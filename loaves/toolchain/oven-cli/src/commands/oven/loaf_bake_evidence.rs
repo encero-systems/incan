@@ -61,6 +61,22 @@ pub(crate) struct OvenLoafBakeReport {
     pub(crate) loafs: Vec<OvenLoafBakeEntryReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) compiler_suite: Option<OvenCompilerSuiteBakeReport>,
+    /// incan.pub harvest written from the release runtime-foundation capture, when `--harvest-output` asked for it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) harvest: Option<OvenLoafHarvestReport>,
+}
+
+/// Where the release bake wrote its harvest and what it held.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct OvenLoafHarvestReport {
+    /// Directory holding `<name>-<version>/proposal.json` entries and `refusals.json`.
+    pub(crate) output: PathBuf,
+    /// Proposal directories, in report order.
+    pub(crate) proposals: Vec<String>,
+    /// Number of refused units; the reasons are in `refusals.json`.
+    pub(crate) refused: usize,
+    /// Ambient hazard variables recorded on every proposal; non-empty means admission will refuse them all.
+    pub(crate) hazards: Vec<String>,
 }
 
 /// Product-owned elapsed-time attribution for one Loaf-baker invocation.
@@ -589,6 +605,7 @@ pub(crate) fn reuse_complete_loaf_envelope(
         evidence: evidence.clone(),
         loafs: reports,
         compiler_suite: None,
+        harvest: None,
     }))
 }
 

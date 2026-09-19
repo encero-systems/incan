@@ -15,9 +15,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use oven_model::loaf_registry::canonical_checksum;
 use oven_model::manifest::RustFactOut;
 use serde::{Deserialize, Serialize};
 
+use super::loaf_bake::OvenLoafPublisherProvenance;
 use super::{
     OvenLegacyCargoBuildScriptFacts, OvenLegacyCargoError, OvenLegacyCargoPrepareResult,
     OvenLegacyCargoSelectedCompilerContext, OvenLegacyCargoSelectedUnit, OvenLegacyCargoSelectedUnitCapture,
@@ -27,10 +29,15 @@ use super::{
 /// The `evidence.method` every proposal records: the facts come from watching Cargo, not from reading a manifest.
 pub const HARVEST_EVIDENCE_METHOD: &str = "compatibility publisher observation";
 
+/// Ambient variables a stable publisher never has. Their presence is recorded as `evidence.hazards`, and admission
+/// refuses a proposal that names any: `RUSTC_BOOTSTRAP` lets a stable compiler answer as nightly, so a script's
+/// probe under it (`proc-macro2`'s `proc_macro_span`) is not a fact of the toolchain.
+pub const HARVEST_HAZARD_VARIABLES: &[&str] = &["RUSTC_BOOTSTRAP"];
+
 /// File name of the refusal list `write_harvest_report` writes beside the proposal directories.
 pub const HARVEST_REFUSALS_FILE: &str = "refusals.json";
 
-/// File name of the proposal inside each `<name>-<version>` directory.
+/// File name of the proposal inside each `<name>-<version>-<profile>` directory.
 pub const HARVEST_PROPOSAL_FILE: &str = "proposal.json";
 
 /// Directory, relative to the proposal, under which committed generated inputs are written.
@@ -89,14 +96,21 @@ pub struct HarvestRustFacts {
     pub facts: Vec<HarvestFact>,
 }
 
-/// `evidence`: what the observation ran under. Admission stores `receipt` as `harvested-from` and the rest verbatim.
+/// `evidence`: what the observation ran under. Admission stores `receipt` as `harvested-from`, refuses a proposal
+/// whose `hazards` name anything, and records the rest verbatim on the event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HarvestEvidence {
     /// Always [`HARVEST_EVIDENCE_METHOD`].
     pub method: String,
-    /// `sha256:` identity of the compatibility receipt whose capture proposed the record.
+    /// `sha256:` identity of the compatibility receipt the publisher ran under.
     pub receipt: String,
+    /// `sha256:` identity of the bounded compiler/sysroot closure that compiled the observation.
+    pub rustc_identity: String,
+    /// The publisher host triple.
+    pub host: String,
+    /// Ambient [`HARVEST_HAZARD_VARIABLES`] present when the publisher ran; empty for an admissible proposal.
+    pub hazards: Vec<String>,
     /// `cargo --version` as the publisher observed it.
     pub cargo_version: String,
     /// `sha256:` digest of the publisher's `Cargo.lock`.
@@ -148,6 +162,8 @@ pub enum HarvestRefusalReason {
     MultipleBuildScriptEdges,
     /// Two units of the same package, version and selection observed different facts.
     ConflictingObservations,
+    /// The staged registry source names a checksum that is not a SHA-256 identity, so no record can bind it.
+    MalformedChecksum,
 }
 
 /// One unit the harvest declined to propose, named so a reviewer can see what the closure still lacks.
@@ -176,8 +192,12 @@ pub struct HarvestReport {
 /// The publisher facts a proposal records as evidence, taken from the preparation that produced the capture.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HarvestEvidenceInputs {
-    /// `sha256:` identity of the compatibility receipt.
+    /// `sha256:` identity of the compatibility receipt the publisher ran under.
     pub receipt: String,
+    /// `sha256:` identity of the bounded compiler/sysroot closure, as the release Toolchain owner names it.
+    pub rustc_identity: String,
+    /// Ambient hazard variables present when the publisher ran; see [`ambient_harvest_hazards`].
+    pub hazards: Vec<String>,
     /// Cargo's version string.
     pub cargo_version: String,
     /// Digest of the publisher `Cargo.lock`.
@@ -186,16 +206,56 @@ pub struct HarvestEvidenceInputs {
     pub cargo_manifest_digest: String,
 }
 
+/// The publisher-side identities every harvest records beside what one preparation observed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HarvestPublisherIdentity {
+    /// `sha256:` identity of the compatibility receipt the publisher ran under.
+    pub receipt: String,
+    /// `sha256:` identity of the bounded compiler/sysroot closure that compiled the observation.
+    pub rustc_identity: String,
+    /// Ambient hazard variables present when the publisher ran.
+    pub hazards: Vec<String>,
+}
+
 impl HarvestEvidenceInputs {
-    /// Evidence for the capture one `prepare_direct_rustc_plan` call produced, under the receipt that authorized it.
-    pub fn from_prepare_result(prepared: &OvenLegacyCargoPrepareResult, receipt: &str) -> Self {
+    /// Evidence for the capture one `prepare_direct_rustc_plan` call produced.
+    pub fn from_prepare_result(prepared: &OvenLegacyCargoPrepareResult, publisher: HarvestPublisherIdentity) -> Self {
         Self {
-            receipt: receipt.to_string(),
+            receipt: publisher.receipt,
+            rustc_identity: publisher.rustc_identity,
+            hazards: publisher.hazards,
             cargo_version: prepared.cargo_version.clone(),
             cargo_lock_digest: prepared.cargo_lock_digest.clone(),
             cargo_manifest_digest: prepared.cargo_manifest_digest.clone(),
         }
     }
+
+    /// Evidence for the capture one Loaf publication produced.
+    pub fn from_loaf_publisher(provenance: &OvenLoafPublisherProvenance, publisher: HarvestPublisherIdentity) -> Self {
+        Self {
+            receipt: publisher.receipt,
+            rustc_identity: publisher.rustc_identity,
+            hazards: publisher.hazards,
+            cargo_version: provenance.cargo_version.clone(),
+            cargo_lock_digest: provenance.cargo_lock_digest.clone(),
+            cargo_manifest_digest: provenance.cargo_manifest_digest.clone(),
+        }
+    }
+}
+
+/// The [`HARVEST_HAZARD_VARIABLES`] set in this process's environment, sorted.
+///
+/// The compatibility publisher runs Cargo as a child of the harvesting process and clears only Cargo's own
+/// variables, so what this process carries is what the scripts saw. A publisher that finds any of these names must
+/// still record the observation; the proposal then says so and admission refuses it.
+pub fn ambient_harvest_hazards() -> Vec<String> {
+    let mut hazards = HARVEST_HAZARD_VARIABLES
+        .iter()
+        .filter(|name| std::env::var_os(name).is_some())
+        .map(|name| (*name).to_string())
+        .collect::<Vec<_>>();
+    hazards.sort();
+    hazards
 }
 
 // ============================================================================
@@ -278,6 +338,9 @@ pub fn harvest_registry_units(
             evidence: HarvestEvidence {
                 method: HARVEST_EVIDENCE_METHOD.to_string(),
                 receipt: evidence.receipt.clone(),
+                rustc_identity: evidence.rustc_identity.clone(),
+                host: compiler.host.clone(),
+                hazards: evidence.hazards.clone(),
                 cargo_version: evidence.cargo_version.clone(),
                 cargo_lock_digest: evidence.cargo_lock_digest.clone(),
                 cargo_manifest_digest: evidence.cargo_manifest_digest.clone(),
@@ -319,6 +382,13 @@ fn observe_unit(
                 .unwrap_or_else(|| "no package source".to_string()),
         ));
     };
+    // Cargo's lock spells the checksum bare; the registry binds it as a `sha256:` identity.
+    let checksum = canonical_checksum(&registry_source.checksum).ok_or_else(|| {
+        refuse(
+            HarvestRefusalReason::MalformedChecksum,
+            "registry checksum is not a sha256 identity".to_string(),
+        )
+    })?;
     if let Some(platform) = unit.platform.as_deref()
         && platform != compiler.target
     {
@@ -429,7 +499,7 @@ fn observe_unit(
         },
         source: HarvestSource {
             registry: registry_index_of(&registry_source.registry),
-            checksum: registry_source.checksum.clone(),
+            checksum,
         },
         out_relative_root: output.map(|output| output.relative_root.clone()),
     })
@@ -476,32 +546,50 @@ fn canonical_json_bytes<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, Ove
 
 /// The directory name each proposal is written under, relative to the report root.
 ///
-/// `<name>-<version>` when the report holds one selection for that package version. A capture can hold more than
-/// one (Cargo's resolver keeps host and target feature sets apart), and then every directory for that package
-/// version carries a short digest of its selection so the names stay stable whichever other selections appear.
+/// `<name>-<version>-<profile>`, as the registry's proposal contract spells it, when the report holds one selection
+/// for that package version and profile. A capture can hold more than one (Cargo's resolver keeps host and target
+/// feature sets apart), and then every directory for that package version and profile also carries a short digest
+/// of its selection so the names stay stable whichever other selections appear.
 pub fn proposal_directory_names(report: &HarvestReport) -> Result<Vec<String>, OvenLegacyCargoError> {
-    let mut per_version = BTreeMap::<(&str, &str), usize>::new();
+    let fact_of = |proposal: &HarvestProposal| {
+        proposal.rust.facts.first().cloned().ok_or_else(|| {
+            OvenLegacyCargoError::Plan(format!(
+                "harvest proposal for `{}-{}` carries no fact",
+                proposal.project.name, proposal.project.version
+            ))
+        })
+    };
+    let mut per_version = BTreeMap::<(String, String, String), usize>::new();
     for proposal in &report.proposals {
+        let fact = fact_of(proposal)?;
         *per_version
-            .entry((&proposal.project.name, &proposal.project.version))
+            .entry((
+                proposal.project.name.clone(),
+                proposal.project.version.clone(),
+                fact.profile.clone(),
+            ))
             .or_default() += 1;
     }
     report
         .proposals
         .iter()
         .map(|proposal| {
-            let base = format!("{}-{}", proposal.project.name, proposal.project.version);
+            let fact = fact_of(proposal)?;
+            let base = format!(
+                "{}-{}-{}",
+                proposal.project.name, proposal.project.version, fact.profile
+            );
             let count = per_version
-                .get(&(proposal.project.name.as_str(), proposal.project.version.as_str()))
+                .get(&(
+                    proposal.project.name.clone(),
+                    proposal.project.version.clone(),
+                    fact.profile.clone(),
+                ))
                 .copied()
                 .unwrap_or(1);
             if count == 1 {
                 return Ok(base);
             }
-            let fact =
-                proposal.rust.facts.first().ok_or_else(|| {
-                    OvenLegacyCargoError::Plan(format!("harvest proposal for `{base}` carries no fact"))
-                })?;
             let selection = serde_json::to_vec(&(&fact.toolchain, &fact.target, &fact.profile, &fact.features))
                 .map_err(|error| OvenLegacyCargoError::Plan(format!("could not encode selection: {error}")))?;
             let digest = digest_bytes(&selection);
@@ -516,8 +604,8 @@ pub fn proposal_directory_names(report: &HarvestReport) -> Result<Vec<String>, O
         .collect()
 }
 
-/// Write the report under `dir`: one `<name>-<version>/proposal.json` per proposal with its `out/` members copied
-/// beside it, and `refusals.json` at the root. Returns every file written, in order.
+/// Write the report under `dir`: one `<name>-<version>-<profile>/proposal.json` per proposal with its `out/`
+/// members copied beside it, and `refusals.json` at the root. Returns every file written, in order.
 ///
 /// `out_dir_sources` is the root the captured `output.relative_root` paths resolve under: the publisher staging
 /// during a bake, or the published artifact's materialized root once the staging is gone. Each member's bytes are
@@ -654,6 +742,8 @@ mod tests {
     fn evidence() -> HarvestEvidenceInputs {
         HarvestEvidenceInputs {
             receipt: format!("sha256:{}", "1".repeat(64)),
+            rustc_identity: format!("sha256:{}", "4".repeat(64)),
+            hazards: Vec::new(),
             cargo_version: "cargo 1.98.0 (fixture)".to_string(),
             cargo_lock_digest: format!("sha256:{}", "2".repeat(64)),
             cargo_manifest_digest: format!("sha256:{}", "3".repeat(64)),
@@ -812,6 +902,17 @@ mod tests {
         assert_eq!(fact.profile, "release");
         assert_eq!(proposal.evidence.method, HARVEST_EVIDENCE_METHOD);
         assert_eq!(proposal.evidence.receipt, evidence().receipt);
+        assert_eq!(proposal.evidence.rustc_identity, evidence().rustc_identity);
+        assert_eq!(proposal.evidence.host, "x86_64-unknown-linux-gnu");
+        assert!(proposal.evidence.hazards.is_empty());
+        let mut hazardous = evidence();
+        hazardous.hazards = vec!["RUSTC_BOOTSTRAP".to_string()];
+        let hazardous_report = harvest_registry_units(&capture, &hazardous, "release")?;
+        assert_eq!(
+            hazardous_report.proposals[0].evidence.hazards,
+            ["RUSTC_BOOTSTRAP"],
+            "a hazard is recorded on the proposal, which is what lets admission refuse it"
+        );
         // The transport root and the run-custom-build node are refused by name, not silently dropped.
         assert_eq!(
             reasons(&report),
@@ -825,12 +926,27 @@ mod tests {
 
     #[test]
     fn a_unit_without_a_build_script_proposes_an_empty_cfg_fact() -> TestResult {
-        let capture = capture(vec![(library("serde", "1.0.228", &["std"]), None)]);
-        let report = harvest_registry_units(&capture, &evidence(), "debug")?;
+        let mut bare = library("serde", "1.0.228", &["std"]);
+        if let Some(source) = bare.registry_source.as_mut() {
+            source.checksum = CHECKSUM.trim_start_matches("sha256:").to_string();
+        }
+        let bare_capture = capture(vec![(bare, None)]);
+        let report = harvest_registry_units(&bare_capture, &evidence(), "debug")?;
         assert_eq!(report.proposals.len(), 1);
         let fact = &report.proposals[0].rust.facts[0];
         assert!(fact.cfg.is_empty() && fact.out.is_empty());
         assert_eq!(fact.profile, "debug");
+        assert_eq!(
+            report.proposals[0].source.checksum, CHECKSUM,
+            "Cargo's bare lock checksum is proposed as the sha256 identity the registry binds"
+        );
+        let mut malformed = library("odd", "1.0.0", &[]);
+        if let Some(source) = malformed.registry_source.as_mut() {
+            source.checksum = "not-a-digest".to_string();
+        }
+        let report = harvest_registry_units(&capture(vec![(malformed, None)]), &evidence(), "debug")?;
+        assert!(report.proposals.is_empty());
+        assert_eq!(reasons(&report)[0], ("odd", HarvestRefusalReason::MalformedChecksum));
         Ok(())
     }
 
@@ -967,12 +1083,8 @@ mod tests {
         ]);
         let report = harvest_registry_units(&capture, &evidence(), "release")?;
         assert_eq!(
-            report
-                .proposals
-                .iter()
-                .map(|proposal| format!("{}-{}", proposal.project.name, proposal.project.version))
-                .collect::<Vec<_>>(),
-            ["alpha-1.0.0", "alpha-2.0.0", "zeta-1.0.0"],
+            proposal_directory_names(&report)?,
+            ["alpha-1.0.0-release", "alpha-2.0.0-release", "zeta-1.0.0-release"],
             "one proposal per selection, sorted; the two alpha 2.0.0 units are one selection"
         );
         Ok(())
@@ -1007,10 +1119,10 @@ mod tests {
         ]);
         let report = harvest_registry_units(&split, &evidence(), "release")?;
         let names = proposal_directory_names(&report)?;
-        assert_eq!(names[0], "quote-1.0.0");
-        assert!(names[1].starts_with("syn-2.0.0-") && names[2].starts_with("syn-2.0.0-"));
+        assert_eq!(names[0], "quote-1.0.0-release");
+        assert!(names[1].starts_with("syn-2.0.0-release-") && names[2].starts_with("syn-2.0.0-release-"));
         assert_ne!(names[1], names[2]);
-        assert_eq!(names[1].len(), "syn-2.0.0-".len() + 12);
+        assert_eq!(names[1].len(), "syn-2.0.0-release-".len() + 12);
         Ok(())
     }
 
@@ -1058,7 +1170,10 @@ mod tests {
         write_harvest_report(&report, registry_root.path().join("harvest").as_path(), retained.path())?;
         fs::create_dir_all(&record_dir)?;
         for out in &proposal.rust.facts[0].out {
-            let source = registry_root.path().join("harvest/serde_core-1.0.228").join(&out.path);
+            let source = registry_root
+                .path()
+                .join("harvest/serde_core-1.0.228-release")
+                .join(&out.path);
             let destination = record_dir.join(&out.path);
             fs::create_dir_all(destination.parent().ok_or("out path has a parent")?)?;
             fs::copy(source, destination)?;
@@ -1138,14 +1253,14 @@ mod tests {
         assert_eq!(
             written,
             [
-                output.path().join("quote-1.0.0/proposal.json"),
-                output.path().join("serde_core-1.0.228/out/nested/generated.rs"),
-                output.path().join("serde_core-1.0.228/out/private.rs"),
-                output.path().join("serde_core-1.0.228/proposal.json"),
+                output.path().join("quote-1.0.0-release/proposal.json"),
+                output.path().join("serde_core-1.0.228-release/out/nested/generated.rs"),
+                output.path().join("serde_core-1.0.228-release/out/private.rs"),
+                output.path().join("serde_core-1.0.228-release/proposal.json"),
                 output.path().join("refusals.json"),
             ]
         );
-        let proposal_text = fs::read_to_string(output.path().join("serde_core-1.0.228/proposal.json"))?;
+        let proposal_text = fs::read_to_string(output.path().join("serde_core-1.0.228-release/proposal.json"))?;
         let proposal: serde_json::Value = serde_json::from_str(&proposal_text)?;
         let keys = proposal
             .as_object()
@@ -1166,10 +1281,12 @@ mod tests {
             "the proposal never carries the keys admission fills or reserves"
         );
         assert_eq!(proposal["evidence"]["method"], HARVEST_EVIDENCE_METHOD);
+        assert_eq!(proposal["evidence"]["hazards"], serde_json::json!([]));
+        assert_eq!(proposal["evidence"]["host"], "x86_64-unknown-linux-gnu");
         let round_trip: HarvestProposal = serde_json::from_str(&proposal_text)?;
         assert_eq!(round_trip.rust, report.proposals[1].rust);
         assert_eq!(
-            fs::read(output.path().join("serde_core-1.0.228/out/private.rs"))?,
+            fs::read(output.path().join("serde_core-1.0.228-release/out/private.rs"))?,
             b"pub mod private {}\n"
         );
         let refusals: Vec<HarvestRefusal> = serde_json::from_slice(&fs::read(output.path().join("refusals.json"))?)?;
