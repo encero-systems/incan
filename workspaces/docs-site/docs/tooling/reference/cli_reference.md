@@ -262,7 +262,7 @@ Project-extension schema 9, packaged-library schema 6, completed-output schema 1
 
 A release envelope may select registry-source authority independently from its feature-unified linkable closure, so supported standard-library Rust facades can be inspected without mixing direct-`rustc` artifacts. `import` reads frozen Cargo declarations only as compatibility evidence and does not run Cargo.
 
-`harvest` is the publisher-side adoption step for crates.io packages: it renders the registry `[rust-dependencies]` of a checked `loaf.toml` (`--project` names the manifest file or its directory) into one Cargo package, runs the compatibility publisher once under the given `--cargo` and `--rustc` for the exact `--target` and `--profile`, and writes one incan.pub fact proposal per registry package version whose build script emitted only `cfg` answers and `OUT_DIR` files, each under `<output>/<name>-<version>-<profile>/proposal.json` beside its copied `out/` members, with `refusals-<profile>.json` naming every unit it declined (linked libraries or paths, compiler probes, script-emitted environment, unretained output, non-registry sources). The proposal binds the toolchain, target, profile and complete feature set the publisher observed and records its receipt, the bounded compiler closure identity, the host and any hazard tokens (`RUSTC_BOOTSTRAP`, `nightly-rustc`; the publisher Cargo's own version is provenance in `cargo_version`); `--cargo-lock` pins the resolution to an existing lock. Rewriting the same directory with the same answers is a no-op and a different answer is refused; admitting a proposal into the registry is a separate `incan-pub add-fact` step. The release publisher writes the same report from its own runtime-foundation capture through `--harvest-dir`.
+`harvest` writes incan.pub fact proposals from one compatibility-publisher run; see [`incan oven harvest`](#incan-oven-harvest).
 
 The internal release publisher is the sole Cargo-backed producer for supported Oven Alpha envelopes. It creates or exactly reuses the release or compiler-suite standard-library Loaf family, and the compiler-suite path also prepares or reuses the bounded receipt-compatible suite store. Each `loaf.json` binds the direct-`rustc` plan, declared artifacts, compatibility, provenance, digests, and byte accounting. The explicit publisher Cargo may differ from the consumer `rustc`; the latter defines the Loaf toolchain identity. Compiler-suite JSON reports distinguish `complete-suite`, `selected-complete-roots`, and `exact-diagnostic` selection modes and expose separate `complete_root_success` and `complete_suite_success` verdicts.
 
@@ -287,6 +287,34 @@ The default Oven store is `$INCAN_HOME/oven/store/v2`, or `~/.incan/oven/store/v
 
 - `incan inspect oven` never consults a proof and rehashes the closure it audits; `incan inspect oven --receipt PATH` adds the receipt/build-unit identity plus a `hit`, `miss`, or `ambiguous` selection reason.
 - `incan oven store inspect` reports reclaimable and lease-protected physical allocation, and for a direct-rustc plan the complete receipt of the compilation that produced its bytes — reuse hands a consumer bytes some other invocation produced, and the manifest records only that receipt's identity, not what it contained.
+
+### `incan oven harvest`
+
+Usage:
+
+```text
+incan oven harvest --target TRIPLE --cargo PATH --rustc PATH --output PATH [--project PATH]
+                   [--profile release|debug] [--cargo-lock PATH] [--format text|json]
+```
+
+Behavior:
+
+- Renders the registry `[rust-dependencies]` of a checked `loaf.toml` into one Cargo package, runs the compatibility publisher once for the exact `--target` and `--profile`, and observes every registry unit the publisher compiled.
+- Writes one incan.pub fact proposal per registry package version whose build script emitted only `cfg` answers and `OUT_DIR` files: `<output>/<name>-<version>-<profile>/proposal.json`, with the retained `OUT_DIR` members copied beside it under `out/`.
+- Writes `<output>/refusals-<profile>.json` naming every unit it declined and why: `not-registry-backed`, `build-script-unit` (the script's own execution node; its library is harvested separately), `linked-libraries`, `linked-paths`, `tool-probes`, `environment-observed`, `unretained-output`, `conflicting-observations`.
+- A proposal binds the toolchain, target, profile and complete feature set the publisher observed; its `evidence` records the capture receipt, the compiler closure identity, the host, `cargo_version` and the Cargo lock and manifest digests, and `hazards` (`RUSTC_BOOTSTRAP`, `nightly-rustc`; empty when clean). Admitting a proposal into the registry is `incan-pub add-fact`, a separate step.
+- Rewriting the same output directory is a no-op when each proposal binds the same facts; a proposal that would bind different facts for an existing directory is refused, because a changed freeze needs a new output directory.
+
+Flags:
+
+- `--project <PATH>`: The checked manifest file or its directory; defaults to the current directory.
+- `--target <TRIPLE>`, `--profile <release|debug>`: The exact selection the facts bind.
+- `--cargo <PATH>`, `--rustc <PATH>`: The publisher tools; the rustc identity is recorded, the Cargo version is provenance.
+- `--cargo-lock <PATH>`: Resolve against an existing lock instead of resolving afresh.
+- `--output <PATH>`: The proposal directory.
+- `--format text|json`: Text lists proposals and refusals; JSON is the harvest report.
+
+The release publisher writes the same report from the captures it already holds for `stdlib/debug` and `stdlib/release` through `incan oven legacy-cargo bake-loafs … --harvest-dir <PATH>`; `--loaf-registry <PATH>` and `--loaf-registry-commit <SHA>` on that command select the registry checkout whose records govern adopted units and refuse a checkout whose HEAD is not the pinned commit.
 
 ### `incan inspect backend-selection`
 
