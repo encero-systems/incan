@@ -14369,6 +14369,112 @@ def foo() -> bool:
 }
 
 #[test]
+fn test_str_encode_and_bytes_decode_accept_utf8_round_trip_issue1668() {
+    let source = r#"
+const GREETING: FrozenStr = "héllo"
+const RAW: FrozenBytes = b"raw"
+
+def encode_forms(text: str, label: str) -> int:
+    plain: bytes = text.encode()
+    explicit: bytes = text.encode("utf-8")
+    named: bytes = text.encode(encoding="UTF_8")
+    runtime: bytes = text.encode(label)
+    frozen: bytes = GREETING.encode()
+    return len(plain) + len(explicit) + len(named) + len(runtime) + len(frozen)
+
+def decode_forms(data: bytes, label: str, policy: str) -> str:
+    plain: str = data.decode()
+    lossy: str = data.decode(errors="replace")
+    positional: str = data.decode("utf8", "strict")
+    runtime: str = data.decode(label, errors=policy)
+    frozen: str = RAW.decode()
+    return plain + lossy + positional + runtime + frozen
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_str_encode_rejects_unsupported_literal_encoding_issue1668() {
+    let errors = check_str_err(
+        r#"
+def payload(text: str) -> bytes:
+    return text.encode("latin-1")
+"#,
+        "str.encode with a non-UTF-8 literal must fail typechecking",
+    );
+    assert!(
+        errors.iter().any(
+            |error| error.message.contains("str.encode() supports only UTF-8") && error.message.contains("latin-1")
+        ),
+        "expected an unsupported-encoding diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_bytes_decode_rejects_bad_policy_keyword_and_arity_issue1668() {
+    let policy_errors = check_str_err(
+        r#"
+def text(data: bytes) -> str:
+    return data.decode(errors="ignore")
+"#,
+        "bytes.decode with an unsupported errors policy must fail typechecking",
+    );
+    assert!(
+        policy_errors
+            .iter()
+            .any(|error| error.message.contains("errors must be") && error.message.contains("ignore")),
+        "expected an unsupported-policy diagnostic, got: {:?}",
+        policy_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+
+    let keyword_errors = check_str_err(
+        r#"
+def text(data: bytes) -> str:
+    return data.decode(codec="utf-8")
+"#,
+        "bytes.decode with an unknown keyword must fail typechecking",
+    );
+    assert!(
+        keyword_errors
+            .iter()
+            .any(|error| error.message.contains("Unexpected keyword argument 'codec'")),
+        "expected an unknown-keyword diagnostic, got: {:?}",
+        keyword_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+
+    let arity_errors = check_str_err(
+        r#"
+def payload(text: str) -> bytes:
+    return text.encode("utf-8", "strict")
+"#,
+        "str.encode takes at most one argument",
+    );
+    assert!(
+        arity_errors.iter().any(|error| error
+            .message
+            .contains("str.encode() expects at most 1 argument(s), got 2")),
+        "expected a max-arity diagnostic, got: {:?}",
+        arity_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+
+    let type_errors = check_str_err(
+        r#"
+def payload(text: str) -> bytes:
+    return text.encode(8)
+"#,
+        "str.encode requires a text encoding label",
+    );
+    assert!(
+        type_errors.iter().any(|error| error
+            .message
+            .contains("Argument 'encoding' of 'str.encode' has type mismatch")),
+        "expected an argument type diagnostic, got: {:?}",
+        type_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_frozen_unknown_method_errors() {
     let source = r#"
 const NUMS: FrozenList[int] = [1, 2]

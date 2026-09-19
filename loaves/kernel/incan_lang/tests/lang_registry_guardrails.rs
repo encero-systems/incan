@@ -9,7 +9,9 @@ use incan_lang::lang::operators;
 use incan_lang::lang::punctuation;
 use incan_lang::lang::registry::{RFC, Since};
 use incan_lang::lang::surface::types::{SurfaceTypeCategory, SurfaceTypeId, SurfaceTypeOwner};
-use incan_lang::lang::surface::{constructors, functions, iterator_methods, result_methods, types as surface_types};
+use incan_lang::lang::surface::{
+    bytes_methods, constructors, functions, iterator_methods, result_methods, string_methods, types as surface_types,
+};
 use incan_lang::lang::testing;
 use incan_lang::lang::traits;
 use incan_lang::lang::types::{collections, numerics, stringlike};
@@ -327,6 +329,44 @@ fn iterator_methods_spellings_unique_and_resolvable() {
         from_str: iterator_methods::from_str,
         as_str: iterator_methods::as_str,
     });
+}
+
+#[test]
+fn string_methods_spellings_unique_and_resolvable() {
+    assert_registry_round_trip(RegistryRoundTrip {
+        label: "string method",
+        expected_len: 14,
+        items: string_methods::STRING_METHODS,
+        id_of: |info| info.id,
+        canonical_of: |info| info.canonical,
+        aliases_of: |info| info.aliases,
+        from_str: string_methods::from_str,
+        as_str: string_methods::as_str,
+    });
+    assert_eq!(
+        string_methods::from_str("encode"),
+        Some(string_methods::StringMethodId::Encode),
+        "the #1668 text return trip starts at str.encode"
+    );
+}
+
+#[test]
+fn bytes_methods_spellings_unique_and_resolvable() {
+    assert_registry_round_trip(RegistryRoundTrip {
+        label: "bytes method",
+        expected_len: 1,
+        items: bytes_methods::BYTES_METHODS,
+        id_of: |info| info.id,
+        canonical_of: |info| info.canonical,
+        aliases_of: |info| info.aliases,
+        from_str: bytes_methods::from_str,
+        as_str: bytes_methods::as_str,
+    });
+    assert_eq!(
+        bytes_methods::from_str("decode"),
+        Some(bytes_methods::BytesMethodId::Decode),
+        "the #1668 text return trip ends at bytes.decode"
+    );
 }
 
 #[test]

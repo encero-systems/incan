@@ -24,6 +24,8 @@ Incan has two core “string-like” types:
 | `", ".join(xs)`      | Join `list[str]` with a separator |
 | `s.contains("x")`    | Substring check (`bool`)          |
 | `s.replace("a", "b")`| Replace all occurrences           |
+| `s.encode()`         | UTF-8 `bytes` of the text         |
+| `b.decode()`         | `str` from UTF-8 `bytes`          |
 
 ## Indexing and slicing
 
@@ -110,6 +112,21 @@ if sentence.contains("quick"):
 text = "hello world"
 result = text.replace("world", "incan")  # "hello incan"
 ```
+
+### Text to bytes and back
+
+`str.encode(encoding: str = "utf-8") -> bytes` returns the UTF-8 encoding of the text, and `bytes.decode(encoding: str = "utf-8", errors: str = "strict") -> str` is the return trip. Both are available on the frozen forms (`FrozenStr`, `FrozenBytes`) as well.
+
+```incan
+payload: bytes = "héllo".encode()
+println(len(payload))                      # 6
+println(payload.decode())                  # héllo
+println(b"\xff".decode(errors="replace"))  # U+FFFD replacement character
+```
+
+Only UTF-8 is supported in this release. A literal `encoding` that names another codec (for example `"latin-1"`) is a compile-time error; a label that is only known at run time raises `ValueError`. Labels are matched case-insensitively with `_` read as `-`, so `"UTF-8"`, `"utf_8"`, and `"utf8"` are all accepted. Other codecs are available through `std.fs` (`read_text` / `write_text`) and `std.encoding`.
+
+`errors` selects what `decode` does with malformed input. `"strict"` (the default) raises `ValueError`, the builtin conversion failure convention that `int("x")` also follows and the counterpart of Python's `UnicodeDecodeError`; `"replace"` substitutes U+FFFD for each malformed sequence and never fails. Any other literal policy is a compile-time error, and a run-time policy outside the pair raises `ValueError`.
 
 ## F-strings (formatted strings)
 

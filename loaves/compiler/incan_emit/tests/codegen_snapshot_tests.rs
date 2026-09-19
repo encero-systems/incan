@@ -2932,6 +2932,25 @@ fn test_issue1668_std_environ_args_codegen() {
 }
 
 #[test]
+fn test_issue1668_str_encode_bytes_decode_codegen() {
+    let source = load_test_file("issue1668_str_encode_bytes_decode");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains(".as_bytes().to_vec()"),
+        "str.encode should materialize owned UTF-8 bytes; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("::std::str::from_utf8(") && rust_code.contains("String::from_utf8_lossy("),
+        "bytes.decode should emit strict and replacing UTF-8 decoding; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("raise_value_error"),
+        "unsupported runtime labels and malformed input must raise ValueError; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1668_str_encode_bytes_decode", rust_code);
+}
+
+#[test]
 fn test_std_tempfile_import_codegen() {
     let source = load_test_file("std_tempfile_import");
     let rust_code = generate_rust(&source);
