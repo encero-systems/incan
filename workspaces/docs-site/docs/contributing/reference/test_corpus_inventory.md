@@ -13,11 +13,11 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
 | keep | 3110 | 172 | 7 |
-| re-point | 482 | 44 | 387 |
+| re-point | 482 | 44 | 390 |
 | retire | 1109 | 72 | 0 |
-| unaffected | 1418 | 133 | 5 |
+| unaffected | 1422 | 133 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **6119** | **421** | **399** |
+| **Total** | **6123** | **421** | **402** |
 
 - Retire-class tests: 1109, of which twinned 18, dies 0, open 1091 (neither yet).
 - Retire-class files with open rows: 82 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -73,7 +73,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/tests/fixtures` | `**/*.incn` | 20 | re-point | #1561 | driver integration fixtures (generated_rust_* artifact projects, callability, native consumer); their owner tests are retire-class. |
 | `loaves/compiler/incan_emit/tests/codegen_snapshots` | `**/*.incn` | 180 | re-point | #1561 | snapshot corpus inputs considered as programs; the .snap outputs retire with codegen_snapshot_tests.rs. |
 | `loaves/compiler/incan_test_support/fixtures` | `*.incn` | 12 | re-point | #1561 | top-level regression programs run by CLI integration tests (rfc023/rfc030/rfc064/rfc088 behaviour, reflection, model traits). |
-| `loaves/compiler/incan_test_support/fixtures/behavior/harness` | `<name>.incn or <name>/` | 5 | re-point | #1561 | the behaviour-fixture harness proving itself: one fixture per shape of the format (refused program, non-zero exit, contained lines, module directory, project directory), run by behavior_harness_tests.rs. They twin nothing; they exist so a runner or route change is caught here before it is caught in a twin. |
+| `loaves/compiler/incan_test_support/fixtures/behavior/harness` | `<name>.incn or <name>/` | 8 | re-point | #1561 | the behaviour-fixture harness proving itself: one fixture per shape of the format (refused program with one code and with two, non-zero exit, exit code as the only observable, empty stdout, contained lines, module directory, project directory), run by behavior_harness_tests.rs. They twin nothing; they exist so a runner or route change is caught here before it is caught in a twin. Header refusals are unit tests of parse_header, not fixtures. |
 | `loaves/compiler/incan_test_support/fixtures/behavior/smoke` | `<name>.incn or <name>/` | 5 | re-point | #1561 | behaviour fixtures: programs with their expected observables in the header, run by behavior_smoke_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines. |
 | `loaves/compiler/incan_test_support/fixtures/invalid` | `**/*.incn` | 7 | keep | #1561 | diagnostics through the checker only (test_invalid_fixtures). |
 | `loaves/compiler/incan_test_support/fixtures/oven_project_bake` | `**/*.incn` | 1 | re-point | #1561 | Incan project baked under Oven by the compiler suite; the program's route changes, the bake harness does not. |
@@ -279,7 +279,7 @@ Per-test overrides in `loaves/compiler/incan_emit/src/codegen.rs`:
 
 | Test | Disposition | Twin | Dies | Lanes | Notes |
 |---|---|---|---|---|---|
-| `string_membership_probe_borrows_loop_binding_used_later_in_branch_issue1057` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/smoke/membership_loop_binding.incn` | - | codegen, generated_text, checker, legacy_ir | twinned by the #1057 program run to completion: the loop binding is used after the membership probe. |
+| `string_membership_probe_borrows_loop_binding_used_later_in_branch_issue1057` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/smoke/membership_loop_binding.incn` | - | codegen, generated_text, checker, legacy_ir | twinned by the #1057 program run to completion: the loop binding is used after the membership probe, which is the observable half. The retired test's other assertion, `!code.contains("name.clone()")` (the probe borrows rather than clones), is not user-observable and dies with #654; the twin stays. |
 | `test_simple_function` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/smoke/simple_function_add.incn` | - | codegen, checker, legacy_ir | twinned by a program that calls the function and prints the sum. |
 | `test_model_generation` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/smoke/model_fields.incn` | - | codegen, checker, legacy_ir | twinned by a program that builds the model and prints its fields. |
 | `test_fstring_generation` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/smoke/fstring_greeting.incn` | - | codegen, checker, legacy_ir | twinned by a program that prints the interpolated greeting. |
@@ -408,11 +408,11 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 | `loaves/compiler/incan_ir/src/lower/types.rs` | 13 | 1864 | 343 | retire | 0/13 | 0 | - | #1561 | checker 1, legacy_ir 13 | the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
 | `loaves/compiler/incan_ir/src/types.rs` | 52 | 1305 | 464 | retire | 0/52 | 0 | - | #1561 | legacy_ir 52 | the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
 
-### `loaves/compiler/incan_test_support` (15 tests in 3 files: retire 3, unaffected 12)
+### `loaves/compiler/incan_test_support` (19 tests in 3 files: retire 3, unaffected 16)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
-| `loaves/compiler/incan_test_support/src/behavior_fixtures.rs` | 11 | 1027 | 279 | unaffected | - | - | - | #1561 | run 1 | test-support helper for the behaviour-fixture family: header grammar, discovery, materialization and observable comparison, with no compiler call. |
+| `loaves/compiler/incan_test_support/src/behavior_fixtures.rs` | 15 | 1353 | 446 | unaffected | - | - | - | #1561 | run 1 | test-support helper for the behaviour-fixture family: header grammar, discovery, materialization and observable comparison. The module drives `incan check` / `incan run` through `run_incan`; its unit tests exercise the grammar, discovery and the comparison rules with no compiler call. |
 | `loaves/compiler/incan_test_support/src/builtin_stdlib.rs` | 1 | 75 | 16 | unaffected | - | - | - | #1561 | - | test-support helper for the builtin stdlib inventory. |
 | `loaves/compiler/incan_test_support/src/emitted_symbol_artifact.rs` | 3 | 421 | 50 | retire | 0/3 | 0 | - | #1561 | - | helpers over emitted symbol projections (RFC 120 physical names). |
 
@@ -495,7 +495,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 | `loaves/toolchain/incan-cli/src/lib.rs` | 36 | 3253 | 1050 | unaffected | - | - | - | #1561 | codegen 1, replacement 9 | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/src/test_runner/execution.rs` | 21 | 3539 | 618 | keep (keep 10, retire 11) | 0/11 | 0 | - | #1561 | text 1, checker 3, parser 3 | `incan test` today lowers Incan tests into a Rust libtest harness; the harness-shape tests retire with it, the discovery and session tests stay. |
 | `loaves/toolchain/incan-cli/src/test_runner/mod.rs` | 15 | 2148 | 492 | keep | - | - | - | #1561 | checker 3 | test collection, parametrize expansion, marker selection and scheduling. |
-| `loaves/toolchain/incan-cli/tests/behavior_harness_tests.rs` | 1 | 15 | 15 | re-point | - | - | - | #1561 | - | runs the harness area's self-proof fixtures as programs; the route changes under it, the fixtures do not. |
+| `loaves/toolchain/incan-cli/tests/behavior_harness_tests.rs` | 1 | 21 | 21 | re-point | - | - | - | #1561 | - | runs the harness area's self-proof fixtures as programs; the route changes under it, the fixtures do not. |
 | `loaves/toolchain/incan-cli/tests/behavior_smoke_tests.rs` | 1 | 16 | 16 | re-point | - | - | - | #1561 | - | runs every behaviour fixture of the smoke area as a program and compares its observables; the route changes under it, the fixtures do not. |
 | `loaves/toolchain/incan-cli/tests/canonical_item_imports.rs` | 3 | 229 | 229 | re-point (keep 1, re-point 2) | - | - | - | #1561 | run 2 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7; the one `check`- or `inspect`-only test is keep (override). |
 | `loaves/toolchain/incan-cli/tests/cli_catalogue_forms_tests.rs` | 1 | 113 | 113 | re-point | - | - | - | #1561 | run 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. |

@@ -2,17 +2,47 @@
   "schema": 1,
   "split_threshold_lines": 1500,
   "fixture_roots": {
+    "examples": {
+      "pattern": "**/*.incn",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "typechecked and run by scripts/run_examples.sh (`make examples`); vocab and library examples are baked."
+    },
+    "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines": {
+      "pattern": "**/*.incn",
+      "disposition": "unaffected",
+      "owner": 1561,
+      "notes": "frozen v0.5.0 migration baseline, decoded through the checked capability-metadata path (no generated Rust); retained only until the v0.5 replacement migration closes, per the compatibility inventory's retirement line, then removed from the collector."
+    },
+    "loaves/compiler/incan_driver/tests/fixtures": {
+      "pattern": "**/*.incn",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "driver integration fixtures (generated_rust_* artifact projects, callability, native consumer); their owner tests are retire-class."
+    },
+    "loaves/compiler/incan_emit/tests/codegen_snapshots": {
+      "pattern": "**/*.incn",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "snapshot corpus inputs considered as programs; the .snap outputs retire with codegen_snapshot_tests.rs."
+    },
     "loaves/compiler/incan_test_support/fixtures": {
       "pattern": "*.incn",
       "disposition": "re-point",
       "owner": 1561,
       "notes": "top-level regression programs run by CLI integration tests (rfc023/rfc030/rfc064/rfc088 behaviour, reflection, model traits)."
     },
-    "loaves/compiler/incan_test_support/fixtures/valid": {
-      "pattern": "**/*.incn",
+    "loaves/compiler/incan_test_support/fixtures/behavior/harness": {
+      "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "typechecked in bulk by test_valid_fixtures (keep) and run one by one as std surface programs by CLI tests (re-point)."
+      "notes": "the behaviour-fixture harness proving itself: one fixture per shape of the format (refused program with one code and with two, non-zero exit, exit code as the only observable, empty stdout, contained lines, module directory, project directory), run by behavior_harness_tests.rs. They twin nothing; they exist so a runner or route change is caught here before it is caught in a twin. Header refusals are unit tests of parse_header, not fixtures."
+    },
+    "loaves/compiler/incan_test_support/fixtures/behavior/smoke": {
+      "pattern": "<name>.incn or <name>/",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "behaviour fixtures: programs with their expected observables in the header, run by behavior_smoke_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/invalid": {
       "pattern": "**/*.incn",
@@ -44,23 +74,11 @@
       "owner": 1561,
       "notes": "release-profile Oven bake exercising file locks."
     },
-    "loaves/compiler/incan_emit/tests/codegen_snapshots": {
+    "loaves/compiler/incan_test_support/fixtures/valid": {
       "pattern": "**/*.incn",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "snapshot corpus inputs considered as programs; the .snap outputs retire with codegen_snapshot_tests.rs."
-    },
-    "loaves/compiler/incan_driver/tests/fixtures": {
-      "pattern": "**/*.incn",
-      "disposition": "re-point",
-      "owner": 1561,
-      "notes": "driver integration fixtures (generated_rust_* artifact projects, callability, native consumer); their owner tests are retire-class."
-    },
-    "loaves/toolchain/incan-cli/tests/fixtures": {
-      "pattern": "**/*.incn",
-      "disposition": "re-point",
-      "owner": 1561,
-      "notes": "CLI integration fixtures (layering, package boundary facade, pub union consumer, vocab guardrails)."
+      "notes": "typechecked in bulk by test_valid_fixtures (keep) and run one by one as std surface programs by CLI tests (re-point)."
     },
     "loaves/oven/oven_rustc/src/fixtures": {
       "pattern": "**/*.incn",
@@ -68,11 +86,17 @@
       "owner": 1561,
       "notes": "Oven rustc fixtures."
     },
-    "examples": {
+    "loaves/toolchain/incan-cli/tests/fixtures": {
       "pattern": "**/*.incn",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "typechecked and run by scripts/run_examples.sh (`make examples`); vocab and library examples are baked."
+      "notes": "CLI integration fixtures (layering, package boundary facade, pub union consumer, vocab guardrails)."
+    },
+    "workspaces/benchmarks": {
+      "pattern": "**/*.incn",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "benchmark programs built and timed by workspaces/benchmarks/run_all.sh (`make benchmarks`); the route changes, the timing harness does not."
     },
     "workspaces/docs-site/docs/_snippets/language/examples": {
       "pattern": "verified_*.incn",
@@ -91,30 +115,6 @@
       "disposition": "re-point",
       "owner": 1561,
       "notes": "fixtures of the Oven release-policy project's tests."
-    },
-    "workspaces/benchmarks": {
-      "pattern": "**/*.incn",
-      "disposition": "re-point",
-      "owner": 1561,
-      "notes": "benchmark programs built and timed by workspaces/benchmarks/run_all.sh (`make benchmarks`); the route changes, the timing harness does not."
-    },
-    "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines": {
-      "pattern": "**/*.incn",
-      "disposition": "unaffected",
-      "owner": 1561,
-      "notes": "frozen v0.5.0 migration baseline, decoded through the checked capability-metadata path (no generated Rust); retained only until the v0.5 replacement migration closes, per the compatibility inventory's retirement line, then removed from the collector."
-    },
-    "loaves/compiler/incan_test_support/fixtures/behavior/smoke": {
-      "pattern": "<name>.incn or <name>/",
-      "disposition": "re-point",
-      "owner": 1561,
-      "notes": "behaviour fixtures: programs with their expected observables in the header, run by behavior_smoke_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
-    },
-    "loaves/compiler/incan_test_support/fixtures/behavior/harness": {
-      "pattern": "<name>.incn or <name>/",
-      "disposition": "re-point",
-      "owner": 1561,
-      "notes": "the behaviour-fixture harness proving itself: one fixture per shape of the format (refused program, non-zero exit, contained lines, module directory, project directory), run by behavior_harness_tests.rs. They twin nothing; they exist so a runner or route change is caught here before it is caught in a twin."
     }
   },
   "files": {
@@ -1011,7 +1011,7 @@
         },
         "string_membership_probe_borrows_loop_binding_used_later_in_branch_issue1057": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/smoke/membership_loop_binding.incn",
-          "notes": "twinned by the #1057 program run to completion: the loop binding is used after the membership probe."
+          "notes": "twinned by the #1057 program run to completion: the loop binding is used after the membership probe, which is the observable half. The retired test's other assertion, `!code.contains(\"name.clone()\")` (the probe borrows rather than clones), is not user-observable and dies with #654; the twin stays."
         }
       }
     },
@@ -2199,6 +2199,14 @@
       "split_target": "",
       "notes": "SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level."
     },
+    "loaves/compiler/incan_test_support/src/behavior_fixtures.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "test-support helper for the behaviour-fixture family: header grammar, discovery, materialization and observable comparison. The module drives `incan check` / `incan run` through `run_incan`; its unit tests exercise the grammar, discovery and the comparison rules with no compiler call."
+    },
     "loaves/compiler/incan_test_support/src/builtin_stdlib.rs": {
       "disposition": "unaffected",
       "owner": 1561,
@@ -3353,6 +3361,22 @@
       "split_target": "",
       "notes": "test collection, parametrize expansion, marker selection and scheduling."
     },
+    "loaves/toolchain/incan-cli/tests/behavior_harness_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs the harness area's self-proof fixtures as programs; the route changes under it, the fixtures do not."
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_smoke_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs every behaviour fixture of the smoke area as a program and compares its observables; the route changes under it, the fixtures do not."
+    },
     "loaves/toolchain/incan-cli/tests/canonical_item_imports.rs": {
       "disposition": "re-point",
       "owner": 1561,
@@ -4310,30 +4334,6 @@
       "split_required": false,
       "split_target": "",
       "notes": "Oven tools command; the build_run hit is a Cargo config hint, not an Incan build."
-    },
-    "loaves/compiler/incan_test_support/src/behavior_fixtures.rs": {
-      "disposition": "unaffected",
-      "owner": 1561,
-      "twin": "",
-      "split_required": false,
-      "split_target": "",
-      "notes": "test-support helper for the behaviour-fixture family: header grammar, discovery, materialization and observable comparison, with no compiler call."
-    },
-    "loaves/toolchain/incan-cli/tests/behavior_smoke_tests.rs": {
-      "disposition": "re-point",
-      "owner": 1561,
-      "twin": "",
-      "split_required": false,
-      "split_target": "",
-      "notes": "runs every behaviour fixture of the smoke area as a program and compares its observables; the route changes under it, the fixtures do not."
-    },
-    "loaves/toolchain/incan-cli/tests/behavior_harness_tests.rs": {
-      "disposition": "re-point",
-      "owner": 1561,
-      "twin": "",
-      "split_required": false,
-      "split_target": "",
-      "notes": "runs the harness area's self-proof fixtures as programs; the route changes under it, the fixtures do not."
     }
   }
 }

@@ -291,13 +291,62 @@ class GateTests(unittest.TestCase):
     def test_stale_row_and_stale_page_fail(self) -> None:
         dispositions = {
             "files": {
-                "loaves/x/src/lib.rs": {"disposition": "keep"},
                 "loaves/gone.rs": {"disposition": "keep"},
+                "loaves/x/src/lib.rs": {"disposition": "keep"},
             }
         }
         failures = collect.check(self.corpus(), dispositions, "rendered page is stale")
         self.assertTrue(any("stale row" in f for f in failures))
         self.assertIn("rendered page is stale", failures)
+
+    def test_dies_reason_beside_a_twin_is_reported_for_every_key(self) -> None:
+        # Three tests share the file's twin; the stray `dies` reason is on the file row, so every key carries it.
+        dispositions = {
+            "files": {
+                "loaves/x/src/lib.rs": {
+                    "disposition": "retire",
+                    "twin": "loaves/x/src/lib.rs::gated",
+                    "dies": "a reason that contradicts the twin",
+                    "tests": {"gated": {"disposition": "keep", "twin": "", "dies": ""}},
+                }
+            }
+        }
+        failures = [f for f in collect.check(self.corpus(), dispositions, None) if "beside a twin that is not" in f]
+        self.assertEqual(
+            sorted(failures),
+            [
+                "`loaves/x/src/lib.rs::tests::inner::plain`: a `dies` reason beside a twin that is not `dies`",
+                "`loaves/x/src/lib.rs::tests::plain`: a `dies` reason beside a twin that is not `dies`",
+            ],
+        )
+
+    def test_unsorted_record_is_refused_naming_the_first_pair_out_of_order(self) -> None:
+        sorted_record = {
+            "fixture_roots": {},
+            "files": {"loaves/x/src/lib.rs": {"disposition": "keep"}},
+        }
+        self.assertEqual(collect.check(self.corpus(), sorted_record, None), [])
+        unsorted_files = {
+            "files": {
+                "loaves/x/src/lib.rs": {"disposition": "keep"},
+                "loaves/a.rs": {"disposition": "keep"},
+            }
+        }
+        failures = collect.check(self.corpus(), unsorted_files, None)
+        self.assertIn(
+            "`files` is not sorted by key: `loaves/a.rs` comes after `loaves/x/src/lib.rs`; "
+            "keep the record sorted so a row is found by position and merges stay clean",
+            failures,
+        )
+        unsorted_roots = {
+            "fixture_roots": {
+                "loaves/b/fixtures": {"disposition": "keep"},
+                "loaves/a/fixtures": {"disposition": "keep"},
+            },
+            "files": {"loaves/x/src/lib.rs": {"disposition": "keep"}},
+        }
+        failures = collect.check(self.corpus(), unsorted_roots, None)
+        self.assertTrue(any(f.startswith("`fixture_roots` is not sorted by key: `loaves/a/fixtures`") for f in failures), failures)
 
 
 class BehaviorFixtureTwinTests(unittest.TestCase):
@@ -392,6 +441,54 @@ class BehaviorFixtureTwinTests(unittest.TestCase):
         )
         failures = collect.check(self.corpus(dispositions), dispositions, None)
         self.assertTrue(any("which is `keep`; only a retire test has a twin" in f for f in failures), failures)
+
+    def test_malformed_retires_key_is_a_failure_line_not_a_traceback(self) -> None:
+        (collect.ROOT / self.area / "broken.incn").write_text(
+            "# behavior: broken\n# retires: not-a-test\n# retires: loaves/emit/src/code gen.rs::other_shape\n"
+            "# retires: loaves/emit/src/codegen.rs::\n# retires: .rs::other_shape\n# expect-exit: 0\n",
+            encoding="utf-8",
+        )
+        dispositions = self.dispositions(
+            generated_shape={"twin": f"{self.area}/shape.incn"},
+            other_shape={"twin": f"{self.area}/modules"},
+        )
+        failures = collect.check(self.corpus(dispositions), dispositions, None)
+        self.assertIn(f"`{self.area}/broken.incn` retires `not-a-test`, which is not `<path>.rs::<fn>`", failures)
+        self.assertIn(f"`{self.area}/broken.incn` retires `loaves/emit/src/codegen.rs::`, which is not `<path>.rs::<fn>`", failures)
+        self.assertIn(f"`{self.area}/broken.incn` retires `.rs::other_shape`, which is not `<path>.rs::<fn>`", failures)
+        # The value with whitespace is read whole and refused for it, so the runner and the collector agree.
+        self.assertIn(
+            f"`{self.area}/broken.incn` retires `loaves/emit/src/code gen.rs::other_shape`, which is not `<path>.rs::<fn>` (no whitespace)",
+            failures,
+        )
+        # A malformed value never reaches the map, so the well-formed rows are judged on their own and pass.
+        self.assertEqual(len(failures), 4, failures)
+
+    def test_retires_line_is_read_only_as_the_runner_reads_it(self) -> None:
+        header = collect.ROOT / self.area / "spelling.incn"
+        header.write_text(
+            "# behavior: spelling\n"
+            "#retires: loaves/emit/src/codegen.rs::no_space\n"
+            "# retires:   loaves/emit/src/codegen.rs::padded   \n"
+            "#  retires: loaves/emit/src/codegen.rs::two_spaces_is_a_block_item\n"
+            "#\tretires: loaves/emit/src/codegen.rs::tab\n"
+            "# retires : loaves/emit/src/codegen.rs::space_before_colon\n"
+            "# expect-exit: 0\n"
+            "\n"
+            "# retires: loaves/emit/src/codegen.rs::after_the_header\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(
+            collect.read_retires(header),
+            ["loaves/emit/src/codegen.rs::no_space", "loaves/emit/src/codegen.rs::padded"],
+        )
+
+    def test_retires_key_problem_mirrors_the_runner(self) -> None:
+        self.assertIsNone(collect.retires_key_problem("loaves/a.rs::t"))
+        self.assertIsNone(collect.retires_key_problem("loaves/a.rs::tests::inner::t"))
+        for value in ("", "not-a-test", "a.rs::", "::t", ".rs::t", "a.txt::t", "a b.rs::t", "a.rs::t u"):
+            with self.subTest(value=value):
+                self.assertIsNotNone(collect.retires_key_problem(value))
 
     def test_two_fixtures_retiring_one_test_is_refused(self) -> None:
         (collect.ROOT / self.area / "dup.incn").write_text(
