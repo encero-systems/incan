@@ -343,7 +343,10 @@ impl<'a> IrEmitter<'a> {
     /// Both traits are normally Rust derives, and a derive enumerates every field of the Rust struct, marker
     /// included. The hand-written impls render exactly what the derives would for the source fields — the same
     /// field order, `debug_struct` formatting, and `T: Debug` bound on every type parameter — so the marker is
-    /// the only difference. Emits nothing for a struct without phantom parameters or without the derive. See #1370.
+    /// the only difference. The `Debug` impl also carries `#[automatically_derived]`, as the builtin derive's
+    /// expansion does: rustc then treats its field reads as trivial for dead-code analysis, so a private field no
+    /// source code reads keeps the `#[expect(dead_code)]` the struct emitter gave it fulfilled, exactly as under the
+    /// derive. Emits nothing for a struct without phantom parameters or without the derive. See #1370.
     fn emit_phantom_struct_field_trait_impls(&self, s: &IrStruct) -> TokenStream {
         if s.phantom_type_params.is_empty() {
             return quote! {};
@@ -361,6 +364,7 @@ impl<'a> IrEmitter<'a> {
                 quote! { .field(#field_name, &self.#field_ident) }
             });
             quote! {
+                #[automatically_derived]
                 impl #debug_generics std::fmt::Debug for #name #generics_bare {
                     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                         formatter.debug_struct(#name_str) #(#field_entries)* .finish()

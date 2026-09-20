@@ -12,6 +12,7 @@ struct Column<T> {
     sql: String,
     pub __incan_phantom: std::marker::PhantomData<T>,
 }
+#[automatically_derived]
 impl<T: std::fmt::Debug> std::fmt::Debug for Column<T> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.debug_struct("Column").field("sql", &self.sql).finish()

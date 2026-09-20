@@ -13,10 +13,13 @@ use std::process::Command;
 use incan_test_support::cli_project::{assert_success, run_explicit_oven_bake, run_incan, write_minimal_project};
 
 /// The issue's program plus one construction whose binding carries no annotation, so only the explicit type
-/// argument names `T` for Rust.
+/// argument names `T` for Rust, and one private field (`note`) that only the `Debug` rendering reads: the emitter
+/// gives such a field a dead-code expectation, and the hand-written `Debug` impl must count as a derive for that
+/// expectation to stay fulfilled.
 const MAIN_SOURCE: &str = r#"@derive(Debug)
 model Column[T]:
   sql: str
+  note: str = "n"
 
   def __mul__(self, other: T) -> Column[T]:
     return Column[T](sql=f"({self.sql} * {other})")
@@ -49,6 +52,15 @@ fn phantom_type_parameter_model_builds_and_runs_issue1370() -> Result<(), Box<dy
     }
     let build = run_incan(tmp.path(), &["build", "src/main.incn"])?;
     assert_success(&build, "build the #1370 phantom-type-parameter program");
+    let build_output = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
+    assert!(
+        !build_output.contains("unfulfilled"),
+        "the hand-written Debug impl must not leave a private field's dead-code expectation unfulfilled:\n{build_output}"
+    );
 
     let binary = tmp
         .path()
@@ -73,7 +85,7 @@ fn phantom_type_parameter_model_builds_and_runs_issue1370() -> Result<(), Box<dy
     );
     assert_eq!(
         String::from_utf8(run.stdout)?.lines().collect::<Vec<_>>(),
-        vec!["(amount * 2)", "(label * x)", "Column { sql: \"amount\" }"],
+        vec!["(amount * 2)", "(label * x)", "Column { sql: \"amount\", note: \"n\" }"],
         "the #1370 program must print both operator results and a Debug rendering without the marker"
     );
     Ok(())

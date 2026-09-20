@@ -3276,9 +3276,9 @@ fn test_issue1370_phantom_type_param_codegen() {
         "Debug and FieldInfo must not be derived on a phantom struct; generated:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("impl<T: std::fmt::Debug> std::fmt::Debug for Column<T> {")
+        rust_code.contains("#[automatically_derived]\nimpl<T: std::fmt::Debug> std::fmt::Debug for Column<T> {")
             && rust_code.contains("formatter.debug_struct(\"Column\").field(\"sql\", &self.sql).finish()"),
-        "Debug must render only the source fields; generated:\n{rust_code}"
+        "Debug must render only the source fields and count as a derive for dead-code analysis; generated:\n{rust_code}"
     );
     assert!(
         rust_code.contains("impl<T> incan_std_core::HasFieldInfo for Column<T> {")
