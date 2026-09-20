@@ -174,6 +174,7 @@ use incan_ir::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ir, pow_
 use incan_ir::types::{Mutability, same_exact_binary_float_type};
 use incan_ir::{IrExpr, IrExprKind, IrType, TypedExpr};
 use incan_lang::interop::rust_display_is_owned_string;
+use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::types::numerics::{self, NumericFamily, NumericTypeId};
 use incan_lang::{NumericOp, NumericTy, needs_float_promotion, result_numeric_type};
@@ -798,16 +799,34 @@ fn field_access_reads_from_self_receiver(expr: &IrExpr) -> bool {
 ///
 /// Tuple-unpack temporaries are the notable exemption: lowering marks the temporary tuple binding as `VarAccess::Move`,
 /// so moving `tmp.0`, then `tmp.1`, is legitimate and should not introduce a backend clone. Ordinary field reads from
-/// borrowed/shared parents still need owned materialization at storage and return sinks.
+/// borrowed/shared parents still need owned materialization at storage and return sinks, and so does a field the
+/// typechecker resolved through a transparent wrapper: the owner may be at its last use, but Rust reaches the field
+/// through the wrapper's `Deref`, and a move out of a dereference is E0507 whatever the owner's access says.
 fn field_read_needs_owned_materialization(expr: &IrExpr) -> bool {
     match &expr.kind {
         IrExprKind::Field { object, .. } => !matches!(
             &object.kind,
             IrExprKind::Var { access, .. }
-                if matches!(access, VarAccess::Move) && !matches!(object.ty, IrType::Ref(_) | IrType::RefMut(_))
+                if matches!(access, VarAccess::Move)
+                    && !matches!(object.ty, IrType::Ref(_) | IrType::RefMut(_))
+                    && !field_access_derefs_transparent_wrapper(&object.ty)
         ),
         _ => false,
     }
+}
+
+/// Whether a field read on a value of this type goes through a wrapper the typechecker looked through.
+///
+/// `Json[T]` and `Query[T]` are the web extractor wrappers whose field access the checker resolves on the wrapped `T`
+/// (`check_expr/access.rs`); the emitted `wrapper.field` relies on the wrapper's `Deref`, so the field is borrowed
+/// storage however the wrapper itself is owned. The pair is the same one the checker names, so a wrapper it starts
+/// looking through must also be added here.
+fn field_access_derefs_transparent_wrapper(ty: &IrType) -> bool {
+    matches!(
+        ty,
+        IrType::NamedGeneric(name, _)
+            if matches!(surface_types::from_str(name), Some(SurfaceTypeId::Json | SurfaceTypeId::Query))
+    )
 }
 
 /// Determines what conversion (if any) is needed for a value
@@ -2089,6 +2108,47 @@ mod tests {
 
         let conv = determine_conversion(&expr, None, ConversionContext::StructField);
         assert_eq!(conv, Conversion::ToString);
+    }
+
+    /// A field the checker resolved through a web extractor wrapper is reached through the wrapper's `Deref`, so it
+    /// clones at every owned sink even when the wrapper local is at its last use; a move would be E0507 (#1489
+    /// review, `build_typed_web_extractors_and_scalar_captures_issue867`).
+    #[test]
+    fn test_field_read_through_a_transparent_wrapper_always_clones() {
+        let wrapped_field_read = |wrapper: &str| {
+            IrExpr::new(
+                IrExprKind::Field {
+                    object: Box::new(IrExpr::new(
+                        IrExprKind::Var {
+                            name: "query".to_string(),
+                            access: VarAccess::Move,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::NamedGeneric(wrapper.to_string(), vec![IrType::Struct("Search".to_string())]),
+                    )),
+                    field: "q".to_string(),
+                },
+                IrType::String,
+            )
+        };
+        for wrapper in ["Query", "Json"] {
+            for context in [
+                ConversionContext::StructField,
+                ConversionContext::CollectionElement,
+                ConversionContext::Assignment,
+            ] {
+                assert_eq!(
+                    determine_conversion(&wrapped_field_read(wrapper), None, context),
+                    Conversion::Clone,
+                    "{context:?}: `{wrapper}[Search].q` is read through `Deref` and cannot move"
+                );
+            }
+        }
+        assert_eq!(
+            determine_conversion(&wrapped_field_read("Decoded"), None, ConversionContext::StructField),
+            Conversion::None,
+            "an ordinary generic owner at its last use still moves its field"
+        );
     }
 
     /// A field read out of an owned local at its last use moves the field into the slot; any other field read

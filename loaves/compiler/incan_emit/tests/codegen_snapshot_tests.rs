@@ -5072,6 +5072,32 @@ fn test_issue1489_method_type_param_clone_bound_codegen() {
     }
 }
 
+/// Issue #1489: the owned-storage policy lets a field move out of a last-use local, but a field the checker resolved
+/// through `Json[T]` or `Query[T]` is reached through the wrapper's `Deref`, so it must still clone at a struct
+/// field, a collection element, and an assignment; a bare `query.q` there is E0507 (found by
+/// `build_typed_web_extractors_and_scalar_captures_issue867` in `cli_rust_interop_tests`).
+#[test]
+fn test_issue1489_web_extractor_field_read_clones_codegen() {
+    let source = load_test_file("issue1489_web_extractor_field_read_clones");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1489_web_extractor_field_read_clones", rust_code);
+    let compact = compact_rust(&rust_code);
+    for expected in [
+        "Reply{value:query.q.clone()}",
+        "letpicked=query.q.clone();",
+        "letvalues=vec![query.q.clone()];",
+    ] {
+        assert!(
+            compact.contains(expected),
+            "a field read through the extractor's `Deref` must clone: {expected}\n{rust_code}"
+        );
+    }
+    assert!(
+        !compact.contains("value:query.q}") && !compact.contains("=query.q;") && !compact.contains("vec![query.q]"),
+        "a move out of the wrapper's dereference is E0507:\n{rust_code}"
+    );
+}
+
 /// Issue #1494: a string literal handed to a collection method must reach the `String` parameter owned. The
 /// `Deque[str]` case was the live one -- `resolve_type_index_expression` dropped the type application's argument, so
 /// the receiver reached emission as `Deque[Unknown]` and the literal had no target to convert toward (fixed in #1529);
