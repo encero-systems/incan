@@ -1,0 +1,12 @@
+# #1450: the metadata-free trait import is retained under its alias when a method call may reach it.
+
+from rust::std::borrow import Borrow as Borrowed
+from rust::std::path import PathBuf
+
+
+pub def borrowed(value: &PathBuf) -> &PathBuf:
+    return value.borrow()
+
+
+def main() -> None:
+    pass
