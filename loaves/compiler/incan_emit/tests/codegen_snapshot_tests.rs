@@ -5004,12 +5004,12 @@ fn test_issue1462_named_constructor_evaluation_order_codegen() {
     let rust_code = generate_rust(&source);
     assert_codegen_snapshot!("issue1462_named_constructor_evaluation_order", rust_code);
     let compact = compact_rust(&rust_code);
-    let (Some(intent), Some(evidence)) = (
-        compact.find("__incan_ctor_arg_0=inspect(source.to_string())"),
-        compact.find("__incan_ctor_arg_1=Evidence{source:source}"),
-    ) else {
-        panic!("reordered named arguments must be bound to temporaries in written order:\n{rust_code}");
-    };
+    let intent = compact.find("__incan_ctor_arg_0=inspect(source.to_string())");
+    let evidence = compact.find("__incan_ctor_arg_1=Evidence{source:source}");
+    assert!(
+        intent.is_some() && evidence.is_some(),
+        "reordered named arguments must be bound to temporaries in written order:\n{rust_code}"
+    );
     assert!(
         intent < evidence,
         "`intent` was written first, so its read of `source` must precede the move into `evidence`:\n{rust_code}"
