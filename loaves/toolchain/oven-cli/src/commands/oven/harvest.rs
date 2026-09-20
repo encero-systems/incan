@@ -6,6 +6,11 @@
 //! `legacy-cargo prepare` runs (`prepare_direct_rustc_plan`, under a scratch store that is discarded afterwards),
 //! binds the captured units to their staged registry sources, and hands the capture to `harvest_registry_units`.
 //! Nothing here writes into a registry; `incan-pub add-fact` admits each proposal in its own reviewable step.
+//!
+//! TODO(#1561): temporary. This command exists only while the observation a proposal is harvested from is a Cargo
+//! build; it retires together with the compatibility publisher's capture once incan.pub records govern the corpus and
+//! a bake settles from records alone. The proposal and refusal model in `oven_cargo_compat::harvest` is the wire
+//! contract and stays; the rendered Cargo package below and the Cargo run are what go.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -273,6 +278,8 @@ fn manifest_identity(manifest: &ProjectManifest) -> (String, String) {
 }
 
 /// Write `Cargo.toml` and an empty `src/main.rs` whose `[dependencies]` are the manifest's registry dependencies.
+///
+/// TODO(#1561): temporary, with the module — the package exists only so Cargo can be observed once.
 ///
 /// Only registry dependencies can be harvested (a path or git dependency has no registry record to propose), so any
 /// other source refuses the whole manifest rather than silently narrowing the closure. Each dependency carries its
