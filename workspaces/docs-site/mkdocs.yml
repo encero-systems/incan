@@ -343,6 +343,7 @@ nav:
           - Generated Rust stdlib coverage: contributing/reference/generated_rust_stdlib_coverage.md
           - Hees.ai v0.5 dependency inventory: contributing/reference/hees_ai_v05_dependency_inventory.md
           - Rust-source backend deprecation policy: contributing/reference/rust_source_backend_deprecation.md
+          - Emitter freeze: contributing/reference/emitter_freeze.md
   - Release notes:
       - Overview: release_notes/index.md
       - Release 0.6 (development): release_notes/0_6.md

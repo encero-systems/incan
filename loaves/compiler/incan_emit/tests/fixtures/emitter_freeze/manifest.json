@@ -1,0 +1,142 @@
+{
+  "tree": "loaves/compiler/incan_emit/src/emit",
+  "policy": "frozen",
+  "files": [
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/consts.rs",
+      "sha256": "f2597357fadc4f0d92e465f3bb5e38de69302350d369049efe12178f91da7fd1",
+      "lines": 385
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/decls/functions.rs",
+      "sha256": "d17d31fbec0df88c6cc95147b314b3a33d5cc530b41ad490c0d8bf9e9cd095a3",
+      "lines": 1996
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/decls/impls.rs",
+      "sha256": "f9ada4d020377247128cb0270a8ed3a2decfcbc56be82e8e496b40b48c928afd",
+      "lines": 779
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/decls/mod.rs",
+      "sha256": "08343b78edfaebc693bdd97e5887df601a3f393aa530a86b514bbd451ea46c26",
+      "lines": 1224
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/decls/mutation_scan.rs",
+      "sha256": "d986a823db063abb4afad20ec6ba5a3ca196434b89f2f00952866364d15f612f",
+      "lines": 23
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/decls/structures.rs",
+      "sha256": "d9514b14572a88ba3f060f3d834747aff16d2776aa79a878847277d3badfb640",
+      "lines": 1211
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/errors.rs",
+      "sha256": "bcdb193a813e5ed0b28ae7824d29f4d193bfeeb163b543366bfc0bb0d5bdf384",
+      "lines": 44
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/builtins.rs",
+      "sha256": "6fb988693e4c1754557bf7de28640785126f2f327ccf5a975fcf856475d8eff3",
+      "lines": 1086
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/calls.rs",
+      "sha256": "86e7c157dbd1086cd91ce275d8489904f75e317b704f893c0c1ed7afaf490843",
+      "lines": 2804
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/calls/testing_asserts.rs",
+      "sha256": "5b4a0da902d9ee10f28c695a165e56438811769c6d133003803020acf6109b27",
+      "lines": 370
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/comprehensions.rs",
+      "sha256": "5a5b94a605a8892658b77eeabd3f7112be29d1ca59b45b44f2607fcd5333c2bb",
+      "lines": 875
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/format.rs",
+      "sha256": "6ea8684af490c608c5bfbaf82ddd9dac103d7f0e71339cd36c847c2da65c914d",
+      "lines": 145
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/indexing.rs",
+      "sha256": "48e1d2d710f6791f35fbbfc7d51a1a6c608bda924936a1ec7a49803ccdfccbdf",
+      "lines": 473
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/interop_coercions.rs",
+      "sha256": "c37efff3967b88a73dd8fc5cbbe0474314f7f617f8a4d203dfd687327df62fa3",
+      "lines": 144
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/lvalue.rs",
+      "sha256": "b4f532d181b496dc6fc8eea978865d59c87381d44155298cb881bee5070ad744",
+      "lines": 182
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
+      "sha256": "06bd0109714fbc9851f37924e5e2795f701e151818d97fd051866ca0fc1bf6fa",
+      "lines": 1453
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/collection_methods.rs",
+      "sha256": "fbebecdbc503fcd2bee8b1635e2e7263242e27cea4329756b7a55fc627c201c1",
+      "lines": 194
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/fast_paths.rs",
+      "sha256": "f65a8035c68e2d3f1d74b864d4339fab1cba70147fa1ec58b68aaa6f0ba62b41",
+      "lines": 203
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/iterator_methods.rs",
+      "sha256": "960aef9b98c9950601955dcfa9d0eca602698ed9777ed00af4393aca349d598c",
+      "lines": 366
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/string_methods.rs",
+      "sha256": "c4015317de23c8bc48a17b584a7f94da8e393df79c4dc5f5085e339a6db64826",
+      "lines": 265
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/mod.rs",
+      "sha256": "e29a9a54647d32a4cc3b24577d2601e906bf22543f4fa45489d80ffd37ee68e8",
+      "lines": 4408
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/expressions/structs_enums.rs",
+      "sha256": "bd27da03cc1482b036e7802f26ebac78f4f8995ecbe48e23b34ec2c9982384a7",
+      "lines": 144
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/mod.rs",
+      "sha256": "513391073130cd9250c415e4d21cf9dcca31d2cf58ac13a5ecd2060a4de5755c",
+      "lines": 4604
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/native_unions.rs",
+      "sha256": "c908c4e362090c3e778387f9a0d623893d043d4fa24d7826a23d6dd624afcfaa",
+      "lines": 2071
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/program.rs",
+      "sha256": "f1f7b8df3a2ade4d4f1dd9a920de1d99fc1ad911113686763caaf9b192d965a8",
+      "lines": 4634
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
+      "sha256": "e1c0d58bc1d113e2c1304d1d1cda9e0589d5c8aa4410eaf8e8b129f6f6f8594a",
+      "lines": 1941
+    },
+    {
+      "path": "loaves/compiler/incan_emit/src/emit/types.rs",
+      "sha256": "c2077cdd45ad7ff502f6279482f189a92600c8379e80ef102f02a6a87d9ecf03",
+      "lines": 688
+    }
+  ],
+  "changes": []
+}
