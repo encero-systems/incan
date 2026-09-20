@@ -6,7 +6,10 @@ use quote::{format_ident, quote};
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
 
-use super::super::{EmitError, IrEmitter, SERDE_DESERIALIZE_DERIVE, SERDE_SERIALIZE_DERIVE, StructConstructorSurface};
+use super::super::{
+    EmitError, IrEmitter, PHANTOM_TYPE_PARAMS_FIELD, SERDE_DESERIALIZE_DERIVE, SERDE_SERIALIZE_DERIVE,
+    StructConstructorSurface, phantom_marker_type,
+};
 use crate::conversions::exact_float_value_validation;
 use incan_ir::decl::{IrEnum, IrEnumValue, IrEnumValueType, IrStruct, IrTypeParam, StructField, VariantFields};
 use incan_ir::types::IrType;
@@ -42,6 +45,15 @@ impl<'a> IrEmitter<'a> {
                     && (plan.checked_constructor.is_some() || !plan.constraints.is_empty())
             });
 
+        // A Rust derive enumerates every struct field, so on a phantom-parameter struct `#[derive(Debug)]` and
+        // `#[derive(FieldInfo)]` would print and list the marker. Those two traits are realised by hand over the
+        // source fields instead (`emit_phantom_struct_field_trait_impls`); the recorded fact decides, not the field
+        // list. See #1370.
+        let has_phantom_type_params = !s.phantom_type_params.is_empty();
+        let realised_over_source_fields = |derive: &str| {
+            has_phantom_type_params
+                && (derives::from_str(derive) == Some(DeriveId::Debug) || derive == derives::FIELD_INFO_DERIVE_NAME)
+        };
         let derives: Vec<TokenStream> = s
             .derives
             .iter()
@@ -49,6 +61,7 @@ impl<'a> IrEmitter<'a> {
             .filter(|d| derives::from_str(d.as_str()) != Some(DeriveId::Validate))
             // Validated newtypes must reconstruct through their checked ingress rather than Serde's tuple derive.
             .filter(|d| checked_deserialize_plan.is_none() || d.as_str() != SERDE_DESERIALIZE_DERIVE)
+            .filter(|d| !realised_over_source_fields(d.as_str()))
             .map(|d| match derives::from_str(d.as_str()) {
                 _ if d == derives::FIELD_INFO_DERIVE_NAME => quote! { incan_derive::FieldInfo },
                 _ if d == derives::INCAN_CLASS_DERIVE_NAME => quote! { incan_derive::IncanClass },
@@ -94,6 +107,15 @@ impl<'a> IrEmitter<'a> {
         let field_value_reflection_reads_fields = Self::struct_emits_field_value_reflection(s);
 
         if is_tuple_struct {
+            // A newtype's construction sites are positional and name `Self(value)` directly, so there is no marker
+            // to thread; the typechecker refuses a newtype whose underlying type does not mention a declared
+            // parameter (`errors::type_param_not_stored`), which is why the recorded phantom list is empty here.
+            if let Some(param) = s.phantom_type_params.first() {
+                return Err(EmitError::InternalInvariant(format!(
+                    "newtype '{}' reached emission with phantom type parameter '{param}'; the typechecker refuses that shape",
+                    s.name
+                )));
+            }
             let tuple_fields: Vec<TokenStream> = s
                 .fields
                 .iter()
@@ -182,7 +204,7 @@ impl<'a> IrEmitter<'a> {
                 #reflection_impls
             })
         } else {
-            let fields: Vec<TokenStream> = s
+            let mut fields: Vec<TokenStream> = s
                 .fields
                 .iter()
                 .map(|f| {
@@ -205,6 +227,32 @@ impl<'a> IrEmitter<'a> {
                     quote! { #dead_code_expect #serde_attr #fvis #fname: #fty }
                 })
                 .collect();
+
+            // ---- Phantom type parameters: one compiler-owned marker field, recorded by lowering (#1370) ----
+            // The marker is public so a struct literal in another generated module can initialise it; it is skipped
+            // by Serde because it is not source data, and rustc exempts `PhantomData` fields from dead-code analysis.
+            //
+            // Compatibility issue: #1370 — a type parameter used only in method signatures emitted a struct rustc
+            // rejects with E0392, and every construction site then failed with E0282.
+            // Behavior evidence: `codegen_snapshot_tests::test_issue1370_phantom_type_param_codegen` and the
+            // `cli_issue1370_phantom_type_param_tests` root, which builds and runs the issue's program.
+            // Semantic owner: `IrStruct::phantom_type_params`, recorded by lowering; this emitter and the
+            // struct-literal emitters (`StructConstructorMetadata::phantom_marker_initializer`) only
+            // realise the marker, and `emit_phantom_struct_field_trait_impls` keeps it out of the `Debug`
+            // rendering and the `HasFieldInfo` field list that a Rust derive would otherwise enumerate.
+            // Retirement condition: removal of the Rust-source backend (#654); a replacement backend
+            // consumes the same recorded fact for its own representation.
+            let phantom_marker = has_phantom_type_params.then(|| {
+                let marker_field = Self::rust_ident(PHANTOM_TYPE_PARAMS_FIELD);
+                let marker_ty = phantom_marker_type(&s.phantom_type_params);
+                let serde_attr = if has_serde {
+                    quote! { #[serde(skip)] }
+                } else {
+                    quote! {}
+                };
+                fields.push(quote! { #serde_attr pub #marker_field: #marker_ty });
+                quote! { #marker_field: std::marker::PhantomData }
+            });
 
             let constructor_surface = self.struct_constructor_surface(s);
             let constructor = if matches!(
@@ -260,6 +308,7 @@ impl<'a> IrEmitter<'a> {
                     StructConstructorSurface::DirectStructLiteral | StructConstructorSurface::Absent => quote! {},
                 };
 
+                field_assigns.extend(phantom_marker.iter().cloned());
                 quote! {
                     #[allow(non_snake_case, clippy::too_many_arguments)]
                     #constructor_visibility fn #name #generics (#(#param_tokens),*) -> #name #generics_bare {
@@ -272,6 +321,8 @@ impl<'a> IrEmitter<'a> {
                 quote! {}
             };
 
+            let phantom_field_trait_impls = self.emit_phantom_struct_field_trait_impls(s);
+
             Ok(quote! {
                 #(#doc_attrs)*
                 #(#lint_allows)*
@@ -280,9 +331,71 @@ impl<'a> IrEmitter<'a> {
                     #(#fields),*
                 }
 
+                #phantom_field_trait_impls
                 #constructor
                 #reflection_impls
             })
+        }
+    }
+
+    /// Realise `Debug` and `HasFieldInfo` over the source fields of a struct that carries a phantom marker.
+    ///
+    /// Both traits are normally Rust derives, and a derive enumerates every field of the Rust struct, marker
+    /// included. The hand-written impls render exactly what the derives would for the source fields — the same
+    /// field order, `debug_struct` formatting, and `T: Debug` bound on every type parameter — so the marker is
+    /// the only difference. The `Debug` impl also carries `#[automatically_derived]`, as the builtin derive's
+    /// expansion does: rustc then treats its field reads as trivial for dead-code analysis, so a private field no
+    /// source code reads keeps the `#[expect(dead_code)]` the struct emitter gave it fulfilled, exactly as under the
+    /// derive. Emits nothing for a struct without phantom parameters or without the derive. See #1370.
+    fn emit_phantom_struct_field_trait_impls(&self, s: &IrStruct) -> TokenStream {
+        if s.phantom_type_params.is_empty() {
+            return quote! {};
+        }
+        let name = Self::rust_ident(&s.name);
+        let name_str = s.name.as_str();
+        let generics = self.emit_type_params(&s.type_params);
+        let generics_bare = self.emit_type_params_bare(&s.type_params);
+
+        let debug_impl = if s.derives.iter().any(|d| derives::from_str(d) == Some(DeriveId::Debug)) {
+            let debug_generics = self.emit_type_params_with_extra_bound(&s.type_params, &quote! { std::fmt::Debug });
+            let field_entries = s.fields.iter().map(|f| {
+                let field_name = f.name.as_str();
+                let field_ident = format_ident!("{}", &f.name);
+                quote! { .field(#field_name, &self.#field_ident) }
+            });
+            quote! {
+                #[automatically_derived]
+                impl #debug_generics std::fmt::Debug for #name #generics_bare {
+                    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        formatter.debug_struct(#name_str) #(#field_entries)* .finish()
+                    }
+                }
+            }
+        } else {
+            quote! {}
+        };
+
+        let field_info_impl = if s.derives.iter().any(|d| d == derives::FIELD_INFO_DERIVE_NAME) {
+            let field_names = s.fields.iter().map(|f| f.name.as_str());
+            let field_types = s.fields.iter().map(|f| self.emit_type(&f.ty).to_string());
+            quote! {
+                impl #generics incan_std_core::HasFieldInfo for #name #generics_bare {
+                    fn field_names() -> Vec<&'static str> {
+                        vec![#(#field_names),*]
+                    }
+
+                    fn field_types() -> Vec<&'static str> {
+                        vec![#(#field_types),*]
+                    }
+                }
+            }
+        } else {
+            quote! {}
+        };
+
+        quote! {
+            #debug_impl
+            #field_info_impl
         }
     }
 
@@ -409,44 +522,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Return whether a field type mentions one of the owning struct's type parameters.
     fn field_type_mentions_type_param(ty: &IrType, type_params: &[IrTypeParam]) -> bool {
-        let is_type_param = |name: &str| type_params.iter().any(|param| param.name == name);
-        match ty {
-            IrType::Generic(name) | IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) => {
-                is_type_param(name)
-            }
-            IrType::NamedGeneric(name, args) => {
-                is_type_param(name)
-                    || args
-                        .iter()
-                        .any(|arg| Self::field_type_mentions_type_param(arg, type_params))
-            }
-            IrType::List(inner)
-            | IrType::Set(inner)
-            | IrType::Option(inner)
-            | IrType::Ref(inner)
-            | IrType::RefMut(inner)
-            | IrType::TypeToken(inner) => Self::field_type_mentions_type_param(inner, type_params),
-            IrType::Dict(key, value) | IrType::Result(key, value) => {
-                Self::field_type_mentions_type_param(key, type_params)
-                    || Self::field_type_mentions_type_param(value, type_params)
-            }
-            IrType::Tuple(items) => items
-                .iter()
-                .any(|item| Self::field_type_mentions_type_param(item, type_params)),
-            IrType::Function { params, ret } => {
-                params
-                    .iter()
-                    .any(|param| Self::field_type_mentions_type_param(param, type_params))
-                    || Self::field_type_mentions_type_param(ret, type_params)
-            }
-            IrType::ExternalUnion { union, .. } => Self::field_type_mentions_type_param(union, type_params),
-            IrType::ImplTrait(bound) => bound
-                .type_args
-                .iter()
-                .chain(bound.assoc_types.iter().map(|(_, ty)| ty))
-                .any(|arg| Self::field_type_mentions_type_param(arg, type_params)),
-            _ => false,
-        }
+        type_params.iter().any(|param| ty.mentions_type_param(&param.name))
     }
 
     /// Emit the string value used by generic field-value reflection for one concrete field.

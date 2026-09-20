@@ -413,12 +413,42 @@ pub struct IrStruct {
     pub visibility: Visibility,
     /// Type parameters for generics, with optional trait bounds (RFC 023).
     pub type_params: Vec<IrTypeParam>,
+    /// Names from [`Self::type_params`] that no declared field type mentions, in declaration order.
+    ///
+    /// A type parameter that appears only in method signatures is a phantom parameter: it types the operations on
+    /// the value without storing anything. The source declaration is complete as written, but a Rust struct must
+    /// mention every parameter it declares, so lowering records which parameters are phantom and emission owns the
+    /// marker representation. Emission must not rediscover this by scanning a source declaration's fields; a compiled
+    /// dependency's manifest records no phantom list, so for that route the emitter applies the same
+    /// [`phantom_type_params`] rule to the manifest's recorded type parameters and field types. Only a model or
+    /// class can carry a phantom parameter: the typechecker refuses a newtype whose underlying type does not
+    /// mention one (`type_param_not_stored`), so a newtype's list is always empty. See #1370.
+    pub phantom_type_params: Vec<String>,
     /// Derive names that should be qualified with a Rust module path.
     ///
     /// Key is the derive name, value is the module path from `rust.module(...)`.
     pub derive_rust_modules: std::collections::HashMap<String, String>,
     /// Targeted Rust lint suppressions from RFC 057 `@rust.allow(...)`.
     pub lint_allows: Vec<IrRustLintAllow>,
+}
+
+/// Return the declared type parameters, in declaration order, that none of `field_types` mentions.
+///
+/// This is the one rule behind [`IrStruct::phantom_type_params`]: lowering applies it to a source declaration's
+/// lowered fields, and the emitter applies it to a compiled dependency's recorded field types, so both routes agree
+/// on which parameters need a marker in the Rust representation (#1370).
+pub fn phantom_type_params<'a, P, F>(type_params: P, field_types: F) -> Vec<String>
+where
+    P: IntoIterator<Item = &'a str>,
+    F: IntoIterator<Item = &'a IrType>,
+    F::IntoIter: Clone,
+{
+    let field_types = field_types.into_iter();
+    type_params
+        .into_iter()
+        .filter(|param| !field_types.clone().any(|ty| ty.mentions_type_param(param)))
+        .map(str::to_string)
+        .collect()
 }
 
 /// Source declaration category for a struct-shaped IR nominal.

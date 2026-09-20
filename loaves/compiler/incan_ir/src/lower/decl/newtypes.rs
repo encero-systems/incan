@@ -47,6 +47,8 @@ impl AstLowering {
 
         // Note: serde derives for newtypes are added post-lowering by `add_serde_to_newtypes` in codegen.rs, which
         // selectively adds only the derives that are actually needed.
+        let type_params = self.lower_type_params(&n.type_params);
+        let phantom_type_params = Self::phantom_type_params(&type_params, &fields);
         Ok(IrStruct {
             kind: IrStructKind::Newtype,
             name: n.name.clone(),
@@ -54,7 +56,8 @@ impl AstLowering {
             fields,
             derives,
             visibility: self.map_type_visibility(n.visibility),
-            type_params: self.lower_type_params(&n.type_params),
+            type_params,
+            phantom_type_params,
             derive_rust_modules,
             lint_allows: self.extract_rust_lint_allows(&n.decorators),
         })

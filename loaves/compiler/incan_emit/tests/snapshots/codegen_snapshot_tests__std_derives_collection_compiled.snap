@@ -596,7 +596,7 @@ for MapFallibleIterator<T, E, Source, Output, StoredMapFn> {
         f: MapFn,
     ) -> impl FallibleIterator<U, E> + use<T, E, Source, Output, StoredMapFn, U, MapFn> {
         let _ = "\n        Lazily transform each successful item while preserving source failures.\n\n        `f` runs exactly once for each yielded source item. It does not run at construction, on exhaustion, or on an\n        error. The mapped type must support `Clone` under Incan's current value-semantics contract.\n        ";
-        return MapFallibleIterator {
+        return MapFallibleIterator::<Output, E, Self, U, MapFn> {
             source: self.clone(),
             f: f,
             input_marker: None::<_>,
@@ -612,7 +612,7 @@ for MapFallibleIterator<T, E, Source, Output, StoredMapFn> {
         E,
     > + use<T, E, Source, Output, StoredMapFn, Predicate> {
         let _ = "\n        Lazily keep successful items for which `f(item)` returns `true`.\n\n        The predicate runs once for each successful source item until exhaustion or error. Rejected items are consumed;\n        errors pass through without invoking the predicate.\n        ";
-        return FilterFallibleIterator {
+        return FilterFallibleIterator::<Output, E, Self, Predicate> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -627,7 +627,7 @@ for MapFallibleIterator<T, E, Source, Output, StoredMapFn> {
         E,
     > + use<T, E, Source, Output, StoredMapFn, U, Expand> {
         let _ = "\n        Lazily expand each successful item into a list and flatten it.\n\n        `f` runs once per successful source item. Every returned list is exhausted in order before the source is polled\n        again. The flattened type must support `Clone` under the current value-semantics contract.\n        ";
-        return FlatMapFallibleIterator {
+        return FlatMapFallibleIterator::<Output, E, Self, U, Expand> {
             source: self.clone(),
             f: f,
             current: Vec::<U>::new(),
@@ -641,7 +641,7 @@ for MapFallibleIterator<T, E, Source, Output, StoredMapFn> {
         n: i64,
     ) -> impl FallibleIterator<Output, E> + use<T, E, Source, Output, StoredMapFn> {
         let _ = "\n        Lazily yield at most `n` successful items without retrying failures.\n\n        A non-positive count produces immediate exhaustion without polling the source. Errors encountered before the\n        limit pass through unchanged.\n        ";
-        return TakeFallibleIterator {
+        return TakeFallibleIterator::<Output, E, Self> {
             source: self.clone(),
             remaining: n,
             item_marker: None::<_>,
@@ -656,7 +656,7 @@ for MapFallibleIterator<T, E, Source, Output, StoredMapFn> {
         E,
     > + use<T, E, Source, Output, StoredMapFn, Observer> {
         let _ = "\n        Lazily observe each successful item without changing it.\n\n        The observer runs exactly once before each successful item is yielded. It does not run for exhaustion or\n        errors.\n        ";
-        return InspectFallibleIterator {
+        return InspectFallibleIterator::<Output, E, Self, Observer> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -671,7 +671,7 @@ for MapFallibleIterator<T, E, Source, Output, StoredMapFn> {
         F,
     > + use<T, E, Source, Output, StoredMapFn, F, ErrorMap> {
         let _ = "\n        Lazily transform each emitted source error while preserving items and exhaustion.\n\n        `f` runs exactly once for each error that escapes the source. It does not retry the failed poll or observe\n        successful items. The mapped error type must support `Clone` under the current value-semantics contract.\n        ";
-        return MapErrFallibleIterator {
+        return MapErrFallibleIterator::<Output, E, Self, F, ErrorMap> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -687,7 +687,7 @@ for MapFallibleIterator<T, E, Source, Output, StoredMapFn> {
         E,
     > + use<T, E, Source, Output, StoredMapFn, ErrorObserver> {
         let _ = "\n        Lazily observe each emitted source error without changing it.\n\n        The observer runs exactly once for each escaping error. Successful items and ordinary exhaustion pass through\n        without invoking it.\n        ";
-        return InspectErrFallibleIterator {
+        return InspectErrFallibleIterator::<Output, E, Self, ErrorObserver> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -1049,7 +1049,7 @@ impl<
         f: MapFn,
     ) -> impl FallibleIterator<U, E> + use<T, E, Source, StoredPredicate, U, MapFn> {
         let _ = "\n        Lazily transform each successful item while preserving source failures.\n\n        `f` runs exactly once for each yielded source item. It does not run at construction, on exhaustion, or on an\n        error. The mapped type must support `Clone` under Incan's current value-semantics contract.\n        ";
-        return MapFallibleIterator {
+        return MapFallibleIterator::<T, E, Self, U, MapFn> {
             source: self.clone(),
             f: f,
             input_marker: None::<_>,
@@ -1062,7 +1062,7 @@ impl<
         f: Predicate,
     ) -> impl FallibleIterator<T, E> + use<T, E, Source, StoredPredicate, Predicate> {
         let _ = "\n        Lazily keep successful items for which `f(item)` returns `true`.\n\n        The predicate runs once for each successful source item until exhaustion or error. Rejected items are consumed;\n        errors pass through without invoking the predicate.\n        ";
-        return FilterFallibleIterator {
+        return FilterFallibleIterator::<T, E, Self, Predicate> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -1074,7 +1074,7 @@ impl<
         f: Expand,
     ) -> impl FallibleIterator<U, E> + use<T, E, Source, StoredPredicate, U, Expand> {
         let _ = "\n        Lazily expand each successful item into a list and flatten it.\n\n        `f` runs once per successful source item. Every returned list is exhausted in order before the source is polled\n        again. The flattened type must support `Clone` under the current value-semantics contract.\n        ";
-        return FlatMapFallibleIterator {
+        return FlatMapFallibleIterator::<T, E, Self, U, Expand> {
             source: self.clone(),
             f: f,
             current: Vec::<U>::new(),
@@ -1088,7 +1088,7 @@ impl<
         n: i64,
     ) -> impl FallibleIterator<T, E> + use<T, E, Source, StoredPredicate> {
         let _ = "\n        Lazily yield at most `n` successful items without retrying failures.\n\n        A non-positive count produces immediate exhaustion without polling the source. Errors encountered before the\n        limit pass through unchanged.\n        ";
-        return TakeFallibleIterator {
+        return TakeFallibleIterator::<T, E, Self> {
             source: self.clone(),
             remaining: n,
             item_marker: None::<_>,
@@ -1100,7 +1100,7 @@ impl<
         f: Observer,
     ) -> impl FallibleIterator<T, E> + use<T, E, Source, StoredPredicate, Observer> {
         let _ = "\n        Lazily observe each successful item without changing it.\n\n        The observer runs exactly once before each successful item is yielded. It does not run for exhaustion or\n        errors.\n        ";
-        return InspectFallibleIterator {
+        return InspectFallibleIterator::<T, E, Self, Observer> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -1112,7 +1112,7 @@ impl<
         f: ErrorMap,
     ) -> impl FallibleIterator<T, F> + use<T, E, Source, StoredPredicate, F, ErrorMap> {
         let _ = "\n        Lazily transform each emitted source error while preserving items and exhaustion.\n\n        `f` runs exactly once for each error that escapes the source. It does not retry the failed poll or observe\n        successful items. The mapped error type must support `Clone` under the current value-semantics contract.\n        ";
-        return MapErrFallibleIterator {
+        return MapErrFallibleIterator::<T, E, Self, F, ErrorMap> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -1128,7 +1128,7 @@ impl<
         E,
     > + use<T, E, Source, StoredPredicate, ErrorObserver> {
         let _ = "\n        Lazily observe each emitted source error without changing it.\n\n        The observer runs exactly once for each escaping error. Successful items and ordinary exhaustion pass through\n        without invoking it.\n        ";
-        return InspectErrFallibleIterator {
+        return InspectErrFallibleIterator::<T, E, Self, ErrorObserver> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -1544,7 +1544,7 @@ for FlatMapFallibleIterator<T, E, Source, Output, StoredExpand> {
         E,
     > + use<T, E, Source, Output, StoredExpand, U, MapFn> {
         let _ = "\n        Lazily transform each successful item while preserving source failures.\n\n        `f` runs exactly once for each yielded source item. It does not run at construction, on exhaustion, or on an\n        error. The mapped type must support `Clone` under Incan's current value-semantics contract.\n        ";
-        return MapFallibleIterator {
+        return MapFallibleIterator::<Output, E, Self, U, MapFn> {
             source: self.clone(),
             f: f,
             input_marker: None::<_>,
@@ -1560,7 +1560,7 @@ for FlatMapFallibleIterator<T, E, Source, Output, StoredExpand> {
         E,
     > + use<T, E, Source, Output, StoredExpand, Predicate> {
         let _ = "\n        Lazily keep successful items for which `f(item)` returns `true`.\n\n        The predicate runs once for each successful source item until exhaustion or error. Rejected items are consumed;\n        errors pass through without invoking the predicate.\n        ";
-        return FilterFallibleIterator {
+        return FilterFallibleIterator::<Output, E, Self, Predicate> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -1575,7 +1575,7 @@ for FlatMapFallibleIterator<T, E, Source, Output, StoredExpand> {
         E,
     > + use<T, E, Source, Output, StoredExpand, U, Expand> {
         let _ = "\n        Lazily expand each successful item into a list and flatten it.\n\n        `f` runs once per successful source item. Every returned list is exhausted in order before the source is polled\n        again. The flattened type must support `Clone` under the current value-semantics contract.\n        ";
-        return FlatMapFallibleIterator {
+        return FlatMapFallibleIterator::<Output, E, Self, U, Expand> {
             source: self.clone(),
             f: f,
             current: Vec::<U>::new(),
@@ -1589,7 +1589,7 @@ for FlatMapFallibleIterator<T, E, Source, Output, StoredExpand> {
         n: i64,
     ) -> impl FallibleIterator<Output, E> + use<T, E, Source, Output, StoredExpand> {
         let _ = "\n        Lazily yield at most `n` successful items without retrying failures.\n\n        A non-positive count produces immediate exhaustion without polling the source. Errors encountered before the\n        limit pass through unchanged.\n        ";
-        return TakeFallibleIterator {
+        return TakeFallibleIterator::<Output, E, Self> {
             source: self.clone(),
             remaining: n,
             item_marker: None::<_>,
@@ -1604,7 +1604,7 @@ for FlatMapFallibleIterator<T, E, Source, Output, StoredExpand> {
         E,
     > + use<T, E, Source, Output, StoredExpand, Observer> {
         let _ = "\n        Lazily observe each successful item without changing it.\n\n        The observer runs exactly once before each successful item is yielded. It does not run for exhaustion or\n        errors.\n        ";
-        return InspectFallibleIterator {
+        return InspectFallibleIterator::<Output, E, Self, Observer> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -1619,7 +1619,7 @@ for FlatMapFallibleIterator<T, E, Source, Output, StoredExpand> {
         F,
     > + use<T, E, Source, Output, StoredExpand, F, ErrorMap> {
         let _ = "\n        Lazily transform each emitted source error while preserving items and exhaustion.\n\n        `f` runs exactly once for each error that escapes the source. It does not retry the failed poll or observe\n        successful items. The mapped error type must support `Clone` under the current value-semantics contract.\n        ";
-        return MapErrFallibleIterator {
+        return MapErrFallibleIterator::<Output, E, Self, F, ErrorMap> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -1635,7 +1635,7 @@ for FlatMapFallibleIterator<T, E, Source, Output, StoredExpand> {
         E,
     > + use<T, E, Source, Output, StoredExpand, ErrorObserver> {
         let _ = "\n        Lazily observe each emitted source error without changing it.\n\n        The observer runs exactly once for each escaping error. Successful items and ordinary exhaustion pass through\n        without invoking it.\n        ";
-        return InspectErrFallibleIterator {
+        return InspectErrFallibleIterator::<Output, E, Self, ErrorObserver> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -1958,7 +1958,7 @@ for TakeFallibleIterator<T, E, Source> {
         f: MapFn,
     ) -> impl FallibleIterator<U, E> + use<T, E, Source, U, MapFn> {
         let _ = "\n        Lazily transform each successful item while preserving source failures.\n\n        `f` runs exactly once for each yielded source item. It does not run at construction, on exhaustion, or on an\n        error. The mapped type must support `Clone` under Incan's current value-semantics contract.\n        ";
-        return MapFallibleIterator {
+        return MapFallibleIterator::<T, E, Self, U, MapFn> {
             source: self.clone(),
             f: f,
             input_marker: None::<_>,
@@ -1971,7 +1971,7 @@ for TakeFallibleIterator<T, E, Source> {
         f: Predicate,
     ) -> impl FallibleIterator<T, E> + use<T, E, Source, Predicate> {
         let _ = "\n        Lazily keep successful items for which `f(item)` returns `true`.\n\n        The predicate runs once for each successful source item until exhaustion or error. Rejected items are consumed;\n        errors pass through without invoking the predicate.\n        ";
-        return FilterFallibleIterator {
+        return FilterFallibleIterator::<T, E, Self, Predicate> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -1983,7 +1983,7 @@ for TakeFallibleIterator<T, E, Source> {
         f: Expand,
     ) -> impl FallibleIterator<U, E> + use<T, E, Source, U, Expand> {
         let _ = "\n        Lazily expand each successful item into a list and flatten it.\n\n        `f` runs once per successful source item. Every returned list is exhausted in order before the source is polled\n        again. The flattened type must support `Clone` under the current value-semantics contract.\n        ";
-        return FlatMapFallibleIterator {
+        return FlatMapFallibleIterator::<T, E, Self, U, Expand> {
             source: self.clone(),
             f: f,
             current: Vec::<U>::new(),
@@ -1994,7 +1994,7 @@ for TakeFallibleIterator<T, E, Source> {
     }
     fn take(&self, n: i64) -> impl FallibleIterator<T, E> + use<T, E, Source> {
         let _ = "\n        Lazily yield at most `n` successful items without retrying failures.\n\n        A non-positive count produces immediate exhaustion without polling the source. Errors encountered before the\n        limit pass through unchanged.\n        ";
-        return TakeFallibleIterator {
+        return TakeFallibleIterator::<T, E, Self> {
             source: self.clone(),
             remaining: n,
             item_marker: None::<_>,
@@ -2006,7 +2006,7 @@ for TakeFallibleIterator<T, E, Source> {
         f: Observer,
     ) -> impl FallibleIterator<T, E> + use<T, E, Source, Observer> {
         let _ = "\n        Lazily observe each successful item without changing it.\n\n        The observer runs exactly once before each successful item is yielded. It does not run for exhaustion or\n        errors.\n        ";
-        return InspectFallibleIterator {
+        return InspectFallibleIterator::<T, E, Self, Observer> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -2018,7 +2018,7 @@ for TakeFallibleIterator<T, E, Source> {
         f: ErrorMap,
     ) -> impl FallibleIterator<T, F> + use<T, E, Source, F, ErrorMap> {
         let _ = "\n        Lazily transform each emitted source error while preserving items and exhaustion.\n\n        `f` runs exactly once for each error that escapes the source. It does not retry the failed poll or observe\n        successful items. The mapped error type must support `Clone` under the current value-semantics contract.\n        ";
-        return MapErrFallibleIterator {
+        return MapErrFallibleIterator::<T, E, Self, F, ErrorMap> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -2031,7 +2031,7 @@ for TakeFallibleIterator<T, E, Source> {
         f: ErrorObserver,
     ) -> impl FallibleIterator<T, E> + use<T, E, Source, ErrorObserver> {
         let _ = "\n        Lazily observe each emitted source error without changing it.\n\n        The observer runs exactly once for each escaping error. Successful items and ordinary exhaustion pass through\n        without invoking it.\n        ";
-        return InspectErrFallibleIterator {
+        return InspectErrFallibleIterator::<T, E, Self, ErrorObserver> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -2367,7 +2367,7 @@ impl<
         f: MapFn,
     ) -> impl FallibleIterator<U, E> + use<T, E, Source, StoredObserver, U, MapFn> {
         let _ = "\n        Lazily transform each successful item while preserving source failures.\n\n        `f` runs exactly once for each yielded source item. It does not run at construction, on exhaustion, or on an\n        error. The mapped type must support `Clone` under Incan's current value-semantics contract.\n        ";
-        return MapFallibleIterator {
+        return MapFallibleIterator::<T, E, Self, U, MapFn> {
             source: self.clone(),
             f: f,
             input_marker: None::<_>,
@@ -2380,7 +2380,7 @@ impl<
         f: Predicate,
     ) -> impl FallibleIterator<T, E> + use<T, E, Source, StoredObserver, Predicate> {
         let _ = "\n        Lazily keep successful items for which `f(item)` returns `true`.\n\n        The predicate runs once for each successful source item until exhaustion or error. Rejected items are consumed;\n        errors pass through without invoking the predicate.\n        ";
-        return FilterFallibleIterator {
+        return FilterFallibleIterator::<T, E, Self, Predicate> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -2392,7 +2392,7 @@ impl<
         f: Expand,
     ) -> impl FallibleIterator<U, E> + use<T, E, Source, StoredObserver, U, Expand> {
         let _ = "\n        Lazily expand each successful item into a list and flatten it.\n\n        `f` runs once per successful source item. Every returned list is exhausted in order before the source is polled\n        again. The flattened type must support `Clone` under the current value-semantics contract.\n        ";
-        return FlatMapFallibleIterator {
+        return FlatMapFallibleIterator::<T, E, Self, U, Expand> {
             source: self.clone(),
             f: f,
             current: Vec::<U>::new(),
@@ -2406,7 +2406,7 @@ impl<
         n: i64,
     ) -> impl FallibleIterator<T, E> + use<T, E, Source, StoredObserver> {
         let _ = "\n        Lazily yield at most `n` successful items without retrying failures.\n\n        A non-positive count produces immediate exhaustion without polling the source. Errors encountered before the\n        limit pass through unchanged.\n        ";
-        return TakeFallibleIterator {
+        return TakeFallibleIterator::<T, E, Self> {
             source: self.clone(),
             remaining: n,
             item_marker: None::<_>,
@@ -2418,7 +2418,7 @@ impl<
         f: Observer,
     ) -> impl FallibleIterator<T, E> + use<T, E, Source, StoredObserver, Observer> {
         let _ = "\n        Lazily observe each successful item without changing it.\n\n        The observer runs exactly once before each successful item is yielded. It does not run for exhaustion or\n        errors.\n        ";
-        return InspectFallibleIterator {
+        return InspectFallibleIterator::<T, E, Self, Observer> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -2430,7 +2430,7 @@ impl<
         f: ErrorMap,
     ) -> impl FallibleIterator<T, F> + use<T, E, Source, StoredObserver, F, ErrorMap> {
         let _ = "\n        Lazily transform each emitted source error while preserving items and exhaustion.\n\n        `f` runs exactly once for each error that escapes the source. It does not retry the failed poll or observe\n        successful items. The mapped error type must support `Clone` under the current value-semantics contract.\n        ";
-        return MapErrFallibleIterator {
+        return MapErrFallibleIterator::<T, E, Self, F, ErrorMap> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -2443,7 +2443,7 @@ impl<
         f: ErrorObserver,
     ) -> impl FallibleIterator<T, E> + use<T, E, Source, StoredObserver, ErrorObserver> {
         let _ = "\n        Lazily observe each emitted source error without changing it.\n\n        The observer runs exactly once for each escaping error. Successful items and ordinary exhaustion pass through\n        without invoking it.\n        ";
-        return InspectErrFallibleIterator {
+        return InspectErrFallibleIterator::<T, E, Self, ErrorObserver> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -2820,7 +2820,7 @@ for MapErrFallibleIterator<T, E, Source, MappedError, StoredErrorMap> {
         MappedError,
     > + use<T, E, Source, MappedError, StoredErrorMap, U, MapFn> {
         let _ = "\n        Lazily transform each successful item while preserving source failures.\n\n        `f` runs exactly once for each yielded source item. It does not run at construction, on exhaustion, or on an\n        error. The mapped type must support `Clone` under Incan's current value-semantics contract.\n        ";
-        return MapFallibleIterator {
+        return MapFallibleIterator::<T, MappedError, Self, U, MapFn> {
             source: self.clone(),
             f: f,
             input_marker: None::<_>,
@@ -2836,7 +2836,7 @@ for MapErrFallibleIterator<T, E, Source, MappedError, StoredErrorMap> {
         MappedError,
     > + use<T, E, Source, MappedError, StoredErrorMap, Predicate> {
         let _ = "\n        Lazily keep successful items for which `f(item)` returns `true`.\n\n        The predicate runs once for each successful source item until exhaustion or error. Rejected items are consumed;\n        errors pass through without invoking the predicate.\n        ";
-        return FilterFallibleIterator {
+        return FilterFallibleIterator::<T, MappedError, Self, Predicate> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -2851,7 +2851,7 @@ for MapErrFallibleIterator<T, E, Source, MappedError, StoredErrorMap> {
         MappedError,
     > + use<T, E, Source, MappedError, StoredErrorMap, U, Expand> {
         let _ = "\n        Lazily expand each successful item into a list and flatten it.\n\n        `f` runs once per successful source item. Every returned list is exhausted in order before the source is polled\n        again. The flattened type must support `Clone` under the current value-semantics contract.\n        ";
-        return FlatMapFallibleIterator {
+        return FlatMapFallibleIterator::<T, MappedError, Self, U, Expand> {
             source: self.clone(),
             f: f,
             current: Vec::<U>::new(),
@@ -2868,7 +2868,7 @@ for MapErrFallibleIterator<T, E, Source, MappedError, StoredErrorMap> {
         MappedError,
     > + use<T, E, Source, MappedError, StoredErrorMap> {
         let _ = "\n        Lazily yield at most `n` successful items without retrying failures.\n\n        A non-positive count produces immediate exhaustion without polling the source. Errors encountered before the\n        limit pass through unchanged.\n        ";
-        return TakeFallibleIterator {
+        return TakeFallibleIterator::<T, MappedError, Self> {
             source: self.clone(),
             remaining: n,
             item_marker: None::<_>,
@@ -2883,7 +2883,7 @@ for MapErrFallibleIterator<T, E, Source, MappedError, StoredErrorMap> {
         MappedError,
     > + use<T, E, Source, MappedError, StoredErrorMap, Observer> {
         let _ = "\n        Lazily observe each successful item without changing it.\n\n        The observer runs exactly once before each successful item is yielded. It does not run for exhaustion or\n        errors.\n        ";
-        return InspectFallibleIterator {
+        return InspectFallibleIterator::<T, MappedError, Self, Observer> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -2898,7 +2898,7 @@ for MapErrFallibleIterator<T, E, Source, MappedError, StoredErrorMap> {
         F,
     > + use<T, E, Source, MappedError, StoredErrorMap, F, ErrorMap> {
         let _ = "\n        Lazily transform each emitted source error while preserving items and exhaustion.\n\n        `f` runs exactly once for each error that escapes the source. It does not retry the failed poll or observe\n        successful items. The mapped error type must support `Clone` under the current value-semantics contract.\n        ";
-        return MapErrFallibleIterator {
+        return MapErrFallibleIterator::<T, MappedError, Self, F, ErrorMap> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -2914,7 +2914,7 @@ for MapErrFallibleIterator<T, E, Source, MappedError, StoredErrorMap> {
         MappedError,
     > + use<T, E, Source, MappedError, StoredErrorMap, ErrorObserver> {
         let _ = "\n        Lazily observe each emitted source error without changing it.\n\n        The observer runs exactly once for each escaping error. Successful items and ordinary exhaustion pass through\n        without invoking it.\n        ";
-        return InspectErrFallibleIterator {
+        return InspectErrFallibleIterator::<T, MappedError, Self, ErrorObserver> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -3272,7 +3272,7 @@ for InspectErrFallibleIterator<T, E, Source, StoredErrorObserver> {
         f: MapFn,
     ) -> impl FallibleIterator<U, E> + use<T, E, Source, StoredErrorObserver, U, MapFn> {
         let _ = "\n        Lazily transform each successful item while preserving source failures.\n\n        `f` runs exactly once for each yielded source item. It does not run at construction, on exhaustion, or on an\n        error. The mapped type must support `Clone` under Incan's current value-semantics contract.\n        ";
-        return MapFallibleIterator {
+        return MapFallibleIterator::<T, E, Self, U, MapFn> {
             source: self.clone(),
             f: f,
             input_marker: None::<_>,
@@ -3288,7 +3288,7 @@ for InspectErrFallibleIterator<T, E, Source, StoredErrorObserver> {
         E,
     > + use<T, E, Source, StoredErrorObserver, Predicate> {
         let _ = "\n        Lazily keep successful items for which `f(item)` returns `true`.\n\n        The predicate runs once for each successful source item until exhaustion or error. Rejected items are consumed;\n        errors pass through without invoking the predicate.\n        ";
-        return FilterFallibleIterator {
+        return FilterFallibleIterator::<T, E, Self, Predicate> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -3303,7 +3303,7 @@ for InspectErrFallibleIterator<T, E, Source, StoredErrorObserver> {
         E,
     > + use<T, E, Source, StoredErrorObserver, U, Expand> {
         let _ = "\n        Lazily expand each successful item into a list and flatten it.\n\n        `f` runs once per successful source item. Every returned list is exhausted in order before the source is polled\n        again. The flattened type must support `Clone` under the current value-semantics contract.\n        ";
-        return FlatMapFallibleIterator {
+        return FlatMapFallibleIterator::<T, E, Self, U, Expand> {
             source: self.clone(),
             f: f,
             current: Vec::<U>::new(),
@@ -3317,7 +3317,7 @@ for InspectErrFallibleIterator<T, E, Source, StoredErrorObserver> {
         n: i64,
     ) -> impl FallibleIterator<T, E> + use<T, E, Source, StoredErrorObserver> {
         let _ = "\n        Lazily yield at most `n` successful items without retrying failures.\n\n        A non-positive count produces immediate exhaustion without polling the source. Errors encountered before the\n        limit pass through unchanged.\n        ";
-        return TakeFallibleIterator {
+        return TakeFallibleIterator::<T, E, Self> {
             source: self.clone(),
             remaining: n,
             item_marker: None::<_>,
@@ -3329,7 +3329,7 @@ for InspectErrFallibleIterator<T, E, Source, StoredErrorObserver> {
         f: Observer,
     ) -> impl FallibleIterator<T, E> + use<T, E, Source, StoredErrorObserver, Observer> {
         let _ = "\n        Lazily observe each successful item without changing it.\n\n        The observer runs exactly once before each successful item is yielded. It does not run for exhaustion or\n        errors.\n        ";
-        return InspectFallibleIterator {
+        return InspectFallibleIterator::<T, E, Self, Observer> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -3344,7 +3344,7 @@ for InspectErrFallibleIterator<T, E, Source, StoredErrorObserver> {
         F,
     > + use<T, E, Source, StoredErrorObserver, F, ErrorMap> {
         let _ = "\n        Lazily transform each emitted source error while preserving items and exhaustion.\n\n        `f` runs exactly once for each error that escapes the source. It does not retry the failed poll or observe\n        successful items. The mapped error type must support `Clone` under the current value-semantics contract.\n        ";
-        return MapErrFallibleIterator {
+        return MapErrFallibleIterator::<T, E, Self, F, ErrorMap> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -3360,7 +3360,7 @@ for InspectErrFallibleIterator<T, E, Source, StoredErrorObserver> {
         E,
     > + use<T, E, Source, StoredErrorObserver, ErrorObserver> {
         let _ = "\n        Lazily observe each emitted source error without changing it.\n\n        The observer runs exactly once for each escaping error. Successful items and ordinary exhaustion pass through\n        without invoking it.\n        ";
-        return InspectErrFallibleIterator {
+        return InspectErrFallibleIterator::<T, E, Self, ErrorObserver> {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,

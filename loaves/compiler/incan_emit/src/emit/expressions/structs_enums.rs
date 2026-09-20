@@ -18,9 +18,14 @@ impl<'a> IrEmitter<'a> {
     /// - Named field construction: `Point { x: 1, y: 2 }`
     /// - Positional (tuple-style) construction: `Point(1, 2)`
     /// - Empty struct construction: `Unit {}`
+    ///
+    /// Explicit source type arguments (`Column[T](...)`) are threaded onto the constructed path as a turbofish, and a
+    /// struct literal for a type with phantom type parameters initialises the compiler-owned marker field. Both
+    /// facts come from lowering; see #1370.
     pub(in super::super) fn emit_struct_expr(
         &self,
         name: &str,
+        type_args: &[IrType],
         fields: &[(String, TypedExpr)],
         fill_defaults: bool,
     ) -> Result<TokenStream, EmitError> {
@@ -46,6 +51,12 @@ impl<'a> IrEmitter<'a> {
         }
 
         let n = self.emit_type(&IrType::Struct(name.to_string()));
+        let n = if type_args.is_empty() {
+            n
+        } else {
+            let emitted: Vec<TokenStream> = type_args.iter().map(|ty| self.emit_type(ty)).collect();
+            quote! { #n::<#(#emitted),*> }
+        };
         let all_named = fields.iter().all(|(fname, _)| !fname.is_empty());
 
         if !all_named && !fields.is_empty() {
@@ -90,8 +101,9 @@ impl<'a> IrEmitter<'a> {
                     Ok(quote! { #n { #(#field_tokens),* } })
                 };
             };
+            let phantom_marker = metadata.phantom_marker_initializer();
             if metadata.fields.is_empty() {
-                return Ok(quote! { #n {} });
+                return Ok(quote! { #n { #phantom_marker } });
             }
 
             let out_fields = self.emit_named_constructor_arguments(name, metadata, fields)?;
@@ -100,7 +112,10 @@ impl<'a> IrEmitter<'a> {
                 let values = out_fields.iter().map(|(_, value)| value);
                 Ok(quote! { #n(#(#values),*) })
             } else {
-                let fields = out_fields.iter().map(|(field, value)| quote! { #field: #value });
+                let fields = out_fields
+                    .iter()
+                    .map(|(field, value)| quote! { #field: #value })
+                    .chain(phantom_marker);
                 Ok(quote! { #n { #(#fields),* } })
             }
         }
@@ -120,7 +135,7 @@ mod tests {
         let fields = vec![("count".to_string(), TypedExpr::new(IrExprKind::Int(7), IrType::Int))];
 
         let rendered = emitter
-            .emit_struct_expr("demo::Record", &fields, true)
+            .emit_struct_expr("demo::Record", &[], &fields, true)
             .map_err(|error| format!("expected default-filled Rust struct emission, got {error:?}"))?
             .to_string();
         assert_eq!(rendered, "demo :: Record { count : 7 , .. Default :: default () }");

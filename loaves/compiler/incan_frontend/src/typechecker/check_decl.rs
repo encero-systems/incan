@@ -2,6 +2,7 @@
 
 use crate::ast::*;
 use crate::ast_walk::any_expr_in_body;
+use crate::diagnostics::errors::StoredTypeParamOwner;
 use crate::diagnostics::{CompileError, errors};
 use crate::resolved_type_subst::{
     substitute_method_info, substitute_property_info, substitute_resolved_type, type_param_subst_map,
@@ -4288,7 +4289,33 @@ impl TypeChecker {
         }
     }
 
-    /// Validate one newtype or rusttype declaration after collection has registered its symbol.
+    /// Refuse a declared type parameter that no part of the declaration's representation mentions.
+    ///
+    /// `representation` is the set of source annotations that give the declaration its storage: a newtype's
+    /// underlying type, an enum's variant payloads. A model or class is not checked here because lowering records
+    /// such a parameter as phantom and emission carries it in a marker; a newtype and an enum have no field to add
+    /// one to, so the shape is refused at its declaration instead of failing in the generated Rust (#1370).
+    fn validate_type_params_stored<'a>(
+        &mut self,
+        owner: StoredTypeParamOwner,
+        owner_name: &str,
+        type_params: &[TypeParam],
+        representation: impl Iterator<Item = &'a Type> + Clone,
+    ) {
+        for param in type_params {
+            if !representation.clone().any(|ty| ty.mentions_name(&param.name)) {
+                self.errors.push(errors::type_param_not_stored(
+                    owner,
+                    owner_name,
+                    &param.name,
+                    param.span,
+                ));
+            }
+        }
+    }
+
+    /// Validate a `newtype` or `rusttype` declaration: its parameters, derives, underlying type, adopted traits,
+    /// checked construction hooks, and member bodies.
     fn check_newtype(&mut self, nt: &NewtypeDecl) {
         self.symbols.enter_scope(ScopeKind::Block);
 
@@ -4320,6 +4347,12 @@ impl TypeChecker {
                 nt.underlying.span,
             ));
         }
+        self.validate_type_params_stored(
+            StoredTypeParamOwner::Newtype,
+            &nt.name,
+            &nt.type_params,
+            std::iter::once(&nt.underlying.node),
+        );
 
         let rusttype_path = if nt.is_rusttype {
             self.rust_path_for_rusttype_underlying(&underlying)
@@ -4640,6 +4673,18 @@ impl TypeChecker {
                     scope: 0,
                 },
                 SemanticSourceTargetKind::GenericBinder,
+            );
+        }
+        // A value enum rejects type parameters outright (`check_value_enum_decl`), so only a payload-carrying enum
+        // is asked whether every parameter is stored by some variant.
+        if en.value_type.is_none() {
+            self.validate_type_params_stored(
+                StoredTypeParamOwner::Enum,
+                &en.name,
+                &en.type_params,
+                en.variants
+                    .iter()
+                    .flat_map(|variant| variant.node.fields.iter().map(|field| &field.node)),
             );
         }
 
@@ -5781,6 +5826,7 @@ impl TypeChecker {
         }
         let active_bounds = self.type_param_bound_details_from_type_params(&func.type_params);
         self.current_type_param_bound_details.push(active_bounds);
+        let previous_annotation_owner = self.enter_annotation_owner(&func.name, &func.type_params);
 
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&func.params);
 
@@ -5857,6 +5903,7 @@ impl TypeChecker {
         self.current_yield_context = prev_yield_context;
         self.current_return_error_type = None;
         self.current_type_param_bound_details.pop();
+        self.annotation_owner = previous_annotation_owner;
         self.symbols.exit_scope();
         self.apply_user_defined_function_decorators(func, decl_span);
     }
@@ -6130,6 +6177,7 @@ impl TypeChecker {
         let mut active_bounds = self.type_param_bound_details_from_type_params(owner_params);
         active_bounds.extend(self.type_param_bound_details_from_type_params(&method.type_params));
         self.current_type_param_bound_details.push(active_bounds);
+        let previous_annotation_owner = self.enter_annotation_owner(&method.name, &method.type_params);
 
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&method.params);
 
@@ -6286,6 +6334,7 @@ impl TypeChecker {
         self.current_return_error_type = None;
         self.current_classmethod_self_ty = previous_classmethod_self_ty;
         self.current_type_param_bound_details.pop();
+        self.annotation_owner = previous_annotation_owner;
         self.mutable_bindings.remove("self");
         self.symbols.exit_scope();
     }

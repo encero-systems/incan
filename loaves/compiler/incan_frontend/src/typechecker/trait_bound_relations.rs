@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::TypeChecker;
+use crate::diagnostics::errors::GenericBoundTarget;
 use crate::resolved_type_subst::substitute_resolved_type;
 use crate::symbols::{ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo};
 use crate::typechecker::helpers::collection_type_id;
@@ -33,6 +34,35 @@ impl TypeChecker {
             .collect::<Vec<_>>()
             .join(", ");
         format!("{}[{}]", bound.name, args)
+    }
+
+    /// Classify what a `with` bound names, for the remedy a bound-violation diagnostic offers (#1373).
+    ///
+    /// Anything the checker can satisfy as a trait — a source trait, a builtin trait, an imported Rust trait, or a
+    /// Rust capability marker — is a trait target. A name that resolves to a declared or builtin type is a type
+    /// target, because no type argument can satisfy it. An active type-parameter placeholder and an unresolvable
+    /// name keep the trait wording, which is the only actionable one for them.
+    pub(in crate::typechecker) fn generic_bound_target(&self, bound: &str) -> GenericBoundTarget {
+        if bound.starts_with("::")
+            || is_rust_capability_bound(bound)
+            || builtin_traits::from_str(bound).is_some()
+            || self.lookup_semantic_trait_info(bound).is_some()
+        {
+            return GenericBoundTarget::Trait;
+        }
+        match self.foreign_trait_bound_requires_native_check(bound) {
+            Some(true) => return GenericBoundTarget::Trait,
+            Some(false) => return GenericBoundTarget::Type,
+            None => {}
+        }
+        let is_active_type_param = self
+            .current_type_param_bound_details
+            .iter()
+            .any(|frame| frame.contains_key(bound));
+        if !is_active_type_param && self.lookup_type_info(bound).is_some() {
+            return GenericBoundTarget::Type;
+        }
+        GenericBoundTarget::Trait
     }
 
     /// Return whether a type satisfies one explicit bound, including generic trait arguments.

@@ -14,6 +14,8 @@ user_id = UserId(42)
 
 The wrapped value is available as `.0`.
 
+A newtype may declare type parameters, and every parameter must appear in the underlying type: `type Box[T] = newtype T` and `type Many[T] = newtype list[T]` are accepted, while `type Tag[T] = newtype str` is rejected at `T` because the wrapped value has nowhere to carry it. A model or class is the shape for a type parameter that only its methods use.
+
 ## Trait Adoption
 
 Newtypes can adopt traits with the same `with TraitName` clause used by models, classes, and enums:

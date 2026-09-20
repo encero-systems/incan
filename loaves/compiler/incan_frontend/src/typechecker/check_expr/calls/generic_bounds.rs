@@ -2,7 +2,7 @@
 
 use super::TypeChecker;
 use crate::ast::{CallArg, ParamKind, Span, Spanned, Type};
-use crate::diagnostics::errors;
+use crate::diagnostics::errors::{self, TypeArgumentOrigin};
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map_call_site};
 use crate::symbols::{CallableParam, FunctionInfo, MethodInfo, ResolvedType, TypeInfo};
 use incan_lang::lang::callables;
@@ -84,8 +84,8 @@ impl TypeChecker {
             if explicit_type_args.len() != info.type_params.len() {
                 self.errors.push(errors::explicit_type_arg_arity(
                     func_name,
-                    info.type_params.len(),
-                    explicit_type_args.len(),
+                    &info.type_params,
+                    &Self::written_type_args(explicit_type_args),
                     call_span,
                 ));
             } else {
@@ -126,6 +126,7 @@ impl TypeChecker {
             &info.type_param_bounds,
             &info.type_param_bound_details,
             &type_bindings,
+            Self::type_argument_origin(explicit_type_args),
             call_span,
         );
         if info.is_async {
@@ -282,8 +283,8 @@ impl TypeChecker {
             if !explicit_arity_ok {
                 self.errors.push(errors::explicit_type_arg_arity(
                     method,
-                    method_info.type_params.len(),
-                    explicit_type_args.len(),
+                    &method_info.type_params,
+                    &Self::written_type_args(explicit_type_args),
                     call_site_span,
                 ));
             } else {
@@ -331,6 +332,7 @@ impl TypeChecker {
             &method_info.type_param_bounds,
             &method_info.type_param_bound_details,
             &type_bindings,
+            Self::type_argument_origin(explicit_type_args),
             call_site_span,
         );
 
@@ -628,6 +630,25 @@ impl TypeChecker {
         }
     }
 
+    /// Render explicit call-site type arguments as the call spelled them, for arity diagnostics.
+    pub(in crate::typechecker::check_expr) fn written_type_args(explicit_type_args: &[Spanned<Type>]) -> Vec<String> {
+        explicit_type_args
+            .iter()
+            .map(|type_arg| type_arg.node.to_string())
+            .collect()
+    }
+
+    /// Classify where the bindings a bound check sees came from: an explicit bracket list or inference.
+    pub(in crate::typechecker::check_expr) fn type_argument_origin(
+        explicit_type_args: &[Spanned<Type>],
+    ) -> TypeArgumentOrigin {
+        if explicit_type_args.is_empty() {
+            TypeArgumentOrigin::Inferred
+        } else {
+            TypeArgumentOrigin::Explicit
+        }
+    }
+
     /// Emit diagnostics when inferred concrete generic bindings violate explicit `with` bounds.
     fn emit_explicit_bound_errors(
         &mut self,
@@ -635,6 +656,7 @@ impl TypeChecker {
         bounds_by_param: &std::collections::HashMap<String, Vec<String>>,
         bound_details_by_param: &std::collections::HashMap<String, Vec<crate::symbols::TypeBoundInfo>>,
         bindings: &std::collections::HashMap<String, ResolvedType>,
+        actual_origin: TypeArgumentOrigin,
         call_span: Span,
     ) {
         for (type_param, bounds) in bounds_by_param {
@@ -650,7 +672,9 @@ impl TypeChecker {
                             func_name,
                             type_param,
                             &self.type_bound_display(bound, bindings),
+                            self.generic_bound_target(&bound.name),
                             &actual_ty.to_string(),
+                            actual_origin,
                             call_span,
                         ));
                     }
@@ -663,7 +687,9 @@ impl TypeChecker {
                         func_name,
                         type_param,
                         bound,
+                        self.generic_bound_target(bound),
                         &actual_ty.to_string(),
+                        actual_origin,
                         call_span,
                     ));
                 }

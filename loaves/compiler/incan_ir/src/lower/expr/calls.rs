@@ -1806,6 +1806,7 @@ impl AstLowering {
                 TypedExpr::new(
                     IrExprKind::Struct {
                         name: step.newtype_name,
+                        type_args: Vec::new(),
                         fields: vec![(String::new(), expr)],
                         fill_defaults: false,
                     },
@@ -1986,6 +1987,7 @@ impl AstLowering {
         let success = TypedExpr::new(
             IrExprKind::Struct {
                 name: name.to_string(),
+                type_args: Vec::new(),
                 fields: vec![(String::new(), value_ref())],
                 fill_defaults: false,
             },
@@ -2248,6 +2250,7 @@ impl AstLowering {
             TypedExpr::new(
                 IrExprKind::Struct {
                     name: name.to_string(),
+                    type_args: Vec::new(),
                     fields: vec![(String::new(), lowered_value)],
                     fill_defaults: false,
                 },
@@ -2282,6 +2285,7 @@ impl AstLowering {
             TypedExpr::new(
                 IrExprKind::Struct {
                     name: name.to_string(),
+                    type_args: Vec::new(),
                     fields: vec![(String::new(), lowered_value)],
                     fill_defaults: false,
                 },
@@ -2776,6 +2780,7 @@ impl AstLowering {
                 value: Some(Box::new(TypedExpr::new(
                     IrExprKind::Struct {
                         name: name.to_string(),
+                        type_args: Vec::new(),
                         fields,
                         fill_defaults: false,
                     },
@@ -3267,6 +3272,7 @@ impl AstLowering {
                 return Ok((
                     IrExprKind::Struct {
                         name: name.clone(),
+                        type_args: Vec::new(),
                         fields,
                         fill_defaults,
                     },
@@ -3745,6 +3751,7 @@ impl AstLowering {
                 Some(TypedExpr::new(
                     IrExprKind::Struct {
                         name: name.clone(),
+                        type_args: Vec::new(),
                         fields,
                         fill_defaults: false,
                     },
@@ -3914,6 +3921,7 @@ impl AstLowering {
         let (argument_stmts, fields) = self.sequence_reordered_constructor_arguments(call_span, fields);
         let construction = IrExprKind::Struct {
             name: name.to_string(),
+            type_args: self.lower_call_site_type_args(call_span, type_args),
             fields,
             fill_defaults: false,
         };
