@@ -46,6 +46,15 @@ fn runtime_list_elem_type(ty: &ResolvedType) -> Option<&ResolvedType> {
     }
 }
 
+/// Whether an expression is an empty list literal, looking through parentheses.
+fn is_empty_list_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::List(entries) => entries.is_empty(),
+        Expr::Paren(inner) => is_empty_list_literal(&inner.node),
+        _ => false,
+    }
+}
+
 /// Return the exact-width unsigned integer id for a resolved type.
 fn exact_unsigned_integer_type_id(ty: &ResolvedType) -> Option<NumericTypeId> {
     match ty {
@@ -248,6 +257,32 @@ impl TypeChecker {
         span: Span,
     ) -> ResolvedType {
         self.check_binary_with_expected(left, op, right, span, None)
+    }
+
+    /// Give an empty list literal compared against a list the partner operand's type, and record it (#1476).
+    ///
+    /// `values == []` checks `[]` as `List[Unknown]` and accepts the comparison by compatibility, but the recorded
+    /// expression type is what lowering carries onto the literal and what emission spells. A bare `vec![]` beside a
+    /// `Vec<String>` leaves rustc with an ambiguous `PartialEq` (E0283), and nothing downstream of the checker knows
+    /// the element type: the comparison is the only place the two operands meet. Re-checking the empty literal
+    /// against the partner's type records the unified `List[T]` for its span. A populated literal, a non-list
+    /// partner, or a partner whose own element type is still unknown is left as checked, and no compatibility rule
+    /// changes: an empty literal already compares against any list.
+    fn adopt_partner_type_for_empty_list_operand(
+        &mut self,
+        operand: &Spanned<Expr>,
+        operand_ty: ResolvedType,
+        partner_ty: &ResolvedType,
+    ) -> ResolvedType {
+        if !is_empty_list_literal(&operand.node) {
+            return operand_ty;
+        }
+        match runtime_list_elem_type(partner_ty) {
+            Some(elem_ty) if !matches!(elem_ty, ResolvedType::Unknown) => {
+                self.check_expr_with_expected(operand, Some(partner_ty))
+            }
+            _ => operand_ty,
+        }
     }
 
     /// Type-check a binary operation with an optional contextual result type for overload disambiguation.
@@ -498,6 +533,8 @@ impl TypeChecker {
             }
             // Comparisons: allow mixed numeric types (promote for comparison), result is Bool
             BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::Gt | BinaryOp::LtEq | BinaryOp::GtEq => {
+                let left_ty = self.adopt_partner_type_for_empty_list_operand(left, left_ty, &right_ty);
+                let right_ty = self.adopt_partner_type_for_empty_list_operand(right, right_ty, &left_ty);
                 // If both are numeric, allow mixed comparisons
                 let lhs_num = numeric_ty_from_resolved(&left_ty);
                 let rhs_num = numeric_ty_from_resolved(&right_ty);

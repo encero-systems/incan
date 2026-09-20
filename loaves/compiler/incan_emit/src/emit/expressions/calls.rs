@@ -1370,25 +1370,11 @@ impl<'a> IrEmitter<'a> {
         Ok(Some(path_tokens))
     }
 
-    /// Emit a binary operation expression. Emit one binary operand, letting an empty list literal borrow its element
-    /// type from the other side.
+    /// Emit a binary operation, folding static string additions.
     ///
-    /// Only the empty case needs this: a populated literal infers from its own elements.
-    fn emit_comparison_operand(&self, operand: &TypedExpr, other_ty: &IrType) -> Result<TokenStream, EmitError> {
-        if let IrExprKind::List(entries) = &operand.kind
-            && entries.is_empty()
-            && !matches!(&operand.ty, IrType::List(elem) if !matches!(elem.as_ref(), IrType::Unknown))
-            && let IrType::List(elem) = other_ty
-            && !matches!(elem.as_ref(), IrType::Unknown)
-        {
-            let ty_tokens = self.emit_type(elem.as_ref());
-            return Ok(quote! { Vec::<#ty_tokens>::new() });
-        }
-        self.emit_expr(operand)
-    }
-
-    /// Emit a binary operation, folding static string additions and lending an empty-list operand the other side's
-    /// element type so the generated comparison is not an ambiguous `PartialEq`.
+    /// An empty list operand carries its element type on the literal itself: the typechecker records the partner
+    /// operand's `List[T]` for it (#1476), lowering carries that onto `TypedExpr::ty`, and list emission spells
+    /// `Vec::<T>::new()` from it. Nothing here re-derives the type from the other side.
     pub(in super::super) fn emit_binop_expr(
         &self,
         op: &BinOp,
@@ -1402,11 +1388,8 @@ impl<'a> IrEmitter<'a> {
             return Ok(tokens);
         }
 
-        // An empty list literal carries no element type of its own. As an initializer the binding supplies one, but
-        // as a comparison operand -- `features == []` -- nothing does, and rustc reports an ambiguous `PartialEq`.
-        // The other operand is the only thing that knows, so take the element type from it.
-        let mut l_raw = self.emit_comparison_operand(left, &right.ty)?;
-        let mut r_raw = self.emit_comparison_operand(right, &left.ty)?;
+        let mut l_raw = self.emit_expr(left)?;
+        let mut r_raw = self.emit_expr(right)?;
 
         // Comparison is an observation boundary for exact floats. Validate the source operands before any concrete
         // f32-to-f64 widening so values injected through a public Rust surface cannot silently compare as IEEE

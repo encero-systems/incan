@@ -5070,6 +5070,28 @@ fn test_issue1494_collection_method_literal_arguments_codegen() {
     );
 }
 
+/// Issue #1476: the element type of an empty list operand is recorded by the checker and carried by lowering, so
+/// emission spells it from the literal's own type in either operand position and for either equality operator.
+#[test]
+fn test_issue1476_empty_list_equality_operands_codegen() {
+    let source = load_test_file("issue1476_empty_list_equality_operands");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1476_empty_list_equality_operands", rust_code);
+    let compact = compact_rust(&rust_code);
+    assert!(
+        compact.contains("returnvalues==Vec::<String>::new();"),
+        "the right-hand empty operand must name the element type:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("returnVec::<String>::new()!=values;"),
+        "the left-hand empty operand must name the element type:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("Vec::<_>::new()") && !compact.contains("vec![]"),
+        "an untyped empty operand leaves `PartialEq` ambiguous (E0283):\n{rust_code}"
+    );
+}
+
 #[test]
 fn test_rfc041_std_rust_capability_bounds_codegen() {
     let source = load_test_file("rfc041_std_rust_capability_bounds");

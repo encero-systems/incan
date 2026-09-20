@@ -193,6 +193,54 @@ def main() -> None:
     Ok(())
 }
 
+/// Comparing a `list[str]` against an empty literal, in either order and with either equality operator, compiles and
+/// runs with the JSON dependency linked (#1476). That cohort brings extra `String: PartialEq<_>` impls into scope,
+/// which is what turned an untyped `vec![]` operand into E0283; the operand now carries its element type from the
+/// checker, so the generated Rust spells `Vec::<String>::new()`.
+#[test]
+fn empty_list_equality_operands_build_with_json_cohort_issue1476() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    write_minimal_project(tmp.path(), "empty_list_equality", "")?;
+    fs::write(
+        tmp.path().join("src/main.incn"),
+        r#"from std.json import JsonValue
+
+def is_empty(values: list[str]) -> bool:
+    return values == []
+
+def is_not_empty(values: list[str]) -> bool:
+    return [] != values
+
+def empty_first(values: list[str]) -> bool:
+    return [] == values
+
+def nonempty_first(values: list[str]) -> bool:
+    return values != []
+
+def main() -> None:
+    value = JsonValue.null()
+    assert value.is_null()
+    assert is_empty([])
+    assert not is_empty(["value"])
+    assert is_not_empty(["value"])
+    assert not is_not_empty([])
+    assert empty_first([])
+    assert not empty_first(["value"])
+    assert nonempty_first(["value"])
+    assert not nonempty_first([])
+    println("empty-list comparisons ok")
+"#,
+    )?;
+    let bake = run_explicit_oven_bake(tmp.path())?;
+    assert_success(&bake, "prepare the empty-list equality fixture");
+    let build = run_incan(tmp.path(), &["build", "src/main.incn"])?;
+    assert_success(&build, "build empty-list comparisons alongside the JSON dependency");
+    let run = run_incan(tmp.path(), &["run", "src/main.incn"])?;
+    assert_success(&run, "run the empty-list comparison assertions");
+    assert_eq!(String::from_utf8(run.stdout)?.trim(), "empty-list comparisons ok");
+    Ok(())
+}
+
 /// `{{` and `}}` are the f-string escapes for one literal brace, as in Python, so `f"{{{name}}}"` renders `{x}`. The
 /// lexer collapsed them correctly; emission then brace-escaped every literal segment again for a `format!` string it
 /// no longer builds, and both characters reached the output.
