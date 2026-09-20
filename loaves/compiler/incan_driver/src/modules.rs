@@ -277,7 +277,12 @@ fn is_unselected_package_entrypoint(source_root: &Path, source_file: &Path, sele
 /// and reports the real failure. The key is only ever used for de-duplication and ordering: a module's
 /// [`ParsedModule::file_path`] keeps the spelling it was reached by, so callers that located the entry themselves can
 /// still find it by the path they passed in.
-fn source_identity_key(path: &str) -> String {
+///
+/// Canonicalizing on every platform also covers the spellings Windows offers for one file (`\\?\` extended-length
+/// prefix, either separator, case-insensitive components), which is the #1357 shape the Windows line applies only
+/// there. Every caller of [`topologically_sort_modules`] must key its dependency edges through this same function;
+/// the test runner's collector in `testing::module_graph` is the other one.
+pub(crate) fn source_identity_key(path: &str) -> String {
     fs::canonicalize(path)
         .map(|canonical| canonical.to_string_lossy().into_owned())
         .unwrap_or_else(|_| path.to_string())
