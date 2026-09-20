@@ -2353,13 +2353,85 @@
       "split_target": "",
       "notes": "lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
-    "loaves/kernel/incan_syntax/src/parser/tests.rs": {
+    "loaves/kernel/incan_syntax/src/parser/tests/expressions.rs": {
       "disposition": "keep",
       "owner": 1561,
       "twin": "",
-      "split_required": true,
+      "split_required": false,
       "split_target": "",
-      "notes": "lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_syntax/src/parser/tests/fstrings.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_syntax/src/parser/tests/functions_decorators_and_bindings.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_syntax/src/parser/tests/modules_and_imports.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_syntax/src/parser/tests/patterns_and_matching.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_syntax/src/parser/tests/soft_keywords_and_vocab_blocks.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_syntax/src/parser/tests/statements_and_blocks.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_syntax/src/parser/tests/type_declarations.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_syntax/src/parser/tests/types_and_bounds.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_syntax/src/parser/tests/vocab_scoped_symbols.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_vocab/src/lib.rs": {
       "disposition": "unaffected",
