@@ -1,0 +1,15 @@
+# behavior: a const FrozenDict answers indexing and contains_key, and a str join over a comprehension of a const FrozenList[str] builds the joined text
+# expect-stdout:
+#   2
+#   true
+#   alpha beta
+
+const TABLE: FrozenDict[str, FrozenList[str]] = {"names": ["alpha", "beta"], "empty": []}
+const NAMES: FrozenList[str] = ["alpha", "beta"]
+
+
+def main() -> None:
+    names = TABLE["names"]
+    println(len(names))
+    println(TABLE.contains_key("names"))
+    println(" ".join([name for name in NAMES]))

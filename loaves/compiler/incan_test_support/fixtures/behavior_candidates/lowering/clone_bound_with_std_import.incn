@@ -1,0 +1,25 @@
+# behavior: a generic bound spelled with the Clone imported from std.derives.copying admits a derived model and clone() through it returns an independent copy
+# expect-stdout:
+#   original 1
+#   copy 5
+#   generic copy 1
+
+from std.derives.copying import Clone
+
+
+@derive(Clone)
+model Counter:
+    value: int
+
+
+def duplicate[T with Clone](item: T) -> T:
+    return item.clone()
+
+
+def main() -> None:
+    original = Counter(value=1)
+    mut copy = original.clone()
+    copy.value = 5
+    println(f"original {original.value}")
+    println(f"copy {copy.value}")
+    println(f"generic copy {duplicate(original).value}")

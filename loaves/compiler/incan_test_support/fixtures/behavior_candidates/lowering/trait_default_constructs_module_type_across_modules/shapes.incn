@@ -1,0 +1,11 @@
+pub model Extent:
+    pub n: int
+
+
+pub trait Counted:
+    def count(self) -> int:
+        Extent = 5
+        return Extent
+
+    def make(self) -> Extent:
+        return Extent(n=3)

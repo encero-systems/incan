@@ -1,0 +1,22 @@
+# behavior: an imported trait's default method returns a type of the trait's own module that the adopting module never imports, and the adopter's expansion of that default still constructs it
+# expect-stdout:
+#   12
+#   4
+
+from shapes import Measured
+
+
+model Card with Measured:
+    size: int
+
+    def width(self) -> int:
+        return self.size
+
+    def height(self) -> int:
+        return self.size + 1
+
+
+def main() -> None:
+    card = Card(size=3)
+    println(card.extent().area())
+    println(Card(size=1).extent().area() * 2)

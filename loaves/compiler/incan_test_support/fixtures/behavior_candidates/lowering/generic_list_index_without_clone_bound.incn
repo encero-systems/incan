@@ -1,0 +1,12 @@
+# behavior: a generic function returns the first element of a list[K] by index with no bound on K
+# expect-stdout:
+#   4
+#   x
+
+def first[K](items: list[K]) -> K:
+    return items[0]
+
+
+def main() -> None:
+    println(first([4, 5]))
+    println(first(["x", "y"]))
