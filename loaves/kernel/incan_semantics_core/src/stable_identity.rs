@@ -204,14 +204,94 @@ mod tests {
     use crate::types::IncanPrimitiveType;
 
     fn canonical(name: &str, span: (usize, usize), scope: Option<usize>) -> CanonicalSymbolId {
+        canonical_of_kind(name, span, scope, SemanticSourceTargetKind::Function)
+    }
+
+    /// Mint one canonical record the way `SymbolTable::mint_identity_with_kind` does for a lexical binding: module
+    /// origin, unqualified declaration name, the binding's own kind, a scope-table discriminant for anything not at
+    /// module level, and the declaration span.
+    fn canonical_of_kind(
+        name: &str,
+        span: (usize, usize),
+        scope: Option<usize>,
+        kind: SemanticSourceTargetKind,
+    ) -> CanonicalSymbolId {
         CanonicalSymbolId {
             namespace: SymbolNamespace::OrdinaryLexical,
             origin: SymbolOrigin::Module(vec!["environ".to_string()]),
             declaration_name: name.to_string(),
-            kind: SemanticSourceTargetKind::Function,
+            kind,
             scope_discriminant: scope.map(ScopeDiscriminant),
             declaration_span: HirSourceSpan::new(span.0, span.1),
         }
+    }
+
+    /// The two records from #1629: parameters both named `value`, minted in sibling functions of one module, so
+    /// they share namespace, origin, name and kind and differ only in scope discriminant and declaration span. The
+    /// projection used to drop both distinguishing fields and reduce every nested scope to one `#nested` key, so
+    /// the two were published as one declaration. Each parameter is now owned by its own function's stable
+    /// identity, and that ownership, not the span or the traversal index, is what separates them.
+    #[test]
+    fn sibling_parameters_named_alike_do_not_share_a_stable_identity_issue1629()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let left_parameter = canonical_of_kind("value", (30, 35), Some(2), SemanticSourceTargetKind::Parameter);
+        let right_parameter = canonical_of_kind("value", (80, 85), Some(3), SemanticSourceTargetKind::Parameter);
+        assert_ne!(
+            left_parameter, right_parameter,
+            "the canonical identities were never the collision"
+        );
+
+        // The issue's own probe: convert without owner context. The old projection answered twice with
+        // `parameter:...::value#nested`; the projection now refuses rather than inventing a colliding key.
+        assert_eq!(
+            StableDeclarationId::from_canonical(&left_parameter, None, None),
+            None,
+            "a nested binding has no stable identity without its checked owner"
+        );
+        assert_eq!(StableDeclarationId::from_canonical(&right_parameter, None, None), None);
+
+        let owner = |name: &str, span: (usize, usize)| {
+            StableDeclarationId::from_canonical(&canonical(name, span, None), None, None)
+                .ok_or_else(|| format!("module-level owner `{name}` must project"))
+        };
+        let project = |parameter: &CanonicalSymbolId, owner: StableDeclarationId| {
+            StableDeclarationId::from_canonical(
+                parameter,
+                None,
+                Some(StableDeclarationContext {
+                    owner,
+                    binding_ordinal: 0,
+                }),
+            )
+            .ok_or("an owned parameter must project")
+        };
+        let left = project(&left_parameter, owner("left", (0, 60))?)?;
+        let right = project(&right_parameter, owner("right", (61, 120))?)?;
+        assert_ne!(left, right, "sibling functions' parameters are distinct declarations");
+        assert_ne!(left.render_compact(), right.render_compact());
+        assert!(
+            left.render_compact().contains("#in(function:environ::left)"),
+            "the rendering names the lexical owner: {}",
+            left.render_compact()
+        );
+
+        // Ownership is what carries the identity: moving both functions down the file and renumbering the scope
+        // table leaves each parameter equal to itself, while the two stay apart.
+        let moved_left = project(
+            &canonical_of_kind("value", (530, 535), Some(41), SemanticSourceTargetKind::Parameter),
+            owner("left", (500, 560))?,
+        )?;
+        let moved_right = project(
+            &canonical_of_kind("value", (580, 585), Some(42), SemanticSourceTargetKind::Parameter),
+            owner("right", (561, 620))?,
+        )?;
+        assert_eq!(
+            left, moved_left,
+            "an unrelated span and scope-table shift is the same declaration"
+        );
+        assert_eq!(right, moved_right);
+        assert_ne!(moved_left, moved_right);
+        Ok(())
     }
 
     /// The defining property: the same declaration at a different offset is the same declaration.
