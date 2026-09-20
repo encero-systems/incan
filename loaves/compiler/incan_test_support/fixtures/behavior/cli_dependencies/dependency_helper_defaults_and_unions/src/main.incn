@@ -1,0 +1,14 @@
+# behavior: a consumer calling a dependency's pub helpers gets the omitted-argument default, the dependency-owned const default and union-typed parameters (#729)
+# retires: loaves/toolchain/incan-cli/tests/rfc031_pub_import_integration_tests.rs::consumer_build_plans_source_backed_pub_helper_calls_with_defaults_and_unions_issue729
+# expect-stdout:
+#   adjusted=5
+#   order_count=__querykit_count_no_argument__
+#   orders=7
+
+from pub::querykit import aggregate_as, aggregate_default, count, describe, lit
+
+
+def main() -> None:
+    println(describe(aggregate_as(lit(5), "adjusted")))
+    println(describe(aggregate_as(count(), "order_count")))
+    println(describe(aggregate_default(lit(7))))

@@ -1,0 +1,14 @@
+# behavior: a `Callable` value from a dependency is passed back across the `pub::` boundary into the dependency's own higher-order function and applied to every element
+# retires: loaves/compiler/incan_driver/tests/generated_rust_callability_artifact_tests.rs::generated_callable_artifact_and_consumers_share_producer_build
+# expect-stdout:
+#   2
+#   3
+#   4
+
+from pub::callability import map_owned, plus_one
+
+
+def main() -> None:
+    mapped = map_owned([1, 2, 3], plus_one)
+    for item in mapped:
+        println(item)

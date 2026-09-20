@@ -1736,6 +1736,54 @@ fn build_frozen_rejects_missing_lockfile() -> Result<(), Box<dyn std::error::Err
 }
 
 #[test]
+fn build_lock_policy_env_defaults_refuse_a_missing_lock() -> Result<(), Box<dyn std::error::Error>> {
+    // `INCAN_LOCKED=1` is the `--locked` default and `INCAN_FROZEN=1` implies locked (and offline), so either one
+    // refuses a project without `oven.lock` exactly as the flag would, and creates none. The environment defaults
+    // are lock-policy inputs, not a Cargo surface; they survive the cutover (#1561).
+    for (variable, context) in [
+        ("INCAN_LOCKED", "INCAN_LOCKED=1 build"),
+        ("INCAN_FROZEN", "INCAN_FROZEN=1 build"),
+    ] {
+        let tmp = tempfile::tempdir()?;
+        let main_path = write_minimal_project(tmp.path(), "cli_lock_env_default_project", "")?;
+        let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
+
+        let build_output = run_incan_with_env(tmp.path(), &["build", main_arg], &[(variable, "1")])?;
+
+        assert_failure(&build_output, context);
+        let stderr = String::from_utf8_lossy(&build_output.stderr);
+        assert!(
+            stderr.contains("oven.lock is missing; run `incan lock`"),
+            "{context} should report the missing lockfile, got:\n{stderr}"
+        );
+        assert!(
+            !tmp.path().join("oven.lock").exists(),
+            "{context} must not create oven.lock after refusing"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn build_no_flags_override_lock_policy_env_defaults() -> Result<(), Box<dyn std::error::Error>> {
+    // `--no-locked` and `--no-frozen` negate the environment defaults on the command line, so the same project
+    // without `oven.lock` builds; the negation is the last word.
+    for (variable, flag, context) in [
+        ("INCAN_LOCKED", "--no-locked", "INCAN_LOCKED=1 build --no-locked"),
+        ("INCAN_FROZEN", "--no-frozen", "INCAN_FROZEN=1 build --no-frozen"),
+    ] {
+        let tmp = tempfile::tempdir()?;
+        let main_path = write_minimal_project(tmp.path(), "cli_lock_env_negation_project", "")?;
+        let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
+
+        let build_output = run_incan_with_env(tmp.path(), &["build", flag, main_arg], &[(variable, "1")])?;
+
+        assert_success(&build_output, context);
+    }
+    Ok(())
+}
+
+#[test]
 fn build_frozen_does_not_read_a_pre_rename_lock() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "cli_pre_rename_lock_project", "")?;
