@@ -5040,6 +5040,36 @@ fn test_issue1489_loop_variable_returned_owned_codegen() {
     );
 }
 
+/// Issue #1494: a string literal handed to a collection method must reach the `String` parameter owned. The
+/// `Deque[str]` case was the live one -- `resolve_type_index_expression` dropped the type application's argument, so
+/// the receiver reached emission as `Deque[Unknown]` and the literal had no target to convert toward (fixed in #1529);
+/// the builtin list, set and dict receivers already converted through `CollectionElement`.
+#[test]
+fn test_issue1494_collection_method_literal_arguments_codegen() {
+    let source = load_test_file("issue1494_collection_method_literal_arguments");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1494_collection_method_literal_arguments", rust_code);
+    let compact = compact_rust(&rust_code);
+    for expected in [
+        "Deque::<String>::from_iter(requested)",
+        "pending.append(\"default\".into())",
+        "pending.appendleft(\"first\".into())",
+        "names.push(\"default\".to_string())",
+        "(&mutseen).insert(\"default\".to_string())",
+        "labels.insert(\"default\".to_string(),\"value\".to_string())",
+        "labels.insert(\"first\".to_string(),\"value\".to_string())",
+    ] {
+        assert!(
+            compact.contains(expected),
+            "expected the literal to reach the collection method owned: {expected}\n{rust_code}"
+        );
+    }
+    assert!(
+        !compact.contains("Deque::<Unknown>") && !compact.contains("append(\"default\")"),
+        "the receiver must keep its element type and the literal must not pass unconverted:\n{rust_code}"
+    );
+}
+
 #[test]
 fn test_rfc041_std_rust_capability_bounds_codegen() {
     let source = load_test_file("rfc041_std_rust_capability_bounds");

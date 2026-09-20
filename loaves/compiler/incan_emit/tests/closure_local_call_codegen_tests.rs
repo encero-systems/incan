@@ -130,9 +130,10 @@ fn closure_shapes_that_already_resolved_are_unchanged_issue1492() -> Result<(), 
 /// type and emits through `ValueUseSite::CollectionElement`. `Deque` is Incan-authored, so its `append` is an
 /// ordinary call whose declared parameter drives the same `str` to `String` conversion.
 ///
-/// This no longer reproduces on the dev line: the literal emits as `"default".into()`. Something merged after the
-/// issue was filed fixed it, and the combination had no test, so this is added as the regression cover the fix
-/// never got rather than as a change made here.
+/// This in-process check takes the module path (`SymbolOrigin::Module`) and passed while the packaged path still
+/// failed: the defect was upstream, in `resolve_type_index_expression` dropping the type application's argument so
+/// the receiver reached emission as `Deque[Unknown]` (fixed in #1529). The real-build cover for the packaged path is
+/// `string_literals_reach_collection_methods_owned_issue1494` in `cli_language_regression_tests`.
 #[test]
 fn a_string_literal_converts_for_a_generic_stdlib_method_issue1494() -> Result<(), Box<dyn std::error::Error>> {
     let source = concat!(

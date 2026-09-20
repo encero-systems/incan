@@ -148,6 +148,51 @@ def main() -> None:
     Ok(())
 }
 
+/// A string literal passed to a collection method reaches the `String` parameter owned (#1494). The live failure was
+/// `Deque[str].from_iter(...)` followed by `append("default")`: the type application lost its argument, the receiver
+/// reached emission as `Deque[Unknown]`, and the literal passed as `&str` (E0308). #1529 fixed that in the type
+/// resolver; the in-process harness had passed all along because it takes the module path, so this pins the packaged
+/// path through a real build, alongside the builtin list, set and dict receivers.
+#[test]
+fn string_literals_reach_collection_methods_owned_issue1494() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    write_minimal_project(tmp.path(), "collection_method_literals", "")?;
+    fs::write(
+        tmp.path().join("src/main.incn"),
+        r#"from std.collections import Deque
+
+def probe(requested: list[str]) -> int:
+    mut pending = Deque[str].from_iter(requested)
+    pending.append("default")
+    pending.appendleft("first")
+    mut names: list[str] = []
+    names.append("default")
+    mut seen: set[str] = set()
+    seen.add("default")
+    seen.add("default")
+    mut labels: Dict[str, str] = {}
+    labels["default"] = "value"
+    labels.insert("first", "value")
+    return len(pending) + len(names) + len(seen) + len(labels)
+
+def main() -> None:
+    println(probe(["a"]))
+"#,
+    )?;
+    let bake = run_explicit_oven_bake(tmp.path())?;
+    assert_success(&bake, "prepare the collection-method literal fixture");
+    let build = run_incan(tmp.path(), &["build", "src/main.incn"])?;
+    assert_success(&build, "build collection methods receiving string literals");
+    let run = run_incan(tmp.path(), &["run", "src/main.incn"])?;
+    assert_success(&run, "run the collection-method literal program");
+    assert_eq!(
+        String::from_utf8(run.stdout)?.trim(),
+        "7",
+        "three deque items, one list item, one set item and two dict entries"
+    );
+    Ok(())
+}
+
 /// `{{` and `}}` are the f-string escapes for one literal brace, as in Python, so `f"{{{name}}}"` renders `{x}`. The
 /// lexer collapsed them correctly; emission then brace-escaped every literal segment again for a `format!` string it
 /// no longer builds, and both characters reached the output.
