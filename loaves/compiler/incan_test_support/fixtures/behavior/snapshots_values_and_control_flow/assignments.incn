@@ -1,0 +1,68 @@
+# behavior: simple, swapped, augmented, collection-element and chained assignments leave each variable with its final value
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_assignments_codegen
+# expect-stdout:
+#   42 hello true 2 1
+#   0 6.0 hello world
+#   10 40 10 2
+#   5 5 5
+
+"""Test variable assignments and augmented assignments"""
+
+def test_basic_assignments() -> None:
+    # Simple assignments
+    x: int = 42
+    y: str = "hello"
+    z: bool = True
+
+    # Multiple simple assignments
+    mut a: int = 1
+    mut b: int = 2
+
+    # Manual swap using temporary
+    temp: int = a
+    a = b
+    b = temp
+    println(f"{x} {y} {z} {a} {b}")
+
+def test_augmented_assignments() -> None:
+    # Arithmetic augmented assignments
+    mut x: int = 10
+    x += 5   # x = 15
+    x -= 3   # x = 12
+    x *= 2   # x = 24
+    x %= 4   # x = 0
+
+    # Division always yields float in Incan, so keep a float-typed variable here
+    mut xf: float = 24.0
+    xf /= 4   # xf = 6.0
+
+    # String concatenation
+    mut s: str = "hello"
+    s += " world"
+    println(f"{x} {xf} {s}")
+
+def test_collection_assignments() -> None:
+    # List element assignment
+    mut numbers: list[int] = [1, 2, 3, 4]
+    numbers[0] = 10
+    numbers[-1] = 40
+
+    # Dict assignment
+    mut data: dict[str, int] = {"a": 1}
+    data["b"] = 2
+    data["a"] = 10
+    println(f"{numbers[0]} {numbers[3]} {data["a"]} {data["b"]}")
+
+def test_multiple_targets() -> None:
+    value: int = 5
+    mut x: int = value
+    mut y: int = value
+    mut z: int = value
+    x = y = z = 5
+    println(f"{x} {y} {z}")
+
+def main() -> None:
+    test_basic_assignments()
+    test_augmented_assignments()
+    test_collection_assignments()
+    test_multiple_targets()

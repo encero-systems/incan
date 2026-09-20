@@ -1,0 +1,20 @@
+# behavior: a Regex built with the constructor and the ignore_case flag matches case-insensitively, and an invalid pattern is refused with an error
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_regex_import_constructor_hook_codegen
+# expect-stdout:
+#   true false
+#   refused
+
+from std.regex import Regex, RegexError
+
+def build() -> Result[None, RegexError]:
+  regex = Regex("x+", ignore_case=true)?
+  println(f"{regex.is_match("aXXb")} {regex.is_match("ab")}")
+  return Ok(None)
+
+def main() -> None:
+  match build():
+    Ok(_) => pass
+    Err(error) => println(error.message())
+  match Regex("(unclosed"):
+    Ok(_) => println("accepted")
+    Err(_) => println("refused")

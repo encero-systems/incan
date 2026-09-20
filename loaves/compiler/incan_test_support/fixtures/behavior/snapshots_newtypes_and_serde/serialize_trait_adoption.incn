@@ -1,0 +1,35 @@
+# behavior: a model adopting std.serde.json Serialize gains to_json and keeps its ordinary methods, and a generic json.Serialize bound accepts a json-derived model (RFC 024)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_serde_with_serialize_trait_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_with_serialize_keeps_ordinary_methods_inherent
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc024_module_derive_json_codegen
+# expect-stdout:
+#   {"value":1}
+#   hello
+#   {"value":"hello"}
+#   {"value":2}
+
+from std.serde import json
+from std.serde.json import Serialize
+
+model Payload with Serialize:
+    value: int
+
+model Text with Serialize:
+    value: str
+
+    def display_text(self) -> str:
+        return self.value
+
+@derive(json)
+model Derived:
+    value: int
+
+def encode[T with json.Serialize](value: T) -> str:
+    return value.to_json()
+
+def main() -> None:
+    println(Payload(value=1).to_json())
+    text = Text(value="hello")
+    println(text.display_text())
+    println(text.to_json())
+    println(encode(Derived(value=2)))

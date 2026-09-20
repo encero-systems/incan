@@ -1,0 +1,16 @@
+# behavior: a json-derived model's own method calls to_json on self and returns the JSON document
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_qualified_source_trait_dispatch_does_not_double_borrow_self
+# expect-stdout:
+#   {"value":1}
+
+from std.serde import json
+
+@derive(json)
+model Payload:
+  value: int
+
+  def encode(self) -> str:
+    return self.to_json()
+
+def main() -> None:
+  println(Payload(value=1).encode())

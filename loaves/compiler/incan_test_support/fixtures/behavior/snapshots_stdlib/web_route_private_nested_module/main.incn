@@ -1,0 +1,11 @@
+# behavior: a program whose nested module declares a private route handler returning a private json model beside an imported App builds and runs; the retired test asserted only how that module was emitted
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_web_route_private_nested_module_codegen
+# expect-stdout:
+#   routes loaded
+
+import std.async
+import api::routes
+from std.web import App
+
+def main() -> None:
+  println("routes loaded")

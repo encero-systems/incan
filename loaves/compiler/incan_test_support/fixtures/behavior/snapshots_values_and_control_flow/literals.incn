@@ -1,0 +1,45 @@
+# behavior: int, float, scientific, string, escaped, single-quoted, bool and None literals hold the values written
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_literals_codegen
+# expect-stdout:
+#   42 -10 1000000
+#   3.14 -2.5 15000000000.0
+#   hello single
+#   hello
+#   world
+#   true false
+#   none
+
+def test_literals() -> None:
+    # Integer literals
+    x: int = 42
+    y: int = -10
+    big: int = 1_000_000
+    println(f"{x} {y} {big}")
+
+    # Float literals
+    pi: float = 3.14
+    neg: float = -2.5
+    sci: float = 1.5e10
+    println(f"{pi} {neg} {sci}")
+
+    # String literals
+    greeting: str = "hello"
+    multiline: str = "hello\nworld"
+    quote: str = 'single'
+    println(f"{greeting} {quote}")
+    println(multiline)
+
+    # Boolean literals
+    yes: bool = True
+    no: bool = False
+    println(f"{yes} {no}")
+
+    # None literal (Optional type)
+    maybe: Option[int] = None
+    match maybe:
+        Some(value) => println(value)
+        None => println("none")
+
+
+def main() -> None:
+    test_literals()

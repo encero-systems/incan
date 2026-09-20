@@ -1,0 +1,48 @@
+# behavior: an async main bootstraps the runtime, spawned tasks run to completion, sleep yields, and timeout resolves an awaited value or reports expiry
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_async_task_compiled_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_async_time_compiled_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_async_main_runtime_bootstrap_codegen
+# expect-stdout:
+#   async main running
+#   1
+#   2
+#   quick 1
+#   timed out
+
+import std.async
+from std.async.task import spawn, spawn_blocking, JoinHandle
+from std.async.time import sleep, timeout, timeout_ms, TimeoutError
+
+
+async def quick() -> int:
+    await sleep(0.01)
+    return 1
+
+
+async def slow() -> int:
+    await sleep(0.5)
+    return 3
+
+
+def blocking() -> int:
+    return 2
+
+
+def launch() -> JoinHandle[int]:
+    return spawn(quick())
+
+
+async def main() -> None:
+    println("async main running")
+    match await launch():
+        Ok(value) => println(value)
+        Err(error) => println(f"join failed: {error.message()}")
+    match await spawn_blocking(blocking):
+        Ok(value) => println(value)
+        Err(error) => println(f"join failed: {error.message()}")
+    match await timeout(0.25, quick()):
+        Ok(value) => println(f"quick {value}")
+        Err(_) => println("timed out")
+    match await timeout_ms(20, slow()):
+        Ok(value) => println(f"slow {value}")
+        Err(_) => println("timed out")

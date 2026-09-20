@@ -1,0 +1,52 @@
+# behavior: std.graph directed graphs, DAGs and multigraphs add nodes and edges, answer neighbourhood and traversal queries, and refuse an edge that would close a cycle in a DAG (RFC 047)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_graph_compiled_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_graph_import_codegen
+# expect-stdout:
+#   successors 1
+#   bfs 2
+#   topo 2
+#   roots 1 sinks 1
+#   removed successors 0
+#   dag order 2
+#   dag cycle refused
+#   multi edges 2
+
+from std.graph import DiGraph, Dag, MultiDiGraph, NodeId, EdgeId, GraphError
+
+def count(result: Result[list[NodeId], GraphError]) -> int:
+    match result:
+        Ok(nodes) => return len(nodes)
+        Err(_) => return -1
+
+def exercise_graphs() -> None:
+    mut graph = DiGraph[str]()
+    a: NodeId = graph.add_node("a")
+    b: NodeId = graph.add_node("b")
+    edge_result: Result[None, GraphError] = graph.add_edge(a, b)
+    println(f"successors {count(graph.successors(a))}")
+    println(f"bfs {count(graph.bfs_nodes(a))}")
+    println(f"topo {count(graph.topological_order())}")
+    println(f"roots {len(graph.roots())} sinks {len(graph.sinks())}")
+    removed_edge: Result[None, GraphError] = graph.remove_edge(a, b)
+    println(f"removed successors {count(graph.successors(a))}")
+
+    mut dag = Dag[str]()
+    root: NodeId = dag.add_node("root")
+    leaf: NodeId = dag.add_node("leaf")
+    dag_edge: Result[None, GraphError] = dag.add_edge(root, leaf)
+    println(f"dag order {len(dag.topological_order())}")
+    match dag.add_edge(leaf, root):
+        Ok(_) => println("dag cycle accepted")
+        Err(_) => println("dag cycle refused")
+
+    mut multi = MultiDiGraph[str]()
+    left: NodeId = multi.add_node("left")
+    right: NodeId = multi.add_node("right")
+    first: Result[EdgeId, GraphError] = multi.add_edge(left, right)
+    second: Result[EdgeId, GraphError] = multi.add_edge(left, right)
+    match multi.edges_between(left, right):
+        Ok(edges) => println(f"multi edges {len(edges)}")
+        Err(_) => println("multi edges failed")
+
+def main() -> None:
+    exercise_graphs()

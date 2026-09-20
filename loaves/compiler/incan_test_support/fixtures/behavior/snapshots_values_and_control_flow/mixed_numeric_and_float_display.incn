@@ -1,0 +1,37 @@
+# behavior: int and float operands mix in arithmetic, and a float renders with its decimal point in println, str() and f-strings while :? and an exact f64 keep the plain rendering (#1372)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_mixed_numeric_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_float_display_codegen
+# expect-stdout:
+#   18.821428571428573
+#   100.0 25.0
+#   25.0
+#   total=100.0 quarter=25.0 field=2.0 debug=100.0 exact=3 100.0 2.0
+
+def mixed_ops(x: int, y: float) -> float:
+    a = x + y
+    b = y + x
+    c = x * y
+    d = y / x
+    e = x / y
+    f = x - y
+    return a + b + c + d + e + f
+
+
+model Reading:
+    value: float
+
+
+def describe(reading: Reading, exact: f64) -> str:
+    total: float = 100.0
+    quarter = total / 4.0
+    interpolated = f"total={total} quarter={quarter} field={reading.value} debug={total:?} exact={exact}"
+    converted = str(total) + " " + str(reading.value)
+    println(total, quarter)
+    println(str(quarter))
+    return interpolated + " " + converted
+
+
+def main() -> None:
+    result = mixed_ops(2, 3.5)
+    println(result)
+    println(describe(Reading(value=2.0), 3.0))

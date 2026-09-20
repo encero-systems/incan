@@ -1,0 +1,19 @@
+# behavior: module statics are mutable shared storage: reassignment and += update an int static, and a list static appended through a live alias shows the change (RFC 052)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc052_module_static_storage_codegen
+# expect-stdout:
+#   3
+#   2
+#   2
+
+static counter: int = 0
+static items: list[int] = []
+
+def main() -> None:
+  counter = counter + 1
+  counter += 2
+  items.append(counter)
+  let live = items
+  live.append(4)
+  println(counter)
+  println(len(items))
+  println(len(live))

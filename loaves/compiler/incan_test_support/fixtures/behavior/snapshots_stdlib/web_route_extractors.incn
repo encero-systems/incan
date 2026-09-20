@@ -1,0 +1,25 @@
+# behavior: route-decorated async handlers with typed path extractors remain callable functions that compute from their parameters, with std.web imported and no framework surfaced (RFC 023)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_web_route_extractors_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_web_route_codegen_no_framework_crate_leakage
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_web_routing_compiled_codegen
+# expect-stdout:
+#   2029
+#   7
+
+"""Web route passthrough fixture for RFC 023."""
+
+import std.async
+from std.web import route, GET, POST
+
+@route("/posts/{year}/{month}", methods=[GET])
+async def get_posts(year: int, month: int) -> str:
+    total = year + month
+    return str(total)
+
+@route("/users/{id}", methods=[POST])
+async def create_user(id: int) -> str:
+    return str(id)
+
+async def main() -> None:
+    println(await get_posts(2024, 5))
+    println(await create_user(7))
