@@ -1,0 +1,200 @@
+# behavior: unit, tuple-payload and collection-payload enum variants are constructed and told apart by match arms that bind their payloads
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_enums_codegen
+# expect-stdout:
+#   Color: red
+#   Some: 84, None: -1
+#   Success: 100
+#   Error: Something went wrong
+#   Quitting
+#   Moving to (10, 20)
+#   Writing: Hello
+#   Color: RGB(255, 0, 0)
+#   Circle area: 78.53975
+#   Rectangle area: 24.0
+#   Triangle area: 12.0
+#   Priority level: 3
+#   Empty count: 0
+#   Single count: 1
+#   Multiple count: 5
+#   Mapped count: 3
+
+"""Test enum definitions and pattern matching"""
+
+# Simple enum with unit variants
+enum Color:
+    Red
+    Green
+    Blue
+
+# Enum with data variants (Option-like)
+enum Maybe:
+    Some(int)
+    None
+
+# Enum with multiple field variants (Result-like)
+enum Result:
+    Ok(int)
+    Err(str)
+
+# Enum with different variant types
+enum Message:
+    Quit
+    Move(int, int)
+    Write(str)
+    ChangeColor(int, int, int)
+
+# Enum with complex data
+enum Shape:
+    Circle(float)
+    Rectangle(float, float)
+    Triangle(float, float)
+
+# Multiple enums in one file
+enum Status:
+    Pending
+    InProgress
+    Complete
+    Failed
+
+enum Priority:
+    Low
+    Medium
+    High
+    Critical
+
+# Enum with nested types
+enum DataContainer:
+    Empty
+    Single(int)
+    Multiple(list[int])
+    Mapped(dict[str, int])
+
+def get_color_name(color: Color) -> str:
+    match color:
+        case Color.Red:
+            return "red"
+        case Color.Green:
+            return "green"
+        case Color.Blue:
+            return "blue"
+
+def process_maybe(value: Maybe) -> int:
+    match value:
+        case Maybe.Some(x):
+            return x * 2
+        case Maybe.None:
+            return -1
+
+def handle_result(result: Result) -> str:
+    match result:
+        case Result.Ok(value):
+            return f"Success: {value}"
+        case Result.Err(error):
+            return f"Error: {error}"
+
+def handle_message(msg: Message) -> str:
+    match msg:
+        case Message.Quit:
+            return "Quitting"
+        case Message.Move(x, y):
+            return f"Moving to ({x}, {y})"
+        case Message.Write(text):
+            return f"Writing: {text}"
+        case Message.ChangeColor(r, g, b):
+            return f"Color: RGB({r}, {g}, {b})"
+
+def calculate_area(shape: Shape) -> float:
+    match shape:
+        case Shape.Circle(r):
+            return 3.14159 * r * r
+        case Shape.Rectangle(w, h):
+            return w * h
+        case Shape.Triangle(b, h):
+            return 0.5 * b * h
+
+def get_priority_level(priority: Priority) -> int:
+    match priority:
+        case Priority.Low:
+            return 1
+        case Priority.Medium:
+            return 2
+        case Priority.High:
+            return 3
+        case Priority.Critical:
+            return 4
+
+def count_items(container: DataContainer) -> int:
+    match container:
+        case DataContainer.Empty:
+            return 0
+        case DataContainer.Single(_):
+            return 1
+        case DataContainer.Multiple(items):
+            return len(items)
+        case DataContainer.Mapped(map):
+            return len(map)
+
+def main() -> None:
+    # Test simple enum
+    color: Color = Color.Red
+    color_name: str = get_color_name(color)
+    print(f"Color: {color_name}")
+
+    # Test Option-like enum
+    some_value: Maybe = Maybe.Some(42)
+    none_value: Maybe = Maybe.None
+
+    result1: int = process_maybe(some_value)
+    result2: int = process_maybe(none_value)
+    print(f"Some: {result1}, None: {result2}")
+
+    # Test Result-like enum
+    ok_result: Result = Result.Ok(100)
+    err_result: Result = Result.Err("Something went wrong")
+
+    ok_msg: str = handle_result(ok_result)
+    err_msg: str = handle_result(err_result)
+    print(ok_msg)
+    print(err_msg)
+
+    # Test Message enum
+    quit_msg: Message = Message.Quit
+    move_msg: Message = Message.Move(10, 20)
+    write_msg: Message = Message.Write("Hello")
+    color_msg: Message = Message.ChangeColor(255, 0, 0)
+
+    print(handle_message(quit_msg))
+    print(handle_message(move_msg))
+    print(handle_message(write_msg))
+    print(handle_message(color_msg))
+
+    # Test Shape enum
+    circle: Shape = Shape.Circle(5.0)
+    rectangle: Shape = Shape.Rectangle(4.0, 6.0)
+    triangle: Shape = Shape.Triangle(3.0, 8.0)
+
+    circle_area: float = calculate_area(circle)
+    rect_area: float = calculate_area(rectangle)
+    tri_area: float = calculate_area(triangle)
+
+    print(f"Circle area: {circle_area}")
+    print(f"Rectangle area: {rect_area}")
+    print(f"Triangle area: {tri_area}")
+
+    # Test Status and Priority enums
+    status: Status = Status.InProgress
+    priority: Priority = Priority.High
+
+    priority_level: int = get_priority_level(priority)
+    print(f"Priority level: {priority_level}")
+
+    # Test DataContainer enum
+    empty: DataContainer = DataContainer.Empty
+    single: DataContainer = DataContainer.Single(42)
+    multiple: DataContainer = DataContainer.Multiple([1, 2, 3, 4, 5])
+    mapped: DataContainer = DataContainer.Mapped({"a": 1, "b": 2, "c": 3})
+
+    print(f"Empty count: {count_items(empty)}")
+    print(f"Single count: {count_items(single)}")
+    print(f"Multiple count: {count_items(multiple)}")
+    print(f"Mapped count: {count_items(mapped)}")

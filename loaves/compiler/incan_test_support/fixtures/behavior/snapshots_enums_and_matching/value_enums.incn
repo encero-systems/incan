@@ -1,0 +1,49 @@
+# behavior: value enums backed by str and int expose their wire value and parse back from it, refusing unknown values (RFC 032)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_value_enums_codegen
+# expect-stdout:
+#   development
+#   production
+#   parsed production
+#   unknown
+#   200
+#   parsed 404
+#   unknown
+
+"""RFC 032 value enum declarations"""
+
+enum Env(str):
+    Dev = "development"
+    Prod = "production"
+
+pub enum HttpStatus(int):
+    Ok = 200
+    NotFound = 404
+
+def env_wire(env: Env) -> str:
+    return env.value()
+
+def parse_env(value: str) -> Option[Env]:
+    return Env.from_value(value)
+
+def status_wire(status: HttpStatus) -> int:
+    return status.value()
+
+def parse_status(value: int) -> Option[HttpStatus]:
+    return HttpStatus.from_value(value)
+
+def main() -> None:
+    println(env_wire(Env.Dev))
+    println(env_wire(Env.Prod))
+    match parse_env("production"):
+        Some(env) => println(f"parsed {env_wire(env)}")
+        None => println("unknown")
+    match parse_env("staging"):
+        Some(env) => println(f"parsed {env_wire(env)}")
+        None => println("unknown")
+    println(status_wire(HttpStatus.Ok))
+    match parse_status(404):
+        Some(status) => println(f"parsed {status_wire(status)}")
+        None => println("unknown")
+    match parse_status(500):
+        Some(status) => println(f"parsed {status_wire(status)}")
+        None => println("unknown")

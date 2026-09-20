@@ -1,0 +1,25 @@
+# behavior: a loop over a list of an imported enum compares each element and passes it on to a function without losing the list (#372)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue372_imported_enum_loop_ownership_codegen
+# expect-stdout:
+#   true
+#   false
+
+from rels import ConformanceRel
+
+def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:
+  match rel:
+    ConformanceRel.Read =>
+      return "ReadRel"
+    _ =>
+      return "Other"
+
+def scenario_matches(required: list[ConformanceRel]) -> bool:
+  for expected in required:
+    if expected == ConformanceRel.Read:
+      if relation_kind_name_from_conformance(expected) == "ReadRel":
+        return true
+  return false
+
+def main() -> None:
+  println(scenario_matches([ConformanceRel.Filter, ConformanceRel.Read]))
+  println(scenario_matches([ConformanceRel.Filter]))

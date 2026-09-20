@@ -1,0 +1,11 @@
+pub model ColumnRef:
+  pub name: str
+
+pub model AggregateMeasure:
+  pub column_name: str
+
+pub def col(name: str) -> ColumnRef:
+  return ColumnRef(name=name)
+
+pub def sum(expr: ColumnRef) -> AggregateMeasure:
+  return AggregateMeasure(column_name=expr.name)

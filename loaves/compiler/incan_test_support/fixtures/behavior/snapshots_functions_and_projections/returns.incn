@@ -1,0 +1,64 @@
+# behavior: plain, expression, early, multiple, in-loop, explicit-void and implicit-void returns each leave the function with the expected value
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_returns_codegen
+# expect-stdout:
+#   42
+#   30
+#   positive
+#   45
+#   15
+#   Hello
+#   positive
+
+"""Test return statements and early returns"""
+
+def simple_return() -> int:
+    return 42
+
+def return_expression() -> int:
+    x: int = 10
+    y: int = 20
+    return x + y
+
+def early_return(x: int) -> str:
+    if x < 0:
+        return "negative"
+    elif x == 0:
+        return "zero"
+    else:
+        return "positive"
+
+def multiple_returns(x: int) -> int:
+    if x < 10:
+        return x * 2
+    return x * 3
+
+def return_from_loop(numbers: list[int]) -> int:
+    for num in numbers:
+        if num > 10:
+            return num
+    return -1
+
+def void_return() -> None:
+    print("Hello")
+    return
+
+def implicit_void_return() -> None:
+    x: int = 5
+    if x > 0:
+        print("positive")
+        return
+    print("not positive")
+
+def main() -> None:
+    result1: int = simple_return()
+    result2: int = return_expression()
+    result3: str = early_return(5)
+    result4: int = multiple_returns(15)
+    result5: int = return_from_loop([1, 5, 15, 20])
+    println(result1)
+    println(result2)
+    println(result3)
+    println(result4)
+    println(result5)
+    void_return()
+    implicit_void_return()

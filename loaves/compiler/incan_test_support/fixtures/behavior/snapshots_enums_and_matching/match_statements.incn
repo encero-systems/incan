@@ -1,0 +1,60 @@
+# behavior: match statements over ints and Options select by literal, binding, wildcard and guard
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_match_statements_codegen
+# expect-stdout:
+#   other
+#   42
+#   many
+#   medium
+
+"""Test match statement code generation"""
+
+
+def test_match_simple() -> None:
+    x: int = 42
+    match x:
+        case 0:
+            print("zero")
+        case 1:
+            print("one")
+        case _:
+            print("other")
+
+
+def test_match_with_option() -> None:
+    value: Option[int] = Some(42)
+    match value:
+        case Some(n):
+            print(n)
+        case None:
+            print("nothing")
+
+
+def test_match_multiple_patterns() -> None:
+    x: int = 5
+    match x:
+        case 1:
+            print("one")
+        case 2:
+            print("two")
+        case 3:
+            print("three")
+        case _:
+            print("many")
+
+
+def test_match_with_guard() -> None:
+    x: int = 15
+    match x:
+        case n if n < 10:
+            print("small")
+        case n if n < 20:
+            print("medium")
+        case _:
+            print("large")
+
+
+def main() -> None:
+    test_match_simple()
+    test_match_with_option()
+    test_match_multiple_patterns()
+    test_match_with_guard()

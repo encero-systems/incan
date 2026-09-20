@@ -1,0 +1,9 @@
+# behavior: a function imported from a sibling module under an alias is callable through the alias and returns the provider's result
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::cross_module_function_alias_imports_and_calls_the_provider_projection
+# expect-stdout:
+#   42
+
+from helpers import calculate as compute
+
+def main() -> None:
+  println(compute(41))

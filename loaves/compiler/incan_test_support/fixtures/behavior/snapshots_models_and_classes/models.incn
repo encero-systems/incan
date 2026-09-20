@@ -1,0 +1,192 @@
+# behavior: models with Debug, Clone and json derives, Option fields, nested collections and nested models are constructible and readable
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_models_codegen
+# expect-stdout:
+#   User: Alice, Age: 30
+#   Product ID: 123
+#   Config port: 8080
+#   optional value 42
+#   none none
+#   Student: Bob
+#   Distance: 5.0
+#   Contact: Charlie in Boston
+#   {"endpoint":"/users","method":"GET","payload":""}
+
+"""Test model definitions with various decorators"""
+
+from std.serde import json
+
+# Simple model with basic fields
+model User:
+    name: str
+    age: int
+    email: str
+
+
+# Model with @derive(Debug)
+@derive(Debug)
+model Product:
+    id: int
+    name: str
+    price: float
+
+
+# Model with @derive(Clone)
+@derive(Clone)
+model Config:
+    host: str
+    port: int
+    timeout: int
+
+
+# Model with @derive(json)
+@derive(json)
+model ApiRequest:
+    endpoint: str
+    method: str
+    payload: str
+
+
+# Model with multiple derives
+@derive(Debug, Clone)
+model Point:
+    x: int
+    y: int
+
+
+# Model with Option fields
+@derive(Debug)
+model OptionalData:
+    required: str
+    optional: Option[str]
+    maybe_number: Option[int]
+
+
+# Model with nested types
+@derive(Debug, Clone)
+model StudentData:
+    name: str
+    grades: list[int]
+    metadata: dict[str, str]
+
+
+# Model with complex nested types
+@derive(Debug)
+model ComplexModel:
+    ids: list[int]
+    mapping: dict[str, int]
+    optional_list: Option[list[str]]
+    nested_dict: dict[str, list[int]]
+
+
+@derive(Debug)
+model Address:
+    street: str
+    city: str
+    zipcode: str
+
+
+@derive(Debug)
+model Contact:
+    name: str
+    address: Address
+    phone: str
+
+
+# Model used in function signatures
+@derive(Debug, Clone)
+model Coordinate:
+    latitude: float
+    longitude: float
+
+
+def create_coordinate(lat: float, lon: float) -> Coordinate:
+    return Coordinate(latitude=lat, longitude=lon)
+
+
+def distance_from_origin(coord: Coordinate) -> float:
+    lat_sq: float = coord.latitude * coord.latitude
+    lon_sq: float = coord.longitude * coord.longitude
+    return (lat_sq + lon_sq) ** 0.5
+
+
+def describe_optional(data: OptionalData) -> str:
+    mut text: str = "none"
+    match data.optional:
+        Some(value) => text = value
+        None => text = "none"
+    mut number: str = "none"
+    match data.maybe_number:
+        Some(value) => number = str(value)
+        None => number = "none"
+    return f"{text} {number}"
+
+
+def main() -> None:
+    # Test simple model instantiation
+    user: User = User(
+        name="Alice",
+        age=30,
+        email="alice@example.com"
+    )
+    print(f"User: {user.name}, Age: {user.age}")
+
+    # Test model with Debug derive
+    product: Product = Product(
+        id=123,
+        name="Laptop",
+        price=999.99
+    )
+    print(f"Product ID: {product.id}")
+
+    # Test model with Clone derive
+    config: Config = Config(
+        host="localhost",
+        port=8080,
+        timeout=30
+    )
+    print(f"Config port: {config.port}")
+
+    # Test model with Option fields
+    data1: OptionalData = OptionalData(
+        required="must have",
+        optional=Some("optional value"),
+        maybe_number=Some(42)
+    )
+
+    data2: OptionalData = OptionalData(
+        required="also must have",
+        optional=None,
+        maybe_number=None
+    )
+    print(describe_optional(data1))
+    print(describe_optional(data2))
+
+    # Test model with nested types
+    student: StudentData = StudentData(
+        name="Bob",
+        grades=[85, 90, 88, 92],
+        metadata={"school": "MIT", "year": "2024"}
+    )
+    print(f"Student: {student.name}")
+
+    # Test function with models
+    coord: Coordinate = create_coordinate(3.0, 4.0)
+    dist: float = distance_from_origin(coord)
+    print(f"Distance: {dist}")
+
+    # Test nested models
+    address: Address = Address(
+        street="123 Main St",
+        city="Boston",
+        zipcode="02101"
+    )
+
+    contact: Contact = Contact(
+        name="Charlie",
+        address=address,
+        phone="555-1234"
+    )
+    print(f"Contact: {contact.name} in {contact.address.city}")
+
+    request: ApiRequest = ApiRequest(endpoint="/users", method="GET", payload="")
+    print(request.to_json())

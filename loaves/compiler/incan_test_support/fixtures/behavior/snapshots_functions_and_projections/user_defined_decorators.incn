@@ -1,0 +1,23 @@
+# behavior: a user-defined decorator replaces the decorated function with the callable it returns, so calling the decorated name runs the replacement (RFC 036)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_user_defined_decorators_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::decorated_function_emits_one_source_projection_and_distinct_generated_helpers
+# expect-stdout:
+#   7
+
+# RFC 036: user-defined decorators
+
+def parse(value: int) -> int:
+    return value
+
+def as_int(func: (int) -> str) -> (int) -> int:
+    return parse
+
+@as_int
+def label(value: int) -> str:
+    return "value"
+
+def run() -> int:
+    return label(7)
+
+def main() -> None:
+    println(run())

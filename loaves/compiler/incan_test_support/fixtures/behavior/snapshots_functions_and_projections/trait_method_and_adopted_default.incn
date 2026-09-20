@@ -1,0 +1,28 @@
+# behavior: a trait method implemented by a class and a trait default method adopted unchanged both answer a call on the concrete receiver
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::trait_method_keeps_abi_slot_and_exposes_one_recoverable_concrete_projection
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::adopted_default_method_exposes_a_recoverable_projection_beside_the_trait_slot
+# expect-stdout:
+#   ready
+#   default
+
+trait Labelled:
+  def label(self) -> str
+
+class Item with Labelled:
+  value: str
+
+  def label(self) -> str:
+    return self.value
+
+trait Named:
+  def label(self) -> str:
+    return "default"
+
+class Plain with Named:
+  value: str
+
+def main() -> None:
+  item: Item = Item(value="ready")
+  println(item.label())
+  plain: Plain = Plain(value="unused")
+  println(plain.label())

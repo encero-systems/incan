@@ -1,0 +1,27 @@
+# behavior: a user-defined decorator on an instance method replaces the method with the callable it returns, and the replacement is what the call runs (RFC 036)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_user_defined_method_decorators_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::decorated_method_declaration_and_call_share_one_projection
+# expect-stdout:
+#   8
+
+# RFC 036: user-defined method decorators
+
+class Box:
+    value: int
+
+    @as_int
+    def label(self, value: int) -> str:
+        return "value"
+
+def parse(box: &Box, value: int) -> int:
+    return value + 1
+
+def as_int(func: (&Box, int) -> str) -> (&Box, int) -> int:
+    return parse
+
+def run(box: Box) -> int:
+    return box.label(7)
+
+def main() -> None:
+    box = Box(value=1)
+    println(run(box))

@@ -1,0 +1,26 @@
+# behavior: a model type parameter used only in method signatures still types the model, its operator method and its debug rendering (#1370)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1370_phantom_type_param_codegen
+# expect-stdout:
+#   (amount * 2)
+#   (label * x)
+#   Column { sql: "amount" }
+
+"""Issue #1370: a model type parameter used only in method signatures is a phantom parameter."""
+
+@derive(Debug)
+model Column[T]:
+  sql: str
+
+  def __mul__(self, other: T) -> Column[T]:
+    return Column[T](sql=f"({self.sql} * {other})")
+
+def col[T](name: str) -> Column[T]:
+  return Column[T](sql=name)
+
+def main() -> None:
+  amount: Column[float] = col("amount")
+  total = amount * 2.0
+  println(f"{total.sql}")
+  label = Column[str](sql="label")
+  println(f"{(label * "x").sql}")
+  println(f"{amount:?}")

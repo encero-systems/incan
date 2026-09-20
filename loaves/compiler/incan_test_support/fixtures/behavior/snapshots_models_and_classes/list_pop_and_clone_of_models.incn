@@ -1,0 +1,38 @@
+# behavior: a list of a Clone-only model drains through pop() and copies through clone() with the copy independent of the original
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_list_pop_clone_only_model_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_list_clone_model_codegen
+# expect-stdout:
+#   2
+#   1
+#   2
+#   3 2
+
+"""Regression #194: list.pop() on Clone-only model must not require Default in generated Rust."""
+
+@derive(Clone)
+model PopRegressItem:
+    id: int
+
+
+def drain_items() -> None:
+    mut xs: list[PopRegressItem] = [PopRegressItem(id=1), PopRegressItem(id=2)]
+    while len(xs) > 0:
+        item: PopRegressItem = xs.pop()
+        print(item.id)
+
+
+@derive(Clone)
+model Node:
+  id: int
+
+def clone_nodes(nodes: List[Node]) -> List[Node]:
+  copy = nodes.clone()
+  return copy
+
+def main() -> None:
+    drain_items()
+    mut nodes = [Node(id=1), Node(id=2)]
+    mut copy = clone_nodes(nodes)
+    print(len(copy))
+    copy.append(Node(id=3))
+    print(f"{len(copy)} {len(nodes)}")

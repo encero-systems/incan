@@ -1,0 +1,17 @@
+# behavior: the power operator applies to a parenthesised float sum and to int operands coerced to float
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_power_receiver_parenthesisation_codegen
+# expect-stdout:
+#   2.6457513110645907
+#   256.0
+
+def compound(left: float, right: float) -> float:
+    return (left + right) ** 0.5
+
+
+def coerced(base: int, exponent: int) -> float:
+    return base ** exponent
+
+
+def main() -> None:
+    println(compound(3.0, 4.0))
+    println(coerced(2, 8))
