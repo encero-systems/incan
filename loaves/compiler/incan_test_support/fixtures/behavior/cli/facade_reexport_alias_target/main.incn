@@ -1,4 +1,4 @@
-# behavior: a facade re-exports functions whose modules import same-named builders under an alias, and the re-exported calls resolve and run (#57)
+# behavior: a facade re-exports functions whose modules import same-named builders under an alias, and the re-exported calls resolve and run (InQL #57)
 # retires: loaves/toolchain/incan-cli/tests/cli_decorator_and_partial_tests.rs::test_facade_reexport_preserves_declared_source_import_alias_target_issue57
 # expect-stdout:
 #   orders

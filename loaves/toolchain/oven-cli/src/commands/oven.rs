@@ -6088,6 +6088,19 @@ mod tests {
             )
             .cargo_fixture
         );
+        // No behaviour-fixture root receives a Cargo authority: its programs run on the sealed stdlib Loaf, and the
+        // `cli_dependencies` area's provider bakes are Cargo-guarded, so a bake that needs Cargo fails there.
+        for root in [
+            "loaves/toolchain/incan-cli/tests/behavior_cli_dependencies_tests.rs",
+            "loaves/toolchain/incan-cli/tests/behavior_cli_tests.rs",
+            "loaves/toolchain/incan-cli/tests/behavior_driver_tests.rs",
+            "loaves/toolchain/incan-cli/tests/behavior_harness_tests.rs",
+            "loaves/toolchain/incan-cli/tests/behavior_smoke_tests.rs",
+        ] {
+            let capabilities = OvenCompilerSuiteTargetCapabilities::for_target("incan-cli", "test", root);
+            assert!(!capabilities.explicit_bake_cargo, "{root}");
+            assert!(!capabilities.cargo_fixture, "{root}");
+        }
 
         let mut environment = BTreeMap::from([
             ("INCAN_OVEN_COMPILER_SUITE_RUSTC".to_string(), "rustc".to_string()),
