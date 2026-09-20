@@ -4641,20 +4641,27 @@ impl TypeChecker {
         if !self.symbols.is_active_lookup_binding(symbol_id) {
             return;
         }
-        if !trait_methods.is_empty() {
-            self.type_info.rust.trait_imports.insert(
-                name.clone(),
-                RustTraitImportInfo {
-                    trait_path: info.path.clone(),
-                    definition_path: info
-                        .metadata
-                        .as_ref()
-                        .and_then(|metadata| metadata.definition_path.clone()),
-                    methods: trait_methods,
-                    method_signatures: trait_method_signatures,
-                },
-            );
+        // An import with a declared method surface is a trait Rust method lookup can use. An import with no
+        // metadata at all may still be one: nothing says which methods it provides, so it stays a candidate for
+        // every method call that no inspected surface resolves rather than being pruned as unused (#1450). Metadata
+        // that names a non-trait item settles the question, and the binding is left out.
+        let methods_known = !trait_methods.is_empty();
+        if !methods_known && info.metadata.is_some() {
+            return;
         }
+        self.type_info.rust.trait_imports.insert(
+            name.clone(),
+            RustTraitImportInfo {
+                trait_path: info.path.clone(),
+                definition_path: info
+                    .metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.definition_path.clone()),
+                methods: trait_methods,
+                methods_known,
+                method_signatures: trait_method_signatures,
+            },
+        );
     }
 
     /// Define a symbol for a Rust crate import.

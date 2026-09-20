@@ -174,7 +174,9 @@ struct DiskCacheEnvelope {
 }
 
 // Bump when extracted metadata semantics change in a way that makes previously persisted items unsafe to reuse.
-const DISK_CACHE_FORMAT: u32 = 40;
+// 41: a method's receiver parameter is persisted as written (`&mut self`, `&self`, `self`, or its declared type)
+// instead of the HIR reference display that dropped `mut`; a trait-qualified call reads its borrow from it (#1375).
+const DISK_CACHE_FORMAT: u32 = 41;
 const DISK_CACHE_FILE: &str = ".incan_rust_inspect_cache.json";
 // Backward-compatibility read path for caches written before the crate/module rename.
 const LEGACY_DISK_CACHE_FILE: &str = ".incan_rust_metadata_cache.json";

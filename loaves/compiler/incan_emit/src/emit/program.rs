@@ -1142,23 +1142,28 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         method: &str,
         dispatch: Option<&IrMethodDispatch>,
     ) {
-        let Some(IrMethodDispatch::RustExtensionTraitImport { binding }) = dispatch else {
+        let Some(IrMethodDispatch::RustExtensionTraitImport { bindings }) = dispatch else {
             if self.receiver_can_use_rust_extension_trait(receiver) {
                 self.mark_unambiguous_rust_extension_trait_import(method);
             }
             return;
         };
-        if self.rust_extension_trait_imports.contains_key(binding) {
-            self.analysis.used_extension_trait_imports.insert(binding.clone());
+        for binding in bindings {
+            if self.rust_extension_trait_imports.contains_key(binding) {
+                self.analysis.used_extension_trait_imports.insert(binding.clone());
+            }
         }
     }
 
     /// Mark a trait import for metadata-free fallback only when the method has one possible imported trait.
+    ///
+    /// Only imports with a declared method surface take part; an unknown-surface import is retained solely through
+    /// the candidates the typechecker recorded on the call.
     fn mark_unambiguous_rust_extension_trait_import(&mut self, method: &str) {
         let mut matches = self
             .rust_extension_trait_imports
             .iter()
-            .filter(|(_, import)| import.methods.iter().any(|candidate| candidate == method))
+            .filter(|(_, import)| import.methods_known && import.methods.iter().any(|candidate| candidate == method))
             .map(|(binding, _)| binding.clone());
         let Some(binding) = matches.next() else {
             return;

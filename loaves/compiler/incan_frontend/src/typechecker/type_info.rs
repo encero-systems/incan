@@ -793,6 +793,13 @@ pub struct RustInteropArtifacts {
     /// call so generated-use analysis can retain the exact import instead of retaining every trait with the same
     /// method name.
     pub method_trait_import_uses: HashMap<(usize, usize), RustMethodTraitImportUse>,
+    /// Imported Rust items with an unknown method surface that a Rust method call may reach through extension lookup.
+    ///
+    /// Keyed by the full method-call expression span and recorded only when no inspected surface resolved the
+    /// method. Every listed binding is retained by generated-use analysis when the call is reachable: without
+    /// metadata the compiler cannot pick the one trait that declares the method, and dropping the `use` turns a
+    /// correct program into an E0599 against generated code (#1450).
+    pub method_trait_import_candidates: HashMap<(usize, usize), Vec<String>>,
     /// Body-less rusttype Rust-trait adoptions proven by metadata and therefore satisfied by the backing type alias.
     ///
     /// Lowering must not emit an `impl Trait for Alias` for these entries because Rust coherence treats the alias as
@@ -1396,6 +1403,13 @@ pub struct RustTraitImportInfo {
     pub definition_path: Option<String>,
     /// Method names this trait can place in Rust method-lookup scope.
     pub methods: HashSet<String>,
+    /// Whether `methods` is the trait's declared surface, from inspected metadata or the compiler's fallback trait
+    /// vocabulary.
+    ///
+    /// An import with neither has an unknown surface: the compiler cannot say which methods it provides, or even
+    /// that it is a trait. Such an import stays a candidate for any method call that no inspected surface resolves,
+    /// so the generated `use` survives when Rust method lookup may need it (#1450).
+    pub methods_known: bool,
     /// Method signatures this trait metadata provided, keyed by method name.
     pub method_signatures: HashMap<String, RustFunctionSig>,
 }
@@ -2386,6 +2400,14 @@ impl TypeCheckInfo {
         self.rust.method_trait_import_uses.get(&(span.start, span.end))
     }
 
+    /// Return the unknown-surface Rust imports the method call at `span` may reach, if any were recorded.
+    pub fn rust_method_trait_import_candidates(&self, span: Span) -> Option<&[String]> {
+        self.rust
+            .method_trait_import_candidates
+            .get(&(span.start, span.end))
+            .map(Vec::as_slice)
+    }
+
     /// Return custom iteration protocol metadata for `span`, if any.
     pub fn protocol_iteration(&self, span: Span) -> Option<&ProtocolIterationInfo> {
         self.protocols.iterations.get(&(span.start, span.end))
@@ -2461,6 +2483,13 @@ impl TypeCheckInfo {
         self.rust
             .method_trait_import_uses
             .insert((span.start, span.end), import_use);
+    }
+
+    /// Record the unknown-surface Rust imports a method call that no inspected surface resolved may reach.
+    pub fn record_rust_method_trait_import_candidates(&mut self, span: Span, bindings: Vec<String>) {
+        self.rust
+            .method_trait_import_candidates
+            .insert((span.start, span.end), bindings);
     }
 
     /// Record a custom `for` iteration protocol route.
