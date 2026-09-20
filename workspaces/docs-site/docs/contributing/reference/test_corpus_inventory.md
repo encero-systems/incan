@@ -12,16 +12,16 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3110 | 148 | 7 |
+| keep | 3110 | 172 | 7 |
 | re-point | 480 | 42 | 377 |
 | retire | 1109 | 72 | 0 |
 | unaffected | 1407 | 132 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **6106** | **394** | **389** |
+| **Total** | **6106** | **418** | **389** |
 
 - Retire-class tests with a named twin: 12/1109.
 - Retire-class files with no twin at all: 79 (the `Twins` column reads `0/n`).
-- Files whose test region exceeds the split threshold of 1500 lines: 26, of which 14 in the durable corpus (keep or re-point).
+- Files whose test region exceeds the split threshold of 1500 lines: 25, of which 13 in the durable corpus (keep or re-point).
 - Unreviewed files: 0.
 
 ## Dispositions
@@ -297,7 +297,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (1707 tests in 42 files: keep 1707)
+### `loaves/compiler/incan_frontend` (1707 tests in 66 files: keep 1707)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---|---|---|---|
@@ -328,10 +328,34 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 | `loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs` | 1 | 4825 | 32 | keep | - | - | #1561 | checker 1 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/typechecker/identity_surface_tests.rs` | 8 | 284 | 284 | keep | - | - | #1561 | checker 8, parser 8 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs` | 31 | 3072 | 1113 | keep | - | - | #1561 | parser 30 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
-| `loaves/compiler/incan_frontend/src/typechecker/tests.rs` | 952 | 25942 | 25942 | keep | - | required | #1561 | checker 944, parser 898 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/async_and_iteration.rs` | 51 | 957 | 957 | keep | - | - | #1561 | checker 37 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/bounds_and_derives.rs` | 39 | 1122 | 1122 | keep | - | - | #1561 | checker 21, parser 10 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/calls_decorators_and_builtins.rs` | 50 | 1153 | 1153 | keep | - | - | #1561 | checker 27, parser 9 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/capabilities.rs` | 20 | 553 | 553 | keep | - | - | #1561 | checker 20, parser 9 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/checked_facts_and_registries.rs` | 21 | 986 | 986 | keep | - | - | #1561 | checker 20, parser 2 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/collections_strings_and_bytes.rs` | 46 | 984 | 984 | keep | - | - | #1561 | checker 42, parser 4 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/extern_and_c_bindings.rs` | 22 | 824 | 824 | keep | - | - | #1561 | checker 16, parser 3 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/fields_and_members.rs` | 51 | 1037 | 1037 | keep | - | - | #1561 | checker 47, parser 5 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/generics_and_type_tokens.rs` | 35 | 932 | 932 | keep | - | - | #1561 | checker 22, parser 9 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/imports_and_stdlib_modules.rs` | 42 | 1155 | 1155 | keep | - | - | #1561 | checker 31, parser 7 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/models_enums_and_newtypes.rs` | 51 | 963 | 963 | keep | - | - | #1561 | checker 37, parser 2 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/narrowing_and_matching.rs` | 53 | 1011 | 1011 | keep | - | - | #1561 | checker 53, parser 1 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/numerics_const_and_static.rs` | 62 | 983 | 983 | keep | - | - | #1561 | checker 61 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/partials_and_callable_aliases.rs` | 33 | 1117 | 1117 | keep | - | - | #1561 | checker 33, parser 12 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/pub_imports_namespaces_and_fields.rs` | 21 | 819 | 819 | keep | - | - | #1561 | checker 21, parser 16 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/pub_imports_symbols_and_identity.rs` | 30 | 1038 | 1038 | keep | - | - | #1561 | checker 29, parser 5 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/pub_imports_trait_adoptions.rs` | 8 | 700 | 700 | keep | - | - | #1561 | checker 8, parser 2 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/rust_constructors_and_fields.rs` | 15 | 974 | 974 | keep | - | - | #1561 | checker 14, parser 11 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/rust_generics_and_traits.rs` | 19 | 1163 | 1163 | keep | - | - | #1561 | checker 18, parser 12 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/rust_imports_and_types.rs` | 55 | 1051 | 1051 | keep | - | - | #1561 | checker 41, parser 5 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/rust_metadata_and_methods.rs` | 27 | 1317 | 1317 | keep | - | - | #1561 | checker 23, parser 11 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/rust_supertraits.rs` | 7 | 164 | 164 | keep | - | - | #1561 | checker 5 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/rust_trait_import_candidates.rs` | 6 | 155 | 155 | keep | - | - | #1561 | checker 6, parser 6 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/rust_trait_qualified_calls.rs` | 9 | 325 | 325 | keep | - | - | #1561 | checker 8, parser 7 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/statements_and_bindings.rs` | 69 | 1175 | 1175 | keep | - | - | #1561 | checker 66, parser 1 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/stdlib_surfaces.rs` | 44 | 1168 | 1168 | keep | - | - | #1561 | checker 31, parser 12 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/trait_instantiation_and_operators.rs` | 42 | 1363 | 1363 | keep | - | - | #1561 | checker 41, parser 11 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/traits.rs` | 46 | 1057 | 1057 | keep | - | - | #1561 | checker 42, parser 22 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/validate_rust_module.rs` | 2 | 270 | 30 | keep | - | - | #1561 | - | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/vocab_ast_bridge.rs` | 12 | 1896 | 491 | keep | - | - | #1561 | - | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/vocab_desugar_pass/helper_bindings.rs` | 15 | 829 | 455 | keep | - | - | #1561 | checker 11 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |

@@ -1186,9 +1186,9 @@ fn lowers_a_dict_comprehension_into_an_insert_loop() -> Result<(), Box<dyn std::
 fn generator_expression_keeps_its_multi_clause_body_lazy_and_captures_its_environment()
 -> Result<(), Box<dyn std::error::Error>> {
     // Mirrors the multi-clause fixture from `test_rfc006_generator_expression_infers_element_type` in
-    // `loaves/compiler/incan_frontend/src/typechecker/tests.rs`, but also reads `offset` from both the filter and
-    // element. The Body IR value must capture that enclosing local once at construction; it must not materialize
-    // the chain or run either filter/element in the enclosing body.
+    // `loaves/compiler/incan_frontend/src/typechecker/tests/async_and_iteration.rs`, but also reads `offset` from both
+    // the filter and element. The Body IR value must capture that enclosing local once at construction; it must not
+    // materialize the chain or run either filter/element in the enclosing body.
     let source = "def positives(offset: int, xs: list[int], ys: list[int]) -> Generator[int]:\n  return (x * offset for x in xs if x > offset for y in ys if y > x)\n";
     let module = build(source, &["m", "generator_expr"])?;
     let snapshot = module.render_snapshot();

@@ -1,0 +1,1010 @@
+//! Sum types and how they are taken apart: union member checks and `isinstance` / `is None` narrowing, transparent type
+//! aliases (#562), match and `if let` patterns and pattern node types (#1245), enum-variant resolution against the
+//! scrutinee, `Option` / `Result` payloads, the `?` operator, RFC 070 combinators, and RFC 068 truthiness.
+
+use super::*;
+
+#[test]
+fn test_union_member_values_satisfy_explicit_union_return_type() {
+    let source = r#"
+def parse_value(flag: bool) -> int | str:
+  if flag:
+    return 42
+  return "fallback"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_rejects_return_value_outside_member_set() {
+    let source = r#"
+def parse_value() -> int | str:
+  return true
+"#;
+    let errors = check_str_err(source, "bool should not satisfy int | str");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Union") && error.message.contains("bool")),
+        "expected union type mismatch diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_union_assignment_canonicalizes_none_through_option() {
+    let source = r#"
+def maybe_name(flag: bool) -> str | None:
+  if flag:
+    return "Ada"
+  return None
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_isinstance_narrows_branch_type() {
+    let source = r#"
+def normalize(value: int | str) -> str:
+  if isinstance(value, str):
+    return value.upper()
+  return "number"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_isinstance_narrows_else_branch_for_two_member_union() {
+    let source = r#"
+def normalize(value: int | str) -> str:
+  if isinstance(value, int):
+    return "number"
+  else:
+    return value.upper()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_isinstance_narrows_wider_else_branch_to_remaining_union() {
+    let source = r#"
+def normalize(value: int | str | bool) -> str:
+  if isinstance(value, int):
+    return "number"
+  else:
+    match value:
+      bool(flag) =>
+        if flag:
+          return "true"
+        return "false"
+      str(text) =>
+        return text.upper()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_isinstance_narrows_elif_chain() {
+    let source = r#"
+def normalize(value: int | str | bool) -> str:
+  if isinstance(value, int):
+    return "number"
+  elif isinstance(value, str):
+    return value.upper()
+  else:
+    if value:
+      return "true"
+    return "false"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_collection_literal_requires_explicit_union_annotation() {
+    let source = r#"
+def values() -> List[int | str]:
+  items: List[int | str] = [1, "two"]
+  return items
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_collection_literal_does_not_synthesize_implicit_union() {
+    let source = r#"
+def values() -> None:
+  items = [1, "two"]
+"#;
+    let errors = check_str_err(source, "mixed list literal should require an explicit union annotation");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("int") && error.message.contains("str")),
+        "expected mixed list element diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_union_is_not_none_narrows_option_canonicalized_union() {
+    let source = r#"
+def normalize(value: str | None) -> str:
+  if value is not None:
+    return value.upper()
+  return "missing"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_is_none_narrows_else_branch_to_option_inner() {
+    let source = r#"
+def normalize(value: str | None) -> str:
+  if value is None:
+    return "missing"
+  else:
+    return value.upper()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_isinstance_narrows_option_wrapped_union_else_branch() {
+    let source = r#"
+def normalize(value: int | str | None) -> str:
+  if isinstance(value, int):
+    return "number"
+  else:
+    if value is None:
+      return "missing"
+    else:
+      return value.upper()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn explicit_builtin_isinstance_narrows_union_and_option_branches() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def normalize_union(value: int | str) -> str:
+  if std.builtins.isinstance(value, str):
+    return value.upper()
+  return "number"
+
+def normalize_option(value: int | str | None) -> str:
+  if std.builtins.isinstance(value, int):
+    return "number"
+  else:
+    if value is None:
+      return "missing"
+    else:
+      return value.upper()
+"#;
+    check_str(source).map_err(|errors| {
+        std::io::Error::other(format!(
+            "the explicit builtin identity must drive the same union and option narrowing as the ambient spelling: {errors:?}"
+        ))
+    })?;
+    Ok(())
+}
+
+#[test]
+fn test_union_match_type_patterns_bind_narrowed_values() {
+    let source = r#"
+def normalize(value: int | str) -> str:
+  match value:
+    int(n) =>
+      return "number"
+    str(s) =>
+      return s.upper()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_match_wildcard_arm_narrows_remaining_member() {
+    let source = r#"
+def normalize(value: int | str) -> str:
+  match value:
+    int(n) =>
+      return "number"
+    _ =>
+      return value.upper()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_issue562_type_aliases_are_transparent_for_dict_and_union_surfaces() -> Result<(), String> {
+    let source = r#"
+type FieldValue = str | bool | int | float | None
+type Fields = Dict[str, FieldValue]
+
+model Logger:
+  fields: Fields = {}
+
+  def copy_fields(self, extra: Fields) -> Fields:
+    mut merged: Fields = {}
+    for key in self.fields.keys():
+      merged[key] = self.fields[key]
+    for key in extra.keys():
+      merged[key] = extra[key]
+    return merged
+
+def to_text(value: FieldValue) -> str:
+  match value:
+    str(text) =>
+      return text
+    bool(flag) =>
+      if flag:
+        return "true"
+      return "false"
+    int(number) =>
+      return str(number)
+    float(number) =>
+      return str(number)
+    None =>
+      return "none"
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn test_generic_type_alias_expands_in_dict_contexts() -> Result<(), String> {
+    let source = r#"
+type NamedValues[T] = Dict[str, T]
+
+def build() -> NamedValues[int]:
+  mut values: NamedValues[int] = {}
+  values["count"] = 1
+  return values
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn test_type_alias_expands_in_narrowing_type_positions() -> Result<(), String> {
+    let source = r#"
+type Text = str
+type MaybeText = Text | int | None
+
+def normalize(value: MaybeText) -> str:
+  if isinstance(value, Text):
+    return value.upper()
+  return "missing"
+
+def describe(value: MaybeText) -> str:
+  match value:
+    Text(text) =>
+      return text.upper()
+    int(number) =>
+      return str(number)
+    None =>
+      return "missing"
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn test_nested_union_aliases_flatten_for_match_narrowing() -> Result<(), String> {
+    let source = r#"
+model A:
+  value: str
+
+model B:
+  value: str
+
+type Base = Union[A, B]
+type Input = Union[Base, int]
+
+def from_alias(value: Input) -> Base:
+  match value:
+    Base(expr) =>
+      return expr
+    int(number) =>
+      return A(value=str(number))
+
+def keep_base(value: Base) -> bool:
+  return true
+
+def from_guarded_alias(value: Input) -> Base:
+  match value:
+    case Base(expr) if keep_base(expr):
+      return expr
+    case Base(expr):
+      return expr
+    case int(number):
+      return A(value=str(number))
+
+def from_fallback(value: Input) -> Base:
+  match value:
+    int(number) =>
+      return A(value=str(number))
+    other =>
+      return other
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn test_guarded_union_alias_patterns_do_not_satisfy_exhaustiveness() {
+    let source = r#"
+model A:
+  value: str
+
+model B:
+  value: str
+
+type Base = Union[A, B]
+type Input = Union[Base, int]
+
+def keep_base(value: Base) -> bool:
+  return true
+
+def guarded_only(value: Input) -> Base:
+  match value:
+    case Base(expr) if keep_base(expr):
+      return expr
+    case int(number):
+      return A(value=str(number))
+"#;
+    let errors = check_str_err(source, "guarded union alias patterns should not prove coverage");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.to_lowercase().contains("non-exhaustive")),
+        "expected non-exhaustive union match diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_union_match_requires_exhaustive_type_patterns() {
+    let source = r#"
+def normalize(value: int | str) -> str:
+  match value:
+    int(n) =>
+      return "number"
+  return "fallback"
+"#;
+    let errors = check_str_err(source, "missing union match arm should be rejected");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("non-exhaustive") || error.message.contains("str")),
+        "expected non-exhaustive union match diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_union_clone_method_typechecks_when_members_are_cloneable() {
+    let source = r#"
+@derive(Clone)
+model Leaf:
+  value: int
+
+@derive(Clone)
+model Pair:
+  args: List[Expr]
+
+type Expr = Union[Leaf, Pair]
+
+def clone_expr(expr: Expr) -> Expr:
+  return expr.clone()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_model_variants_reject_direct_recursive_payload_without_indirection() {
+    let source = r#"
+@derive(Clone)
+model Leaf:
+  value: int
+
+@derive(Clone)
+model Pair:
+  left: Expr
+  right: Expr
+
+type Expr = Union[Leaf, Pair]
+"#;
+    let errors = check_str_err(source, "direct recursive union model payload should be rejected");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("direct recursive") && error.message.contains("Pair")),
+        "expected direct recursive model diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_match_pattern_alternation_typechecks_and_counts_exhaustiveness() {
+    let source = r#"
+enum Status:
+  Pending
+  Retrying
+  Done
+
+def label(status: Status) -> str:
+  match status:
+    Status.Pending | Status.Retrying =>
+      return "waiting"
+    Status.Done =>
+      return "done"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_if_let_pattern_alternation_typechecks_common_binding() {
+    let source = r#"
+def first(result: Result[int, int]) -> int:
+  if let Ok(value) | Err(value) = result:
+    return value
+  return 0
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+/// The checked type of every pattern node is recorded at that node's span (#1245), so lowering can read a
+/// destructured binding's declared payload type back instead of re-deriving it. One test covers the three
+/// constructs that share the pattern walk plus the `assert value is P` subset, which defines its binding apart.
+#[test]
+fn pattern_nodes_record_their_checked_type_at_their_span_issue1245() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+enum Shape:
+  Circle(int)
+  Label(str)
+
+def size(s: Shape, o: Option[str]) -> int:
+  match s:
+    case Shape.Circle(radius):
+      return radius
+    case Shape.Label(text):
+      return len(text)
+  if let Some(found) = o:
+    return len(found)
+  assert o is Some(asserted)
+  return len(asserted)
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+
+    let binding_span = |name: &str| -> Result<Span, Box<dyn std::error::Error>> {
+        let needle = format!("({name})");
+        let start = source
+            .find(&needle)
+            .ok_or_else(|| format!("fixture must spell `{needle}`"))?
+            + 1;
+        Ok(Span::new(start, start + name.len()))
+    };
+    for (name, expected) in [
+        ("radius", ResolvedType::Int),
+        ("text", ResolvedType::Str),
+        ("found", ResolvedType::Str),
+        ("asserted", ResolvedType::Str),
+    ] {
+        assert_eq!(
+            info.expr_type(binding_span(name)?),
+            Some(&expected),
+            "the checked payload type must be recorded at `{name}`'s own span"
+        );
+    }
+    // The constructor node itself carries the scrutinee type, so nested sub-patterns can be checked against it.
+    let circle_start = source
+        .find("Shape.Circle(radius)")
+        .ok_or("fixture must spell the Circle pattern")?;
+    assert_eq!(
+        info.expr_type(Span::new(circle_start, circle_start + "Shape.Circle(radius)".len())),
+        Some(&ResolvedType::Named("Shape".to_string())),
+        "a constructor pattern node records the type it was checked against"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_pattern_alternation_rejects_missing_binding() {
+    let source = r#"
+def first(result: Result[int, int]) -> int:
+  if let Ok(value) | Err(_) = result:
+    return value
+  return 0
+"#;
+    let errors = check_str_err(source, "pattern alternation with missing binding should be rejected");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Pattern alternation binding mismatch")),
+        "expected binding mismatch diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_pattern_alternation_rejects_different_binding_names() {
+    let source = r#"
+def first(result: Result[int, int]) -> int:
+  if let Ok(value) | Err(error) = result:
+    return value
+  return 0
+"#;
+    let errors = check_str_err(
+        source,
+        "pattern alternation with different binding names should be rejected",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Pattern alternation binding mismatch")),
+        "expected binding mismatch diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_pattern_alternation_rejects_different_binding_types() {
+    let source = r#"
+def describe(value: int | str) -> str:
+  match value:
+    int(item) | str(item) =>
+      return str(item)
+"#;
+    let errors = check_str_err(
+        source,
+        "pattern alternation with different binding types should be rejected",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("has incompatible types")),
+        "expected binding type mismatch diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_try_on_non_result() {
+    let source = r#"
+def foo() -> Result[int, str]:
+  x = 42
+  y = x?
+  return Ok(y)
+"#;
+    let result = check_str(source);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_try_requires_result_return_type() {
+    let source = r#"
+def foo() -> int:
+  x: Result[int, str] = Ok(42)
+  return x?
+"#;
+    let errors = check_str_err(source, "try in non-Result function should fail typechecking");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("enclosing function does not return Result")),
+        "expected non-Result enclosing function diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_try_does_not_cross_closure_boundary() {
+    let source = r#"
+def parse_value() -> Result[int, str]:
+  return Ok(42)
+
+def foo() -> Result[int, str]:
+  callback = () => parse_value()?
+  return Ok(callback())
+"#;
+    let errors = check_str_err(
+        source,
+        "try in closure should not target enclosing Result-returning function",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("enclosing function does not return Result")),
+        "expected closure boundary diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_if_let_rejects_impossible_pattern() {
+    let source = r#"
+def first(count: int) -> int:
+  if let Some(value) = count:
+    return value
+  return 0
+"#;
+    let errs = check_str_err(source, "expected impossible `if let` pattern to fail");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Constructor pattern 'Some' does not resolve")),
+        "unexpected errors: {errs:?}"
+    );
+}
+
+#[test]
+fn test_option_some() {
+    let source = r#"
+def foo() -> Option[int]:
+  return Some(42)
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_option_none() {
+    let source = r#"
+def foo() -> Option[int]:
+  return None
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_result_none_ok_literal() {
+    let source = r#"
+def ping() -> Result[None, str]:
+  return Ok(None)
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_option_match_exhaustive_some_none() {
+    let source = r#"
+def foo(value: Option[int]) -> int:
+  match value:
+    case Some(n):
+      return n
+    case None:
+      return 0
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_result_ok() {
+    let source = r#"
+def foo() -> Result[int, str]:
+  return Ok(42)
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_result_err() {
+    let source = r#"
+def foo() -> Result[int, str]:
+  return Err("error")
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_result_ok_reports_payload_type_mismatch() {
+    let source = r#"
+def foo() -> Result[int, str]:
+  return Ok("hello")
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("Ok payload type mismatch should fail");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Result[int, str]") && e.message.contains("Result[str, str]")),
+        "Expected Result payload mismatch; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_result_err_reports_payload_type_mismatch() {
+    let source = r#"
+def foo() -> Result[int, str]:
+  return Err(1)
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("Err payload type mismatch should fail");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Result[int, str]") && e.message.contains("Result[int, int]")),
+        "Expected Result payload mismatch; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_match_expression() {
+    let source = r#"
+def foo(x: int) -> str:
+  match x:
+    0 => "zero"
+    1 => "one"
+    _ => "other"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_match_unknown_incan_enum_variant_reports_constructor_resolution_error() {
+    let source = r#"
+enum Traffic:
+  Red
+  Amber
+
+def f(x: Traffic) -> None:
+  match x:
+    Crimson() =>
+      _ = 0
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected type errors for unknown enum constructor pattern");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("does not resolve for this match")),
+        "expected unknown_match_constructor_pattern, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_match_qualified_incan_enum_variant_resolves_against_scrutinee() {
+    let source = r#"
+pub enum ConformanceRel:
+  Read
+  Filter
+  Project
+
+pub def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:
+  match rel:
+    ConformanceRel.Read =>
+      return "ReadRel"
+    ConformanceRel.Filter =>
+      return "FilterRel"
+    ConformanceRel.Project =>
+      return "ProjectRel"
+    _ =>
+      return "UnknownRel"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_match_qualified_incan_enum_variant_with_wrong_qualifier_reports_resolution_error() {
+    let source = r#"
+enum ConformanceRel:
+  Read
+  Filter
+
+enum OtherRel:
+  Read
+
+def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:
+  match rel:
+    OtherRel.Read =>
+      return "ReadRel"
+    _ =>
+      return "UnknownRel"
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected type errors for mismatched enum constructor qualifier");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("does not resolve for this match")),
+        "expected unknown_match_constructor_pattern, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_match_qualified_incan_enum_variant_stays_resolvable_with_duplicate_variant_names() {
+    let source = r#"
+enum ConformanceRel:
+  Read
+  Filter
+
+enum OtherRel:
+  Read
+
+def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:
+  match rel:
+    ConformanceRel.Read =>
+      return "ReadRel"
+    ConformanceRel.Filter =>
+      return "FilterRel"
+    _ =>
+      return "UnknownRel"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_match_qualified_incan_enum_variant_uses_enum_owned_payload_metadata() {
+    let source = r#"
+enum Packet:
+  Bool(bool)
+  String(str)
+
+enum OtherKind(str):
+  Bool = "bool"
+  String = "string"
+
+def packet_name(packet: Packet) -> str:
+  match packet:
+    Packet.Bool(flag) =>
+      if flag:
+        return "true"
+      return "false"
+    Packet.String(value) =>
+      return value
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_enum_variant_does_not_shadow_existing_same_scope_type_binding() {
+    let source = r#"
+class Sha256:
+  @staticmethod
+  def default() -> int:
+    return 256
+
+enum Algorithm(str):
+  Sha256 = "sha256"
+  Md5 = "md5"
+
+def selected_algorithm_name(algorithm: Algorithm) -> str:
+  match algorithm:
+    Algorithm.Sha256 =>
+      return "sha256"
+    Algorithm.Md5 =>
+      return "md5"
+
+def default_value() -> int:
+  return Sha256.default()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_rfc070_result_combinators_typecheck() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def double(value: int) -> int:
+  return value * 2
+
+def prefix_error(err: str) -> str:
+  return "error: " + err
+
+def keep_positive(value: int) -> Result[int, str]:
+  if value > 0:
+    return Ok(value)
+  return Err("not positive")
+
+def recover(_err: str) -> Result[int, int]:
+  return Ok(0)
+
+def observe_int(_value: int) -> None:
+  pass
+
+def observe_err(_err: str) -> None:
+  pass
+
+from std.traits.callable import Callable1
+
+model Observer with Callable1[int, None]:
+  def __call__(self, value: int) -> None:
+    pass
+
+def main(result: Result[int, str]) -> None:
+  observer = Observer()
+  mapped: Result[int, str] = result.map(double)
+  mapped_err: Result[int, str] = result.map_err(prefix_error)
+  chained: Result[int, str] = result.and_then(keep_positive)
+  recovered: Result[int, int] = result.or_else(recover)
+  inspected: Result[int, str] = result.inspect(observe_int).inspect(observer)
+  inspected_err: Result[int, str] = result.inspect_err(observe_err)
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_result_unwrap_helpers_typecheck() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def direct(result: Result[int, str]) -> int:
+  return result.unwrap()
+
+def fallback(result: Result[int, str]) -> int:
+  return result.unwrap_or(0)
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_option_copied_accepts_generic_reference_payloads() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def copy_placeholder[T](value: Option[&T]) -> Option[T]:
+  return value.copied()
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_rfc070_result_combinators_reject_bad_callbacks() {
+    let source = r#"
+def wrong_arg(value: str) -> int:
+  return 1
+
+def not_result(value: int) -> int:
+  return value
+
+def observes_with_value(value: int) -> int:
+  return value
+
+def main(result: Result[int, str]) -> None:
+  _mapped = result.map(wrong_arg)
+  _chained = result.and_then(not_result)
+  _inspected = result.inspect(observes_with_value)
+"#;
+
+    let errs = check_str_err(source, "bad Result combinator callbacks should fail");
+    for expected in [
+        "expected 'str', found 'int'",
+        "expected 'Result",
+        "expected 'Unit', found 'int'",
+    ] {
+        assert!(
+            errs.iter().any(|err| err.message.contains(expected)),
+            "expected diagnostic containing {expected:?}, got: {errs:?}"
+        );
+    }
+}
+
+#[test]
+fn test_rfc068_option_and_result_are_not_truthy() {
+    let source = r#"
+def maybe_value() -> Option[int]:
+  return None
+
+def parse_value() -> Result[int, str]:
+  return Ok(1)
+
+def main() -> None:
+  if maybe_value():
+    pass
+  while parse_value():
+    break
+  maybe_bool = bool(maybe_value())
+  result_bool = bool(parse_value())
+"#;
+
+    let errs = check_str_err(source, "expected Option/Result truthiness rejection");
+    for expected in [
+        "expected 'bool', found 'Option[int]'",
+        "expected 'bool', found 'Result[int, str]'",
+        "bool() does not support type Option[int]",
+        "bool() does not support type Result[int, str]",
+    ] {
+        assert!(
+            errs.iter().any(|err| err.message.contains(expected)),
+            "expected diagnostic containing {expected:?}, got: {errs:?}"
+        );
+    }
+}
