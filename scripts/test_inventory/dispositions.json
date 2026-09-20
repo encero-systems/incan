@@ -103,6 +103,18 @@
       "disposition": "unaffected",
       "owner": 1561,
       "notes": "frozen v0.5.0 migration baseline, decoded through the checked capability-metadata path (no generated Rust); retained only until the v0.5 replacement migration closes, per the compatibility inventory's retirement line, then removed from the collector."
+    },
+    "loaves/compiler/incan_test_support/fixtures/behavior/smoke": {
+      "pattern": "<name>.incn or <name>/",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "behaviour fixtures: programs with their expected observables in the header, run by behavior_smoke_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+    },
+    "loaves/compiler/incan_test_support/fixtures/behavior/harness": {
+      "pattern": "<name>.incn or <name>/",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "the behaviour-fixture harness proving itself: one fixture per shape of the format (refused program, non-zero exit, contained lines, module directory, project directory), run by behavior_harness_tests.rs. They twin nothing; they exist so a runner or route change is caught here before it is caught in a twin."
     }
   },
   "files": {
@@ -975,7 +987,33 @@
       "twin": "",
       "split_required": true,
       "split_target": "",
-      "notes": "IrCodegen entry point and emitter-side metadata; every test drives IrCodegen or emitter-owned merges (manifest type refs, native-union capture). Split with the retirement, not before."
+      "notes": "IrCodegen entry point and emitter-side metadata; every test drives IrCodegen or emitter-owned merges (manifest type refs, native-union capture). Split with the retirement, not before.",
+      "tests": {
+        "test_simple_function": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/smoke/simple_function_add.incn",
+          "notes": "twinned by a program that calls the function and prints the sum."
+        },
+        "test_fstring_generation": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/smoke/fstring_greeting.incn",
+          "notes": "twinned by a program that prints the interpolated greeting."
+        },
+        "test_model_generation": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/smoke/model_fields.incn",
+          "notes": "twinned by a program that builds the model and prints its fields."
+        },
+        "test_struct_instantiation": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/smoke/model_fields.incn",
+          "notes": "twinned by a program that builds the model with named arguments and prints each field."
+        },
+        "test_enum_generation": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/smoke/enum_variants.incn",
+          "notes": "twinned by a program that matches each variant and prints its name."
+        },
+        "string_membership_probe_borrows_loop_binding_used_later_in_branch_issue1057": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/smoke/membership_loop_binding.incn",
+          "notes": "twinned by the #1057 program run to completion: the loop binding is used after the membership probe."
+        }
+      }
     },
     "loaves/compiler/incan_emit/src/codegen/capability_bridge.rs": {
       "disposition": "retire",
@@ -4408,6 +4446,30 @@
       "split_required": false,
       "split_target": "",
       "notes": "Oven tools command; the build_run hit is a Cargo config hint, not an Incan build."
+    },
+    "loaves/compiler/incan_test_support/src/behavior_fixtures.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "test-support helper for the behaviour-fixture family: header grammar, discovery, materialization and observable comparison, with no compiler call."
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_smoke_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs every behaviour fixture of the smoke area as a program and compares its observables; the route changes under it, the fixtures do not."
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_harness_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs the harness area's self-proof fixtures as programs; the route changes under it, the fixtures do not."
     }
   }
 }

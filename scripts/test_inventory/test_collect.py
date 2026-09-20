@@ -230,6 +230,64 @@ class GateTests(unittest.TestCase):
         failures = collect.check(self.corpus(), dispositions, None)
         self.assertTrue(any("split_required" in f for f in failures))
 
+    def test_dies_needs_a_retire_row_and_a_reason(self) -> None:
+        corpus = self.corpus()
+        # `gated` is an override with its own twin; `dies` there needs a reason on the override.
+        missing_reason = {
+            "files": {"loaves/x/src/lib.rs": {"disposition": "retire", "twin": "dies"}}
+        }
+        failures = collect.check(corpus, missing_reason, None)
+        self.assertTrue(any('needs a `"dies": "<reason>"`' in f for f in failures), failures)
+        on_keep = {
+            "files": {"loaves/x/src/lib.rs": {"disposition": "keep", "twin": "dies", "dies": "generated project"}}
+        }
+        failures = collect.check(corpus, on_keep, None)
+        self.assertTrue(any("only a retire test dies" in f for f in failures), failures)
+        recorded = {
+            "files": {"loaves/x/src/lib.rs": {"disposition": "retire", "twin": "dies", "dies": "inspect rust output"}}
+        }
+        self.assertEqual(collect.check(corpus, recorded, None), [])
+        self.assertEqual(collect.retire_totals(corpus, recorded), {"dies": 3})
+        stray_reason = {
+            "files": {"loaves/x/src/lib.rs": {"disposition": "retire", "twin": "", "dies": "orphan reason"}}
+        }
+        failures = collect.check(corpus, stray_reason, None)
+        self.assertTrue(any('needs `"twin": "dies"` beside it' in f for f in failures), failures)
+
+    def test_file_level_dies_does_not_reach_an_override_with_another_disposition(self) -> None:
+        dispositions = {
+            "files": {
+                "loaves/x/src/lib.rs": {
+                    "disposition": "retire",
+                    "twin": "dies",
+                    "dies": "generated project shape",
+                    "tests": {"gated": {"disposition": "keep"}},
+                }
+            }
+        }
+        corpus = self.corpus()
+        self.assertEqual(collect.check(corpus, dispositions, None), [])
+        self.assertEqual(collect.effective_twin(dispositions["files"]["loaves/x/src/lib.rs"], "gated"), "")
+        self.assertEqual(collect.retire_totals(corpus, dispositions), {"dies": 2})
+
+    def test_retire_totals_split_twinned_dies_and_open(self) -> None:
+        dispositions = {
+            "files": {
+                "loaves/x/src/lib.rs": {
+                    "disposition": "retire",
+                    "twin": "",
+                    "tests": {
+                        "gated": {"disposition": "keep"},
+                        "tests::plain": {"twin": "loaves/x/src/lib.rs::gated"},
+                        "tests::inner::plain": {"twin": "dies", "dies": "data-structure invariant of a dying crate"},
+                    },
+                }
+            }
+        }
+        corpus = self.corpus()
+        self.assertEqual(collect.check(corpus, dispositions, None), [])
+        self.assertEqual(collect.retire_totals(corpus, dispositions), {"twinned": 1, "dies": 1})
+
     def test_stale_row_and_stale_page_fail(self) -> None:
         dispositions = {
             "files": {
@@ -240,6 +298,111 @@ class GateTests(unittest.TestCase):
         failures = collect.check(self.corpus(), dispositions, "rendered page is stale")
         self.assertTrue(any("stale row" in f for f in failures))
         self.assertIn("rendered page is stale", failures)
+
+
+class BehaviorFixtureTwinTests(unittest.TestCase):
+    """A behaviour fixture and the row it retires must name each other, and a fixture twin must exist."""
+
+    SOURCE = (
+        "#[test]\nfn generated_shape() {\n    let code = generate_rust(\"x\");\n    assert!(code.contains(\"fn \"));\n}\n\n"
+        "#[test]\nfn other_shape() {\n    let code = generate_rust(\"y\");\n    assert!(code.contains(\"impl \"));\n}\n"
+    )
+
+    def setUp(self) -> None:
+        import tempfile
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.original_root = collect.ROOT
+        collect.ROOT = Path(self.tmp.name)
+        self.area = collect.BEHAVIOR_FIXTURES_ROOT + "/probe"
+        area_dir = collect.ROOT / self.area
+        area_dir.mkdir(parents=True)
+        (area_dir / "shape.incn").write_text(
+            "# behavior: prints the shape\n"
+            "# retires: loaves/emit/src/codegen.rs::generated_shape\n"
+            "# expect-stdout:\n#   shape\n\ndef main() -> None:\n    println(\"shape\")\n",
+            encoding="utf-8",
+        )
+        (area_dir / "modules").mkdir()
+        (area_dir / "modules" / "main.incn").write_text(
+            "# behavior: modules\n# retires: loaves/emit/src/codegen.rs::other_shape\n# expect-exit: 0\n", encoding="utf-8"
+        )
+        scanned = collect.scan_file("loaves/emit/src/codegen.rs", self.SOURCE)
+        assert scanned is not None
+        self.scanned = scanned
+
+    def tearDown(self) -> None:
+        collect.ROOT = self.original_root
+        self.tmp.cleanup()
+
+    def dispositions(self, **overrides: dict) -> dict:
+        return {
+            "fixture_roots": {self.area: {"pattern": "<name>.incn or <name>/", "disposition": "re-point"}},
+            "files": {
+                "loaves/emit/src/codegen.rs": {
+                    "disposition": "retire",
+                    "twin": "",
+                    "tests": overrides,
+                }
+            },
+        }
+
+    def corpus(self, dispositions: dict) -> collect.Corpus:
+        return collect.Corpus(files=[self.scanned], fixture_roots=collect.count_fixture_roots(dispositions))
+
+    def test_fixture_area_counts_one_case_per_fixture(self) -> None:
+        roots = collect.count_fixture_roots(self.dispositions())
+        self.assertEqual([(root.root, root.cases) for root in roots], [(self.area, 2)])
+
+    def test_both_sides_agree(self) -> None:
+        dispositions = self.dispositions(
+            generated_shape={"twin": f"{self.area}/shape.incn"},
+            other_shape={"twin": f"{self.area}/modules"},
+        )
+        self.assertEqual(collect.check(self.corpus(dispositions), dispositions, None), [])
+        self.assertEqual(collect.retire_totals(self.corpus(dispositions), dispositions), {"twinned": 2})
+
+    def test_fixture_that_names_a_test_whose_row_does_not_point_back_fails(self) -> None:
+        dispositions = self.dispositions(other_shape={"twin": f"{self.area}/modules"})
+        failures = collect.check(self.corpus(dispositions), dispositions, None)
+        self.assertEqual(len(failures), 1, failures)
+        self.assertIn("retires `loaves/emit/src/codegen.rs::generated_shape`, but that row's twin is nothing", failures[0])
+
+    def test_row_that_points_at_a_fixture_which_does_not_name_it_fails(self) -> None:
+        dispositions = self.dispositions(
+            generated_shape={"twin": f"{self.area}/modules"},
+            other_shape={"twin": f"{self.area}/modules"},
+        )
+        failures = collect.check(self.corpus(dispositions), dispositions, None)
+        self.assertTrue(any("does not name it in a `# retires:` line" in f for f in failures), failures)
+        self.assertTrue(any("retires `loaves/emit/src/codegen.rs::generated_shape`, but that row's twin is" in f for f in failures), failures)
+
+    def test_missing_fixture_file_is_refused(self) -> None:
+        dispositions = self.dispositions(
+            generated_shape={"twin": f"{self.area}/shape.incn"},
+            other_shape={"twin": f"{self.area}/vanished.incn"},
+        )
+        failures = collect.check(self.corpus(dispositions), dispositions, None)
+        self.assertTrue(any("twin fixture" in f and "does not exist" in f for f in failures), failures)
+
+    def test_fixture_retiring_a_keep_test_is_refused(self) -> None:
+        dispositions = self.dispositions(
+            generated_shape={"twin": f"{self.area}/shape.incn"},
+            other_shape={"disposition": "keep"},
+        )
+        failures = collect.check(self.corpus(dispositions), dispositions, None)
+        self.assertTrue(any("which is `keep`; only a retire test has a twin" in f for f in failures), failures)
+
+    def test_two_fixtures_retiring_one_test_is_refused(self) -> None:
+        (collect.ROOT / self.area / "dup.incn").write_text(
+            "# behavior: dup\n# retires: loaves/emit/src/codegen.rs::generated_shape\n# expect-exit: 0\n", encoding="utf-8"
+        )
+        dispositions = self.dispositions(
+            generated_shape={"twin": f"{self.area}/shape.incn"},
+            other_shape={"twin": f"{self.area}/modules"},
+        )
+        failures = collect.check(self.corpus(dispositions), dispositions, None)
+        self.assertTrue(any("both retire" in f for f in failures), failures)
 
 
 if __name__ == "__main__":

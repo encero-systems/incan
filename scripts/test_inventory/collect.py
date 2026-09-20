@@ -15,8 +15,16 @@ Modes:
 - `--propose`: write `proposals.json` beside the dispositions with a mechanical disposition per file and per test,
   for a reviewer to fold into `dispositions.json` by hand;
 - `--check`: exit non-zero when a test has no disposition, a disposition names a test that no longer exists, a twin
-  does not resolve, a recorded split flag disagrees with the measured test region, or the rendered page is stale;
+  does not resolve, a behaviour fixture and the row it retires disagree, a `dies` row has no reason, a recorded
+  split flag disagrees with the measured test region, or the rendered page is stale;
 - `--dispositions <path>`: read another dispositions file, for scratch probes that must not edit the tracked record.
+
+A `retire` row leaves the corpus one of two ways. Its `twin` names what proves the behaviour after the cutover: a
+`keep`/`re-point` test as `path::fn`, a declared fixture root by its bare path, or a behaviour fixture (a file or
+directory under `loaves/compiler/incan_test_support/fixtures/behavior/<area>/`) by its path; the fixture's own
+`# retires:` lines must name the test back, so neither side can drift. Or its `twin` is the word `dies`, with the
+reason in a `dies` field beside it: the test has no user-observable behaviour to twin (generated projects, `inspect
+rust` output and the build-report Cargo fields die with #654; a data-structure invariant of a dying crate dies).
 
 The scanner is deliberately shallow: it masks strings and comments, counts braces, and reads `fn` names. It never
 parses Rust. Signals are evidence for a reviewer, not a verdict; the disposition in `dispositions.json` is the
@@ -45,6 +53,12 @@ SKIPPED_DIR_NAMES = {"target", ".lane", "node_modules"}
 DISPOSITIONS = ("keep", "re-point", "retire", "unaffected", "unreviewed")
 DURABLE_DISPOSITIONS = ("keep", "re-point")
 TWIN_DISPOSITIONS = ("keep", "re-point")
+# The `twin` value that records a retire test with nothing to twin; the reason lives in the `dies` field beside it.
+DIES = "dies"
+# Every declared fixture root under this directory is a behaviour-fixture area: its cases carry a header whose
+# `# retires:` lines name the tests they twin (see the family's README.md).
+BEHAVIOR_FIXTURES_ROOT = "loaves/compiler/incan_test_support/fixtures/behavior"
+RETIRES_RE = re.compile(r"^#\s*retires:\s*(\S+)\s*$")
 
 TEST_ATTR_RE = re.compile(r"^\s*#\[\s*(?:test|tokio::test(?:\([^)]*\))?)\s*\]\s*$")
 ATTR_RE = re.compile(r"^\s*#\s*\[")
@@ -747,13 +761,15 @@ def load_dispositions(path: Path = DISPOSITIONS_PATH) -> dict:
 
 
 def count_fixture_roots(dispositions: dict) -> list[FixtureRoot]:
-    """Count the `.incn` cases under each declared fixture root."""
+    """Count the `.incn` cases under each declared fixture root; a behaviour area counts one case per fixture."""
     roots = []
     for root, entry in sorted(dispositions.get("fixture_roots", {}).items()):
         pattern = entry.get("pattern", "**/*.incn")
         base = ROOT / root
         cases = 0
-        if base.is_dir():
+        if root.startswith(BEHAVIOR_FIXTURES_ROOT + "/"):
+            cases = len(behavior_fixture_paths(root))
+        elif base.is_dir():
             cases = sum(
                 1
                 for path in base.glob(pattern)
@@ -786,12 +802,51 @@ def effective_disposition(entry: dict, key: str) -> str:
     return entry.get("disposition", "unreviewed")
 
 
+def twin_level(entry: dict, key: str) -> dict:
+    """The record a test's twin is read from: its override when that names a twin, the file row otherwise.
+
+    An override that changes the disposition without naming a twin inherits nothing: the file-level twin (or
+    `dies`) describes the tests that share the file's default, not a test the override has moved elsewhere.
+    """
+    override = entry.get("tests", {}).get(key)
+    if override:
+        if override.get("twin"):
+            return override
+        if override.get("disposition") and override["disposition"] != entry.get("disposition"):
+            return {}
+    return entry
+
+
 def effective_twin(entry: dict, key: str) -> str:
     """The twin of one test: its override when present, otherwise the file-level twin."""
-    override = entry.get("tests", {}).get(key)
-    if override and override.get("twin"):
-        return override["twin"]
-    return entry.get("twin", "")
+    return twin_level(entry, key).get("twin", "")
+
+
+def effective_dies(entry: dict, key: str) -> str:
+    """The `dies` reason of one test, read from the same level its twin came from."""
+    return twin_level(entry, key).get("dies", "")
+
+
+def retire_fate(entry: dict, key: str) -> str:
+    """`twinned`, `dies` or `open` for one retire-class test."""
+    twin = effective_twin(entry, key)
+    if not twin:
+        return "open"
+    return DIES if twin == DIES else "twinned"
+
+
+def retire_totals(corpus: Corpus, dispositions: dict) -> Counter:
+    """Retire-class tests across the corpus by fate: `twinned`, `dies`, `open`."""
+    totals: Counter = Counter()
+    files = dispositions.get("files", {})
+    for file in corpus.files:
+        entry = files.get(file.path)
+        if entry is None:
+            continue
+        for key in file.keys:
+            if effective_disposition(entry, key) == "retire":
+                totals[retire_fate(entry, key)] += 1
+    return totals
 
 
 def disposition_totals(corpus: Corpus, dispositions: dict) -> Counter:
@@ -857,16 +912,98 @@ def propose(corpus: Corpus, dispositions: dict) -> dict:
 
 
 # ============================================================
+# Behaviour fixtures
+# ============================================================
+
+
+def behavior_areas(dispositions: dict) -> list[str]:
+    """The declared fixture roots that are behaviour-fixture areas, in path order."""
+    return sorted(
+        root for root in dispositions.get("fixture_roots", {}) if root.startswith(BEHAVIOR_FIXTURES_ROOT + "/")
+    )
+
+
+def behavior_fixture_paths(area: str) -> list[str]:
+    """Checkout-relative paths of the fixtures in one area: `<name>.incn` files and `<name>/` directories."""
+    base = ROOT / area
+    if not base.is_dir():
+        return []
+    found = []
+    for path in sorted(base.iterdir()):
+        if path.name.startswith("."):
+            continue
+        if path.is_dir() or path.suffix == ".incn":
+            found.append(path.relative_to(ROOT).as_posix())
+    return found
+
+
+def behavior_fixture_header_file(fixture: str) -> Path:
+    """The file that carries a fixture's header: the file itself, `main.incn`, or `src/main.incn` of a project."""
+    path = ROOT / fixture
+    if path.is_file():
+        return path
+    if (path / "loaf.toml").is_file():
+        return path / "src" / "main.incn"
+    return path / "main.incn"
+
+
+def read_retires(header_file: Path) -> list[str]:
+    """The `# retires:` test keys of a fixture header: the leading `#` lines, read the way the Rust runner reads them."""
+    if not header_file.is_file():
+        return []
+    retires = []
+    for line in header_file.read_text(encoding="utf-8").split("\n"):
+        if not line.startswith("#"):
+            break
+        match = RETIRES_RE.match(line)
+        if match:
+            retires.append(match.group(1))
+    return retires
+
+
+def behavior_retires(dispositions: dict) -> tuple[dict[str, str], list[str]]:
+    """Map every test a behaviour fixture retires to the fixture that retires it, plus the conflicts found."""
+    retired_by: dict[str, str] = {}
+    failures: list[str] = []
+    for area in behavior_areas(dispositions):
+        for fixture in behavior_fixture_paths(area):
+            for test in read_retires(behavior_fixture_header_file(fixture)):
+                other = retired_by.get(test)
+                if other is not None and other != fixture:
+                    failures.append(f"`{fixture}` and `{other}` both retire `{test}`; a test has one twin")
+                    continue
+                retired_by[test] = fixture
+    return retired_by, failures
+
+
+def is_behavior_fixture_twin(twin: str, dispositions: dict) -> bool:
+    """True when `twin` is spelled as a path inside a declared behaviour-fixture area."""
+    return any(twin.startswith(area + "/") for area in behavior_areas(dispositions))
+
+
+# ============================================================
 # Gate
 # ============================================================
 
 
 def resolve_twin(twin: str, corpus: Corpus, dispositions: dict) -> str | None:
-    """Return None when `twin` names an existing keep/re-point test or a declared fixture root, else the reason."""
+    """Return None when `twin` names an existing keep/re-point test, a declared fixture root or a behaviour fixture
+    file or directory under one, else the reason."""
     if not twin:
         return "twin is empty"
     files = corpus.by_path()
     entries = dispositions.get("files", {})
+    if is_behavior_fixture_twin(twin, dispositions):
+        roots = {root.root: root for root in corpus.fixture_roots}
+        area = next(area for area in behavior_areas(dispositions) if twin.startswith(area + "/"))
+        if twin not in behavior_fixture_paths(area):
+            return f"twin fixture `{twin}` does not exist under `{area}`"
+        root = roots.get(area)
+        if root is None:
+            return f"twin fixture root `{area}` is declared but was not counted"
+        if root.disposition not in TWIN_DISPOSITIONS:
+            return f"twin fixture root `{area}` is `{root.disposition}`, not keep or re-point"
+        return None
     if "::" in twin:
         path, key = twin.split("::", 1)
         file = files.get(path)
@@ -890,12 +1027,25 @@ def resolve_twin(twin: str, corpus: Corpus, dispositions: dict) -> str | None:
     return None
 
 
+def dies_failures(path: str, key: str, entry: dict) -> list[str]:
+    """Why a `"twin": "dies"` record is not admissible: it is not a retire test, or it carries no reason."""
+    failures = []
+    disposition = effective_disposition(entry, key)
+    if disposition != "retire":
+        failures.append(f"`{path}::{key}`: `dies` is recorded on a `{disposition}` test; only a retire test dies")
+    if not effective_dies(entry, key).strip():
+        failures.append(f"`{path}::{key}`: `\"twin\": \"dies\"` needs a `\"dies\": \"<reason>\"` beside it")
+    return failures
+
+
 def check(corpus: Corpus, dispositions: dict, rendered_page_stale: str | None) -> list[str]:
     """Every gate failure as one line; an empty list means the inventory is green."""
     failures: list[str] = []
     threshold = int(dispositions.get("split_threshold_lines", 1500))
     entries = dispositions.get("files", {})
     scanned = corpus.by_path()
+    retired_by, conflicts = behavior_retires(dispositions)
+    failures.extend(conflicts)
 
     # ---- Every scanned test has a disposition ----
     for file in corpus.files:
@@ -930,17 +1080,51 @@ def check(corpus: Corpus, dispositions: dict, rendered_page_stale: str | None) -
         twins: dict[str, str] = {}
         for key in file.keys:
             twin = effective_twin(entry, key)
-            if twin:
+            if twin == DIES:
+                failures.extend(dies_failures(file.path, key, entry))
+            elif twin:
                 twins.setdefault(twin, key)
+            elif effective_dies(entry, key):
+                failures.append(f"`{file.path}::{key}`: a `dies` reason needs `\"twin\": \"dies\"` beside it")
         for twin, key in twins.items():
             reason = resolve_twin(twin, corpus, dispositions)
             if reason is not None:
                 failures.append(f"`{file.path}::{key}`: {reason}")
+            if effective_dies(entry, key):
+                failures.append(f"`{file.path}::{key}`: a `dies` reason beside a twin that is not `dies`")
+        # ---- A row that points at a behaviour fixture must be named back by that fixture ----
+        for key in file.keys:
+            twin = effective_twin(entry, key)
+            if twin and twin != DIES and is_behavior_fixture_twin(twin, dispositions):
+                if retired_by.get(f"{file.path}::{key}") != twin:
+                    failures.append(
+                        f"`{file.path}::{key}`: twin `{twin}` does not name it in a `# retires:` line"
+                    )
 
     # ---- Every disposition row names a file that still carries tests ----
     for path in entries:
         if path not in scanned:
             failures.append(f"stale row: `{path}` has a disposition but carries no tests in the tree")
+
+    # ---- Every behaviour fixture's `# retires:` line names a retire test whose row points back at it ----
+    for test, fixture in sorted(retired_by.items()):
+        path, key = test.split("::", 1)
+        file = scanned.get(path)
+        if file is None or key not in file.keys:
+            failures.append(f"`{fixture}` retires `{test}`, which is not a test in the tree")
+            continue
+        entry = entries.get(path)
+        if entry is None:
+            failures.append(f"`{fixture}` retires `{test}`, whose file has no disposition row")
+            continue
+        disposition = effective_disposition(entry, key)
+        if disposition != "retire":
+            failures.append(f"`{fixture}` retires `{test}`, which is `{disposition}`; only a retire test has a twin")
+            continue
+        twin = effective_twin(entry, key)
+        if twin != fixture:
+            recorded = f"`{twin}`" if twin else "nothing"
+            failures.append(f"`{fixture}` retires `{test}`, but that row's twin is {recorded}; record `\"twin\": \"{fixture}\"`")
 
     # ---- Fixture roots exist and are non-empty ----
     for root in corpus.fixture_roots:
@@ -972,6 +1156,8 @@ def print_summary(corpus: Corpus, dispositions: dict) -> None:
     for name in DISPOSITIONS + ("unclassified",):
         if totals.get(name):
             print(f"  {name:<13}{totals[name]:>6}")
+    fates = retire_totals(corpus, dispositions)
+    print(f"retire: twinned {fates['twinned']}, dies {fates['dies']}, open {fates['open']}")
     split = [file for file in corpus.files if file.test_lines > threshold]
     print(f"split candidates (test region > {threshold} lines): {len(split)}")
     for file in sorted(split, key=lambda f: -f.test_lines):
@@ -1057,10 +1243,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"\n{len(failures)} failure(s).")
             return 1
         totals = disposition_totals(corpus, dispositions)
+        fates = retire_totals(corpus, dispositions)
         print(
             f"test corpus inventory green: {corpus.total_tests} tests in {len(corpus.files)} files, "
             f"{sum(r.cases for r in corpus.fixture_roots)} fixture cases in {len(corpus.fixture_roots)} roots "
-            f"({', '.join(f'{name} {totals[name]}' for name in DISPOSITIONS if totals.get(name))})"
+            f"({', '.join(f'{name} {totals[name]}' for name in DISPOSITIONS if totals.get(name))}; "
+            f"retire twinned {fates['twinned']}, dies {fates['dies']}, open {fates['open']})"
         )
         return 0
 
