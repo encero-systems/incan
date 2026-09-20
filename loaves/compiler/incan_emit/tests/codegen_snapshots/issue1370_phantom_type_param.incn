@@ -16,3 +16,4 @@ def main() -> None:
   println(f"{total.sql}")
   label = Column[str](sql="label")
   println(f"{(label * "x").sql}")
+  println(f"{amount:?}")

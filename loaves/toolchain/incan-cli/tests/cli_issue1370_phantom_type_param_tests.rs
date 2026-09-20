@@ -4,7 +4,8 @@
 //! used) and E0282 at every construction site, so the defect is only visible on a real build. Lowering now records
 //! the phantom parameter on the struct and emission carries it as a `PhantomData` marker, initialises the marker at
 //! every struct literal, and threads the explicit constructor type argument. The built executable is run so the
-//! operator method's output is asserted, not only compilation.
+//! operator method's output is asserted, not only compilation, and the `Debug` rendering is printed to prove the
+//! marker stays out of it.
 
 use std::fs;
 use std::process::Command;
@@ -29,6 +30,7 @@ def main() -> None:
   println(f"{total.sql}")
   label = Column[str](sql="label")
   println(f"{(label * "x").sql}")
+  println(f"{amount:?}")
 "#;
 
 /// Build the phantom-parameter program through Oven and run the executable.
@@ -71,8 +73,8 @@ fn phantom_type_parameter_model_builds_and_runs_issue1370() -> Result<(), Box<dy
     );
     assert_eq!(
         String::from_utf8(run.stdout)?.lines().collect::<Vec<_>>(),
-        vec!["(amount * 2)", "(label * x)"],
-        "the #1370 program must print both operator results"
+        vec!["(amount * 2)", "(label * x)", "Column { sql: \"amount\" }"],
+        "the #1370 program must print both operator results and a Debug rendering without the marker"
     );
     Ok(())
 }

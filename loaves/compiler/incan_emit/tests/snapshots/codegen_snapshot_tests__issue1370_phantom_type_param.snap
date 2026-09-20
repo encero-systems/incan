@@ -7,10 +7,23 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 // __INCAN_INSERT_MODS__
 
 incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
+#[derive(Clone, incan_derive::IncanClass)]
 struct Column<T> {
     sql: String,
     pub __incan_phantom: std::marker::PhantomData<T>,
+}
+impl<T: std::fmt::Debug> std::fmt::Debug for Column<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("Column").field("sql", &self.sql).finish()
+    }
+}
+impl<T> incan_std_core::HasFieldInfo for Column<T> {
+    fn field_names() -> Vec<&'static str> {
+        vec!["sql"]
+    }
+    fn field_types() -> Vec<&'static str> {
+        vec!["String"]
+    }
 }
 impl<T> incan_std_core::reflection::HasClassName for Column<T> {
     fn __class_name__(&self) -> &'static str {
@@ -105,5 +118,10 @@ fn main() {
         "{}", { let __parts : [& str; 2usize] = ["", ""]; let __args : Vec < String > =
         vec![format!("{}", label.__mul__("x".to_string()).sql)];
         incan_std_core::strings::fstring(& __parts, & __args) }
+    );
+    let _ = println!(
+        "{}", { let __parts : [& str; 2usize] = ["", ""]; let __args : Vec < String > =
+        vec![format!("{:?}", amount)]; incan_std_core::strings::fstring(& __parts, &
+        __args) }
     );
 }

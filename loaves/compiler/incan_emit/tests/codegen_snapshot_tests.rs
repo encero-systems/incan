@@ -3260,7 +3260,9 @@ fn test_generic_model_field_access_codegen() {
 
 /// Issue #1370: a model type parameter that no field mentions is a phantom parameter. Lowering records it on the
 /// struct; emission carries it as one `PhantomData` marker field, initialises the marker at every struct literal,
-/// and threads the explicit constructor type argument so a binding without an annotation still names `T`.
+/// and threads the explicit constructor type argument so a binding without an annotation still names `T`. The
+/// marker is invisible to `Debug` and `HasFieldInfo`, which are written by hand over the source fields instead of
+/// derived.
 #[test]
 fn test_issue1370_phantom_type_param_codegen() {
     let source = load_test_file("issue1370_phantom_type_param");
@@ -3268,6 +3270,21 @@ fn test_issue1370_phantom_type_param_codegen() {
     assert!(
         rust_code.contains("pub __incan_phantom: std::marker::PhantomData<T>,"),
         "a phantom type parameter must be carried by a marker field; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("#[derive(Clone, incan_derive::IncanClass)]\nstruct Column<T> {"),
+        "Debug and FieldInfo must not be derived on a phantom struct; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("impl<T: std::fmt::Debug> std::fmt::Debug for Column<T> {")
+            && rust_code.contains("formatter.debug_struct(\"Column\").field(\"sql\", &self.sql).finish()"),
+        "Debug must render only the source fields; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("impl<T> incan_std_core::HasFieldInfo for Column<T> {")
+            && rust_code.contains("vec![\"sql\"]")
+            && !rust_code.contains("\"__incan_phantom\""),
+        "HasFieldInfo must list only the source fields; generated:\n{rust_code}"
     );
     assert!(
         rust_code.contains("Column::<T> {") && rust_code.contains("Column::<String> {"),
