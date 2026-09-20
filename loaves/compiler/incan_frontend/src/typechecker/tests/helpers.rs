@@ -303,3 +303,21 @@ pub(super) fn typecheck_info_for_module(
         .map_err(|errs| std::io::Error::other(format!("{context}: {errs:?}")))?;
     Ok(checker.type_info().clone())
 }
+
+/// A library index whose one manifest ships `metadata` as inspected Rust ABI, the way a compiled dependency records
+/// a Rust item it re-exports; the checker's metadata lookups read it before any rust-inspect cache.
+pub(super) fn library_index_with_rust_abi_item(name: &str, metadata: RustItemMetadata) -> LibraryManifestIndex {
+    let mut manifest = LibraryManifest::new("runtime_facade", "0.1.0");
+    manifest.rust_abi = LibraryRustAbi::from_items(vec![metadata]);
+    LibraryManifestIndex::from_entries(HashMap::from([(
+        "runtime_facade".to_string(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root(
+                "runtime_facade",
+                "runtime_facade",
+                synthetic_artifact_root(name),
+            ),
+        },
+    )]))
+}

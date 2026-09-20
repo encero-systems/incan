@@ -26,6 +26,36 @@ impl TypeChecker {
         }
     }
 
+    /// Type-check the arguments of a `print`/`println` call and refuse any that is a tuple (#1725).
+    ///
+    /// Every argument is checked as usual so its own diagnostics still surface; a tuple argument is then refused
+    /// with the call's own spelling (`builtin`), because a tuple has no printed form and the program could not be
+    /// built. The tuple's arity shapes the element-by-element remedy in the hint. Any other argument type stays
+    /// as permissive as before.
+    fn check_print_call_args(&mut self, builtin: &str, args: &[CallArg]) {
+        for arg in args {
+            let arg_expr = Self::call_arg_expr(arg);
+            self.call_argument_depth += 1;
+            let arg_ty = self.check_expr(arg_expr);
+            self.call_argument_depth -= 1;
+            let arity = match &arg_ty {
+                ResolvedType::Tuple(elements) => elements.len(),
+                ResolvedType::Generic(name, elements)
+                    if collection_type_id(name.as_str()) == Some(CollectionTypeId::Tuple) =>
+                {
+                    elements.len()
+                }
+                _ => continue,
+            };
+            let value = match &arg_expr.node {
+                Expr::Ident(name) => name.as_str(),
+                _ => "value",
+            };
+            self.errors
+                .push(errors::print_argument_is_tuple(builtin, value, arity, arg_expr.span));
+        }
+    }
+
     /// Return whether an expression is the explicit builtin namespace `std.builtins`.
     pub(in crate::typechecker::check_expr) fn is_explicit_builtin_namespace_expr(expr: &Spanned<Expr>) -> bool {
         let Expr::Field(root, namespace) = &expr.node else {
@@ -280,7 +310,7 @@ impl TypeChecker {
                     Some(ResolvedType::Bool)
                 }
                 BuiltinFnId::Print => {
-                    self.check_call_args(args);
+                    self.check_print_call_args(name, args);
                     Some(ResolvedType::Unit)
                 }
                 BuiltinFnId::Len => {

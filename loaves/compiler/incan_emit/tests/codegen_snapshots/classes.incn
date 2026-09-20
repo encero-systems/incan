@@ -44,7 +44,7 @@ class Stack:
     def push(mut self, item: int) -> None:
         self.items.append(item)
     
-    def pop(self) -> int:
+    def pop(mut self) -> int:
         if len(self.items) > 0:
             return self.items.pop()
         return -1

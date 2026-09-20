@@ -6184,11 +6184,16 @@ impl TypeChecker {
         // Define the source receiver with its exact declaration token. Classmethod `cls` remains absent from the
         // legacy receiver enum because it emits as an associated function, but it is still a source binding with a
         // canonical receiver identity.
+        let binds_self_receiver = method
+            .receiver_binding
+            .as_ref()
+            .is_none_or(|binding| binding.node == "self");
+        let previous_immutable_self_method = std::mem::replace(
+            &mut self.current_immutable_self_method,
+            (method.receiver == Some(Receiver::Immutable) && binds_self_receiver).then(|| method.name.clone()),
+        );
         if let Some(receiver) = method.receiver
-            && method
-                .receiver_binding
-                .as_ref()
-                .is_none_or(|binding| binding.node == "self")
+            && binds_self_receiver
         {
             let is_mutable = matches!(receiver, Receiver::Mutable);
             if is_mutable {
@@ -6335,6 +6340,7 @@ impl TypeChecker {
         self.current_classmethod_self_ty = previous_classmethod_self_ty;
         self.current_type_param_bound_details.pop();
         self.annotation_owner = previous_annotation_owner;
+        self.current_immutable_self_method = previous_immutable_self_method;
         self.mutable_bindings.remove("self");
         self.symbols.exit_scope();
     }

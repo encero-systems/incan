@@ -373,6 +373,37 @@ pub struct CAbiRawCallResult {
     pub slots_by_parameter: HashMap<String, String>,
 }
 
+/// A Rust associated call whose owner type arguments the call itself left open (#1720).
+///
+/// `HashMap.new()` on `rust::std::collections::HashMap` names neither `K` nor `V`, and nothing at the call fixes
+/// them: no explicit `[str, int]`, no expected type, no argument that mentions them. Rust would still fill them
+/// from a later reader of the value; the checker keeps this record only long enough to learn whether one exists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenRustGenericCall {
+    /// The receiver as the source spells it (`HashMap`), for the diagnostic.
+    pub owner: String,
+    /// The associated function called (`new`).
+    pub method: String,
+    /// The owner's type parameters the call left open, in declaration order (`K`, `V`).
+    pub type_params: Vec<String>,
+}
+
+/// A local bound to an [`OpenRustGenericCall`] that no later statement has read yet (#1720).
+///
+/// Dropped on the first read of the name; whatever is left when the declaring block ends is refused, because a
+/// binding nothing reads gives Rust nothing to infer the arguments from and the build would stop on the call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenRustGenericBinding {
+    /// The local's name.
+    pub name: String,
+    /// Identity of the statement block that declared the binding, so the block's end reports only its own.
+    pub block: usize,
+    /// Span of the call expression the binding received.
+    pub span: Span,
+    /// The call whose open parameters the binding carries.
+    pub call: OpenRustGenericCall,
+}
+
 impl Drop for TypeCompatibilityDepthGuard<'_> {
     fn drop(&mut self) {
         self.depth.set(self.depth.get().saturating_sub(1));
@@ -402,6 +433,10 @@ pub struct TypeChecker {
     pub warnings: Vec<CompileError>,
     /// Track which bindings are mutable for mutation checks.
     pub mutable_bindings: HashSet<String>,
+    /// The method whose body is being checked while its receiver is a plain `self`, so a write through `self`
+    /// inside it can be refused with the declaration to change (#1723). `None` outside a method body, and inside a
+    /// `mut self` method.
+    current_immutable_self_method: Option<String>,
     /// Iterator bindings consumed by terminal RFC 088 methods in the current local checking flow.
     pub consumed_iterator_bindings: HashMap<String, Span>,
     /// Resource bindings transferred to an owning C ABI parameter in the current local checking flow.
@@ -420,6 +455,16 @@ pub struct TypeChecker {
     pub unbound_c_abi_raw_call_results: HashMap<(usize, usize), CAbiRawCallResult>,
     /// Raw C result bindings whose enum outcome may establish branch-local output validity.
     pub c_abi_raw_call_results: Vec<CAbiRawCallResult>,
+    /// Rust associated calls in the current statement whose owner type arguments were left open, keyed by call
+    /// span, waiting for the statement to say whether a local receives the value (#1720). Cleared when the
+    /// statement ends: a value nested somewhere else may still be fixed by its context.
+    open_rust_generic_calls: HashMap<(usize, usize), OpenRustGenericCall>,
+    /// Locals bound to open Rust associated calls that nothing has read yet (#1720).
+    open_rust_generic_bindings: Vec<OpenRustGenericBinding>,
+    /// Identity of the statement block being checked, and the count that mints those identities. A block's
+    /// identity keys the bindings it declared so its end reports only those.
+    current_statement_block: usize,
+    statement_block_serial: usize,
     /// Slot identities currently readable in the active control-flow path.
     pub available_c_abi_output_slots: HashSet<String>,
     /// Slot identities already consumed by `take()` in the active checking flow.
@@ -482,7 +527,9 @@ pub struct TypeChecker {
     dependency_import_type_alias_transaction: Option<HashMap<String, Option<TypeAliasTarget>>>,
     /// Whether source annotation names should be validated during the semantic check pass.
     validate_source_type_names: bool,
-    /// Unbound source annotation diagnostics already emitted in the current program check.
+    /// Source annotation diagnostics already emitted in the current program check, keyed by spelling and span:
+    /// unbound names, and bare tuple annotations (#1717), which the collection pass and the body check can both
+    /// meet.
     unknown_source_type_names_emitted: HashSet<(String, usize, usize)>,
     /// The callable whose signature and body annotations are being checked, when one is active.
     ///
@@ -710,6 +757,7 @@ impl TypeChecker {
             errors: Vec::new(),
             warnings: Vec::new(),
             mutable_bindings: HashSet::new(),
+            current_immutable_self_method: None,
             consumed_iterator_bindings: HashMap::new(),
             transferred_c_resource_bindings: HashMap::new(),
             unbound_c_abi_span_constructors: HashMap::new(),
@@ -718,6 +766,10 @@ impl TypeChecker {
             pending_c_abi_output_slots: HashMap::new(),
             unbound_c_abi_output_slot_constructors: HashMap::new(),
             unbound_c_abi_raw_call_results: HashMap::new(),
+            open_rust_generic_calls: HashMap::new(),
+            open_rust_generic_bindings: Vec::new(),
+            current_statement_block: 0,
+            statement_block_serial: 0,
             c_abi_raw_call_results: Vec::new(),
             available_c_abi_output_slots: HashSet::new(),
             consumed_c_abi_output_slots: HashMap::new(),
@@ -5036,6 +5088,20 @@ impl TypeChecker {
             return decimal_ty;
         }
         if let Type::Simple(name) = &ty.node
+            && self.is_bare_builtin_tuple_annotation(name)
+        {
+            // The same annotation can be resolved by the collection pass and again by the body check; one report
+            // per occurrence, keyed the way unknown annotation names are.
+            if self
+                .unknown_source_type_names_emitted
+                .insert((name.clone(), ty.span.start, ty.span.end))
+            {
+                self.errors
+                    .push(errors::tuple_annotation_requires_element_types(name, ty.span));
+            }
+            return ResolvedType::Unknown;
+        }
+        if let Type::Simple(name) = &ty.node
             && let Some(sym) = self.lookup_symbol(name.as_str())
             && let SymbolKind::RustItem(info) = &sym.kind
             && info.binding == RustImportBindingKind::CrateRoot
@@ -5053,6 +5119,17 @@ impl TypeChecker {
         );
         self.record_mutable_rust_type_argument_projection(ty);
         self.expand_type_aliases(resolved)
+    }
+
+    /// Return whether a simple annotation is the builtin tuple family written without element types (#1717).
+    ///
+    /// `Tuple` and `tuple` name a family of types, one per element list; the bare word names no type, and the
+    /// shared resolver would otherwise hand lowering a `Tuple` nominal that no backend can spell. Only the prelude
+    /// builtin counts: a source declaration that shadows the spelling with its own `Tuple` type is a nominal like
+    /// any other and resolves as one.
+    fn is_bare_builtin_tuple_annotation(&self, name: &str) -> bool {
+        collection_type_id(name) == Some(CollectionTypeId::Tuple)
+            && matches!(self.lookup_type_info(name), Some(TypeInfo::Builtin))
     }
 
     /// Return the nominal type a module-qualified spelling was proven to name, for the shared type resolver.
@@ -8406,7 +8483,8 @@ impl TypeChecker {
             // - a concrete tuple type: `Tuple[T1, T2, ...]`
             // - a supertype for any tuple when used without args: `Tuple`
             //
-            // This matches snapshot tests that use `tuple[int, str]` and `Tuple` as "any tuple".
+            // A checked annotation never produces the bare form any more (`resolve_type_checked` refuses it, #1717);
+            // the arm remains for the shared resolver's unchecked callers, which still spell "any tuple" this way.
             (ResolvedType::Tuple(_), ResolvedType::Named(name))
                 if collection_type_id(name.as_str()) == Some(CollectionTypeId::Tuple) =>
             {

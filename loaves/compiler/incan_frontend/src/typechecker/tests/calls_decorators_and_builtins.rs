@@ -1150,3 +1150,57 @@ def explicit_call() -> int:
 "#;
     assert_check_ok(source);
 }
+
+// ---- #1725: `print` has no rendering for a tuple ----
+
+#[test]
+fn print_of_a_tuple_value_is_refused_issue1725() {
+    // The program from #1725: the tuple has no printed form, so the checker refuses it where the build would have.
+    let source = r#"
+def get_coordinates() -> tuple[int, int]:
+    return (10, 20)
+
+def main() -> None:
+    coords: tuple[int, int] = get_coordinates()
+    print(coords)
+    println(get_coordinates())
+"#;
+    let errors = check_str_err(source, "printing a tuple must be refused");
+    let refused = errors
+        .iter()
+        .filter(|error| error.stable_code() == Some("INCAN-T0103"))
+        .map(|error| (error.message.as_str(), error.hints.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        refused.len(),
+        2,
+        "both call spellings refuse the tuple, got: {refused:?}"
+    );
+    assert_eq!(refused[0].0, "'print' cannot print the tuple 'coords'");
+    assert!(
+        refused[0]
+            .1
+            .iter()
+            .any(|hint| hint.contains("print(coords[0], coords[1])")),
+        "the hint spells the element-by-element form, got: {:?}",
+        refused[0].1
+    );
+    assert_eq!(refused[1].0, "'println' cannot print the tuple 'value'");
+}
+
+#[test]
+fn print_of_tuple_elements_and_unpacked_names_is_accepted_issue1725() {
+    assert_check_ok(
+        r#"
+def get_coordinates() -> tuple[int, int]:
+    return (10, 20)
+
+def main() -> None:
+    coords: tuple[int, int] = get_coordinates()
+    print(coords[0], coords[1])
+    x, y = coords
+    println(x, y)
+    println(f"{coords[0]},{coords[1]}")
+"#,
+    );
+}

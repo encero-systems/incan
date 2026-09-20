@@ -4,22 +4,6 @@
 
 use super::*;
 
-fn library_index_with_rust_abi_item(name: &str, metadata: RustItemMetadata) -> LibraryManifestIndex {
-    let mut manifest = LibraryManifest::new("runtime_facade", "0.1.0");
-    manifest.rust_abi = LibraryRustAbi::from_items(vec![metadata]);
-    LibraryManifestIndex::from_entries(HashMap::from([(
-        "runtime_facade".to_string(),
-        LibraryManifestIndexEntry::Loaded {
-            manifest: Box::new(manifest),
-            metadata: LibraryArtifactMetadata::from_crate_root(
-                "runtime_facade",
-                "runtime_facade",
-                synthetic_artifact_root(name),
-            ),
-        },
-    )]))
-}
-
 #[test]
 fn rust_item_metadata_prefers_shipped_library_abi() {
     let manifest_metadata = RustItemMetadata {
