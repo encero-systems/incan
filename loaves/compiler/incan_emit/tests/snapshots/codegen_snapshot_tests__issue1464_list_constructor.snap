@@ -52,6 +52,20 @@ fn thawed_text(frozen: incan_std_core::frozen::FrozenList<&'static str>) -> Vec<
         .map(|__incan_item| __incan_item.to_string())
         .collect::<Vec<_>>();
 }
+fn from_generator(source: incan_std_core::iter::Generator<i64>) -> Vec<i64> {
+    return (source).into_iter().collect::<Vec<_>>();
+}
+fn from_iterator<
+    __IncanTrait0: crate::__incan_std::derives::collection::Iterator<(i64, String)>,
+>(pairs: __IncanTrait0) -> Vec<(i64, String)> {
+    return ({
+        let mut __incan_iter = pairs;
+        std::iter::from_fn(move || crate::__incan_std::derives::collection::Iterator::__next__(
+            &mut __incan_iter,
+        ))
+    })
+        .collect::<Vec<_>>();
+}
 fn reused(words: Vec<String>) -> i64 {
     let first = (words.clone()).into_iter().collect::<Vec<_>>();
     let second = (words).into_iter().collect::<Vec<_>>();
@@ -114,6 +128,20 @@ fn main() {
         .len() as i64)
     );
     let _ = println!("{}", reused(vec!["p".to_string(), "q".to_string()]));
+    let _ = println!(
+        "{}",
+        ::std::convert::identity(from_generator(incan_std_core::iter::Generator::new((0_i64
+        .. (3 as i64)).flat_map(move | value | {
+        incan_std_core::iter::Generator::new(std::iter::once(value)) }))).len() as i64)
+    );
+    let _ = println!(
+        "{}", ::std::convert::identity(from_iterator(crate
+        ::__incan_std::derives::collection::ZipIterator { left : (crate
+        ::__incan_std::derives::collection::ListIterator { items : (vec![1, 2]), index :
+        0i64 }), right : (crate ::__incan_std::derives::collection::ListIterator { items
+        : (vec!["a".to_string(), "b".to_string()]), index : 0i64 }), left_marker : None,
+        right_marker : None, }).len() as i64)
+    );
     let arguments = (args()).into_iter().collect::<Vec<_>>();
     let _ = println!("{}", ::std::convert::identity(arguments.len() as i64));
 }

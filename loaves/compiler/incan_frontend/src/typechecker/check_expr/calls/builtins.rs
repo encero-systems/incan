@@ -129,11 +129,13 @@ impl TypeChecker {
 
     /// Return the element type `list(source)` collects, or `None` when the source is not iterable.
     ///
-    /// The rule is the loop-header rule (`infer_iterator_element_type`): a collection yields its items, a dict its
-    /// keys, text its one-character strings, bytes its integers, and an `Iterator[T]` or `Generator[T]` its `T`.
-    /// A Rust value the checker cannot see into (a `rust::` import or an unresolved type) is accepted with an unknown
-    /// element, as a loop over it is; a value the checker can see and that iteration rejects (a scalar, a tuple, a
-    /// nominal type without an iteration protocol) is refused so the call never lowers to an undefined conversion.
+    /// The rule is the built-in loop-header rule (`infer_iterator_element_type`): a collection yields its items, a
+    /// dict its keys, text its one-character strings, bytes its integers, and an `Iterator[T]` or `Generator[T]` its
+    /// `T`. A Rust value the checker cannot see into (a `rust::` import or an unresolved type) is accepted with an
+    /// unknown element, as a loop over it is. Everything else is refused so the call never lowers to an undefined
+    /// conversion: a scalar, a tuple, an `Option`, and also a class or model that implements `__iter__` / `__next__`,
+    /// which a `for` statement accepts through `resolve_iteration_protocol` but which no `list(...)` lowering drives
+    /// yet.
     fn list_constructor_item_type(&self, source_ty: &ResolvedType) -> Option<ResolvedType> {
         match source_ty {
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.list_constructor_item_type(inner),

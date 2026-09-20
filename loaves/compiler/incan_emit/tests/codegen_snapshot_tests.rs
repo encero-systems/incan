@@ -3067,6 +3067,14 @@ fn test_issue1464_list_constructor_codegen() {
         rust_code.contains("let names: Vec<String> = Vec::<String>::new();"),
         "an empty list() must adopt its annotated element type; generated:\n{rust_code}"
     );
+    assert!(
+        rust_code.contains("(source).into_iter().collect::<Vec<_>>()"),
+        "list() over a generator must consume it through IntoIterator; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("let mut __incan_iter = pairs;"),
+        "list() over an Iterator[T] must poll the source-owned iterator; generated:\n{rust_code}"
+    );
     assert_codegen_snapshot!("issue1464_list_constructor", rust_code);
 }
 
@@ -3076,8 +3084,10 @@ fn test_issue1464_list_constructor_codegen() {
 fn test_issue1490_comprehension_over_rust_iterator_codegen() {
     let source = load_test_file("issue1490_comprehension_over_rust_iterator");
     let rust_code = generate_rust(&source);
+    // prettyplease breaks a method chain across lines, so the guard compares without whitespace.
+    let compact = rust_code.split_whitespace().collect::<String>();
     assert!(
-        !rust_code.contains("(args()).iter()") && !rust_code.contains("(args()).clone()"),
+        !compact.contains("(args()).iter()") && !compact.contains("(args()).clone()"),
         "a by-value Rust iterator must be neither borrowed with .iter() nor cloned; generated:\n{rust_code}"
     );
     assert!(

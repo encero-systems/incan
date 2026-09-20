@@ -51,6 +51,14 @@ def thawed_text(frozen: FrozenList[str]) -> list[str]:
     return list(frozen)
 
 
+def from_generator(source: Generator[int]) -> list[int]:
+    return list(source)
+
+
+def from_iterator(pairs: Iterator[(int, str)]) -> list[(int, str)]:
+    return list(pairs)
+
+
 def reused(words: list[str]) -> int:
     first = list(words)
     second = list(words)
@@ -74,5 +82,7 @@ def main() -> None:
     println(len(thawed(FrozenList([7]))))
     println(len(thawed_text(FrozenList(["x"]))))
     println(reused(["p", "q"]))
+    println(len(from_generator((value for value in range(3)))))
+    println(len(from_iterator(zip([1, 2], ["a", "b"]))))
     arguments = list(args())
     println(len(arguments))

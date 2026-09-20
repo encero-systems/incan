@@ -1489,8 +1489,10 @@ pub def main() -> None:
         tmp.path()
             .join("target/incan/comprehension_rust_iterator_issue1490/src/main.rs"),
     )?;
+    // prettyplease breaks a method chain across lines, so the guard compares without whitespace.
+    let compact = generated.split_whitespace().collect::<String>();
     assert!(
-        !generated.contains("(args()).iter()") && !generated.contains("(args()).clone()"),
+        !compact.contains("(args()).iter()") && !compact.contains("(args()).clone()"),
         "a by-value Rust iterator must be neither borrowed with .iter() nor cloned:\n{generated}"
     );
     assert!(
