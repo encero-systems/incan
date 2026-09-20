@@ -199,6 +199,12 @@ def render(corpus: Corpus, dispositions: dict) -> str:
     )
     out.append("")
     out.append(
+        "    Temporary. This page, the dispositions record and the `test-inventory` gate exist for the v0.6 cutover only: "
+        "they retire with [#654](https://github.com/encero-systems/incan/issues/654) once no `retire` row remains and the "
+        "durable corpus is frozen. Nothing here is a lasting contributor contract."
+    )
+    out.append("")
+    out.append(
         "This is the control plane for the slice-7 cutover (issue [#1561](https://github.com/encero-systems/incan/issues/1561), "
         "test corpus). Every Rust test under `loaves/` and `workspaces/` has a disposition by what it proves and how, not by "
         "where it lives; every `.incn` fixture root is listed with its case count. A disposition is a recorded decision, "
