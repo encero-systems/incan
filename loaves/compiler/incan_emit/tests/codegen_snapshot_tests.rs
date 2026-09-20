@@ -4780,15 +4780,15 @@ fn test_issue367_result_ok_string_literal_emits_owned_strings() {
     let rust_code = generate_rust(&source);
 
     assert!(
-        rust_code.contains("(\"from_call\").to_string()"),
+        rust_code.contains("\"from_call\".to_string()"),
         "expected call-argument seeding path to coerce Ok string literals to owned String"
     );
     assert!(
-        rust_code.contains("(\"from_local\").to_string()"),
+        rust_code.contains("\"from_local\".to_string()"),
         "expected assignment seeding path to coerce Ok string literals to owned String"
     );
     assert!(
-        rust_code.contains("(\"from_return\").to_string()"),
+        rust_code.contains("\"from_return\".to_string()"),
         "expected return-context seeding path to coerce Ok string literals to owned String"
     );
     assert!(
@@ -5017,6 +5017,26 @@ fn test_issue1462_named_constructor_evaluation_order_codegen() {
     assert!(
         compact.contains("Document{evidence:__incan_ctor_arg_1,intent:__incan_ctor_arg_0,}"),
         "the construction must read the temporaries rather than re-evaluate the arguments:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_issue1489_loop_variable_returned_owned_codegen() {
+    let source = load_test_file("issue1489_loop_variable_returned_owned");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1489_loop_variable_returned_owned", rust_code);
+    let compact = compact_rust(&rust_code);
+    assert!(
+        compact.contains("returnOk::<Vec<String>,String>(row.clone());"),
+        "a loop binding iterated by reference must be materialized when it becomes the `Ok` payload:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("returnOk::<String,String>(candidate.to_string());"),
+        "a borrowed string loop binding must become an owned `String` payload:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("returnOk::<Vec<String>,String>(found);"),
+        "an owned local returned inside the loop is its last use and must move, not clone:\n{rust_code}"
     );
 }
 

@@ -31,14 +31,15 @@ use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::{magic_methods, trait_bounds::rust as tb};
 
 use crate::ownership::{
-    RegularMethodArgumentContext, ValueUseSite, list_index_assignment_element_type, regular_method_argument_use_site,
-    value_use_requires_clone_bound, value_use_site_target_ty,
+    RegularMethodArgumentContext, ValueUseSite, collection_element_type, dict_entry_types,
+    list_index_assignment_element_type, regular_method_argument_use_site, value_use_requires_clone_bound,
+    value_use_site_target_ty,
 };
 use incan_ir::IrProgram;
 use incan_ir::decl::{FunctionParam, IrDeclKind, IrFunction, IrTraitBound, IrTypeParam};
 use incan_ir::expr::{
-    BinOp, BuiltinFn, FormatPart, IrCallArg, IrDictEntry, IrExpr, IrExprKind, IrGeneratorClause, IrListEntry,
-    MethodCallArgPolicy, VarRefKind,
+    BinOp, BuiltinFn, CollectionMethodKind, FormatPart, IrCallArg, IrDictEntry, IrExpr, IrExprKind, IrGeneratorClause,
+    IrListEntry, MethodCallArgPolicy, MethodKind, VarRefKind,
 };
 use incan_ir::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use incan_ir::types::{IrType, SetConstructorIteration};
@@ -880,7 +881,27 @@ fn collect_backend_clone_bounds_in_stmt(
                 clone_params,
             );
         }
-        IrStmtKind::While { body, .. } | IrStmtKind::Loop { body, .. } => {
+        IrStmtKind::While { condition, body, .. } => {
+            // A loop condition is an ordinary expression: a planned clone inside it, such as a predicate call on a
+            // non-Copy local, needs the same bound as one in the body.
+            collect_backend_clone_bounds_in_expr(
+                condition,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
+            for stmt in body {
+                collect_backend_clone_bounds_in_stmt(
+                    stmt,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
+            }
+        }
+        IrStmtKind::Loop { body, .. } => {
             for stmt in body {
                 collect_backend_clone_bounds_in_stmt(
                     stmt,
@@ -903,10 +924,19 @@ fn collect_backend_clone_bounds_in_stmt(
             }
         }
         IrStmtKind::If {
+            condition,
             then_branch,
             else_branch,
-            ..
         } => {
+            // The condition was skipped until #1489: `if f(item):` plans `item.clone()` for the call, and the `T:
+            // Clone` bound that clone needs only appeared when another clone of `item` happened to demand it.
+            collect_backend_clone_bounds_in_expr(
+                condition,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
             for stmt in then_branch {
                 collect_backend_clone_bounds_in_stmt(
                     stmt,
@@ -1285,7 +1315,7 @@ fn collect_backend_clone_bounds_in_expr(
                 clone_params,
             );
         }
-        IrExprKind::KnownMethodCall { receiver, args, .. } => {
+        IrExprKind::KnownMethodCall { receiver, kind, args } => {
             collect_backend_clone_bounds_in_expr(
                 receiver,
                 type_param_names,
@@ -1293,6 +1323,33 @@ fn collect_backend_clone_bounds_in_expr(
                 clone_context,
                 clone_params,
             );
+            // Storing into a builtin collection is an owned-element sink. Mirror the sites collection-method
+            // emission uses so a clone planned for `items.append(item)` demands the same bound here (#1489).
+            let element_sites: Vec<(usize, Option<&IrType>)> = match kind {
+                MethodKind::Collection(CollectionMethodKind::Add | CollectionMethodKind::Append) => {
+                    vec![(0, collection_element_type(&receiver.ty))]
+                }
+                MethodKind::Collection(CollectionMethodKind::Insert) => {
+                    let (key_ty, value_ty) = match dict_entry_types(&receiver.ty) {
+                        Some((key_ty, value_ty)) => (Some(key_ty), Some(value_ty)),
+                        None => (None, None),
+                    };
+                    vec![(0, key_ty), (1, value_ty)]
+                }
+                _ => Vec::new(),
+            };
+            for (index, target_ty) in element_sites {
+                if let Some(arg) = args.get(index)
+                    && value_use_requires_clone_bound(&arg.expr, ValueUseSite::CollectionElement { target_ty })
+                {
+                    add_backend_clone_bounds_for_cloned_expr(
+                        &arg.expr,
+                        type_param_names,
+                        self_clone_params,
+                        clone_params,
+                    );
+                }
+            }
             for arg in args {
                 collect_backend_clone_bounds_in_expr(
                     &arg.expr,

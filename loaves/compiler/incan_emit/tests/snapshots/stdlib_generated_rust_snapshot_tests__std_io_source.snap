@@ -2025,7 +2025,7 @@ fn _write_u8_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -2057,7 +2057,7 @@ fn _write_i8_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -2097,7 +2097,7 @@ fn _read_u16_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2147,7 +2147,7 @@ fn _read_i16_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2190,8 +2190,8 @@ fn _write_u16_value(
         let _ = match cursor.write_u16::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(
-                    stream.clone(),
-                    cursor.clone(),
+                    stream,
+                    cursor,
                 );
             }
             Err(err) => {
@@ -2200,7 +2200,7 @@ fn _write_u16_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2213,7 +2213,7 @@ fn _write_u16_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -2246,8 +2246,8 @@ fn _write_i16_value(
         let _ = match cursor.write_i16::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(
-                    stream.clone(),
-                    cursor.clone(),
+                    stream,
+                    cursor,
                 );
             }
             Err(err) => {
@@ -2256,7 +2256,7 @@ fn _write_i16_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2269,7 +2269,7 @@ fn _write_i16_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -2309,7 +2309,7 @@ fn _read_u32_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2359,7 +2359,7 @@ fn _read_i32_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2402,8 +2402,8 @@ fn _write_u32_value(
         let _ = match cursor.write_u32::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(
-                    stream.clone(),
-                    cursor.clone(),
+                    stream,
+                    cursor,
                 );
             }
             Err(err) => {
@@ -2412,7 +2412,7 @@ fn _write_u32_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2425,7 +2425,7 @@ fn _write_u32_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -2458,8 +2458,8 @@ fn _write_i32_value(
         let _ = match cursor.write_i32::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(
-                    stream.clone(),
-                    cursor.clone(),
+                    stream,
+                    cursor,
                 );
             }
             Err(err) => {
@@ -2468,7 +2468,7 @@ fn _write_i32_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2481,7 +2481,7 @@ fn _write_i32_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -2521,7 +2521,7 @@ fn _read_u64_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2571,7 +2571,7 @@ fn _read_i64_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2614,8 +2614,8 @@ fn _write_u64_value(
         let _ = match cursor.write_u64::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(
-                    stream.clone(),
-                    cursor.clone(),
+                    stream,
+                    cursor,
                 );
             }
             Err(err) => {
@@ -2624,7 +2624,7 @@ fn _write_u64_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2637,7 +2637,7 @@ fn _write_u64_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -2670,8 +2670,8 @@ fn _write_i64_value(
         let _ = match cursor.write_i64::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(
-                    stream.clone(),
-                    cursor.clone(),
+                    stream,
+                    cursor,
                 );
             }
             Err(err) => {
@@ -2680,7 +2680,7 @@ fn _write_i64_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2693,7 +2693,7 @@ fn _write_i64_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -2733,7 +2733,7 @@ fn _read_u128_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2783,7 +2783,7 @@ fn _read_i128_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2826,8 +2826,8 @@ fn _write_u128_value(
         let _ = match cursor.write_u128::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(
-                    stream.clone(),
-                    cursor.clone(),
+                    stream,
+                    cursor,
                 );
             }
             Err(err) => {
@@ -2836,7 +2836,7 @@ fn _write_u128_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2849,7 +2849,7 @@ fn _write_u128_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -2882,8 +2882,8 @@ fn _write_i128_value(
         let _ = match cursor.write_i128::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(
-                    stream.clone(),
-                    cursor.clone(),
+                    stream,
+                    cursor,
                 );
             }
             Err(err) => {
@@ -2892,7 +2892,7 @@ fn _write_i128_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2905,7 +2905,7 @@ fn _write_i128_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -2945,7 +2945,7 @@ fn _read_f32_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2995,7 +2995,7 @@ fn _read_f64_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -3038,8 +3038,8 @@ fn _write_f32_value(
         let _ = match cursor.write_f32::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(
-                    stream.clone(),
-                    cursor.clone(),
+                    stream,
+                    cursor,
                 );
             }
             Err(err) => {
@@ -3048,7 +3048,7 @@ fn _write_f32_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -3061,7 +3061,7 @@ fn _write_f32_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -3094,8 +3094,8 @@ fn _write_f64_value(
         let _ = match cursor.write_f64::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(
-                    stream.clone(),
-                    cursor.clone(),
+                    stream,
+                    cursor,
                 );
             }
             Err(err) => {
@@ -3104,7 +3104,7 @@ fn _write_f64_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -3117,7 +3117,7 @@ fn _write_f64_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -3213,8 +3213,8 @@ fn _rust_io_error(
     let _ = "\n    Convert host I/O error text into a `std.io` error.\n    ";
     if incan_std_core::strings::str_contains(&detail, &"invalid") {
         return {
-            let __incan_ctor_arg_0 = operation.clone();
-            let __incan_ctor_arg_2 = detail.clone();
+            let __incan_ctor_arg_0 = operation;
+            let __incan_ctor_arg_2 = detail;
             let __incan_ctor_arg_3 = position;
             IoError {
                 kind: "invalid_input".to_string(),
@@ -3229,8 +3229,8 @@ fn _rust_io_error(
             || incan_std_core::strings::str_contains(&detail, &"early eof")
         {
             return {
-                let __incan_ctor_arg_0 = operation.clone();
-                let __incan_ctor_arg_2 = detail.clone();
+                let __incan_ctor_arg_0 = operation;
+                let __incan_ctor_arg_2 = detail;
                 let __incan_ctor_arg_3 = position;
                 IoError {
                     kind: "unexpected_eof".to_string(),

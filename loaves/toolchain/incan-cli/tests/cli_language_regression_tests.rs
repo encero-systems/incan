@@ -90,6 +90,64 @@ def main() -> None:
     Ok(())
 }
 
+/// A `for` over `list[list[str]]` binds its variable by reference, so returning it as an `Ok` payload needs the
+/// owned value. The payload used to bypass ownership planning and reached rustc as `&Vec<String>` (E0308, #1489),
+/// while an owned local returned from the same loop must still move rather than clone.
+#[test]
+fn returning_a_loop_variable_from_a_list_of_lists_issue1489() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    write_minimal_project(tmp.path(), "loop_variable_returned", "")?;
+    fs::write(
+        tmp.path().join("src/main.incn"),
+        r#"def require_member(values: list[list[str]], name: str) -> Result[list[str], str]:
+    for row in values:
+        if row[0] == name:
+            return Ok(row)
+    return Err("absent")
+
+def first_named(names: list[str], name: str) -> Result[str, str]:
+    for candidate in names:
+        if candidate == name:
+            return Ok(candidate)
+    return Err("absent")
+
+def collect_named(names: list[str], name: str) -> Result[list[str], str]:
+    mut found: list[str] = []
+    for candidate in names:
+        if candidate == name:
+            found.append(candidate)
+            return Ok(found)
+    return Err("absent")
+
+def main() -> None:
+    match require_member([["a", "b"], ["c", "d"]], "c"):
+        Ok(row) => println(",".join(row))
+        Err(reason) => println(reason)
+    match require_member([["a"]], "z"):
+        Ok(row) => println(",".join(row))
+        Err(reason) => println(reason)
+    match first_named(["a", "b"], "b"):
+        Ok(found) => println(found)
+        Err(reason) => println(reason)
+    match collect_named(["a", "b"], "b"):
+        Ok(found) => println(len(found))
+        Err(reason) => println(reason)
+"#,
+    )?;
+    let bake = run_explicit_oven_bake(tmp.path())?;
+    assert_success(&bake, "prepare the returned loop variable fixture");
+    let build = run_incan(tmp.path(), &["build", "src/main.incn"])?;
+    assert_success(&build, "build a function returning its loop variable as an Ok payload");
+    let run = run_incan(tmp.path(), &["run", "src/main.incn"])?;
+    assert_success(&run, "run the returned loop variable program");
+    assert_eq!(
+        String::from_utf8(run.stdout)?.lines().collect::<Vec<_>>(),
+        vec!["c,d", "absent", "b", "1"],
+        "each shape must return the owned value it found"
+    );
+    Ok(())
+}
+
 /// `{{` and `}}` are the f-string escapes for one literal brace, as in Python, so `f"{{{name}}}"` renders `{x}`. The
 /// lexer collapsed them correctly; emission then brace-escaped every literal segment again for a `format!` string it
 /// no longer builds, and both characters reached the output.

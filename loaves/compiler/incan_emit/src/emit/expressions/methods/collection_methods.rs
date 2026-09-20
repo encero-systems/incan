@@ -3,7 +3,9 @@ use quote::quote;
 
 use crate::emit::expressions::methods::ReceiverInfo;
 use crate::emit::{EmitError, IrEmitter};
-use crate::ownership::{ValueUseSite, dict_entry_types, plan_collection_receiver, plan_dict_lookup_key};
+use crate::ownership::{
+    ValueUseSite, collection_element_type, dict_entry_types, plan_collection_receiver, plan_dict_lookup_key,
+};
 use incan_ir::expr::{CollectionMethodKind, TypedExpr};
 use incan_ir::types::IrType;
 
@@ -14,15 +16,6 @@ use incan_ir::types::IrType;
 /// ownership planner's borrowed probe rules.
 pub fn emit_dict_lookup_key(receiver: &TypedExpr, arg: &TypedExpr, emitted: TokenStream) -> TokenStream {
     plan_dict_lookup_key(&receiver.ty, &arg.ty).apply(emitted)
-}
-
-/// Return the element type for a collection IR type.
-fn collection_element_type(ty: &IrType) -> Option<&IrType> {
-    match ty {
-        IrType::List(elem) | IrType::Set(elem) => Some(elem.as_ref()),
-        IrType::Ref(inner) | IrType::RefMut(inner) => collection_element_type(inner),
-        _ => None,
-    }
 }
 
 /// Return whether a type stores owned string values.
@@ -99,14 +92,7 @@ pub fn emit_collection_method(
         }
         CollectionMethodKind::Append => {
             if let Some(arg) = args.first() {
-                let elem_ty = match &receiver.ty {
-                    IrType::List(elem) => Some(elem.as_ref()),
-                    IrType::Ref(inner) | IrType::RefMut(inner) => match inner.as_ref() {
-                        IrType::List(elem) => Some(elem.as_ref()),
-                        _ => None,
-                    },
-                    _ => None,
-                };
+                let elem_ty = collection_element_type(&receiver.ty);
                 let converted =
                     emitter.emit_expr_for_use(arg, ValueUseSite::CollectionElement { target_ty: elem_ty })?;
                 return Ok(quote! { #r.push(#converted) });
