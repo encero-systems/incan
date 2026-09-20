@@ -12,16 +12,16 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3110 | 163 | 7 |
+| keep | 3110 | 172 | 7 |
 | re-point | 480 | 42 | 377 |
 | retire | 1109 | 72 | 0 |
 | unaffected | 1407 | 132 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **6106** | **409** | **389** |
+| **Total** | **6106** | **418** | **389** |
 
 - Retire-class tests with a named twin: 12/1109.
 - Retire-class files with no twin at all: 79 (the `Twins` column reads `0/n`).
-- Files whose test region exceeds the split threshold of 1500 lines: 26, of which 14 in the durable corpus (keep or re-point).
+- Files whose test region exceeds the split threshold of 1500 lines: 25, of which 13 in the durable corpus (keep or re-point).
 - Unreviewed files: 0.
 
 ## Dispositions
@@ -434,7 +434,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 | `loaves/kernel/incan_semantics_core/src/stable_identity.rs` | 7 | 444 | 245 | keep | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/types.rs` | 7 | 435 | 95 | keep | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 
-### `loaves/kernel/incan_syntax` (307 tests in 6 files: keep 307)
+### `loaves/kernel/incan_syntax` (307 tests in 15 files: keep 307)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---|---|---|---|
@@ -442,8 +442,17 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 | `loaves/kernel/incan_syntax/src/diagnostics/base.rs` | 2 | 396 | 39 | keep | - | - | #1561 | checker 1 | lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/diagnostics/stable.rs` | 5 | 605 | 121 | keep | - | - | #1561 | checker 5 | lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/lexer/mod.rs` | 20 | 909 | 400 | keep | - | - | #1561 | checker 20, parser 20 | lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
-| `loaves/kernel/incan_syntax/src/parser/embedded/tests.rs` | 28 | 914 | 906 | keep | - | - | #1561 | checker 24, parser 4 | lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
-| `loaves/kernel/incan_syntax/src/parser/tests.rs` | 251 | 6673 | 6672 | keep | - | required | #1561 | checker 226, parser 251, formatter 2 | lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
+| `loaves/kernel/incan_syntax/src/parser/embedded/tests.rs` | 28 | 915 | 907 | keep | - | - | #1561 | checker 24, parser 4 | lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
+| `loaves/kernel/incan_syntax/src/parser/tests/expressions.rs` | 26 | 769 | 769 | keep | - | - | #1561 | checker 20, parser 26 | split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
+| `loaves/kernel/incan_syntax/src/parser/tests/fstrings.rs` | 7 | 365 | 365 | keep | - | - | #1561 | checker 7, parser 7 | split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
+| `loaves/kernel/incan_syntax/src/parser/tests/functions_decorators_and_bindings.rs` | 23 | 556 | 556 | keep | - | - | #1561 | checker 16, parser 23 | split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
+| `loaves/kernel/incan_syntax/src/parser/tests/modules_and_imports.rs` | 47 | 883 | 883 | keep | - | - | #1561 | checker 30, parser 47 | split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
+| `loaves/kernel/incan_syntax/src/parser/tests/patterns_and_matching.rs` | 16 | 555 | 555 | keep | - | - | #1561 | checker 12, parser 16 | split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
+| `loaves/kernel/incan_syntax/src/parser/tests/soft_keywords_and_vocab_blocks.rs` | 20 | 655 | 655 | keep | - | - | #1561 | checker 5, parser 20 | split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
+| `loaves/kernel/incan_syntax/src/parser/tests/statements_and_blocks.rs` | 19 | 426 | 426 | keep | - | - | #1561 | checker 17, parser 19 | split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
+| `loaves/kernel/incan_syntax/src/parser/tests/type_declarations.rs` | 58 | 1134 | 1134 | keep | - | - | #1561 | checker 35, parser 58, formatter 2 | split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
+| `loaves/kernel/incan_syntax/src/parser/tests/types_and_bounds.rs` | 21 | 412 | 412 | keep | - | - | #1561 | checker 13, parser 21 | split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
+| `loaves/kernel/incan_syntax/src/parser/tests/vocab_scoped_symbols.rs` | 14 | 824 | 824 | keep | - | - | #1561 | parser 14 | split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
 
 ### `loaves/toolchain/incan-cli` (617 tests in 38 files: keep 117, re-point 342, retire 35, unaffected 123)
 
