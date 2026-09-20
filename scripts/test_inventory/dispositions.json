@@ -56,6 +56,24 @@
       "owner": 1561,
       "notes": "the behaviour-fixture harness proving itself: one fixture per shape of the format (refused program with one code and with two, non-zero exit, exit code as the only observable, empty stdout, contained lines, module directory, project directory), run by behavior_harness_tests.rs. They twin nothing; they exist so a runner or route change is caught here before it is caught in a twin. Header refusals are unit tests of parse_header, not fixtures."
     },
+    "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations": {
+      "pattern": "<name>.incn or <name>/",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "behaviour fixtures twinning incan_ir retire tests about declarations: models, enums, generics, frozen collections, exact float widths, RFC 018 assertions, serde derive propagation, module-scoped traits (module fixtures) and two check-time refusals; run by behavior_lowering_tests.rs. Each names the retire tests it twins in `# retires:` lines."
+    },
+    "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies": {
+      "pattern": "<name>.incn or <name>/",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "behaviour fixtures twinning incan_ir retire tests whose observable crosses a package boundary: projects with in-fixture providers (`[dependencies] <name> = { path = \"deps/<name>\" }`) that the runner bakes first with no Cargo authority; run by behavior_lowering_tests.rs. Each names the retire tests it twins in `# retires:` lines."
+    },
+    "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions": {
+      "pattern": "<name>.incn or <name>/",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "behaviour fixtures twinning incan_ir retire tests about expressions: call shapes, method-kind classification, iterator and Result surfaces, trait dispatch by receiver shape, decorators, partials and the std JSON protocol; run by behavior_lowering_tests.rs. Each names the retire tests it twins in `# retires:` lines."
+    },
     "loaves/compiler/incan_test_support/fixtures/behavior/smoke": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
@@ -2287,7 +2305,13 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "tests": {
+        "test_visibility_rust_keyword": {
+          "twin": "dies",
+          "dies": "data-structure invariant of the retiring crate: the Rust keyword spelling of `Visibility` (`pub `, `pub(crate) `)."
+        }
+      }
     },
     "loaves/compiler/incan_ir/src/expr.rs": {
       "disposition": "retire",
@@ -2295,7 +2319,21 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "tests": {
+        "iterator_method_kind_for_receiver_classifies_rfc088_surface": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/iterator_adapter_surface.incn",
+          "notes": "The `IteratorMethodKind` classifications die with the crate; the fixture drives every adapter and terminal of the table on `Iterator[int]` values from `list.iter()`."
+        },
+        "iterator_method_kind_for_receiver_does_not_capture_iterable_or_plain_structs": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/user_methods_named_like_builtins.incn",
+          "notes": "The `None` classifications die with the crate; the fixture's model defines `map` and the call reaches the model's method. An `Iterable[int]` value calling `map` is a checker refusal, not a lowering fact."
+        },
+        "result_method_kind_for_receiver_classifies_result_surface": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/result_method_surface.incn",
+          "notes": "The `ResultMethodId` classifications die with the crate; the fixture applies each of the eight methods to `Result[int, str]` values. `missing` is a checker refusal."
+        }
+      }
     },
     "loaves/compiler/incan_ir/src/lib.rs": {
       "disposition": "retire",
@@ -2303,7 +2341,29 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "tests": {
+        "checked_c_wrapper_names_do_not_merge_component_boundaries": {
+          "twin": "dies",
+          "dies": "data-structure invariant of the retiring crate: the Rust and FFI wrapper name spellings of a checked C binding (`Fixture_` + `symbol` versus `Fixture` + `_symbol`)."
+        },
+        "function_registry_finds_exact_package_declaration_behind_encoded_key": {
+          "twin": "dies",
+          "dies": "data-structure invariant of the retiring crate: `FunctionRegistry` finds a canonical identity by package, module path and declaration name behind an encoded key."
+        },
+        "function_registry_finds_local_identity_by_retained_source_name": {
+          "twin": "dies",
+          "dies": "data-structure invariant of the retiring crate: `FunctionRegistry` finds a canonical identity by retained source name."
+        },
+        "function_registry_retains_source_identity_without_parsing_the_emitted_name": {
+          "twin": "dies",
+          "dies": "data-structure invariant of the retiring crate: `FunctionRegistry` maps an opaque projection back to its source name."
+        },
+        "merged_source_signature_keeps_mutable_parameter_abi": {
+          "twin": "dies",
+          "dies": "data-structure invariant of the retiring crate: `FunctionSignature::merge_default_source` keeps the source signature's `Mutable` parameter over the checked one's, on hand-built signatures with no program."
+        }
+      }
     },
     "loaves/compiler/incan_ir/src/lower/decl/helpers.rs": {
       "disposition": "retire",
@@ -2311,7 +2371,21 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "tests": {
+        "adopted_serde_derives_require_canonical_std_serde_json_owner": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/adopted_serde_traits_by_owner",
+          "notes": "The forwarded `serde::Serialize`/`serde::Deserialize` derive spellings die with the crate; the fixture adopts `std.serde.json` traits module-qualified and by imported name (the JSON protocol answers) beside another module's trait spelled `Serialize` (its own `to_json` body answers). The negative halves, that a same-named local or third-party trait forwards no derive, are not observable: a superfluous derive changes no output. The `JsonDeserialize` alias spelling is #1712 and lands with its fix."
+        },
+        "phantom_type_params_are_the_parameters_no_field_mentions": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/phantom_type_parameter_model_issue1370.incn",
+          "notes": "The phantom-parameter list dies with the crate; the fixture is the #1370 program (`Column[T]` with `T` in no field) constructed, multiplied and rendered, as `cli_issue1370_phantom_type_param_tests.rs` runs it through a build."
+        },
+        "source_callable_lowering_requires_canonical_std_trait_owner": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/callable_trait_local_versus_std",
+          "notes": "`IrTraitBoundOrigin` and the `crate::__incan_std::traits::callable::Callable1` path die with the crate; the fixture's module-local `Callable1` is an ordinary trait dispatching its own method, and the std `Callable1` admits a closure and a plain function."
+        }
+      }
     },
     "loaves/compiler/incan_ir/src/lower/decl/methods.rs": {
       "disposition": "retire",
@@ -2319,7 +2393,13 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "tests": {
+        "decorated_method_static_signature_keeps_first_projected_surface_parameter": {
+          "twin": "",
+          "notes": "open: asserts the Rust spelling (`ProviderHandle<(&mut i64, &mut i64)>`) and `OwnedMutable` mutability of a decorated method's static signature under a hand-inserted mutable-reference projection over `rust::std::vec::Vec`. The behaviour, a decorated method taking a `mut` Rust generic parameter and running, is the same program as `loaves/toolchain/incan-cli/tests/integration_tests.rs::decorated_method_explicit_mutable_rust_generic_keeps_static_and_wrapper_abi` (itself retire/open) and its candidate `decorated_rust_generic_mutable_reference_args.incn` under the `cli/` behaviour-candidates group (#1701); waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records through Cargo, and `incan check` refuses it before that bake. that candidate passed standalone where Cargo was available."
+        }
+      }
     },
     "loaves/compiler/incan_ir/src/lower/decl/traits.rs": {
       "disposition": "retire",
@@ -2327,7 +2407,21 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "tests": {
+        "loaf_source_callable_module_restores_internal_std_identity": {
+          "twin": "dies",
+          "dies": "SDK-provider build-mode switch of the retiring crate (`set_sdk_provider_build` with the current module named `__incan_std.traits.callable`): the compiler's own build of the standard library, not a user program. What the bridge gives a program, the std `Callable1` admitting a closure and a plain function, is shown by loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/callable_trait_local_versus_std/."
+        },
+        "normal_oven_internal_stdlib_callable_module_keeps_its_bridge": {
+          "twin": "dies",
+          "dies": "build-mode switch of the retiring crate (`source_callable_trait` keyed on the current module being named `__incan_std.traits.callable`, the standard library's own source under a normal Oven bake); no user program names that module. What the bridge gives a program, the std `Callable1` admitting a closure and a plain function, is shown by loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/callable_trait_local_versus_std/."
+        },
+        "sdk_provider_callable_module_retains_public_std_identity": {
+          "twin": "dies",
+          "dies": "SDK-provider build-mode switch of the retiring crate (`set_sdk_provider_build` with the current module named `traits.callable`): the compiler's own build of the standard library, not a user program. What the bridge gives a program, the std `Callable1` admitting a closure and a plain function, is shown by loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/callable_trait_local_versus_std/."
+        }
+      }
     },
     "loaves/compiler/incan_ir/src/lower/expr/calls.rs": {
       "disposition": "retire",
@@ -2335,7 +2429,89 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "tests": {
+        "canonical_path_keeps_its_spelling_when_no_overload_was_selected": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/overloaded_stdlib_call_selection.incn",
+          "notes": "The source-shaped path spelling dies with the crate; the fixture's non-overloaded `get_optional` call reaches its only declaration."
+        },
+        "canonical_path_names_the_overload_a_call_selected": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/overloaded_stdlib_call_selection.incn",
+          "notes": "The overload's `__incan_v1_...` path spelling dies with the crate; the fixture calls both arities of `std.environ.get_as` and shows each reached its own overload."
+        },
+        "compiled_provider_signature_uses_artifact_api_and_preserves_union_owner": {
+          "twin": "dies",
+          "dies": "data-structure invariant of the retiring crate: reconstructs a callable signature and a module-qualified callee path from a hand-built compiled-provider manifest (no source, in-memory API metadata) through the retiring crate's own manifest readers; no program."
+        },
+        "imported_pub_callable_signature_uses_identity_graph_before_short_name_lookup": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/identity_graph_alias_signature",
+          "notes": "The manifest-reading path dies with the crate; the fixture's provider publishes `helpers.cast` (str) as `safe_cast` beside a root-level `cast` (int), and the consumer's `safe_cast(\"text\")` shows the alias took the str declaration."
+        },
+        "imported_pub_parent_namespace_routes_to_nested_checked_callable_issue948": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/parent_namespace_and_qualified_partial_issue948",
+          "notes": "The `pub::modulelib::hyperquant::default_index` callee path dies with the crate; the fixture imports the directory namespace and calls the nested module's function and partial through it."
+        },
+        "lower_generic_box_as_ref_preserves_nominal_generic_receiver_args": {
+          "twin": "",
+          "notes": "open: candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_box_generic_receiver.incn (the test's own program with a `main`: `Box[Node[T]].as_ref()` handed to a generic function returns the typed value); waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records through Cargo, and `incan check` refuses it before that bake. The candidate was written from the language reference and not executed (no Cargo where it was written)."
+        },
+        "lower_method_call_applies_required_concrete_borrow_despite_arg_shape_hint": {
+          "twin": "",
+          "notes": "open: candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_std_collections_argument_coercions.incn (`Vec.append` takes its argument by mutable reference); waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records through Cargo, and `incan check` refuses it before that bake. The candidate was written from the language reference and not executed (no Cargo where it was written)."
+        },
+        "lower_method_call_threads_arg_shape_hint_from_typechecker": {
+          "twin": "",
+          "notes": "open: candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_std_collections_argument_coercions.incn (`HashMap.get` keeps its lookup argument's shape); waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records through Cargo, and `incan check` refuses it before that bake. The candidate was written from the language reference and not executed (no Cargo where it was written)."
+        },
+        "lower_method_call_wraps_args_with_rust_arg_coercion": {
+          "twin": "",
+          "notes": "open: candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_std_collections_argument_coercions.incn (a `str` literal passed to `String.push_str`, which takes a borrowed str); waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records through Cargo, and `incan check` refuses it before that bake. The candidate was written from the language reference and not executed (no Cargo where it was written)."
+        },
+        "lower_nested_rust_associated_method_arg_keeps_type_like_receiver": {
+          "twin": "",
+          "notes": "open: candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_std_time_receivers.incn (`Duration.from_millis(500)` as a method argument keeps its type-like receiver); waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records through Cargo, and `incan check` refuses it before that bake. The candidate was written from the language reference and not executed (no Cargo where it was written)."
+        },
+        "lower_rust_boundary_target_preserves_nested_borrowed_str_refs": {
+          "twin": "dies",
+          "dies": "data-structure invariant of the retiring crate: the Rust spelling a `List[Ref[str]]` boundary target lowers to (`Vec<&str>`), computed on a hand-built resolved type with no program."
+        },
+        "lower_rust_constant_method_receiver_as_value_not_type_like": {
+          "twin": "",
+          "notes": "open: candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_std_time_receivers.incn (`UNIX_EPOCH.checked_add(...)`, the imported constant as a value receiver); waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records through Cargo, and `incan check` refuses it before that bake. The candidate was written from the language reference and not executed (no Cargo where it was written)."
+        },
+        "lower_rust_import_associated_method_keeps_type_like_receiver": {
+          "twin": "",
+          "notes": "open: candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_std_time_receivers.incn (`Duration.from_secs(1).as_secs()`, the imported type as a type-like receiver); waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records through Cargo, and `incan check` refuses it before that bake. The candidate was written from the language reference and not executed (no Cargo where it was written)."
+        },
+        "lower_rust_named_field_constructor_wraps_fields_with_rust_arg_coercion": {
+          "twin": "",
+          "notes": "open: candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_named_field_constructor.incn (a `rust::std::ops::Range` constructed by named fields, read back); the test's hand-inserted Default-fill fact has no std struct to observe it on. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records through Cargo, and `incan check` refuses it before that bake. The candidate was written from the language reference and not executed (no Cargo where it was written)."
+        },
+        "lower_rusttype_interop_adapter_uses_from_edge_for_rusttype_target": {
+          "twin": "",
+          "notes": "open: candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rusttype_interop_edges.incn (a `str` passed where the `rusttype` is expected adapts through its `from str via` edge); waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records through Cargo, and `incan check` refuses it before that bake. The candidate was written from the language reference and not executed (no Cargo where it was written)."
+        },
+        "lower_rusttype_interop_adapter_uses_into_edge_for_rusttype_argument": {
+          "twin": "",
+          "notes": "open: candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rusttype_interop_edges.incn (a `rusttype` over `rust::std::string::String` passed where a `str` is expected adapts through its `into str via` edge); waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records through Cargo, and `incan check` refuses it before that bake. The candidate was written from the language reference and not executed (no Cargo where it was written)."
+        },
+        "method_type_arg_uses_unique_sdk_provider_nominal_path": {
+          "twin": "dies",
+          "dies": "SDK-provider build-mode switch of the retiring crate (`set_sdk_provider_build` over an in-memory SDK manifest): the `crate::__incan_std::io::IoError` Rust path a method type argument takes while the compiler builds the standard library itself; no user program."
+        },
+        "qualified_partial_expands_presets_without_a_callable_snapshot_issue948": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/parent_namespace_and_qualified_partial_issue948",
+          "notes": "The `modulelib::hyperquant::index::DEFAULT_SIZE` field-chain spelling dies with the crate; the fixture's provider declares the partial beside its const and the consumer's call shows the preset applied. The residual parameter is passed explicitly: called without it the route drops the target's declaration default (E0061; candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/imported_partial_keeps_target_defaults/, a bug beside this row)."
+        },
+        "sdk_provider_physical_call_path_restores_std_identity_for_semantic_lookup": {
+          "twin": "dies",
+          "dies": "SDK-provider build-mode switch of the retiring crate (`set_sdk_provider_build` plus a registry package identity and bootstrap namespace roots): rewrites a physical callee path back to its `std.` spelling while the compiler builds the standard library itself; no user program."
+        },
+        "source_partial_without_callable_snapshot_defers_to_canonical_defaults_issue701": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/source_partial_keeps_declaration_defaults_issue701.incn",
+          "notes": "The `partial_projection_call_args` `None` dies with the crate; the fixture's stored partial over a model constructor applies its preset and the declaration's own defaults fill the rest."
+        }
+      }
     },
     "loaves/compiler/incan_ir/src/lower/expr/mod.rs": {
       "disposition": "retire",
@@ -2343,7 +2519,69 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "tests": {
+        "a_dispatched_call_to_another_packages_method_is_not_projected": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/stdlib_trait_dispatch_across_package.incn",
+          "notes": "The projection-suppression decision dies with the crate; the fixture is the case the test names, typed `BinaryRead`/`BinaryWrite` calls on a stdlib `BytesIO`, each width reaching the stdlib's own implementation. Not executed where it was written (a standalone bake of a `std.io` program reaches for Rust inspection); `incan check` accepts it and the same surface runs under the suite in the snapshots areas (#1701)."
+        },
+        "a_package_projects_its_own_inherent_method_while_building_itself": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/package_inherent_methods_issue1174",
+          "notes": "`method_belongs_to_an_imported_type` dies with the crate; the fixture's provider calls an inherent method of a sibling module's model while it is baked (#1174's failure mode), and the consumer prints its result."
+        },
+        "a_receiver_typed_as_a_supertrait_adopter_keeps_the_trait_slot_spelling": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/trait_typed_receivers.incn",
+          "notes": "The trait-slot spelling dies with the crate; the fixture returns a value typed as the sub-trait and calls a method of its supertrait on it."
+        },
+        "a_receiver_typed_as_the_dispatched_trait_keeps_the_trait_slot_spelling": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/trait_typed_receivers.incn",
+          "notes": "The trait-slot spelling dies with the crate; the fixture is the case the test names, `display[T](data: DataSet[T])` calling the trait's own method."
+        },
+        "another_packages_inherent_method_is_still_not_projected": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/package_inherent_methods_issue1174",
+          "notes": "The suppression decision dies with the crate; the fixture's consumer calls the dependency's inherent method on the dependency's type directly."
+        },
+        "concrete_source_trait_can_use_recoverable_projection": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/trait_dispatch_receiver_shapes.incn",
+          "notes": "The projection decision dies with the crate; the fixture dispatches a source trait's method on its concrete adopter."
+        },
+        "generic_receiver_keeps_trait_abi_dispatch": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/trait_dispatch_receiver_shapes.incn",
+          "notes": "The trait-slot versus projection spelling dies with the crate; the fixture dispatches the trait method on a generic receiver bound by a source trait."
+        },
+        "imported_method_chain_dispatches_trait_through_public_library": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/fallible_iterator_through_public_library",
+          "notes": "The `fallible_streams::__incan_std::derives::collection::FallibleIterator` trait path dies with the crate; the fixture chains `map` and `collect` on a stream a dependency returns. The consumer imports `FallibleIterator` itself: without the import the route leaves the trait out of scope (E0599; candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/fallible_iterator_chain_without_trait_import/, a bug beside this row)."
+        },
+        "nominal_generic_receiver_can_use_source_projection": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/trait_dispatch_receiver_shapes.incn",
+          "notes": "The projection decision dies with the crate; the fixture dispatches the trait method through a nominal generic receiver over a bound type parameter."
+        },
+        "rust_native_trait_dispatch_keeps_native_method_lookup": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/clone_dispatch_with_std_import.incn",
+          "notes": "The native trait path dies with the crate; the fixture imports `Clone` from `std.derives.copying` and calls `clone()` on a derived model. A generic bound spelled with that imported `Clone` is refused by the route (E0277; candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/clone_bound_with_std_import.incn, the #1727 family)."
+        },
+        "rust_native_trait_keeps_abi_dispatch_for_concrete_receiver": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/trait_dispatch_receiver_shapes.incn",
+          "notes": "The ABI-dispatch decision dies with the crate; the fixture calls `clone()` on a derived model and shows the copy."
+        },
+        "sdk_provider_dispatches_std_trait_through_local_facade": {
+          "twin": "dies",
+          "dies": "SDK-provider build-mode switch of the retiring crate (`set_sdk_provider_build`): the `crate::__incan_std::...` trait path a dispatch takes while the compiler builds the standard library itself; no user program."
+        },
+        "stdlib_json_trait_dispatch_keeps_source_protocol_lookup": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/json_protocol_dispatch.incn",
+          "notes": "The `json::Serialize` path dies with the crate; the fixture's `with json.Serialize` adopter reaches the JSON protocol."
+        },
+        "stdlib_json_trait_owner_precedes_native_serde_mapping": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/json_protocol_dispatch.incn",
+          "notes": "The `crate::__incan_std::serde::json::Serialize` path dies with the crate; the fixture adopts the trait by its imported name and module-qualified and calls `to_json` on both."
+        },
+        "unqualified_stdlib_json_trait_precedes_native_serde_mapping": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/json_protocol_dispatch.incn",
+          "notes": "The unqualified `Serialize` path dies with the crate; the fixture's `with Serialize` adopter reaches the JSON protocol."
+        }
+      }
     },
     "loaves/compiler/incan_ir/src/lower/mod.rs": {
       "disposition": "retire",
@@ -2351,7 +2589,129 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "tests": {
+        "class_lowering_without_type_info_fails_closed": {
+          "twin": "dies",
+          "dies": "fail-closed guard of the retiring crate: the test hand-strips or omits the checker's facts (no type info at all for a class) and asserts lowering refuses to guess; no checked program reaches lowering without them, so there is nothing a program can show."
+        },
+        "decorated_function_original_name_collision_uses_distinct_registry_keys": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/decorated_function_beside_original_named_function.incn",
+          "notes": "The registry keys die with the crate; the fixture declares `__incan_original_target` beside a decorated `target` and calls both."
+        },
+        "decorator_declared_result_type_follows_the_resolved_declaration_issue1453": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/decorator_declared_surface_issue1453.incn",
+          "notes": "The `IrType::Function` surface read off the decorator declaration dies with the crate; the fixture is the test's program with a `main`: the decorator declared after its use and the factory decorator both keep the union surface, the undecorated function is untouched."
+        },
+        "local_trait_shadow_and_nonstdlib_alias_keep_default_fact_provenance": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/local_trait_shadows_imported_trait_issue1592",
+          "notes": "The `imported_trait_decls` provenance flags die with the crate; the fixture keeps a local `Same` and an imported module's `Same` apart and each adopter expands the default body of the trait it named."
+        },
+        "lowering_reports_default_parameter_expression_failures": {
+          "twin": "dies",
+          "dies": "hand-built AST (a vocab block as a parameter default, never desugared) driven into lowering to assert the error text; the parser and desugarer never produce that input from a program."
+        },
+        "membership_operators_lower_with_receiver_aware_known_methods": {
+          "twin": "loaves/compiler/incan_frontend/src/body_ir/tests/operators_literals_and_assignment.rs::lowers_collection_membership_as_a_helper_call_naming_its_own_container",
+          "notes": "Asserts that `in` over a list, set, dict and str lowers to the receiver's own known-method kind and `not in` to its negation. Body IR asserts the same fact per container: the named test (list/set/dict each name their own contains helper), with `lowers_string_membership_as_an_explicit_helper_call_with_its_runtime_requirement` (str) and `lowers_negated_collection_membership_as_its_own_helper_per_container` (`not in`) in the same file."
+        },
+        "method_kind_for_receiver": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/user_methods_named_like_builtins.incn",
+          "notes": "The `MethodKind` classifications die with the crate; the fixture dispatches a model's own `join`/`split`/`replace`/`count`/`index`/`map` beside the str and mut-list builtins of those names. `list.count(v)` and `list.index(v)` have no program: the checker refuses them (`Iterator.count() expects 0 argument(s)`), so those two classifications were unreachable."
+        },
+        "method_kind_for_receiver_issue1668_surfaces": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/receiver_aware_method_kinds_issue1668.incn",
+          "notes": "The classifications die with the crate; the fixture calls `contains_key`/`keys`/`values` on a dict and through a `mut` dict parameter, `encode` on `str` and `FrozenStr`, and `decode` on a bytes literal, a bytes value and a `FrozenBytes` const. The two negative classifications (`str.decode`, `bytes.encode`) are checker refusals, not lowering facts."
+        },
+        "model_lowering_without_type_info_fails_closed_issue884": {
+          "twin": "dies",
+          "dies": "fail-closed guard of the retiring crate: the test hand-strips or omits the checker's facts (no checked field visibility for a model, #884) and asserts lowering refuses to guess; no checked program reaches lowering without them, so there is nothing a program can show."
+        },
+        "retain_declared_decorator_surface_restores_native_carriers_issue1453": {
+          "twin": "loaves/toolchain/incan-cli/tests/package_boundary_facade_tests.rs::explicitly_typed_decorator_keeps_the_provider_union_representation_issue1453",
+          "notes": "Asserts the positional IrType merge that restores a provider-owned union onto a decorated surface (`retain_declared_decorator_surface`) on hand-built types; retires with `incan_ir`. The behaviour, an explicitly typed decorator over a provider's `pub type` union running across the boundary and printing the narrowed value, is carried by the named CLI test (the same #1453 program). The local-alias, declared-after-use and factory halves of #1453 are twinned by loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/decorator_declared_surface_issue1453.incn."
+        },
+        "source_function_without_canonical_identity_fails_closed": {
+          "twin": "dies",
+          "dies": "fail-closed guard of the retiring crate: the test hand-strips or omits the checker's facts (a function's canonical identity removed) and asserts lowering refuses to guess; no checked program reaches lowering without them, so there is nothing a program can show."
+        },
+        "source_method_without_canonical_identity_fails_closed": {
+          "twin": "dies",
+          "dies": "fail-closed guard of the retiring crate: the test hand-strips or omits the checker's facts (a method's canonical identity removed) and asserts lowering refuses to guess; no checked program reaches lowering without them, so there is nothing a program can show."
+        },
+        "source_static_without_canonical_identity_fails_closed": {
+          "twin": "dies",
+          "dies": "fail-closed guard of the retiring crate: the test hand-strips or omits the checker's facts (a static's canonical identity removed) and asserts lowering refuses to guess; no checked program reaches lowering without them, so there is nothing a program can show."
+        },
+        "stdlib_import_facade_reexports_use_the_emitted_namespace": {
+          "twin": "dies",
+          "dies": "standard-library facade build of the retiring crate (current module `__incan_std.datetime.civil`): the emitted `__incan_std` re-export target path of a `from std... import` in the stdlib's own source; a Rust namespace spelling with no user program."
+        },
+        "synthetic_method_partial_wrapper_has_no_source_receiver_binding": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/method_partial_mutating_receiver.incn",
+          "notes": "The wrapper's receiver-binding shape dies with the crate; the fixture calls two method partials on a `mut` model and shows the receiver mutated through the `mut self` target."
+        },
+        "test_inferred_reassign_immutable_error": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/immutable_reassignment_refused.incn",
+          "notes": "The lowering error text dies with the crate; the fixture's reassignment of a non-`mut` binding is refused at check time (INCAN-T0001)."
+        },
+        "test_inferred_reassign_mutable": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/statements_and_expressions.incn",
+          "notes": "The three-statement body shape dies with the crate; the fixture reassigns a `mut` binding and prints it."
+        },
+        "test_lower_binary_expressions": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/statements_and_expressions.incn",
+          "notes": "The declaration count dies with the crate; the fixture prints the chained arithmetic result."
+        },
+        "test_lower_enum": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/function_model_enum_and_entry.incn",
+          "notes": "The variant count dies with the crate; the fixture matches a variant of the three-variant enum."
+        },
+        "test_lower_for_loop": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/statements_and_expressions.incn",
+          "notes": "The declaration count dies with the crate; the fixture prints the loop's iterations."
+        },
+        "test_lower_if_statement": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/statements_and_expressions.incn",
+          "notes": "The non-empty body assertion dies with the crate; the fixture prints all three branches."
+        },
+        "test_lower_imported_assert_raises_injects_error_type_name": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/assert_raises_forms.incn",
+          "notes": "The injected `\"ValueError\"` literal argument dies with the crate; the fixture calls `assert_raises[ValueError](explode, ...)` and the program continues."
+        },
+        "test_lower_list_literal": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/statements_and_expressions.incn",
+          "notes": "The declaration count dies with the crate; the fixture returns the list literal and prints its length and sum."
+        },
+        "test_lower_main_entry": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/function_model_enum_and_entry.incn",
+          "notes": "`entry_point` dies with the crate; the fixture's first line is printed by `main`."
+        },
+        "test_lower_model": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/function_model_enum_and_entry.incn",
+          "notes": "The struct/impl pair dies with the crate; the fixture constructs the model and reads both fields."
+        },
+        "test_lower_pub_model_uses_checked_private_field_visibility_issue884": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/pub_model_private_field_refused_issue884",
+          "notes": "The `is_type_private` flags die with the crate; the fixture reads a `pub model`'s non-pub field from another module and is refused (INCAN-T0001, `Field 'secret' on 'Vault' is private`)."
+        },
+        "test_lower_rfc018_assert_is_some_binding_to_helper_let": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/assert_is_some_binds_the_payload.incn",
+          "notes": "The `std.testing.assert_is_some` helper call dies with the crate; the fixture binds the payload with `assert value is Some(inner)` and prints it."
+        },
+        "test_lower_rfc018_assert_raises_to_canonical_helper_call": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/assert_raises_forms.incn",
+          "notes": "The `std.testing.assert_raises` helper call dies with the crate; the fixture's `assert explode() raises ValueError` passes over a block that raises and the program continues (a block that does not raise fails the assertion: checked while writing)."
+        },
+        "test_lower_simple_function": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/function_model_enum_and_entry.incn",
+          "notes": "The declaration count and parameter count die with the crate; the fixture calls the function."
+        },
+        "test_serde_propagation_respects_derives_and_containers": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/serde_derive_propagation.incn",
+          "notes": "The `derives` lists on the enum and newtype die with the crate; the fixture serializes the payload, which needs the derive propagated to both. `Deserialize` staying unpropagated is not observable. The enum derives `Eq, Hash`: a `set[Tag]` over an underived enum is accepted by the checker and refused by the route (E0277; candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/set_of_underived_enum.incn, a bug beside this row)."
+        }
+      }
     },
     "loaves/compiler/incan_ir/src/lower/types.rs": {
       "disposition": "retire",
@@ -2359,15 +2719,84 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "tests": {
+        "exact_binary_float_arithmetic_keeps_its_native_ir_width": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/exact_float_width_arithmetic.incn",
+          "notes": "`binary_result_type` dies with the crate; the fixture shows the width through the printed values (`0.1 + 0.2` is `0.3` in f32 and `0.30000000000000004` in f64) for every operator of the table."
+        },
+        "foreign_manifest_signatures_use_checked_native_routes": {
+          "twin": "",
+          "notes": "open: asserts, on a hand-built manifest signature, that a provider's exported function type carrying a type of the provider's own dependency lowers through the checker's foreign remapping (`pub::pricing::__incan_provider_rust::catalog::Product`). The behaviour needs a provider that itself declares `[dependencies]`, whose bake under the suite goes through the compatibility publisher and reaches Cargo (see *Provider bakes and Cargo* in the family README); the program shape is #1699's candidate `transitive_provider_chain/` under the `dependencies/` behaviour-candidates group (#1701). Waits for the Cargo-free provider-with-dependencies bake."
+        },
+        "lower_resolved_frozen_collections_freeze_nested_strings": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/frozen_collections_nested_strings.incn",
+          "notes": "The `FrozenDict`/`FrozenList` over `&'static` spellings die with the crate; the fixture reads nested const frozen collections by length, index and iteration. Indexing and `contains_key` on a const `FrozenDict`, and `str.join` over a `FrozenList[str]` comprehension, are accepted by the checker and refused by the route (E0608/E0277/E0308; candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/frozen_dict_lookup_and_frozen_list_join.incn, a bug beside this row)."
+        },
+        "lower_resolved_named_type_param_preserves_active_generic_identity": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/generic_nominal_arguments.incn",
+          "notes": "The `Generic`/`Struct` split dies with the crate; the fixture's generic functions use `K` as a type parameter beside a nominal `Value`. `first` carries `K with Clone`: without the bound the route refuses the index (E0308; candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/generic_list_index_without_clone_bound.incn, a bug beside this row)."
+        },
+        "lower_resolved_type_preserves_named_generic_args_for_nominal_types": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/generic_nominal_arguments.incn",
+          "notes": "The `NamedGeneric` shape dies with the crate; the fixture constructs `Wrapper[Node]` and reads the nominal argument's field."
+        },
+        "lower_resolved_type_qualifies_canonical_public_library_identity_issue892": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/provider_nominal_types_and_unions_issue892",
+          "notes": "The `widgets::Widget` Rust path dies with the crate; the fixture constructs and narrows the provider's nominal types in a consumer."
+        },
+        "lower_resolved_type_qualifies_generic_public_library_identity_issue892": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/provider_nominal_types_and_unions_issue892",
+          "notes": "The `widgets::Envelope<widgets::Widget>` Rust path dies with the crate; the fixture constructs the provider's generic type over the provider's nominal type in a consumer and reads it back."
+        },
+        "lower_trait_default_annotation_uses_defining_module_type_path": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/stdlib_trait_default_names_its_own_module_type.incn",
+          "notes": "The `crate::__incan_std::io::ReaderChunks` path dies with the crate; the fixture iterates `BytesIO.chunks(2)`, the `BinaryReader` default whose annotation names its module's `ReaderChunks`, never imported by the program. Not executed where it was written (a standalone bake of a `std.io` program reaches for Rust inspection); `incan check` accepts it and the same surface runs under the suite in the snapshots areas (#1701). The user-module flavour is a route bug: an imported trait's default returning a type of its own module fails in the adopter's expansion (E0425; candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/trait_default_names_its_own_module_types/)."
+        },
+        "lower_trait_default_constructor_respects_active_local_binding": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/trait_default_local_shadows_module_type",
+          "notes": "`active_trait_default_value_type_path` dies with the crate; the fixture's imported default body binds a local named like a model of the trait's module and returns the local. The sibling fact, the default constructing that model by named fields across modules, is a route bug (E0423; candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/trait_default_constructs_module_type_across_modules/)."
+        },
+        "merge_inferred_ir_type_does_not_erase_a_concrete_closure_return": {
+          "twin": "dies",
+          "dies": "data-structure invariant of the retiring crate: `merge_inferred_ir_type` keeps a concrete closure return over `Unknown`, on hand-built `IrType` values."
+        },
+        "merge_inferred_ir_type_preserves_exact_rust_display_types": {
+          "twin": "dies",
+          "dies": "data-structure invariant of the retiring crate: `merge_inferred_ir_type` keeps an `IrType::RustDisplay` spelling over a union shape, on hand-built `IrType` values."
+        },
+        "merge_inferred_ir_type_preserves_existing_generic_placeholders": {
+          "twin": "dies",
+          "dies": "data-structure invariant of the retiring crate: `merge_inferred_ir_type` keeps a generic placeholder over an inferred struct spelling, on hand-built `IrType` values."
+        },
+        "pub_external_type_normalizes_canonical_union_members_issue892": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/provider_nominal_types_and_unions_issue892",
+          "notes": "The `IrType::ExternalUnion` member spelling dies with the crate; the fixture matches the provider's union by its own members in a consumer."
+        }
+      }
     },
     "loaves/compiler/incan_ir/src/types.rs": {
       "disposition": "retire",
       "owner": 1561,
-      "twin": "",
+      "twin": "dies",
+      "dies": "`IrType` display and predicate helpers (`rust_name`, `incan_name`, `is_copy`, `is_ref`, `iterator_item_type`) and the equality of `IrType::ExternalUnion` across artifact digests, asserted on hand-built values with no program: data-structure invariant of the retiring crate. The three tests whose helper decides something a program shows (isinstance over string storages, provider-owned union member matching and localization) are twinned per test.",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "tests": {
+        "external_union_member_matching_is_provider_aware_issue892": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/provider_nominal_types_and_unions_issue892",
+          "notes": "The `widgets::Widget` versus `other::Widget` spelling test dies with the carrier; the fixture narrows a provider-owned union by the provider's own members in a consumer, beside a second provider's union."
+        },
+        "isinstance_string_storage_identity_is_symmetric_without_widening_union_carriers": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/isinstance_over_string_storages.incn",
+          "notes": "The helper's decision is what `isinstance(value, str)` answers over a union carrying `FrozenStr` and `str` members; the fixture matches both string storages against `str` and an int against `int`. The `union_member_type_matches` asymmetry (String accepts FrozenStr, not the reverse) is a widening rule of the retiring carrier and dies."
+        },
+        "provider_localization_preserves_foreign_external_union_issue892": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/provider_nominal_types_and_unions_issue892",
+          "notes": "`provider_localized` on a hand-built union dies with the carrier; the fixture keeps two providers' unions apart in one consumer, each matched by its own members."
+        }
+      }
     },
     "loaves/compiler/incan_oven_facet/src/lib.rs": {
       "disposition": "unaffected",
@@ -3664,6 +4093,14 @@
       "split_required": false,
       "split_target": "",
       "notes": "runs the harness area's self-proof fixtures as programs; the route changes under it, the fixtures do not."
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_lowering_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs every behaviour fixture of the three lowering_* areas as a program (one libtest case per leaf area), baking a project fixture's in-fixture providers first with no Cargo authority, and compares its observables; the route changes under it, the fixtures do not."
     },
     "loaves/toolchain/incan-cli/tests/behavior_smoke_tests.rs": {
       "disposition": "re-point",
