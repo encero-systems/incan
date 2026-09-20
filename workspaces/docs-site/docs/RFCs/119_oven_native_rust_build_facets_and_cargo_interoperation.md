@@ -390,6 +390,7 @@ This checklist tracks the full RFC. The dev.6 ecosystem slice (#1561) delivers t
 - [ ] Verify Rust test, documentation, example, benchmark, and caller roles with host/target separation.
 - [ ] Verify warm-reusing IDE projections, target switching, and explicit editor macro policy.
 - [ ] Verify Cargo compatibility boundaries and the absence of implicit native-mode fallback.
+- [ ] Retire the compatibility publisher's Cargo observation once incan.pub records govern the corpus, and the compiler-suite foundation's Cargo build once that family bakes through the Loaf-native route; the harvest wire contract, the registry authority and pin, and the policy engine stay.
 - [ ] Publish the supported conformance envelope and update user-facing reference, adoption, and release documentation.
 
 ## Design decisions

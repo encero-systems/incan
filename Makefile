@@ -46,6 +46,9 @@ INCAN_TEST_OVEN_TEST_ONE_REPORT ?=
 # consumer toolchain, so the pinned Rust 1.98.0 gates prove their advertised compiler rather than nightly. The named
 # publisher/test-fixture boundary remains explicit; normal Oven build/run/test remains direct-rustc.
 INCAN_TEST_PREWARM_TOOLCHAIN ?= 1.98.0
+# TODO(#1561): the publisher and fixture Cargo toolchains exist for the compatibility publisher's observation of
+# registry closures and retire with it once incan.pub records govern the corpus. The registry checkout and its pin
+# below are not transitional: a bake settles from them for as long as there is a registry.
 INCAN_TEST_PUBLISHER_TOOLCHAIN ?= nightly-2026-03-24
 INCAN_TEST_FIXTURE_CARGO_TOOLCHAIN ?= $(INCAN_TEST_PUBLISHER_TOOLCHAIN)
 INCAN_TEST_LOAF_TOOLCHAIN ?= 1.98.0

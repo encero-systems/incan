@@ -1,5 +1,9 @@
 //! The compiler-suite third-party foundation's own identity, and reuse of a stored foundation by it (#1564).
 //!
+//! TODO(#1561): the Cargo build this module keys is transitional — it retires when the compiler-suite family bakes
+//! through the Loaf-native route the release family already uses. The key, the family record and the mirror import
+//! describe a stored foundation and outlive the build that first produced it.
+//!
 //! The suite publisher runs Cargo for exactly one compilation: the third-party foundation, the registry and vendored
 //! closure every shard links. That closure is a function of the private foundation manifest, the lock it was resolved
 //! from, the checked-in patches it names, the build intent and the toolchain that compiled it — and of nothing the
