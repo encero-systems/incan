@@ -4289,7 +4289,6 @@ impl TypeChecker {
         }
     }
 
-    /// Validate one newtype or rusttype declaration after collection has registered its symbol.
     /// Refuse a declared type parameter that no part of the declaration's representation mentions.
     ///
     /// `representation` is the set of source annotations that give the declaration its storage: a newtype's
