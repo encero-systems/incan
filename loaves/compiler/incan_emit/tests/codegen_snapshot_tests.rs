@@ -4999,6 +4999,28 @@ fn test_issue1493_empty_list_comparison_codegen() {
 }
 
 #[test]
+fn test_issue1462_named_constructor_evaluation_order_codegen() {
+    let source = load_test_file("issue1462_named_constructor_evaluation_order");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1462_named_constructor_evaluation_order", rust_code);
+    let compact = compact_rust(&rust_code);
+    let (Some(intent), Some(evidence)) = (
+        compact.find("__incan_ctor_arg_0=inspect(source.to_string())"),
+        compact.find("__incan_ctor_arg_1=Evidence{source:source}"),
+    ) else {
+        panic!("reordered named arguments must be bound to temporaries in written order:\n{rust_code}");
+    };
+    assert!(
+        intent < evidence,
+        "`intent` was written first, so its read of `source` must precede the move into `evidence`:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("Document{evidence:__incan_ctor_arg_1,intent:__incan_ctor_arg_0,}"),
+        "the construction must read the temporaries rather than re-evaluate the arguments:\n{rust_code}"
+    );
+}
+
+#[test]
 fn test_rfc041_std_rust_capability_bounds_codegen() {
     let source = load_test_file("rfc041_std_rust_capability_bounds");
     let rust_code = generate_rust(&source);

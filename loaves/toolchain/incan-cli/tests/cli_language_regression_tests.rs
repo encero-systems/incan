@@ -47,6 +47,49 @@ fn nested_empty_first_list_runs_without_a_caller_annotation_issue1471() -> Resul
     Ok(())
 }
 
+/// Named constructor arguments evaluate in the order they were written, however the model declares its fields. The
+/// emitter assembles the construction in declaration order, so `evidence=Evidence(source=source)` moved `source`
+/// before `intent=inspect(source)` had read it, and the generated Rust failed with E0382 (#1462).
+#[test]
+fn named_constructor_arguments_evaluate_in_written_order_issue1462() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    write_minimal_project(tmp.path(), "constructor_argument_order", "")?;
+    fs::write(
+        tmp.path().join("src/main.incn"),
+        r#"model Evidence:
+    source: str
+
+model Document:
+    evidence: Evidence
+    intent: str
+
+def inspect(source: str) -> str:
+    return f"inspect:{source}"
+
+def main() -> None:
+    source = "manifest"
+    result = Document(intent=inspect(source), evidence=Evidence(source=source))
+    println(result.intent)
+    println(result.evidence.source)
+"#,
+    )?;
+    let bake = run_explicit_oven_bake(tmp.path())?;
+    assert_success(&bake, "prepare the reordered constructor fixture");
+    let build = run_incan(tmp.path(), &["build", "src/main.incn"])?;
+    assert_success(
+        &build,
+        "build a construction whose arguments are written out of declaration order",
+    );
+    let run = run_incan(tmp.path(), &["run", "src/main.incn"])?;
+    assert_success(&run, "run the reordered constructor program");
+    assert_eq!(
+        String::from_utf8(run.stdout)?.lines().collect::<Vec<_>>(),
+        vec!["inspect:manifest", "manifest"],
+        "both arguments must observe `source`, in written order"
+    );
+    Ok(())
+}
+
 /// `{{` and `}}` are the f-string escapes for one literal brace, as in Python, so `f"{{{name}}}"` renders `{x}`. The
 /// lexer collapsed them correctly; emission then brace-escaped every literal segment again for a `format!` string it
 /// no longer builds, and both characters reached the output.
