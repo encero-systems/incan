@@ -1,0 +1,9 @@
+# behavior: contained-line expectations match whole lines of stdout in any order
+# expect-stdout-contains:
+#   two
+#   one
+
+def main() -> None:
+    println("one")
+    println("two")
+    println("three")
