@@ -1,4 +1,7 @@
 //! Stable physical rustc-invocation capture for the explicit Cargo compatibility publisher.
+//!
+//! TODO(#1561): transitional with the publisher's Cargo capture (see the crate header); the trace exists to observe
+//! what Cargo asked rustc to do, and has no role once a bake settles from registry records.
 
 use std::collections::BTreeMap;
 use std::env;

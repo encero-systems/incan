@@ -1,9 +1,20 @@
 //! Hidden `legacy_cargo` Loaf baker for Oven Alpha compatibility preparation.
 //!
-//! This is deliberately not an execution backend. It may be invoked only through the named `legacy_cargo` command
-//! while direct closure materialization is being completed for #1005/#975. It bakes typed `.loaf/` envelopes and
-//! publishes receipt-bound compiler-suite plans into the bounded Oven store, then removes every private Cargo target
-//! before returning. Normal Oven build, run, and test code neither calls this module nor receives a Cargo target path.
+//! This is deliberately not an execution backend. It may be invoked only through the named `legacy_cargo` command.
+//! It bakes typed `.loaf/` envelopes and publishes receipt-bound compiler-suite plans into the bounded Oven store,
+//! then removes every private Cargo target before returning. Normal Oven build, run, and test code neither calls this
+//! module nor receives a Cargo target path; the suite's `cargo-guard` refuses any Cargo a normal command reaches.
+//!
+//! TODO(#1561): transitional. Cargo runs here for one reason — to *observe* a package closure the registry does not yet
+//! describe: the unit graph, each build script's cfg and `OUT_DIR` output, the feature selection. Those observations
+//! are what a harvest proposes to incan.pub as records, and a bake whose every registry unit a record governs
+//! settles from records alone (`loaf_registry_authority`). When the corpus is governed, the capture in this crate
+//! (`run_legacy_cargo_invocation`, the `rustc_trace` wrapper, the unit-graph query, the metadata and lock
+//! normalization that feed `prepare_direct_rustc_plan`) retires together with the publisher toolchain pin in the
+//! Makefile. What stays: the harvest's proposal and refusal wire contract, the registry authority and its pin, the
+//! Rust policy engine that settles a graph, and the receipt-bound direct-rustc plan a bake publishes. The
+//! compiler-suite foundation's own Cargo build (`compiler_suite_foundation`, `build_compiler_suite_foundation`)
+//! retires on a different trigger: the suite family baking through the Loaf-native route like the release family.
 
 mod cargo_json;
 pub mod cargo_process;
@@ -2193,6 +2204,10 @@ fn reused_compiler_suite_foundation(
 }
 
 /// Compile the third-party foundation through the one permitted Cargo build and catalog what it produced.
+///
+/// TODO(#1561): transitional. This is the compiler-suite family's Cargo build; it retires when that family bakes
+/// through the Loaf-native route the release family already uses, not with the harvest capture (the crate header
+/// keeps the two triggers apart). Until then #1564's key makes a hit cost no Cargo and a miss cost exactly this.
 ///
 /// The staged manifest's copied lock file preserves the compiler workspace's exact registry resolution, while its
 /// private root has no path dependency on the compiler workspace. Every compiler library, proc macro, CLI and test
