@@ -171,7 +171,7 @@ Helpers available: `compile_source(source)`, `compile_file(path)`.
 cargo test -p incan_emit --test codegen_snapshot_tests -- test_my_feature
 
 # Run all typechecker tests
-cargo test -p incan --lib typechecker::tests
+cargo test -p incan_frontend --lib typechecker::tests
 
 # Run all parser tests
 cargo test -p incan_syntax --lib parser::tests
