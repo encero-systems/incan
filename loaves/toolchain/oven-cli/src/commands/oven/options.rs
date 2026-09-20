@@ -226,6 +226,8 @@ pub struct OvenLoafBakeCommandOptions {
     /// Index commit `loaf_registry` must be checked out at; any other revision refuses the bake.
     pub loaf_registry_commit: Option<String>,
     /// Directory receiving harvest proposals and refusals from the release runtime-foundation capture (release only).
+    ///
+    /// TODO(#1561): temporary; retires with the Cargo-observed harvest once incan.pub records govern the corpus.
     pub harvest_dir: Option<PathBuf>,
 }
 

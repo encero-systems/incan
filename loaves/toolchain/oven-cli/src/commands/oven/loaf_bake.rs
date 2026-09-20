@@ -281,6 +281,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         release_store_member_byte_counts(&staged_root, release_store_member.as_ref(), limits)?;
     let mut pending = Vec::new();
     let mut release_foundation_capture: Option<ReleaseFoundationCapture> = None;
+    // TODO(#1561): temporary with `--harvest-dir` (see `harvest_release_entry`).
     // Harvest state: the compiler closure identity is computed once for every harvested entry and later checked
     // against the retained Toolchain owner; the report accumulates over both stdlib profiles.
     let mut harvest_compiler_closure: Option<String> = None;
@@ -1619,6 +1620,11 @@ pub(crate) fn compiler_suite_store_path(options: &OvenLoafBakeCommandOptions) ->
 }
 
 /// Harvest incan.pub proposals from one release entry's capture into `harvest_dir`.
+///
+/// TODO(#1561): temporary. This is the release bake's half of the Cargo-observed harvest: it proposes records from
+/// the compatibility publisher's capture of the release family, and retires with that capture once incan.pub records
+/// govern the corpus and the bake settles from records alone. The registry pin beside it (`--loaf-registry-commit`,
+/// `LoafRegistryAuthority`) is not temporary.
 ///
 /// The evidence names the receipt the publisher ran under, the compiler closure identity the generation will
 /// retain as its Toolchain owner, and the hazard tokens this process carries; the note names the compiler checkout
