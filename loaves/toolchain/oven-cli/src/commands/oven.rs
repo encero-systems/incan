@@ -6101,6 +6101,7 @@ mod tests {
             "loaves/toolchain/incan-cli/tests/behavior_driver_tests.rs",
             "loaves/toolchain/incan-cli/tests/behavior_harness_tests.rs",
             "loaves/toolchain/incan-cli/tests/behavior_smoke_tests.rs",
+            "loaves/toolchain/incan-cli/tests/behavior_snapshots_tests.rs",
         ] {
             let capabilities = OvenCompilerSuiteTargetCapabilities::for_target("incan-cli", "test", root);
             assert!(!capabilities.explicit_bake_cargo, "{root}");

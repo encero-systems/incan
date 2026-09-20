@@ -510,6 +510,89 @@ def size(s: Shape, o: Option[str]) -> int:
     Ok(())
 }
 
+/// A tuple pattern binds its names over both tuple spellings: the `(A, B)` form that infers `ResolvedType::Tuple`
+/// and the written `tuple[A, B]` annotation that resolves as `Generic("Tuple", …)`. Before #1714 only the first
+/// spelling was destructured, so the bindings of a `match` over a `tuple[int, str]`-typed value were never
+/// defined; the element types recorded at each binding's own span prove the sub-patterns are now visited.
+#[test]
+fn tuple_pattern_binds_over_a_written_tuple_annotation_issue1714() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def describe(pair: tuple[int, str]) -> str:
+  match pair:
+    (0, _) =>
+      return "zero"
+    (number, word) =>
+      return f"{number + 1} {word.upper()}"
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+
+    let pattern_start = source
+        .find("(number, word)")
+        .ok_or("fixture must spell the tuple pattern")?;
+    for (name, offset, expected) in [("number", 1, ResolvedType::Int), ("word", 9, ResolvedType::Str)] {
+        let start = pattern_start + offset;
+        assert_eq!(
+            info.expr_type(Span::new(start, start + name.len())),
+            Some(&expected),
+            "the element type must be recorded at `{name}`'s own span"
+        );
+    }
+    Ok(())
+}
+
+/// A model or class pattern that names a subset of the fields records the canonical fields it leaves unnamed at
+/// the constructor name's span, in declaration order and with aliases resolved (#1708); a pattern that names every
+/// field records nothing.
+#[test]
+fn partial_constructor_pattern_records_its_rest_fields_issue1708() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Account:
+  type_ [alias="type"]: str
+  tier: int
+  name: str
+
+def describe(a: Account) -> str:
+  match a:
+    Account(type="premium") =>
+      return "premium"
+    Account(tier=1, name=n, type=t) =>
+      return t
+    _ =>
+      return "other"
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+
+    let name_span = |pattern: &str| -> Result<Span, Box<dyn std::error::Error>> {
+        let start = source
+            .find(pattern)
+            .ok_or_else(|| format!("fixture must spell `{pattern}`"))?;
+        Ok(Span::new(start, start + "Account".len()))
+    };
+    assert_eq!(
+        info.pattern_rest_fields(name_span("Account(type=\"premium\")")?),
+        Some(["tier".to_string(), "name".to_string()].as_slice()),
+        "the fields the partial pattern leaves unnamed are recorded in declaration order"
+    );
+    assert_eq!(
+        info.pattern_rest_fields(name_span("Account(tier=1, name=n, type=t)")?),
+        None,
+        "a pattern naming every field, aliases included, records no rest"
+    );
+    Ok(())
+}
+
 #[test]
 fn test_pattern_alternation_rejects_missing_binding() {
     let source = r#"
