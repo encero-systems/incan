@@ -1,0 +1,159 @@
+# behavior: classes adopting one or several traits answer trait methods directly and through trait-typed parameters, including a self-mutating trait method
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_traits_codegen
+# expect-stdout:
+#   Dog name: Buddy
+#   Rectangle area: 15.0, perimeter: 16.0
+#   Circle with radius 2.5
+#   Square area: 16.0
+#   Square with side 4.0
+#   Original volume: 24.0
+#   New volume: 192.0
+#   README: This is the content
+#   title=README,content=This is the content
+#   Circle with radius 2.5
+#   Square with side 4.0
+#   Areas: 15.0, 16.0
+
+"""Test trait definitions and implementations"""
+
+# Empty trait definition
+trait Named:
+    pass
+
+# Trait with single method signature
+trait Drawable:
+    def draw(self) -> str
+
+# Trait with multiple methods
+trait Shape:
+    def area(self) -> float
+    def perimeter(self) -> float
+
+# Trait with methods (extended)
+trait Comparable:
+    def compare(self, other: Self) -> int
+    def is_equal(self, other: Self) -> bool
+
+# Class implementing single trait
+class Dog with Named:
+    pub name: str
+
+# Class implementing trait with methods
+class Rectangle with Shape:
+    width: float
+    height: float
+
+    def area(self) -> float:
+        return self.width * self.height
+
+    def perimeter(self) -> float:
+        return 2.0 * (self.width + self.height)
+
+# Class implementing trait with draw method
+class Circle with Drawable:
+    radius: float
+
+    def draw(self) -> str:
+        return f"Circle with radius {self.radius}"
+
+# Class implementing multiple traits
+class Square with Shape, Drawable:
+    side: float
+
+    def area(self) -> float:
+        return self.side * self.side
+
+    def perimeter(self) -> float:
+        return 4.0 * self.side
+
+    def draw(self) -> str:
+        return f"Square with side {self.side}"
+
+# Another trait
+trait Resizable:
+    def resize(mut self, factor: float) -> None
+
+# Class with mutable trait implementation
+class Carton with Resizable:
+    width: float
+    height: float
+    depth: float
+
+    def resize(mut self, factor: float) -> None:
+        self.width *= factor
+        self.height *= factor
+        self.depth *= factor
+
+    def volume(self) -> float:
+        return self.width * self.height * self.depth
+
+# Multiple traits in one file
+trait Printable:
+    def to_string(self) -> str
+
+trait Serializable:
+    def serialize(self) -> str
+
+class Document with Printable, Serializable:
+    title: str
+    content: str
+
+    def to_string(self) -> str:
+        return f"{self.title}: {self.content}"
+
+    def serialize(self) -> str:
+        return f"title={self.title},content={self.content}"
+
+# Function accepting trait objects (if supported)
+def draw_shape(shape: Drawable) -> None:
+    output: str = shape.draw()
+    print(output)
+
+def calculate_area(shape: Shape) -> float:
+    return shape.area()
+
+def main() -> None:
+    # Test simple trait implementation
+    dog: Dog = Dog(name="Buddy")
+    print(f"Dog name: {dog.name}")
+
+    # Test Shape trait implementations
+    rect: Rectangle = Rectangle(width=5.0, height=3.0)
+    rect_area: float = rect.area()
+    rect_perimeter: float = rect.perimeter()
+    print(f"Rectangle area: {rect_area}, perimeter: {rect_perimeter}")
+
+    # Test Drawable trait
+    circle: Circle = Circle(radius=2.5)
+    circle_drawing: str = circle.draw()
+    print(circle_drawing)
+
+    # Test multiple trait implementation
+    square: Square = Square(side=4.0)
+    square_area: float = square.area()
+    square_drawing: str = square.draw()
+    print(f"Square area: {square_area}")
+    print(square_drawing)
+
+    # Test mutable trait
+    mut carton: Carton = Carton(width=2.0, height=3.0, depth=4.0)
+    original_volume: float = carton.volume()
+    print(f"Original volume: {original_volume}")
+    carton.resize(2.0)
+    new_volume: float = carton.volume()
+    print(f"New volume: {new_volume}")
+
+    # Test document with multiple traits
+    doc: Document = Document(title="README", content="This is the content")
+    doc_str: str = doc.to_string()
+    doc_serial: str = doc.serialize()
+    print(doc_str)
+    print(doc_serial)
+
+    # Test trait-based functions
+    draw_shape(circle)
+    draw_shape(square)
+
+    area1: float = calculate_area(rect)
+    area2: float = calculate_area(square)
+    print(f"Areas: {area1}, {area2}")

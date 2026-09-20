@@ -1,0 +1,24 @@
+# behavior: a Callable1-bounded generic parameter accepts a closure and a model with __call__, and each is invoked with the argument
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_source_callable_bound_preserves_nominal_trait_with_native_callable_blanket_codegen
+# expect-stdout:
+#   item:3:model:4
+
+from std.traits.callable import Callable1
+
+def apply[Mapper with (Clone, Callable1[int, str])](mapper: Mapper, value: int) -> str:
+  return mapper(value)
+
+@derive(Clone)
+model Prefixer with Callable1[int, str]:
+  prefix: str
+
+  def __call__(self, value: int) -> str:
+    return f"{self.prefix}:{value}"
+
+def render() -> str:
+  prefix = "item"
+  closure_value = apply((value) => f"{prefix}:{value}", 3)
+  return f"{closure_value}:{apply(Prefixer(prefix="model"), 4)}"
+
+def main() -> None:
+  println(render())

@@ -1,0 +1,44 @@
+# behavior: match arms assign string literals and a bound payload to a mutable str, with nested if/else inside an arm (#1668)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1668_mut_str_match_arm_codegen
+# expect-stdout:
+#   admitted
+#   no manifest
+#   beta-strict
+#   beta
+#   alpha
+#   other
+
+enum Verdict:
+    Admitted
+    Rejected(str)
+
+
+def describe(verdict: Verdict) -> str:
+    mut label = "pending"
+    match verdict:
+        Verdict.Admitted => label = "admitted"
+        Verdict.Rejected(reason) => label = reason
+    return label
+
+
+def classify(code: str, strict: bool) -> str:
+    mut kind: str = "other"
+    match code:
+        "a" =>
+            kind = "alpha"
+        "b" =>
+            if strict:
+                kind = "beta-strict"
+            else:
+                kind = "beta"
+        _ => pass
+    return kind
+
+
+def main() -> None:
+    println(describe(Verdict.Admitted))
+    println(describe(Verdict.Rejected("no manifest")))
+    println(classify("b", true))
+    println(classify("b", false))
+    println(classify("a", true))
+    println(classify("z", true))

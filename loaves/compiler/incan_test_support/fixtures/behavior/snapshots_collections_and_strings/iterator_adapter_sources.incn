@@ -1,0 +1,64 @@
+# behavior: zip and take adapters serve as loop, comprehension and generator sources through both the fluent and the builtin spellings (#950, #953)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue950_953_iterator_adapter_sources_codegen
+# expect-stdout:
+#   11.0
+#   11.0
+#   11.0
+#   0:beta
+#   1:alpha
+#   2
+#   alpha
+#   2
+
+def score_pairs(left: list[float], right: list[float]) -> float:
+    """Compute a dot product through the fluent iterator zip adapter."""
+    mut score = 0.0
+    for pair in left.iter().zip(right.iter()):
+        score += pair[0] * pair[1]
+    return score
+
+def score_pairs_builtin(left: list[float], right: list[float]) -> float:
+    """Compute a dot product through the direct builtin zip spelling."""
+    mut score = 0.0
+    for pair in zip(left, right):
+        score += pair[0] * pair[1]
+    return score
+
+def score_iterator_pairs(left: Iterator[float], right: Iterator[float]) -> float:
+    """Pair canonical iterator values through the direct builtin zip spelling."""
+    mut score = 0.0
+    for pair in zip(left, right):
+        score += pair[0] * pair[1]
+    return score
+
+def print_prefix(values: list[str]) -> None:
+    """Print the first two values with their iterator-generated ranks."""
+    mut rank = 0
+    for value in values.iter().take(2):
+        println(f"{rank}:{value}")
+        rank += 1
+
+def project_prefix(values: list[str]) -> list[str]:
+    """Project the first two ranked values through a list comprehension."""
+    return [f"{rank}:{value}" for rank, value in values.iter().take(2).enumerate()]
+
+def index_prefix(values: list[str]) -> dict[int, str]:
+    """Index the first two values through a dictionary comprehension."""
+    return {rank: value for rank, value in values.iter().take(2).enumerate()}
+
+def collect_prefix(values: list[str]) -> list[str]:
+    """Collect a generator that reads from a source-owned iterator adapter."""
+    return (value for value in values.iter().take(2)).collect()
+
+def main() -> None:
+    """Exercise iterator adapters as direct loop and comprehension sources."""
+    left = [1.0, 2.0]
+    right = [3.0, 4.0]
+    values = ["beta", "alpha", "beta"]
+    println(score_pairs(left, right))
+    println(score_pairs_builtin(left, right))
+    println(score_iterator_pairs(left.iter(), right.iter()))
+    print_prefix(values)
+    println(len(project_prefix(values)))
+    println(index_prefix(values)[1])
+    println(len(collect_prefix(values)))

@@ -1,0 +1,25 @@
+# behavior: a Default with-bound lets a generic function build the value through T.default(), giving a derived model its field defaults (#1374)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_trait_bound_default_codegen
+# expect-stdout:
+#   0
+#   empty
+
+# #1374: `Default` is derivable and must also be usable as a `with` bound.
+# The bound must lower to the Rust `Default` trait that `@derive(Default)` implements,
+# and `T.default()` through that bound must dispatch through the same Rust trait.
+
+@derive(Default)
+model Settings:
+    retries: int = 0
+    label: str = ""
+
+
+def make[T with Default]() -> T:
+    return T.default()
+
+
+def main() -> None:
+    settings: Settings = make()
+    println(settings.retries)
+    if settings.label == "":
+        println("empty")

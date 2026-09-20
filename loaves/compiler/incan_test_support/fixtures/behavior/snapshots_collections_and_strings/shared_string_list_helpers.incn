@@ -1,0 +1,39 @@
+# behavior: a str list passed to a helper inside a loop and inside a comprehension is readable on every iteration, and a dict comprehension reuses its str key in the value (#383)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue383_loop_helper_shared_string_list_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue383_dict_comp_reuses_noncopy_key_codegen
+# expect-stdout:
+#   0 1 -1
+#   0 1 -1
+#   5 3
+
+def match_index(xs: list[str], y: int) -> int:
+    mut idx = 0
+    while idx < len(xs):
+        if len(xs[idx]) == y:
+            return idx
+        idx = idx + 1
+    return -1
+
+
+def helper_loop(xs: list[str], ys: list[int]) -> list[int]:
+    mut out: list[int] = []
+    for y in ys:
+        out.append(match_index(xs, y))
+    return out
+
+
+def helper_list(xs: list[str], ys: list[int]) -> list[int]:
+    return [match_index(xs, y) for y in ys]
+
+
+def lengths(names: list[str]) -> dict[str, int]:
+    return {name: len(name) for name in names}
+
+
+def main() -> None:
+    looped = helper_loop(["a", "bb", "ccc"], [1, 2, 4])
+    println(f"{looped[0]} {looped[1]} {looped[2]}")
+    listed = helper_list(["a", "bb", "ccc"], [1, 2, 4])
+    println(f"{listed[0]} {listed[1]} {listed[2]}")
+    values = lengths(["alice", "bob"])
+    println(f"{values["alice"]} {values["bob"]}")

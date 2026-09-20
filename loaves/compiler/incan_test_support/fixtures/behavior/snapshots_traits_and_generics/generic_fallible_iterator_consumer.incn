@@ -1,0 +1,34 @@
+# behavior: a generic model adopting FallibleIterator is drained by generic functions that inherit the implementation's bound on the type parameter (#1280)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::generic_fallible_iterator_consumer_inherits_implementation_bounds_issue1280
+# expect-stdout:
+#   2
+#   2
+
+from std.derives.collection import FallibleIterator
+
+model Stream[R] with FallibleIterator[int, str]:
+    value: R
+    remaining: int = 2
+
+    def __next__(mut self) -> Result[Option[int], str]:
+        if self.remaining == 0:
+            return Ok(None)
+        self.remaining -= 1
+        return Ok(Some(self.remaining))
+
+pub def drain[R](value: R) -> Result[int, str]:
+    mut count = 0
+    for _item in Stream[R](value=value)?:
+        count += 1
+    return Ok(count)
+
+pub def relay[R](value: R) -> Result[int, str]:
+    return drain(value)
+
+def main() -> None:
+    match drain("text"):
+        Ok(count) => println(count)
+        Err(error) => println(error)
+    match relay(1):
+        Ok(count) => println(count)
+        Err(error) => println(error)

@@ -1,0 +1,43 @@
+# behavior: models adopting From and TryFrom convert through their classmethod hooks, the fallible one refusing a non-positive value
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_traits_convert_usage_codegen
+# expect-stdout:
+#   42
+#   3
+#   Value must be positive
+
+"""User-facing conversion hooks should compile through imported trait names and classmethod syntax."""
+
+from std.traits.convert import From, TryFrom
+
+model UserId with From[int]:
+    value: int
+
+    @classmethod
+    def from(cls, value: int) -> Self:
+        return UserId(value=value)
+
+
+model PositiveInt with TryFrom[int]:
+    value: int
+
+    @classmethod
+    def try_from(cls, value: int) -> Result[Self, str]:
+        if value <= 0:
+            return Err("Value must be positive")
+        return Ok(PositiveInt(value=value))
+
+
+def main() -> None:
+    user = UserId.from(42)
+    result = PositiveInt.try_from(3)
+    println(str(user.value))
+    match result:
+        Ok(value) =>
+            println(str(value.value))
+        Err(error) =>
+            println(error)
+    match PositiveInt.try_from(0):
+        Ok(value) =>
+            println(str(value.value))
+        Err(error) =>
+            println(error)

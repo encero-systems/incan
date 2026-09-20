@@ -1,0 +1,37 @@
+# behavior: methods on generic receivers fill their default arguments at positional and named call sites (#731)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue731_generic_method_defaults_codegen
+# expect-stdout:
+#   2
+#   2
+#   1-
+#   1-again
+
+"""Issue #731: generic receiver methods should fill default arguments at call sites."""
+
+class Box[T with Clone]:
+    pub value: T
+
+    def join(self, other: Box[T], suffix: str = "") -> Box[T]:
+        return other
+
+
+model Shelf[T]:
+    item: T
+    label: str = ""
+
+    def relabel(self, suffix: str = "") -> Shelf[T]:
+        return Shelf(item=self.item, label=f"{self.item}-{suffix}")
+
+
+def main() -> None:
+    left = Box(value=1)
+    right = Box(value=2)
+    joined: Box[int] = left.join(right)
+    joined_named: Box[int] = left.join(other=right)
+    println(joined.value)
+    println(joined_named.value)
+
+    shelf: Shelf[int] = Shelf(item=1)
+    relabeled: Shelf[int] = shelf.relabel()
+    println(relabeled.label)
+    println(shelf.relabel(suffix="again").label)

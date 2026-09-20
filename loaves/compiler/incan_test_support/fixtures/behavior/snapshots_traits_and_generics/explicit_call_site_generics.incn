@@ -1,0 +1,23 @@
+# behavior: explicit call-site type arguments on a function and on a method select the instantiation and return the passed value (RFC 054)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_explicit_call_site_generics_codegen
+# expect-stdout:
+#   3
+#   text
+
+"""RFC 054: explicit call-site type arguments lower to Rust turbofish on calls and method calls."""
+
+def id[T](x: T) -> T:
+    return x
+
+
+class Boxed:
+    def pick[T](self, value: T) -> T:
+        return value
+
+
+def main() -> None:
+    let a = id[int](1)
+    let b = Boxed()
+    let c = b.pick[int](2)
+    println(a + c)
+    println(b.pick[str]("text"))

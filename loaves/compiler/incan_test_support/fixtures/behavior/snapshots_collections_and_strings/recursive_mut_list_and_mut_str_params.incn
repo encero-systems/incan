@@ -1,0 +1,31 @@
+# behavior: a recursive function threads mut list parameters through a loop and marks every node once, and a mut str parameter accepts a literal (#244)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue244_recursive_mut_list_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue244_mut_str_param_codegen
+# expect-stdout:
+#   true true true
+#   0
+#   hello
+
+"""Issue #244: recursive calls inside a loop must pass mut list params as &mut, not .clone()."""
+
+def walk(node_id: int, mut pending: list[int], mut visited: list[bool]) -> None:
+    if node_id < 0:
+        return
+    if visited[node_id]:
+        return
+    visited[node_id] = True
+    pending.append(node_id - 1)
+    while len(pending) > 0:
+        nxt = pending.pop()
+        walk(nxt, pending, visited)
+
+def bump(mut s: str) -> None:
+    println(s)
+
+def main() -> None:
+    mut q: list[int] = []
+    mut seen: list[bool] = [False, False, False]
+    walk(2, q, seen)
+    println(f"{seen[0]} {seen[1]} {seen[2]}")
+    println(len(q))
+    bump("hello")

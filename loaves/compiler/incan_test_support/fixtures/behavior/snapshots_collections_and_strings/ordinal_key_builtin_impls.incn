@@ -1,0 +1,59 @@
+# behavior: str, i32, bool, decimal and value-enum keys expose ordinal bytes and encodings through a generic OrdinalKey bound
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_ordinal_key_builtin_impls_codegen
+# expect-stdout:
+#   str:4
+#   i32:4
+#   bool:bool:u8
+#   decimal:17:decimal128:coefficient-i128-le:scale-u8
+#   status:4:value-enum:str:main.Status:4:paid;4:open;:v1
+#   http:8
+
+from std.collections import OrdinalKey
+
+enum Status(str):
+    Paid = "paid"
+    Open = "open"
+
+enum HttpStatus(int):
+    Ok = 200
+    NotFound = 404
+
+pub def key_bytes[T with OrdinalKey](value: T) -> bytes:
+    return value.ordinal_bytes()
+
+pub def key_encoding[T with OrdinalKey](_value: T) -> str:
+    return T.ordinal_encoding()
+
+pub def str_bytes(value: str) -> bytes:
+    return key_bytes(value)
+
+pub def i32_bytes(value: i32) -> bytes:
+    return key_bytes(value)
+
+pub def bool_encoding(value: bool) -> str:
+    return key_encoding(value)
+
+pub def decimal_bytes(value: decimal[5, 2]) -> bytes:
+    return key_bytes(value)
+
+pub def decimal_encoding(value: decimal[5, 2]) -> str:
+    return key_encoding(value)
+
+pub def status_bytes(value: Status) -> bytes:
+    return key_bytes(value)
+
+pub def status_encoding(value: Status) -> str:
+    return key_encoding(value)
+
+pub def http_status_bytes(value: HttpStatus) -> bytes:
+    return key_bytes(value)
+
+def main() -> None:
+    println(f"str:{len(str_bytes("paid"))}")
+    narrow: i32 = 7
+    println(f"i32:{len(i32_bytes(narrow))}")
+    println(f"bool:{bool_encoding(true)}")
+    price: decimal[5, 2] = 19.99d
+    println(f"decimal:{len(decimal_bytes(price))}:{decimal_encoding(price)}")
+    println(f"status:{len(status_bytes(Status.Paid))}:{status_encoding(Status.Open)}")
+    println(f"http:{len(http_status_bytes(HttpStatus.NotFound))}")

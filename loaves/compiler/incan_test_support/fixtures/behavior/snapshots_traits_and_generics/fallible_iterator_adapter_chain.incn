@@ -1,0 +1,93 @@
+# behavior: a source-defined fallible stream trait with map, take, inspect, inspect_err, map_err and collect adapters runs each chain and reports the collected count or mapped error
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_fallible_iterator_adapter_chain_codegen
+# expect-stdout:
+#   2
+#   1
+#   0
+
+trait FallibleStream[T, E]:
+  def __next__(mut self) -> Result[Option[T], E]: ...
+
+  def map[U with Clone](self, f: (T) -> U) -> FallibleStream[U, E]:
+    return MappedStream[T, E, Self, U](source=self, f=f)
+
+  def collect(mut self) -> Result[list[T], E]:
+    mut items: list[T] = []
+    while true:
+      match self.__next__():
+        Ok(Some(item)) => items.append(item)
+        Ok(None) => return Ok(items)
+        Err(error) => return Err(error)
+
+  def take(self, count: int) -> FallibleStream[T, E]:
+    return self
+
+  def inspect(self, f: (T) -> None) -> FallibleStream[T, E]:
+    return self
+
+  def inspect_err(self, f: (E) -> None) -> FallibleStream[T, E]:
+    return self
+
+  def map_err[F with Clone](self, f: (E) -> F) -> FallibleStream[T, F]:
+    return ErrorMappedStream[T, E, Self, F](source=self, f=f, item_marker=None)
+
+model NumberStream with FallibleStream[int, str]:
+  items: list[int]
+  index: int
+
+  def __next__(mut self) -> Result[Option[int], str]:
+    if self.index >= len(self.items):
+      return Ok(None)
+    item = self.items[self.index]
+    self.index += 1
+    return Ok(Some(item))
+
+model MappedStream[T, E, Source with FallibleStream[T, E], Output] with FallibleStream[Output, E]:
+  source: Source
+  f: (T) -> Output
+  error_marker: Option[E] = None
+
+  def __next__(mut self) -> Result[Option[Output], E]:
+    match self.source.__next__():
+      Ok(Some(item)) =>
+        transform = self.f
+        return Ok(Some(transform(item)))
+      Ok(None) => return Ok(None)
+      Err(error) => return Err(error)
+
+model ErrorMappedStream[T, E, Source with FallibleStream[T, E], MappedError] with FallibleStream[T, MappedError]:
+  source: Source
+  f: (E) -> MappedError
+  item_marker: Option[T] = None
+
+  def __next__(mut self) -> Result[Option[T], MappedError]:
+    match self.source.__next__():
+      Ok(next) => return Ok(next)
+      Err(error) =>
+        transform = self.f
+        return Err(transform(error))
+
+def double(value: int) -> int:
+  return value * 2
+
+def observe_value(value: int) -> None:
+  pass
+
+def observe_error(error: str) -> None:
+  pass
+
+def main() -> None:
+  pipeline = NumberStream(items=[1, 2], index=0).map(double).take(1).inspect(observe_value).inspect_err(observe_error)
+  match pipeline.collect():
+    Ok(values) => println(len(values))
+    Err(error) => println(error)
+
+  stream = NumberStream(items=[3], index=0).map(double)
+  match stream.collect():
+    Ok(values) => println(len(values))
+    Err(error) => println(error)
+
+  errors = NumberStream(items=[], index=0).map_err((error) => f"mapped:{error}")
+  match errors.collect():
+    Ok(values) => println(len(values))
+    Err(error) => println(error)

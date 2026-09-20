@@ -1,0 +1,38 @@
+# behavior: a generic function returning a trait whose parameter carries a Clone bound accepts a subtrait-typed model (#196)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_generic_bounds_return_type_codegen
+# expect-stdout:
+#   5
+#   5
+
+"""Issue #196: infer generic bounds required by trait return types."""
+
+pub trait DataSet[T with Clone]:
+    def tag(self) -> T: ...
+
+
+pub trait BoundedDataSet[T with Clone] with DataSet[T]:
+    def bound(self) -> T: ...
+
+
+pub def upcast_bounded_to_dataset[T](value: BoundedDataSet[T]) -> DataSet[T]:
+    return value
+
+
+pub def upcast_bounded_to_bounded[T](value: BoundedDataSet[T]) -> BoundedDataSet[T]:
+    return value
+
+
+model Holder[T with Clone] with BoundedDataSet:
+    value: T
+
+    def tag(self) -> T:
+        return self.value
+
+    def bound(self) -> T:
+        return self.value
+
+
+def main() -> None:
+    holder = Holder(value=5)
+    println(upcast_bounded_to_dataset(holder).tag())
+    println(upcast_bounded_to_bounded(Holder(value=5)).bound())
