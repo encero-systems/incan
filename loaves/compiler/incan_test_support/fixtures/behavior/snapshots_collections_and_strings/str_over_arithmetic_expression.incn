@@ -1,0 +1,25 @@
+# behavior: str() over an arithmetic, negated or compound expression renders the whole expression's value, not the left operand joined to the rendered right operand
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::str_over_an_operator_expression_lowers_a_grouped_argument_issue1726
+# expect-stdout:
+#   3
+#   7
+#   12
+#   36
+#   -1
+#   2.5
+#   true
+
+model Reading:
+    value: int
+
+def main() -> None:
+    a = 1
+    b = 2
+    println(str(a + b))
+    println(str(a * 5 + b))
+    reading = Reading(value=10)
+    println(str(reading.value + b))
+    println(str(a + b) + str(a * 6))
+    println(str(-a))
+    println(str(a / b + b))
+    println(str(a < b))
