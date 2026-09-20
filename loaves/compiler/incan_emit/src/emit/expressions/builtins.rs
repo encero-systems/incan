@@ -10,7 +10,7 @@ use super::super::{EmitError, IrEmitter};
 use super::format::{float_display_text, renders_as_python_float};
 use super::methods::iterator_methods::emit_iter_receiver;
 use crate::conversions::exact_float_value_validation;
-use crate::ownership::ValueUseSite;
+use crate::ownership::{ValueUseSite, plan_list_constructor_source};
 use incan_ir::expr::{BuiltinFn, IrExprKind, Pattern, TypedExpr};
 use incan_ir::types::{
     IR_UNION_TYPE_NAME, IrType, SetConstructorIteration, isinstance_type_matches, isinstance_union_variant_indices,
@@ -593,6 +593,44 @@ impl<'a> IrEmitter<'a> {
                         (#values).into_iter().collect::<std::collections::HashSet<_>>()
                     }),
                 }
+            }
+            BuiltinFn::CollectionConstructor(CollectionTypeId::List) => {
+                // Migration note (rust_source_backend_deprecation.md):
+                // - Compatibility issue: #1464 -- `list(dict.keys())` typechecked but reached emission as an ordinary
+                //   call to an undefined Rust `list` function.
+                // - Behavior evidence: the `issue1464_list_constructor` codegen snapshot and the Oven-built dict-views
+                //   program in `cli_issue1668_stdlib_gaps_tests`.
+                // - Semantic owner: the checker's recorded collection-constructor fact
+                //   (`resolved_collection_constructor`) and Body IR's aggregate lowering; this arm only realizes the
+                //   plan `plan_list_constructor_source` derives from the checked source type.
+                // - Retirement condition: the Rust-source backend is deleted (#654); Body IR lowers the conversion as
+                //   the same general iteration a `for` statement takes.
+                if args.len() > 1 {
+                    return Err(EmitError::InternalInvariant(format!(
+                        "List collection constructor reached emission with {} arguments",
+                        args.len()
+                    )));
+                }
+                let Some(arg) = args.first() else {
+                    return Ok(quote! { Vec::new() });
+                };
+                // A dict view or an Incan iterator already yields owned items; collect it without materializing the
+                // intermediate list the value-position emission would build.
+                if let Some(iter) = self.emit_direct_dict_view_iter(arg)? {
+                    return Ok(quote! { (#iter).collect::<Vec<_>>() });
+                }
+                if let Some(iter) = self.emit_incan_iterator_source(arg)? {
+                    return Ok(quote! { (#iter).collect::<Vec<_>>() });
+                }
+                let values = self.emit_expr_for_use(
+                    arg,
+                    ValueUseSite::IncanCallArg {
+                        target_ty: Some(&arg.ty),
+                        callee_param: None,
+                        in_return: false,
+                    },
+                )?;
+                Ok(plan_list_constructor_source(&arg.ty).apply(values))
             }
             BuiltinFn::CollectionConstructor(collection) => Err(EmitError::InternalInvariant(format!(
                 "collection constructor `{}` reached emission without a lowering implementation",

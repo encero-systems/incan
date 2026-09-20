@@ -11,7 +11,7 @@ use quote::quote;
 use super::super::{EmitError, IrEmitter};
 use crate::ownership::{
     ComprehensionIterationPlan, dict_comprehension_key_needs_clone, plan_dict_comprehension_iteration,
-    plan_list_comprehension_iteration, plan_owned_iterator_source,
+    plan_list_comprehension_iteration, plan_opaque_comprehension_source, plan_owned_iterator_source,
 };
 use incan_ir::expr::{
     BuiltinFn, CollectionMethodKind, FormatPart, IrCallArg, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry,
@@ -359,8 +359,33 @@ impl<'a> IrEmitter<'a> {
                 func: BuiltinFn::Enumerate,
                 args,
             } => self.emit_owned_enumerate_iter(args).map(Some),
-            _ => self.emit_direct_dict_view_iter(iterable),
+            _ => {
+                if let Some(iter) = self.emit_direct_dict_view_iter(iterable)? {
+                    return Ok(Some(iter));
+                }
+                self.emit_opaque_comprehension_source(iterable)
+            }
         }
+    }
+
+    /// Emit a comprehension source that is not an Incan collection as the owned `IntoIterator` a `for` statement
+    /// over the same value already takes, or `None` when the source has a borrowed item plan of its own.
+    ///
+    /// Migration note (rust_source_backend_deprecation.md):
+    /// - Compatibility issue: #1490 -- `[argument for argument in args()]` over the by-value `std::env::Args` iterator
+    ///   emitted `.iter()`, which the type does not have, while `for argument in args()` compiled.
+    /// - Behavior evidence: the `issue1490_comprehension_over_rust_iterator` codegen snapshot and the Oven-built
+    ///   program in `cli_rust_interop_tests`.
+    /// - Semantic owner: the checked source type and `plan_opaque_comprehension_source` in the ownership planner; this
+    ///   helper only realizes that plan.
+    /// - Retirement condition: the Rust-source backend is deleted (#654); Body IR already lowers a comprehension clause
+    ///   and a `for` statement through the same general-iteration path.
+    fn emit_opaque_comprehension_source(&self, iterable: &TypedExpr) -> Result<Option<TokenStream>, EmitError> {
+        let Some(plan) = plan_opaque_comprehension_source(iterable) else {
+            return Ok(None);
+        };
+        let source = plan.apply(self.emit_expr(iterable)?);
+        Ok(Some(quote! { #source.into_iter() }))
     }
 
     /// Emit `dict.keys()` / `dict.values()` as a direct owned-item iterator for a loop or comprehension source.
