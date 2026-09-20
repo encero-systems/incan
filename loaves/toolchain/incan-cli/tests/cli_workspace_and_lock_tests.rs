@@ -1740,7 +1740,10 @@ fn build_lock_policy_env_defaults_refuse_a_missing_lock() -> Result<(), Box<dyn 
     // `INCAN_LOCKED=1` is the `--locked` default and `INCAN_FROZEN=1` implies locked (and offline), so either one
     // refuses a project without `oven.lock` exactly as the flag would, and creates none. The environment defaults
     // are lock-policy inputs, not a Cargo surface; they survive the cutover (#1561).
-    for (variable, context) in [("INCAN_LOCKED", "INCAN_LOCKED=1 build"), ("INCAN_FROZEN", "INCAN_FROZEN=1 build")] {
+    for (variable, context) in [
+        ("INCAN_LOCKED", "INCAN_LOCKED=1 build"),
+        ("INCAN_FROZEN", "INCAN_FROZEN=1 build"),
+    ] {
         let tmp = tempfile::tempdir()?;
         let main_path = write_minimal_project(tmp.path(), "cli_lock_env_default_project", "")?;
         let main_arg = main_path.to_str().ok_or("main path was not valid UTF-8")?;
@@ -1753,7 +1756,10 @@ fn build_lock_policy_env_defaults_refuse_a_missing_lock() -> Result<(), Box<dyn 
             stderr.contains("oven.lock is missing; run `incan lock`"),
             "{context} should report the missing lockfile, got:\n{stderr}"
         );
-        assert!(!tmp.path().join("oven.lock").exists(), "{context} must not create oven.lock after refusing");
+        assert!(
+            !tmp.path().join("oven.lock").exists(),
+            "{context} must not create oven.lock after refusing"
+        );
     }
     Ok(())
 }
