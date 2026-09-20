@@ -234,8 +234,10 @@ pub enum StructConstructorSurface {
 ///
 /// A source declaration may use a type parameter only in method signatures; Rust requires every declared parameter
 /// to be mentioned by the struct, so emission adds one marker field typed [`phantom_marker_type`] over the
-/// parameters lowering recorded as phantom. The name is compiler-owned and never appears in source, reflection
-/// metadata, or serialized output. See #1370.
+/// parameters lowering recorded as phantom. The name is compiler-owned and never appears in source, in the
+/// `__fields__()` and `__field_items__()` reflection built from IR fields, or in serialized output (the field is
+/// `#[serde(skip)]`). It is visible where Rust derives enumerate struct fields: `#[derive(Debug)]` output and the
+/// `incan_derive::FieldInfo` field list. See #1370.
 pub(in crate::emit) const PHANTOM_TYPE_PARAMS_FIELD: &str = "__incan_phantom";
 
 /// Emit the marker type for a declaration's phantom type parameters: `PhantomData<T>` for one parameter and

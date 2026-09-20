@@ -415,7 +415,9 @@ pub struct IrStruct {
     /// A type parameter that appears only in method signatures is a phantom parameter: it types the operations on
     /// the value without storing anything. The source declaration is complete as written, but a Rust struct must
     /// mention every parameter it declares, so lowering records which parameters are phantom and emission owns the
-    /// marker representation. Emission must not rediscover this by scanning fields. See #1370.
+    /// marker representation. Emission must not rediscover this by scanning a source declaration's fields; a compiled
+    /// dependency's manifest records no phantom list, so for that route the emitter applies the same
+    /// [`phantom_type_params`] rule to the manifest's recorded type parameters and field types. See #1370.
     pub phantom_type_params: Vec<String>,
     /// Derive names that should be qualified with a Rust module path.
     ///
