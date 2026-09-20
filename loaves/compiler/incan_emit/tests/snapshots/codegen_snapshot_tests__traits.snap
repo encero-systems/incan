@@ -165,7 +165,9 @@ impl Circle {
     pub fn draw(&self) -> String {
         return {
             let __parts: [&str; 2usize] = ["Circle with radius ", ""];
-            let __args: Vec<String> = vec![format!("{}", self.radius)];
+            let __args: Vec<String> = vec![
+                incan_std_core::strings::float_to_string(self.radius)
+            ];
             incan_std_core::strings::fstring(&__parts, &__args)
         };
     }
@@ -174,7 +176,9 @@ impl Drawable for Circle {
     fn draw(&self) -> String {
         return {
             let __parts: [&str; 2usize] = ["Circle with radius ", ""];
-            let __args: Vec<String> = vec![format!("{}", self.radius)];
+            let __args: Vec<String> = vec![
+                incan_std_core::strings::float_to_string(self.radius)
+            ];
             incan_std_core::strings::fstring(&__parts, &__args)
         };
     }
@@ -225,7 +229,9 @@ impl Square {
     pub fn draw(&self) -> String {
         return {
             let __parts: [&str; 2usize] = ["Square with side ", ""];
-            let __args: Vec<String> = vec![format!("{}", self.side)];
+            let __args: Vec<String> = vec![
+                incan_std_core::strings::float_to_string(self.side)
+            ];
             incan_std_core::strings::fstring(&__parts, &__args)
         };
     }
@@ -242,7 +248,9 @@ impl Drawable for Square {
     fn draw(&self) -> String {
         return {
             let __parts: [&str; 2usize] = ["Square with side ", ""];
-            let __args: Vec<String> = vec![format!("{}", self.side)];
+            let __args: Vec<String> = vec![
+                incan_std_core::strings::float_to_string(self.side)
+            ];
             incan_std_core::strings::fstring(&__parts, &__args)
         };
     }
@@ -429,8 +437,10 @@ fn main() {
     let rect_perimeter: f64 = rect.perimeter();
     let _ = println!(
         "{}", { let __parts : [& str; 3usize] = ["Rectangle area: ", ", perimeter: ",
-        ""]; let __args : Vec < String > = vec![format!("{}", rect_area), format!("{}",
-        rect_perimeter)]; incan_std_core::strings::fstring(& __parts, & __args) }
+        ""]; let __args : Vec < String > =
+        vec![incan_std_core::strings::float_to_string(rect_area),
+        incan_std_core::strings::float_to_string(rect_perimeter)];
+        incan_std_core::strings::fstring(& __parts, & __args) }
     );
     let circle: Circle = Circle { radius: 2.5 };
     let circle_drawing: String = circle.draw();
@@ -440,8 +450,8 @@ fn main() {
     let square_drawing: String = square.draw();
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Square area: ", ""]; let __args : Vec <
-        String > = vec![format!("{}", square_area)]; incan_std_core::strings::fstring(&
-        __parts, & __args) }
+        String > = vec![incan_std_core::strings::float_to_string(square_area)];
+        incan_std_core::strings::fstring(& __parts, & __args) }
     );
     let _ = println!("{}", square_drawing);
     let mut carton: Carton = Carton {
@@ -452,15 +462,15 @@ fn main() {
     let original_volume: f64 = carton.volume();
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Original volume: ", ""]; let __args :
-        Vec < String > = vec![format!("{}", original_volume)];
+        Vec < String > = vec![incan_std_core::strings::float_to_string(original_volume)];
         incan_std_core::strings::fstring(& __parts, & __args) }
     );
     let _ = carton.resize(2.0);
     let new_volume: f64 = carton.volume();
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["New volume: ", ""]; let __args : Vec <
-        String > = vec![format!("{}", new_volume)]; incan_std_core::strings::fstring(&
-        __parts, & __args) }
+        String > = vec![incan_std_core::strings::float_to_string(new_volume)];
+        incan_std_core::strings::fstring(& __parts, & __args) }
     );
     let doc: Document = Document {
         title: "README".to_string(),
@@ -476,7 +486,8 @@ fn main() {
     let area2: f64 = calculate_area(square);
     let _ = println!(
         "{}", { let __parts : [& str; 3usize] = ["Areas: ", ", ", ""]; let __args : Vec <
-        String > = vec![format!("{}", area1), format!("{}", area2)];
+        String > = vec![incan_std_core::strings::float_to_string(area1),
+        incan_std_core::strings::float_to_string(area2)];
         incan_std_core::strings::fstring(& __parts, & __args) }
     );
 }

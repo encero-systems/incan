@@ -1753,6 +1753,10 @@ impl TypeChecker {
                 AssertIsPatternKind::Err => scrutinee_ty.result_err_type().cloned().unwrap_or(ResolvedType::Unknown),
                 AssertIsPatternKind::None => ResolvedType::Unit,
             };
+            // The assertion subset defines its one binding here rather than through `check_pattern`, so it records
+            // the same per-pattern-node type fact that walk records (#1245): lowering reads one fact for a pattern
+            // binding whichever construct owns it.
+            self.record_expr_type(span, ty.clone());
             self.validate_protected_builtin_binding(&name, span);
             self.symbols.define(Symbol {
                 name: name.clone(),

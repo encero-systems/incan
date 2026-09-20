@@ -1227,7 +1227,7 @@ static std_tempfile: RegistryEntry[FeatureId, FeatureDescriptor] = features.entr
         references=std_tempfile_references,
     ),
 )
-const std_datetime_forms: FrozenList[str] = ["Date.utc_today()", "DateTime.utc_now()", "TimeDelta(days=1)"]
+const std_datetime_forms: FrozenList[str] = ["from std.datetime import Date, DateTime, TimeDelta", "Date.utc_today()", "DateTime.utc_now()", "TimeDelta.days(1)"]
 const std_datetime_references: FrozenList[CapabilityReference] = [CapabilityReference(
     label="std.datetime",
     path="stdlib/datetime.md",

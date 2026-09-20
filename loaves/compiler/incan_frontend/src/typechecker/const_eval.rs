@@ -20,7 +20,8 @@ use incan_lang::{NumericTy, result_numeric_type};
 
 use super::{PartialProjectionTargetKind, TypeChecker};
 use crate::typechecker::helpers::{
-    freeze_const_type, frozen_bytes_ty, frozen_str_ty, is_frozen_str, is_intlike_for_index, is_str_like,
+    freeze_const_type, frozen_bytes_ty, frozen_str_ty, is_frozen_str, is_intlike_for_index,
+    is_mutable_collection_const_annotation, is_str_like,
 };
 
 /// Const category used by RFC 008.
@@ -87,16 +88,35 @@ pub enum ConstEvalState {
 }
 
 impl TypeChecker {
-    /// Convert a user-written type annotation in a `const` declaration to its frozen form.
+    /// Resolve a `const` declaration's written annotation to the frozen type the const will carry, rejecting the one
+    /// family of annotations that cannot be honoured.
     ///
-    /// This makes `const X: List[T] = [...]` behave as `const X: FrozenList[T] = [...]`, ensuring the resulting
-    /// constant has a deeply immutable type (no mutating APIs).
-    fn freeze_const_annotation(&self, ty: ResolvedType) -> ResolvedType {
-        freeze_const_type(ty)
+    /// `str`/`bytes` and the frozen wrappers freeze silently: `const X: str = ...` carries `FrozenStr`, which reads
+    /// wherever `str` is expected, so the written annotation holds at every use site. A mutable container (`list`,
+    /// `dict`, `set`) does not: its frozen wrapper is a different type at every use site, so accepting the annotation
+    /// would only move the contradiction to the first call that passes the const along (#1488). That annotation is
+    /// rejected here, at its own span, naming the frozen spelling to write instead; the const still resolves as its
+    /// frozen type afterwards so the declaration site stays the only place the mismatch is reported.
+    fn resolve_const_annotation(&mut self, konst: &ConstDecl, ann: &Spanned<Type>) -> ResolvedType {
+        let resolved = self.resolve_type_checked(ann);
+        let rejected = is_mutable_collection_const_annotation(&resolved);
+        let frozen = freeze_const_type(resolved);
+        if rejected {
+            self.errors.push(errors::const_mutable_collection_annotation(
+                &konst.name,
+                &ann.node.to_string(),
+                &frozen.to_string(),
+                ann.span,
+            ));
+        }
+        frozen
     }
 
     /// Evaluate, type-check, classify, and publish one `const` declaration for later compiler stages.
     pub fn check_and_resolve_const(&mut self, konst: &ConstDecl, decl_span: Span) {
+        // ---- Annotation first: its diagnostic lands whether or not the initializer evaluates ----
+        let annotation = konst.ty.as_ref().map(|ann| self.resolve_const_annotation(konst, ann));
+
         // Evaluate (with cycle detection) and update the symbol table entry.
         let mut stack = Vec::new();
         let Some(mut result) = self.eval_const_by_name(&konst.name, &mut stack) else {
@@ -113,9 +133,7 @@ impl TypeChecker {
         }
 
         // If an annotation exists, require compatibility.
-        if let Some(ann) = &konst.ty {
-            let resolved = self.resolve_type_checked(ann);
-            let expected = self.freeze_const_annotation(resolved);
+        if let Some(expected) = annotation {
             match self.const_numeric_value_checked_against_numeric_expected(&result, &expected, konst.value.span) {
                 Some(true) => result.ty = expected,
                 Some(false) => {}
@@ -194,6 +212,13 @@ impl TypeChecker {
         Some(fits)
     }
 
+    /// Evaluate the named module-level const, memoising the result and detecting dependency cycles.
+    ///
+    /// `stack` is the chain of consts currently being evaluated: a const whose initializer references another const
+    /// recurses through here, and a name found `InProgress` is a cycle reported at that const's declaration span. A
+    /// const that fails to evaluate returns `None` after its diagnostic has been pushed, so a dependent const's own
+    /// evaluation stops rather than reporting the same failure again. The written annotation supplies only the
+    /// frozen expected type here; whether it may be written at all is `check_and_resolve_const`'s question.
     fn eval_const_by_name(&mut self, name: &str, stack: &mut Vec<String>) -> Option<ConstEvalResult> {
         if let Some(res) = self.const_eval_cache.get(name).cloned() {
             return Some(res);
@@ -227,8 +252,10 @@ impl TypeChecker {
             .insert(name.to_string(), ConstEvalState::InProgress);
         stack.push(name.to_string());
 
+        // The evaluator only needs the frozen expectation; the declaration check (`check_and_resolve_const`) is
+        // the one place an unhonourable annotation is reported.
         let expected = decl.ty.as_ref().map(|t| self.resolve_type_checked(t));
-        let expected = expected.map(|t| self.freeze_const_annotation(t));
+        let expected = expected.map(freeze_const_type);
         let result = self.eval_const_expr(&decl.value, expected.as_ref(), stack, decl_span);
 
         stack.pop();

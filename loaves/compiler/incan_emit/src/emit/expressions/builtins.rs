@@ -7,6 +7,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use super::super::{EmitError, IrEmitter};
+use super::format::{float_display_text, renders_as_python_float};
 use super::methods::iterator_methods::emit_iter_receiver;
 use crate::conversions::exact_float_value_validation;
 use crate::ownership::ValueUseSite;
@@ -305,8 +306,14 @@ impl<'a> IrEmitter<'a> {
         let rendered = args
             .iter()
             .map(|arg| {
-                let emitted = self.emit_expr(arg)?;
-                Ok(exact_float_value_validation(&arg.ty).apply(emitted))
+                let emitted = exact_float_value_validation(&arg.ty).apply(self.emit_expr(arg)?);
+                // A `float` prints through the runtime's spelling rather than Rust's `Display`; see
+                // `renders_as_python_float` for the migration note.
+                Ok(if renders_as_python_float(&arg.ty) {
+                    float_display_text(emitted)
+                } else {
+                    emitted
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
         // One `{}` per argument, joined by the separator. Built here rather than in `quote!` because the format
@@ -414,7 +421,13 @@ impl<'a> IrEmitter<'a> {
             BuiltinFn::Str => {
                 if let Some(arg) = args.first() {
                     let a = exact_float_value_validation(&arg.ty).apply(self.emit_expr(arg)?);
-                    Ok(quote! { #a.to_string() })
+                    // A `float` renders through the runtime's spelling rather than Rust's `Display`; see
+                    // `renders_as_python_float` for the migration note. Mirrors the string-dispatch arm below.
+                    if renders_as_python_float(&arg.ty) {
+                        Ok(float_display_text(a))
+                    } else {
+                        Ok(quote! { #a.to_string() })
+                    }
                 } else {
                     Ok(quote! { String::new() })
                 }
@@ -667,7 +680,13 @@ impl<'a> IrEmitter<'a> {
             BuiltinFnId::Str => {
                 if let Some(arg) = args.first() {
                     let a = exact_float_value_validation(&arg.ty).apply(self.emit_expr(arg)?);
-                    Ok(Some(quote! { #a.to_string() }))
+                    // A `float` renders through the runtime's spelling rather than Rust's `Display`; see
+                    // `renders_as_python_float` for the migration note.
+                    if renders_as_python_float(&arg.ty) {
+                        Ok(Some(float_display_text(a)))
+                    } else {
+                        Ok(Some(quote! { #a.to_string() }))
+                    }
                 } else {
                     Ok(None)
                 }
