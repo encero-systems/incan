@@ -1,0 +1,9 @@
+[project]
+name = "callable_across_package_boundary"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+callability = { path = "deps/callability_core" }

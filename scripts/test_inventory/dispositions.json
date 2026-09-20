@@ -38,6 +38,12 @@
       "owner": 1561,
       "notes": "behaviour fixtures twinning the retire-class tests under loaves/toolchain/incan-cli (generated-text assertions after a build, IrCodegen smoke tests, an `--emit-rust`-only test), run by behavior_cli_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire test it twins in `# retires:` lines."
     },
+    "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies": {
+      "pattern": "<name>.incn or <name>/",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "behaviour fixtures that are projects with in-fixture path dependencies (`[dependencies] <name> = { path = \"deps/<name>\" }`, reached through `pub::<name>`): the runner bakes every provider in dependency order before the run, with no Cargo authority, so a twin can prove what a consumer prints (or which diagnostic refuses it) across a package boundary. Run by behavior_cli_dependencies_tests.rs; a provider that would need Cargo (one that itself declares `[dependencies]`) fails its fixture at the suite's Cargo guard, so such fixtures stay parked. Each names the retire tests it twins in `# retires:` lines."
+    },
     "loaves/compiler/incan_test_support/fixtures/behavior/driver": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
@@ -693,7 +699,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "public generated-Rust artifact contract (RFC 120 projections, baseline generated projects); three rows die with the generated project, two stay open on questions the maintainer decides (the `.incnlib` manifest's fate and a provider bake the fixture runner does not perform).",
+      "notes": "public generated-Rust artifact contract (RFC 120 projections, baseline generated projects); three rows die with the generated project, one is twinned by a refused-program project fixture, one stays open on a question the maintainer decides (the `.incnlib` manifest's fate; the provider bake its consumer-run twin would need now exists in the fixture runner).",
       "tests": {
         "generated_application_artifact_matches_baseline": {
           "twin": "dies",
@@ -710,8 +716,8 @@
         },
         "path_dependency_artifact_rebuilds_for_a_b_a_feature_projections": {
           "disposition": "retire",
-          "twin": "",
-          "notes": "OPEN. Two observables: (a) `incan build --no-default-features` refusing a feature-gated `pub::` export with INCAN-I0103 and the `features = [\"alpha\"]` remedy, reproducible today as a refused-program project fixture (`incan check` prepares an unbaked provider's metadata itself; verified 2026-09-20); (b) the alpha/beta/alpha re-bake sequence proving the dependency artifact is re-projected per feature set, whose generated `lib.rs` assertions die with #654 and whose `.incnlib` `active_features`/`fact_requirements` assertions are a bake-sequence observable the fixture format cannot drive (one `check` or `run`, no flags). Question: is (a) alone the twin, with a `feature_gated_export_refused/` fixture landing in a follow-up, or does (b) need its own re-point coverage first?"
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/refused_feature_gated_export_of_dependency",
+          "notes": "twinned by a refused-program project fixture: a consumer importing a feature-gated `pub::` export of its in-fixture provider while the package feature is off is refused with INCAN-I0103 (`incan check` prepares an unbaked provider's metadata itself). The alpha/beta/alpha re-bake sequence and the generated `lib.rs` half die with #654; the `.incnlib` `active_features` and `fact_requirements` fields are pinned by re-point rows (`cli_codegraph_and_inspection_tests.rs`, `cli_workspace_and_lock_tests.rs`, `package_executable_representation.rs`)."
         },
         "a_package_projects_a_call_into_its_own_sibling_module": {
           "twin": "dies",
@@ -731,10 +737,10 @@
     "loaves/compiler/incan_driver/tests/generated_rust_callability_artifact_tests.rs": {
       "disposition": "retire",
       "owner": 1561,
-      "twin": "",
+      "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/callable_across_package_boundary",
       "split_required": false,
       "split_target": "",
-      "notes": "OPEN. The generated Cargo manifests and the `transforms.rs`/`main.rs` text (fn-pointer parameters, qualified provider calls) die with #654, but the test also runs the consumer and reads `2 3 4`: a `Callable` value passed across a `pub::` package boundary, which no other test runs (integration_tests.rs uses callables inside one program). A twin needs the in-fixture producer baked before `incan run` (`Oven Alpha requires a baked package Loaf`), which the runner does not do for project fixtures (verified 2026-09-20). Question: extend the runner to bake a project fixture's `[dependencies]` path packages first and twin it, or cover the boundary in a re-point CLI test?"
+      "notes": "The generated Cargo manifests and the `transforms.rs`/`main.rs` text (fn-pointer parameters, qualified provider calls) die with #654; the surviving observable, the consumer run printing `2 3 4` (a `Callable` value passed across a `pub::` package boundary, which no other test runs), is the twin: a project fixture carrying the producer under `deps/callability_core`, which the runner bakes before `incan run` (harness-deps)."
     },
     "loaves/compiler/incan_driver/tests/generated_rust_native_consumer_tests.rs": {
       "disposition": "retire",
@@ -1127,7 +1133,7 @@
         },
         "string_membership_probe_borrows_loop_binding_used_later_in_branch_issue1057": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/smoke/membership_loop_binding.incn",
-          "notes": "twinned by the #1057 program run to completion: the loop binding is used after the membership probe, which is the observable half. The retired test's other assertion, `!code.contains(\"name.clone()\")` (the probe borrows rather than clones), is not user-observable and dies with #654; the twin stays."
+          "notes": "twinned by the #1057 program run to completion: the loop binding is used after the membership probe, which is the observable half. Of the retired test's three assertions, the one a run cannot see, `!code.contains(\"name.clone()\")` (the probe borrows rather than clones), is not user-observable and dies with #654; the twin stays."
         }
       }
     },
@@ -3627,6 +3633,14 @@
       "split_target": "",
       "notes": "test collection, parametrize expansion, marker selection and scheduling."
     },
+    "loaves/toolchain/incan-cli/tests/behavior_cli_dependencies_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs every behaviour fixture of the cli_dependencies area as a program, baking its in-fixture providers first with no Cargo authority (the root is deliberately not registered in OvenCompilerSuiteTargetCapabilities), and compares its observables; the route changes under it, the fixtures do not."
+    },
     "loaves/toolchain/incan-cli/tests/behavior_cli_tests.rs": {
       "disposition": "re-point",
       "owner": 1561,
@@ -4045,7 +4059,7 @@
         "build_explicit_mutable_rust_generic_reaches_codegen_through_normal_cli_path": {
           "disposition": "retire",
           "twin": "",
-          "notes": "open (twin-h-cli): the build succeeds and the assertions are the projected ABI in `main.rs` (`ProviderHandle<(&mut i64, &mut i64)>`), generated text. A behaviour twin exists and passes standalone: the same program run to completion, printing its marker line. Question Q1 (harness): a program with a `rust::` import needs project inspection authority, which only an explicit `incan oven bake --project .` gives it; the behaviour-fixture runner bakes only outside the compiler suite (the #1668 pattern) and under the suite the root would also need an `explicit_bake_cargo` entry in `OvenCompilerSuiteTargetCapabilities`. Either the harness grows a baked `cli_rust_interop/` area, and this fixture lands as written, or Rust-interop behaviour moves with #1337's spec and this row is `dies` with the generated-text half named. The candidate fixture is in the twin-h-cli handoff."
+          "notes": "open (harness-deps): the build succeeds and the assertions are the projected ABI in `main.rs` (`ProviderHandle<(&mut i64, &mut i64)>`), generated text. A behaviour twin exists and passes standalone and under a root admitted to the explicit bake: the same program run to completion, printing its marker line (this program's `rust::std::vec::Vec` import launched no Cargo itself, but the bake that records its authority is the same explicit bake). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; measured 2026-09-20, ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. The candidate fixture is in the harness-deps slice folder."
         },
         "build_lib_imported_static_decorator_receiver_materializes_string_arg_issue671": {
           "disposition": "retire",
@@ -4055,7 +4069,7 @@
         "decorated_method_explicit_mutable_rust_generic_keeps_static_and_wrapper_abi": {
           "disposition": "retire",
           "twin": "",
-          "notes": "open (twin-h-cli): the build succeeds and the assertions are the shared ABI spelling in `main.rs`, generated text. A behaviour twin exists and passes standalone: the same program run to completion (`7`, then its marker line). Question Q1 (harness): a program with a `rust::` import needs project inspection authority, which only an explicit `incan oven bake --project .` gives it; the behaviour-fixture runner bakes only outside the compiler suite (the #1668 pattern) and under the suite the root would also need an `explicit_bake_cargo` entry in `OvenCompilerSuiteTargetCapabilities`. Either the harness grows a baked `cli_rust_interop/` area, and this fixture lands as written, or Rust-interop behaviour moves with #1337's spec and this row is `dies` with the generated-text half named. The candidate fixture is in the twin-h-cli handoff."
+          "notes": "open (harness-deps): the build succeeds and the assertions are the shared ABI spelling in `main.rs`, generated text. A behaviour twin exists and passes standalone and under a root admitted to the explicit bake: the same program run to completion (`7`, then its marker line). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; measured 2026-09-20, ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. The candidate fixture is in the harness-deps slice folder."
         },
         "test_class_with_traits": {
           "disposition": "keep",
@@ -4136,7 +4150,7 @@
         "test_rfc041_rust_coercion_codegen_smoke": {
           "disposition": "retire",
           "twin": "",
-          "notes": "open (twin-h-cli): IrCodegen text only (`Duration::from_secs_f32`). A behaviour twin exists and passes standalone: a program passing a float literal to `rust::std::time::Duration.from_secs_f32` and printing `as_millis()` (`1500`). Question Q1 (harness): a program with a `rust::` import needs project inspection authority, which only an explicit `incan oven bake --project .` gives it; the behaviour-fixture runner bakes only outside the compiler suite (the #1668 pattern) and under the suite the root would also need an `explicit_bake_cargo` entry in `OvenCompilerSuiteTargetCapabilities`. Either the harness grows a baked `cli_rust_interop/` area, and this fixture lands as written, or Rust-interop behaviour moves with #1337's spec and this row is `dies` with the generated-text half named. The candidate fixture is in the twin-h-cli handoff."
+          "notes": "open (harness-deps): IrCodegen text only (`Duration::from_secs_f32`). A behaviour twin exists and passes standalone and under a root admitted to the explicit bake: a program passing a float literal to `rust::std::time::Duration.from_secs_f32` and printing `as_millis()` (`1500`). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; measured 2026-09-20, ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. The candidate fixture is in the harness-deps slice folder."
         },
         "test_rfc041_rusttype_interop_typechecks_end_to_end": {
           "disposition": "keep",
@@ -4307,8 +4321,8 @@
         },
         "consumer_build_plans_source_backed_pub_helper_calls_with_defaults_and_unions_issue729": {
           "disposition": "retire",
-          "twin": "",
-          "notes": "open (twin-h-cli): the consumer build succeeds and the assertions are generated text (`querykit::count(` filled from the helper default, `COUNT_SENTINEL` and `DEFAULT_LABEL` through the provider module path, no re-owned `__IncanUnion`, `.to_string()` arguments). A behaviour twin exists and was run by hand: a project fixture with `deps/querykit` whose `main` prints `adjusted=5`, `order_count=__querykit_count_no_argument__` and `orders=7` (union parameter, omitted-argument default, dependency-owned const default). It cannot land yet because a consumer with a package dependency refuses to run until `incan oven bake --project deps/querykit` has published the provider, and the behaviour-fixture runner bakes only the consumer (and only outside the suite). Question Q2 (harness): bake the `deps/*/loaf.toml` providers of a project fixture before the consumer (under the suite too, which needs the `explicit_bake_cargo` capability for the root)? Then this row twins; the candidate fixture is in the twin-h-cli handoff. Note for the twin: narrowing the dependency's `Union[IntLiteralExpr, StringLiteralExpr]` in the consumer is accepted by the checker but the legacy route does not compile it, so the twin narrows inside the provider."
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_helper_defaults_and_unions",
+          "notes": "the consumer build succeeded and the assertions were generated text (`querykit::count(` filled from the helper default, `COUNT_SENTINEL` and `DEFAULT_LABEL` through the provider module path, no re-owned `__IncanUnion`, `.to_string()` arguments); the twin is a project fixture with `deps/querykit` whose `main` prints `adjusted=5`, `order_count=__querykit_count_no_argument__` and `orders=7` (union parameter, omitted-argument default, dependency-owned const default), with the provider baked by the runner (harness-deps). Narrowing the dependency's `Union[IntLiteralExpr, StringLiteralExpr]` in the consumer is accepted by the checker but the legacy route does not compile it, so the twin narrows inside the provider."
         },
         "consumer_build_plans_source_backed_vocab_helper_calls_with_defaults_and_unions_issue729": {
           "disposition": "retire",

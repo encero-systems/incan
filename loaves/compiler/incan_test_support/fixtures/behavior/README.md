@@ -19,6 +19,8 @@ Every entry in an area is one of those three shapes. A stray file is refused, an
 
 Two areas ship with the harness: `smoke/`, the first twins (each retires `codegen.rs` unit tests), and `harness/`, the harness proving itself with one fixture per shape of the format (a refused program with one code and with two, a non-zero exit code, an exit code as the only observable, an empty stdout, contained lines, a module directory, a project directory). The `harness/` fixtures twin nothing; a change to the runner or to the route underneath it fails there before it fails in a twin. The header *refusals* are unit tests of `parse_header` in `incan_test_support`, not fixtures: an area fixture must pass, so a fixture cannot prove that a malformed header is refused.
 
+One area is set apart by what its programs need from the runner: `cli_dependencies/`, project fixtures with in-fixture path dependencies, whose providers the runner bakes before the run (see *Project fixtures with dependencies* and *Provider bakes and Cargo*). No behaviour root, that one included, is registered for a compiler-suite Cargo capability: every bake the runner performs under the suite is Cargo-guarded.
+
 ### Area size
 
 An area is one libtest case, and the compiler suite runs roots on two threads with no slicing inside a case (#1549 slices by case). At roughly 3.5 s per fixture locally and 6–10 s per fixture on the four-core CI runner, **an area holds at most 60 fixtures**: about 3.5 minutes locally, 6–10 minutes in CI, the most one case should cost. The runner enforces it: `assert_area_green` refuses a larger area with a message naming this rule.
@@ -26,6 +28,27 @@ An area is one libtest case, and the compiler suite runs roots on two threads wi
 A family that outgrows one area splits into leaf areas of at most 60 (`driver_imports/`, `driver_traits/`, ...), and its root file holds one `#[test]` per leaf area, each calling `assert_area_green("<area>")`, so the suite's two-thread root budget runs two of them concurrently and case slicing applies. Declare only leaf areas in `fixture_roots`: a parent directory of areas would be discovered as module fixtures. Do not add threading inside an area: the two-thread budget is the suite's by design, and the case is its unit of scheduling.
 
 A module fixture becomes the `src/` of a minimal project (`loaf.toml` with `[project.scripts] main = "src/main.incn"`), so `from helper import f` resolves `helper.incn` beside `main.incn`. A project fixture supplies its own `loaf.toml` and anything else it needs (a dependency package in a subdirectory, a facade), and its `[project.scripts] main` must be `src/main.incn`.
+
+### Project fixtures with dependencies
+
+A project fixture may depend on packages that live inside it. It declares them the way any project does, and the runner bakes them before the program runs:
+
+```text
+<name>/
+  loaf.toml                 [dependencies] querykit = { path = "deps/querykit" }
+  src/main.incn             from pub::querykit import count   (header first, as always)
+  deps/querykit/
+    loaf.toml               [project] name = "querykit"
+    src/
+      lib.incn              pub from helpers import count
+      helpers.incn
+```
+
+- **What is read.** The fixture's `loaf.toml` is read the way the compiler reads it, and every `[dependencies]` path entry is followed into the provider's own `loaf.toml`, so a provider's providers are found too and planned first. The dependency's name is what the program imports as `pub::<name>`.
+- **What is baked.** Every provider, once, in dependency order (a provider after the providers it depends on; a provider two consumers share once), with `incan oven bake --project .` in the provider's directory and no Cargo authority (see *Provider bakes and Cargo*). Outside the compiler suite the bake publishes into the fixture project's own Oven home, where the consumer's run finds it. A consumer refuses to run until its providers have published a package Loaf, which is the whole reason for the bake. The consumer project itself is baked outside the suite only, as every run fixture is. A refused program is checked, never baked: `incan check` prepares an unbaked provider's metadata itself.
+- **What is refused at discovery** (the area fails to run, naming the fixture, like a malformed header): a dependency whose path resolves outside the fixture directory (only the fixture directory is copied into the scratch project, so `path = "../elsewhere"` would depend on nothing), a cycle among the path dependencies (named as the chain that closes it: neither side could be baked first), and a fixture `loaf.toml` the compiler cannot read.
+- **What fails the fixture** (reported beside the other failures, with the bake's stdout and stderr): a provider whose bake fails for any reason, a `loaf.toml` the compiler refuses included, and under the suite a provider whose bake reaches for Cargo. A provider's manifest the runner cannot read is not a discovery refusal: the provider is planned without dependencies of its own and its bake says what is wrong, so one broken provider fails one fixture rather than the whole area.
+- **Where.** Under `cli_dependencies/`.
 
 ## Header
 
@@ -52,7 +75,7 @@ def main() -> None:
 | `# expect-stdout:` | The program's whole stdout, one line per indented line below. Exact: every line, in order, nothing else. An empty block means the program prints nothing. |
 | `# expect-stdout-contains:` | Lines that must each appear as a whole line of stdout, in any order. At least one line; each line once. Cannot be combined with `expect-stdout`. |
 | `# expect-exit: <n>` | The exit code the run must end with, `0` to `255`. Default `0`. |
-| `# expect-diagnostic: <CODE>` | The program must be refused at check time with this diagnostic code (`INCAN-T0001`); it is never run. Repeatable. Cannot be combined with any run expectation. |
+| `# expect-diagnostic: <CODE>` | The program must be refused at check time with this diagnostic code (`INCAN-T0001`); it is never run. Repeatable, each code once. Cannot be combined with any run expectation. |
 
 A directive is `#`, one space, the key, a colon: `#retires:` is accepted, `#  retires:` (two spaces) is a block item, `#\tretires:` and `# retires :` are refused. The `retires:` value is the inventory's key with no whitespace anywhere: `<path>.rs::<fn>`, the function part module-qualified (`tests::inner::name`) only when the bare name repeats in the file. The inventory collector reads the same line with the same rule, so what one reader accepts the other does too.
 
@@ -70,8 +93,14 @@ A header must declare at least one observable (`expect-stdout`, `expect-stdout-c
 
 1. materializes it as its own scratch project under `INCAN_TEST_TMP_ROOT` (the process temporary directory when that is unset; an explicit root that does not exist is an error, not created);
 2. for a refused program, runs `incan check src/main.incn --format json` and requires the check to fail with every declared code in its report;
-3. for a run, runs the program (`incan run src/main.incn`, preceded outside the compiler suite by the explicit Oven bake that gives a fresh project its Loaf authority) and compares stdout and the exit code with the header;
+3. for a run, bakes each in-fixture provider the project declares, in dependency order and with no Cargo authority; bakes the project itself outside the compiler suite (a fresh project has no Loaf authority until then; under the suite the sealed standard-library Loaf serves); then runs the program (`incan run src/main.incn`) and compares stdout and the exit code with the header;
 4. records the outcome, deletes the scratch project, and moves on to the next fixture.
+
+### Provider bakes and Cargo
+
+Under the compiler suite an ordinary program runs on the sealed standard-library Loaf and no bake happens; `make test-one` puts a Cargo guard on `PATH` and fails the run if anything reaches it. A provider bake is the one bake the runner performs under the suite, and it is run **Cargo-guarded**: through the same command environment as any other `incan` call, with no `CARGO` and none of the explicit-bake authority the suite grants registered roots (`explicit_bake_cargo` in `OvenCompilerSuiteTargetCapabilities`, `loaves/oven/oven_model/src/compiler_suite_env.rs`). No behaviour root is registered there, and a test in `oven-cli` asserts it.
+
+What that admits, measured on 2026-09-20 under `make test-one` with the guard: an Incan library provider with no dependencies of its own, which the Oven serves from the active standard-library Loaf without invoking Cargo (the three `cli_dependencies/` fixtures: a helper library, a library exporting a `Callable`-taking function, and a feature-gated library behind a refused program). What it refuses, loudly: a provider that itself declares `[dependencies]`, whose bake goes through the compatibility publisher's test-dependency envelope and runs `cargo metadata` and `cargo build`; under the suite that bake meets the guard, the fixture fails with the bake's stderr, and the suite wrapper fails on the guard log. The same holds for a program that imports through `rust::`: it needs source-current project inspection authority, which only an explicit bake of its own project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; ten launches for one fixture). Such fixtures are not in the tree; they wait for a Cargo-free bake under the suite, and their candidates are parked with the #1561 test-corpus slice records.
 
 The scratch project is deleted after every fixture, pass or fail, so the stderr in the report is all a failure leaves behind: put what a reader needs to see into the program's output, not into files.
 
@@ -82,10 +111,10 @@ A root reports **every** failing fixture at once, each with its path, its `behav
 ```bash
 make test-one TEST_ROOT=loaves/toolchain/incan-cli/tests/behavior_smoke_tests.rs   # through the compiler suite
 cargo test -p incan-cli --test behavior_smoke_tests                                # standalone
-cargo test -p incan_test_support --lib behavior_fixtures                           # the format and comparison rules
+cargo test -p incan_test_support --lib behavior_fixtures                           # the format, the provider plan and the comparison rules
 ```
 
-A standalone run outside `make` needs the runtime environment `make test` exports (`INCAN_INTERNAL_SDK_PROVIDER_STORE`, `INCAN_GENERATED_CARGO_TARGET_DIR`, `INCAN_SDK_INVENTORY`, `INCAN_STDLIB`; see `TEST_RUNTIME_ENV` in the `Makefile`), or its first `incan check` compiles a cold SDK provider store under the checkout's `target/`. That is how every CLI root behaves, not something the fixtures add.
+A standalone run outside `make` needs the runtime environment `make test` exports (`INCAN_INTERNAL_SDK_PROVIDER_STORE`, `INCAN_GENERATED_CARGO_TARGET_DIR`, `INCAN_SDK_INVENTORY`, `INCAN_STDLIB`; see `TEST_RUNTIME_ENV` in the `Makefile`), or its first `incan check` compiles a cold SDK provider store under the checkout's `target/`. That is how every CLI root behaves, not something the fixtures add. The `cli_dependencies/` area needs one thing more standalone: `cargo test` hands the test binary the active toolchain's Cargo in `CARGO`, and the standalone bake of a consumer project with dependencies then fails with "Cargo compiler artifact ... has no exact rustc invocation" unless `CARGO` names the pinned publisher toolchain (`INCAN_TEST_PUBLISHER_TOOLCHAIN` in the `Makefile`). Run that root's test binary with `CARGO` pointed at that toolchain's cargo, or run the root through `make test-one`, where no project bake happens.
 
 ## Adding a fixture
 
