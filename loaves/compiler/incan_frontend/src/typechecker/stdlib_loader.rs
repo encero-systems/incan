@@ -317,15 +317,6 @@ impl StdlibAstCache {
         self.cache.get(&module_path.join("."))?.identities.get(name).cloned()
     }
 
-    /// Return the identity of a stdlib member whose module this cache has already loaded.
-    ///
-    /// Re-export resolution runs over shared references after a facade's own import has loaded the target module, so
-    /// it reads that loaded entry rather than loading. An unloaded module answers `None`, which the caller treats as
-    /// an unproven identity, never as evidence the member does not exist.
-    pub fn cached_identity(&self, module_path: &[String], name: &str) -> Option<CanonicalSymbolId> {
-        self.cache.get(&module_path.join("."))?.identities.get(name).cloned()
-    }
-
     /// Look up a specific static binding in a stdlib module.
     pub fn lookup_static(&mut self, module_path: &[String], static_name: &str) -> Option<StaticInfo> {
         self.ensure_loaded(module_path);
