@@ -5395,8 +5395,8 @@ def main() -> None:
     /// Lowering must read that identity back to the `std.serde.json` declaration; otherwise the facade-bound
     /// `Serialize` loses its backend `to_json` and the adopter's `from_json` is dropped from the `Deserialize` impl.
     #[test]
-    fn std_serde_json_traits_keep_their_protocol_through_source_facade_issue1431() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn std_serde_json_traits_keep_their_protocol_through_source_facade_issue1431()
+    -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         let project_name = unique_test_project_name("serde_trait_facade");
