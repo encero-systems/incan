@@ -3070,6 +3070,27 @@ fn test_issue1464_list_constructor_codegen() {
     assert_codegen_snapshot!("issue1464_list_constructor", rust_code);
 }
 
+/// A comprehension over a by-value Rust iterator (or a generator) consumes it through `IntoIterator`, as the `for`
+/// statement over the same value already does, instead of borrowing it with `.iter()` (#1490).
+#[test]
+fn test_issue1490_comprehension_over_rust_iterator_codegen() {
+    let source = load_test_file("issue1490_comprehension_over_rust_iterator");
+    let rust_code = generate_rust(&source);
+    assert!(
+        !rust_code.contains("(args()).iter()") && !rust_code.contains("(args()).clone()"),
+        "a by-value Rust iterator must be neither borrowed with .iter() nor cloned; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("((args()).into_iter())"),
+        "the comprehension must consume the iterator through IntoIterator; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("((source).into_iter())"),
+        "a generator source must be consumed by value as well; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1490_comprehension_over_rust_iterator", rust_code);
+}
+
 #[test]
 fn test_std_tempfile_import_codegen() {
     let source = load_test_file("std_tempfile_import");

@@ -1,0 +1,23 @@
+from rust::std::env import args
+
+
+def lengths() -> list[int]:
+    return [len(argument) for argument in args()]
+
+
+def long_arguments() -> list[str]:
+    return [argument for argument in args() if len(argument) > 1]
+
+
+def squares(source: Generator[int]) -> list[int]:
+    return [value * value for value in source]
+
+
+pub def main() -> None:
+    arguments: list[str] = [argument for argument in args()]
+    println(f"{len(arguments)}")
+    println(len(lengths()))
+    println(len(long_arguments()))
+    positions: Dict[str, int] = {argument: index for index, argument in enumerate(arguments)}
+    println(len(positions))
+    println(len(squares((value for value in range(4)))))

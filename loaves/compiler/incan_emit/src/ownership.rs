@@ -1033,6 +1033,39 @@ pub fn plan_owned_iterator_source(expr: &IrExpr) -> OwnedIteratorSourcePlan {
     }
 }
 
+/// Plan how a comprehension consumes a source that is not an Incan collection, or `None` when it is one.
+///
+/// A `for` statement hands such a value (a Rust iterator such as `std::env::Args`, a generator, an opaque value the
+/// checker could not see into) straight to Rust's `IntoIterator`; the comprehension paths instead borrowed it with
+/// `.iter()`, which a by-value iterator does not have (#1490). Sources the comprehension planner already understands
+/// (collections, ranges, text) return `None` and keep their borrowed item plans. A borrowed opaque value is consumed
+/// through the reference exactly as the loop consumes it, so it is never cloned; an owned one follows the same
+/// move-or-clone materialization as every other adapter-owned source.
+pub fn plan_opaque_comprehension_source(expr: &IrExpr) -> Option<OwnedIteratorSourcePlan> {
+    match &expr.ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => {
+            comprehension_source_is_opaque(inner).then_some(OwnedIteratorSourcePlan::Move)
+        }
+        ty => comprehension_source_is_opaque(ty).then(|| plan_owned_iterator_source(expr)),
+    }
+}
+
+/// Whether a comprehension source type is one the emitter can only traverse through `IntoIterator`.
+///
+/// Incan collections, text, bytes, ranges, and the `Iterator[T]` protocol all have dedicated iteration plans; a
+/// nominal Rust or generator value, or one whose type the checker could not resolve, has none and is consumed exactly
+/// as a `for` statement consumes it.
+fn comprehension_source_is_opaque(ty: &IrType) -> bool {
+    match ty {
+        IrType::Struct(_) | IrType::Unknown => true,
+        IrType::NamedGeneric(name, _) => {
+            collections::from_str(name) == Some(CollectionTypeId::Generator)
+                || (collections::from_str(name).is_none() && !ty.is_iterator_protocol())
+        }
+        _ => false,
+    }
+}
+
 /// Return whether an expression can be moved into an adapter-owned iterator source.
 fn expr_can_move_into_owned_iterator(expr: &IrExpr) -> bool {
     match &expr.kind {
@@ -1727,6 +1760,68 @@ mod tests {
         assert_eq!(
             list_constructor_item_type(&IrType::RefMut(Box::new(strings))),
             Some(&IrType::String)
+        );
+    }
+
+    /// A comprehension over a value that is not an Incan collection consumes it as the `for` statement does: a
+    /// one-shot Rust iterator moves, a borrowed one is read through the reference, and collections keep their own
+    /// borrowed item plans (#1490).
+    #[test]
+    fn opaque_comprehension_sources_are_consumed_by_value() {
+        let rust_iterator = IrType::Struct("std::env::Args".to_string());
+        let call = IrExpr::new(
+            IrExprKind::Call {
+                func: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "args".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Unknown,
+                )),
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                canonical_path: None,
+            },
+            rust_iterator.clone(),
+        );
+        assert_eq!(
+            plan_opaque_comprehension_source(&call),
+            Some(OwnedIteratorSourcePlan::Move)
+        );
+
+        let reused_var = |ty: IrType| {
+            IrExpr::new(
+                IrExprKind::Var {
+                    name: "source".to_string(),
+                    access: VarAccess::Read,
+                    ref_kind: VarRefKind::Value,
+                },
+                ty,
+            )
+        };
+        assert_eq!(
+            plan_opaque_comprehension_source(&reused_var(IrType::RefMut(Box::new(rust_iterator.clone())))),
+            Some(OwnedIteratorSourcePlan::Move)
+        );
+        assert_eq!(
+            plan_opaque_comprehension_source(&reused_var(IrType::NamedGeneric(
+                collections::as_str(CollectionTypeId::Generator).to_string(),
+                vec![IrType::Int]
+            ))),
+            Some(OwnedIteratorSourcePlan::Clone)
+        );
+        assert_eq!(
+            plan_opaque_comprehension_source(&reused_var(IrType::List(Box::new(IrType::Int)))),
+            None
+        );
+        assert_eq!(
+            plan_opaque_comprehension_source(&reused_var(IrType::NamedGeneric(
+                collections::as_str(CollectionTypeId::Option).to_string(),
+                vec![IrType::Int]
+            ))),
+            None
         );
     }
 
