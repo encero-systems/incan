@@ -2342,6 +2342,46 @@ mod selected_rust_facet_graph_tests {
         Ok(())
     }
 
+    /// A producer that observes an environment asks the validator's own classification before binding a value, so
+    /// what it carries as text is exactly what admission retains as text (#1704).
+    #[test]
+    fn selected_graph_environment_retains_text_answers_from_the_closed_registry() -> TestResult {
+        for name in [
+            "CARGO_CFG_TARGET_ARCH",
+            "CARGO_PKG_VERSION_PRE",
+            "PROFILE",
+            "CARGO_FEATURE_ROOT_FEATURE",
+        ] {
+            assert!(
+                selected_graph_environment_retains_text(name),
+                "`{name}` is a registered public fact or a feature flag and is retained as text"
+            );
+        }
+        for name in [
+            // What `libm`'s build script reemits for its own test logging: nobody's public compiler fact.
+            "CFG_CARGO_FEATURES",
+            "CFG_OPT_LEVEL",
+            "CFG_TARGET_FEATURES",
+            // Secrets under unremarkable names, and locations that need an owner rebinding rather than text.
+            "DATABASE_URL",
+            "PRIVATE_MATERIAL",
+            "OUT_DIR",
+            "FIXTURE_DIR",
+            // Registry neighbours deliberately left out.
+            "CARGO_PKG_AUTHORS",
+        ] {
+            assert!(
+                !selected_graph_environment_retains_text(name),
+                "`{name}` has no text form in a graph"
+            );
+        }
+        // Admitting the name is not admitting the value: a registered name still fails on a non-portable value.
+        let graph = graph_with_root_environment(&[("PROFILE", environment_text("/Users/alice/project"))])?;
+        let field = refusal_field(graph, "environment `PROFILE`")?;
+        assert!(field.ends_with("environment.PROFILE"));
+        Ok(())
+    }
+
     #[test]
     fn selected_graph_environment_text_fails_closed_outside_the_public_registry() -> TestResult {
         let credential_uri = "postgres://user:password@host/db";
