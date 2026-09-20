@@ -738,9 +738,10 @@ fn replacement_cli_executes_unchanged_type_conversions_with_receipt() -> Result<
         .output()?;
 
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    // `float(10)` prints `10.0`: an ordinary `float` spells itself the way Python does (#1372).
     assert_eq!(
         output.stdout,
-        b"String '42' -> int 42\nInt 123 -> string '123'\nString '3.14' -> float 3.14\nInt 10 -> float 10\n10 + 20 = 30\n"
+        b"String '42' -> int 42\nInt 123 -> string '123'\nString '3.14' -> float 3.14\nInt 10 -> float 10.0\n10 + 20 = 30\n"
     );
     assert!(
         output.stderr.is_empty(),
@@ -784,7 +785,7 @@ fn replacement_cli_executes_unchanged_type_conversions_with_receipt() -> Result<
             "String '42' -> int 42",
             "Int 123 -> string '123'",
             "String '3.14' -> float 3.14",
-            "Int 10 -> float 10",
+            "Int 10 -> float 10.0",
             "10 + 20 = 30"
         ])
     );

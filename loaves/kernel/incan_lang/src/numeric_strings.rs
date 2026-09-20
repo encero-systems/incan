@@ -110,10 +110,25 @@ mod tests {
             (1.5e-7, "1.5e-07"),
             (1e100, "1e+100"),
             (0.1 + 0.2, "0.30000000000000004"),
+            (1.0 / 3.0, "0.3333333333333333"),
             (f64::MAX, "1.7976931348623157e+308"),
+            // The positional/exponential switch-over sits exactly where Python's `repr` puts it: the last
+            // positional value below `1e16` and the first exponential value below `1e-4`.
+            (9999999999999998.0, "9999999999999998.0"),
+            (123456789012345680.0, "1.2345678901234568e+17"),
+            (0.00009999, "9.999e-05"),
+            (-1e-5, "-1e-05"),
+            (-1e16, "-1e+16"),
+            (1e22, "1e+22"),
+            (1e300 * 10.0, "1e+301"),
+            // Subnormals keep their shortest round-trip digits.
+            (f64::MIN_POSITIVE, "2.2250738585072014e-308"),
+            (5e-324, "5e-324"),
+            (f64::MAX * 10.0, "inf"),
             (f64::INFINITY, "inf"),
             (f64::NEG_INFINITY, "-inf"),
             (f64::NAN, "nan"),
+            (-f64::NAN, "nan"),
         ] {
             assert_eq!(float_to_string(value), expected, "value `{value:?}`");
         }
