@@ -1613,7 +1613,7 @@
     "normal": {
      "native_consumer_core": {
       "package": "native_consumer_core",
-      "kind": "third-party",
+      "kind": "generated",
       "origin": "path",
       "workspace_inherited": false,
       "version_req": null,
@@ -1674,7 +1674,7 @@
     "normal": {
      "native_consumer_core": {
       "package": "native_consumer_core",
-      "kind": "third-party",
+      "kind": "generated",
       "origin": "path",
       "workspace_inherited": false,
       "version_req": null,

@@ -3179,12 +3179,6 @@ pub fn oven_build_toolchain_binaries(
         Some(output) => output,
         None => options.compiler_root.join(OVEN_TOOLCHAIN_BUILD_OUTPUT_RELATIVE_PATH),
     };
-    fs::create_dir_all(output_directory.join("bin")).map_err(|error| {
-        CliError::failure(format!(
-            "cannot create toolchain build output directory {}: {error}",
-            output_directory.display()
-        ))
-    })?;
     let compiler_root = fs::canonicalize(&options.compiler_root).map_err(|error| {
         CliError::failure(format!(
             "cannot canonicalize workspace root {}: {error}",
@@ -3192,8 +3186,8 @@ pub fn oven_build_toolchain_binaries(
         ))
     })?;
     let stored_cli_source = compiler_root.join(&cli_target.source_relative_path);
-    let mut workspace_library_cache = BTreeMap::new();
-    let mut reports = Vec::with_capacity(options.binaries.len());
+    // Every role is matched to its stored plan before any output directory exists, so a refused role leaves no
+    // half-made `bin/` behind.
     for role in &options.binaries {
         let declared_source = fs::canonicalize(options.project_root.join(&role.path)).map_err(|error| {
             CliError::failure(format!(
@@ -3208,6 +3202,16 @@ pub fn oven_build_toolchain_binaries(
                 role.name, role.path, cli_target.target_name, cli_target.source_relative_path
             )));
         }
+    }
+    fs::create_dir_all(output_directory.join("bin")).map_err(|error| {
+        CliError::failure(format!(
+            "cannot create toolchain build output directory {}: {error}",
+            output_directory.display()
+        ))
+    })?;
+    let mut workspace_library_cache = BTreeMap::new();
+    let mut reports = Vec::with_capacity(options.binaries.len());
+    for role in &options.binaries {
         let output = output_directory.join("bin").join(&role.name);
         let phase = PhaseProgress::start(format!("toolchain binary `{}`", role.name));
         let CompilerSuiteCliBake { bake, .. } = bake_stored_compiler_suite_cli(
@@ -3229,10 +3233,11 @@ pub fn oven_build_toolchain_binaries(
                 role.name
             )));
         }
+        let reused = bake.reused;
         reports.push(OvenToolchainBinaryReport {
             name: role.name.clone(),
-            output: bake.output.clone(),
-            reused: bake.reused,
+            output: bake.output,
+            reused,
         });
     }
     Ok(reports)

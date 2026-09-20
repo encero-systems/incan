@@ -1315,7 +1315,6 @@ pub fn is_sha256_identity(value: &str) -> bool {
     })
 }
 
-/// Refuse a declared-fact record set that is not closed, sorted, bound once, and free of reserved or foreign keys.
 /// Refuse `[[rust.bin]]` roles that could not select exactly one binary of this Loaf's own Rust unit.
 ///
 /// A role names an executable and its root source. The name must be usable as a file name and a crate name; the
@@ -1393,6 +1392,7 @@ fn validate_rust_binary_roles(
     Ok(())
 }
 
+/// Refuse a declared-fact record set that is not closed, sorted, bound once, and free of reserved or foreign keys.
 fn validate_rust_fact_records(
     records: &[RustFactRecord],
     path: &Path,
@@ -3492,6 +3492,21 @@ path = "src/bin/probe.rs"
             "{rendered}"
         );
         assert!(rendered.contains("sibling Loaf"), "{rendered}");
+    }
+
+    #[test]
+    fn a_rust_binary_role_declares_both_its_name_and_its_path() {
+        for (body, expected) in [
+            ("name = \"incan\"", "missing field `path`"),
+            ("path = \"src/main.rs\"", "missing field `name`"),
+        ] {
+            let content = format!("[project]\nname = \"demo\"\n\n[[rust.bin]]\n{body}\n");
+            let rendered = match ProjectManifest::from_str(&content, Path::new("loaf.toml")) {
+                Err(err) => err.to_string(),
+                Ok(_) => panic!("expected `{body}` to be refused"),
+            };
+            assert!(rendered.contains(expected), "`{body}`: {rendered}");
+        }
     }
 
     #[test]

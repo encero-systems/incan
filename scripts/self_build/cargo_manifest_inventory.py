@@ -5,7 +5,8 @@ The compiler is to be built by Oven from `loaf.toml` Rust facets (RFC 119) with 
 Before a manifest can be deleted, everything it declares that a compile unit depends on has to be expressible in the
 facet. This script parses every `Cargo.toml` with `tomllib` and writes one JSON record per manifest: package
 identity (with `workspace = true` inheritance resolved and recorded), edition, features and their defaults, normal /
-dev / build dependencies split into workspace-internal and third-party with their version requirements, explicit
+dev / build dependencies split into workspace-internal, third-party and generated (a fixture's path dependency on a
+harness-built output) with their version requirements, explicit
 `[lib]` / `[[bin]]` / `[[test]]` / `[[example]]` / `[[bench]]` targets, procedural-macro and crate-type facts, build
 scripts (inert per #1561), `[lints]` tables, `[package.metadata]`, and the crate-level `#![...]` attributes of every
 target root (the in-source lint policy that stays as code).
@@ -148,7 +149,9 @@ def normalize_dependency(
     """One dependency as the facet needs it: package, origin, requirement, features and role flags.
 
     A `workspace = true` entry is merged over the root's `[workspace.dependencies]` declaration the way Cargo
-    merges it: the member may add features and set `optional`; every other field comes from the root.
+    merges it: the member may add features and set `optional`; every other field comes from the root. The kind is
+    `workspace-internal` for a workspace crate, `generated` for a path dependency that resolves into a build-output
+    directory (a fixture's dependency on a library the harness bakes first), and `third-party` otherwise.
     """
     if isinstance(entry, str):
         table: dict[str, Any] = {"version": entry}
@@ -178,7 +181,12 @@ def normalize_dependency(
         origin = "git"
     else:
         origin = "registry"
-    kind = "workspace-internal" if package in workspace_packages else "third-party"
+    if package in workspace_packages:
+        kind = "workspace-internal"
+    elif origin == "path" and any(part in SKIPPED_DIRECTORIES for part in Path(table["path"]).parts):
+        kind = "generated"
+    else:
+        kind = "third-party"
     record: dict[str, Any] = {
         "package": package,
         "kind": kind,
@@ -464,8 +472,12 @@ def render_markdown(inventory: dict[str, Any]) -> str:
     def deps(record: dict[str, Any], role: str) -> str:
         table = record["dependencies"][role]
         internal = sum(1 for dependency in table.values() if dependency["kind"] == "workspace-internal")
-        external = len(table) - internal
-        return f"{internal} ws / {external} 3p" if table else "–"
+        generated = sum(1 for dependency in table.values() if dependency["kind"] == "generated")
+        external = len(table) - internal - generated
+        text = f"{internal} ws / {external} 3p"
+        if generated:
+            text += f" / {generated} generated"
+        return text if table else "–"
 
     def lint_attributes(record: dict[str, Any]) -> str:
         attributes = [
