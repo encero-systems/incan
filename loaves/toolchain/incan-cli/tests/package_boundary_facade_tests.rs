@@ -569,7 +569,8 @@ fn child_module_derive_is_available_when_only_a_function_crosses_the_package_bou
 /// Issue #1453: `def preserve(func: (Answer) -> Answer) -> ((Answer) -> Answer)` checked, but the decorated static
 /// was typed with a consumer-local union wrapper while the decorator returned a function pointer over the provider's,
 /// so the library failed to bake with E0308. The generic pass-through form of #1426 is a different contract and
-/// does not cover this declaration.
+/// does not cover this declaration. The decorator is declared after the function it decorates, so the declared
+/// surface must be read independently of declaration order.
 #[test]
 fn explicitly_typed_decorator_keeps_the_provider_union_representation_issue1453() -> TestResult {
     let temporary = tempfile::tempdir()?;
@@ -597,12 +598,12 @@ fn explicitly_typed_decorator_keeps_the_provider_union_representation_issue1453(
         "src/lib.incn",
         r#"from pub::provider import Answer
 
-def preserve(func: (Answer) -> Answer) -> ((Answer) -> Answer):
-    return func
-
 @preserve
 pub def echo(value: Answer) -> Answer:
     return value
+
+def preserve(func: (Answer) -> Answer) -> ((Answer) -> Answer):
+    return func
 "#,
     )?;
     let check = run_incan(&library, &["check", "src/lib.incn"])?;
