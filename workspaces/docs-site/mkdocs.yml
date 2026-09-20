@@ -326,7 +326,6 @@ nav:
           - Benchmarks & profiling (repository): contributing/how-to/benchmarks_and_profiling.md
           - Oven Alpha benchmark protocol: contributing/how-to/oven_alpha_benchmark.md
           - CI & automation (repository): contributing/how-to/ci_and_automation.md
-          - Work the test inventory: contributing/how-to/work_the_test_inventory.md
           - Writing RFCs: contributing/how-to/writing_rfcs.md
       - Explanation:
           - Architecture: contributing/explanation/architecture.md

@@ -4,7 +4,7 @@
 
     Do not edit this page by hand. Regenerate it with `make test-inventory` from the tests in the tree and `scripts/test_inventory/dispositions.json`; `make test-inventory-check` fails when it is stale.
 
-This is the control plane for the slice-7 cutover (issue [#1561](https://github.com/encero-systems/incan/issues/1561), test corpus). Every Rust test under `loaves/` and `workspaces/` has a disposition by what it proves and how, not by where it lives; every `.incn` fixture root is listed with its case count. A disposition is a recorded decision, the lane signals beside it are the mechanical evidence, and a `retire` row may be deleted only once it names a twin. How to classify a test, record a twin, or plan a split is in [Work the test inventory](../how-to/work_the_test_inventory.md).
+This is the control plane for the slice-7 cutover (issue [#1561](https://github.com/encero-systems/incan/issues/1561), test corpus). Every Rust test under `loaves/` and `workspaces/` has a disposition by what it proves and how, not by where it lives; every `.incn` fixture root is listed with its case count. A disposition is a recorded decision, the lane signals beside it are the mechanical evidence, and a `retire` row may be deleted only once it names a twin. How to classify a test, record a twin, or plan a split is recorded on the owning issue: [working the test corpus inventory](https://github.com/encero-systems/incan/issues/1561#issuecomment-5750194193).
 
 ## Summary
 
@@ -13,9 +13,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3110 | 139 | 7 |
 | re-point | 480 | 42 | 377 |
 | retire | 1109 | 72 | 0 |
-| unaffected | 1405 | 131 | 5 |
+| unaffected | 1407 | 132 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **6104** | **384** | **389** |
+| **Total** | **6106** | **385** | **389** |
 
 - Retire-class tests with a named twin: 12/1109.
 - Retire-class files with no twin at all: 79 (the `Twins` column reads `0/n`).
@@ -187,7 +187,7 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_ex
 | `replacement_refuses_a_nominal_pattern_after_its_exact_target_identity_is_removed` | keep | - | replacement, checker, parser | generated-text hit is a diagnostic string |
 | `both_backends_render_a_multi_argument_print_the_same_way` | retire | - | codegen, replacement, checker, parser | compares replacement output with IrCodegen output; the replacement-only assertion is the twin |
 
-### `loaves/compiler/incan_emit` (922 tests in 54 files: keep 100, retire 822)
+### `loaves/compiler/incan_emit` (924 tests in 55 files: keep 100, retire 822, unaffected 2)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---|---|---|---|
@@ -231,6 +231,7 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_ex
 | `loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs` | 289 | 6771 | 6771 | retire | 0/289 | required | #1561 | codegen 289, snapshot 1, text 31, checker 7, parser 289 | insta snapshot corpus of generated Rust; the .incn inputs under loaves/compiler/incan_emit/tests/codegen_snapshots are inventoried as a fixture root (re-point) and are the twin surface once run as programs. |
 | `loaves/compiler/incan_emit/tests/construction_diagnostics_tests.rs` | 2 | 52 | 52 | keep | - | - | #1561 | checker 2, parser 2 | typechecker diagnostics for model construction. |
 | `loaves/compiler/incan_emit/tests/constructor_argument_order_tests.rs` | 4 | 161 | 161 | retire | 4/4 | - | #1561 | codegen 1, checker 3, parser 4, legacy_ir 3 | argument sequencing asserted through the legacy IR and generated Rust; the CLI regression for issue 1462 runs the same program. |
+| `loaves/compiler/incan_emit/tests/emitter_freeze_tests.rs` | 2 | 103 | 103 | unaffected | - | - | #1561 | - | emitter freeze gate (#1687); runs the fingerprint checker and goes with the emitter tree. |
 | `loaves/compiler/incan_emit/tests/empty_list_comparison_operand_tests.rs` | 5 | 143 | 143 | keep (keep 3, retire 2) | 1/2 | - | #1561 | codegen 1, text 1, checker 4, parser 5, legacy_ir 1 | checker facts for empty-list operands; the lowered/generated assertions retire. |
 | `loaves/compiler/incan_emit/tests/enumerate_value_codegen_tests.rs` | 1 | 71 | 71 | retire | 0/1 | - | #1561 | codegen 1, parser 1 | asserts generated Rust text. |
 | `loaves/compiler/incan_emit/tests/fallible_entrypoint_codegen_tests.rs` | 1 | 50 | 50 | retire | 0/1 | - | #1561 | codegen 1, snapshot 1, parser 1 | snapshot of the generated entrypoint. |

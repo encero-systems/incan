@@ -108,7 +108,7 @@ class DocPathTests(unittest.TestCase):
         self.write("scripts/check_doc_paths.py", CHECKER.read_text())
         self.write(
             "Makefile", (CHECKER.parent.parent / "Makefile").read_text()
-            + "\nfmt-check-ci rustdoc-gate-ci:\n\t@true\ncheck-fast-ci:\n\t@touch cargo-started\n",
+            + "\nfmt-check-ci rustdoc-gate-ci emitter-freeze-ci:\n\t@true\ncheck-fast-ci:\n\t@touch cargo-started\n",
         )
         result = subprocess.run(
             ["make", "-s", "pre-commit-fast"],

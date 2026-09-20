@@ -116,6 +116,13 @@ jobs:
             base_ref="HEAD^"
           fi
           python3 scripts/check_changed_rustdocs.py --base "$base_ref"
+      # The Rust-emission backend is frozen (#1561): every `.rs` file under `loaves/compiler/incan_emit/src/emit/` must
+      # match the fingerprint manifest, and a change to it carries a migration note recorded there. The gate reads only
+      # the checkout, so it runs beside the rustdoc gate rather than behind a Rust build.
+      - name: Check the emitter freeze
+        run: |
+          python3 scripts/test_check_emitter_freeze.py
+          python3 scripts/check_emitter_freeze.py
       - name: Check the test corpus inventory
         run: make test-inventory-check
 

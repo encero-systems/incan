@@ -32,7 +32,7 @@ from collect import (  # noqa: E402 -- sibling module
 )
 
 PAGE_PATH = ROOT / "workspaces" / "docs-site" / "docs" / "contributing" / "reference" / "test_corpus_inventory.md"
-HOW_TO_LINK = "../how-to/work_the_test_inventory.md"
+HOW_TO_LINK = "https://github.com/encero-systems/incan/issues/1561#issuecomment-5750194193"
 
 DISPOSITION_MEANING = {
     "keep": "Asserts source meaning through the parser, typechecker, Body IR, formatter, LSP or semantics core, and never touches generated Rust. Survives the slice-7 cutover untouched.",
@@ -203,7 +203,7 @@ def render(corpus: Corpus, dispositions: dict) -> str:
         "test corpus). Every Rust test under `loaves/` and `workspaces/` has a disposition by what it proves and how, not by "
         "where it lives; every `.incn` fixture root is listed with its case count. A disposition is a recorded decision, "
         "the lane signals beside it are the mechanical evidence, and a `retire` row may be deleted only once it names a "
-        f"twin. How to classify a test, record a twin, or plan a split is in [Work the test inventory]({HOW_TO_LINK})."
+        f"twin. How to classify a test, record a twin, or plan a split is recorded on the owning issue: [working the test corpus inventory]({HOW_TO_LINK})."
     )
     out.append("")
 

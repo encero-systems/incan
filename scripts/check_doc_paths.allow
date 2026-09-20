@@ -16,8 +16,6 @@
 .agents/skills/test/SKILL.md	loaves/compiler/incan_emit/tests/snapshots/codegen_snapshot_tests__my_feature.snap	Illustrative example filename in skill template or example project
 README.md	src/main.incn	Illustrative example filename in skill template or example project
 workspaces/docs-site/docs/contributing/how-to/authoring_vocab_crates.md	src/lib.incn	Illustrative example filename in skill template or example project
-workspaces/docs-site/docs/contributing/how-to/work_the_test_inventory.md	loaves/compiler/incan_emit/tests/new_tests.rs	Illustrative new test file in the classification example
-workspaces/docs-site/docs/contributing/how-to/work_the_test_inventory.md	scripts/test_inventory/proposals.json	Git-ignored reviewer sidecar written by scripts/test_inventory/collect.py --propose
 
 # A package's or an example project's own source directory, named relative to the document; the workspace root has had no `src/` since the root crate ceased to exist (#1478).
 *	src/	A package- or project-relative source directory named beside its own README or in an example project layout, not a repository path

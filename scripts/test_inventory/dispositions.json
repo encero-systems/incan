@@ -1273,6 +1273,14 @@
       "split_target": "",
       "notes": "argument sequencing asserted through the legacy IR and generated Rust; the CLI regression for issue 1462 runs the same program."
     },
+    "loaves/compiler/incan_emit/tests/emitter_freeze_tests.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "emitter freeze gate (#1687); runs the fingerprint checker and goes with the emitter tree."
+    },
     "loaves/compiler/incan_emit/tests/empty_list_comparison_operand_tests.rs": {
       "disposition": "keep",
       "owner": 1561,
