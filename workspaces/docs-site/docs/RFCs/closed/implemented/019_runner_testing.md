@@ -711,8 +711,8 @@ The following marker decorators are recognized when they resolve to the `testing
 
 Default marks:
 
-- A `const TEST_MARKS: List[str]` binding (in a test file or in a `module tests:` context) adds default marks to all tests collected from that context.
-- A `const TEST_MARKS: List[str]` binding in `tests/**/conftest.incn` adds default marks to all tests collected from files in that conftest’s directory subtree.
+- A `const TEST_MARKS: FrozenList[str]` binding (in a test file or in a `module tests:` context) adds default marks to all tests collected from that context.
+- A `const TEST_MARKS: FrozenList[str]` binding in `tests/**/conftest.incn` adds default marks to all tests collected from files in that conftest’s directory subtree.
 
 Unknown markers:
 
@@ -723,7 +723,7 @@ Marker registration (required for `--strict-markers`):
 
 - Marker names are considered “known” if they are:
     - built-in markers (`skip`, `xfail`, `slow`), OR
-    - declared in a `const TEST_MARKERS: List[str]` registry visible to the test.
+    - declared in a `const TEST_MARKERS: FrozenList[str]` registry visible to the test.
 
 Rules:
 
@@ -1016,8 +1016,8 @@ Any file named `conftest.incn` under `tests/` is discovered automatically and ma
 Recognized constructs in `conftest.incn`:
 
 - `@fixture`-decorated functions (fixture definitions)
-- `const TEST_MARKS: List[str]` (default marks for the subtree)
-- `const TEST_MARKERS: List[str]` (marker registry for strict mode)
+- `const TEST_MARKS: FrozenList[str]` (default marks for the subtree)
+- `const TEST_MARKERS: FrozenList[str]` (marker registry for strict mode)
 - imports required by the above
 
 Arbitrary top-level code in `conftest.incn` is **not executed** at collection time. Unlike pytest's conftest.py (which executes as a normal Python module), `conftest.incn` is parsed declaratively for fixture and marker definitions only. This avoids import-time side effects and keeps collection deterministic.
@@ -1030,7 +1030,7 @@ Resolution:
 
 Default marks (`TEST_MARKS`):
 
-- `conftest.incn` may define `const TEST_MARKS: List[str]`.
+- `conftest.incn` may define `const TEST_MARKS: FrozenList[str]`.
 - All applicable `TEST_MARKS` values from conftest files on the path to a test file are **merged** (union), from outer-to-inner directories.
 - The test file’s own `TEST_MARKS` (if present) is also merged.
 - Per-test and per-case marks are merged on top.

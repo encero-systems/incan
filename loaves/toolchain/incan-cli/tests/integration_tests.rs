@@ -10190,8 +10190,8 @@ from rust::std::thread import sleep
 from rust::std::time import Duration
 from std.testing import assert_eq, feature, mark, param_case, parametrize, platform, skipif, slow, timeout, xfail, xfailif
 
-const TEST_MARKERS: List[str] = ["api", "db", "smoke"]
-const TEST_MARKS: List[str] = ["smoke"]
+const TEST_MARKERS: FrozenList[str] = ["api", "db", "smoke"]
+const TEST_MARKS: FrozenList[str] = ["smoke"]
 
 def test_inherited_smoke() -> None:
     assert_eq(1, 1)
@@ -11539,8 +11539,8 @@ module tests:
     from rust::std::time import Duration
     from std.testing import assert_eq, mark, param_case, parametrize, timeout, xfail
 
-    const TEST_MARKERS: List[str] = ["smoke"]
-    const TEST_MARKS: List[str] = ["smoke"]
+    const TEST_MARKERS: FrozenList[str] = ["smoke"]
+    const TEST_MARKS: FrozenList[str] = ["smoke"]
 
     @parametrize("x, expected", [
         param_case((1, 3), marks=[xfail("known")], id="one-three"),
