@@ -328,6 +328,131 @@ def main(left: List[str], right: List[str]) -> None:
     );
 }
 
+/// `list(source)` records the canonical List constructor identity and types its elements by the loop-header
+/// iteration rule, so lowering never treats the call as an ordinary function named `list` (#1464).
+#[test]
+fn list_constructor_calls_record_canonical_collection_identity_issue1464() -> Result<(), String> {
+    let source = r#"
+def main(values: Dict[str, int], names: list[str], text: str) -> None:
+  keys = list(values.keys())
+  counts = list(values.values())
+  copied = list(names)
+  key_view = list(values)
+  characters = list(text)
+  empty: list[int] = list()
+"#;
+    let ast = parse_program(source, "issue1464 list constructor identity");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errors| format!("list constructors should typecheck: {errors:?}"))?;
+
+    let constructors = checker
+        .type_info()
+        .calls
+        .resolved_collection_constructors
+        .values()
+        .copied()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        constructors,
+        vec![CollectionTypeId::List; 6],
+        "every accepted list() spelling should resolve through the canonical List identity"
+    );
+
+    let expr_type = |call: &str| -> Result<ResolvedType, String> {
+        let start = source.find(call).ok_or_else(|| format!("missing `{call}`"))?;
+        checker
+            .type_info()
+            .expr_type(Span::new(start, start + call.len()))
+            .cloned()
+            .ok_or_else(|| format!("`{call}` should retain a checked type"))
+    };
+    let list_of = crate::typechecker::helpers::list_ty;
+    assert_eq!(expr_type("list(values.keys())")?, list_of(ResolvedType::Str));
+    assert_eq!(expr_type("list(values.values())")?, list_of(ResolvedType::Int));
+    assert_eq!(expr_type("list(names)")?, list_of(ResolvedType::Str));
+    assert_eq!(
+        expr_type("list(values)")?,
+        list_of(ResolvedType::Str),
+        "a dict yields its keys"
+    );
+    assert_eq!(expr_type("list(text)")?, list_of(ResolvedType::Str));
+    assert_eq!(
+        expr_type("list()")?,
+        list_of(ResolvedType::Int),
+        "an empty list() adopts the annotated element type"
+    );
+    Ok(())
+}
+
+#[test]
+fn list_constructor_rejects_sources_iteration_rejects_issue1464() {
+    let errors = check_str_err(
+        r#"
+def main(count: int, pair: (int, str)) -> None:
+  from_scalar = list(count)
+  from_tuple = list(pair)
+"#,
+        "list() should reject sources a loop cannot iterate",
+    );
+
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("list() expects an iterable collection, str, bytes, or Iterator, got int")),
+        "expected a source diagnostic for the scalar before lowering, got {errors:?}"
+    );
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("list() expects an iterable collection, str, bytes, or Iterator, got (int, str)")),
+        "expected a source diagnostic for the tuple before lowering, got {errors:?}"
+    );
+}
+
+#[test]
+fn list_constructor_rejects_more_than_one_source_issue1464() {
+    let errors = check_str_err(
+        r#"
+def main(left: List[str], right: List[str]) -> None:
+  invalid = list(left, right)
+"#,
+        "list() should reject multiple sources",
+    );
+
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("list() expects at most 1 argument(s), got 2")),
+        "expected a source diagnostic before lowering, got {errors:?}"
+    );
+}
+
+#[test]
+fn user_defined_list_call_does_not_record_collection_constructor_issue1464() -> Result<(), String> {
+    let ast = parse_program(
+        r#"
+def list(values: List[str]) -> int:
+  return len(values)
+
+def main(values: List[str]) -> None:
+  count = list(values)
+"#,
+        "issue1464 shadowed list function",
+    );
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errors| format!("shadowing source function should typecheck: {errors:?}"))?;
+
+    assert!(
+        checker.type_info().calls.resolved_collection_constructors.is_empty(),
+        "a user-defined list function must not be lowered as the List collection constructor"
+    );
+    Ok(())
+}
+
 #[test]
 fn stdlib_module_function_calls_accept_default_arguments() -> Result<(), String> {
     let source = r#"
@@ -5556,6 +5681,67 @@ def first(result: Result[int, int]) -> int:
     assert!(check_str(source).is_ok());
 }
 
+/// The checked type of every pattern node is recorded at that node's span (#1245), so lowering can read a
+/// destructured binding's declared payload type back instead of re-deriving it. One test covers the three
+/// constructs that share the pattern walk plus the `assert value is P` subset, which defines its binding apart.
+#[test]
+fn pattern_nodes_record_their_checked_type_at_their_span_issue1245() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+enum Shape:
+  Circle(int)
+  Label(str)
+
+def size(s: Shape, o: Option[str]) -> int:
+  match s:
+    case Shape.Circle(radius):
+      return radius
+    case Shape.Label(text):
+      return len(text)
+  if let Some(found) = o:
+    return len(found)
+  assert o is Some(asserted)
+  return len(asserted)
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+
+    let binding_span = |name: &str| -> Result<Span, Box<dyn std::error::Error>> {
+        let needle = format!("({name})");
+        let start = source
+            .find(&needle)
+            .ok_or_else(|| format!("fixture must spell `{needle}`"))?
+            + 1;
+        Ok(Span::new(start, start + name.len()))
+    };
+    for (name, expected) in [
+        ("radius", ResolvedType::Int),
+        ("text", ResolvedType::Str),
+        ("found", ResolvedType::Str),
+        ("asserted", ResolvedType::Str),
+    ] {
+        assert_eq!(
+            info.expr_type(binding_span(name)?),
+            Some(&expected),
+            "the checked payload type must be recorded at `{name}`'s own span"
+        );
+    }
+    // The constructor node itself carries the scrutinee type, so nested sub-patterns can be checked against it.
+    let circle_start = source
+        .find("Shape.Circle(radius)")
+        .ok_or("fixture must spell the Circle pattern")?;
+    assert_eq!(
+        info.expr_type(Span::new(circle_start, circle_start + "Shape.Circle(radius)".len())),
+        Some(&ResolvedType::Named("Shape".to_string())),
+        "a constructor pattern node records the type it was checked against"
+    );
+    Ok(())
+}
+
 #[test]
 fn test_pattern_alternation_rejects_missing_binding() {
     let source = r#"
@@ -7061,10 +7247,12 @@ def use_widget(w: Widget) -> str:
 #[cfg(feature = "rust_inspect")]
 #[test]
 fn test_rusttype_return_coercion_recorded_for_generic_newtype_method_call() -> Result<(), Box<dyn std::error::Error>> {
+    // The wrapper's parameter must be stored by the underlying Rust type (#1370 refuses an unused one), so the
+    // probe wraps a generic Rust type whose only method returns a borrowed `&str`.
     let source = r#"
-from rust::std::string import String as RustString
+from rust::std::vec import Vec as RustVec
 
-type Label[T] = rusttype RustString:
+type Label[T] = rusttype RustVec[T]:
     def as_str(self) -> str:
         ...
 
@@ -7082,11 +7270,11 @@ def render[T](value: Label[T]) -> str:
         .insert_test_item(
             &manifest_dir,
             RustItemMetadata {
-                canonical_path: "std::string::String".to_string(),
-                definition_path: Some("std::string::String".to_string()),
+                canonical_path: "std::vec::Vec".to_string(),
+                definition_path: Some("std::vec::Vec".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
-                    type_params: Vec::new(),
+                    type_params: vec!["T".to_string()],
                     type_param_defaults: Vec::new(),
                     mutable_reference_type_params: Vec::new(),
                     expanded_derive_traits: Vec::new(),
@@ -13031,6 +13219,139 @@ enum Box[T](str):
     );
 }
 
+/// Issue #1370: a newtype has exactly its underlying type, so a declared parameter the underlying type does not
+/// mention has nowhere to live; the checker refuses it at the parameter's span instead of the generated Rust failing.
+#[test]
+fn issue1370_newtype_type_param_not_in_underlying_type_is_refused() -> Result<(), String> {
+    let source = r#"
+type Tag[T] = newtype str:
+  def label(self) -> str:
+    return self.0
+"#;
+    let errs = check_str_err(source, "expected the phantom newtype parameter to be refused");
+    let refusal = errs
+        .iter()
+        .find(|e| e.message == "Type parameter 'T' of newtype 'Tag' is not used by its underlying type")
+        .ok_or_else(|| format!("expected the type_param_not_stored diagnostic, got {errs:?}"))?;
+    assert_eq!(
+        refusal.hints,
+        vec!["Use 'T' in the underlying type, for example `newtype list[T]`, or remove it"]
+    );
+    let param_offset = source
+        .find("[T]")
+        .ok_or_else(|| "fixture must declare [T]".to_string())?
+        + 1;
+    assert_eq!(
+        refusal.span.start, param_offset,
+        "the diagnostic points at the parameter, got {:?}",
+        refusal.span
+    );
+
+    let rusttype = r#"
+from rust::std::collections import HashMap
+
+type Index[K, V] = rusttype HashMap[K, str]
+"#;
+    let errs = check_str_err(rusttype, "expected the unused rusttype parameter to be refused");
+    assert!(
+        errs.iter()
+            .any(|e| e.message == "Type parameter 'V' of newtype 'Index' is not used by its underlying type"),
+        "a rusttype takes the same rule, and only the unused parameter is named; got {errs:?}"
+    );
+    assert!(
+        !errs.iter().any(|e| e.message.contains("'K' of newtype")),
+        "a parameter the underlying type mentions is accepted; got {errs:?}"
+    );
+    Ok(())
+}
+
+/// Issue #1370: a newtype whose parameter appears anywhere in the underlying type is the accepted shape.
+#[test]
+fn issue1370_newtype_type_param_in_underlying_type_is_accepted() {
+    assert_check_ok(
+        r#"
+type Bare[T] = newtype T
+
+type Many[T] = newtype list[T]:
+  def count(self) -> int:
+    return len(self.0)
+
+type Pair[K, V] = newtype (K, list[V])
+"#,
+    );
+}
+
+/// Issue #1370: an enum stores its parameters in variant payloads; a parameter no payload mentions is refused at the
+/// parameter's span rather than reaching rustc as an unused type parameter.
+#[test]
+fn issue1370_enum_type_param_not_in_any_payload_is_refused() -> Result<(), String> {
+    let source = r#"
+enum Slot[T]:
+  Filled
+  Empty
+
+  def describe(self) -> str:
+    return "slot"
+"#;
+    let errs = check_str_err(source, "expected the phantom enum parameter to be refused");
+    let refusal = errs
+        .iter()
+        .find(|e| e.message == "Type parameter 'T' of enum 'Slot' is not used by any variant payload")
+        .ok_or_else(|| format!("expected the type_param_not_stored diagnostic, got {errs:?}"))?;
+    assert_eq!(
+        refusal.hints,
+        vec!["Give a variant a payload that mentions 'T', for example `Some(T)`, or remove it"]
+    );
+    let param_offset = source
+        .find("[T]")
+        .ok_or_else(|| "fixture must declare [T]".to_string())?
+        + 1;
+    assert_eq!(
+        refusal.span.start, param_offset,
+        "the diagnostic points at the parameter, got {:?}",
+        refusal.span
+    );
+
+    let partly_stored = r#"
+enum Outcome[T, E]:
+  Done(T)
+  Pending
+"#;
+    let errs = check_str_err(partly_stored, "expected the unused enum parameter to be refused");
+    assert!(
+        errs.iter()
+            .any(|e| e.message == "Type parameter 'E' of enum 'Outcome' is not used by any variant payload"),
+        "only the parameter no payload mentions is named; got {errs:?}"
+    );
+    assert!(
+        !errs.iter().any(|e| e.message.contains("'T' of enum")),
+        "a parameter some payload mentions is accepted; got {errs:?}"
+    );
+    Ok(())
+}
+
+/// Issue #1370: an enum whose parameter appears in at least one payload, at any nesting, is the accepted shape.
+#[test]
+fn issue1370_enum_type_param_in_a_payload_is_accepted() {
+    assert_check_ok(
+        r#"
+enum Maybe[T]:
+  Some(T)
+  Nothing
+
+enum Batch[T, E]:
+  Items(list[T])
+  Failed(str, E)
+  Empty
+
+  def is_empty(self) -> bool:
+    match self:
+      Batch.Empty => return true
+      _ => return false
+"#,
+    );
+}
+
 #[test]
 fn test_value_enum_from_value_argument_type_checked() {
     let source = r#"
@@ -14208,6 +14529,97 @@ def foo() -> bool:
     assert!(check_str(source).is_ok());
 }
 
+/// #1488: a `const` annotated with a mutable container type is rejected at the annotation, naming the frozen
+/// representation the const actually has, instead of being silently retyped and failing at its first use site.
+#[test]
+fn const_mutable_collection_annotation_is_rejected_at_the_annotation_issue1488() {
+    let source = r#"
+const SECTIONS: list[str] = ["x"]
+
+def read_only(names: list[str]) -> int:
+  return len(names)
+
+def main() -> None:
+  println(f"{read_only(SECTIONS)}")
+"#;
+    let errs = check_str_err(source, "a `list[str]` const annotation must be rejected");
+    let annotation_start = source.find("list[str]").unwrap_or_default();
+    let annotation = Span::new(annotation_start, annotation_start + "list[str]".len());
+    let rejection = errs
+        .iter()
+        .find(|err| err.message.contains("const 'SECTIONS'"))
+        .unwrap_or_else(|| panic!("expected a const-annotation diagnostic, got: {errs:?}"));
+    assert_eq!(
+        rejection.span, annotation,
+        "the diagnostic must point at the annotation the author wrote: {rejection:?}"
+    );
+    assert!(
+        rejection.message.contains("'list[str]'") && rejection.message.contains("'FrozenList[str]'"),
+        "the diagnostic must name both the written and the frozen spelling: {}",
+        rejection.message
+    );
+    assert!(
+        rejection.hints.iter().any(|hint| hint.contains("FrozenList[str]")),
+        "the hint must say what to write instead: {:?}",
+        rejection.hints
+    );
+    // The use-site mismatch is real -- a frozen const cannot feed a mutable `list[str]` parameter -- and it stays.
+    // What changes is where the author learns about it: the declaration reports first, naming the spelling they
+    // wrote, so the later message about `FrozenList[str]` no longer reads as a contradiction.
+    let use_site = errs
+        .iter()
+        .position(|err| err.message.contains("Argument 'names'"))
+        .unwrap_or_else(|| panic!("the use-site mismatch must still be reported: {errs:?}"));
+    let declaration = errs
+        .iter()
+        .position(|err| err.span == annotation)
+        .unwrap_or_else(|| panic!("the annotation diagnostic must be present: {errs:?}"));
+    assert!(
+        declaration < use_site,
+        "the annotation must be reported before the use site: {errs:?}"
+    );
+}
+
+#[test]
+fn const_dict_and_set_annotations_name_their_frozen_forms_issue1488() {
+    let source = r#"
+const TABLE: dict[str, int] = {"a": 1}
+const ALLOWED: set[int] = {1, 2}
+"#;
+    let errs = check_str_err(source, "mutable `dict`/`set` const annotations must be rejected");
+    for (written, frozen) in [
+        ("dict[str, int]", "FrozenDict[str, int]"),
+        ("set[int]", "FrozenSet[int]"),
+    ] {
+        assert!(
+            errs.iter().any(
+                |err| err.message.contains(&format!("'{written}'")) && err.message.contains(&format!("'{frozen}'"))
+            ),
+            "expected a diagnostic naming '{written}' and '{frozen}', got: {errs:?}"
+        );
+    }
+}
+
+#[test]
+fn const_frozen_and_scalar_annotations_stay_accepted_issue1488() {
+    // `str`/`bytes` are also frozen in const context, but a `FrozenStr`/`FrozenBytes` reads wherever `str`/`bytes`
+    // is expected, so the written annotation is honoured at every use site and there is nothing to reject.
+    let source = r#"
+const NAMES: FrozenList[str] = ["x"]
+const INFERRED = ["y"]
+const LABEL: str = "z"
+const RAW: bytes = b"\x00"
+const LIMIT: int = 3
+
+def take(label: str, raw: bytes) -> int:
+  return len(label) + len(raw)
+
+def main() -> int:
+  return take(LABEL, RAW) + LIMIT
+"#;
+    assert!(check_str(source).is_ok(), "{:?}", check_str(source));
+}
+
 #[test]
 fn test_const_reference_other_const() {
     let source = r#"
@@ -14366,6 +14778,253 @@ def foo() -> bool:
 "#;
     // May need type inference improvements
     let _ = check_str(source);
+}
+
+#[test]
+fn test_str_encode_and_bytes_decode_accept_utf8_round_trip_issue1668() {
+    let source = r#"
+const GREETING: FrozenStr = "héllo"
+const RAW: FrozenBytes = b"raw"
+
+def encode_forms(text: str, label: str) -> int:
+    plain: bytes = text.encode()
+    explicit: bytes = text.encode("utf-8")
+    named: bytes = text.encode(encoding="UTF_8")
+    runtime: bytes = text.encode(label)
+    frozen: bytes = GREETING.encode()
+    return len(plain) + len(explicit) + len(named) + len(runtime) + len(frozen)
+
+def decode_forms(data: bytes, label: str, policy: str) -> Result[str, ValidationError]:
+    plain: str = data.decode()?
+    lossy: str = data.decode(errors="replace")?
+    positional: str = data.decode("utf8", "strict")?
+    runtime: str = data.decode(label, errors=policy)?
+    frozen: str = RAW.decode()?
+    attempt: Result[str, ValidationError] = data.decode()
+    match attempt:
+        Ok(text) => println(text)
+        Err(error) => println(f"{error}")
+    return Ok(plain + lossy + positional + runtime + frozen)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_bytes_decode_returns_result_not_str_issue1668() {
+    let errors = check_str_err(
+        r#"
+def text(data: bytes) -> str:
+    decoded: str = data.decode()
+    return decoded
+"#,
+        "bytes.decode() returns Result[str, ValidationError], not str",
+    );
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("expected 'str', found 'Result[str, ValidationError]'")),
+        "expected a Result mismatch diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_str_encode_rejects_unsupported_literal_encoding_issue1668() {
+    let errors = check_str_err(
+        r#"
+def payload(text: str) -> bytes:
+    return text.encode("latin-1")
+"#,
+        "str.encode with a non-UTF-8 literal must fail typechecking",
+    );
+    assert!(
+        errors.iter().any(
+            |error| error.message.contains("str.encode() supports only UTF-8") && error.message.contains("latin-1")
+        ),
+        "expected an unsupported-encoding diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_bytes_decode_rejects_unsupported_literal_encoding_issue1668() {
+    let errors = check_str_err(
+        r#"
+def text(data: bytes) -> str:
+    return data.decode("latin-1")
+"#,
+        "bytes.decode with a non-UTF-8 literal must fail typechecking",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("bytes.decode() supports only UTF-8")
+                && error.message.contains("latin-1")),
+        "expected an unsupported-encoding diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_text_codec_calls_reject_foreign_keyword_and_duplicate_label_issue1668() {
+    let keyword_errors = check_str_err(
+        r#"
+def payload(text: str) -> bytes:
+    return text.encode(errors="strict")
+"#,
+        "str.encode has no errors policy",
+    );
+    assert!(
+        keyword_errors
+            .iter()
+            .any(|error| error.message.contains("Unexpected keyword argument 'errors'")),
+        "expected an unknown-keyword diagnostic, got: {:?}",
+        keyword_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+
+    let duplicate_errors = check_str_err(
+        r#"
+def text(data: bytes) -> str:
+    return data.decode("utf-8", encoding="utf-8")
+"#,
+        "bytes.decode must not bind encoding twice",
+    );
+    assert!(
+        duplicate_errors
+            .iter()
+            .any(|error| error.message.contains("Duplicate argument 'encoding'")),
+        "expected a duplicate-argument diagnostic, got: {:?}",
+        duplicate_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_bytes_decode_rejects_bad_policy_keyword_and_arity_issue1668() {
+    let policy_errors = check_str_err(
+        r#"
+def text(data: bytes) -> str:
+    return data.decode(errors="ignore")
+"#,
+        "bytes.decode with an unsupported errors policy must fail typechecking",
+    );
+    assert!(
+        policy_errors
+            .iter()
+            .any(|error| error.message.contains("errors must be") && error.message.contains("ignore")),
+        "expected an unsupported-policy diagnostic, got: {:?}",
+        policy_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+
+    let keyword_errors = check_str_err(
+        r#"
+def text(data: bytes) -> str:
+    return data.decode(codec="utf-8")
+"#,
+        "bytes.decode with an unknown keyword must fail typechecking",
+    );
+    assert!(
+        keyword_errors
+            .iter()
+            .any(|error| error.message.contains("Unexpected keyword argument 'codec'")),
+        "expected an unknown-keyword diagnostic, got: {:?}",
+        keyword_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+
+    let arity_errors = check_str_err(
+        r#"
+def payload(text: str) -> bytes:
+    return text.encode("utf-8", "strict")
+"#,
+        "str.encode takes at most one argument",
+    );
+    assert!(
+        arity_errors.iter().any(|error| error
+            .message
+            .contains("str.encode() expects at most 1 argument(s), got 2")),
+        "expected a max-arity diagnostic, got: {:?}",
+        arity_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+
+    let type_errors = check_str_err(
+        r#"
+def payload(text: str) -> bytes:
+    return text.encode(8)
+"#,
+        "str.encode requires a text encoding label",
+    );
+    assert!(
+        type_errors.iter().any(|error| error
+            .message
+            .contains("Argument 'encoding' of 'str.encode' has type mismatch")),
+        "expected an argument type diagnostic, got: {:?}",
+        type_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_dict_contains_key_typechecks_on_mutable_dict_issue1668() {
+    let source = r#"
+def has_manifest(files: Dict[str, str]) -> bool:
+    return files.contains_key("loaf.toml")
+
+def has_id(mut counts: Dict[int, int], id: int) -> bool:
+    return counts.contains_key(id)
+
+def keys_outside_comprehension(d: Dict[str, int]) -> int:
+    names: list[str] = sorted(d.keys())
+    present: bool = "a" in d.keys()
+    values: list[int] = d.values()
+    return len(names) + len(values)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_dict_contains_key_rejects_arity_and_key_type_issue1668() {
+    let arity_errors = check_str_err(
+        r#"
+def has_manifest(files: Dict[str, str]) -> bool:
+    return files.contains_key()
+"#,
+        "Dict.contains_key requires exactly one key argument",
+    );
+    assert!(
+        arity_errors.iter().any(|error| error
+            .message
+            .contains("Dict.contains_key() expects 1 argument(s), got 0")),
+        "expected an arity diagnostic, got: {:?}",
+        arity_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+
+    let type_errors = check_str_err(
+        r#"
+def has_manifest(files: Dict[str, str]) -> bool:
+    return files.contains_key(7)
+"#,
+        "Dict.contains_key rejects a probe outside the key type",
+    );
+    assert!(
+        type_errors.iter().any(|error| error
+            .message
+            .contains("Argument to 'Dict.contains_key' has type mismatch")),
+        "expected a key type diagnostic, got: {:?}",
+        type_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+
+    let named_errors = check_str_err(
+        r#"
+def has_manifest(files: Dict[str, str]) -> bool:
+    return files.contains_key(key="loaf.toml")
+"#,
+        "Dict.contains_key takes its probe positionally",
+    );
+    assert!(
+        named_errors
+            .iter()
+            .any(|error| error.message.contains("Unexpected keyword argument 'key'")),
+        "expected an unknown-keyword diagnostic, got: {:?}",
+        named_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -14699,17 +15358,22 @@ fn provider_plan_for_sdk_modules(
     .map(Arc::new)
 }
 
-#[test]
-fn sdk_provider_import_retains_manifest_canonical_identity() -> Result<(), String> {
-    let package_name = "incan_stdlib_fixture";
+/// Build one in-memory SDK provider plan publishing `std.helpers` from a checked provider source.
+///
+/// The plan carries the provider's checked API and identity graph exactly as an installed artifact would, so a
+/// consumer test proves what an import binds against the compiled provider rather than against provider source.
+fn sdk_provider_plan_for_helpers_module(
+    package_name: &str,
+    provider_source: &str,
+) -> Result<ProviderPlan, Box<dyn std::error::Error>> {
     let module_path = vec!["helpers".to_string()];
-    let provider_ast = parse_program("pub def helper() -> int:\n  return 42\n", "canonical SDK provider");
+    let provider_ast = parse_program(provider_source, "checked SDK provider");
     let mut provider_checker = TypeChecker::new();
     provider_checker.set_current_package_identity(Some(package_name.to_string()));
     provider_checker.set_current_module_path(Some(module_path.clone()));
     provider_checker
         .check_program(&provider_ast)
-        .map_err(|errors| format!("canonical SDK provider should typecheck: {errors:?}"))?;
+        .map_err(|errors| format!("checked SDK provider should typecheck: {errors:?}"))?;
     let checked_exports = collect_checked_public_exports(&provider_ast, &provider_checker);
     let mut api = CheckedApiMetadataPackage {
         schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
@@ -14721,24 +15385,23 @@ fn sdk_provider_import_retains_manifest_canonical_identity() -> Result<(), Strin
         )],
         public_namespaces: Vec::new(),
     };
-    materialize_checked_api_public_namespaces(&mut api).map_err(|error| error.to_string())?;
+    materialize_checked_api_public_namespaces(&mut api)?;
     let mut identity_graph = LibraryIdentityGraph::from_checked_exports(package_name, &[]);
-    identity_graph
-        .extend_checked_api_exports(package_name, &api, &[(module_path.clone(), checked_exports)])
-        .map_err(|error| error.to_string())?;
+    identity_graph.extend_checked_api_exports(package_name, &api, &[(module_path, checked_exports)])?;
     let public_path = vec![package_name.to_string(), "helpers".to_string(), "helper".to_string()];
     if identity_graph.canonical_for_public_path(&public_path).is_none() {
         return Err(format!(
             "fixture identity graph did not retain {public_path:?}: {:?}",
             identity_graph.exports
-        ));
+        )
+        .into());
     }
     let mut manifest = LibraryManifest::new(package_name, "0.5.0");
     manifest.contract_metadata.api = Some(api);
     manifest.contract_metadata.identity_graph = identity_graph;
 
     let namespace_claims = BTreeSet::from([vec!["std".to_string(), "helpers".to_string()]]);
-    let plan = ProviderPlan::new(
+    Ok(ProviderPlan::new(
         LibraryManifestIndex::default(),
         vec![ProviderRecord {
             identity: ProviderIdentity {
@@ -14761,8 +15424,14 @@ fn sdk_provider_import_retains_manifest_canonical_identity() -> Result<(), Strin
             implementation_facets: Vec::new(),
         }],
         namespace_claims,
-    )
-    .map_err(|error| error.to_string())?;
+    )?)
+}
+
+#[test]
+fn sdk_provider_import_retains_manifest_canonical_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let package_name = "incan_stdlib_fixture";
+    let module_path = vec!["helpers".to_string()];
+    let plan = sdk_provider_plan_for_helpers_module(package_name, "pub def helper() -> int:\n  return 42\n")?;
     let consumer_source = "from std.helpers import helper\n\ndef run() -> int:\n  return helper()\n";
     let consumer_ast = parse_program(consumer_source, "canonical SDK consumer");
     let mut consumer_checker = TypeChecker::new();
@@ -14801,6 +15470,54 @@ fn sdk_provider_import_retains_manifest_canonical_identity() -> Result<(), Strin
         .resolved_identity(Span::new(call_start, call_start + "helper".len()))
         .ok_or("SDK call must retain its manifest canonical identity")?;
     assert_eq!(called, imported);
+    Ok(())
+}
+
+/// A source facade republishing a compiled SDK function binds the provider's declaration, identity included.
+///
+/// Issue #1435: the facade hop used to resolve `std.*` through the source stdlib cache while a direct import went
+/// through the provider registry, so the consumer's binding carried no identity and lowering could never reach
+/// the compiled signature that owns the omitted default.
+#[test]
+fn sdk_provider_facade_reexport_retains_manifest_canonical_identity_issue1435() -> Result<(), Box<dyn std::error::Error>>
+{
+    let package_name = "incan_stdlib_fixture";
+    let plan = sdk_provider_plan_for_helpers_module(
+        package_name,
+        "pub def helper(pretty: bool = false) -> int:\n  return 42\n",
+    )?;
+    let facade_ast = parse_program("pub from std.helpers import helper\n", "SDK facade");
+    let consumer_source = "from codec import helper\n\ndef run() -> int:\n  return helper()\n";
+    let consumer_ast = parse_program(consumer_source, "SDK facade consumer");
+    let mut consumer_checker = TypeChecker::new();
+    consumer_checker.set_current_module_path(Some(vec!["consumer".to_string()]));
+    consumer_checker.register_dependency_module_path_segments("codec", vec!["codec".to_string()]);
+    consumer_checker.set_provider_plan(Arc::new(plan));
+    consumer_checker
+        .check_with_imports(&consumer_ast, &[("codec", &facade_ast)])
+        .map_err(|errors| format!("SDK facade consumer should typecheck: {errors:?}"))?;
+
+    let expected_origin = SymbolOrigin::Package {
+        library: package_name.to_string(),
+        module_path: vec!["helpers".to_string()],
+    };
+    let imported = consumer_checker
+        .type_info()
+        .resolved_import_identity("helper")
+        .ok_or("facade import of an SDK function must retain the provider's canonical identity")?;
+    assert_eq!(imported.origin, expected_origin);
+    assert_eq!(imported.declaration_name, "helper");
+    let call_start = consumer_source.rfind("helper").ok_or("missing helper call")?;
+    let called = consumer_checker
+        .type_info()
+        .resolved_identity(Span::new(call_start, call_start + "helper".len()))
+        .ok_or("facade-bound SDK call must retain the provider's canonical identity")?;
+    assert_eq!(called, imported);
+    assert_eq!(
+        consumer_checker.import_binding_path("helper"),
+        Some(["codec".to_string(), "helper".to_string()].as_slice()),
+        "the checked binding path keeps naming the facade the consumer imported from"
+    );
     Ok(())
 }
 
@@ -16760,6 +17477,7 @@ fn test_rust_generic_argument_retains_imported_public_provider_identity_issue885
             &checker.symbols,
             &|arg| checker.render_provider_aware_rust_arg(arg),
             &|arg| checker.canonicalize_public_library_nominals(arg),
+            &|_| None,
         ),
         ResolvedType::RustPath("rust_shadow::Envelope<compiled_parent::Payload>".to_string())
     );
@@ -16774,6 +17492,7 @@ fn test_rust_generic_argument_retains_imported_public_provider_identity_issue885
             &checker.symbols,
             &|arg| checker.render_provider_aware_rust_arg(arg),
             &|arg| checker.canonicalize_public_library_nominals(arg),
+            &|_| None,
         ),
         ResolvedType::Generic(
             "Box".to_string(),
@@ -19662,6 +20381,62 @@ def accept_user_id(value: UserId) -> UserId:
 }
 
 #[test]
+fn test_std_environ_args_returns_result_of_list_of_str_issue1668() {
+    let source = r#"
+from std.environ import EnvironError, args
+
+def subcommand() -> Result[str, EnvironError]:
+    arguments: list[str] = args()?
+    if len(arguments) < 2:
+        return Ok("help")
+    return Ok(arguments[1])
+
+def main() -> Result[None, EnvironError]:
+    for argument in args()?[1:]:
+        println(argument)
+    match args():
+        Ok(arguments) => println(len(arguments))
+        Err(error) => println(f"{error.kind_name()}:{error.key}")
+    return Ok(None)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_environ_args_rejects_arguments_and_non_list_bindings_issue1668() {
+    let arity_errors = check_str_err(
+        r#"
+from std.environ import args
+
+def main() -> None:
+    arguments = args("extra")
+"#,
+        "args() takes no arguments",
+    );
+    assert!(
+        !arity_errors.is_empty(),
+        "expected an arity diagnostic for args(\"extra\"), got none"
+    );
+
+    let type_errors = check_str_err(
+        r#"
+from std.environ import args
+
+def main() -> None:
+    arguments: list[str] = args()
+"#,
+        "args() returns Result[list[str], EnvironError], not list[str]",
+    );
+    assert!(
+        type_errors.iter().any(|error| error
+            .message
+            .contains("expected 'List[str]', found 'Result[List[str], EnvironError]'")),
+        "expected a Result mismatch diagnostic, got: {:?}",
+        type_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_std_environ_get_as_accepts_required_primitive_targets() {
     let source = r#"
 from std.environ import EnvironError, get_as
@@ -20195,6 +20970,150 @@ def main() -> str:
     checker
         .check_with_imports(&ast, &[("yaml", &yaml_ast)])
         .unwrap_or_else(|errs| panic!("user derivable module should typecheck: {errs:?}"));
+}
+
+#[test]
+fn test_user_module_derive_bound_survives_exported_enum_variant_spelled_like_the_trait() -> Result<(), String> {
+    // #1429: a dependency's exported enum variant with the same spelling as its derivable trait must not steal the
+    // trait's lookup binding while the dependency interface is collected. The variant is a member convenience binding
+    // in the enum's namespace; the trait bound and the module derive resolve the trait declaration whichever of the
+    // two is declared first.
+    for codec_source in [
+        r#"
+__derives__ = [Ready]
+
+@rust.derive("Debug")
+pub trait Ready:
+  pass
+
+pub enum Kind(str):
+  Ready = "ready"
+
+pub def encode[T with Ready](value: T) -> None:
+  pass
+"#,
+        r#"
+__derives__ = [Ready]
+
+pub enum Kind(str):
+  Ready = "ready"
+
+@rust.derive("Debug")
+pub trait Ready:
+  pass
+
+pub def encode[T with Ready](value: T) -> None:
+  pass
+"#,
+    ] {
+        // The module derive and the directly imported trait derive both resolve the trait declaration; the second
+        // form reported the derive as unknown when the variant had taken the binding.
+        for source in [
+            r#"
+import codec
+
+@derive(codec)
+model Item:
+  value: int
+
+def main() -> None:
+  codec.encode(Item(value=1))
+"#,
+            r#"
+from codec import Ready, encode
+
+@derive(Ready)
+model Item:
+  value: int
+
+def main() -> None:
+  encode(Item(value=1))
+"#,
+        ] {
+            let codec_ast = parse_program(codec_source, "codec module");
+            let ast = parse_program(source, "consumer");
+            let mut checker = TypeChecker::new();
+            checker
+                .check_with_imports(&ast, &[("codec", &codec_ast)])
+                .map_err(|errs| {
+                    format!("the derive should satisfy the bound despite the same-spelled variant: {errs:?}\n{source}")
+                })?;
+        }
+    }
+    Ok(())
+}
+
+/// #1431: a stdlib trait reached through a facade re-export binds the stdlib trait itself, and the recorded import
+/// identity names the declaring `std.serde.json` module rather than the facade. Lowering keys the trait's protocol on
+/// that identity, so the written import path (which names only the facade) must not be the only fact available.
+#[test]
+fn test_facade_reexported_stdlib_trait_records_declaring_identity() -> Result<(), String> {
+    let facade_source = "from std.serde.json import Serialize, Deserialize\n";
+    let source = r#"
+from facade import Serialize, Deserialize
+
+model Payload with Serialize, Deserialize:
+  value: int
+
+  def from_json(json_str: str) -> Result[Payload, str]:
+    return Ok(Payload(value=len(json_str)))
+
+def main() -> None:
+  println(Payload(value=1).to_json())
+"#;
+    let facade_ast = parse_program(facade_source, "facade");
+    let ast = parse_program(source, "consumer");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_with_imports(&ast, &[("facade", &facade_ast)])
+        .map_err(|errs| format!("facade re-export should typecheck: {errs:?}"))?;
+
+    let json_module = vec!["std".to_string(), "serde".to_string(), "json".to_string()];
+    for trait_name in ["Serialize", "Deserialize"] {
+        let identity = checker
+            .type_info()
+            .resolved_import_identity(trait_name)
+            .ok_or_else(|| format!("no resolved import identity recorded for facade-re-exported {trait_name}"))?;
+        if identity.origin != SymbolOrigin::Module(json_module.clone())
+            || identity.declaration_name != trait_name
+            || identity.kind != SemanticSourceTargetKind::Trait
+        {
+            return Err(format!(
+                "{trait_name} identity must name the declaring stdlib module: {identity:?}"
+            ));
+        }
+        if checker.lookup_trait_info(trait_name).is_none() {
+            return Err(format!(
+                "{trait_name} must bind the stdlib trait, not an import placeholder"
+            ));
+        }
+        // The written import path keeps its meaning: it names the facade the consumer actually imported from.
+        if checker.import_binding_path(trait_name) != Some(["facade".to_string(), trait_name.to_string()].as_slice()) {
+            return Err(format!(
+                "{trait_name} import binding path must stay the written facade path"
+            ));
+        }
+    }
+
+    // A direct stdlib import records the same identity through the loading lookup.
+    let direct = parse_program(
+        "from std.serde.json import Serialize\n\nmodel Payload with Serialize:\n  value: int\n",
+        "direct",
+    );
+    let mut direct_checker = TypeChecker::new();
+    direct_checker
+        .check_program(&direct)
+        .map_err(|errs| format!("direct stdlib import should typecheck: {errs:?}"))?;
+    let direct_identity = direct_checker
+        .type_info()
+        .resolved_import_identity("Serialize")
+        .ok_or("no resolved import identity recorded for a direct stdlib trait import")?;
+    if direct_identity.origin != SymbolOrigin::Module(json_module) {
+        return Err(format!(
+            "direct identity must name the declaring stdlib module: {direct_identity:?}"
+        ));
+    }
+    Ok(())
 }
 
 #[test]
@@ -21230,6 +22149,178 @@ def run() -> int:
             .any(|e| e.message.contains("expects 1 explicit type argument(s), got 2")),
         "expected explicit type argument arity diagnostic, got {errs:?}"
     );
+}
+
+/// Issue #1373 (1): a `with` bound naming a type is not a trait, so the hint must not ask for an implementation of
+/// `float`, and it must not point at the value arguments when the explicit type argument is what mismatched.
+#[test]
+fn issue1373_type_bound_violation_hint_names_the_type_not_an_implementation() -> Result<(), String> {
+    let source = r#"
+def cast[T with float](x: int) -> float:
+  return 1.0
+
+def main() -> None:
+  a = cast[int](1)
+"#;
+    let errs = check_str_err(source, "expected the float bound to reject cast[int]");
+    let bound_error = errs
+        .iter()
+        .find(|e| {
+            e.message == "Call to 'cast' violates generic bound: type parameter 'T' requires 'float' but got 'int'"
+        })
+        .ok_or_else(|| format!("expected the bound-violation error, got {errs:?}"))?;
+    let hint = bound_error.hints.join("\n");
+    assert!(
+        hint.contains("'float' is a type, not a trait") && hint.contains("declare the parameter as 'float'"),
+        "the hint must explain that a type in bound position cannot be implemented, got {hint:?}"
+    );
+    assert!(
+        !hint.contains("implements 'float'") && !hint.contains("the argument type"),
+        "the hint must not ask to implement a type or blame the value arguments, got {hint:?}"
+    );
+    Ok(())
+}
+
+/// Issue #1373 (1): with a trait bound, an explicit type argument that fails it is named as the type argument.
+#[test]
+fn issue1373_explicit_type_argument_bound_violation_hint_names_the_type_argument() -> Result<(), String> {
+    let source = r#"
+@requires(message: str)
+trait Displayable:
+  def display(self) -> str:
+    return self.message
+
+class NotDisplayable:
+  value: int
+
+def show[T with Displayable](value: T) -> T:
+  return value
+
+def main() -> None:
+  _ = show[NotDisplayable](NotDisplayable(value=1))
+"#;
+    let errs = check_str_err(source, "expected the Displayable bound to reject show[NotDisplayable]");
+    let bound_error = errs
+        .iter()
+        .find(|e| e.message.contains("violates generic bound"))
+        .ok_or_else(|| format!("expected the bound-violation error, got {errs:?}"))?;
+    let hint = bound_error.hints.join("\n");
+    assert!(
+        hint.contains("Type argument 'NotDisplayable' for 'T' must implement 'Displayable'"),
+        "an explicit type argument is named as such, got {hint:?}"
+    );
+    assert!(
+        !hint.contains("the argument type"),
+        "the value arguments are not what mismatched, got {hint:?}"
+    );
+    Ok(())
+}
+
+/// Issue #1373 (2): a call that no overload accepts lists every candidate and what each one wanted, instead of only
+/// the first-declared candidate's bound.
+#[test]
+fn issue1373_overload_set_rejection_lists_every_candidate() -> Result<(), String> {
+    let source = r#"
+def cast[T with float](x: int) -> float:
+  return 1.0
+
+def cast[T with int](x: int) -> int:
+  return 1
+
+def main() -> None:
+  c = cast[str](1)
+"#;
+    let errs = check_str_err(source, "expected cast[str] to match no overload");
+    let summary = errs
+        .iter()
+        .find(|e| e.message == "Call to 'cast' matches none of its 2 overloads")
+        .ok_or_else(|| format!("expected the overload summary diagnostic, got {errs:?}"))?;
+    assert_eq!(
+        summary.notes,
+        vec![
+            "candidate `cast[T with float](x: int) -> float` rejected: Call to 'cast' violates generic bound: type \
+             parameter 'T' requires 'float' but got 'str'",
+            "candidate `cast[T with int](x: int) -> int` rejected: Call to 'cast' violates generic bound: type \
+             parameter 'T' requires 'int' but got 'str'",
+        ],
+        "each candidate is listed with the reason it was rejected"
+    );
+    Ok(())
+}
+
+/// Issue #1373 (3): an unknown name in a signature's type position is most likely an undeclared type parameter, so
+/// the hint shows the declaration rather than sending the reader to their imports.
+#[test]
+fn issue1373_undeclared_type_parameter_suggests_declaring_it() -> Result<(), String> {
+    let source = r#"
+model Column[T]:
+  name: str
+
+def widen(x: Column[U]) -> None:
+  println(f"{x.name}")
+"#;
+    let errs = check_str_err(source, "expected the undeclared U to be rejected");
+    let unknown = errs
+        .iter()
+        .find(|e| e.message == "Unknown symbol 'U'")
+        .ok_or_else(|| format!("expected the unknown-symbol error, got {errs:?}"))?;
+    assert_eq!(
+        unknown.hints.first().map(String::as_str),
+        Some("'U' is not declared as a type parameter of 'widen'; did you mean `def widen[U](...)`?"),
+        "the first hint shows where the declaration goes, got {:?}",
+        unknown.hints
+    );
+    assert!(
+        !unknown.hints.iter().any(|hint| hint.contains("forget to import")),
+        "the generic import hint must not lead, got {:?}",
+        unknown.hints
+    );
+
+    let generic_owner = r#"
+def pair[T](x: T, y: U) -> T:
+  return x
+"#;
+    let errs = check_str_err(generic_owner, "expected the undeclared U to be rejected");
+    let unknown = errs
+        .iter()
+        .find(|e| e.message == "Unknown symbol 'U'")
+        .ok_or_else(|| format!("expected the unknown-symbol error, got {errs:?}"))?;
+    assert_eq!(
+        unknown.hints.first().map(String::as_str),
+        Some("'U' is not declared as a type parameter of 'pair'; did you mean `def pair[T, U](...)`?"),
+        "declared parameters are kept ahead of the missing one, got {:?}",
+        unknown.hints
+    );
+    Ok(())
+}
+
+/// Issue #1373 (4): RFC 054 keeps an explicit bracket list arity-complete, so a short list names the parameters it
+/// left unbound and shows the `_` placeholder that infers them, rather than only counting.
+#[test]
+fn issue1373_partial_explicit_type_arguments_hint_shows_the_inference_placeholder() -> Result<(), String> {
+    let source = r#"
+def convert[T, U](x: U) -> T:
+  return x
+
+def main() -> None:
+  a: float = convert[float](1)
+"#;
+    let errs = check_str_err(source, "expected the partial bracket list to be rejected");
+    let arity = errs
+        .iter()
+        .find(|e| e.message == "convert expects 2 explicit type argument(s), got 1")
+        .ok_or_else(|| format!("expected the arity error, got {errs:?}"))?;
+    assert_eq!(
+        arity.notes,
+        vec!["'convert' declares type parameters [T, U]; an explicit list binds every one of them in that order"],
+        "the note names the declared parameters"
+    );
+    assert_eq!(
+        arity.hints,
+        vec!["Write `_` for a parameter the value arguments determine (U): convert[float, _](...)"],
+        "the hint completes the written list with the inference placeholder"
+    );
+    Ok(())
 }
 
 #[test]
@@ -24815,6 +25906,8 @@ def f() -> None:
 }
 
 mod rust_supertraits;
+mod rust_trait_import_candidates;
+mod rust_trait_qualified_calls;
 
 #[test]
 fn admitted_legacy_nominals_keep_distinct_source_paths_and_consistent_hashes() {

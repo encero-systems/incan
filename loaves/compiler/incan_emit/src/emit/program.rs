@@ -495,6 +495,15 @@ impl<'program> GeneratedUseAnalyzer<'program> {
     /// Module derives retain source paths such as `codec.Encode`; Rust bounds may already use `codec::Encode`.
     /// Both require the leading import binding. Absolute Rust paths bypass local imports and must not retain an
     /// unrelated alias with the same crate spelling.
+    ///
+    /// Compatibility issue: #1434. Generated-use pruning dropped an import whose only use was the trait module named
+    /// by a module derive's `impl module::Trait for T`; for a compiled SDK bundle the bare spelling then resolved to
+    /// an external crate. Behavior evidence: `module_derive_retains_its_trait_module_import` (source through
+    /// emission) and `qualified_trait_impl_retains_projected_sdk_module_import` (provider-projected IR); the SDK
+    /// facade routing of the same report is `std_root_module_derive_retains_sdk_facade_import`. Semantic owner: the
+    /// import-usage fact belongs beside the checked import bindings and the adoption identity that lowering records on
+    /// the impl (`trait_module_path`), not to a scan of emitted trait spellings. Retirement condition: the Body IR
+    /// backend derives its `use` items from those facts and this analyzer is deleted with #654.
     fn mark_trait_path_binding(&mut self, trait_path: &str) {
         self.mark_reachable_item(trait_path);
         if !trait_path.starts_with("::")
@@ -1142,23 +1151,28 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         method: &str,
         dispatch: Option<&IrMethodDispatch>,
     ) {
-        let Some(IrMethodDispatch::RustExtensionTraitImport { binding }) = dispatch else {
+        let Some(IrMethodDispatch::RustExtensionTraitImport { bindings }) = dispatch else {
             if self.receiver_can_use_rust_extension_trait(receiver) {
                 self.mark_unambiguous_rust_extension_trait_import(method);
             }
             return;
         };
-        if self.rust_extension_trait_imports.contains_key(binding) {
-            self.analysis.used_extension_trait_imports.insert(binding.clone());
+        for binding in bindings {
+            if self.rust_extension_trait_imports.contains_key(binding) {
+                self.analysis.used_extension_trait_imports.insert(binding.clone());
+            }
         }
     }
 
     /// Mark a trait import for metadata-free fallback only when the method has one possible imported trait.
+    ///
+    /// Only imports with a declared method surface take part; an unknown-surface import is retained solely through
+    /// the candidates the typechecker recorded on the call.
     fn mark_unambiguous_rust_extension_trait_import(&mut self, method: &str) {
         let mut matches = self
             .rust_extension_trait_imports
             .iter()
-            .filter(|(_, import)| import.methods.iter().any(|candidate| candidate == method))
+            .filter(|(_, import)| import.methods_known && import.methods.iter().any(|candidate| candidate == method))
             .map(|(binding, _)| binding.clone());
         let Some(binding) = matches.next() else {
             return;
@@ -4303,6 +4317,7 @@ mod tests {
             derives: Vec::new(),
             visibility: Visibility::Public,
             type_params: Vec::new(),
+            phantom_type_params: Vec::new(),
             derive_rust_modules: HashMap::new(),
             lint_allows: Vec::new(),
         })));

@@ -304,6 +304,16 @@ impl StdlibAstCache {
     /// Look up the source declaration identity exported by a stdlib module member.
     pub fn lookup_identity(&mut self, module_path: &[String], name: &str) -> Option<CanonicalSymbolId> {
         self.ensure_loaded(module_path);
+        self.cached_identity(module_path, name)
+    }
+
+    /// Return the identity of a stdlib member whose module this cache has already loaded.
+    ///
+    /// Unlike [`Self::lookup_identity`] this never loads source. Re-export resolution runs over shared references
+    /// after a facade's own import has loaded the target module, so it reads that loaded entry rather than loading.
+    /// An unloaded module answers `None`, which the caller treats as an unproven identity, never as evidence the
+    /// member does not exist.
+    pub fn cached_identity(&self, module_path: &[String], name: &str) -> Option<CanonicalSymbolId> {
         self.cache.get(&module_path.join("."))?.identities.get(name).cloned()
     }
 

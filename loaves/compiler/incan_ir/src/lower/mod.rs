@@ -82,6 +82,21 @@ pub struct ImportedAliasTarget {
     pub path: Vec<String>,
 }
 
+/// The `return` operand being lowered, which turns its final reads of owned locals into moves.
+///
+/// `frame` indexes the operand's own read counters in `AstLowering::remaining_ident_reads`; a read is the operand's
+/// last only when that frame and every frame pushed inside it are exhausted for the name. `depth` is the non-linear
+/// context depth at the `return` itself: a read at a deeper depth sits inside a closure, comprehension, or loop
+/// expression within the operand, where the binding may be a per-item borrow or a repeatable capture, so it keeps the
+/// ordinary conservative policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReturnOperandContext {
+    /// Index of the operand's read-counter frame.
+    pub frame: usize,
+    /// Non-linear context depth at the `return` statement.
+    pub depth: usize,
+}
+
 /// AST to IR lowering context.
 ///
 /// Maintains state needed during the lowering pass:
@@ -197,6 +212,19 @@ pub struct AstLowering {
     /// Captures remain non-consuming because a closure can run repeatedly. Parameters are freshly owned by each
     /// invocation, but nested non-linear contexts inside the closure must still suppress syntactic last-use moves.
     pub closure_param_scopes: Vec<(usize, HashSet<String>)>,
+    /// Names bound by the patterns of the `for` loops enclosing the statement being lowered, innermost last.
+    ///
+    /// A loop binding's Rust shape is the emitter's iteration plan rather than the binding's source type: a list of
+    /// owned values ordinarily iterates by shared reference, so the binding is a borrow of the collection's element.
+    /// Its reads therefore never claim a last-use move, even inside a `return` operand, and every owned sink
+    /// materializes the item through the ordinary non-consuming read policy (#1489).
+    pub loop_pattern_bindings: Vec<HashSet<String>>,
+    /// The `return` operand currently being lowered, when there is one.
+    ///
+    /// A `return` leaves the function, so the final read of an owned local inside its operand is that local's last
+    /// use on the path however many loops or match arms surround the statement. See
+    /// [`ReturnOperandContext`] for the two facts that scope this claim.
+    pub return_operand: Option<ReturnOperandContext>,
     /// Import alias map for decorator/derive passthrough resolution.
     pub import_aliases: HashMap<String, Vec<String>>,
     /// Direct Rust import aliases mapped to Rust path segments.
@@ -256,6 +284,14 @@ pub struct AstLowering {
     /// visible even when the dispatched trait differs from the receiver's -- `OrderedCollection[int]` dispatching
     /// `Collection::first` is still a trait-typed receiver.
     pub declared_trait_names: HashSet<String>,
+    /// Declared return types of this program's functions, lowered from their annotations and keyed by declaration
+    /// span.
+    ///
+    /// A decorator's declared return annotation is the one spelling of the decorated callable surface that still
+    /// names admitted native union carriers; the typechecker's resolved callable type has expanded every alias to its
+    /// members. Decorators may be declared after the functions they decorate, so the map is filled for the whole
+    /// program before any signature is registered and read through the decorator's resolved declaration identity.
+    pub local_function_declared_returns: HashMap<(usize, usize), IrType>,
     /// Canonical package identity supplied by the build or test orchestration layer.
     ///
     /// Explicit `RegistrySubject.package()` entries need this boundary-owned fact so their runtime value agrees with
@@ -651,6 +687,8 @@ impl AstLowering {
             remaining_ident_reads: Vec::new(),
             non_linear_context_depth: 0,
             closure_param_scopes: Vec::new(),
+            loop_pattern_bindings: Vec::new(),
+            return_operand: None,
             import_aliases: HashMap::new(),
             rust_import_aliases: HashMap::new(),
             callable_param_scopes: Vec::new(),
@@ -670,6 +708,7 @@ impl AstLowering {
             current_source_module_name: None,
             adopted_traits_by_type: HashMap::new(),
             declared_trait_names: HashSet::new(),
+            local_function_declared_returns: HashMap::new(),
             registry_package_identity: None,
         }
     }
@@ -744,6 +783,69 @@ impl AstLowering {
         }
     }
 
+    /// Return the callable surface the outermost user-defined decorator declares it returns, with native carriers.
+    ///
+    /// The typechecker computes a decorated binding's type from the decorator's declared return type, but with every
+    /// alias expanded: `(Answer) -> Answer` over `pub type Answer = int | str` from a provider becomes a structural
+    /// union that lowering would represent with a consumer-local wrapper, while the decorator itself is emitted
+    /// against the provider's. The decorator's declaration is the authority for which carrier the decorated static
+    /// holds, so this reads that declaration through the identity the typechecker resolved for the decorator -- not
+    /// through its spelling -- and lowers its return annotation in this module. A factory decorator's declared return
+    /// is the callable applied to the function, so its own return is the surface. Decorators resolved to method,
+    /// imported, or generic declarations yield the annotation as declared; retention leaves positions without an
+    /// admitted carrier untouched.
+    fn decorator_declared_result_type(&self, decorators: &[ast::Spanned<ast::Decorator>]) -> Option<IrType> {
+        // ---- Context: the outermost user-defined decorator and the declaration it resolved to ----
+        let decorator = decorators
+            .iter()
+            .find(|decorator| self.is_user_defined_decorator_candidate(&decorator.node))?;
+        let info = self.type_info.as_ref()?;
+        let identity = info.resolved_identity(decorator.span)?;
+        if identity.kind != SemanticSourceTargetKind::Function {
+            return None;
+        }
+        // ---- Context: only a declaration of this module has a lowered annotation to read ----
+        let declaration_span = (identity.declaration_span.start, identity.declaration_span.end);
+        let declares_locally = info
+            .declarations
+            .function_bindings_by_span
+            .get(&declaration_span)
+            .is_some_and(|binding| binding.identity.as_ref() == Some(identity));
+        if !declares_locally {
+            return None;
+        }
+        // ---- Context: the declared surface, unwrapped once for a factory decorator ----
+        let declared = self.local_function_declared_returns.get(&declaration_span)?.clone();
+        if !decorator.node.is_call {
+            return Some(declared);
+        }
+        match declared {
+            IrType::Function { ret, .. } => Some(*ret),
+            _ => None,
+        }
+    }
+
+    /// Restore the native union carriers a decorator declares onto the decorated callable surface.
+    ///
+    /// Parameters are retained positionally and the return type directly, both against the declared surface; a
+    /// declared surface that is not a function type of the same arity leaves the surface as inferred.
+    fn retain_declared_decorator_surface(params: &mut [FunctionParam], return_type: &mut IrType, declared: &IrType) {
+        let IrType::Function {
+            params: declared_params,
+            ret: declared_ret,
+        } = declared
+        else {
+            return;
+        };
+        if declared_params.len() != params.len() {
+            return;
+        }
+        for (param, declared_param) in params.iter_mut().zip(declared_params) {
+            param.ty = Self::retain_native_union_representation(std::mem::take(&mut param.ty), declared_param);
+        }
+        *return_type = Self::retain_native_union_representation(std::mem::take(return_type), declared_ret);
+    }
+
     /// Read the checked generic pass-through proof for every user-defined decorator in the chain.
     fn decorator_chain_preserves_representation(&self, function: &ast::FunctionDecl) -> bool {
         function.decorators.iter().all(|decorator| {
@@ -804,22 +906,6 @@ impl AstLowering {
                 }
             })
             .collect()
-    }
-
-    /// Lower typechecker callable metadata into an IR function type.
-    fn function_type_from_callable_surface(
-        &mut self,
-        callable_params: &[CallableParam],
-        return_type: IrType,
-        source_params: Option<&[ast::Spanned<ast::Param>]>,
-        original_callable_params: Option<&[CallableParam]>,
-    ) -> IrType {
-        let params =
-            self.function_params_from_callable_surface(callable_params, &[], source_params, original_callable_params);
-        IrType::Function {
-            params: params.into_iter().map(|param| param.ty).collect(),
-            ret: Box::new(return_type),
-        }
     }
 
     /// Build forwarding arguments for a wrapper whose IR parameters already encode rest-parameter containers.
@@ -1567,7 +1653,9 @@ impl AstLowering {
     /// This implements a local #121-style heuristic:
     /// - copy types stay `Copy`,
     /// - mutable/non-linear/non-tracked reads stay non-consuming (`Read`),
-    /// - immutable last reads in straight-line blocks become `Move`.
+    /// - immutable last reads in straight-line blocks become `Move`,
+    /// - the final read of an owned local inside a `return` operand becomes `Move` wherever the `return` sits, because
+    ///   the function exits there (see [`ReturnOperandContext`] and [`Self::return_operand_read_can_move`]).
     pub fn select_var_access_for_ident(&mut self, name: &str, ty: &IrType) -> VarAccess {
         if ty.is_copy() {
             return VarAccess::Copy;
@@ -1582,6 +1670,22 @@ impl AstLowering {
 
         // Keep counters in sync even when we intentionally disable moves.
         let is_last_use_here = self.consume_ident_read(name);
+
+        if let Some(context) = self.return_operand
+            && context.depth == self.non_linear_context_depth
+            && self.return_operand_read_can_move(name)
+        {
+            // Every frame from the operand inward must be exhausted: a later read of the same name elsewhere in the
+            // operand, outside the arm or block this read sits in, still has to see the value.
+            let consumed_within_operand = self.remaining_ident_reads[context.frame..]
+                .iter()
+                .all(|reads| reads.get(name).is_none_or(|remaining| *remaining == 0));
+            return if consumed_within_operand {
+                VarAccess::Move
+            } else {
+                VarAccess::Read
+            };
+        }
 
         let is_mutable = self.mutable_vars.get(name).copied().unwrap_or(false);
         let closure_param_can_move = self.closure_param_scopes.last().is_some_and(|(entry_depth, params)| {
@@ -1604,6 +1708,21 @@ impl AstLowering {
         }
 
         VarAccess::Move
+    }
+
+    /// Whether a read of `name` inside a `return` operand may consume the binding once it is the operand's final read.
+    ///
+    /// The `return` ends every enclosing loop and arm, so the usual non-linear-context caution does not apply, and a
+    /// `mut` local has no later assignment to protect. Two bindings are still never consumed here: a `for` pattern
+    /// binding, whose Rust shape is the emitter's iteration plan and is ordinarily a borrow of the element (#1489),
+    /// and a static binding, which is storage rather than a value. Reads nested in a closure, comprehension, or loop
+    /// expression inside the operand are excluded by depth before this is consulted.
+    fn return_operand_read_can_move(&self, name: &str) -> bool {
+        !self.is_static_binding(name)
+            && !self
+                .loop_pattern_bindings
+                .iter()
+                .any(|bindings| bindings.contains(name))
     }
 
     /// Enter a nested lowering scope for locals, live static bindings, and local callable signatures.
@@ -2276,6 +2395,20 @@ impl AstLowering {
             }
         }
 
+        // Declared returns first: a decorated signature below may read the annotation of a decorator declared later.
+        self.local_function_declared_returns = program
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.node {
+                ast::Declaration::Function(f) => {
+                    let type_param_names: HashSet<&str> = f.type_params.iter().map(|tp| tp.name.as_str()).collect();
+                    let declared = self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names));
+                    Some(((decl.span.start, decl.span.end), declared))
+                }
+                _ => None,
+            })
+            .collect();
+
         // Second pass: collect all function signatures
         for decl in &program.declarations {
             if let ast::Declaration::Function(ref f) = decl.node {
@@ -2345,7 +2478,7 @@ impl AstLowering {
                                 continue;
                             }
                         };
-                    let params = self.function_params_from_callable_surface(
+                    let mut params = self.function_params_from_callable_surface(
                         &callable_params,
                         &defaults,
                         Some(&f.params),
@@ -2353,12 +2486,15 @@ impl AstLowering {
                     );
                     let declared_return =
                         self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names));
-                    let return_type = self.lower_callable_surface_return_type(
+                    let mut return_type = self.lower_callable_surface_return_type(
                         &callable_ret,
                         original_ret,
                         self.decorator_chain_preserves_representation(f),
                         &declared_return,
                     );
+                    if let Some(declared_surface) = self.decorator_declared_result_type(&f.decorators) {
+                        Self::retain_declared_decorator_surface(&mut params, &mut return_type, &declared_surface);
+                    }
                     let identity = match self.emitted_function_identity(&f.name, decl.span) {
                         Ok(identity) => identity,
                         Err(err) => {
@@ -3098,26 +3234,35 @@ impl AstLowering {
 
         let original_registry_key = Self::decorator_original_function_registry_key(&emitted_name);
         let original = self.lower_function_named(f, original_registry_key.clone(), super::decl::Visibility::Private)?;
-        let return_type = self.lower_callable_surface_return_type(
+        let mut return_type = self.lower_callable_surface_return_type(
             &callable_ret,
             original_ret.as_deref(),
             self.decorator_chain_preserves_representation(f),
             &original.return_type,
         );
-        let decorated_ty = self.function_type_from_callable_surface(
+        // The wrapper's parameters, the static's callable type, and the value the decorator returns must agree on
+        // one representation, so the surface is settled once here and every item below is shaped from it.
+        let defaults = self.decorated_param_defaults_for_surface(&callable_params, &original_params, &f.params)?;
+        let mut surface_params = self.function_params_from_callable_surface(
             &callable_params,
-            return_type.clone(),
+            &defaults,
             Some(&f.params),
             Some(&original_params),
         );
+        if let Some(declared_surface) = self.decorator_declared_result_type(&f.decorators) {
+            Self::retain_declared_decorator_surface(&mut surface_params, &mut return_type, &declared_surface);
+        }
+        let decorated_ty = IrType::Function {
+            params: surface_params.iter().map(|param| param.ty.clone()).collect(),
+            ret: Box::new(return_type.clone()),
+        };
 
         if !original.type_params.is_empty() {
             let wrapper = self.generic_decorated_function_wrapper(
                 f,
                 &emitted_name,
                 &original_registry_key,
-                &callable_params,
-                &original_params,
+                surface_params,
                 return_type,
                 &original.params,
                 &original.return_type,
@@ -3143,14 +3288,7 @@ impl AstLowering {
         );
         let value = self.lower_decorator_application_value(&f.decorators, original_ref, decorated_ty.clone())?;
         let static_name = Self::decorator_static_binding_name(&emitted_name);
-        let wrapper = self.decorated_function_wrapper(
-            f,
-            &emitted_name,
-            &static_name,
-            &callable_params,
-            &original_params,
-            return_type,
-        )?;
+        let wrapper = self.decorated_function_wrapper(f, &emitted_name, &static_name, surface_params, return_type);
 
         Ok(vec![
             IrDecl::new(IrDeclKind::Function(original)),
@@ -3362,27 +3500,23 @@ impl AstLowering {
     /// A module-level static can store a monomorphic decorated function value, but it cannot store "the decorated
     /// version of `f[T]` for every `T`". For generic declarations, the wrapper keeps the source type parameters and
     /// applies the decorator chain to `__incan_original_f::<T>` at the call site before invoking the result.
+    ///
+    /// `params`, `return_type`, and `decorated_ty` are the one settled decorated surface: the wrapper forwards exactly
+    /// the parameters the decorated value accepts, carriers included, rather than rebuilding them from the checked
+    /// callable surface.
     #[allow(clippy::too_many_arguments)]
     fn generic_decorated_function_wrapper(
         &mut self,
         f: &ast::FunctionDecl,
         wrapper_name: &str,
         original_name: &str,
-        callable_params: &[CallableParam],
-        original_params: &[CallableParam],
+        params: Vec<FunctionParam>,
         return_type: IrType,
         original_function_params: &[FunctionParam],
         original_return_type: &IrType,
         type_params: Vec<IrTypeParam>,
         decorated_ty: IrType,
     ) -> Result<super::decl::IrFunction, LoweringError> {
-        let defaults = self.decorated_param_defaults_for_surface(callable_params, original_params, &f.params)?;
-        let params = self.function_params_from_callable_surface(
-            callable_params,
-            &defaults,
-            Some(&f.params),
-            Some(original_params),
-        );
         let type_args = type_params
             .iter()
             .map(|param| IrType::Generic(param.name.clone()))
@@ -3536,22 +3670,17 @@ impl AstLowering {
     }
 
     /// Lower the public function wrapper that dispatches through the decorated callable static.
+    ///
+    /// `params` and `return_type` are the settled decorated surface: the same parameter types and return the static's
+    /// callable type carries, defaults included, so the wrapper forwards exactly what the static accepts.
     fn decorated_function_wrapper(
         &mut self,
         f: &ast::FunctionDecl,
         wrapper_name: &str,
         static_name: &str,
-        callable_params: &[CallableParam],
-        original_params: &[CallableParam],
+        params: Vec<FunctionParam>,
         return_type: IrType,
-    ) -> Result<super::decl::IrFunction, LoweringError> {
-        let defaults = self.decorated_param_defaults_for_surface(callable_params, original_params, &f.params)?;
-        let params = self.function_params_from_callable_surface(
-            callable_params,
-            &defaults,
-            Some(&f.params),
-            Some(original_params),
-        );
+    ) -> super::decl::IrFunction {
         let static_func = TypedExpr::new(
             IrExprKind::StaticRead {
                 name: static_name.to_string(),
@@ -3577,7 +3706,7 @@ impl AstLowering {
             return_type.clone(),
         );
 
-        Ok(super::decl::IrFunction {
+        super::decl::IrFunction {
             name: wrapper_name.to_string(),
             docstring: callable_docstring(&f.body),
             params,
@@ -3591,7 +3720,7 @@ impl AstLowering {
             rust_extern_name: None,
             rust_attributes: Vec::new(),
             lint_allows: Vec::new(),
-        })
+        }
     }
 
     /// Lower source defaults for a decorated callable wrapper when the final callable surface still maps to the
@@ -3965,7 +4094,7 @@ impl Default for AstLowering {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::expr::{CollectionMethodKind, IrExprKind, MethodKind, StringMethodKind, UnaryOp};
+    use crate::expr::{BytesMethodKind, CollectionMethodKind, IrExprKind, MethodKind, StringMethodKind, UnaryOp};
     use crate::stmt::IrStmtKind;
     use incan_frontend::{lexer, parser, typechecker::TypeChecker};
 
@@ -3987,6 +4116,133 @@ mod tests {
         let _ = checker.check_program(&ast);
         let mut lowering = AstLowering::new_with_type_info(checker.type_info().clone());
         lowering.lower_program(&ast)
+    }
+
+    /// Parse, check, and lower one source module, keeping the lowering pass for further inspection.
+    fn lower_source_with_lowering(source: &str) -> Result<(ast::Program, AstLowering), String> {
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("typechecker failed: {errors:?}"))?;
+        let mut lowering = AstLowering::new_with_type_info(checker.type_info().clone());
+        lowering
+            .lower_program(&program)
+            .map_err(|errors| format!("lowering failed: {errors:?}"))?;
+        Ok((program, lowering))
+    }
+
+    /// Return the declaration of the named function in one parsed program.
+    fn function_declaration<'a>(program: &'a ast::Program, name: &str) -> Result<&'a ast::FunctionDecl, String> {
+        program
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                ast::Declaration::Function(function) if function.name == name => Some(function),
+                _ => None,
+            })
+            .ok_or_else(|| format!("missing function declaration `{name}`"))
+    }
+
+    /// The decorated surface is read from the decorator's declared return type through the declaration the
+    /// typechecker resolved, so a decorator declared after its use and a factory decorator both answer, and a
+    /// decorator that is not a local function declaration does not.
+    #[test]
+    fn decorator_declared_result_type_follows_the_resolved_declaration_issue1453() -> Result<(), String> {
+        let source = r#"
+type Answer = int | str
+
+@preserve
+def echo(value: Answer) -> Answer:
+  return value
+
+@configure()
+def twice(value: Answer) -> Answer:
+  return value
+
+def preserve(func: (Answer) -> Answer) -> ((Answer) -> Answer):
+  return func
+
+def configure() -> (((Answer) -> Answer) -> ((Answer) -> Answer)):
+  return preserve
+"#;
+        let (program, lowering) = lower_source_with_lowering(source)?;
+        // A local alias lowers under its own name; the retention this feeds only acts on admitted native carriers.
+        let answer = IrType::Struct("Answer".to_string());
+        let surface = IrType::Function {
+            params: vec![answer.clone()],
+            ret: Box::new(answer),
+        };
+        assert_eq!(
+            lowering.decorator_declared_result_type(&function_declaration(&program, "echo")?.decorators),
+            Some(surface.clone()),
+            "a decorator declared after its use still names the surface it declares"
+        );
+        assert_eq!(
+            lowering.decorator_declared_result_type(&function_declaration(&program, "twice")?.decorators),
+            Some(surface),
+            "a factory decorator's declared callable return is the decorated surface"
+        );
+        assert_eq!(
+            lowering.decorator_declared_result_type(&function_declaration(&program, "preserve")?.decorators),
+            None,
+            "an undecorated function has no declared decorator surface"
+        );
+        Ok(())
+    }
+
+    /// Retention restores admitted native carriers positionally and leaves every other position as inferred.
+    #[test]
+    fn retain_declared_decorator_surface_restores_native_carriers_issue1453() {
+        let local_union = crate::lower::types::union_ir_type(vec![IrType::Int, IrType::String]);
+        let native = incan_frontend::library_manifest::NativeUnionExport {
+            owner: incan_frontend::library_manifest::NativeUnionOwnerExport::ContainingArtifact,
+            rust_name: "__IncanUnionProvider".to_string(),
+            members: Vec::new(),
+            local_nominals: std::collections::BTreeMap::new(),
+            checked_projection: None,
+        };
+        let provider_union = IrType::ExternalUnion {
+            library: "provider".to_string(),
+            union: Box::new(local_union.clone()),
+            native: Some(crate::types::CarriedNativeUnion(Box::new(native))),
+        };
+        let param = |ty: IrType| FunctionParam {
+            name: "value".to_string(),
+            ty,
+            mutability: Mutability::Immutable,
+            is_self: false,
+            kind: ast::ParamKind::Normal,
+            default: None,
+        };
+        let mut params = vec![param(local_union.clone()), param(IrType::Int)];
+        let mut return_type = local_union.clone();
+        AstLowering::retain_declared_decorator_surface(
+            &mut params,
+            &mut return_type,
+            &IrType::Function {
+                params: vec![provider_union.clone(), IrType::Int],
+                ret: Box::new(provider_union.clone()),
+            },
+        );
+        assert_eq!(params[0].ty, provider_union);
+        assert_eq!(params[1].ty, IrType::Int);
+        assert_eq!(return_type, provider_union);
+
+        // A declared surface of another arity is not the surface being lowered: nothing is touched.
+        let mut params = vec![param(local_union.clone())];
+        let mut return_type = local_union.clone();
+        AstLowering::retain_declared_decorator_surface(
+            &mut params,
+            &mut return_type,
+            &IrType::Function {
+                params: vec![provider_union.clone(), IrType::Int],
+                ret: Box::new(provider_union),
+            },
+        );
+        assert_eq!(params[0].ty, local_union.clone());
+        assert_eq!(return_type, local_union);
     }
 
     /// An imported trait's short name may be shadowed by a local trait, but that local default body must still consume
@@ -4821,6 +5077,46 @@ type UserId = newtype int
             MethodKind::for_receiver(&IrType::List(Box::new(IrType::Int)), "index"),
             Some(MethodKind::Collection(CollectionMethodKind::Index))
         );
+    }
+
+    /// The #1668 surfaces classify against their registries, seeing through a `mut` parameter's reference wrapper.
+    #[test]
+    fn method_kind_for_receiver_issue1668_surfaces() {
+        let dict = IrType::Dict(Box::new(IrType::String), Box::new(IrType::Int));
+        let borrowed_dict = IrType::RefMut(Box::new(dict.clone()));
+        assert_eq!(
+            MethodKind::for_receiver(&dict, "contains_key"),
+            Some(MethodKind::Collection(CollectionMethodKind::Contains))
+        );
+        assert_eq!(
+            MethodKind::for_receiver(&borrowed_dict, "contains_key"),
+            Some(MethodKind::Collection(CollectionMethodKind::Contains))
+        );
+        assert_eq!(
+            MethodKind::for_receiver(&dict, "keys"),
+            Some(MethodKind::Collection(CollectionMethodKind::Keys))
+        );
+        assert_eq!(
+            MethodKind::for_receiver(&borrowed_dict, "values"),
+            Some(MethodKind::Collection(CollectionMethodKind::Values))
+        );
+        assert_eq!(
+            MethodKind::for_receiver(&IrType::String, "encode"),
+            Some(MethodKind::String(StringMethodKind::Encode))
+        );
+        assert_eq!(
+            MethodKind::for_receiver(&IrType::FrozenStr, "encode"),
+            Some(MethodKind::String(StringMethodKind::Encode))
+        );
+        for receiver in [IrType::Bytes, IrType::StaticBytes, IrType::FrozenBytes] {
+            assert_eq!(
+                MethodKind::for_receiver(&receiver, "decode"),
+                Some(MethodKind::Bytes(BytesMethodKind::Decode)),
+                "{receiver:?} must classify decode"
+            );
+        }
+        assert_eq!(MethodKind::for_receiver(&IrType::String, "decode"), None);
+        assert_eq!(MethodKind::for_receiver(&IrType::Bytes, "encode"), None);
     }
 
     #[test]

@@ -8901,7 +8901,7 @@ mod completion_tests {
     fn stdlib_environ_completions_cover_the_public_module_surface() -> Result<(), String> {
         let items = stdlib_import_item_completions("from std.environ import ", None)
             .ok_or_else(|| "expected std.environ item completions".to_string())?;
-        assert_eq!(items.len(), 6, "expected one completion per public item: {items:?}");
+        assert_eq!(items.len(), 7, "expected one completion per public item: {items:?}");
         let completions = items
             .iter()
             .map(|item| (item.label.as_str(), item.kind))
@@ -8911,6 +8911,7 @@ mod completion_tests {
             vec![
                 "EnvironError",
                 "EnvironErrorKind",
+                "args",
                 "get",
                 "get_as",
                 "get_optional",
@@ -8922,7 +8923,7 @@ mod completion_tests {
             completions.get("EnvironErrorKind"),
             Some(&Some(CompletionItemKind::ENUM))
         );
-        for function in ["get", "get_as", "get_optional", "get_or"] {
+        for function in ["args", "get", "get_as", "get_optional", "get_or"] {
             assert_eq!(
                 completions.get(function),
                 Some(&Some(CompletionItemKind::FUNCTION)),

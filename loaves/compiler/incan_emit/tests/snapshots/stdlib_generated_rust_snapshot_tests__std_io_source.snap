@@ -416,7 +416,13 @@ impl<R: BinaryReader + Clone> FallibleIterator<Vec<u8>, IoError> for ReaderChunk
         MapFn: Clone + crate::__incan_std::traits::callable::Callable1<Vec<u8>, U>,
     >(&self, f: MapFn) -> impl FallibleIterator<U, IoError> + use<R, U, MapFn> {
         let _ = "\n        Lazily transform each successful item while preserving source failures.\n\n        `f` runs exactly once for each yielded source item. It does not run at construction, on exhaustion, or on an\n        error. The mapped type must support `Clone` under Incan's current value-semantics contract.\n        ";
-        return crate::__incan_std::derives::collection::MapFallibleIterator {
+        return crate::__incan_std::derives::collection::MapFallibleIterator::<
+            Vec<u8>,
+            IoError,
+            Self,
+            U,
+            MapFn,
+        > {
             source: self.clone(),
             f: f,
             input_marker: None::<_>,
@@ -431,7 +437,12 @@ impl<R: BinaryReader + Clone> FallibleIterator<Vec<u8>, IoError> for ReaderChunk
         f: Predicate,
     ) -> impl FallibleIterator<Vec<u8>, IoError> + use<R, Predicate> {
         let _ = "\n        Lazily keep successful items for which `f(item)` returns `true`.\n\n        The predicate runs once for each successful source item until exhaustion or error. Rejected items are consumed;\n        errors pass through without invoking the predicate.\n        ";
-        return crate::__incan_std::derives::collection::FilterFallibleIterator {
+        return crate::__incan_std::derives::collection::FilterFallibleIterator::<
+            Vec<u8>,
+            IoError,
+            Self,
+            Predicate,
+        > {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -443,7 +454,13 @@ impl<R: BinaryReader + Clone> FallibleIterator<Vec<u8>, IoError> for ReaderChunk
         Expand: Clone + crate::__incan_std::traits::callable::Callable1<Vec<u8>, Vec<U>>,
     >(&self, f: Expand) -> impl FallibleIterator<U, IoError> + use<R, U, Expand> {
         let _ = "\n        Lazily expand each successful item into a list and flatten it.\n\n        `f` runs once per successful source item. Every returned list is exhausted in order before the source is polled\n        again. The flattened type must support `Clone` under the current value-semantics contract.\n        ";
-        return crate::__incan_std::derives::collection::FlatMapFallibleIterator {
+        return crate::__incan_std::derives::collection::FlatMapFallibleIterator::<
+            Vec<u8>,
+            IoError,
+            Self,
+            U,
+            Expand,
+        > {
             source: self.clone(),
             f: f,
             current: Vec::<_>::new(),
@@ -454,7 +471,11 @@ impl<R: BinaryReader + Clone> FallibleIterator<Vec<u8>, IoError> for ReaderChunk
     }
     fn take(&self, n: i64) -> impl FallibleIterator<Vec<u8>, IoError> + use<R> {
         let _ = "\n        Lazily yield at most `n` successful items without retrying failures.\n\n        A non-positive count produces immediate exhaustion without polling the source. Errors encountered before the\n        limit pass through unchanged.\n        ";
-        return crate::__incan_std::derives::collection::TakeFallibleIterator {
+        return crate::__incan_std::derives::collection::TakeFallibleIterator::<
+            Vec<u8>,
+            IoError,
+            Self,
+        > {
             source: self.clone(),
             remaining: n,
             item_marker: None::<_>,
@@ -465,7 +486,12 @@ impl<R: BinaryReader + Clone> FallibleIterator<Vec<u8>, IoError> for ReaderChunk
         Observer: Clone + crate::__incan_std::traits::callable::Callable1<Vec<u8>, ()>,
     >(&self, f: Observer) -> impl FallibleIterator<Vec<u8>, IoError> + use<R, Observer> {
         let _ = "\n        Lazily observe each successful item without changing it.\n\n        The observer runs exactly once before each successful item is yielded. It does not run for exhaustion or\n        errors.\n        ";
-        return crate::__incan_std::derives::collection::InspectFallibleIterator {
+        return crate::__incan_std::derives::collection::InspectFallibleIterator::<
+            Vec<u8>,
+            IoError,
+            Self,
+            Observer,
+        > {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -477,7 +503,13 @@ impl<R: BinaryReader + Clone> FallibleIterator<Vec<u8>, IoError> for ReaderChunk
         ErrorMap: Clone + crate::__incan_std::traits::callable::Callable1<IoError, F>,
     >(&self, f: ErrorMap) -> impl FallibleIterator<Vec<u8>, F> + use<R, F, ErrorMap> {
         let _ = "\n        Lazily transform each emitted source error while preserving items and exhaustion.\n\n        `f` runs exactly once for each error that escapes the source. It does not retry the failed poll or observe\n        successful items. The mapped error type must support `Clone` under the current value-semantics contract.\n        ";
-        return crate::__incan_std::derives::collection::MapErrFallibleIterator {
+        return crate::__incan_std::derives::collection::MapErrFallibleIterator::<
+            Vec<u8>,
+            IoError,
+            Self,
+            F,
+            ErrorMap,
+        > {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -493,7 +525,12 @@ impl<R: BinaryReader + Clone> FallibleIterator<Vec<u8>, IoError> for ReaderChunk
         f: ErrorObserver,
     ) -> impl FallibleIterator<Vec<u8>, IoError> + use<R, ErrorObserver> {
         let _ = "\n        Lazily observe each emitted source error without changing it.\n\n        The observer runs exactly once for each escaping error. Successful items and ordinary exhaustion pass through\n        without invoking it.\n        ";
-        return crate::__incan_std::derives::collection::InspectErrFallibleIterator {
+        return crate::__incan_std::derives::collection::InspectErrFallibleIterator::<
+            Vec<u8>,
+            IoError,
+            Self,
+            ErrorObserver,
+        > {
             source: self.clone(),
             f: f,
             item_marker: None::<_>,
@@ -817,13 +854,16 @@ impl _BytesIO {
             return Err::<
                 Vec<u8>,
                 IoError,
-            >(IoError {
-                kind: "unexpected_eof".to_string(),
-                detail: "buffer ended before read_exact size".to_string(),
-                operation: "read_exact".to_string(),
-                position: self
-                    .tell(),
-                path: None::<_>,
+            >({
+                let __incan_ctor_arg_3 = self
+                    .tell();
+                IoError {
+                    kind: "unexpected_eof".to_string(),
+                    detail: "buffer ended before read_exact size".to_string(),
+                    operation: "read_exact".to_string(),
+                    position: __incan_ctor_arg_3,
+                    path: None::<_>,
+                }
             });
         }
         return Ok::<Vec<u8>, IoError>(chunk);
@@ -1437,7 +1477,7 @@ impl BinaryReader for _BytesIO {
         Self: Sized,
     {
         let _ = "\n        Return a bounded, fallible stream of non-empty byte chunks.\n\n        Consume the stream with `for chunk in reader.chunks(size)?:`. EOF is `Ok(None)` rather than an empty byte\n        value. A size less than or equal to zero returns `IoError(kind=\"invalid_input\", ...)` from the first poll.\n        ";
-        return ReaderChunks {
+        return ReaderChunks::<Self> {
             reader: self.clone(),
             chunk_size: chunk_size,
         };
@@ -2022,7 +2062,7 @@ fn _write_u8_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -2054,7 +2094,7 @@ fn _write_i8_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -2094,7 +2134,7 @@ fn _read_u16_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2144,7 +2184,7 @@ fn _read_i16_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2187,8 +2227,8 @@ fn _write_u16_value(
         let _ = match cursor.write_u16::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(
-                    stream.clone(),
-                    cursor.clone(),
+                    stream,
+                    cursor,
                 );
             }
             Err(err) => {
@@ -2197,7 +2237,7 @@ fn _write_u16_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2210,7 +2250,7 @@ fn _write_u16_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -2243,8 +2283,8 @@ fn _write_i16_value(
         let _ = match cursor.write_i16::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(
-                    stream.clone(),
-                    cursor.clone(),
+                    stream,
+                    cursor,
                 );
             }
             Err(err) => {
@@ -2253,7 +2293,7 @@ fn _write_i16_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2266,7 +2306,7 @@ fn _write_i16_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -2306,7 +2346,7 @@ fn _read_u32_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2356,7 +2396,7 @@ fn _read_i32_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2399,8 +2439,8 @@ fn _write_u32_value(
         let _ = match cursor.write_u32::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(
-                    stream.clone(),
-                    cursor.clone(),
+                    stream,
+                    cursor,
                 );
             }
             Err(err) => {
@@ -2409,7 +2449,7 @@ fn _write_u32_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2422,7 +2462,7 @@ fn _write_u32_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -2455,8 +2495,8 @@ fn _write_i32_value(
         let _ = match cursor.write_i32::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(
-                    stream.clone(),
-                    cursor.clone(),
+                    stream,
+                    cursor,
                 );
             }
             Err(err) => {
@@ -2465,7 +2505,7 @@ fn _write_i32_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2478,7 +2518,7 @@ fn _write_i32_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -2518,7 +2558,7 @@ fn _read_u64_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2568,7 +2608,7 @@ fn _read_i64_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2611,8 +2651,8 @@ fn _write_u64_value(
         let _ = match cursor.write_u64::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(
-                    stream.clone(),
-                    cursor.clone(),
+                    stream,
+                    cursor,
                 );
             }
             Err(err) => {
@@ -2621,7 +2661,7 @@ fn _write_u64_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2634,7 +2674,7 @@ fn _write_u64_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -2667,8 +2707,8 @@ fn _write_i64_value(
         let _ = match cursor.write_i64::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(
-                    stream.clone(),
-                    cursor.clone(),
+                    stream,
+                    cursor,
                 );
             }
             Err(err) => {
@@ -2677,7 +2717,7 @@ fn _write_i64_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2690,7 +2730,7 @@ fn _write_i64_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -2730,7 +2770,7 @@ fn _read_u128_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2780,7 +2820,7 @@ fn _read_i128_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2823,8 +2863,8 @@ fn _write_u128_value(
         let _ = match cursor.write_u128::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(
-                    stream.clone(),
-                    cursor.clone(),
+                    stream,
+                    cursor,
                 );
             }
             Err(err) => {
@@ -2833,7 +2873,7 @@ fn _write_u128_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2846,7 +2886,7 @@ fn _write_u128_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -2879,8 +2919,8 @@ fn _write_i128_value(
         let _ = match cursor.write_i128::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(
-                    stream.clone(),
-                    cursor.clone(),
+                    stream,
+                    cursor,
                 );
             }
             Err(err) => {
@@ -2889,7 +2929,7 @@ fn _write_i128_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2902,7 +2942,7 @@ fn _write_i128_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -2942,7 +2982,7 @@ fn _read_f32_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -2992,7 +3032,7 @@ fn _read_f64_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -3035,8 +3075,8 @@ fn _write_f32_value(
         let _ = match cursor.write_f32::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(
-                    stream.clone(),
-                    cursor.clone(),
+                    stream,
+                    cursor,
                 );
             }
             Err(err) => {
@@ -3045,7 +3085,7 @@ fn _write_f32_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -3058,7 +3098,7 @@ fn _write_f32_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -3091,8 +3131,8 @@ fn _write_f64_value(
         let _ = match cursor.write_f64::<LittleEndian>(value) {
             Ok(_) => {
                 return _finish_numeric_write(
-                    stream.clone(),
-                    cursor.clone(),
+                    stream,
+                    cursor,
                 );
             }
             Err(err) => {
@@ -3101,7 +3141,7 @@ fn _write_f64_value(
                     IoError,
                 >(
                     _rust_io_error(
-                        operation.to_string(),
+                        operation,
                         stream
                             .tell(),
                         err.to_string(),
@@ -3114,7 +3154,7 @@ fn _write_f64_value(
         Ok(_) => {
             return _finish_numeric_write(
                 stream,
-                cursor.clone(),
+                cursor,
             );
         }
         Err(err) => {
@@ -3189,12 +3229,17 @@ fn _invalid_input(
     detail: String,
 ) -> IoError {
     let _ = "\n    Create a stable invalid-input error.\n    ";
-    return IoError {
-        kind: "invalid_input".to_string(),
-        detail: detail,
-        operation: operation,
-        position: position,
-        path: None::<_>,
+    return {
+        let __incan_ctor_arg_0 = operation;
+        let __incan_ctor_arg_2 = detail;
+        let __incan_ctor_arg_3 = position;
+        IoError {
+            kind: "invalid_input".to_string(),
+            detail: __incan_ctor_arg_2,
+            operation: __incan_ctor_arg_0,
+            position: __incan_ctor_arg_3,
+            path: None::<_>,
+        }
     };
 }
 fn _rust_io_error(
@@ -3204,31 +3249,46 @@ fn _rust_io_error(
 ) -> IoError {
     let _ = "\n    Convert host I/O error text into a `std.io` error.\n    ";
     if incan_std_core::strings::str_contains(&detail, &"invalid") {
-        return IoError {
-            kind: "invalid_input".to_string(),
-            detail: detail.to_string(),
-            operation: operation.to_string(),
-            position: position,
-            path: None::<_>,
+        return {
+            let __incan_ctor_arg_0 = operation;
+            let __incan_ctor_arg_2 = detail;
+            let __incan_ctor_arg_3 = position;
+            IoError {
+                kind: "invalid_input".to_string(),
+                detail: __incan_ctor_arg_2,
+                operation: __incan_ctor_arg_0,
+                position: __incan_ctor_arg_3,
+                path: None::<_>,
+            }
         };
     } else {
         if incan_std_core::strings::str_contains(&detail, &"failed to fill whole buffer")
             || incan_std_core::strings::str_contains(&detail, &"early eof")
         {
-            return IoError {
-                kind: "unexpected_eof".to_string(),
-                detail: detail.to_string(),
-                operation: operation.to_string(),
-                position: position,
-                path: None::<_>,
+            return {
+                let __incan_ctor_arg_0 = operation;
+                let __incan_ctor_arg_2 = detail;
+                let __incan_ctor_arg_3 = position;
+                IoError {
+                    kind: "unexpected_eof".to_string(),
+                    detail: __incan_ctor_arg_2,
+                    operation: __incan_ctor_arg_0,
+                    position: __incan_ctor_arg_3,
+                    path: None::<_>,
+                }
             };
         }
     }
-    return IoError {
-        kind: "other".to_string(),
-        detail: detail,
-        operation: operation,
-        position: position,
-        path: None::<_>,
+    return {
+        let __incan_ctor_arg_0 = operation;
+        let __incan_ctor_arg_2 = detail;
+        let __incan_ctor_arg_3 = position;
+        IoError {
+            kind: "other".to_string(),
+            detail: __incan_ctor_arg_2,
+            operation: __incan_ctor_arg_0,
+            position: __incan_ctor_arg_3,
+            path: None::<_>,
+        }
     };
 }

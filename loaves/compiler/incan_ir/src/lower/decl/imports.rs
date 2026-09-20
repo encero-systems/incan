@@ -135,6 +135,7 @@ impl AstLowering {
                             trait_path: import.trait_path.clone(),
                             definition_path: import.definition_path.clone(),
                             methods,
+                            methods_known: import.methods_known,
                         }
                     });
                 vec![super::super::super::decl::IrImportItem {

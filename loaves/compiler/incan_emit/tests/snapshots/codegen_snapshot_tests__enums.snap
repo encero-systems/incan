@@ -263,18 +263,18 @@ fn main() {
     let tri_area: f64 = calculate_area(triangle);
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Circle area: ", ""]; let __args : Vec <
-        String > = vec![format!("{}", circle_area)]; incan_std_core::strings::fstring(&
-        __parts, & __args) }
+        String > = vec![incan_std_core::strings::float_to_string(circle_area)];
+        incan_std_core::strings::fstring(& __parts, & __args) }
     );
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Rectangle area: ", ""]; let __args :
-        Vec < String > = vec![format!("{}", rect_area)];
+        Vec < String > = vec![incan_std_core::strings::float_to_string(rect_area)];
         incan_std_core::strings::fstring(& __parts, & __args) }
     );
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Triangle area: ", ""]; let __args : Vec
-        < String > = vec![format!("{}", tri_area)]; incan_std_core::strings::fstring(&
-        __parts, & __args) }
+        < String > = vec![incan_std_core::strings::float_to_string(tri_area)];
+        incan_std_core::strings::fstring(& __parts, & __args) }
     );
     let _status: Status = Status::InProgress;
     let priority: Priority = Priority::High;

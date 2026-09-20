@@ -18,7 +18,7 @@ use super::{FunctionSignature, IrSpan, IrType, Ownership};
 use incan_lang::interop::CoercionPolicy;
 use incan_lang::lang::builtins::{self as core_builtins, BuiltinFnId};
 use incan_lang::lang::surface::{
-    dict_methods, iterator_methods, list_methods, result_methods, set_methods, string_methods,
+    bytes_methods, dict_methods, iterator_methods, list_methods, result_methods, set_methods, string_methods,
 };
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
@@ -303,6 +303,11 @@ pub enum IrExprKind {
     // Struct construction
     Struct {
         name: String,
+        /// Explicit source type arguments on the constructor (`Column[T](...)`), lowered in declaration order.
+        ///
+        /// Empty when the source wrote none. Emission threads these onto the constructed path so a construction
+        /// whose type argument no field value determines — a phantom parameter, #1370 — still names it for Rust.
+        type_args: Vec<IrType>,
         fields: Vec<(String, IrExpr)>,
         /// Fill omitted imported Rust named fields with `Default::default()`.
         fill_defaults: bool,
@@ -749,8 +754,12 @@ pub enum IrMethodDispatch {
     /// Emit a compiler-proved inherent source projection while retaining the selected trait evidence for bound
     /// propagation and receiver mutability.
     SourceProjection(Box<IrTraitDispatch>),
-    /// Keep the emitted call as regular Rust method lookup while retaining this extension-trait import binding.
-    RustExtensionTraitImport { binding: String },
+    /// Keep the emitted call as regular Rust method lookup while retaining these extension-trait import bindings.
+    ///
+    /// One binding is the import the typechecker proved provides the method. Several are the imports with an unknown
+    /// method surface that the call may reach when no inspected surface resolved it; the compiler cannot narrow
+    /// further without metadata, so every listed `use` is retained while the call is reachable (#1450).
+    RustExtensionTraitImport { bindings: Vec<String> },
 }
 
 /// Compiler-owned semantics and emission data for one selected trait dispatch.
@@ -791,8 +800,18 @@ pub enum MethodKind {
     Iterator(IteratorMethodKind),
     /// Result combinators recognized for `Result[T, E]` receivers.
     Result(result_methods::ResultMethodId),
+    /// Runtime `bytes` methods that route through the text-codec emitter.
+    Bytes(BytesMethodKind),
     /// Internal helper methods that lower to dedicated runtime support.
     Internal(InternalMethodKind),
+}
+
+/// Known `bytes`-method variants handled by the compiler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BytesMethodKind {
+    /// `data.decode(encoding="utf-8", errors="strict")` → `Result[str, ValidationError]` UTF-8 decoding, strict or
+    /// replacing.
+    Decode,
 }
 
 /// Known string-method variants handled by the compiler.
@@ -818,6 +837,8 @@ pub enum StringMethodKind {
     EndsWith,
     /// `s.contains(needle)` → `str_contains(s, needle)`
     Contains,
+    /// `s.encode(encoding="utf-8")` → `s.as_bytes().to_vec()` behind a UTF-8 label guard
+    Encode,
 }
 
 /// Known collection-method variants handled by the compiler.
@@ -852,6 +873,12 @@ pub enum CollectionMethodKind {
     Reserve,
     /// `list.reserve_exact(n)` → `list.reserve_exact(n as usize)`
     ReserveExact,
+    /// `dict.keys()` → `dict.keys().cloned().collect::<Vec<_>>()` in value position; `for` loops and
+    /// comprehensions iterate `dict.keys().cloned()` directly (#1668).
+    Keys,
+    /// `dict.values()` → `dict.values().cloned().collect::<Vec<_>>()` in value position; `for` loops and
+    /// comprehensions iterate `dict.values().cloned()` directly (#1668).
+    Values,
 }
 
 /// Known iterator-method variants handled by the compiler.
@@ -951,8 +978,15 @@ impl MethodKind {
                     S::StartsWith => StringMethodKind::StartsWith,
                     S::EndsWith => StringMethodKind::EndsWith,
                     S::Contains => StringMethodKind::Contains,
+                    S::Encode => StringMethodKind::Encode,
                     // The rest are either typechecker-only (return types) or normal method calls:
                     _ => return None,
+                }))
+            }
+            IrType::Bytes | IrType::StaticBytes | IrType::FrozenBytes => {
+                use bytes_methods::BytesMethodId as B;
+                Some(Self::Bytes(match bytes_methods::from_str(name)? {
+                    B::Decode => BytesMethodKind::Decode,
                 }))
             }
             IrType::List(_) => {
@@ -981,8 +1015,10 @@ impl MethodKind {
                 Some(Self::Collection(match id {
                     D::Get => CollectionMethodKind::Get,
                     D::Insert => CollectionMethodKind::Insert,
-                    // keys/values are emitted as normal method calls.
-                    D::Keys | D::Values => return None,
+                    // A dict receiver spells membership `contains_key`, the same emission `key in dict` takes.
+                    D::ContainsKey => CollectionMethodKind::Contains,
+                    D::Keys => CollectionMethodKind::Keys,
+                    D::Values => CollectionMethodKind::Values,
                 }))
             }
             IrType::Set(_) => {

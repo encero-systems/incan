@@ -244,6 +244,8 @@ tree = Node(
 )
 ```
 
+Every type parameter an enum declares must appear in at least one variant payload; the payloads are the only place an enum stores a value. An `enum Slot[T]` whose variants are all bare is rejected at `T` with a hint to give a variant a payload that mentions it or to remove the parameter. A parameter that only methods use belongs on a model or class instead.
+
 ---
 
 ## Methods and associated functions

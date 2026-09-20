@@ -1354,14 +1354,40 @@ fn source_type_alias_generics(alias: ra_ap_hir::TypeAlias, db: &RootDatabase) ->
     source_owner_generics(alias.source(db).and_then(|source| source.value.generic_param_list()))
 }
 
+/// Render a method's receiver from its declaration, keeping the mutability the HIR type display erases.
+///
+/// [`RustTypeShape::Ref`] carries no mutability, so a `&mut self` receiver displayed through its HIR type becomes
+/// `&Self`, and a trait-qualified call that passes the receiver explicitly then borrows it shared (#1375). The written
+/// declaration is the authority: `&self`, `&mut self` and `self` render as written with lifetimes dropped, and a typed
+/// receiver such as `self: Box<Self>` renders its declared type.
+fn source_self_param_display(f: Function, db: &RootDatabase) -> Option<String> {
+    let source = f.source(db)?;
+    let self_param = source.value.param_list()?.self_param()?;
+    if let Some(ty) = self_param.ty() {
+        return Some(ty.syntax().text().to_string());
+    }
+    let display = match (self_param.amp_token().is_some(), self_param.mut_token().is_some()) {
+        (true, true) => "&mut self",
+        (true, false) => "&self",
+        (false, _) => "self",
+    };
+    Some(display.to_string())
+}
+
 /// Extract a Rust function signature from inspection metadata.
 fn extract_function_sig(f: Function, db: &RootDatabase, dt: DisplayTarget) -> RustFunctionSig {
+    let has_receiver = f.self_param(db).is_some();
     let params = f
         .assoc_fn_params(db)
         .into_iter()
-        .map(|p| {
+        .enumerate()
+        .map(|(index, p)| {
             let mut type_display = function_sig_type_display(p.ty(), db, dt);
-            if let Some(source_type_display) = source_function_param_type_display(f, &p, db) {
+            if has_receiver && index == 0 {
+                if let Some(receiver_display) = source_self_param_display(f, db) {
+                    type_display = receiver_display;
+                }
+            } else if let Some(source_type_display) = source_function_param_type_display(f, &p, db) {
                 type_display = source_type_display;
             }
             RustParam {

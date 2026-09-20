@@ -264,6 +264,34 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Emit type parameters with their declared bounds plus one more bound on every parameter: `<T: Clone + Debug>`.
+    ///
+    /// This is the header a Rust derive would generate for its impl, which adds its own trait to each parameter
+    /// unconditionally; a hand-written impl that stands in for a derive uses it so the two are interchangeable.
+    pub fn emit_type_params_with_extra_bound(
+        &self,
+        type_params: &[incan_ir::decl::IrTypeParam],
+        extra_bound: &TokenStream,
+    ) -> TokenStream {
+        if type_params.is_empty() {
+            return quote! {};
+        }
+        let params: Vec<TokenStream> = type_params
+            .iter()
+            .map(|tp| {
+                let name = format_ident!("{}", &tp.name);
+                let bounds: Vec<TokenStream> = tp
+                    .bounds
+                    .iter()
+                    .map(|b| self.emit_trait_bound(b))
+                    .chain(std::iter::once(extra_bound.clone()))
+                    .collect();
+                quote! { #name: #(#bounds)+* }
+            })
+            .collect();
+        quote! { < #(#params),* > }
+    }
+
     /// Emit bare type parameter names without bounds: `<T, E>`.
     ///
     /// Used in type-application positions (return types, `impl Foo<T>`) where Rust does not allow trait bounds — only

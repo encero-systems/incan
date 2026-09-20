@@ -10,16 +10,17 @@ use crate::diagnostics::{CompileError, errors};
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::*;
 use crate::typechecker::helpers::{
-    collection_name, collection_type_id, generator_ty, is_frozen_bytes, is_frozen_str, is_intlike_for_index, list_ty,
-    option_ty, render_resolved_type_as_rust_arg, runtime_string_method_identity_and_return, string_method_return,
+    collection_name, collection_type_id, generator_ty, is_frozen_bytes, is_frozen_str, is_intlike_for_index,
+    is_str_like, list_ty, option_ty, render_resolved_type_as_rust_arg, runtime_string_method_identity_and_return,
+    string_method_return,
 };
 use crate::typechecker::type_info::{
     CBindingEnumAccess, RustArgCoercionInfo, RustArgCoercionKind, RustMethodTraitImportUse, RustTraitImportInfo,
 };
 use crate::typechecker::{IdentKind, MemberBindingSurface, canonical_public_library_type_name};
 use incan_lang::interop::{
-    RustCollectionFamily, RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustVisibility,
-    metadata_free_method_signature,
+    RustCollectionFamily, RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustTraitAssoc,
+    RustTraitInfo, RustVisibility, metadata_free_method_signature,
 };
 use incan_lang::lang::magic_methods;
 use incan_lang::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
@@ -28,9 +29,10 @@ use incan_lang::lang::surface::string_methods::{self, SelectedStringMethodArgume
 use incan_lang::lang::surface::types as surface_types;
 use incan_lang::lang::surface::types::{SEMAPHORE_ACQUIRE_ERROR_TYPE_NAME, SEMAPHORE_PERMIT_TYPE_NAME, SurfaceTypeId};
 use incan_lang::lang::surface::{
-    dict_methods, float_methods, frozen_bytes_methods, frozen_dict_methods, frozen_list_methods, frozen_set_methods,
-    iterator_methods, list_methods, result_methods, set_methods,
+    bytes_methods, dict_methods, float_methods, frozen_bytes_methods, frozen_dict_methods, frozen_list_methods,
+    frozen_set_methods, iterator_methods, list_methods, result_methods, set_methods,
 };
+use incan_lang::lang::text_codecs::{self, DecodeErrorsPolicy};
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::types::numerics::NumericFamily;
@@ -99,6 +101,22 @@ struct RustTraitMethodCall<'a> {
     args: &'a [CallArg],
     arg_types: &'a [ResolvedType],
     preserves_lookup_arg_shape: bool,
+    /// What `Self` in the signature denotes. `None` means `rust_path` is the receiver's own type, as for
+    /// `value.method(...)`; a trait-qualified call names the trait in `rust_path`, so it supplies the receiver's
+    /// resolved type instead, or `Unknown` when the call has no receiver and Rust infers `Self` from context.
+    self_type: Option<&'a ResolvedType>,
+    span: Span,
+}
+
+/// A trait-qualified call `Trait.method(receiver, args...)` on an imported Rust trait with inspected metadata.
+struct RustTraitQualifiedCall<'a> {
+    rust_path: &'a str,
+    trait_info: &'a RustTraitInfo,
+    method: &'a str,
+    type_args: &'a [Spanned<Type>],
+    args: &'a [CallArg],
+    arg_types: &'a [ResolvedType],
+    preserves_lookup_arg_shape: bool,
     span: Span,
 }
 
@@ -106,6 +124,9 @@ struct RustPathMethodCall<'a> {
     rust_path: &'a str,
     method: &'a str,
     receiver_metadata: Option<&'a RustItemMetadata>,
+    /// The import binding the receiver expression names, when the receiver is a bare imported Rust item such as
+    /// the `Mac` in `Mac.update(handle, data)`; `None` for value receivers.
+    receiver_binding: Option<&'a str>,
     type_args: &'a [Spanned<Type>],
     args: &'a [CallArg],
     arg_types: &'a [ResolvedType],
@@ -919,6 +940,142 @@ impl TypeChecker {
         valid
     }
 
+    /// Validate `dict.contains_key(key)` (#1668): exactly one positional probe whose type is compatible with the key
+    /// type, so a mistyped probe fails here instead of as a rustc `Borrow` error in the generated `contains_key`. The
+    /// probe has no parameter name, so a named or unpacked argument is refused with the ordinary call diagnostics.
+    fn validate_dict_contains_key_call(
+        &mut self,
+        key_ty: &ResolvedType,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        span: Span,
+    ) {
+        const CALLEE: &str = "Dict.contains_key";
+        let [arg] = args else {
+            self.errors.push(errors::builtin_arity(CALLEE, 1, args.len(), span));
+            return;
+        };
+        let expr = match arg {
+            CallArg::Positional(expr) => expr,
+            CallArg::Named(name, _) => {
+                self.errors
+                    .push(errors::unknown_keyword_argument(CALLEE, &name.node, name.span));
+                return;
+            }
+            CallArg::PositionalUnpack(expr) => {
+                self.errors
+                    .push(errors::call_unpack_without_rest(CALLEE, "*", expr.span));
+                return;
+            }
+            CallArg::KeywordUnpack(expr) => {
+                self.errors
+                    .push(errors::call_unpack_without_rest(CALLEE, "**", expr.span));
+                return;
+            }
+        };
+        if let Some(actual) = arg_types.first()
+            && !matches!(key_ty, ResolvedType::Unknown)
+            && !self.types_compatible(actual, key_ty)
+        {
+            self.errors.push(errors::call_argument_type_mismatch(
+                CALLEE,
+                None,
+                &key_ty.to_string(),
+                &actual.to_string(),
+                expr.span,
+            ));
+        }
+    }
+
+    /// Validate the arguments of a builtin text-codec call (`str.encode` / `bytes.decode`, #1668).
+    ///
+    /// Both methods take an optional `encoding` and `bytes.decode` also takes an optional `errors`, positionally or
+    /// by name. Every argument must be text. A literal label is checked against the `text_codecs` tables here so an
+    /// unsupported codec or error policy is a compile-time error; a label that is only known at run time is left to
+    /// the emitter's runtime guard, which reads the same tables.
+    fn validate_text_codec_call(
+        &mut self,
+        callee: &str,
+        accepts_errors_policy: bool,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        span: Span,
+    ) {
+        const ENCODING: &str = "encoding";
+        const ERRORS: &str = "errors";
+        let parameters: &[&str] = if accepts_errors_policy {
+            &[ENCODING, ERRORS]
+        } else {
+            &[ENCODING]
+        };
+
+        // ---- Bind each argument to its parameter, rejecting shapes the surface does not offer ----
+        let mut bound: Vec<(&str, &Spanned<Expr>, &ResolvedType)> = Vec::new();
+        let mut positional_count = 0usize;
+        for (arg, actual) in args.iter().zip(arg_types.iter()) {
+            match arg {
+                CallArg::Positional(expr) => {
+                    let Some(parameter) = parameters.get(positional_count) else {
+                        self.errors
+                            .push(errors::builtin_max_arity(callee, parameters.len(), args.len(), span));
+                        return;
+                    };
+                    positional_count += 1;
+                    bound.push((parameter, expr, actual));
+                }
+                CallArg::Named(name, expr) => {
+                    let Some(parameter) = parameters.iter().find(|parameter| **parameter == name.node) else {
+                        self.errors
+                            .push(errors::unknown_keyword_argument(callee, &name.node, name.span));
+                        return;
+                    };
+                    if let Some((_, first, _)) = bound.iter().find(|(seen, _, _)| seen == parameter) {
+                        self.errors.push(errors::duplicate_call_argument(
+                            callee, parameter, first.span, name.span,
+                        ));
+                        return;
+                    }
+                    bound.push((parameter, expr, actual));
+                }
+                CallArg::PositionalUnpack(expr) => {
+                    self.errors
+                        .push(errors::call_unpack_without_rest(callee, "*", expr.span));
+                    return;
+                }
+                CallArg::KeywordUnpack(expr) => {
+                    self.errors
+                        .push(errors::call_unpack_without_rest(callee, "**", expr.span));
+                    return;
+                }
+            }
+        }
+
+        // ---- Each bound label must be text, and a literal label must name a supported codec or policy ----
+        for (parameter, expr, actual) in bound {
+            if !is_str_like(actual) {
+                self.errors.push(errors::call_argument_type_mismatch(
+                    callee,
+                    Some(parameter),
+                    &ResolvedType::Str.to_string(),
+                    &actual.to_string(),
+                    expr.span,
+                ));
+                continue;
+            }
+            let Expr::Literal(Literal::String(label)) = &expr.node else {
+                continue;
+            };
+            if parameter == ENCODING && !text_codecs::is_utf8_encoding_label(label) {
+                self.errors
+                    .push(errors::unsupported_text_encoding(callee, label, expr.span));
+            }
+            if parameter == ERRORS && DecodeErrorsPolicy::from_label(label).is_none() {
+                self.errors
+                    .push(errors::unsupported_decode_errors_policy(label, expr.span));
+            }
+        }
+    }
+
     /// Build a resolved callable type from parameter and return types for adapter diagnostics.
     fn iterator_callback_ty(params: Vec<ResolvedType>, ret: ResolvedType) -> ResolvedType {
         ResolvedType::Function(
@@ -1352,9 +1509,11 @@ impl TypeChecker {
                 ),
                 string_methods::from_str(method).map(string_methods::as_str)?,
             ),
-            ResolvedType::Bytes if method == "as_slice" => (
+            ResolvedType::Bytes => (
                 incan_lang::lang::types::stringlike::as_str(incan_lang::lang::types::stringlike::StringLikeId::Bytes),
-                "as_slice",
+                bytes_methods::from_str(method)
+                    .map(bytes_methods::as_str)
+                    .or_else(|| (method == "as_slice").then_some("as_slice"))?,
             ),
             ResolvedType::FrozenBytes => (
                 incan_lang::lang::types::stringlike::as_str(
@@ -1738,6 +1897,21 @@ impl TypeChecker {
             ResolvedType::Generic(name, args) => {
                 self.rust_canonical_path_for_nominal_receiver(name, Some(args.as_slice()))
             }
+            _ => None,
+        }
+    }
+
+    /// Return the import binding a bare receiver expression names, when it is an imported Rust item.
+    ///
+    /// `Trait.method(...)` and `Type.method(...)` spell the receiver as the import binding itself; a value receiver
+    /// such as `handle.method(...)`, including a local that happens to be a bare identifier, has no binding to report.
+    fn rust_import_binding_for_receiver_expr<'a>(&self, receiver: &'a Spanned<Expr>) -> Option<&'a str> {
+        match &receiver.node {
+            Expr::Ident(name) => self
+                .lookup_symbol(name)
+                .filter(|symbol| matches!(symbol.kind, SymbolKind::RustItem(_)))
+                .map(|_| name.as_str()),
+            Expr::Paren(inner) => self.rust_import_binding_for_receiver_expr(inner),
             _ => None,
         }
     }
@@ -2260,6 +2434,7 @@ impl TypeChecker {
             rust_path,
             method,
             receiver_metadata,
+            receiver_binding,
             type_args,
             args,
             arg_types,
@@ -2273,8 +2448,10 @@ impl TypeChecker {
             self.type_info.record_regular_method_arg_shape(receiver_span, method);
         }
         let Some(metadata) = self.rust_metadata_for_receiver_method(rust_path, method, receiver_metadata) else {
-            if let Some(import_use) = self.record_unique_rust_trait_import_for_method_call(method, span)
-                && let Some(sig) = import_use.signature.as_ref()
+            let claimed_import = self.record_unique_rust_trait_import_for_method_call(method, span);
+            if let Some(sig) = claimed_import
+                .as_ref()
+                .and_then(|import_use| import_use.signature.as_ref())
             {
                 return Some(self.validate_rust_trait_method_call(RustTraitMethodCall {
                     rust_path,
@@ -2284,6 +2461,7 @@ impl TypeChecker {
                     args,
                     arg_types,
                     preserves_lookup_arg_shape,
+                    self_type: None,
                     span,
                 }));
             }
@@ -2292,6 +2470,7 @@ impl TypeChecker {
                     rust_path,
                     method,
                     receiver_metadata,
+                    receiver_binding,
                     type_args,
                     args,
                     arg_types,
@@ -2302,6 +2481,18 @@ impl TypeChecker {
                 preserves_lookup_arg_shape,
             ) {
                 return Some(ret);
+            }
+            // A trait-qualified call passes its receiver as the first argument, and only the trait method's
+            // declared receiver says how that argument is passed. Without a signature the mode is unknowable;
+            // refusing here keeps the emitter from assuming `&self` and handing rustc a mismatched borrow (#1375).
+            if self.receiver_names_rust_trait_import(receiver_binding, method) {
+                self.errors
+                    .push(errors::rust_trait_receiver_mode_unavailable(rust_path, method, span));
+                self.preserve_unresolved_rust_call_argument_returns(args);
+                return Some(ResolvedType::Unknown);
+            }
+            if claimed_import.is_none() {
+                self.record_rust_method_trait_import_candidates(rust_path, receiver_binding, span);
             }
             self.preserve_unresolved_rust_call_argument_returns(args);
             return None;
@@ -2324,8 +2515,12 @@ impl TypeChecker {
                         self.type_info.record_call_site_callable_params_exact(span, &[]);
                         return Some(ResolvedType::RustPath(rust_path.to_string()));
                     }
-                    if let Some(import_use) = self.record_rust_extension_trait_import_for_call(&metadata, method, span)
-                        && let Some(sig) = import_use.signature.as_ref()
+                    let claimed_import = self
+                        .record_rust_extension_trait_import_for_call(&metadata, method, span)
+                        .or_else(|| self.record_unique_rust_trait_import_for_method_call(method, span));
+                    if let Some(sig) = claimed_import
+                        .as_ref()
+                        .and_then(|import_use| import_use.signature.as_ref())
                     {
                         return Some(self.validate_rust_trait_method_call(RustTraitMethodCall {
                             rust_path,
@@ -2335,20 +2530,7 @@ impl TypeChecker {
                             args,
                             arg_types,
                             preserves_lookup_arg_shape,
-                            span,
-                        }));
-                    }
-                    if let Some(import_use) = self.record_unique_rust_trait_import_for_method_call(method, span)
-                        && let Some(sig) = import_use.signature.as_ref()
-                    {
-                        return Some(self.validate_rust_trait_method_call(RustTraitMethodCall {
-                            rust_path,
-                            method,
-                            sig,
-                            type_args,
-                            args,
-                            arg_types,
-                            preserves_lookup_arg_shape,
+                            self_type: None,
                             span,
                         }));
                     }
@@ -2357,6 +2539,7 @@ impl TypeChecker {
                             rust_path,
                             method,
                             receiver_metadata,
+                            receiver_binding,
                             type_args,
                             args,
                             arg_types,
@@ -2369,6 +2552,9 @@ impl TypeChecker {
                         return Some(ret);
                     }
                     // Stay permissive when no unambiguous imported trait or trait method signature can be selected.
+                    if claimed_import.is_none() {
+                        self.record_rust_method_trait_import_candidates(rust_path, receiver_binding, span);
+                    }
                     self.preserve_unresolved_rust_call_argument_returns(args);
                     return Some(ResolvedType::Unknown);
                 };
@@ -2492,6 +2678,18 @@ impl TypeChecker {
                 ));
                 Some(ResolvedType::Unknown)
             }
+            RustItemKind::Trait(trait_info) if receiver_binding.is_some() => {
+                Some(self.resolve_rust_trait_qualified_call(RustTraitQualifiedCall {
+                    rust_path,
+                    trait_info,
+                    method,
+                    type_args,
+                    args,
+                    arg_types,
+                    preserves_lookup_arg_shape,
+                    span,
+                }))
+            }
             // Function, Trait, Module, Constant: metadata is incomplete for method surfaces.
             // Stay permissive and let rustc catch genuine errors at compile time.
             _ => {
@@ -2499,6 +2697,168 @@ impl TypeChecker {
                 Some(ResolvedType::Unknown)
             }
         }
+    }
+
+    /// Return whether a method-call receiver is a bare imported Rust trait that is known to declare `method`.
+    ///
+    /// The trait-import registry learns a trait's method names from inspected metadata or, failing that, from the
+    /// compiler's fallback trait vocabulary. Either way the spelling `Trait.method(...)` is then a trait-qualified call
+    /// rather than an associated function on a type, which is what decides whether a missing signature is a
+    /// receiver-mode gap the call must report.
+    fn receiver_names_rust_trait_import(&self, receiver_binding: Option<&str>, method: &str) -> bool {
+        receiver_binding
+            .and_then(|binding| self.type_info.rust.trait_imports.get(binding))
+            .is_some_and(|import| import.methods.contains(method))
+    }
+
+    /// Check a trait-qualified call `Trait.method(receiver, args...)` against inspected Rust trait metadata (#1375).
+    ///
+    /// Rust resolves `Trait::method` only against the trait's own associated items, and the method's declared receiver
+    /// decides how the explicit first argument is passed: `&mut self` needs an exclusive borrow, `&self` a shared one,
+    /// and `self` moves the value. That mode is recorded as the first argument's Rust boundary coercion, the same fact
+    /// lowering and emission already consume for every other inspected Rust parameter, so the emitter never derives
+    /// it from the method or trait name. The remaining arguments and the result follow the ordinary trait-method
+    /// validation; a method the trait does not declare is reported here instead of by rustc against generated code.
+    fn resolve_rust_trait_qualified_call(&mut self, call: RustTraitQualifiedCall<'_>) -> ResolvedType {
+        let RustTraitQualifiedCall {
+            rust_path,
+            trait_info,
+            method,
+            type_args,
+            args,
+            arg_types,
+            preserves_lookup_arg_shape,
+            span,
+        } = call;
+        let Some(sig) = trait_info.items.iter().find_map(|item| match item {
+            RustTraitAssoc::Function { name, signature } if name == method => Some(signature),
+            _ => None,
+        }) else {
+            self.errors
+                .push(errors::rust_trait_method_not_declared(rust_path, method, span));
+            self.preserve_unresolved_rust_call_argument_returns(args);
+            return ResolvedType::Unknown;
+        };
+        if !Self::rust_signature_has_receiver(sig) {
+            // `Deserialize.deserialize(input)` has no receiver: Rust infers `Self` from the destination, which the
+            // checker learns only later, so the result stays permissive while the arguments are still validated.
+            return self.validate_rust_trait_method_call(RustTraitMethodCall {
+                rust_path,
+                method,
+                sig,
+                type_args,
+                args,
+                arg_types,
+                preserves_lookup_arg_shape,
+                self_type: Some(&ResolvedType::Unknown),
+                span,
+            });
+        }
+
+        // ---- The explicit receiver argument takes the declared receiver mode ----
+        let (Some(CallArg::Positional(receiver_expr)), Some(receiver_ty)) = (args.first(), arg_types.first()) else {
+            self.errors.push(errors::builtin_arity(
+                format!("rust::{rust_path}.{method}").as_str(),
+                sig.params.len(),
+                args.len(),
+                span,
+            ));
+            self.preserve_unresolved_rust_call_argument_returns(args);
+            return ResolvedType::Unknown;
+        };
+        let receiver_display = Self::rust_display_without_lifetimes(sig.params[0].type_display.trim());
+        if let Some((mutable, _)) = Self::rust_display_borrow_kind(receiver_display.as_str()) {
+            let already_borrowed = match receiver_ty {
+                ResolvedType::RefMut(_) => true,
+                ResolvedType::Ref(_) => !mutable,
+                _ => false,
+            };
+            if matches!(receiver_ty, ResolvedType::Ref(_)) && mutable {
+                self.errors.push(errors::type_mismatch(
+                    receiver_display.as_str(),
+                    &receiver_ty.to_string(),
+                    receiver_expr.span,
+                ));
+            } else if !already_borrowed {
+                let kind = RustArgCoercionKind::Borrow { mutable };
+                if self.validate_rust_borrow_mutability(kind, receiver_expr) {
+                    let target_type = if mutable {
+                        ResolvedType::RefMut(Box::new(receiver_ty.clone()))
+                    } else {
+                        ResolvedType::Ref(Box::new(receiver_ty.clone()))
+                    };
+                    self.type_info.rust.arg_coercions.insert(
+                        (receiver_expr.span.start, receiver_expr.span.end),
+                        RustArgCoercionInfo {
+                            rust_target_type: receiver_display,
+                            target_type,
+                            kind,
+                        },
+                    );
+                }
+            }
+        }
+
+        // ---- The remaining arguments follow the trait method's own parameters ----
+        let self_type = match receiver_ty {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref().clone(),
+            other => other.clone(),
+        };
+        let ret = self.validate_rust_trait_method_call(RustTraitMethodCall {
+            rust_path,
+            method,
+            sig,
+            type_args,
+            args: &args[1..],
+            arg_types: &arg_types[1..],
+            preserves_lookup_arg_shape,
+            self_type: Some(&self_type),
+            span,
+        });
+        // The call site's parameter list must line up with the source arguments, receiver included, so that
+        // lowering and emission pair each argument with its own parameter shape.
+        self.record_rust_trait_qualified_call_site_params(span, sig, receiver_ty, rust_path);
+        ret
+    }
+
+    /// Record the call-site parameters of a trait-qualified call with the receiver parameter in first position.
+    ///
+    /// `validate_rust_method_call` records the parameters after the receiver, which is right for `value.method(...)`
+    /// where the receiver is not an argument. A trait-qualified call spells the receiver as its first argument, so the
+    /// receiver parameter is re-added here with the receiver's own resolved shape rather than the opaque `Self`
+    /// display, keeping argument and parameter indexes aligned for the backend.
+    fn record_rust_trait_qualified_call_site_params(
+        &mut self,
+        span: Span,
+        sig: &RustFunctionSig,
+        receiver_ty: &ResolvedType,
+        owner_path: &str,
+    ) {
+        let receiver_display = Self::rust_display_without_lifetimes(sig.params[0].type_display.trim());
+        let receiver_param_ty = match (Self::rust_display_borrow_kind(receiver_display.as_str()), receiver_ty) {
+            (Some(_), ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => receiver_ty.clone(),
+            (Some((true, _)), _) => ResolvedType::RefMut(Box::new(receiver_ty.clone())),
+            (Some((false, _)), _) => ResolvedType::Ref(Box::new(receiver_ty.clone())),
+            (None, _) => receiver_ty.clone(),
+        };
+        let mut params = vec![CallableParam {
+            name: sig.params[0].name.clone(),
+            ty: receiver_param_ty,
+            kind: ParamKind::Normal,
+            has_default: false,
+            is_partial_preset: false,
+        }];
+        params.extend(sig.params[1..].iter().map(|param| CallableParam {
+            name: param.name.clone(),
+            ty: self.resolved_rust_boundary_target_from_param_display_for_owner_path(
+                param.type_display.as_str(),
+                owner_path,
+            ),
+            kind: ParamKind::Normal,
+            has_default: false,
+            is_partial_preset: false,
+        }));
+        self.type_info.record_call_site_callable_params_exact(span, &params);
     }
 
     /// Enforce RFC 054's arity-complete bracket contract for inspected Rust methods.
@@ -2517,8 +2877,8 @@ impl TypeChecker {
         }
         self.errors.push(errors::explicit_type_arg_arity(
             method,
-            declared_type_params.len(),
-            type_args.len(),
+            declared_type_params,
+            &Self::written_type_args(type_args),
             span,
         ));
         false
@@ -2559,11 +2919,42 @@ impl TypeChecker {
             call.preserves_lookup_arg_shape,
             call.span,
         );
-        let ret = Self::substitute_rust_self_type(ret, call.rust_path);
-        if Self::contains_unbound_rust_type_var(&ret) {
+        let ret = match call.self_type {
+            Some(self_type) => Self::substitute_rust_self_type_with_resolved(ret, self_type),
+            None => Self::substitute_rust_self_type(ret, call.rust_path),
+        };
+        if Self::contains_unbound_rust_type_var(&ret)
+            || (resolved_type_args.is_empty() && Self::mentions_rust_method_type_param(&ret, &call.sig.type_params))
+        {
             ResolvedType::Unknown
         } else {
             ret
+        }
+    }
+
+    /// Return whether a Rust return type still projects through one of the method's own type parameters.
+    ///
+    /// `Result<S::Ok, S::Error>` on `Serialize::serialize<S>` names associated types of a parameter the call did not
+    /// bind; Rust infers `S` from the argument, and the projection is not an Incan type the checker can compare.
+    fn mentions_rust_method_type_param(ty: &ResolvedType, type_params: &[String]) -> bool {
+        match ty {
+            ResolvedType::RustPath(path) => path
+                .split("::")
+                .next()
+                .is_some_and(|head| type_params.iter().any(|param| param == head.trim())),
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => {
+                Self::mentions_rust_method_type_param(inner, type_params)
+            }
+            ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => args
+                .iter()
+                .any(|arg| Self::mentions_rust_method_type_param(arg, type_params)),
+            ResolvedType::Function(params, ret) => {
+                params
+                    .iter()
+                    .any(|param| Self::mentions_rust_method_type_param(&param.ty, type_params))
+                    || Self::mentions_rust_method_type_param(ret, type_params)
+            }
+            _ => false,
         }
     }
 
@@ -2596,6 +2987,7 @@ impl TypeChecker {
             rust_path,
             method,
             receiver_metadata: _,
+            receiver_binding: _,
             type_args,
             args,
             arg_types,
@@ -2706,6 +3098,40 @@ impl TypeChecker {
         self.type_info
             .record_rust_method_trait_import_use(span, import_use.clone());
         Some(import_use.clone())
+    }
+
+    /// Attribute a method call that no inspected surface resolved to the imported Rust items whose method surface is
+    /// unknown, so generated-use analysis keeps their `use` declarations while the call is reachable (#1450).
+    ///
+    /// Only imports with neither inspected metadata nor a fallback vocabulary qualify: an import with a declared
+    /// surface that does not list the method cannot provide it. The import the receiver itself names is already in
+    /// use as a path, and the import that is the receiver's own type is a type, not a trait; both are left out.
+    /// Without metadata the compiler cannot narrow further, so every remaining candidate is kept; a spurious retained
+    /// import is a warning, while a dropped one is an E0599 against code the author never wrote.
+    fn record_rust_method_trait_import_candidates(
+        &mut self,
+        receiver_rust_path: &str,
+        receiver_binding: Option<&str>,
+        span: Span,
+    ) {
+        let mut candidates = self
+            .type_info
+            .rust
+            .trait_imports
+            .iter()
+            .filter(|(binding, import)| {
+                !import.methods_known
+                    && Some(binding.as_str()) != receiver_binding
+                    && import.trait_path != receiver_rust_path
+            })
+            .map(|(binding, _)| binding.clone())
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            return;
+        }
+        candidates.sort();
+        self.type_info
+            .record_rust_method_trait_import_candidates(span, candidates);
     }
 
     /// Return the trait method signature when `import` is implemented by `type_info` and declares `method`.
@@ -4904,6 +5330,7 @@ impl TypeChecker {
                 rust_path: &path,
                 method,
                 receiver_metadata: self.rust_metadata_for_receiver_expr(base).as_ref(),
+                receiver_binding: self.rust_import_binding_for_receiver_expr(base),
                 type_args,
                 args,
                 arg_types: &arg_types,
@@ -5052,6 +5479,26 @@ impl TypeChecker {
         }
         if matches!(base_ty, ResolvedType::Bytes) && method == "as_slice" && args.is_empty() {
             return ResolvedType::Bytes;
+        }
+
+        // The builtin text return trip (#1668): `str.encode` and `bytes.decode` accept optional codec labels that are
+        // validated against the shared `text_codecs` tables when they are literals.
+        if (matches!(base_ty, ResolvedType::Str) || is_frozen_str(&base_ty))
+            && string_methods::from_str(method) == Some(StringMethodId::Encode)
+        {
+            self.validate_text_codec_call("str.encode", false, args, &arg_types, span);
+            return ResolvedType::Bytes;
+        }
+        if (matches!(base_ty, ResolvedType::Bytes) || is_frozen_bytes(&base_ty))
+            && bytes_methods::from_str(method) == Some(bytes_methods::BytesMethodId::Decode)
+        {
+            self.validate_text_codec_call("bytes.decode", true, args, &arg_types, span);
+            // Malformed input is a data failure the caller handles, so the result is a `Result` over the prelude
+            // validation error (#1668); `str.encode` cannot fail on valid text and stays a plain `bytes`.
+            return ResolvedType::Generic(
+                "Result".to_string(),
+                vec![ResolvedType::Str, ResolvedType::Named("ValidationError".to_string())],
+            );
         }
 
         if matches!(base_ty, ResolvedType::Str)
@@ -5302,6 +5749,10 @@ impl TypeChecker {
                         // typecheck consistently with codegen.
                         M::Get => return option_ty(ResolvedType::Ref(Box::new(val.clone()))),
                         M::Insert => return ResolvedType::Unit,
+                        M::ContainsKey => {
+                            self.validate_dict_contains_key_call(&key, args, &arg_types, span);
+                            return ResolvedType::Bool;
+                        }
                     }
                 }
             }
@@ -5447,6 +5898,7 @@ impl TypeChecker {
                             rust_path: path,
                             method: resolved_method,
                             receiver_metadata: None,
+                            receiver_binding: None,
                             type_args,
                             args,
                             arg_types: &arg_types,
@@ -5560,6 +6012,7 @@ impl TypeChecker {
                                 rust_path: path,
                                 method: resolved_method,
                                 receiver_metadata: None,
+                                receiver_binding: None,
                                 type_args,
                                 args,
                                 arg_types: &arg_types,

@@ -1,0 +1,88 @@
+from rust::std::env import args
+
+
+def key_list(values: Dict[str, int]) -> list[str]:
+    return list(values.keys())
+
+
+def value_list(values: Dict[str, int]) -> list[int]:
+    return list(values.values())
+
+
+def copied(items: list[str]) -> list[str]:
+    return list(items)
+
+
+def from_set(items: set[int]) -> list[int]:
+    return list(items)
+
+
+def from_mut_param(mut items: list[str]) -> list[str]:
+    items.append("z")
+    return list(items)
+
+
+def keys_of(values: Dict[str, int]) -> list[str]:
+    return list(values)
+
+
+def characters(text: str) -> list[str]:
+    return list(text)
+
+
+def empty_names() -> list[str]:
+    names: list[str] = list()
+    return names
+
+
+def byte_values(payload: bytes) -> list[int]:
+    return list(payload)
+
+
+def counted() -> list[int]:
+    return list(range(3))
+
+
+def thawed(frozen: FrozenList[int]) -> list[int]:
+    return list(frozen)
+
+
+def thawed_text(frozen: FrozenList[str]) -> list[str]:
+    return list(frozen)
+
+
+def from_generator(source: Generator[int]) -> list[int]:
+    return list(source)
+
+
+def from_iterator(pairs: Iterator[(int, str)]) -> list[(int, str)]:
+    return list(pairs)
+
+
+def reused(words: list[str]) -> int:
+    first = list(words)
+    second = list(words)
+    return len(first) + len(second)
+
+
+def main() -> None:
+    values: Dict[str, int] = {"b": 2, "a": 1}
+    for key in list(values.keys()):
+        println(key)
+    println(len(key_list(values)))
+    println(len(value_list(values)))
+    println(len(copied(["x", "y"])))
+    println(len(from_set({1, 2, 3})))
+    println(len(from_mut_param(["q"])))
+    println(len(keys_of(values)))
+    println(len(characters("abc")))
+    println(len(empty_names()))
+    println(len(byte_values(b"ab")))
+    println(len(counted()))
+    println(len(thawed(FrozenList([7]))))
+    println(len(thawed_text(FrozenList(["x"]))))
+    println(reused(["p", "q"]))
+    println(len(from_generator((value for value in range(3)))))
+    println(len(from_iterator(zip([1, 2], ["a", "b"]))))
+    arguments = list(args())
+    println(len(arguments))

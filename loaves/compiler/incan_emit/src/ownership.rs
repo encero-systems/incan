@@ -18,6 +18,7 @@ use crate::reference_shape::expr_has_rust_reference_shape;
 use incan_ir::decl::FunctionParam;
 use incan_ir::expr::{IrExpr, IrExprKind, MethodCallArgPolicy, VarAccess, VarRefKind};
 use incan_ir::types::IrType;
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 /// Return the owned assignment element type for a list index, including explicit reference wrappers.
 ///
@@ -26,6 +27,33 @@ pub fn list_index_assignment_element_type(object_ty: &IrType) -> Option<&IrType>
     match object_ty {
         IrType::Ref(inner) | IrType::RefMut(inner) => list_index_assignment_element_type(inner),
         IrType::List(elem_ty) => Some(elem_ty.as_ref()),
+        _ => None,
+    }
+}
+
+/// Return the owned element type behind a list or set receiver, including explicit reference wrappers.
+///
+/// `list.append(item)` and `set.add(item)` store `item` as an element, so emission and clone-bound inference both
+/// plan that argument as a `CollectionElement` of this type; sharing the projection keeps the two phases on the same
+/// boundary decision (#1489).
+pub fn collection_element_type(receiver_ty: &IrType) -> Option<&IrType> {
+    match receiver_ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => collection_element_type(inner),
+        IrType::List(elem_ty) | IrType::Set(elem_ty) => Some(elem_ty.as_ref()),
+        _ => None,
+    }
+}
+
+/// Return the owned key and value types behind a dict receiver, including explicit reference wrappers.
+///
+/// A `mut Dict` parameter reaches emission as `RefMut(Dict)`. Every dict-shaped decision (index assignment, key
+/// lookup shaping, membership) must see through that wrapper, because `HashMap` offers no `IndexMut` and no
+/// `contains`: the borrowed receiver has to take the same `.insert` / `.get` / `.contains_key` route a local dict
+/// takes (#1668).
+pub fn dict_entry_types(object_ty: &IrType) -> Option<(&IrType, &IrType)> {
+    match object_ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => dict_entry_types(inner),
+        IrType::Dict(key_ty, value_ty) => Some((key_ty.as_ref(), value_ty.as_ref())),
         _ => None,
     }
 }
@@ -668,19 +696,14 @@ impl DictLookupKeyPlan {
 }
 
 /// Plan the borrow shape for a dictionary lookup key probe.
+///
+/// The receiver may be a borrowed dict (a `mut Dict` parameter); the key family behind the wrapper decides the plan.
 pub fn plan_dict_lookup_key(receiver_ty: &IrType, arg_ty: &IrType) -> DictLookupKeyPlan {
-    match receiver_ty {
-        IrType::Dict(key_ty, _)
-            if matches!(
-                key_ty.as_ref(),
-                IrType::String | IrType::StrRef | IrType::StaticStr | IrType::FrozenStr
-            ) =>
-        {
-            match arg_ty {
-                IrType::Ref(_) | IrType::RefMut(_) | IrType::StrRef | IrType::StaticStr => DictLookupKeyPlan::AsIs,
-                _ => DictLookupKeyPlan::BorrowAsRefStr,
-            }
-        }
+    match dict_entry_types(receiver_ty) {
+        Some((IrType::String | IrType::StrRef | IrType::StaticStr | IrType::FrozenStr, _)) => match arg_ty {
+            IrType::Ref(_) | IrType::RefMut(_) | IrType::StrRef | IrType::StaticStr => DictLookupKeyPlan::AsIs,
+            _ => DictLookupKeyPlan::BorrowAsRefStr,
+        },
         _ => match arg_ty {
             IrType::Ref(_) | IrType::RefMut(_) | IrType::StrRef | IrType::StaticStr => DictLookupKeyPlan::AsIs,
             _ => DictLookupKeyPlan::BorrowShared,
@@ -805,6 +828,117 @@ pub fn plan_for_loop_iteration(
     }
 }
 
+/// How `list(source)` materializes the items a `for` loop over the same source yields.
+///
+/// The source has already been emitted for an Incan call-argument use site, so an owned collection arrives owned
+/// (moved or cloned by the value plan) and can be consumed; the remaining variants cover sources that cannot be
+/// consumed item by item (borrowed collections, immutable wrappers, a dict's key view) or that yield converted items
+/// (text, bytes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListConstructorSourcePlan {
+    /// Consume the owned source through `IntoIterator`: an ordinary list or set, a generator, or an opaque Rust value
+    /// the checker could not see into, exactly as `for item in source` hands it to Rust.
+    IntoOwnedItems,
+    /// Clone each item out of an immutable collection that only lends its elements.
+    CloneBorrowedItems,
+    /// Materialize each item of an immutable collection of `str` as an owned string: the frozen wrappers store
+    /// Incan `str` as `&'static str`, while the typechecker reports the converted list as `list[str]`.
+    OwnedStringsFromFrozenText,
+    /// Clone each key of a dict, the items `for key in dict` yields.
+    CloneDictKeys,
+    /// Yield converted items through the loop adapter the same source takes in a `for` header.
+    Items(LoopIterationPlan),
+}
+
+impl ListConstructorSourcePlan {
+    /// Apply the source plan to an already-emitted source expression, producing the collected `Vec`.
+    pub fn apply(&self, tokens: TokenStream) -> TokenStream {
+        let items = match self {
+            Self::IntoOwnedItems => quote! { (#tokens).into_iter() },
+            Self::CloneBorrowedItems => quote! { (#tokens).iter().cloned() },
+            Self::OwnedStringsFromFrozenText => {
+                quote! { (#tokens).iter().map(|__incan_item| __incan_item.to_string()) }
+            }
+            Self::CloneDictKeys => quote! { (#tokens).keys().cloned() },
+            Self::Items(plan) => plan.apply(tokens),
+        };
+        quote! { #items.collect::<Vec<_>>() }
+    }
+
+    /// Whether the plan clones items out of the source, which needs the item type to be `Clone`.
+    pub fn clones_items(&self) -> bool {
+        matches!(self, Self::CloneBorrowedItems | Self::CloneDictKeys)
+    }
+}
+
+/// Plan how `list(source)` obtains owned items from one accepted source type.
+///
+/// The typechecker has already refused sources iteration rejects, so every remaining type maps to a plan. A borrowed
+/// collection (a `mut` parameter reaches emission as `RefMut`) only lends its items, so they are cloned out; the
+/// other reference wrappers plan like the value they borrow because their adapters read through the reference.
+pub fn plan_list_constructor_source(source_ty: &IrType) -> ListConstructorSourcePlan {
+    match source_ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => match inner.as_ref() {
+            IrType::List(_) | IrType::Set(_) => ListConstructorSourcePlan::CloneBorrowedItems,
+            borrowed => plan_list_constructor_source(borrowed),
+        },
+        IrType::Dict(_, _) => ListConstructorSourcePlan::CloneDictKeys,
+        IrType::String
+        | IrType::StaticStr
+        | IrType::StrRef
+        | IrType::FrozenStr
+        | IrType::Bytes
+        | IrType::StaticBytes
+        | IrType::FrozenBytes => {
+            ListConstructorSourcePlan::Items(plan_for_loop_iteration(source_ty, false, false, false))
+        }
+        IrType::NamedGeneric(name, items)
+            if matches!(
+                collections::from_str(name),
+                Some(CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet)
+            ) =>
+        {
+            if items.first().is_some_and(frozen_item_is_incan_str) {
+                ListConstructorSourcePlan::OwnedStringsFromFrozenText
+            } else {
+                ListConstructorSourcePlan::CloneBorrowedItems
+            }
+        }
+        _ => ListConstructorSourcePlan::IntoOwnedItems,
+    }
+}
+
+/// Whether a frozen collection's item type is Incan `str`, which the frozen wrappers store as `&'static str`.
+fn frozen_item_is_incan_str(item_ty: &IrType) -> bool {
+    is_owned_string_type(item_ty) || matches!(item_ty, IrType::StaticStr | IrType::StrRef)
+}
+
+/// Return the item type `list(source)` collects, when the source type names one.
+///
+/// Clone-bound inference reads this to require `Clone` on a generic item type only when the plan clones items.
+pub fn list_constructor_item_type(source_ty: &IrType) -> Option<&IrType> {
+    match source_ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => list_constructor_item_type(inner),
+        IrType::List(item) | IrType::Set(item) => Some(item),
+        IrType::Dict(key, _) => Some(key),
+        IrType::NamedGeneric(name, args)
+            if matches!(
+                collections::from_str(name),
+                Some(
+                    CollectionTypeId::List
+                        | CollectionTypeId::Set
+                        | CollectionTypeId::FrozenList
+                        | CollectionTypeId::FrozenSet
+                        | CollectionTypeId::Generator
+                )
+            ) =>
+        {
+            args.first()
+        }
+        _ => None,
+    }
+}
+
 /// How a comprehension should traverse its input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComprehensionIterationPlan {
@@ -912,6 +1046,39 @@ pub fn plan_owned_iterator_source(expr: &IrExpr) -> OwnedIteratorSourcePlan {
     }
 }
 
+/// Plan how a comprehension consumes a source that is not an Incan collection, or `None` when it is one.
+///
+/// A `for` statement hands such a value (a Rust iterator such as `std::env::Args`, a generator, an opaque value the
+/// checker could not see into) straight to Rust's `IntoIterator`; the comprehension paths instead borrowed it with
+/// `.iter()`, which a by-value iterator does not have (#1490). Sources the comprehension planner already understands
+/// (collections, ranges, text) return `None` and keep their borrowed item plans. A borrowed opaque value is consumed
+/// through the reference exactly as the loop consumes it, so it is never cloned; an owned one follows the same
+/// move-or-clone materialization as every other adapter-owned source.
+pub fn plan_opaque_comprehension_source(expr: &IrExpr) -> Option<OwnedIteratorSourcePlan> {
+    match &expr.ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => {
+            comprehension_source_is_opaque(inner).then_some(OwnedIteratorSourcePlan::Move)
+        }
+        ty => comprehension_source_is_opaque(ty).then(|| plan_owned_iterator_source(expr)),
+    }
+}
+
+/// Whether a comprehension source type is one the emitter can only traverse through `IntoIterator`.
+///
+/// Incan collections, text, bytes, ranges, and the `Iterator[T]` protocol all have dedicated iteration plans; a
+/// nominal Rust or generator value, or one whose type the checker could not resolve, has none and is consumed exactly
+/// as a `for` statement consumes it.
+fn comprehension_source_is_opaque(ty: &IrType) -> bool {
+    match ty {
+        IrType::Struct(_) | IrType::Unknown => true,
+        IrType::NamedGeneric(name, _) => {
+            collections::from_str(name) == Some(CollectionTypeId::Generator)
+                || (collections::from_str(name).is_none() && !ty.is_iterator_protocol())
+        }
+        _ => false,
+    }
+}
+
 /// Return whether an expression can be moved into an adapter-owned iterator source.
 fn expr_can_move_into_owned_iterator(expr: &IrExpr) -> bool {
     match &expr.kind {
@@ -932,6 +1099,74 @@ mod tests {
 
     fn render(tokens: TokenStream) -> String {
         tokens.to_string().replace(' ', "")
+    }
+
+    /// A `mut Dict` parameter (`RefMut(Dict)`) plans its key probe exactly like the owned dict it borrows (#1668).
+    #[test]
+    fn dict_lookup_key_plan_sees_through_borrowed_receivers() {
+        let dict = IrType::Dict(Box::new(IrType::String), Box::new(IrType::Int));
+        let borrowed = IrType::RefMut(Box::new(dict.clone()));
+        assert_eq!(
+            dict_entry_types(&borrowed).map(|(key, value)| (key.clone(), value.clone())),
+            Some((IrType::String, IrType::Int))
+        );
+        assert_eq!(dict_entry_types(&IrType::List(Box::new(IrType::Int))), None);
+        assert_eq!(
+            plan_dict_lookup_key(&dict, &IrType::String),
+            DictLookupKeyPlan::BorrowAsRefStr
+        );
+        assert_eq!(
+            plan_dict_lookup_key(&borrowed, &IrType::String),
+            DictLookupKeyPlan::BorrowAsRefStr
+        );
+        let int_keys = IrType::RefMut(Box::new(IrType::Dict(Box::new(IrType::Int), Box::new(IrType::Int))));
+        assert_eq!(
+            plan_dict_lookup_key(&int_keys, &IrType::Int),
+            DictLookupKeyPlan::BorrowShared
+        );
+    }
+
+    /// A `for` binding over `list[list[str]]` reaches the body as a non-consuming read of an owned element type; the
+    /// emitter iterates such a list by shared reference, so storing the binding into an `Ok` payload -- a struct-field
+    /// slot -- must clone it (#1489). An owned local whose read is its last use moves instead.
+    #[test]
+    fn result_payload_read_of_a_loop_binding_materializes_the_owned_value() {
+        let row_ty = IrType::List(Box::new(IrType::String));
+        let loop_binding = IrExpr::new(
+            IrExprKind::Var {
+                name: "row".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            row_ty.clone(),
+        );
+        assert_eq!(
+            plan_value_use(
+                &loop_binding,
+                ValueUseSite::StructField {
+                    target_ty: Some(&row_ty)
+                }
+            ),
+            OwnershipPlan::Clone
+        );
+
+        let last_use = IrExpr::new(
+            IrExprKind::Var {
+                name: "found".to_string(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            row_ty.clone(),
+        );
+        assert_eq!(
+            plan_value_use(
+                &last_use,
+                ValueUseSite::StructField {
+                    target_ty: Some(&row_ty)
+                }
+            ),
+            OwnershipPlan::None
+        );
     }
 
     #[test]
@@ -1531,6 +1766,119 @@ mod tests {
         let expr = IrExpr::new(IrExprKind::List(Vec::new()), IrType::List(Box::new(IrType::Int)));
 
         assert_eq!(plan_owned_iterator_source(&expr), OwnedIteratorSourcePlan::Move);
+    }
+
+    /// `list(source)` collects what a loop over the source yields: owned collections are consumed, borrowed and
+    /// immutable ones lend clones, a dict lends its keys, and text takes the loop's character adapter (#1464).
+    #[test]
+    fn list_constructor_source_plans_follow_loop_iteration() {
+        let strings = IrType::List(Box::new(IrType::String));
+        assert_eq!(
+            plan_list_constructor_source(&strings),
+            ListConstructorSourcePlan::IntoOwnedItems
+        );
+        assert_eq!(
+            plan_list_constructor_source(&IrType::RefMut(Box::new(strings.clone()))),
+            ListConstructorSourcePlan::CloneBorrowedItems
+        );
+        assert_eq!(
+            plan_list_constructor_source(&IrType::NamedGeneric(
+                collections::as_str(CollectionTypeId::FrozenList).to_string(),
+                vec![IrType::String]
+            )),
+            ListConstructorSourcePlan::OwnedStringsFromFrozenText
+        );
+        assert_eq!(
+            plan_list_constructor_source(&IrType::NamedGeneric(
+                collections::as_str(CollectionTypeId::FrozenSet).to_string(),
+                vec![IrType::Int]
+            )),
+            ListConstructorSourcePlan::CloneBorrowedItems
+        );
+        assert_eq!(
+            plan_list_constructor_source(&IrType::Dict(Box::new(IrType::String), Box::new(IrType::Int))),
+            ListConstructorSourcePlan::CloneDictKeys
+        );
+        assert_eq!(
+            plan_list_constructor_source(&IrType::String),
+            ListConstructorSourcePlan::Items(LoopIterationPlan::StringChars)
+        );
+        assert_eq!(
+            plan_list_constructor_source(&IrType::Struct("std::env::Args".to_string())),
+            ListConstructorSourcePlan::IntoOwnedItems
+        );
+        assert_eq!(
+            render(ListConstructorSourcePlan::CloneDictKeys.apply(quote! { values })),
+            "(values).keys().cloned().collect::<Vec<_>>()"
+        );
+        assert!(ListConstructorSourcePlan::CloneBorrowedItems.clones_items());
+        assert!(!ListConstructorSourcePlan::IntoOwnedItems.clones_items());
+        assert_eq!(
+            list_constructor_item_type(&IrType::RefMut(Box::new(strings))),
+            Some(&IrType::String)
+        );
+    }
+
+    /// A comprehension over a value that is not an Incan collection consumes it as the `for` statement does: a
+    /// one-shot Rust iterator moves, a borrowed one is read through the reference, and collections keep their own
+    /// borrowed item plans (#1490).
+    #[test]
+    fn opaque_comprehension_sources_are_consumed_by_value() {
+        let rust_iterator = IrType::Struct("std::env::Args".to_string());
+        let call = IrExpr::new(
+            IrExprKind::Call {
+                func: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "args".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Unknown,
+                )),
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                canonical_path: None,
+            },
+            rust_iterator.clone(),
+        );
+        assert_eq!(
+            plan_opaque_comprehension_source(&call),
+            Some(OwnedIteratorSourcePlan::Move)
+        );
+
+        let reused_var = |ty: IrType| {
+            IrExpr::new(
+                IrExprKind::Var {
+                    name: "source".to_string(),
+                    access: VarAccess::Read,
+                    ref_kind: VarRefKind::Value,
+                },
+                ty,
+            )
+        };
+        assert_eq!(
+            plan_opaque_comprehension_source(&reused_var(IrType::RefMut(Box::new(rust_iterator.clone())))),
+            Some(OwnedIteratorSourcePlan::Move)
+        );
+        assert_eq!(
+            plan_opaque_comprehension_source(&reused_var(IrType::NamedGeneric(
+                collections::as_str(CollectionTypeId::Generator).to_string(),
+                vec![IrType::Int]
+            ))),
+            Some(OwnedIteratorSourcePlan::Clone)
+        );
+        assert_eq!(
+            plan_opaque_comprehension_source(&reused_var(IrType::List(Box::new(IrType::Int)))),
+            None
+        );
+        assert_eq!(
+            plan_opaque_comprehension_source(&reused_var(IrType::NamedGeneric(
+                collections::as_str(CollectionTypeId::Option).to_string(),
+                vec![IrType::Int]
+            ))),
+            None
+        );
     }
 
     #[test]

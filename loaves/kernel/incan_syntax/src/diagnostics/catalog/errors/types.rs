@@ -16,6 +16,32 @@ pub fn unknown_symbol(name: &str, span: Span) -> CompileError {
         .with_hint("Did you forget to import it or define it?")
 }
 
+/// Report an unknown type name written in a callable's signature or body annotation.
+///
+/// The likeliest cause there is a type parameter that was never declared, not a missing import, so the hint shows
+/// where the declaration goes on `owner` (already-declared parameters are kept, the unknown name is appended). The
+/// import remedy stays as the second hint because the name can still be a type declared elsewhere. See #1373.
+pub fn unknown_type_parameter_candidate(
+    name: &str,
+    owner: &str,
+    declared_type_params: &[String],
+    span: Span,
+) -> CompileError {
+    let params = declared_type_params
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once(name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    CompileError::type_error(format!("Unknown symbol '{}'", name), span)
+        .with_hint(format!(
+            "'{name}' is not declared as a type parameter of '{owner}'; did you mean `def {owner}[{params}](...)`?"
+        ))
+        .with_hint(format!(
+            "If '{name}' is a type declared elsewhere, import it or define it"
+        ))
+}
+
 pub fn duplicate_definition(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Duplicate definition of '{}'", name), span)
 }
@@ -53,6 +79,40 @@ pub fn ambiguous_import_binding(name: &str, first_span: Span, second_span: Span)
 pub fn immutable_builtin_redefinition(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Cannot redefine immutable built-in function '{name}'"), span)
         .with_hint("Use a different name; `print` and `println` are reserved language functions")
+}
+
+/// The declaration kind whose representation must store every declared type parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredTypeParamOwner {
+    /// A `newtype` or `rusttype`: the parameter must appear in the underlying type.
+    Newtype,
+    /// An `enum`: the parameter must appear in at least one variant payload.
+    Enum,
+}
+
+/// Report a declared type parameter that the declaration's representation does not store.
+///
+/// A model or class can carry such a parameter (it becomes a phantom marker, #1370), but a newtype has exactly its
+/// underlying type and an enum has exactly its variant payloads, so a parameter neither mentions has nowhere to
+/// live; the generated Rust would be rejected as an unused type parameter. Reported at the parameter's own span.
+pub fn type_param_not_stored(owner: StoredTypeParamOwner, owner_name: &str, param: &str, span: Span) -> CompileError {
+    let (kind, storage, hint) = match owner {
+        StoredTypeParamOwner::Newtype => (
+            "newtype",
+            "its underlying type",
+            format!("Use '{param}' in the underlying type, for example `newtype list[{param}]`, or remove it"),
+        ),
+        StoredTypeParamOwner::Enum => (
+            "enum",
+            "any variant payload",
+            format!("Give a variant a payload that mentions '{param}', for example `Some({param})`, or remove it"),
+        ),
+    };
+    CompileError::type_error(
+        format!("Type parameter '{param}' of {kind} '{owner_name}' is not used by {storage}"),
+        span,
+    )
+    .with_hint(hint)
 }
 
 /// Report a value enum declaration that attempts to use type parameters.
@@ -167,6 +227,26 @@ pub fn call_unpack_without_rest(callee: &str, unpack: &str, span: Span) -> Compi
         format!(
             "Cannot use `{unpack}` unpacking when calling '{callee}' because the callee has no matching rest parameter"
         ),
+        span,
+    )
+}
+
+/// Report a text encoding label outside the builtin `str.encode` / `bytes.decode` contract (#1668).
+///
+/// The builtin text return trip supports UTF-8 only; a literal label is rejected here, while a label that is only
+/// known at run time raises `ValueError` from the generated program instead.
+pub fn unsupported_text_encoding(callee: &str, encoding: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("{callee}() supports only UTF-8 in this release, got encoding '{encoding}'"),
+        span,
+    )
+    .with_hint("Omit the argument or pass \"utf-8\"; std.fs and std.encoding cover other codecs")
+}
+
+/// Report a `bytes.decode` `errors` policy that is neither `strict` nor `replace` (#1668).
+pub fn unsupported_decode_errors_policy(policy: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("bytes.decode() errors must be \"strict\" or \"replace\", got '{policy}'"),
         span,
     )
 }
@@ -1304,23 +1384,82 @@ pub fn trait_not_implemented(type_name: &str, trait_name: &str, span: Span) -> C
     error
 }
 
+/// What the name in a `with` bound resolved to, which decides the remedy a bound violation can offer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenericBoundTarget {
+    /// The bound names a trait (source, builtin, or imported Rust), so a type argument can satisfy it.
+    Trait,
+    /// The bound names a type such as `float` or a model. A `with` bound names a trait, so no type argument
+    /// satisfies this bound; the declaration needs a different shape, not a different call.
+    Type,
+}
+
+/// Where the type bound to a generic parameter at a call site came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeArgumentOrigin {
+    /// Written in the call's bracket list (`cast[int](...)`).
+    Explicit,
+    /// Inferred from the value arguments or the expected result type.
+    Inferred,
+}
+
+/// Report a call whose bound type argument does not satisfy a `with` bound on the callee's type parameter.
+///
+/// The hint names the type that failed rather than "the argument type", because with an explicit bracket list the
+/// value arguments are not what is wrong, and it branches on what the bound names: a trait can be implemented or the
+/// bound widened, while a type in bound position cannot be satisfied by any argument. See #1373.
 pub fn generic_bound_not_satisfied(
     function_name: &str,
     type_param: &str,
     bound: &str,
+    bound_target: GenericBoundTarget,
     actual: &str,
+    actual_origin: TypeArgumentOrigin,
     span: Span,
 ) -> CompileError {
-    CompileError::type_error(
+    let error = CompileError::type_error(
         format!(
             "Call to '{}' violates generic bound: type parameter '{}' requires '{}' but got '{}'",
             function_name, type_param, bound, actual
         ),
         span,
-    )
-    .with_hint(format!(
-        "Ensure the argument type implements '{}' or widen '{}' bounds in '{}'",
-        bound, type_param, function_name
+    );
+    match (bound_target, actual_origin) {
+        (GenericBoundTarget::Type, _) => error.with_hint(format!(
+            "'{bound}' is a type, not a trait, so no type argument satisfies this bound; a `with` bound names a \
+             trait the type argument must implement. To accept only '{bound}', declare the parameter as '{bound}' \
+             instead of '{type_param}'"
+        )),
+        (GenericBoundTarget::Trait, TypeArgumentOrigin::Explicit) => error.with_hint(format!(
+            "Type argument '{actual}' for '{type_param}' must implement '{bound}'; pass a type that implements it \
+             or widen the '{type_param}' bounds in '{function_name}'"
+        )),
+        (GenericBoundTarget::Trait, TypeArgumentOrigin::Inferred) => error.with_hint(format!(
+            "Ensure the argument type '{actual}' implements '{bound}' or widen the '{type_param}' bounds in \
+             '{function_name}'"
+        )),
+    }
+}
+
+/// Report a call that matched none of an overload set's candidates.
+///
+/// One diagnostic carries what every candidate wanted, so the reader is not told only what the first-declared
+/// overload required. `candidates` pairs each candidate's rendered signature with the first reason it was rejected,
+/// in declaration order. See #1373.
+pub fn no_overload_accepts_call(function_name: &str, candidates: &[(String, String)], span: Span) -> CompileError {
+    let mut error = CompileError::type_error(
+        format!(
+            "Call to '{}' matches none of its {} overloads",
+            function_name,
+            candidates.len()
+        ),
+        span,
+    );
+    for (signature, reason) in candidates {
+        error = error.with_note(format!("candidate `{signature}` rejected: {reason}"));
+    }
+    error.with_hint(format!(
+        "Change the call to satisfy one candidate, or add an overload of '{function_name}' for this call"
     ))
 }
 
@@ -1452,6 +1591,37 @@ pub fn rust_receiver_const_generics_not_supported(path: &str, span: Span) -> Com
     )
     .with_hint("Use a Rust or Incan wrapper whose public receiver has type parameters only")
     .with_note("Incan v0.5 does not accept const values in call-site type-argument syntax")
+}
+
+/// A trait-qualified call `Trait.method(receiver, ...)` names an imported Rust trait whose method signature is not
+/// available, so the compiler cannot tell whether the receiver must be borrowed exclusively, shared, or moved.
+///
+/// The receiver mode is a fact of the Rust declaration. Guessing `&self` produces Rust that rustc rejects against
+/// generated code the author never wrote, so the call is refused with the missing fact named instead (#1375).
+pub fn rust_trait_receiver_mode_unavailable(trait_path: &str, method: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Cannot determine the receiver of `rust::{trait_path}.{method}`: no signature metadata is available for \
+             this Rust trait method"
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Call it as a method on the receiver value (`value.{method}(...)`), or refresh Rust metadata for `{trait_path}`"
+    ))
+    .with_note("A trait-qualified call passes its receiver explicitly, and only the trait's declared receiver says whether that argument is `&mut self`, `&self`, or `self`")
+}
+
+/// A trait-qualified call names a method the inspected Rust trait does not declare.
+///
+/// Rust resolves `Trait::method` only against the trait's own associated items, so a method the trait inherits or
+/// does not have at all fails native compilation; report it against the source call instead (#1375).
+pub fn rust_trait_method_not_declared(trait_path: &str, method: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Rust trait `rust::{trait_path}` does not declare an associated function `{method}`"),
+        span,
+    )
+    .with_hint("Qualify the call with the trait that declares the method, or call it as a method on the receiver value")
 }
 
 /// A Rust import is being used as a constructor, but the compiler lacks enough metadata to emit valid Rust.

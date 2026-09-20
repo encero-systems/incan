@@ -5330,6 +5330,122 @@ def main() -> None:
         Ok(())
     }
 
+    /// A compiled SDK function re-exported by a source facade keeps its omitted defaults through native emission.
+    ///
+    /// Issue #1435: `std.regex.compile` declares four defaulted flags. Checking accepted `compile(pattern)` through
+    /// the facade while emission passed only the pattern, so rustc rejected the generated call with E0061. The
+    /// direct `from std.regex import compile` spelling filled the defaults all along; the facade must bind the same
+    /// provider declaration.
+    #[test]
+    fn std_function_defaults_survive_source_facade_issue1435() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        let project_name = unique_test_project_name("regex_default_facade");
+        std::fs::create_dir_all(project_root.join("src"))?;
+        std::fs::write(
+            project_root.join("loaf.toml"),
+            format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
+        )?;
+        std::fs::write(
+            project_root.join("src/codec.incn"),
+            "pub from std.regex import compile\n",
+        )?;
+        let main_path = project_root.join("src/main.incn");
+        std::fs::write(
+            &main_path,
+            r#"from codec import compile
+from std.regex import RegexError
+
+
+def run() -> Result[None, RegexError]:
+  strict = compile("ab+c")?
+  relaxed = compile("AB+C", ignore_case=true)?
+  exact = strict.is_match("xabbcx")
+  upper = strict.is_match("xABBCx")
+  folded = relaxed.is_match("xabbcx")
+  println(f"{exact}:{upper}:{folded}")
+  return Ok(None)
+
+
+def main() -> None:
+  match run():
+    Ok(_) => pass
+    Err(error) => println(error.message())
+"#,
+        )?;
+
+        let output = super::incan_command()
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "expected a compiled SDK function with omitted defaults to run through a source facade.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8(output.stdout)?, "true:false:true\n");
+        Ok(())
+    }
+
+    /// A `std.serde.json` trait re-exported by a source facade keeps its JSON protocol under a compiled SDK provider.
+    ///
+    /// Issue #1431 keyed the protocol on the trait's canonical identity, and issue #1435 made a facade of a compiled
+    /// `std.*` member bind the provider's declaration, whose identity is package-owned rather than module-owned.
+    /// Lowering must read that identity back to the `std.serde.json` declaration; otherwise the facade-bound
+    /// `Serialize` loses its backend `to_json` and the adopter's `from_json` is dropped from the `Deserialize` impl.
+    #[test]
+    fn std_serde_json_traits_keep_their_protocol_through_source_facade_issue1431()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        let project_name = unique_test_project_name("serde_trait_facade");
+        std::fs::create_dir_all(project_root.join("src"))?;
+        std::fs::write(
+            project_root.join("loaf.toml"),
+            format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
+        )?;
+        std::fs::write(
+            project_root.join("src/codec.incn"),
+            "pub from std.serde.json import Serialize, Deserialize\n",
+        )?;
+        let main_path = project_root.join("src/main.incn");
+        std::fs::write(
+            &main_path,
+            r#"from codec import Serialize, Deserialize
+
+
+model Payload with Serialize, Deserialize:
+  value: int
+
+  def from_json(json_str: str) -> Result[Payload, str]:
+    return Ok(Payload(value=len(json_str)))
+
+
+def main() -> None:
+  println(Payload(value=1).to_json())
+  match Payload.from_json("{}"):
+    case Ok(restored):
+      println(restored.value)
+    case Err(message):
+      println(message)
+"#,
+        )?;
+
+        let output = super::incan_command()
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "expected the std.serde.json traits re-exported by a source facade to keep their JSON protocol.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8(output.stdout)?, "{\"value\":1}\n2\n");
+        Ok(())
+    }
+
     #[test]
     fn check_pub_boundary_preserves_consumer_type_fidelity_cases() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
@@ -6940,7 +7056,7 @@ def reject_mismatched_owner(left: list[f32], right: list[f32]) -> f32:
 
         let generated_main_rs = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
         assert!(
-            !generated_main_rs.contains("__incan_vocab_helper_filterkit_filter"),
+            !generated_main_rs.contains("__incan_vocab_helper_"),
             "expected generated Rust to avoid hidden helper aliases, got:\n{generated_main_rs}"
         );
         assert!(
@@ -6996,7 +7112,7 @@ def main() -> None:
         assert!(
             normalized.contains("helperkit::aggregate_as(helperkit::lit(5),\"total\".to_string()")
                 || normalized.contains(
-                    "__incan_vocab_helper_helperkit_aggregate_as(__incan_vocab_helper_helperkit_lit(5),\"total\".to_string()"
+                    "__incan_vocab_helper_9_helperkit_aggregate_as(__incan_vocab_helper_9_helperkit_lit(5),\"total\".to_string()"
                 ),
             "expected nested helper calls to keep independent call planning, got:\n{generated_main_rs}"
         );
@@ -7041,11 +7157,11 @@ def main() -> None:
 
         assert!(
             generated_main_rs.contains("querykit::count(")
-                || generated_main_rs.contains("__incan_vocab_helper_querykit_count("),
+                || generated_main_rs.contains("__incan_vocab_helper_8_querykit_count("),
             "expected omitted count() argument to be filled from the helper's default expression, got:\n{generated_main_rs}"
         );
         assert!(
-            !generated_main_rs.contains("__incan_vocab_helper_querykit_count()"),
+            !generated_main_rs.contains("__incan_vocab_helper_8_querykit_count()"),
             "helper default planning must not emit a zero-argument Rust count call, got:\n{generated_main_rs}"
         );
         assert!(
@@ -7101,12 +7217,12 @@ def main() -> None:
         );
         assert!(
             generated_main_rs.contains("querykit::count(")
-                || generated_main_rs.contains("__incan_vocab_helper_querykit_count("),
+                || generated_main_rs.contains("__incan_vocab_helper_8_querykit_count("),
             "expected omitted count() argument to be filled from the helper's default expression, got:\n{generated_main_rs}"
         );
         assert!(
             !generated_main_rs.contains("querykit::count()")
-                && !generated_main_rs.contains("__incan_vocab_helper_querykit_count()"),
+                && !generated_main_rs.contains("__incan_vocab_helper_8_querykit_count()"),
             "ordinary pub helper default planning must not emit a zero-argument Rust count call, got:\n{generated_main_rs}"
         );
         assert!(

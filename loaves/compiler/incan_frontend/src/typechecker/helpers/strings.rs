@@ -79,6 +79,7 @@ fn string_method_return_for_id(id: StringMethodId, include_len: bool) -> Option<
         | StringMethodId::ToString => Some(ResolvedType::Str),
         StringMethodId::SplitWhitespace | StringMethodId::Split => Some(list_ty(ResolvedType::Str)),
         StringMethodId::Contains | StringMethodId::StartsWith | StringMethodId::EndsWith => Some(ResolvedType::Bool),
+        StringMethodId::Encode => Some(ResolvedType::Bytes),
         StringMethodId::Len if include_len => Some(ResolvedType::Int),
         StringMethodId::IsEmpty if include_len => Some(ResolvedType::Bool),
         _ => None,

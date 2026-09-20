@@ -11,10 +11,11 @@ use quote::quote;
 use super::super::{EmitError, IrEmitter};
 use crate::ownership::{
     ComprehensionIterationPlan, dict_comprehension_key_needs_clone, plan_dict_comprehension_iteration,
-    plan_list_comprehension_iteration, plan_owned_iterator_source,
+    plan_list_comprehension_iteration, plan_opaque_comprehension_source, plan_owned_iterator_source,
 };
 use incan_ir::expr::{
-    BuiltinFn, FormatPart, IrCallArg, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, Pattern, TypedExpr,
+    BuiltinFn, CollectionMethodKind, FormatPart, IrCallArg, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry,
+    MethodKind, Pattern, TypedExpr,
 };
 use incan_ir::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use incan_ir::types::IrType;
@@ -358,14 +359,60 @@ impl<'a> IrEmitter<'a> {
                 func: BuiltinFn::Enumerate,
                 args,
             } => self.emit_owned_enumerate_iter(args).map(Some),
-            IrExprKind::MethodCall {
-                receiver, method, args, ..
-            } if method == "keys" && args.is_empty() && matches!(receiver.ty, IrType::Dict(_, _)) => {
-                let receiver_tokens = self.emit_expr(receiver)?;
-                Ok(Some(quote! { (#receiver_tokens).keys().cloned() }))
+            _ => {
+                if let Some(iter) = self.emit_direct_dict_view_iter(iterable)? {
+                    return Ok(Some(iter));
+                }
+                self.emit_opaque_comprehension_source(iterable)
             }
-            _ => Ok(None),
         }
+    }
+
+    /// Emit a comprehension source that is not an Incan collection as the owned `IntoIterator` a `for` statement
+    /// over the same value already takes, or `None` when the source has a borrowed item plan of its own.
+    ///
+    /// Migration note (rust_source_backend_deprecation.md):
+    /// - Compatibility issue: #1490 -- `[argument for argument in args()]` over the by-value `std::env::Args` iterator
+    ///   emitted `.iter()`, which the type does not have, while `for argument in args()` compiled.
+    /// - Behavior evidence: the `issue1490_comprehension_over_rust_iterator` codegen snapshot and the Oven-built
+    ///   program in `cli_rust_interop_tests`.
+    /// - Semantic owner: the checked source type and `plan_opaque_comprehension_source` in the ownership planner; this
+    ///   helper only realizes that plan.
+    /// - Retirement condition: the Rust-source backend is deleted (#654); Body IR already lowers a comprehension clause
+    ///   and a `for` statement through the same general-iteration path.
+    fn emit_opaque_comprehension_source(&self, iterable: &TypedExpr) -> Result<Option<TokenStream>, EmitError> {
+        let Some(plan) = plan_opaque_comprehension_source(iterable) else {
+            return Ok(None);
+        };
+        let source = plan.apply(self.emit_expr(iterable)?);
+        Ok(Some(quote! { #source.into_iter() }))
+    }
+
+    /// Emit `dict.keys()` / `dict.values()` as a direct owned-item iterator for a loop or comprehension source.
+    ///
+    /// In value position those calls materialize the `list` the typechecker reports (see `emit_collection_method`);
+    /// a loop or comprehension does not need the allocation, only owned items that match the typechecker's `K` / `V`
+    /// item typing, so the borrowed view is cloned per item instead of collected (#1668).
+    pub(in crate::emit) fn emit_direct_dict_view_iter(
+        &self,
+        iterable: &TypedExpr,
+    ) -> Result<Option<TokenStream>, EmitError> {
+        let IrExprKind::KnownMethodCall {
+            receiver,
+            kind: MethodKind::Collection(kind @ (CollectionMethodKind::Keys | CollectionMethodKind::Values)),
+            args,
+        } = &iterable.kind
+        else {
+            return Ok(None);
+        };
+        if !args.is_empty() {
+            return Ok(None);
+        }
+        let receiver_tokens = self.emit_expr(receiver)?;
+        Ok(Some(match kind {
+            CollectionMethodKind::Keys => quote! { (#receiver_tokens).keys().cloned() },
+            _ => quote! { (#receiver_tokens).values().cloned() },
+        }))
     }
 
     /// Emit `enumerate(xs)` for comprehension closures, cloning values to match the typechecker's owned tuple item

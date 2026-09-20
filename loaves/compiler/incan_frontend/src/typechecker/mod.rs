@@ -63,11 +63,11 @@ pub use type_info::{
     CheckedSourceBinding, ComputedPropertyAccessInfo, DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo,
     FixedUnpackPlan, FunctionBindingInfo, IdentKind, ImportedRegistryDefinitionInfo, MutableRustTypeArgumentProjection,
     PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind, ProtocolIterationInfo,
-    ProviderOperationDeclarationInfo, RegistryArtifacts, RegistryDefinitionInfo, RegistryDescriptionRegistry,
-    RegistryExplicitEntryInfo, ResolvedMethodCall, ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind,
-    RustArgCoercionInfo, RustArgCoercionKind, SourceTargetInfo, StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo,
-    ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode, ValidatedNewtypeCoercionStep,
-    c_binding_descriptor_identity,
+    ProviderOperationDeclarationInfo, QualifiedTypeReferenceInfo, RegistryArtifacts, RegistryDefinitionInfo,
+    RegistryDescriptionRegistry, RegistryExplicitEntryInfo, ResolvedMethodCall, ResolvedMethodDispatch,
+    ResolvedOperatorCall, ResolvedOperatorKind, RustArgCoercionInfo, RustArgCoercionKind, SourceTargetInfo,
+    StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo, ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode,
+    ValidatedNewtypeCoercionStep, c_binding_descriptor_identity,
 };
 pub use type_info::{ClassFieldDefaultInfo, semantic_type_from_resolved};
 #[cfg(test)]
@@ -102,6 +102,7 @@ use incan_lang::interop::{
     split_top_level_rust_args, strip_rust_borrow_lifetimes,
 };
 use incan_lang::lang::builtins::{self, BuiltinFnId};
+use incan_lang::lang::c_abi;
 use incan_lang::lang::conventions;
 use incan_lang::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_lang::lang::errors as runtime_errors;
@@ -380,6 +381,18 @@ impl Drop for TypeCompatibilityDepthGuard<'_> {
     }
 }
 
+/// The callable whose signature and body annotations the checker is currently resolving.
+///
+/// Retained only to word the unknown-type-name diagnostic: the suggestion appends the unknown name to the callable's
+/// declared type parameters (#1373). It carries no semantic authority and is never exported.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AnnotationOwner {
+    /// Source-visible callable name.
+    name: String,
+    /// Type parameters the callable already declares, in declaration order.
+    declared_type_params: Vec<String>,
+}
+
 pub struct TypeChecker {
     /// Symbol table populated during the first pass.
     pub symbols: SymbolTable,
@@ -473,6 +486,11 @@ pub struct TypeChecker {
     validate_source_type_names: bool,
     /// Unbound source annotation diagnostics already emitted in the current program check.
     unknown_source_type_names_emitted: HashSet<(String, usize, usize)>,
+    /// The callable whose signature and body annotations are being checked, when one is active.
+    ///
+    /// An unknown type name inside a callable is most likely a type parameter that was never declared, so the
+    /// unknown-symbol diagnostic names this callable and its declared parameters in its suggestion (#1373).
+    annotation_owner: Option<AnnotationOwner>,
     /// Declaration-order index for each local static binding.
     pub static_decl_positions: HashMap<String, usize>,
     /// Whether the active expression is the initializer of a `RegistryEntry[K, T]` module static.
@@ -732,6 +750,7 @@ impl TypeChecker {
             dependency_import_type_alias_transaction: None,
             validate_source_type_names: false,
             unknown_source_type_names_emitted: HashSet::new(),
+            annotation_owner: None,
             static_decl_positions: HashMap::new(),
             checking_registry_entry_static_initializer: false,
             checking_callable_default: false,
@@ -4640,56 +4659,160 @@ impl TypeChecker {
     }
 
     /// Record one type reached through an already-resolved Incan module binding.
+    ///
+    /// The spelling was resolved by [`Self::resolve_qualified_type_annotations`] before this walk; this only attaches
+    /// that proven identity to the reference site's own span.
     fn record_dotted_type_reference_identity(&mut self, segments: &[String], span: Span) {
-        let Some((root, remainder)) = segments.split_first() else {
-            return;
-        };
-        let Some((name, nested_module)) = remainder.split_last() else {
-            return;
-        };
-        let Some(mut module_path) = self.lookup_symbol(root).and_then(|symbol| match &symbol.kind {
-            SymbolKind::Module(info) if !info.is_python => Some(info.path.clone()),
-            _ => None,
-        }) else {
-            return;
-        };
-        module_path.extend(nested_module.iter().cloned());
-
-        let identity = if module_path.len() >= 2 && module_path.first().is_some_and(|part| part == "pub") {
-            self.resolve_pub_library_module_symbol_member(&module_path[1], &module_path[2..], name)
-                .ok()
-                .flatten()
-                .and_then(|resolved| {
-                    matches!(resolved.kind, SymbolKind::Type(_) | SymbolKind::Trait(_)).then_some(resolved.canonical)?
-                })
-        } else {
-            let import = ImportPath::simple(module_path.clone());
-            let type_like = self
-                .dependency_member_symbol_for_path(&import, name)
-                .is_some_and(|kind| matches!(kind, SymbolKind::Type(_) | SymbolKind::Trait(_)));
-            if type_like {
-                self.dependency_member_identity(&import, name)
-                    .or_else(|| self.stdlib_cache.lookup_identity(&module_path, name))
-            } else {
-                self.stdlib_cache
-                    .lookup_identity(&module_path, name)
-                    .filter(|identity| {
-                        matches!(
-                            identity.kind,
-                            SemanticSourceTargetKind::Model
-                                | SemanticSourceTargetKind::Class
-                                | SemanticSourceTargetKind::Newtype
-                                | SemanticSourceTargetKind::Rusttype
-                                | SemanticSourceTargetKind::Enum
-                                | SemanticSourceTargetKind::TypeAlias
-                                | SemanticSourceTargetKind::Trait
-                        )
-                    })
-            }
-        };
-        if let Some(identity) = identity {
+        let spelling = segments.join(".");
+        if let Some(identity) = self
+            .type_info
+            .qualified_type_reference(&spelling)
+            .map(|reference| reference.identity.clone())
+        {
             self.type_info.record_resolved_identity(span, identity);
         }
+    }
+
+    /// Resolve every module-qualified spelling (`mod.Type`, `mod.Box[T]`) inside one annotation before the
+    /// annotation itself is resolved.
+    ///
+    /// The shared type resolver only sees the symbol table, while a qualified spelling resolves through the module
+    /// member registry, the stdlib cache, or a public library's checked manifest. So the checker proves each spelling
+    /// here first and records the result keyed by the spelling; the resolver then reads that fact, and so does
+    /// lowering when it places the nominal type. Nothing is reported here: the validation walk owns the diagnostic
+    /// for a spelling that did not resolve, so it fires once in the checking pass like the other annotation
+    /// diagnostics, while the facts are needed during declaration collection as well.
+    fn resolve_qualified_type_annotations(&mut self, ty: &Spanned<Type>) {
+        match &ty.node {
+            Type::Dotted(segments) => self.resolve_qualified_type_annotation(segments),
+            Type::DottedGeneric(segments, args) => {
+                self.resolve_qualified_type_annotation(segments);
+                for arg in args {
+                    self.resolve_qualified_type_annotations(arg);
+                }
+            }
+            Type::Generic(_, args) | Type::Tuple(args) => {
+                for arg in args {
+                    self.resolve_qualified_type_annotations(arg);
+                }
+            }
+            Type::Function(params, ret) => {
+                for param in params {
+                    self.resolve_qualified_type_annotations(param);
+                }
+                self.resolve_qualified_type_annotations(ret);
+            }
+            Type::Ref(inner) | Type::RefMut(inner) => self.resolve_qualified_type_annotations(inner),
+            Type::Simple(_)
+            | Type::Qualified(_)
+            | Type::ConstrainedPrimitive(..)
+            | Type::IntLiteral(_)
+            | Type::Unit
+            | Type::SelfType
+            | Type::Infer => {}
+        }
+    }
+
+    /// Resolve one module-qualified type spelling and retain the proof under that spelling.
+    ///
+    /// A spelling is a module-scope fact -- its root is a module binding and its tail names a member of that module --
+    /// so every occurrence in one module resolves the same way. It is still resolved afresh each time rather than
+    /// memoized: dependency interfaces are collected through this same path before the consumer's facts are reset,
+    /// and two dependencies can spell `errors.T` against different `errors` bindings, so a remembered answer could
+    /// outlive the binding it was proven against. A failed resolution removes any earlier entry for the same reason.
+    fn resolve_qualified_type_annotation(&mut self, segments: &[String]) {
+        let spelling = segments.join(".");
+        match self.qualified_type_declaration(segments) {
+            Some(reference) => {
+                self.type_info
+                    .declarations
+                    .qualified_type_references
+                    .insert(spelling, reference);
+            }
+            None => {
+                self.type_info.declarations.qualified_type_references.remove(&spelling);
+            }
+        }
+    }
+
+    /// Resolve the declaration a module-qualified type spelling names, if the checker can prove one.
+    ///
+    /// The root must be an Incan module binding; the remaining segments walk nested modules and end at a member that
+    /// declares a type or trait. Three registries can own that member, and each is consulted the way the matching
+    /// direct import would be: a public library through its checked manifest, a source dependency through the module
+    /// member registry, and a stdlib module through its cache. The resolved type is the one that direct import would
+    /// have bound -- the declaration's own name, the target of a non-generic source type alias, or the
+    /// provider-qualified spelling for a public library -- so values checked against either spelling of the same
+    /// declaration are compatible. `None` means no type was proven; it never means "assume the written path".
+    fn qualified_type_declaration(&mut self, segments: &[String]) -> Option<QualifiedTypeReferenceInfo> {
+        let (root, remainder) = segments.split_first()?;
+        let (name, nested_module) = remainder.split_last()?;
+        let mut module_path = self.lookup_symbol(root).and_then(|symbol| match &symbol.kind {
+            SymbolKind::Module(info) if !info.is_python => Some(info.path.clone()),
+            _ => None,
+        })?;
+        module_path.extend(nested_module.iter().cloned());
+
+        // ---- Public library module: the checked manifest owns both the identity and the qualified type name ----
+        if module_path.len() >= 2 && module_path.first().is_some_and(|part| part == "pub") {
+            let resolved = self
+                .resolve_pub_library_module_symbol_member(&module_path[1], &module_path[2..], name)
+                .ok()
+                .flatten()?;
+            if !matches!(resolved.kind, SymbolKind::Type(_) | SymbolKind::Trait(_)) {
+                return None;
+            }
+            let identity = resolved.canonical?;
+            let mut source_type_path = resolved.source_module_path.iter().skip(2).cloned().collect::<Vec<_>>();
+            source_type_path.push(resolved.source_name);
+            let canonical_name = canonical_public_library_type_name(&module_path[1], &source_type_path.join("::"));
+            return Some(QualifiedTypeReferenceInfo {
+                identity,
+                module_path,
+                resolved: ResolvedType::Named(canonical_name),
+            });
+        }
+
+        // ---- Source dependency or stdlib module: the member registry proves the kind, the caches the identity ----
+        let import = ImportPath::simple(module_path.clone());
+        let member_kind = self.dependency_member_symbol_for_path(&import, name);
+        let type_like = member_kind
+            .as_ref()
+            .is_some_and(|kind| matches!(kind, SymbolKind::Type(_) | SymbolKind::Trait(_)));
+        let identity = if type_like {
+            self.dependency_member_identity(&import, name)
+                .or_else(|| self.stdlib_cache.lookup_identity(&module_path, name))
+        } else {
+            self.stdlib_cache
+                .lookup_identity(&module_path, name)
+                .filter(|identity| {
+                    matches!(
+                        identity.kind,
+                        SemanticSourceTargetKind::Model
+                            | SemanticSourceTargetKind::Class
+                            | SemanticSourceTargetKind::Newtype
+                            | SemanticSourceTargetKind::Rusttype
+                            | SemanticSourceTargetKind::Enum
+                            | SemanticSourceTargetKind::TypeAlias
+                            | SemanticSourceTargetKind::Trait
+                    )
+                })
+        }?;
+        // A direct import of a type alias registers its target and lets alias expansion replace the name; the
+        // qualified spelling registers nothing local, so the target is the resolved type here. A generic alias
+        // needs its arguments substituted, which only the local alias registry does, so it keeps the nominal name.
+        let resolved = match member_kind {
+            Some(SymbolKind::Type(TypeInfo::TypeAlias)) => self
+                .dependency_member_type_alias_for_path(&import, name)
+                .filter(|alias| alias.type_params.is_empty())
+                .map_or_else(|| ResolvedType::Named(name.clone()), |alias| alias.target),
+            _ => ResolvedType::Named(name.clone()),
+        };
+        Some(QualifiedTypeReferenceInfo {
+            identity,
+            module_path,
+            resolved,
+        })
     }
 
     /// Record one type-like lexical binding without guessing an identity from its source spelling.
@@ -4894,6 +5017,7 @@ impl TypeChecker {
 
     /// Resolve a type annotation and emit diagnostics for reserved or invalid type spellings.
     fn resolve_type_checked(&mut self, ty: &Spanned<Type>) -> ResolvedType {
+        self.resolve_qualified_type_annotations(ty);
         if self.validate_source_type_names {
             self.validate_source_type_annotation_names(&ty.node, ty.span);
             self.record_type_reference_identities(ty);
@@ -4927,9 +5051,20 @@ impl TypeChecker {
             &self.symbols,
             &|arg| self.render_provider_aware_rust_arg(arg),
             &|arg| self.canonicalize_public_library_nominals(arg),
+            &|segments| self.qualified_type_annotation_resolved_type(segments),
         );
         self.record_mutable_rust_type_argument_projection(ty);
         self.expand_type_aliases(resolved)
+    }
+
+    /// Return the nominal type a module-qualified spelling was proven to name, for the shared type resolver.
+    ///
+    /// The proof was recorded by [`Self::resolve_qualified_type_annotations`]; an unproven spelling stays `None` so
+    /// the resolver yields `Unknown` and the validation walk reports it.
+    fn qualified_type_annotation_resolved_type(&self, segments: &[String]) -> Option<ResolvedType> {
+        self.type_info
+            .qualified_type_reference(&segments.join("."))
+            .map(|reference| reference.resolved.clone())
     }
 
     /// Preserve a metadata-directed mutable-reference projection for one imported Rust generic annotation.
@@ -4964,6 +5099,7 @@ impl TypeChecker {
                     &self.symbols,
                     &|arg| self.render_provider_aware_rust_arg(arg),
                     &|arg| self.canonicalize_public_library_nominals(arg),
+                    &|segments| self.qualified_type_annotation_resolved_type(segments),
                 )
             })
             .collect::<Vec<_>>();
@@ -5373,12 +5509,70 @@ impl TypeChecker {
         }
     }
 
-    /// Validate a namespace-qualified type such as `c.i32`.
+    /// Reject a module-qualified type annotation (`mod.Type`) the checker could not resolve to a declaration.
+    ///
+    /// An unbound root is an unknown symbol like any other. A bound root that is not a module, or a module that
+    /// declares no such type, is refused with its own message: the spelling would otherwise resolve to `Unknown`
+    /// and reach lowering as a dotted name, which the Rust emitter cannot spell (#1437). A spelling that resolved
+    /// has its proof recorded under [`DeclarationArtifacts::qualified_type_references`] and needs nothing here.
+    ///
+    /// The C interop namespace is the one dotted root that is not a module: `c.i32` or `c.Owned[T]` names a
+    /// vocabulary carrier that the checked-binding facet interprets, and `from std.interop import c` binds `c` as
+    /// that namespace's marker type. Those spellings are accepted here exactly as they were before qualified module
+    /// types resolved, so a safe facade over a binding keeps checking.
     fn validate_source_dotted_type_annotation(&mut self, segments: &[String], span: Span) {
-        if let Some(root) = segments.first()
-            && self.symbols.lookup(root).is_none()
-        {
+        let Some((root, remainder)) = segments.split_first() else {
+            return;
+        };
+        if self.symbols.lookup(root).is_none() {
             self.emit_unknown_source_type_annotation_name(root, span);
+            return;
+        }
+        let spelling = segments.join(".");
+        if self.type_info.qualified_type_reference(&spelling).is_some() {
+            return;
+        }
+        if self
+            .import_binding_path(root)
+            .is_some_and(|path| c_abi::is_interop_namespace_path(path.iter().map(String::as_str)))
+        {
+            return;
+        }
+        let key = (spelling.clone(), span.start, span.end);
+        if !self.unknown_source_type_names_emitted.insert(key) {
+            return;
+        }
+        let module_path = self.lookup_symbol(root).and_then(|symbol| match &symbol.kind {
+            SymbolKind::Module(info) if !info.is_python => Some(info.path.clone()),
+            _ => None,
+        });
+        let error = match (module_path, remainder.split_last()) {
+            (Some(mut module_path), Some((member, nested))) => {
+                module_path.extend(nested.iter().cloned());
+                let module = Self::module_import_spelling(&module_path);
+                errors::qualified_type_not_declared(&spelling, &module, member, span)
+            }
+            _ => errors::qualified_type_root_not_a_module(&spelling, root, span),
+        };
+        self.errors.push(error);
+    }
+
+    /// Render a checked module path the way an import statement spells it, for a diagnostic.
+    ///
+    /// The path is the binding's resolved one rather than the alias the author wrote, so the message names the
+    /// module that was actually searched (`beta`, not `m`) and its hint is a spelling that imports from it. A
+    /// public library carries its `pub::` marker and dots below the library name, as the import reference documents.
+    fn module_import_spelling(module_path: &[String]) -> String {
+        match module_path {
+            [root, library, rest @ ..] if root == PUBLIC_LIBRARY_NAMESPACE => {
+                let mut spelling = format!("{root}::{library}");
+                if !rest.is_empty() {
+                    spelling.push('.');
+                    spelling.push_str(&rest.join("."));
+                }
+                spelling
+            }
+            _ => module_path.join("."),
         }
     }
 
@@ -5401,11 +5595,29 @@ impl TypeChecker {
     }
 
     /// Emit at most one unknown-symbol diagnostic for one source annotation occurrence.
+    ///
+    /// Inside a callable the diagnostic suggests declaring the name as a type parameter of that callable; elsewhere
+    /// it keeps the import-or-define remedy.
     fn emit_unknown_source_type_annotation_name(&mut self, name: &str, span: Span) {
         let key = (name.to_string(), span.start, span.end);
-        if self.unknown_source_type_names_emitted.insert(key) {
-            self.errors.push(errors::unknown_symbol(name, span));
+        if !self.unknown_source_type_names_emitted.insert(key) {
+            return;
         }
+        let error = match &self.annotation_owner {
+            Some(owner) => {
+                errors::unknown_type_parameter_candidate(name, &owner.name, &owner.declared_type_params, span)
+            }
+            None => errors::unknown_symbol(name, span),
+        };
+        self.errors.push(error);
+    }
+
+    /// Make `owner` the callable whose annotations are being checked, returning the previous owner to restore.
+    fn enter_annotation_owner(&mut self, name: &str, type_params: &[TypeParam]) -> Option<AnnotationOwner> {
+        self.annotation_owner.replace(AnnotationOwner {
+            name: name.to_string(),
+            declared_type_params: type_params.iter().map(|param| param.name.clone()).collect(),
+        })
     }
 
     /// Return whether a simple type name is reserved for a parameterized numeric family.
@@ -6631,7 +6843,7 @@ impl TypeChecker {
             .unwrap_or_else(|| vec![module_name.to_string()]);
         for (exported_name, module, item_name) in Self::dependency_source_reexport_targets(module_ast) {
             reexports.insert(exported_name.clone(), (module.clone(), item_name.clone()));
-            if let Some(kind) = self.dependency_reexported_function_symbol(&facade_module_path, &module, &item_name) {
+            if let Some(kind) = self.dependency_reexported_member_symbol(&facade_module_path, &module, &item_name) {
                 member_symbols.insert(exported_name.clone(), kind);
             }
             if let Some(target) =
@@ -6656,8 +6868,20 @@ impl TypeChecker {
             .insert(module_name.to_string(), member_projections);
     }
 
-    /// Resolve a function re-export from either another source dependency or the compiler-owned stdlib metadata.
-    fn dependency_reexported_function_symbol(
+    /// Resolve a re-exported member from another source dependency, an active SDK provider, or the compiler-owned
+    /// stdlib source metadata, in that order.
+    ///
+    /// A facade that republishes `std.*` must bind the same declaration a direct `from std.x import f` binds. When an
+    /// active provider owns the module, that is the provider's checked declaration: its identity is what lets lowering
+    /// recover the compiled signature, defaults included. Falling back to the source cache there would hand the
+    /// source tree semantic authority again and leave the re-export identity-less, so it stays reserved for sessions
+    /// no provider serves.
+    ///
+    /// A facade that writes `from std.serde.json import Serialize` re-exports that trait exactly as it re-exports a
+    /// function, so a consumer importing the spelling from the facade must bind the stdlib trait rather than a module
+    /// placeholder: the placeholder let adoption and method calls through unproven, and lowering then had only the
+    /// spelling to key the trait's protocol on (#1431).
+    fn dependency_reexported_member_symbol(
         &mut self,
         base_module_path: &[String],
         module: &ImportPath,
@@ -6670,7 +6894,73 @@ impl TypeChecker {
         if module_path.first().map(String::as_str) != Some(incan_lang::lang::stdlib::STDLIB_ROOT) {
             return None;
         }
-        self.stdlib_cache.lookup_function_symbol(&module_path, item_name)
+        if let Some(kind) = self.sdk_provider_member_symbol(module, item_name).filter(|kind| {
+            matches!(
+                kind,
+                SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_) | SymbolKind::Trait(_)
+            )
+        }) {
+            return Some(kind);
+        }
+        if self.checked_sdk_provider_owns_module(&module_path) {
+            return None;
+        }
+        self.stdlib_cache
+            .lookup_function_symbol(&module_path, item_name)
+            .or_else(|| {
+                self.stdlib_cache
+                    .lookup_trait(&module_path, item_name)
+                    .map(SymbolKind::Trait)
+            })
+    }
+
+    /// Return the checked symbol an active SDK provider publishes under one spelled `std.*` member path.
+    ///
+    /// Provider modules are seeded under their public dotted spelling rather than the underscore-joined keys source
+    /// dependencies use, so ordinary candidate resolution never reaches them. This is the one lookup both direct
+    /// imports and facade re-exports share for that registry.
+    fn sdk_provider_member_symbol(&self, module: &ImportPath, item_name: &str) -> Option<SymbolKind> {
+        if module.parent_levels != 0 {
+            return None;
+        }
+        let provider_key = canonicalize_source_module_segments(&module.segments).join(".");
+        self.dependency_direct_member_symbols
+            .get(&provider_key)?
+            .get(item_name)
+            .cloned()
+    }
+
+    /// Return the canonical identity an active SDK provider publishes under one spelled `std.*` member path.
+    ///
+    /// The identity is absent for a provider overload set, whose spelling selects no single declaration, and stays
+    /// absent rather than being reconstructed from the member symbol.
+    fn sdk_provider_member_identity(&self, module: &ImportPath, item_name: &str) -> Option<CanonicalSymbolId> {
+        if module.parent_levels != 0 {
+            return None;
+        }
+        let provider_key = canonicalize_source_module_segments(&module.segments).join(".");
+        if !self
+            .dependency_direct_member_symbols
+            .get(&provider_key)
+            .is_some_and(|members| members.contains_key(item_name))
+        {
+            return None;
+        }
+        self.dependency_direct_member_identities
+            .get(&provider_key)
+            .and_then(|identities| identities.get(item_name))
+            .cloned()
+    }
+
+    /// Return whether a checked, manifest-backed SDK provider owns one canonical `std.*` module path.
+    ///
+    /// Where it does, the stdlib source cache is never consulted for that module. This is the refusal the direct
+    /// import route applies, and the facade hops apply it identically so a re-export cannot hand the source tree the
+    /// semantic authority a direct import denies it, nor bind a symbol whose identity the provider never published.
+    fn checked_sdk_provider_owns_module(&self, module_path: &[String]) -> bool {
+        self.provider_plan
+            .active_sdk_provider_for_module(module_path)
+            .is_some_and(|provider| provider.manifest.is_some())
     }
 
     /// Cache direct declarations owned by one dependency module.
@@ -7111,21 +7401,7 @@ impl TypeChecker {
         // It must stay a fallback. Running it first let the spelling pre-empt resolution: `from helpers import
         // render` inside `pkg.app` selects the sibling `pkg.helpers`, but a root `helpers` declaring the same member
         // answered instead -- a module the import did not select.
-        if module.parent_levels == 0 {
-            let provider_key = canonicalize_source_module_segments(&module.segments).join(".");
-            if self
-                .dependency_direct_member_symbols
-                .get(&provider_key)
-                .is_some_and(|members| members.contains_key(item_name))
-            {
-                return self
-                    .dependency_direct_member_identities
-                    .get(&provider_key)
-                    .and_then(|identities| identities.get(item_name))
-                    .cloned();
-            }
-        }
-        None
+        self.sdk_provider_member_identity(module, item_name)
     }
 
     /// Resolve one imported member to its declaring identity, using `from_module_path` as the resolution base.
@@ -7169,11 +7445,49 @@ impl TypeChecker {
 
             // Otherwise the member arrived here as a re-export. Follow it to the declaration it names, resolving
             // against the facade's own module — the same base `cache_dependency_member_symbols` used when it bound
-            // that link, so the identity names exactly the declaration the binding selected.
+            // that link, so the identity names exactly the declaration the binding selected. A link into `std.*`
+            // reaches the same provider registry and source metadata the binding itself came from, in the same order.
             let (target_module, target_name) = self.dependency_member_reexports.get(&key)?.get(item_name)?;
-            return self.dependency_member_identity_from(&owner, target_module, target_name, depth + 1);
+            return self
+                .dependency_member_identity_from(&owner, target_module, target_name, depth + 1)
+                .or_else(|| self.stdlib_reexport_identity(target_module, target_name));
+        }
+        // A chain that ends in a compiler-owned stdlib module has no dependency candidate to stop at; the stdlib
+        // cache holds that module's declaration identities. Only a chain reaches here with a stdlib path: a direct
+        // stdlib import proves its identity through the loading lookup instead.
+        if depth > 0 && module.parent_levels == 0 && !module.is_absolute {
+            let module_path = canonicalize_source_module_segments(&module.segments);
+            if module_path.first().map(String::as_str) == Some(incan_lang::lang::stdlib::STDLIB_ROOT) {
+                return self.stdlib_cache.cached_identity(&module_path, item_name);
+            }
         }
         None
+    }
+
+    /// Return the identity behind a facade re-export of a `std.*` member: the active SDK provider's, or the source
+    /// metadata's where no checked provider serves the module.
+    ///
+    /// This is the identity half of [`Self::dependency_reexported_member_symbol`] and follows it hop for hop, so the
+    /// identity a facade records is the identity of the symbol it bound: a chain that ends in a compiler-owned stdlib
+    /// module has no dependency candidate to stop at, and the provider registry or the stdlib cache holds that
+    /// module's declaration identities. The source identity is read from the already-populated cache because the
+    /// facade's binding loaded the module while it resolved the member symbol; a module that was never loaded never
+    /// bound the re-export in the first place. A direct stdlib import proves its identity through the loading lookup
+    /// instead.
+    fn stdlib_reexport_identity(&self, module: &ImportPath, item_name: &str) -> Option<CanonicalSymbolId> {
+        if let Some(identity) = self.sdk_provider_member_identity(module, item_name) {
+            return Some(identity);
+        }
+        if module.parent_levels != 0 || module.is_absolute {
+            return None;
+        }
+        let module_path = canonicalize_source_module_segments(&module.segments);
+        if module_path.first().map(String::as_str) != Some(incan_lang::lang::stdlib::STDLIB_ROOT)
+            || self.checked_sdk_provider_owns_module(&module_path)
+        {
+            return None;
+        }
+        self.stdlib_cache.cached_identity(&module_path, item_name)
     }
 
     /// Return one imported registry's checked defining contract and canonical owner path.

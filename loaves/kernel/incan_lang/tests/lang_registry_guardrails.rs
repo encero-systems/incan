@@ -9,8 +9,12 @@ use incan_lang::lang::operators;
 use incan_lang::lang::punctuation;
 use incan_lang::lang::registry::{RFC, Since};
 use incan_lang::lang::surface::types::{SurfaceTypeCategory, SurfaceTypeId, SurfaceTypeOwner};
-use incan_lang::lang::surface::{constructors, functions, iterator_methods, result_methods, types as surface_types};
+use incan_lang::lang::surface::{
+    bytes_methods, constructors, dict_methods, functions, iterator_methods, result_methods, string_methods,
+    types as surface_types,
+};
 use incan_lang::lang::testing;
+use incan_lang::lang::trait_bounds;
 use incan_lang::lang::traits;
 use incan_lang::lang::types::{collections, numerics, stringlike};
 use std::path::{Path, PathBuf};
@@ -259,6 +263,35 @@ fn derives_spellings_unique_and_resolvable() {
     });
 }
 
+/// A derive implements the Rust trait, so a bound spelled with the same name must lower to that Rust trait.
+///
+/// A source-owned builtin trait (one with a `std.derives` source module) otherwise lowers to the generated
+/// `__incan_std` trait, which no derived type implements and which a plain program never materializes (#1374).
+#[test]
+fn derivable_source_owned_traits_have_rust_bound_mappings() {
+    for derive in derives::DERIVES {
+        let Some(trait_id) = traits::from_str(derive.canonical) else {
+            continue;
+        };
+        if traits::source_module(trait_id).is_none() {
+            continue;
+        }
+        assert!(
+            trait_bounds::incan_to_rust(derive.canonical).is_some(),
+            "derivable source-owned trait `{}` has no Rust trait-bound mapping",
+            derive.canonical
+        );
+    }
+    assert_eq!(
+        trait_bounds::incan_to_rust(traits::as_str(traits::TraitId::Default)),
+        Some(trait_bounds::rust::DEFAULT)
+    );
+    assert_eq!(
+        trait_bounds::rust_path(trait_bounds::TraitBoundId::Default),
+        Some(trait_bounds::rust::DEFAULT)
+    );
+}
+
 #[test]
 fn traits_spellings_unique_and_resolvable() {
     assert_registry_round_trip(RegistryRoundTrip {
@@ -327,6 +360,63 @@ fn iterator_methods_spellings_unique_and_resolvable() {
         from_str: iterator_methods::from_str,
         as_str: iterator_methods::as_str,
     });
+}
+
+#[test]
+fn string_methods_spellings_unique_and_resolvable() {
+    assert_registry_round_trip(RegistryRoundTrip {
+        label: "string method",
+        expected_len: 14,
+        items: string_methods::STRING_METHODS,
+        id_of: |info| info.id,
+        canonical_of: |info| info.canonical,
+        aliases_of: |info| info.aliases,
+        from_str: string_methods::from_str,
+        as_str: string_methods::as_str,
+    });
+    assert_eq!(
+        string_methods::from_str("encode"),
+        Some(string_methods::StringMethodId::Encode),
+        "the #1668 text return trip starts at str.encode"
+    );
+}
+
+#[test]
+fn bytes_methods_spellings_unique_and_resolvable() {
+    assert_registry_round_trip(RegistryRoundTrip {
+        label: "bytes method",
+        expected_len: 1,
+        items: bytes_methods::BYTES_METHODS,
+        id_of: |info| info.id,
+        canonical_of: |info| info.canonical,
+        aliases_of: |info| info.aliases,
+        from_str: bytes_methods::from_str,
+        as_str: bytes_methods::as_str,
+    });
+    assert_eq!(
+        bytes_methods::from_str("decode"),
+        Some(bytes_methods::BytesMethodId::Decode),
+        "the #1668 text return trip ends at bytes.decode"
+    );
+}
+
+#[test]
+fn dict_methods_spellings_unique_and_resolvable() {
+    assert_registry_round_trip(RegistryRoundTrip {
+        label: "dict method",
+        expected_len: 5,
+        items: dict_methods::DICT_METHODS,
+        id_of: |info| info.id,
+        canonical_of: |info| info.canonical,
+        aliases_of: |info| info.aliases,
+        from_str: dict_methods::from_str,
+        as_str: dict_methods::as_str,
+    });
+    assert_eq!(
+        dict_methods::from_str("contains_key"),
+        Some(dict_methods::DictMethodId::ContainsKey),
+        "mutable Dict answers contains_key like FrozenDict (#1668)"
+    );
 }
 
 #[test]

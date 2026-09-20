@@ -1091,6 +1091,30 @@ fn render_surface_methods_section(out: &mut String) {
     }
     out.push('\n');
 
+    out.push_str("\n### Bytes methods\n\n");
+    out.push_str(table_header());
+    for m in surface::bytes_methods::BYTES_METHODS {
+        let id = format!("{:?}", m.id);
+        let canonical = format!("`{}`", m.canonical);
+        let aliases = if m.aliases.is_empty() {
+            String::new()
+        } else {
+            m.aliases
+                .iter()
+                .map(|a| format!("`{}`", a))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let desc = m.description;
+        let rfc = m.introduced_in_rfc;
+        let since = m.since;
+        let stability = format!("{:?}", m.stability);
+        out.push_str(&format!(
+            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
+        ));
+    }
+    out.push('\n');
+
     out.push_str("\n### FrozenBytes methods\n\n");
     out.push_str(table_header());
     for m in surface::frozen_bytes_methods::FROZEN_BYTES_METHODS {
