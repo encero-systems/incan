@@ -10,38 +10,38 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3079 | 140 | 7 |
-| re-point | 529 | 41 | 368 |
-| retire | 1103 | 72 | 0 |
-| unaffected | 1393 | 131 | 4 |
+| keep | 3110 | 139 | 7 |
+| re-point | 480 | 42 | 377 |
+| retire | 1109 | 72 | 0 |
+| unaffected | 1405 | 131 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **6104** | **384** | **379** |
+| **Total** | **6104** | **384** | **389** |
 
-- Retire-class tests with a named twin: 12/1103.
-- Retire-class files with no twin at all: 78 (the `Twins` column reads `0/n`).
-- Files whose test region exceeds the split threshold of 1500 lines: 28, of which 15 in the durable corpus (keep or re-point).
+- Retire-class tests with a named twin: 12/1109.
+- Retire-class files with no twin at all: 79 (the `Twins` column reads `0/n`).
+- Files whose test region exceeds the split threshold of 1500 lines: 27, of which 15 in the durable corpus (keep or re-point).
 - Unreviewed files: 0.
 
 ## Dispositions
 
 | Disposition | Meaning |
 |---|---|
-| `keep` | Asserts source meaning through the parser, typechecker, Body IR, lowering facts, formatter, LSP or semantics core. Survives the slice-7 cutover untouched. |
+| `keep` | Asserts source meaning through the parser, typechecker, Body IR, formatter, LSP or semantics core, and never touches generated Rust. Survives the slice-7 cutover untouched. |
 | `re-point` | Asserts program behaviour (output, exit code, diagnostics of a run) but proves it by building or running generated Rust. The assertion stays; slice 7 changes the route. |
 | `retire` | Asserts the shape of the generated Rust itself: snapshot text, `contains("fn ...")` on emitted source, emitter unit tests. Dies with #654, and only after its twin exists. |
-| `unaffected` | Oven, store, rustc, installer, stdlib runtime, formatter internals and other tests the cutover does not touch. Listed so the total reconciles. |
+| `unaffected` | Oven, store, rustc, installer, stdlib runtime, layering guards and other tests the cutover does not touch. Listed so the total reconciles. |
 | `unreviewed` | Nobody has read the file yet. The mechanical proposal is recorded in the notes when there is one; the maintainer works these rows through. |
 
 ## Lane signals
 
-The collector counts these in the text of each test function and of the file-local helpers it calls. They are evidence, not the verdict: the disposition column is what the reviewer recorded.
+The collector counts these in the text of each test function and of the file-local helpers it calls. They are evidence, not the verdict: the disposition column is what the reviewer recorded. Helpers that live in a `#[path = "support/..."]` module outside the file are invisible to the scanner, so a test that drives the shadow comparison through such a helper shows only the lanes its own text carries. A `#[cfg_attr(..., test)]` attribute and a one-line `#[test] fn ...` are not counted; the tree has neither.
 
 | Signal | Fires when the test |
 |---|---|
-| `codegen` | calls a codegen API (`IrCodegen`, `try_generate`, `generate_rust`, `emit_program`, `read_generated_rust`) |
+| `codegen` | calls a codegen API (`IrCodegen`, `try_generate`, `generate_rust`, `emit_program`, `read_generated_rust`) or reads generated Rust (`target/incan/<project>/src/*.rs`, `incan --emit-rust`) |
 | `snapshot` | asserts an `insta` snapshot |
 | `generated_text` | asserts on generated Rust text (`contains("fn ")`, `contains("impl ")` and the like) |
-| `build_run` | builds or runs a project (`run_incan`, `incan_command`, `run_explicit_oven_bake`, project runner helpers) |
+| `build_run` | builds or runs generated Rust (`run_explicit_oven_bake`, `compare_source_observable`, a `cargo`/`rustc` command, or a CLI invocation such as `run_incan` / `incan_command` beside a `build`, `run`, `test` or `bake` subcommand or a generated-target read; `incan fmt`, `incan check`, `--help` and `--version` alone do not count) |
 | `replacement` | uses the replacement route or Body IR (`replacement::`, `shadow_support`, `body_ir`, `lower_typed_body_ir`, `execute_free_function`) |
 | `checker` | typechecks or reads diagnostics (`TypeChecker`, `check_str`, `CompileError`, `CompilationSession`) |
 | `parser` | lexes or parses (`parser::parse`, `parse_str`, `lexer::lex`) |
@@ -56,6 +56,7 @@ The collector counts these in the text of each test function and of the file-loc
 | Root | Pattern | Cases | Disposition | Owner | Notes |
 |---|---|---:|---|---|---|
 | `examples` | `**/*.incn` | 91 | re-point | #1561 | typechecked and run by scripts/run_examples.sh (`make examples`); vocab and library examples are baked. |
+| `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines` | `**/*.incn` | 1 | unaffected | #1561 | frozen v0.5.0 migration baseline, decoded through the checked capability-metadata path (no generated Rust); retained only until the v0.5 replacement migration closes, per the compatibility inventory's retirement line, then removed from the collector. |
 | `loaves/compiler/incan_driver/tests/fixtures` | `**/*.incn` | 20 | re-point | #1561 | driver integration fixtures (generated_rust_* artifact projects, callability, native consumer); their owner tests are retire-class. |
 | `loaves/compiler/incan_emit/tests/codegen_snapshots` | `**/*.incn` | 180 | re-point | #1561 | snapshot corpus inputs considered as programs; the .snap outputs retire with codegen_snapshot_tests.rs. |
 | `loaves/compiler/incan_test_support/fixtures` | `*.incn` | 12 | re-point | #1561 | top-level regression programs run by CLI integration tests (rfc023/rfc030/rfc064/rfc088 behaviour, reflection, model traits). |
@@ -67,15 +68,16 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_test_support/fixtures/valid` | `**/*.incn` | 28 | re-point | #1561 | typechecked in bulk by test_valid_fixtures (keep) and run one by one as std surface programs by CLI tests (re-point). |
 | `loaves/oven/oven_rustc/src/fixtures` | `**/*.incn` | 4 | unaffected | #1561 | Oven rustc fixtures. |
 | `loaves/toolchain/incan-cli/tests/fixtures` | `**/*.incn` | 8 | re-point | #1561 | CLI integration fixtures (layering, package boundary facade, pub union consumer, vocab guardrails). |
+| `workspaces/benchmarks` | `**/*.incn` | 9 | re-point | #1561 | benchmark programs built and timed by workspaces/benchmarks/run_all.sh (`make benchmarks`); the route changes, the timing harness does not. |
 | `workspaces/docs-site/docs/_snippets/language/examples` | `verified_*.incn` | 8 | re-point | #1561 | verified documentation examples checked by scripts/check_docs_examples.sh. |
 | `workspaces/oven/src` | `test_*.incn` | 11 | re-point | #1561 | Incan tests of the Oven release-policy project (workspaces/oven), run through `incan test`. |
 | `workspaces/oven/tests/fixtures` | `**/*.incn` | 4 | re-point | #1561 | fixtures of the Oven release-policy project's tests. |
 
 ## Test files by crate
 
-`Lines` is the file length; `Test lines` is the test region (the whole file for a test file, the `#[cfg(test)]` modules for a source file) that the split threshold applies to. `Twins` is `named/retire-class` for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
+`Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `named/retire-class` for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (745 tests in 98 files: keep 390, re-point 109, retire 103, unaffected 143)
+### `loaves/compiler/incan_driver` (745 tests in 98 files: keep 362, re-point 138, retire 102, unaffected 143)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---|---|---|---|
@@ -92,7 +94,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/backend/shadow/json_stringify_tests.rs` | 3 | 219 | 219 | re-point | - | - | #1561 | run 3, replacement 3 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. |
 | `loaves/compiler/incan_driver/src/backend/shadow/legacy_oven.rs` | 1 | 669 | 59 | re-point | - | - | #1561 | run 1, replacement 1 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. |
 | `loaves/compiler/incan_driver/src/backend/shadow/len_string_tests.rs` | 2 | 82 | 82 | re-point | - | - | #1561 | run 2, replacement 2, checker 2 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. |
-| `loaves/compiler/incan_driver/src/backend/shadow/tests.rs` | 47 | 1253 | 1253 | re-point (re-point 46, retire 1) | 0/1 | - | #1561 | run 3, replacement 30 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. Result-report transport tests are the comparison harness itself. |
+| `loaves/compiler/incan_driver/src/backend/shadow/tests.rs` | 47 | 1253 | 1253 | re-point | - | - | #1561 | run 3, replacement 30 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. Result-report transport tests are the comparison harness itself. |
 | `loaves/compiler/incan_driver/src/build/bake.rs` | 5 | 1137 | 172 | unaffected | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/caller_owned.rs` | 7 | 1044 | 315 | unaffected | - | - | #1561 | checker 4 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/inline_command.rs` | 5 | 129 | 75 | unaffected | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
@@ -113,7 +115,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/src/build/publication.rs` | 1 | 798 | 63 | unaffected | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build/replacement.rs` | 5 | 533 | 161 | keep | - | - | #1561 | replacement 4, checker 4, parser 1 | replacement build pipeline (session projection, exact numeric report). |
 | `loaves/compiler/incan_driver/src/build/reuse.rs` | 1 | 679 | 35 | unaffected | - | - | #1561 | - | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
-| `loaves/compiler/incan_driver/src/build/source_authority.rs` | 19 | 1846 | 1171 | unaffected | - | - | #1561 | checker 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
+| `loaves/compiler/incan_driver/src/build/source_authority.rs` | 19 | 1846 | 1171 | unaffected | - | - | #1561 | codegen 1, checker 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/build_unit.rs` | 1 | 202 | 27 | unaffected | - | - | #1561 | checker 1 | build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend. |
 | `loaves/compiler/incan_driver/src/cargo_policy.rs` | 4 | 270 | 92 | retire | 0/4 | - | #1561 | - | Cargo flag policy of the generated-project route. |
 | `loaves/compiler/incan_driver/src/generated_cache.rs` | 18 | 1510 | 447 | retire | 0/18 | - | #1561 | - | generated-project cache identity and pruning; dies with the generated-project route. |
@@ -143,7 +145,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/tests/generated_rust_audit_tests.rs` | 4 | 193 | 193 | retire | 0/4 | - | #1561 | - | public generated-Rust artifact contract (RFC 120 projections, native consumers, audit); survives only if #654 keeps generated artifacts as inspection output. |
 | `loaves/compiler/incan_driver/tests/generated_rust_callability_artifact_tests.rs` | 1 | 258 | 258 | retire | 0/1 | - | #1561 | text 1, run 1, checker 1 | public generated-Rust artifact contract (RFC 120 projections, native consumers, audit); survives only if #654 keeps generated artifacts as inspection output. |
 | `loaves/compiler/incan_driver/tests/generated_rust_native_consumer_tests.rs` | 1 | 367 | 367 | retire | 0/1 | - | #1561 | run 1 | public generated-Rust artifact contract (RFC 120 projections, native consumers, audit); survives only if #654 keeps generated artifacts as inspection output. |
-| `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs` | 28 | 5792 | 5792 | keep | - | required | #1561 | replacement 22 | the parity corpus: slice 7's own measurement instrument (RFC 120 coverage, replacement receipts, corpus validation). |
+| `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs` | 28 | 5792 | 5792 | re-point | - | required | #1561 | replacement 22 | the parity corpus: slice 7's own measurement instrument (RFC 120 coverage, replacement receipts, corpus validation). 16 of 28 tests assert a green legacy-vs-replacement shadow comparison through `loaves/compiler/incan_driver/tests/support/parity_corpus.rs` (`shadow_support::compare_source_observable`), the same evidence class as `backend/shadow/**`: slice 7 (#1675) re-points that baseline to the frozen corpus receipts or retires the comparison with the legacy route. The support helper lives outside the file, so the scanner sees only the `replacement` lane. |
 | `loaves/compiler/incan_driver/tests/protected_builtin_binding_tests.rs` | 3 | 141 | 141 | keep | - | - | #1561 | checker 3, parser 3 | lex/parse/typecheck only. |
 | `loaves/compiler/incan_driver/tests/protected_generic_binding_tests.rs` | 2 | 106 | 106 | keep | - | - | #1561 | checker 2, parser 2 | lex/parse/typecheck only. |
 | `loaves/compiler/incan_driver/tests/replacement_abs_sum_profile_shadow_tests.rs` | 1 | 154 | 154 | re-point | - | - | #1561 | run 1, replacement 1 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. |
@@ -177,12 +179,6 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/tests/replacement_typed_numeric_tests.rs` | 13 | 581 | 581 | keep | - | - | #1561 | replacement 13, checker 13, parser 13 | Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep. |
 | `loaves/compiler/incan_driver/tests/shadow_comparison_tests.rs` | 9 | 451 | 451 | re-point | - | - | #1561 | run 9, replacement 9 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. |
 | `loaves/compiler/incan_driver/tests/stdlib_version_artifact_tests.rs` | 1 | 132 | 132 | retire | 0/1 | - | #1561 | codegen 1, parser 1 | asserts the stdlib version check inside the generated artifact. |
-
-Per-test overrides in `loaves/compiler/incan_driver/src/backend/shadow/tests.rs`:
-
-| Test | Disposition | Twin | Lanes | Notes |
-|---|---|---|---|---|
-| `the_generated_entrypoint_writes_a_typed_result_without_touching_program_streams` | retire | - | replacement | asserts generated Rust text |
 
 Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_execution_tests.rs`:
 
@@ -285,7 +281,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 
 | Test | Disposition | Twin | Lanes | Notes |
 |---|---|---|---|---|
-| `nested_list_empty_holes_retain_checked_string_types` | retire | - | checker, parser, legacy_ir | legacy IR shape |
+| `nested_list_empty_holes_retain_checked_string_types` | retire | - | checker, parser, legacy_ir | legacy IR shape; the checked-type assertions (`List[List[str]]` on the empty holes) are the keep-class content the twin must carry. |
 | `nested_list_loop_emits_owned_strings_without_caller_annotation` | retire | `loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs::nested_empty_first_list_runs_without_a_caller_annotation_issue1471` | codegen, parser | asserts generated Rust text |
 
 ### `loaves/compiler/incan_format` (191 tests in 5 files: keep 191)
@@ -296,7 +292,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 | `loaves/compiler/incan_format/src/formatter/tests.rs` | 11 | 327 | 327 | keep | - | - | #1561 | parser 7, formatter 11 | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/lib.rs` | 112 | 2852 | 2623 | keep | - | required | #1561 | checker 1, parser 110, formatter 110 | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
-| `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 411 | keep | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
 ### `loaves/compiler/incan_frontend` (1707 tests in 42 files: keep 1707)
 
@@ -349,17 +345,17 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---|---|---|---|
-| `loaves/compiler/incan_ir/src/decl.rs` | 1 | 711 | 11 | retire | 0/1 | - | #1561 | - | Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
-| `loaves/compiler/incan_ir/src/expr.rs` | 3 | 1165 | 81 | retire | 0/3 | - | #1561 | legacy_ir 3 | Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
-| `loaves/compiler/incan_ir/src/lib.rs` | 5 | 793 | 136 | retire | 0/5 | - | #1561 | legacy_ir 5 | Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
-| `loaves/compiler/incan_ir/src/lower/decl/helpers.rs` | 3 | 883 | 150 | retire | 0/3 | - | #1561 | legacy_ir 3 | Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
-| `loaves/compiler/incan_ir/src/lower/decl/methods.rs` | 1 | 2233 | 78 | retire | 0/1 | - | #1561 | checker 1, parser 1, legacy_ir 1 | Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
-| `loaves/compiler/incan_ir/src/lower/decl/traits.rs` | 3 | 279 | 45 | retire | 0/3 | - | #1561 | legacy_ir 3 | Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
-| `loaves/compiler/incan_ir/src/lower/expr/calls.rs` | 20 | 5372 | 1079 | retire | 0/20 | - | #1561 | checker 9, parser 4, legacy_ir 18 | Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
-| `loaves/compiler/incan_ir/src/lower/expr/mod.rs` | 15 | 3135 | 351 | retire | 0/15 | - | #1561 | checker 3, legacy_ir 15 | Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
-| `loaves/compiler/incan_ir/src/lower/mod.rs` | 30 | 5189 | 1095 | retire | 0/30 | - | #1561 | checker 25, parser 26, legacy_ir 30 | Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
-| `loaves/compiler/incan_ir/src/lower/types.rs` | 13 | 1864 | 343 | retire | 0/13 | - | #1561 | checker 1, legacy_ir 13 | Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
-| `loaves/compiler/incan_ir/src/types.rs` | 52 | 1305 | 464 | retire | 0/52 | - | #1561 | legacy_ir 52 | Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
+| `loaves/compiler/incan_ir/src/decl.rs` | 1 | 711 | 11 | retire | 0/1 | - | #1561 | - | the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
+| `loaves/compiler/incan_ir/src/expr.rs` | 3 | 1165 | 81 | retire | 0/3 | - | #1561 | legacy_ir 3 | the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
+| `loaves/compiler/incan_ir/src/lib.rs` | 5 | 793 | 136 | retire | 0/5 | - | #1561 | legacy_ir 5 | the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
+| `loaves/compiler/incan_ir/src/lower/decl/helpers.rs` | 3 | 883 | 150 | retire | 0/3 | - | #1561 | legacy_ir 3 | the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
+| `loaves/compiler/incan_ir/src/lower/decl/methods.rs` | 1 | 2233 | 78 | retire | 0/1 | - | #1561 | checker 1, parser 1, legacy_ir 1 | the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
+| `loaves/compiler/incan_ir/src/lower/decl/traits.rs` | 3 | 279 | 45 | retire | 0/3 | - | #1561 | legacy_ir 3 | the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
+| `loaves/compiler/incan_ir/src/lower/expr/calls.rs` | 20 | 5372 | 1079 | retire | 0/20 | - | #1561 | checker 9, parser 4, legacy_ir 18 | the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
+| `loaves/compiler/incan_ir/src/lower/expr/mod.rs` | 15 | 3135 | 351 | retire | 0/15 | - | #1561 | checker 3, legacy_ir 15 | the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
+| `loaves/compiler/incan_ir/src/lower/mod.rs` | 30 | 5189 | 1095 | retire | 0/30 | - | #1561 | checker 25, parser 26, legacy_ir 30 | the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
+| `loaves/compiler/incan_ir/src/lower/types.rs` | 13 | 1864 | 343 | retire | 0/13 | - | #1561 | checker 1, legacy_ir 13 | the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
+| `loaves/compiler/incan_ir/src/types.rs` | 52 | 1305 | 464 | retire | 0/52 | - | #1561 | legacy_ir 52 | the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level. |
 
 ### `loaves/compiler/incan_test_support` (4 tests in 2 files: retire 3, unaffected 1)
 
@@ -419,10 +415,10 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 | `loaves/kernel/incan_syntax/src/diagnostics/base.rs` | 2 | 396 | 39 | keep | - | - | #1561 | checker 1 | lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/diagnostics/stable.rs` | 5 | 605 | 121 | keep | - | - | #1561 | checker 5 | lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/lexer/mod.rs` | 20 | 909 | 400 | keep | - | - | #1561 | checker 20, parser 20 | lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
-| `loaves/kernel/incan_syntax/src/parser/embedded/tests.rs` | 28 | 914 | 914 | keep | - | - | #1561 | checker 24, parser 4 | lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
-| `loaves/kernel/incan_syntax/src/parser/tests.rs` | 251 | 6673 | 6673 | keep | - | required | #1561 | checker 226, parser 251, formatter 2 | lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
+| `loaves/kernel/incan_syntax/src/parser/embedded/tests.rs` | 28 | 914 | 906 | keep | - | - | #1561 | checker 24, parser 4 | lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
+| `loaves/kernel/incan_syntax/src/parser/tests.rs` | 251 | 6673 | 6672 | keep | - | required | #1561 | checker 226, parser 251, formatter 2 | lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level. |
 
-### `loaves/toolchain/incan-cli` (617 tests in 38 files: keep 58, re-point 420, retire 28, unaffected 111)
+### `loaves/toolchain/incan-cli` (617 tests in 38 files: keep 117, re-point 342, retire 35, unaffected 123)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---|---|---|---|
@@ -435,34 +431,34 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 | `loaves/toolchain/incan-cli/src/commands/representation_inspect.rs` | 4 | 503 | 126 | keep | - | - | #1561 | checker 4 | representation inspection from checked facts. |
 | `loaves/toolchain/incan-cli/src/commands/tools_boundary_tests.rs` | 1 | 116 | 116 | unaffected | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/src/commands/workspace.rs` | 1 | 428 | 45 | unaffected | - | - | #1561 | - | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
-| `loaves/toolchain/incan-cli/src/lib.rs` | 36 | 3253 | 1050 | unaffected | - | - | #1561 | replacement 9 | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
+| `loaves/toolchain/incan-cli/src/lib.rs` | 36 | 3253 | 1050 | unaffected | - | - | #1561 | codegen 1, replacement 9 | CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics. |
 | `loaves/toolchain/incan-cli/src/test_runner/execution.rs` | 21 | 3539 | 618 | keep (keep 10, retire 11) | 0/11 | - | #1561 | text 1, checker 3, parser 3 | `incan test` today lowers Incan tests into a Rust libtest harness; the harness-shape tests retire with it, the discovery and session tests stay. |
 | `loaves/toolchain/incan-cli/src/test_runner/mod.rs` | 15 | 2148 | 492 | keep | - | - | #1561 | checker 3 | test collection, parametrize expansion, marker selection and scheduling. |
-| `loaves/toolchain/incan-cli/tests/canonical_item_imports.rs` | 3 | 229 | 229 | re-point | - | - | #1561 | run 3 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. |
+| `loaves/toolchain/incan-cli/tests/canonical_item_imports.rs` | 3 | 229 | 229 | re-point (keep 1, re-point 2) | - | - | #1561 | run 2 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7; the one `check`- or `inspect`-only test is keep (override). |
 | `loaves/toolchain/incan-cli/tests/cli_catalogue_forms_tests.rs` | 1 | 113 | 113 | re-point | - | - | #1561 | run 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. |
-| `loaves/toolchain/incan-cli/tests/cli_codegraph_and_inspection_tests.rs` | 16 | 2016 | 2016 | re-point | - | required | #1561 | run 16 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. |
-| `loaves/toolchain/incan-cli/tests/cli_decorator_and_partial_tests.rs` | 11 | 1113 | 1113 | re-point | - | - | #1561 | run 11 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. |
+| `loaves/toolchain/incan-cli/tests/cli_codegraph_and_inspection_tests.rs` | 16 | 2016 | 2016 | re-point (keep 8, re-point 7, retire 1) | 0/1 | required | #1561 | run 7 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. `inspect codegraph`/`inspect bindings`/`check`-only tests are keep; `inspect rust` asserts the generated-project report and generated Rust text and retires unless #654 keeps that inspection path (overrides). |
+| `loaves/toolchain/incan-cli/tests/cli_decorator_and_partial_tests.rs` | 11 | 1113 | 1113 | re-point (re-point 10, retire 1) | 0/1 | - | #1561 | codegen 1, run 11 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. |
 | `loaves/toolchain/incan-cli/tests/cli_float_display_tests.rs` | 1 | 86 | 86 | re-point | - | - | #1561 | run 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. |
-| `loaves/toolchain/incan-cli/tests/cli_interop_target_tests.rs` | 9 | 868 | 868 | re-point | - | - | #1561 | run 9 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. |
+| `loaves/toolchain/incan-cli/tests/cli_interop_target_tests.rs` | 9 | 868 | 868 | re-point (keep 1, re-point 8) | - | - | #1561 | run 8 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7; the one `check`- or `inspect`-only test is keep (override). |
 | `loaves/toolchain/incan-cli/tests/cli_issue1370_phantom_type_param_tests.rs` | 1 | 93 | 93 | re-point | - | - | #1561 | run 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. |
 | `loaves/toolchain/incan-cli/tests/cli_issue1668_stdlib_gaps_tests.rs` | 2 | 235 | 235 | re-point | - | - | #1561 | run 2 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. |
-| `loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs` | 25 | 2101 | 2101 | re-point | - | required | #1561 | codegen 1, run 25 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire. |
+| `loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs` | 25 | 2101 | 2101 | re-point (re-point 25) | - | required | #1561 | codegen 5, run 25 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that also read generated Rust (`target/incan/<project>/src/main.rs`, `--emit-rust`) stay re-point on their build or run assertion and lose the generated-text assertion in slice 7 (overrides). |
 | `loaves/toolchain/incan-cli/tests/cli_layering_guardrails.rs` | 2 | 189 | 189 | unaffected | - | - | #1561 | codegen 2, legacy_ir 2 | layering baseline of what the CLI may reach; names codegen types without using them. |
 | `loaves/toolchain/incan-cli/tests/cli_provider_boundary_tests.rs` | 19 | 1343 | 1343 | re-point | - | - | #1561 | codegen 2, run 19 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire. |
-| `loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs` | 13 | 1504 | 1504 | re-point (re-point 12, retire 1) | 0/1 | required | #1561 | codegen 1, text 1, run 13 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire. |
+| `loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs` | 13 | 1504 | 1504 | re-point (re-point 12, retire 1) | 0/1 | required | #1561 | codegen 7, text 1, run 13 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that also read generated Rust (`target/incan/<project>/src/main.rs`) stay re-point on their build or run assertion and lose the generated-text assertion in slice 7 (overrides); the one library-build test that only asserts generated text retires. |
 | `loaves/toolchain/incan-cli/tests/cli_std_environ_tests.rs` | 4 | 473 | 473 | re-point | - | - | #1561 | run 4 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. |
-| `loaves/toolchain/incan-cli/tests/cli_surface_tests.rs` | 26 | 1432 | 1432 | re-point | - | - | #1561 | run 25 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire. |
-| `loaves/toolchain/incan-cli/tests/cli_workspace_and_lock_tests.rs` | 23 | 1795 | 1795 | re-point | - | required | #1561 | run 22 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. |
+| `loaves/toolchain/incan-cli/tests/cli_surface_tests.rs` | 26 | 1432 | 1432 | re-point (keep 10, re-point 12, unaffected 4) | - | - | #1561 | run 12 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. `check`/`explain`/`tools metadata api` tests are keep; `init`, `tools doctor`, `lock` and the fixture-handoff helper test are unaffected (overrides). |
+| `loaves/toolchain/incan-cli/tests/cli_workspace_and_lock_tests.rs` | 23 | 1795 | 1795 | re-point (keep 2, re-point 17, unaffected 4) | - | required | #1561 | codegen 1, run 17 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. `workspace check`/`workspace fmt` tests are keep; `lock`/`workspace inspect`-only tests are unaffected; one build test also reads generated Rust and loses that assertion in slice 7 (overrides). |
 | `loaves/toolchain/incan-cli/tests/example_capability_coverage.rs` | 1 | 279 | 279 | keep | - | - | #1561 | replacement 1 | examples cover the stable capability registry. |
-| `loaves/toolchain/incan-cli/tests/integration_tests.rs` | 203 | 12563 | 12563 | re-point (keep 20, re-point 174, retire 9) | 0/9 | required | #1561 | codegen 8, text 7, run 178, checker 14, parser 29 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire. |
+| `loaves/toolchain/incan-cli/tests/integration_tests.rs` | 203 | 12563 | 12563 | re-point (keep 30, re-point 160, retire 9, unaffected 4) | 0/9 | required | #1561 | codegen 8, text 7, run 164, checker 14, parser 29 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides). |
 | `loaves/toolchain/incan-cli/tests/layering_guard.rs` | 9 | 359 | 359 | unaffected | - | - | #1561 | - | crate and stdlib layering guards. |
 | `loaves/toolchain/incan-cli/tests/package_boundary_facade_tests.rs` | 7 | 646 | 646 | re-point | - | - | #1561 | run 7, checker 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire. |
 | `loaves/toolchain/incan-cli/tests/package_executable_representation.rs` | 6 | 724 | 724 | re-point | - | - | #1561 | run 6, checker 3 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire. |
-| `loaves/toolchain/incan-cli/tests/repository_path_tests.rs` | 5 | 61 | 61 | unaffected | - | - | #1561 | run 1 | repository path resolution for the compiler command. |
-| `loaves/toolchain/incan-cli/tests/rfc031_pub_import_integration_tests.rs` | 82 | 8051 | 8051 | re-point (re-point 78, retire 4) | 0/4 | required | #1561 | codegen 1, text 4, run 82, checker 33, parser 12 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire. |
+| `loaves/toolchain/incan-cli/tests/repository_path_tests.rs` | 5 | 61 | 61 | unaffected | - | - | #1561 | - | repository path resolution for the compiler command. |
+| `loaves/toolchain/incan-cli/tests/rfc031_pub_import_integration_tests.rs` | 82 | 8051 | 8051 | re-point (keep 27, re-point 46, retire 9) | 0/9 | required | #1561 | codegen 9, text 4, run 49, checker 33, parser 12 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides). |
 | `loaves/toolchain/incan-cli/tests/script_target_diagnostics.rs` | 1 | 44 | 44 | re-point | - | - | #1561 | - | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. |
 | `loaves/toolchain/incan-cli/tests/std_encoding_algorithm_modules.rs` | 1 | 128 | 128 | re-point | - | - | #1561 | run 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. |
-| `loaves/toolchain/incan-cli/tests/toolchain_installer_tests.rs` | 30 | 2728 | 2728 | unaffected | - | required | #1561 | run 6 | installer, archive packager and release manifest. |
+| `loaves/toolchain/incan-cli/tests/toolchain_installer_tests.rs` | 30 | 2728 | 2728 | unaffected | - | required | #1561 | run 4 | installer, archive packager and release manifest. |
 | `loaves/toolchain/incan-cli/tests/vocab_guardrails.rs` | 3 | 575 | 575 | unaffected | - | - | #1561 | text 1 | source audits (semantic string audit, stringly vocab checks). |
 
 Per-test overrides in `loaves/toolchain/incan-cli/src/commands/build.rs`:
@@ -489,11 +485,91 @@ Per-test overrides in `loaves/toolchain/incan-cli/src/test_runner/execution.rs`:
 | `inject_file_test_harness_emits_tests_module` | retire | - | generated_text | libtest harness of the generated test crate |
 | `inject_file_test_harness_wraps_async_tests_and_fixtures` | retire | - | - | libtest harness of the generated test crate |
 
+Per-test overrides in `loaves/toolchain/incan-cli/tests/canonical_item_imports.rs`:
+
+| Test | Disposition | Twin | Lanes | Notes |
+|---|---|---|---|---|
+| `an_import_does_not_reach_across_modules` | keep | - | - | `incan check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+
+Per-test overrides in `loaves/toolchain/incan-cli/tests/cli_codegraph_and_inspection_tests.rs`:
+
+| Test | Disposition | Twin | Lanes | Notes |
+|---|---|---|---|---|
+| `inspect_bindings_projects_checked_declaration_facts` | keep | - | - | `incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust. |
+| `diagnostic_facts_keep_related_spans_and_type_payloads_across_cli_and_codegraph` | keep | - | - | `incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust. |
+| `inspect_rust_reports_current_generated_rust_files` | retire | - | - | `incan inspect rust`: asserts the generated-project report and generated Rust text (`#[doc = ...]`); retire unless #654 keeps the generated-project inspection path, in which case re-point. |
+| `inspect_codegraph_exports_multifile_imports_and_public_symbols` | keep | - | - | `incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust. |
+| `inspect_codegraph_distinguishes_sibling_binding_stable_identities_issue1629` | keep | - | - | `incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust. |
+| `inspect_codegraph_exports_checked_registry_facts` | keep | - | - | `incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust. |
+| `inspect_codegraph_attaches_facade_paths_to_checked_registry_facts` | keep | - | - | `incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust. |
+| `inspect_codegraph_tolerant_directory_keeps_parseable_facts_and_diagnostics` | keep | - | - | `incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust. |
+| `inspect_codegraph_strict_directory_rejects_semantic_diagnostics` | keep | - | - | `incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust. |
+
+Per-test overrides in `loaves/toolchain/incan-cli/tests/cli_decorator_and_partial_tests.rs`:
+
+| Test | Disposition | Twin | Lanes | Notes |
+|---|---|---|---|---|
+| `test_facade_reexport_preserves_declared_source_import_alias_target_issue57` | retire | - | codegen, build_run | `--emit-rust` smoke only: asserts that the facade re-export lowers through the Rust-source backend; nothing is checked, built or run besides that emission. |
+
+Per-test overrides in `loaves/toolchain/incan-cli/tests/cli_interop_target_tests.rs`:
+
+| Test | Disposition | Twin | Lanes | Notes |
+|---|---|---|---|---|
+| `codegraph_projects_checked_c_bindings_and_explicit_unsafe_calls` | keep | - | - | `incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust. |
+
+Per-test overrides in `loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs`:
+
+| Test | Disposition | Twin | Lanes | Notes |
+|---|---|---|---|---|
+| `module_qualified_stdlib_type_annotation_emits_and_runs_issue1437` | re-point | - | codegen, build_run | bakes and runs the program and also asserts `--emit-rust` text; the run stays, the generated-text assertion drops in slice 7. |
+| `build_union_widening_converts_generated_wrappers_issue741` | re-point | - | codegen, build_run | builds through `incan build` (the build must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; the build assertion stays, the generated-text assertion drops in slice 7. |
+| `build_pub_helper_wraps_union_call_result_as_option_payload_issue745` | re-point | - | codegen, build_run | builds through `incan build` (the build must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; the build assertion stays, the generated-text assertion drops in slice 7. |
+| `build_pub_method_accepts_dependency_owned_union_alias_payload_issue755` | re-point | - | codegen, build_run | builds through `incan build` (the build must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; the build assertion stays, the generated-text assertion drops in slice 7. |
+| `build_locked_map_err_string_literal_closure_issue880` | re-point | - | codegen, build_run | builds through `incan build` (the build must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; the build assertion stays, the generated-text assertion drops in slice 7. |
+
 Per-test overrides in `loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs`:
 
 | Test | Disposition | Twin | Lanes | Notes |
 |---|---|---|---|---|
+| `rust_std_io_trait_interop_borrows_receivers_and_propagates_results_issues878_888` | re-point | - | codegen, build_run | builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays. |
+| `rust_trait_object_method_arguments_borrow_by_metadata_issue832` | re-point | - | codegen, build_run | builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays. |
+| `rust_concrete_reference_arguments_borrow_by_metadata_issue861` | re-point | - | codegen, build_run | builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays. |
+| `rust_std_result_and_contextual_f32_interop_compile_together_issues801_802` | re-point | - | codegen, build_run | builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays. |
 | `cold_library_build_preserves_rust_string_compound_assignment_issue896` | retire | - | generated_text, build_run | asserts generated Rust text |
+| `rust_method_into_bound_keeps_string_argument_inferable_issue804` | re-point | - | codegen, build_run | builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays. |
+| `build_metadata_free_into_bound_tokenizer_encode_issue804` | re-point | - | codegen, build_run | builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays. |
+| `comprehension_over_rust_iterator_consumes_it_by_value_issue1490` | re-point | - | codegen, build_run | builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays. |
+
+Per-test overrides in `loaves/toolchain/incan-cli/tests/cli_surface_tests.rs`:
+
+| Test | Disposition | Twin | Lanes | Notes |
+|---|---|---|---|---|
+| `fixture_handoff_copy_rejects_symlinks` | unaffected | - | - | test-support helper (fixture hand-off copy); no compiler invocation. |
+| `check_json_reports_parser_diagnostics` | keep | - | - | `incan check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `check_json_reports_typechecker_diagnostics` | keep | - | - | `incan check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `check_json_reports_tooling_diagnostics` | keep | - | - | `incan check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `check_json_reports_import_diagnostics` | keep | - | - | `incan check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `explain_reports_known_and_unknown_diagnostic_codes` | keep | - | - | `incan explain` only; diagnostics catalog surface, no generated Rust. |
+| `requires_incan_allows_compatible_project_commands` | unaffected | - | - | `incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend. |
+| `init_creates_project_scaffold_with_expected_content` | unaffected | - | - | CLI surface (argument parsing, scaffolding, lifecycle, doctor); no compiler semantics. |
+| `tools_doctor_reports_text_and_json` | unaffected | - | - | CLI surface (argument parsing, scaffolding, lifecycle, doctor); no compiler semantics. |
+| `tools_metadata_api_reports_docstring_drift` | keep | - | - | `incan tools metadata api` only; API metadata from checked facts, no generated Rust. |
+| `tools_metadata_api_reports_public_import_aliases` | keep | - | - | `incan tools metadata api` only; API metadata from checked facts, no generated Rust. |
+| `check_json_reports_parser_and_typechecker_warnings_without_failing` | keep | - | - | `incan check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `check_json_reports_warnings_alongside_errors_when_typechecking_fails` | keep | - | - | `incan check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `check_rejects_statement_tuple_unpack_of_non_tuple_without_leaking_generated_rust` | keep | - | - | `incan check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+
+Per-test overrides in `loaves/toolchain/incan-cli/tests/cli_workspace_and_lock_tests.rs`:
+
+| Test | Disposition | Twin | Lanes | Notes |
+|---|---|---|---|---|
+| `workspace_inspect_reports_deterministic_scope_and_stale_member_locks` | unaffected | - | - | `incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend. |
+| `workspace_lock_scopes_command_feature_flags_to_the_invoking_member_issue1414` | unaffected | - | - | `incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend. |
+| `workspace_root_library_without_a_script_publishes_the_canonical_lock_issue997` | unaffected | - | - | `incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend. |
+| `rooted_workspace_cold_lock_and_selected_member_preserve_identity_issues908_909_931` | re-point | - | codegen, build_run | builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays. |
+| `workspace_lock_concurrent_publishers_leave_one_parseable_root_lock` | unaffected | - | - | `incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend. |
+| `workspace_fmt_fans_out_in_member_order_without_changing_single_project_semantics` | keep | - | - | `incan workspace fmt` only; formatter surface fanned out per member, no generated Rust. |
+| `workspace_check_fans_out_with_one_member_scoped_json_report` | keep | - | - | `incan workspace check` only; checker surface fanned out per member, no generated Rust. |
 
 Per-test overrides in `loaves/toolchain/incan-cli/tests/integration_tests.rs`:
 
@@ -501,14 +577,28 @@ Per-test overrides in `loaves/toolchain/incan-cli/tests/integration_tests.rs`:
 |---|---|---|---|---|
 | `build_explicit_mutable_rust_generic_reaches_codegen_through_normal_cli_path` | retire | - | codegen, generated_text, build_run | generated text or IrCodegen |
 | `decorated_method_explicit_mutable_rust_generic_keeps_static_and_wrapper_abi` | retire | - | codegen, generated_text, build_run | generated text or IrCodegen |
+| `test_cli_fmt_preserves_block_decl_docstrings_and_export_doc_surface` | keep | - | parser | `incan fmt` only; formatter surface, no generated Rust. |
+| `test_cli_fmt_accepts_assert_identity_bool_literals` | keep | - | - | `incan fmt` only; formatter surface, no generated Rust. |
+| `test_cli_fmt_wraps_long_parenthesized_logical_expression_chain` | keep | - | - | `incan fmt` only; formatter surface, no generated Rust. |
+| `test_cli_fmt_preserves_fstring_escaped_newline_roundtrip` | keep | - | - | `incan fmt` only; formatter surface, no generated Rust. |
+| `test_cli_fmt_applies_rfc053_vertical_spacing_contract` | keep | - | parser | `incan fmt` only; formatter surface, no generated Rust. |
+| `test_cli_fmt_keeps_two_blank_lines_between_static_and_function` | keep | - | parser | `incan fmt` only; formatter surface, no generated Rust. |
+| `test_cli_fmt_keeps_trailing_comment_after_multiline_function` | keep | - | parser | `incan fmt` only; formatter surface, no generated Rust. |
+| `test_cli_check_accepts_trailing_comma_in_multiline_function_params` | keep | - | - | `incan --check` only; checker surface (diagnostics through the CLI), no generated Rust. |
 | `test_compound_assign_float_with_int_rhs` | keep | - | checker, parser | lex/parse/typecheck only |
 | `test_valid_fixtures` | keep | - | checker, parser | lex/parse/typecheck only |
 | `test_invalid_fixtures` | keep | - | checker, parser | lex/parse/typecheck only |
+| `test_help_is_banner_free` | unaffected | - | - | CLI argument surface (`--help`, `--version`, an unknown flag); never reaches the compiler. |
+| `test_version_is_single_line_and_banner_free` | unaffected | - | - | CLI argument surface (`--help`, `--version`, an unknown flag); never reaches the compiler. |
+| `test_parse_error_is_banner_free` | unaffected | - | - | CLI argument surface (`--help`, `--version`, an unknown flag); never reaches the compiler. |
 | `test_imported_static_initializer_does_not_deadlock_issue680` | retire | - | generated_text, build_run | generated text or IrCodegen |
 | `lexer_token_surface_cases` | keep | - | - | lexer only |
 | `test_python_like_numeric_ops_compile` | keep | - | checker, parser | lex/parse/typecheck only |
 | `test_hello_world_codegen` | retire | - | codegen, generated_text, checker, parser | generated text or IrCodegen |
 | `test_method_alias_codegen_rewrites_to_target_method` | retire | - | codegen, parser | generated text or IrCodegen |
+| `test_check_web_route_uses_proc_macro_passthrough` | keep | - | - | `incan --check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `explicit_legacy_sdk_inventory_blocks_lock_preheat` | unaffected | - | - | `incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend. |
+| `test_check_cyclic_explicit_call_site_generics_cross_module_succeeds` | keep | - | - | `incan --check` only; checker surface (diagnostics through the CLI), no generated Rust. |
 | `test_rfc041_rusttype_interop_typechecks_end_to_end` | keep | - | checker, parser | lex/parse/typecheck only |
 | `test_rfc041_rusttype_with_methods_typechecks` | keep | - | checker, parser | lex/parse/typecheck only |
 | `test_rfc041_rust_coercion_codegen_smoke` | retire | - | codegen, checker, parser | generated text or IrCodegen |
@@ -534,9 +624,43 @@ Per-test overrides in `loaves/toolchain/incan-cli/tests/rfc031_pub_import_integr
 | Test | Disposition | Twin | Lanes | Notes |
 |---|---|---|---|---|
 | `compiled_provider_preserves_shared_rust_interop_contracts_issues834_835_961` | retire | - | codegen, generated_text, build_run, checker | asserts generated Rust text |
-| `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` | retire | - | generated_text, build_run | asserts generated Rust text |
+| `oven_build_projects_structural_mutable_reference_generics_for_an_unrelated_provider` | re-point | - | codegen, build_run | builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays. |
+| `external_pub_consumer_uses_flattened_nested_union_variant_index_issue1198` | re-point | - | codegen, build_run | builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays. |
+| `fmt_dependency_collection_does_not_prepare_persistent_library_artifact` | keep | - | - | `incan fmt` only; formatter surface, no generated Rust. |
+| `check_reports_unknown_pub_library` | keep | - | - | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `check_reports_missing_pub_export` | keep | - | checker | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `check_reports_pub_manifest_load_failure` | keep | - | - | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `check_passes_for_pub_imported_manifest_type` | keep | - | checker | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `check_reports_missing_pub_library_artifacts` | keep | - | checker | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `check_reports_pub_library_artifact_mismatch` | keep | - | checker | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `consumer_check_resolves_a_manifest_declared_package_relative_c_header` | keep | - | - | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `consumer_check_copies_a_sqlite_error_view_with_an_explicit_bound` | retire | - | codegen | `incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter, as its sibling `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` does. |
+| `consumer_check_models_a_sqlite_caller_owned_byte_buffer_through_a_declared_shim` | retire | - | codegen | `incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter, as its sibling `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` does. |
+| `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` | retire | - | codegen, generated_text | `incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter. |
+| `consumer_check_supports_checked_byte_spans_and_caller_owned_buffers` | retire | - | codegen | `incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter, as its sibling `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` does. |
+| `consumer_check_rejects_unpaired_or_immutable_checked_byte_buffer_arguments` | keep | - | - | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `consumer_check_rejects_checked_byte_span_escape_and_reuse` | keep | - | - | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `consumer_check_preserves_checked_c_f32_scalar_identity` | retire | - | codegen | `incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter, as its sibling `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` does. |
+| `consumer_check_preserves_exact_checked_c_scalar_carriers` | retire | - | codegen | `incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter, as its sibling `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` does. |
+| `consumer_check_supports_checked_f32_spans_for_paired_numeric_pointers` | keep | - | - | `incan check` and `inspect bindings` only; representation inspection from checked facts, no generated Rust. |
+| `consumer_check_rejects_unpaired_checked_f32_span_arguments` | keep | - | - | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `sqlite_checked_c_tooling_projects_the_shared_descriptor` | keep | - | - | `incan check` and `inspect bindings` only; representation inspection from checked facts, no generated Rust. |
+| `consumer_check_reports_checked_c_signature_mismatch_at_the_binding` | keep | - | - | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `consumer_check_desugars_external_vocab_block_via_wasm` | keep | - | checker, parser | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `consumer_check_passes_request_payload_into_external_vocab_desugarer` | keep | - | checker, parser | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `consumer_check_accepts_expression_desugar_output_in_statement_position` | keep | - | checker, parser | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `consumer_check_reports_external_vocab_desugarer_failure` | keep | - | checker, parser | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
 | `consumer_build_plans_source_backed_vocab_helper_calls_with_defaults_and_unions_issue729` | retire | - | generated_text, build_run, checker | asserts generated Rust text |
 | `consumer_build_plans_source_backed_pub_helper_calls_with_defaults_and_unions_issue729` | retire | - | generated_text, build_run, checker | asserts generated Rust text |
+| `consumer_check_passes_scoped_query_surface_artifacts_to_desugarer` | keep | - | checker, parser | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `consumer_check_passes_expr_list_item_metadata_to_desugarer_issue724` | keep | - | checker, parser | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `consumer_check_desugars_colon_vocab_expression_in_assignment_issue727` | keep | - | checker, parser | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `consumer_check_desugars_colon_vocab_expression_in_return_issue727` | keep | - | checker, parser | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `consumer_check_desugars_colon_vocab_expression_preserves_inline_clauses_issue727` | keep | - | checker, parser | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `consumer_check_desugars_braced_vocab_expression_with_compound_clauses_issue727` | keep | - | checker, parser | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `consumer_check_desugared_public_field_callee_call_typechecks_as_method_issue727` | keep | - | checker, parser | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `consumer_check_desugared_generic_method_call_uses_expected_return_type_issue735` | keep | - | checker, parser | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
+| `fmt_activates_clean_source_dependency_vocab_before_parsing_issue756` | keep | - | - | `incan fmt` only; formatter surface, no generated Rust. |
 
 ### `loaves/toolchain/incan-lsp` (93 tests in 6 files: keep 92, retire 1)
 
@@ -645,7 +769,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     |---|---:|---:|---:|---|---:|---|---|---|---|
     | `loaves/oven/oven_rustc/src/loaf.rs` | 28 | 4707 | 1338 | unaffected | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_rustc/src/loaf_mirror.rs` | 9 | 758 | 429 | unaffected | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_rustc/src/native_test.rs` | 34 | 2881 | 2881 | unaffected | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_rustc/src/native_test.rs` | 34 | 2881 | 1419 | unaffected | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). A source module (the native test runner) with a `#[cfg(test)]` region, measured by that region. Reviewed at crate level. |
     | `loaves/oven/oven_rustc/src/native_test/case_slice.rs` | 5 | 174 | 87 | unaffected | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_rustc/src/native_test/evidence.rs` | 4 | 258 | 74 | unaffected | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_rustc/src/plan/composition.rs` | 8 | 1496 | 686 | unaffected | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |

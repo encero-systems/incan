@@ -15,11 +15,14 @@ Modes:
 - `--propose`: write `proposals.json` beside the dispositions with a mechanical disposition per file and per test,
   for a reviewer to fold into `dispositions.json` by hand;
 - `--check`: exit non-zero when a test has no disposition, a disposition names a test that no longer exists, a twin
-  does not resolve, a recorded split flag disagrees with the measured test region, or the rendered page is stale.
+  does not resolve, a recorded split flag disagrees with the measured test region, or the rendered page is stale;
+- `--dispositions <path>`: read another dispositions file, for scratch probes that must not edit the tracked record.
 
 The scanner is deliberately shallow: it masks strings and comments, counts braces, and reads `fn` names. It never
 parses Rust. Signals are evidence for a reviewer, not a verdict; the disposition in `dispositions.json` is the
-verdict, and the page says which one the reviewer recorded.
+verdict, and the page says which one the reviewer recorded. Known limits: a `#[cfg_attr(..., test)]` attribute and a
+one-line `#[test] fn ...` are not counted (the tree has neither), and helpers that live in a `#[path = "support/..."]
+module outside the file are invisible to the signals.
 """
 
 from __future__ import annotations
@@ -52,12 +55,13 @@ FN_HEAD_RE = re.compile(
 MOD_OPEN_RE = re.compile(r"\bmod\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{")
 CFG_TEST_RE = re.compile(r"^\s*#\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*$")
 IDENT_CALL_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
-TEST_FILE_NAME_RE = re.compile(r"(?:^tests\.rs$|_tests?\.rs$)")
 
 # Lane signals, as regexes over the original text of a test function (signature and body, strings included).
 # Each list is evidence for one lane; the proposal rules below read them in a fixed order of authority. The
-# names in `build_run` come from `loaves/compiler/incan_test_support/src/cli_project.rs` and the driver's project
-# runner; the codegen names come from `loaves/compiler/incan_emit/src/test_support.rs` and the emit crate's tests.
+# names in `build_run` come from `loaves/compiler/incan_test_support/src/cli_project.rs` and `lib.rs` and from
+# the copies the driver and CLI test files carry; the codegen names come from
+# `loaves/compiler/incan_emit/src/test_support.rs` and the emit crate's tests. Every pattern matches something in
+# the tree; a guessed name that matches nothing is noise in the table, not evidence.
 SIGNALS: dict[str, tuple[str, ...]] = {
     "codegen": (
         r"\bIrCodegen\b",
@@ -68,13 +72,16 @@ SIGNALS: dict[str, tuple[str, ...]] = {
         r"\bgenerate_registry_rust\s*\(",
         r"\bgenerate_projected_registry_rust\s*\(",
         r"\bemit_program\s*\(",
-        r"\brender_rust\s*\(",
         r"\bread_generated_rust\s*\(",
         r"\bincan_emit::",
         r"\bGeneratedRust\b",
         r"\bgenerated_rust\b",
         r"\bgenerate\s*\(",
         r"\bprettyplease\b",
+        # A read of the generated project's Rust under `target/incan/<project>/src/*.rs`, or the CLI's own
+        # generated-Rust emission (`incan --emit-rust`).
+        r"target/incan/[^\s\"']*\.rs\b",
+        r"\"--emit-rust\"",
     ),
     "snapshot": (
         r"\bassert_snapshot!",
@@ -87,33 +94,23 @@ SIGNALS: dict[str, tuple[str, ...]] = {
         r"contains\(\s*&?(?:r#*)?\"(?:pub(?:\([^)]*\))? fn |fn |impl |let |use |mod |async fn|unsafe |#\[derive|#\[allow|#!\[|::new\(|\.clone\(\)|\.to_string\(\)|\.into\(\)|\.as_str\(\)|&mut |&str|String::|Vec<|Vec::|Box<|Box::|Option<|Rc<|Arc<|HashMap<|HashSet<|BTreeMap<|Result<)",
         r"contains\(\s*&?format!\(\s*\"(?:pub fn |fn |impl |let |use |mod )",
         r"\bassert_no_generated_unused_lint_allows\s*\(",
-        r"\bassert_generated\w*\s*\(",
-        r"\bexpect_generated\w*\s*\(",
     ),
+    # Evidence that generated Rust is built or run. A bare CLI invocation is not on this list: `incan fmt`,
+    # `incan check`, `--help` and `--version` never reach the backend, so those helpers count only through
+    # `CLI_INVOCATION_RE` below, beside a compiling subcommand or a generated-target read.
     "build_run": (
-        r"\brun_incan\w*\s*\(",
-        r"\bincan_command\s*\(",
-        r"\bconfigured_incan_command\s*\(",
-        r"\bincan_binary\s*\(",
-        r"\bincan_debug_binary\s*\(",
         r"\brun_explicit_oven_bake\w*\s*\(",
         r"\bconfigure_explicit_oven_bake_command\s*\(",
-        r"\bcargo_bin\s*\(",
         r"Command::new\(\s*\"cargo\"",
         r"Command::new\(\s*\"rustc\"",
-        r"Command::new\(\s*&?incan",
         r"\bcompile_and_run\w*\s*\(",
-        r"\brun_project\s*\(",
-        r"\bbuild_project\s*\(",
-        r"\bProjectRunner\b",
         r"\bProjectGenerator\b",
         r"\bbake\s*\(",
         r"\bLegacyOvenCapability\b",
         r"\bcompare_source_observable\s*\(",
         r"\bwrite_minimal_project\s*\(",
         r"\bunique_test_project_name\s*\(",
-        r"\.args?\(\s*\[?\s*\"(?:run|build|test|check|bake)\"",
-        r"\.arg\(\s*\"(?:run|build|test|check|bake)\"",
+        r"\.args?\(\s*\[?\s*\"(?:run|build|test|bake)\"",
     ),
     "replacement": (
         r"\breplacement::",
@@ -143,7 +140,6 @@ SIGNALS: dict[str, tuple[str, ...]] = {
         r"\bcheck_program\w*\s*\(",
         r"\bcheck_source\w*\s*\(",
         r"\bcheck_module\w*\s*\(",
-        r"\bcheck_ok\w*\s*\(",
         r"\bcheck_err\w*\s*\(",
         r"\bCompileError\b",
         r"\bincan_syntax::diagnostics\b",
@@ -154,8 +150,6 @@ SIGNALS: dict[str, tuple[str, ...]] = {
         r"\bcompile_source\s*\(",
         r"\bcompile_file\s*\(",
         r"\bCompilationSession\b",
-        r"\bexpect_type_error\w*\s*\(",
-        r"\bassert_type_error\w*\s*\(",
         r"\bSymbolTable\b",
         r"\bapi_metadata::",
         r"\bLibraryManifest(?:Index)?::",
@@ -204,6 +198,25 @@ COMPILED_SIGNALS = {
 }
 LANE_ORDER = tuple(SIGNALS)
 
+# A CLI invocation is `build_run` evidence only when the same function names a subcommand that compiles the
+# program (`build`, `run`, `test`, `bake`) or reads the generated project; `incan fmt`, `incan check`,
+# `--help` and `--version` stop in the frontend and the cutover does not change their route.
+CLI_INVOCATION_RE = re.compile(
+    "|".join(
+        f"(?:{pattern})"
+        for pattern in (
+            r"\brun_incan\w*\s*\(",
+            r"\bincan_command\s*\(",
+            r"\bconfigured_incan_command\s*\(",
+            r"\bincan_binary\s*\(",
+            r"\bincan_debug_binary\s*\(",
+            r"\bcargo_bin\s*\(",
+            r"Command::new\(\s*&?incan",
+        )
+    )
+)
+COMPILING_CONTEXT_RE = re.compile(r"\"(?:build|run|test|bake)\"|\bread_generated_rust\s*\(|target/incan/")
+
 # Crate roots whose tests do not touch the compiler pipeline at all. A test under one of these is proposed
 # `unaffected` unless its body says otherwise.
 UNAFFECTED_PREFIXES = (
@@ -217,13 +230,14 @@ UNAFFECTED_PREFIXES = (
     "loaves/kernel/incan_vocab/",
     "loaves/kernel/incan_codegraph/",
 )
-# Crate roots that assert source meaning: the frontend, syntax, semantics core, lowering, formatter and LSP.
+# Crate roots that assert source meaning: the frontend, syntax, semantics core, formatter and LSP. The
+# Rust-source backend's own IR (`loaves/compiler/incan_ir/`) is not one of them: its tests carry the `legacy_ir`
+# signal and the record classifies them retire under the condition in their notes.
 KEEP_PREFIXES = (
     "loaves/kernel/incan_syntax/",
     "loaves/kernel/incan_semantics_core/",
     "loaves/kernel/incan_lang/",
     "loaves/compiler/incan_frontend/",
-    "loaves/compiler/incan_ir/",
     "loaves/compiler/incan_format/",
     "loaves/toolchain/incan-lsp/",
 )
@@ -452,13 +466,36 @@ def line_of(text: str, index: int, line_starts: list[int]) -> int:
     return lo + 1
 
 
+def body_open_index(masked: str, start: int) -> int | None:
+    """Index of the `{` that opens the body of the `fn` whose name ends at `start`; None when a `;` ends it first.
+
+    Only a `{` or `;` outside the signature's own brackets counts, so `fn x() -> [u8; 4] {` has a body and a
+    trait method `fn x() -> [u8; 4];` does not. `->` is an arrow, not a closing angle bracket.
+    """
+    depth = 0
+    for index in range(start, len(masked)):
+        ch = masked[index]
+        if ch in "([<":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        elif ch == ">":
+            if masked[index - 1] != "-":
+                depth -= 1
+        elif depth == 0:
+            if ch == "{":
+                return index
+            if ch == ";":
+                return None
+    return None
+
+
 def function_spans(masked: str) -> list[tuple[str, int, int, int]]:
     """Every `fn` in masked text as `(name, fn_index, body_open, body_close)`; a bodiless `fn` is skipped."""
     spans = []
     for match in FN_RE.finditer(masked):
-        open_index = masked.find("{", match.end())
-        semicolon = masked.find(";", match.end())
-        if open_index == -1 or (semicolon != -1 and semicolon < open_index):
+        open_index = body_open_index(masked, match.end())
+        if open_index is None:
             continue
         close_index = matching_brace(masked, open_index)
         spans.append((match.group(1), match.start(), open_index, close_index))
@@ -536,25 +573,29 @@ def module_path_at(index: int, regions: list[tuple[int, int, tuple[str, ...]]]) 
 
 
 def lane_signals(text: str) -> Counter:
-    """Count lane-signal hits in one function's text (signature and body, strings included)."""
+    """Count lane-signal hits in one function's text (signature and body, strings included).
+
+    CLI invocations (`run_incan`, `incan_command` and their kin) are `build_run` evidence only beside a compiling
+    subcommand or a generated-target read in the same text; on their own they prove nothing about the route.
+    """
     counts: Counter = Counter()
     for lane, pattern in COMPILED_SIGNALS.items():
         hits = sum(1 for _ in pattern.finditer(text))
         if hits:
             counts[lane] = hits
+    invocations = sum(1 for _ in CLI_INVOCATION_RE.finditer(text))
+    if invocations and COMPILING_CONTEXT_RE.search(text):
+        counts["build_run"] += invocations
     return counts
 
 
-def is_test_region_file(rel_path: str) -> bool:
-    """True when the whole file is test code: under a `tests/` directory or named like a test module."""
-    parts = rel_path.split("/")
-    if "tests" in parts[:-1]:
-        return True
-    return bool(TEST_FILE_NAME_RE.search(parts[-1]))
-
-
 def cfg_test_region_lines(lines: list[str], masked_lines: list[str], masked: str, line_starts: list[int]) -> int:
-    """Total lines inside `#[cfg(test)] mod name { ... }` blocks, the test region of a source file."""
+    """Total lines inside `#[cfg(test)] mod name { ... }` blocks; zero when the file has none.
+
+    This is the test region the split threshold applies to whenever a file has one, whatever the file is called:
+    a source module named `*_test.rs` that carries a runner beside its `#[cfg(test)]` module is measured by the
+    module, not the file. A file with no such block is test code throughout and is measured whole.
+    """
     total = 0
     for index, line in enumerate(masked_lines):
         if not CFG_TEST_RE.match(line):
@@ -582,8 +623,9 @@ def cfg_test_region_lines(lines: list[str], masked_lines: list[str], masked: str
 def scan_file(rel_path: str, text: str) -> ScannedFile | None:
     """Scan one Rust file for test functions; None when it has no test attribute at all."""
     lines = text.split("\n")
-    if not any(TEST_ATTR_RE.match(line) for line in lines):
-        # Cheap pre-filter on raw lines; the masked pass below is authoritative.
+    if "#[" not in text or "test" not in text:
+        # Cheap substring pre-filter; the masked pass below is authoritative (a `#[test] // note` line has a
+        # trailing comment on the raw line and none once masked, so the raw line must not be the judge).
         return None
     masked = mask_rust(text)
     masked_lines = masked.split("\n")
@@ -660,10 +702,8 @@ def scan_file(rel_path: str, text: str) -> ScannedFile | None:
         if count > 1:
             anomalies.append(f"duplicate test key `{key}` ({count} functions share the same module path and name)")
 
-    if is_test_region_file(rel_path):
-        test_lines = len(lines)
-    else:
-        test_lines = cfg_test_region_lines(lines, masked_lines, masked, line_starts) or len(lines)
+    # ---- Test region: the `#[cfg(test)]` modules when there are any, else the whole file ----
+    test_lines = cfg_test_region_lines(lines, masked_lines, masked, line_starts) or len(lines)
     return ScannedFile(path=rel_path, lines=len(lines), test_lines=test_lines, tests=tests, anomalies=anomalies)
 
 
@@ -886,12 +926,13 @@ def check(corpus: Corpus, dispositions: dict, rendered_page_stale: str | None) -
             override_disposition = override.get("disposition")
             if override_disposition is not None and override_disposition not in DISPOSITIONS:
                 failures.append(f"`{file.path}::{key}`: disposition `{override_disposition}` is not valid")
+        # ---- Every named twin resolves, whatever the row's disposition; one line per distinct twin ----
+        twins: dict[str, str] = {}
         for key in file.keys:
-            if effective_disposition(entry, key) != "retire":
-                continue
             twin = effective_twin(entry, key)
-            if not twin:
-                continue
+            if twin:
+                twins.setdefault(twin, key)
+        for twin, key in twins.items():
             reason = resolve_twin(twin, corpus, dispositions)
             if reason is not None:
                 failures.append(f"`{file.path}::{key}`: {reason}")
@@ -948,6 +989,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--check", action="store_true", help="run the gate and exit non-zero on any failure")
     parser.add_argument("--propose", action="store_true", help="write proposals.json with mechanical dispositions")
     parser.add_argument("--json", action="store_true", help="print the scanned corpus as JSON instead of a summary")
+    parser.add_argument(
+        "--dispositions",
+        type=Path,
+        default=DISPOSITIONS_PATH,
+        metavar="PATH",
+        help="dispositions file to read instead of the tracked record, for scratch probes",
+    )
     return parser.parse_args(argv)
 
 
@@ -981,7 +1029,7 @@ def corpus_as_json(corpus: Corpus) -> dict:
 def main(argv: list[str] | None = None) -> int:
     """Entry point."""
     args = parse_args(sys.argv[1:] if argv is None else argv)
-    dispositions = load_dispositions()
+    dispositions = load_dispositions(args.dispositions)
     corpus = collect(dispositions)
 
     if args.json:

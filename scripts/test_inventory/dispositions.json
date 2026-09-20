@@ -91,6 +91,18 @@
       "disposition": "re-point",
       "owner": 1561,
       "notes": "fixtures of the Oven release-policy project's tests."
+    },
+    "workspaces/benchmarks": {
+      "pattern": "**/*.incn",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "benchmark programs built and timed by workspaces/benchmarks/run_all.sh (`make benchmarks`); the route changes, the timing harness does not."
+    },
+    "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines": {
+      "pattern": "**/*.incn",
+      "disposition": "unaffected",
+      "owner": 1561,
+      "notes": "frozen v0.5.0 migration baseline, decoded through the checked capability-metadata path (no generated Rust); retained only until the v0.5 replacement migration closes, per the compatibility inventory's retirement line, then removed from the collector."
     }
   },
   "files": {
@@ -204,14 +216,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. Result-report transport tests are the comparison harness itself.",
-      "tests": {
-        "the_generated_entrypoint_writes_a_typed_result_without_touching_program_streams": {
-          "disposition": "retire",
-          "twin": "",
-          "notes": "asserts generated Rust text"
-        }
-      }
+      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. Result-report transport tests are the comparison harness itself."
     },
     "loaves/compiler/incan_driver/src/build/bake.rs": {
       "disposition": "unaffected",
@@ -614,12 +619,12 @@
       "notes": "public generated-Rust artifact contract (RFC 120 projections, native consumers, audit); survives only if #654 keeps generated artifacts as inspection output."
     },
     "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs": {
-      "disposition": "keep",
+      "disposition": "re-point",
       "owner": 1561,
       "twin": "",
       "split_required": true,
       "split_target": "",
-      "notes": "the parity corpus: slice 7's own measurement instrument (RFC 120 coverage, replacement receipts, corpus validation)."
+      "notes": "the parity corpus: slice 7's own measurement instrument (RFC 120 coverage, replacement receipts, corpus validation). 16 of 28 tests assert a green legacy-vs-replacement shadow comparison through `loaves/compiler/incan_driver/tests/support/parity_corpus.rs` (`shadow_support::compare_source_observable`), the same evidence class as `backend/shadow/**`: slice 7 (#1675) re-points that baseline to the frozen corpus receipts or retires the comparison with the legacy route. The support helper lives outside the file, so the scanner sees only the `replacement` lane."
     },
     "loaves/compiler/incan_driver/tests/protected_builtin_binding_tests.rs": {
       "disposition": "keep",
@@ -1347,7 +1352,7 @@
         "nested_list_empty_holes_retain_checked_string_types": {
           "disposition": "retire",
           "twin": "",
-          "notes": "legacy IR shape"
+          "notes": "legacy IR shape; the checked-type assertions (`List[List[str]]` on the empty holes) are the keep-class content the twin must carry."
         },
         "nested_list_loop_emits_owned_strings_without_caller_annotation": {
           "disposition": "retire",
@@ -1786,7 +1791,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
     },
     "loaves/compiler/incan_ir/src/expr.rs": {
       "disposition": "retire",
@@ -1794,7 +1799,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
     },
     "loaves/compiler/incan_ir/src/lib.rs": {
       "disposition": "retire",
@@ -1802,7 +1807,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
     },
     "loaves/compiler/incan_ir/src/lower/decl/helpers.rs": {
       "disposition": "retire",
@@ -1810,7 +1815,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
     },
     "loaves/compiler/incan_ir/src/lower/decl/methods.rs": {
       "disposition": "retire",
@@ -1818,7 +1823,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
     },
     "loaves/compiler/incan_ir/src/lower/decl/traits.rs": {
       "disposition": "retire",
@@ -1826,7 +1831,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
     },
     "loaves/compiler/incan_ir/src/lower/expr/calls.rs": {
       "disposition": "retire",
@@ -1834,7 +1839,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
     },
     "loaves/compiler/incan_ir/src/lower/expr/mod.rs": {
       "disposition": "retire",
@@ -1842,7 +1847,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
     },
     "loaves/compiler/incan_ir/src/lower/mod.rs": {
       "disposition": "retire",
@@ -1850,7 +1855,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
     },
     "loaves/compiler/incan_ir/src/lower/types.rs": {
       "disposition": "retire",
@@ -1858,7 +1863,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
     },
     "loaves/compiler/incan_ir/src/types.rs": {
       "disposition": "retire",
@@ -1866,7 +1871,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
     },
     "loaves/compiler/incan_oven_facet/src/lib.rs": {
       "disposition": "unaffected",
@@ -2536,9 +2541,9 @@
       "disposition": "unaffected",
       "owner": 1561,
       "twin": "",
-      "split_required": true,
+      "split_required": false,
       "split_target": "",
-      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). A source module (the native test runner) with a `#[cfg(test)]` region, measured by that region. Reviewed at crate level."
     },
     "loaves/oven/oven_rustc/src/native_test/case_slice.rs": {
       "disposition": "unaffected",
@@ -3044,7 +3049,14 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7."
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7; the one `check`- or `inspect`-only test is keep (override).",
+      "tests": {
+        "an_import_does_not_reach_across_modules": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        }
+      }
     },
     "loaves/toolchain/incan-cli/tests/cli_catalogue_forms_tests.rs": {
       "disposition": "re-point",
@@ -3060,7 +3072,54 @@
       "twin": "",
       "split_required": true,
       "split_target": "",
-      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7."
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. `inspect codegraph`/`inspect bindings`/`check`-only tests are keep; `inspect rust` asserts the generated-project report and generated Rust text and retires unless #654 keeps that inspection path (overrides).",
+      "tests": {
+        "inspect_bindings_projects_checked_declaration_facts": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust."
+        },
+        "diagnostic_facts_keep_related_spans_and_type_payloads_across_cli_and_codegraph": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust."
+        },
+        "inspect_codegraph_exports_multifile_imports_and_public_symbols": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust."
+        },
+        "inspect_codegraph_distinguishes_sibling_binding_stable_identities_issue1629": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust."
+        },
+        "inspect_codegraph_exports_checked_registry_facts": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust."
+        },
+        "inspect_codegraph_attaches_facade_paths_to_checked_registry_facts": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust."
+        },
+        "inspect_codegraph_tolerant_directory_keeps_parseable_facts_and_diagnostics": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust."
+        },
+        "inspect_codegraph_strict_directory_rejects_semantic_diagnostics": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust."
+        },
+        "inspect_rust_reports_current_generated_rust_files": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "`incan inspect rust`: asserts the generated-project report and generated Rust text (`#[doc = ...]`); retire unless #654 keeps the generated-project inspection path, in which case re-point."
+        }
+      }
     },
     "loaves/toolchain/incan-cli/tests/cli_decorator_and_partial_tests.rs": {
       "disposition": "re-point",
@@ -3068,7 +3127,14 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7."
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7.",
+      "tests": {
+        "test_facade_reexport_preserves_declared_source_import_alias_target_issue57": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "`--emit-rust` smoke only: asserts that the facade re-export lowers through the Rust-source backend; nothing is checked, built or run besides that emission."
+        }
+      }
     },
     "loaves/toolchain/incan-cli/tests/cli_float_display_tests.rs": {
       "disposition": "re-point",
@@ -3084,7 +3150,14 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7."
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7; the one `check`- or `inspect`-only test is keep (override).",
+      "tests": {
+        "codegraph_projects_checked_c_bindings_and_explicit_unsafe_calls": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust."
+        }
+      }
     },
     "loaves/toolchain/incan-cli/tests/cli_issue1370_phantom_type_param_tests.rs": {
       "disposition": "re-point",
@@ -3108,7 +3181,34 @@
       "twin": "",
       "split_required": true,
       "split_target": "",
-      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire."
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that also read generated Rust (`target/incan/<project>/src/main.rs`, `--emit-rust`) stay re-point on their build or run assertion and lose the generated-text assertion in slice 7 (overrides).",
+      "tests": {
+        "build_union_widening_converts_generated_wrappers_issue741": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "builds through `incan build` (the build must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; the build assertion stays, the generated-text assertion drops in slice 7."
+        },
+        "build_pub_helper_wraps_union_call_result_as_option_payload_issue745": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "builds through `incan build` (the build must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; the build assertion stays, the generated-text assertion drops in slice 7."
+        },
+        "build_pub_method_accepts_dependency_owned_union_alias_payload_issue755": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "builds through `incan build` (the build must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; the build assertion stays, the generated-text assertion drops in slice 7."
+        },
+        "build_locked_map_err_string_literal_closure_issue880": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "builds through `incan build` (the build must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; the build assertion stays, the generated-text assertion drops in slice 7."
+        },
+        "module_qualified_stdlib_type_annotation_emits_and_runs_issue1437": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "bakes and runs the program and also asserts `--emit-rust` text; the run stays, the generated-text assertion drops in slice 7."
+        }
+      }
     },
     "loaves/toolchain/incan-cli/tests/cli_layering_guardrails.rs": {
       "disposition": "unaffected",
@@ -3132,12 +3232,47 @@
       "twin": "",
       "split_required": true,
       "split_target": "",
-      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire.",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that also read generated Rust (`target/incan/<project>/src/main.rs`) stay re-point on their build or run assertion and lose the generated-text assertion in slice 7 (overrides); the one library-build test that only asserts generated text retires.",
       "tests": {
         "cold_library_build_preserves_rust_string_compound_assignment_issue896": {
           "disposition": "retire",
           "twin": "",
           "notes": "asserts generated Rust text"
+        },
+        "rust_std_io_trait_interop_borrows_receivers_and_propagates_results_issues878_888": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
+        },
+        "rust_trait_object_method_arguments_borrow_by_metadata_issue832": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
+        },
+        "rust_concrete_reference_arguments_borrow_by_metadata_issue861": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
+        },
+        "rust_std_result_and_contextual_f32_interop_compile_together_issues801_802": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
+        },
+        "rust_method_into_bound_keeps_string_argument_inferable_issue804": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
+        },
+        "build_metadata_free_into_bound_tokenizer_encode_issue804": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
+        },
+        "comprehension_over_rust_iterator_consumes_it_by_value_issue1490": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
         }
       }
     },
@@ -3155,7 +3290,79 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire."
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. `check`/`explain`/`tools metadata api` tests are keep; `init`, `tools doctor`, `lock` and the fixture-handoff helper test are unaffected (overrides).",
+      "tests": {
+        "check_json_reports_parser_diagnostics": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "check_json_reports_typechecker_diagnostics": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "check_json_reports_tooling_diagnostics": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "check_json_reports_import_diagnostics": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "check_json_reports_parser_and_typechecker_warnings_without_failing": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "check_json_reports_warnings_alongside_errors_when_typechecking_fails": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "check_rejects_statement_tuple_unpack_of_non_tuple_without_leaking_generated_rust": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "explain_reports_known_and_unknown_diagnostic_codes": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan explain` only; diagnostics catalog surface, no generated Rust."
+        },
+        "tools_metadata_api_reports_docstring_drift": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan tools metadata api` only; API metadata from checked facts, no generated Rust."
+        },
+        "tools_metadata_api_reports_public_import_aliases": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan tools metadata api` only; API metadata from checked facts, no generated Rust."
+        },
+        "requires_incan_allows_compatible_project_commands": {
+          "disposition": "unaffected",
+          "twin": "",
+          "notes": "`incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend."
+        },
+        "init_creates_project_scaffold_with_expected_content": {
+          "disposition": "unaffected",
+          "twin": "",
+          "notes": "CLI surface (argument parsing, scaffolding, lifecycle, doctor); no compiler semantics."
+        },
+        "tools_doctor_reports_text_and_json": {
+          "disposition": "unaffected",
+          "twin": "",
+          "notes": "CLI surface (argument parsing, scaffolding, lifecycle, doctor); no compiler semantics."
+        },
+        "fixture_handoff_copy_rejects_symlinks": {
+          "disposition": "unaffected",
+          "twin": "",
+          "notes": "test-support helper (fixture hand-off copy); no compiler invocation."
+        }
+      }
     },
     "loaves/toolchain/incan-cli/tests/cli_workspace_and_lock_tests.rs": {
       "disposition": "re-point",
@@ -3163,7 +3370,44 @@
       "twin": "",
       "split_required": true,
       "split_target": "",
-      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7."
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. `workspace check`/`workspace fmt` tests are keep; `lock`/`workspace inspect`-only tests are unaffected; one build test also reads generated Rust and loses that assertion in slice 7 (overrides).",
+      "tests": {
+        "rooted_workspace_cold_lock_and_selected_member_preserve_identity_issues908_909_931": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
+        },
+        "workspace_check_fans_out_with_one_member_scoped_json_report": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan workspace check` only; checker surface fanned out per member, no generated Rust."
+        },
+        "workspace_fmt_fans_out_in_member_order_without_changing_single_project_semantics": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan workspace fmt` only; formatter surface fanned out per member, no generated Rust."
+        },
+        "workspace_inspect_reports_deterministic_scope_and_stale_member_locks": {
+          "disposition": "unaffected",
+          "twin": "",
+          "notes": "`incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend."
+        },
+        "workspace_lock_scopes_command_feature_flags_to_the_invoking_member_issue1414": {
+          "disposition": "unaffected",
+          "twin": "",
+          "notes": "`incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend."
+        },
+        "workspace_root_library_without_a_script_publishes_the_canonical_lock_issue997": {
+          "disposition": "unaffected",
+          "twin": "",
+          "notes": "`incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend."
+        },
+        "workspace_lock_concurrent_publishers_leave_one_parseable_root_lock": {
+          "disposition": "unaffected",
+          "twin": "",
+          "notes": "`incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend."
+        }
+      }
     },
     "loaves/toolchain/incan-cli/tests/example_capability_coverage.rs": {
       "disposition": "keep",
@@ -3179,7 +3423,7 @@
       "twin": "",
       "split_required": true,
       "split_target": "",
-      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire.",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides).",
       "tests": {
         "build_explicit_mutable_rust_generic_reaches_codegen_through_normal_cli_path": {
           "disposition": "retire",
@@ -3325,6 +3569,76 @@
           "disposition": "keep",
           "twin": "",
           "notes": "lexer only"
+        },
+        "test_cli_fmt_preserves_block_decl_docstrings_and_export_doc_surface": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan fmt` only; formatter surface, no generated Rust."
+        },
+        "test_cli_fmt_accepts_assert_identity_bool_literals": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan fmt` only; formatter surface, no generated Rust."
+        },
+        "test_cli_fmt_wraps_long_parenthesized_logical_expression_chain": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan fmt` only; formatter surface, no generated Rust."
+        },
+        "test_cli_fmt_preserves_fstring_escaped_newline_roundtrip": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan fmt` only; formatter surface, no generated Rust."
+        },
+        "test_cli_fmt_applies_rfc053_vertical_spacing_contract": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan fmt` only; formatter surface, no generated Rust."
+        },
+        "test_cli_fmt_keeps_two_blank_lines_between_static_and_function": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan fmt` only; formatter surface, no generated Rust."
+        },
+        "test_cli_fmt_keeps_trailing_comment_after_multiline_function": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan fmt` only; formatter surface, no generated Rust."
+        },
+        "test_cli_check_accepts_trailing_comma_in_multiline_function_params": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan --check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "test_check_web_route_uses_proc_macro_passthrough": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan --check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "test_check_cyclic_explicit_call_site_generics_cross_module_succeeds": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan --check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "test_help_is_banner_free": {
+          "disposition": "unaffected",
+          "twin": "",
+          "notes": "CLI argument surface (`--help`, `--version`, an unknown flag); never reaches the compiler."
+        },
+        "test_version_is_single_line_and_banner_free": {
+          "disposition": "unaffected",
+          "twin": "",
+          "notes": "CLI argument surface (`--help`, `--version`, an unknown flag); never reaches the compiler."
+        },
+        "test_parse_error_is_banner_free": {
+          "disposition": "unaffected",
+          "twin": "",
+          "notes": "CLI argument surface (`--help`, `--version`, an unknown flag); never reaches the compiler."
+        },
+        "explicit_legacy_sdk_inventory_blocks_lock_preheat": {
+          "disposition": "unaffected",
+          "twin": "",
+          "notes": "`incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend."
         }
       }
     },
@@ -3366,7 +3680,7 @@
       "twin": "",
       "split_required": true,
       "split_target": "",
-      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire.",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides).",
       "tests": {
         "compiled_provider_preserves_shared_rust_interop_contracts_issues834_835_961": {
           "disposition": "retire",
@@ -3386,7 +3700,177 @@
         "consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim": {
           "disposition": "retire",
           "twin": "",
-          "notes": "asserts generated Rust text"
+          "notes": "`incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter."
+        },
+        "oven_build_projects_structural_mutable_reference_generics_for_an_unrelated_provider": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
+        },
+        "external_pub_consumer_uses_flattened_nested_union_variant_index_issue1198": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
+        },
+        "consumer_check_copies_a_sqlite_error_view_with_an_explicit_bound": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "`incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter, as its sibling `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` does."
+        },
+        "consumer_check_models_a_sqlite_caller_owned_byte_buffer_through_a_declared_shim": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "`incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter, as its sibling `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` does."
+        },
+        "consumer_check_preserves_checked_c_f32_scalar_identity": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "`incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter, as its sibling `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` does."
+        },
+        "consumer_check_preserves_exact_checked_c_scalar_carriers": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "`incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter, as its sibling `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` does."
+        },
+        "consumer_check_supports_checked_byte_spans_and_caller_owned_buffers": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "`incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter, as its sibling `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` does."
+        },
+        "check_passes_for_pub_imported_manifest_type": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "check_reports_missing_pub_export": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "check_reports_missing_pub_library_artifacts": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "check_reports_pub_library_artifact_mismatch": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "check_reports_pub_manifest_load_failure": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "check_reports_unknown_pub_library": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_rejects_checked_byte_span_escape_and_reuse": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_rejects_unpaired_checked_f32_span_arguments": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_rejects_unpaired_or_immutable_checked_byte_buffer_arguments": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_reports_checked_c_signature_mismatch_at_the_binding": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_resolves_a_manifest_declared_package_relative_c_header": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_desugars_external_vocab_block_via_wasm": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_passes_request_payload_into_external_vocab_desugarer": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_accepts_expression_desugar_output_in_statement_position": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_reports_external_vocab_desugarer_failure": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_passes_scoped_query_surface_artifacts_to_desugarer": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_passes_expr_list_item_metadata_to_desugarer_issue724": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_desugars_colon_vocab_expression_in_assignment_issue727": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_desugars_colon_vocab_expression_in_return_issue727": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_desugars_colon_vocab_expression_preserves_inline_clauses_issue727": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_desugars_braced_vocab_expression_with_compound_clauses_issue727": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_desugared_public_field_callee_call_typechecks_as_method_issue727": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_desugared_generic_method_call_uses_expected_return_type_issue735": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_supports_checked_f32_spans_for_paired_numeric_pointers": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` and `inspect bindings` only; representation inspection from checked facts, no generated Rust."
+        },
+        "sqlite_checked_c_tooling_projects_the_shared_descriptor": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` and `inspect bindings` only; representation inspection from checked facts, no generated Rust."
+        },
+        "fmt_activates_clean_source_dependency_vocab_before_parsing_issue756": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan fmt` only; formatter surface, no generated Rust."
+        },
+        "fmt_dependency_collection_does_not_prepare_persistent_library_artifact": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan fmt` only; formatter surface, no generated Rust."
         }
       }
     },

@@ -228,7 +228,7 @@ doc-paths:
 test-inventory:
 	@python3 scripts/test_inventory/render.py
 
-.PHONY: test-inventory-check  ## quality - Fail when a test has no disposition, a twin is missing, or the inventory page is stale
+.PHONY: test-inventory-check  ## quality - Fail when a test has no disposition, a twin does not resolve, or the inventory page is stale
 test-inventory-check:
 	@python3 -m unittest discover -q -s scripts/test_inventory -p 'test_collect.py' >/dev/null 2>&1 \
 		|| python3 -m unittest discover -s scripts/test_inventory -p 'test_collect.py'

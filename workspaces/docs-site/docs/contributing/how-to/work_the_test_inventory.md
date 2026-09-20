@@ -57,7 +57,7 @@ A declared fixture root is also a valid twin, spelled as its bare path, when the
 
 ## Plan a split
 
-The collector measures each file's test region: the whole file for a test file, the `#[cfg(test)]` modules for a source file. When that region exceeds `split_threshold_lines` (1500), the row must carry `split_required: true`, and the gate says which value to record when the flag and the measurement disagree:
+The collector measures each file's test region: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. When that region exceeds `split_threshold_lines` (1500), the row must carry `split_required: true`, and the gate says which value to record when the flag and the measurement disagree:
 
 ```text
 - `loaves/kernel/incan_syntax/src/parser/tests.rs`: split_required is false but the test region is 6673 lines against a threshold of 1500; record true
@@ -87,6 +87,7 @@ make test-inventory          # rewrite the reference page
 make test-inventory-check    # what pre-commit-fast and CI run
 python3 scripts/test_inventory/collect.py            # summary: totals, split candidates, anomalies
 python3 scripts/test_inventory/collect.py --json     # every test with its lanes, for tooling
+python3 scripts/test_inventory/collect.py --check --dispositions scratch.json   # probe another record without editing the tracked one
 ```
 
 The check fails, with one line per finding, when:

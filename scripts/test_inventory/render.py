@@ -35,18 +35,18 @@ PAGE_PATH = ROOT / "workspaces" / "docs-site" / "docs" / "contributing" / "refer
 HOW_TO_LINK = "../how-to/work_the_test_inventory.md"
 
 DISPOSITION_MEANING = {
-    "keep": "Asserts source meaning through the parser, typechecker, Body IR, lowering facts, formatter, LSP or semantics core. Survives the slice-7 cutover untouched.",
+    "keep": "Asserts source meaning through the parser, typechecker, Body IR, formatter, LSP or semantics core, and never touches generated Rust. Survives the slice-7 cutover untouched.",
     "re-point": "Asserts program behaviour (output, exit code, diagnostics of a run) but proves it by building or running generated Rust. The assertion stays; slice 7 changes the route.",
     "retire": "Asserts the shape of the generated Rust itself: snapshot text, `contains(\"fn ...\")` on emitted source, emitter unit tests. Dies with #654, and only after its twin exists.",
-    "unaffected": "Oven, store, rustc, installer, stdlib runtime, formatter internals and other tests the cutover does not touch. Listed so the total reconciles.",
+    "unaffected": "Oven, store, rustc, installer, stdlib runtime, layering guards and other tests the cutover does not touch. Listed so the total reconciles.",
     "unreviewed": "Nobody has read the file yet. The mechanical proposal is recorded in the notes when there is one; the maintainer works these rows through.",
 }
 
 LANE_MEANING = {
-    "codegen": "calls a codegen API (`IrCodegen`, `try_generate`, `generate_rust`, `emit_program`, `read_generated_rust`)",
+    "codegen": "calls a codegen API (`IrCodegen`, `try_generate`, `generate_rust`, `emit_program`, `read_generated_rust`) or reads generated Rust (`target/incan/<project>/src/*.rs`, `incan --emit-rust`)",
     "snapshot": "asserts an `insta` snapshot",
     "generated_text": "asserts on generated Rust text (`contains(\"fn \")`, `contains(\"impl \")` and the like)",
-    "build_run": "builds or runs a project (`run_incan`, `incan_command`, `run_explicit_oven_bake`, project runner helpers)",
+    "build_run": "builds or runs generated Rust (`run_explicit_oven_bake`, `compare_source_observable`, a `cargo`/`rustc` command, or a CLI invocation such as `run_incan` / `incan_command` beside a `build`, `run`, `test` or `bake` subcommand or a generated-target read; `incan fmt`, `incan check`, `--help` and `--version` alone do not count)",
     "replacement": "uses the replacement route or Body IR (`replacement::`, `shadow_support`, `body_ir`, `lower_typed_body_ir`, `execute_free_function`)",
     "checker": "typechecks or reads diagnostics (`TypeChecker`, `check_str`, `CompileError`, `CompilationSession`)",
     "parser": "lexes or parses (`parser::parse`, `parse_str`, `lexer::lex`)",
@@ -239,7 +239,10 @@ def render(corpus: Corpus, dispositions: dict) -> str:
     out.append("")
     out.append(
         "The collector counts these in the text of each test function and of the file-local helpers it calls. They are "
-        "evidence, not the verdict: the disposition column is what the reviewer recorded."
+        "evidence, not the verdict: the disposition column is what the reviewer recorded. Helpers that live in a "
+        "`#[path = \"support/...\"]` module outside the file are invisible to the scanner, so a test that drives the "
+        "shadow comparison through such a helper shows only the lanes its own text carries. A `#[cfg_attr(..., test)]` "
+        "attribute and a one-line `#[test] fn ...` are not counted; the tree has neither."
     )
     out.append("")
     out.append("| Signal | Fires when the test |")
@@ -284,8 +287,8 @@ def render(corpus: Corpus, dispositions: dict) -> str:
     out.append("## Test files by crate")
     out.append("")
     out.append(
-        "`Lines` is the file length; `Test lines` is the test region (the whole file for a test file, the `#[cfg(test)]` "
-        "modules for a source file) that the split threshold applies to. `Twins` is `named/retire-class` for files with "
+        "`Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` "
+        "modules when the file has any, otherwise the whole file. `Twins` is `named/retire-class` for files with "
         "retire-class tests. Per-test rows follow a file only when it carries per-test overrides."
     )
     out.append("")
