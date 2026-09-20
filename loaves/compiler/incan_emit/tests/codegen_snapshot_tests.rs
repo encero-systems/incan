@@ -5040,10 +5040,6 @@ fn test_issue1489_loop_variable_returned_owned_codegen() {
     );
 }
 
-/// Issue #1494: a string literal handed to a collection method must reach the `String` parameter owned. The
-/// `Deque[str]` case was the live one -- `resolve_type_index_expression` dropped the type application's argument, so
-/// the receiver reached emission as `Deque[Unknown]` and the literal had no target to convert toward (fixed in #1529);
-/// the builtin list, set and dict receivers already converted through `CollectionElement`.
 /// Issue #1489: a loop binding returned as an `Ok` payload is cloned, and the `T` it clones needs `Clone`. Free
 /// functions already received the bound; a method's own type parameters were never augmented, which surfaced as
 /// E0599 in `std.data.toml` once the payload went through planning. The field read out of a last-use local is the
@@ -5076,6 +5072,10 @@ fn test_issue1489_method_type_param_clone_bound_codegen() {
     }
 }
 
+/// Issue #1494: a string literal handed to a collection method must reach the `String` parameter owned. The
+/// `Deque[str]` case was the live one -- `resolve_type_index_expression` dropped the type application's argument, so
+/// the receiver reached emission as `Deque[Unknown]` and the literal had no target to convert toward (fixed in #1529);
+/// the builtin list, set and dict receivers already converted through `CollectionElement`.
 #[test]
 fn test_issue1494_collection_method_literal_arguments_codegen() {
     let source = load_test_file("issue1494_collection_method_literal_arguments");

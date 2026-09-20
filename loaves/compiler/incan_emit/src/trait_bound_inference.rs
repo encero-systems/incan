@@ -1916,7 +1916,6 @@ fn receiver_ref_kind(receiver: &IrExpr) -> Option<VarRefKind> {
     }
 }
 
-/// Return whether a call expression targets an Incan callable rather than an external Rust symbol.
 /// Return the declared payload type when `func` is the `Ok` or `Err` constructor of a `Result`-typed call.
 ///
 /// Mirrors the emitter's constructor seeding: the `Ok` side reads the result's success type and the `Err` side its
@@ -1932,6 +1931,7 @@ fn result_constructor_payload_slot<'a>(func: &IrExpr, result_ty: &'a IrType) -> 
     }
 }
 
+/// Return whether a call expression targets an Incan callable rather than an external Rust symbol.
 fn call_args_use_incan_clone_policy(func: &IrExpr) -> bool {
     !matches!(
         &func.kind,
