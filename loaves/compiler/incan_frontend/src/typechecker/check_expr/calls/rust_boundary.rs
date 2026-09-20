@@ -628,7 +628,11 @@ impl TypeChecker {
     }
 
     /// Reject an immutable source binding when a planned Rust boundary borrow is exclusive.
-    fn validate_rust_borrow_mutability(&mut self, kind: RustArgCoercionKind, arg_expr: &Spanned<Expr>) -> bool {
+    pub(in crate::typechecker) fn validate_rust_borrow_mutability(
+        &mut self,
+        kind: RustArgCoercionKind,
+        arg_expr: &Spanned<Expr>,
+    ) -> bool {
         if matches!(
             kind,
             RustArgCoercionKind::Borrow { mutable: true } | RustArgCoercionKind::TraitObjectBorrow { mutable: true }

@@ -1872,7 +1872,15 @@ impl AstLowering {
                             .as_ref()
                             .and_then(|info| info.rust_method_trait_import_use(expr_span))
                             .map(|import_use| IrMethodDispatch::RustExtensionTraitImport {
-                                binding: import_use.binding.clone(),
+                                bindings: vec![import_use.binding.clone()],
+                            })
+                    })
+                    .or_else(|| {
+                        self.type_info
+                            .as_ref()
+                            .and_then(|info| info.rust_method_trait_import_candidates(expr_span))
+                            .map(|bindings| IrMethodDispatch::RustExtensionTraitImport {
+                                bindings: bindings.to_vec(),
                             })
                     });
 

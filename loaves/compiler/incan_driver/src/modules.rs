@@ -263,7 +263,41 @@ fn is_unselected_package_entrypoint(source_root: &Path, source_file: &Path, sele
         .is_some_and(|stem| matches!(stem, "lib" | "main"))
 }
 
+/// Key one source file by identity rather than by the spelling used to reach it.
+///
+/// Module collection dedupes visited files, records dependency edges, and correlates the topological sort by a
+/// string key. That key has to name the file, not the path a caller happened to spell: the resolver canonicalizes
+/// every local import it locates (`resolve_module_path_from_base`), so a module reached through an import always
+/// arrives under its canonical path, while a seed arrives under whatever the caller wrote. When the two disagree, as
+/// they do for an entry spelled through a symlink (macOS keeps its temporary directory behind one) whose import cycle
+/// reaches back into it, the entry is collected twice and the two parsed modules carry one module identity, which the
+/// replacement execution graph refuses as a duplicate rather than dispatching by assembly order (#1557).
+///
+/// A path that cannot be canonicalized keeps its spelling, which is the only identity it has; the file is read next
+/// and reports the real failure. The key is only ever used for de-duplication and ordering: a module's
+/// [`ParsedModule::file_path`] keeps the spelling it was reached by, so callers that located the entry themselves can
+/// still find it by the path they passed in.
+///
+/// Canonicalizing on every platform also covers the spellings Windows offers for one file (`\\?\` extended-length
+/// prefix, either separator, case-insensitive components), which is the #1357 shape the Windows line applies only
+/// there. Every caller of [`topologically_sort_modules`] must key its dependency edges through this same function;
+/// the test runner's collector in `testing::module_graph` is the other one.
+pub(crate) fn source_identity_key(path: &str) -> String {
+    fs::canonicalize(path)
+        .map(|canonical| canonical.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| path.to_string())
+}
+
 /// Collect one source graph from explicit seed modules through an already-resolved compilation session.
+///
+/// Seeds are `(file path, module name, module segments)` triples. Each file is parsed once, its imports are resolved
+/// into further seeds, and the resulting edges drive a topological sort so a module is always parsed before the
+/// modules that depend on it.
+///
+/// Visited files and dependency edges are keyed through [`source_identity_key`] rather than by the path string the
+/// file happened to be reached by. Both sides of that keying must agree with the key
+/// [`topologically_sort_modules`] builds its module map from: if they diverge, edges silently fail to match a module
+/// and the sort quietly loses ordering constraints rather than reporting a problem.
 fn collect_modules_detailed_from_seeds(
     path: PathBuf,
     session: &CompilationSession,
@@ -285,11 +319,12 @@ fn collect_modules_detailed_from_seeds(
         }
     };
     while let Some((file_path, module_name, path_segments)) = to_process.pop() {
-        if processed.contains(&file_path) {
+        let file_key = source_identity_key(&file_path);
+        if processed.contains(&file_key) {
             continue;
         }
-        processed.insert(file_path.clone());
-        dependency_edges.entry(file_path.clone()).or_default();
+        processed.insert(file_key.clone());
+        dependency_edges.entry(file_key.clone()).or_default();
 
         let source = read_source_for_diagnostics(&file_path)?;
         let file_path_obj = Path::new(&file_path);
@@ -326,13 +361,11 @@ fn collect_modules_detailed_from_seeds(
                 let module_segments = stdlib_module_segments(&module_path);
                 let module_name = module_segments.join("_");
                 let dep_path_str = source_path.to_string_lossy().to_string();
-                if !processed.contains(&dep_path_str) {
-                    to_process.push((dep_path_str.clone(), module_name, module_segments));
+                let dep_key = source_identity_key(&dep_path_str);
+                if !processed.contains(&dep_key) {
+                    to_process.push((dep_path_str, module_name, module_segments));
                 }
-                dependency_edges
-                    .entry(file_path.clone())
-                    .or_default()
-                    .insert(dep_path_str);
+                dependency_edges.entry(file_key.clone()).or_default().insert(dep_key);
             }
         }
         if uses_result_combinator_surface(&ast) {
@@ -342,13 +375,11 @@ fn collect_modules_detailed_from_seeds(
                 let module_segments = stdlib_module_segments(&module_path);
                 let module_name = module_segments.join("_");
                 let dep_path_str = source_path.to_string_lossy().to_string();
-                if !processed.contains(&dep_path_str) {
-                    to_process.push((dep_path_str.clone(), module_name, module_segments));
+                let dep_key = source_identity_key(&dep_path_str);
+                if !processed.contains(&dep_key) {
+                    to_process.push((dep_path_str, module_name, module_segments));
                 }
-                dependency_edges
-                    .entry(file_path.clone())
-                    .or_default()
-                    .insert(dep_path_str);
+                dependency_edges.entry(file_key.clone()).or_default().insert(dep_key);
             }
         }
         for resolved in resolve_program_source_imports(&ast, current_base, Some(&session.source_root)) {
@@ -373,25 +404,21 @@ fn collect_modules_detailed_from_seeds(
                     let module_segments = stdlib_module_segments(&module_path);
                     let module_name = module_segments.join("_");
                     let dep_path_str = source_path.to_string_lossy().to_string();
-                    if !processed.contains(&dep_path_str) {
-                        to_process.push((dep_path_str.clone(), module_name, module_segments));
+                    let dep_key = source_identity_key(&dep_path_str);
+                    if !processed.contains(&dep_key) {
+                        to_process.push((dep_path_str, module_name, module_segments));
                     }
-                    dependency_edges
-                        .entry(file_path.clone())
-                        .or_default()
-                        .insert(dep_path_str);
+                    dependency_edges.entry(file_key.clone()).or_default().insert(dep_key);
                 }
                 SourceModuleImportResolution::Local(module_ref) => {
                     let dep_path_str = module_ref.file_path.to_string_lossy().to_string();
+                    let dep_key = source_identity_key(&dep_path_str);
                     let module_segments = canonicalize_source_module_segments(&module_ref.path_segments);
                     let module_name = module_segments.join("_");
-                    if !processed.contains(&dep_path_str) {
-                        to_process.push((dep_path_str.clone(), module_name, module_segments));
+                    if !processed.contains(&dep_key) {
+                        to_process.push((dep_path_str, module_name, module_segments));
                     }
-                    dependency_edges
-                        .entry(file_path.clone())
-                        .or_default()
-                        .insert(dep_path_str);
+                    dependency_edges.entry(file_key.clone()).or_default().insert(dep_key);
                 }
                 SourceModuleImportResolution::SelfImport {
                     module_ref,
@@ -430,6 +457,10 @@ fn collect_modules_detailed_from_seeds(
 /// This explicit sort guarantees each module appears only after its direct and transitive dependencies for acyclic
 /// portions of the graph. For cyclic components (for example stdlib prelude re-export loops), we keep deterministic
 /// fallback ordering rather than hard-failing in collection.
+///
+/// `dependency_edges` is keyed by [`source_identity_key`] on both sides, and the module map built here uses the same
+/// key, so an edge recorded under a file's canonical path still finds the module that was reached by another
+/// spelling.
 pub fn topologically_sort_modules(
     modules: Vec<ParsedModule>,
     dependency_edges: &HashMap<String, HashSet<String>>,
@@ -441,7 +472,7 @@ pub fn topologically_sort_modules(
     let mut module_by_path: HashMap<String, ParsedModule> = HashMap::new();
     let mut order_index: HashMap<String, usize> = HashMap::new();
     for (idx, module) in modules.into_iter().enumerate() {
-        let key = module.file_path.to_string_lossy().to_string();
+        let key = source_identity_key(&module.file_path.to_string_lossy());
         order_index.insert(key.clone(), idx);
         module_by_path.insert(key, module);
     }
@@ -1030,6 +1061,52 @@ def main() -> None:
             modules.iter().any(|m| m.file_path.ends_with("src/dataset.incn")),
             "expected dataset module to resolve from source root"
         );
+        Ok(())
+    }
+
+    /// A module cycle that re-enters the entry through a differently spelled path collects the entry once.
+    ///
+    /// The resolver canonicalizes every local import it locates, so a back edge into the entry hands collection the
+    /// entry's canonical path. When the caller spelled the entry through a symlink (macOS keeps its temporary
+    /// directory behind one), keying the visited set by spelling collected the entry twice, and the two parsed
+    /// modules then carried one module identity, which the replacement execution graph refuses as a duplicate
+    /// (#1557).
+    #[cfg(unix)]
+    #[test]
+    fn collect_modules_collects_a_symlink_spelled_entry_once_through_its_own_back_edge_issue1557()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let real_root = tmp.path().canonicalize()?.join("real");
+        std::fs::create_dir_all(real_root.join("src"))?;
+        std::fs::write(real_root.join("loaf.toml"), "[project]\nname = \"frame_cycle\"\n")?;
+        std::fs::write(
+            real_root.join("src/main.incn"),
+            "from helper import bounce\n\npub def step(value: int) -> int:\n    if value == 0:\n        return 42\n    return bounce(value - 1)\n\ndef main() -> int:\n    return step(4)\n",
+        )?;
+        std::fs::write(
+            real_root.join("src/helper.incn"),
+            "from main import step\n\npub def bounce(value: int) -> int:\n    return step(value)\n",
+        )?;
+        let linked_root = tmp.path().canonicalize()?.join("linked");
+        std::os::unix::fs::symlink(&real_root, &linked_root)?;
+        let entry = linked_root.join("src/main.incn");
+
+        let session = CompilationSession::discover_for_collection_with_feature_selection(&entry, &Default::default())?;
+        let modules =
+            collect_modules_detailed_with_session(entry.clone(), &session).map_err(|failure| failure.render_human())?;
+
+        let entry_modules: Vec<&Path> = modules
+            .iter()
+            .filter(|module| module.path_segments == ["main"])
+            .map(|module| module.file_path.as_path())
+            .collect();
+        assert_eq!(
+            entry_modules,
+            vec![entry.as_path()],
+            "the entry must be collected exactly once, under the spelling it was reached by: {entry_modules:?}"
+        );
+        let collected: Vec<&Path> = modules.iter().map(|module| module.file_path.as_path()).collect();
+        assert_eq!(collected.len(), 2, "one entry and one helper: {collected:?}");
         Ok(())
     }
 

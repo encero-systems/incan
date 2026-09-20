@@ -5789,6 +5789,76 @@ fn test_std_serde_with_serialize_trait_codegen() {
     assert_codegen_snapshot!("std_serde_with_serialize_trait", rust_code);
 }
 
+/// #1431: a source trait that only shares the spelling of `std.serde.json.Serialize` / `Deserialize` carries no
+/// JSON protocol. Its adoption must not inject serde derives or the `to_json` / `from_json` backend defaults; the
+/// stdlib JSON behavior keys on the canonical trait identity, never on the basename.
+#[test]
+fn test_newtype_local_serde_named_traits_codegen() {
+    let source = load_test_file("newtype_local_serde_named_traits");
+    let rust_code = generate_rust(&source);
+    let compact = compact_rust(&rust_code);
+    assert!(
+        compact.contains("implSerializeforNumber{}") && compact.contains("implDeserializeforNumber{}"),
+        "expected empty impls for the local traits; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("serde::") && !compact.contains("to_json") && !compact.contains("from_json"),
+        "local traits spelled like the stdlib JSON traits must not receive serde derives or JSON methods; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("newtype_local_serde_named_traits", rust_code);
+}
+
+/// #1431: a `std.serde.json` trait imported through a facade re-export is still the stdlib trait. The consumer's
+/// written import names only the facade, so the protocol must key on the identity the frontend proved through the
+/// re-export: the serde derives are forwarded, the backend default `to_json` is emitted for `Serialize`, and the
+/// adopter's own `from_json` lands inside the `Deserialize` impl rather than being dropped as an unknown method.
+#[test]
+fn test_facade_reexported_std_serde_json_traits_keep_their_protocol() -> Result<(), Box<dyn std::error::Error>> {
+    let facade_source = "from std.serde.json import Serialize, Deserialize\n";
+    let consumer_source = r#"
+from facade import Serialize, Deserialize
+
+model Payload with Serialize, Deserialize:
+  value: int
+
+  def from_json(json_str: str) -> Result[Payload, str]:
+    return Ok(Payload(value=len(json_str)))
+
+def main() -> None:
+  println(Payload(value=1).to_json())
+  match Payload.from_json("{}"):
+    case Ok(restored):
+      println(restored.value)
+    case Err(message):
+      println(message)
+"#;
+    let facade_ast = parse_incan_program(facade_source, "facade");
+    let consumer_ast = parse_incan_program(consumer_source, "consumer");
+    let mut codegen = codegen_with_builtin_stdlib_inventory();
+    codegen.add_module_with_path_segments("facade", &facade_ast, vec!["facade".to_string()]);
+    let (consumer_code, _modules) = codegen
+        .try_generate_multi_file_nested(&consumer_ast, &[vec!["facade".to_string()]])
+        .map_err(|err| std::io::Error::other(format!("facade re-export should codegen: {err:?}")))?;
+    let compact = compact_rust(&consumer_code);
+    assert!(
+        compact.contains("serde::Serialize,") && compact.contains("serde::Deserialize,"),
+        "serde derives must be forwarded for the re-exported stdlib traits; generated:\n{consumer_code}"
+    );
+    assert!(
+        compact.contains("implSerializeforPayload{fnto_json(&self)->String"),
+        "the stdlib backend default must be emitted for the re-exported Serialize; generated:\n{consumer_code}"
+    );
+    assert!(
+        compact.contains("implDeserializeforPayload{fnfrom_json(json_str:String)->Result<Payload,String>"),
+        "the adopter's from_json must land in the re-exported Deserialize impl; generated:\n{consumer_code}"
+    );
+    assert!(
+        compact.contains("usecrate::facade::Serialize;") && compact.contains("usecrate::facade::Deserialize;"),
+        "the facade bindings must stay imported; generated:\n{consumer_code}"
+    );
+    Ok(())
+}
+
 #[test]
 fn test_newtype_with_serialize_trait_forwards_rust_derive() {
     let source = r#"
@@ -6352,6 +6422,75 @@ fn test_trait_bound_explicit_codegen() {
     let source = load_test_file("trait_bound_explicit");
     let rust_code = generate_rust(&source);
     assert_codegen_snapshot!("trait_bound_explicit", rust_code);
+}
+
+/// #1427: a source trait inherits an imported Rust trait, and the generated declaration keeps the foreign bound.
+#[test]
+fn test_rust_supertrait_imported_codegen() {
+    let source = load_test_file("rust_supertrait_imported");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("pub trait Labeled: ::std::fmt::Display"),
+        "the imported supertrait must survive as an absolute Rust bound:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("rust_supertrait_imported", rust_code);
+}
+
+/// #1450: a metadata-free extension-trait import survives pruning when a method call may reach it.
+#[test]
+fn test_rust_trait_import_without_metadata_codegen() {
+    let source = load_test_file("rust_trait_import_without_metadata");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("use ::std::borrow::Borrow;"),
+        "the trait providing `.borrow()` must stay in scope:\n{rust_code}"
+    );
+    assert!(rust_code.contains("value.borrow()"), "{rust_code}");
+    assert_codegen_snapshot!("rust_trait_import_without_metadata", rust_code);
+}
+
+/// #1450: the retained metadata-free trait import keeps its alias.
+#[test]
+fn test_rust_trait_import_without_metadata_alias_codegen() {
+    let source = load_test_file("rust_trait_import_without_metadata_alias");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("use ::std::borrow::Borrow as Borrowed;"),
+        "the aliased trait import must stay in scope under its alias:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("rust_trait_import_without_metadata_alias", rust_code);
+}
+
+/// #1450 control: without an unresolved method call the metadata-free import is still pruned.
+#[test]
+fn test_rust_trait_import_without_metadata_unused_codegen() {
+    let source = load_test_file("rust_trait_import_without_metadata_unused");
+    let rust_code = generate_rust(&source);
+    assert!(
+        !rust_code.contains("std::borrow::Borrow"),
+        "an import no method call can reach must not be retained:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("rust_trait_import_without_metadata_unused", rust_code);
+}
+
+/// #1374: a `Default` bound must name the Rust `Default` trait that `@derive(Default)` implements.
+///
+/// The bound comes from the trait-bound registry, so the generic function compiles against the derived
+/// implementation instead of a source-owned `__incan_std` trait that no generated program implements.
+#[test]
+fn test_trait_bound_default_codegen() {
+    let source = load_test_file("trait_bound_default");
+    let rust_code = generate_rust(&source);
+    let default_bound = incan_lang::lang::trait_bounds::rust::DEFAULT;
+    assert!(
+        rust_code.contains(&format!("fn make<T: {default_bound}>() -> T")),
+        "expected the registry's Rust `Default` bound in the generated signature:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("__incan_std::derives::copying::Default"),
+        "a `Default` bound must not point at the source-owned trait:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("trait_bound_default", rust_code);
 }
 
 #[test]

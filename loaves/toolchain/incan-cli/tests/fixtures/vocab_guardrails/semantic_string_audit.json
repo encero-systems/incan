@@ -303,8 +303,8 @@
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
       "category": "quarantined metadata-free method compatibility",
-      "expected_count": 11,
-      "expected_fingerprint": "0x78afd8a9c8305f8a"
+      "expected_count": 9,
+      "expected_fingerprint": "0xf12b2c1097e6c27e"
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/fast_paths.rs",

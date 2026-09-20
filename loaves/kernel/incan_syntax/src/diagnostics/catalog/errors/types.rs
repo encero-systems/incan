@@ -1474,6 +1474,37 @@ pub fn rust_receiver_const_generics_not_supported(path: &str, span: Span) -> Com
     .with_note("Incan v0.5 does not accept const values in call-site type-argument syntax")
 }
 
+/// A trait-qualified call `Trait.method(receiver, ...)` names an imported Rust trait whose method signature is not
+/// available, so the compiler cannot tell whether the receiver must be borrowed exclusively, shared, or moved.
+///
+/// The receiver mode is a fact of the Rust declaration. Guessing `&self` produces Rust that rustc rejects against
+/// generated code the author never wrote, so the call is refused with the missing fact named instead (#1375).
+pub fn rust_trait_receiver_mode_unavailable(trait_path: &str, method: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Cannot determine the receiver of `rust::{trait_path}.{method}`: no signature metadata is available for \
+             this Rust trait method"
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Call it as a method on the receiver value (`value.{method}(...)`), or refresh Rust metadata for `{trait_path}`"
+    ))
+    .with_note("A trait-qualified call passes its receiver explicitly, and only the trait's declared receiver says whether that argument is `&mut self`, `&self`, or `self`")
+}
+
+/// A trait-qualified call names a method the inspected Rust trait does not declare.
+///
+/// Rust resolves `Trait::method` only against the trait's own associated items, so a method the trait inherits or
+/// does not have at all fails native compilation; report it against the source call instead (#1375).
+pub fn rust_trait_method_not_declared(trait_path: &str, method: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Rust trait `rust::{trait_path}` does not declare an associated function `{method}`"),
+        span,
+    )
+    .with_hint("Qualify the call with the trait that declares the method, or call it as a method on the receiver value")
+}
+
 /// A Rust import is being used as a constructor, but the compiler lacks enough metadata to emit valid Rust.
 pub fn rust_constructor_metadata_unavailable(path: &str, span: Span) -> CompileError {
     CompileError::type_error(
