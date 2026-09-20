@@ -1711,13 +1711,173 @@
       "split_target": "",
       "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
     },
-    "loaves/compiler/incan_frontend/src/typechecker/tests.rs": {
+    "loaves/compiler/incan_frontend/src/typechecker/tests/async_and_iteration.rs": {
       "disposition": "keep",
       "owner": 1561,
       "twin": "",
-      "split_required": true,
+      "split_required": false,
       "split_target": "",
-      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/bounds_and_derives.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/calls_decorators_and_builtins.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/capabilities.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/checked_facts_and_registries.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/collections_strings_and_bytes.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/extern_and_c_bindings.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/fields_and_members.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/generics_and_type_tokens.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/imports_and_stdlib_modules.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/models_enums_and_newtypes.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/narrowing_and_matching.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/numerics_const_and_static.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/partials_and_callable_aliases.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/pub_imports_namespaces_and_fields.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/pub_imports_symbols_and_identity.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/pub_imports_trait_adoptions.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/rust_constructors_and_fields.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/rust_generics_and_traits.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/rust_imports_and_types.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/rust_metadata_and_methods.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
     },
     "loaves/compiler/incan_frontend/src/typechecker/tests/rust_supertraits.rs": {
       "disposition": "keep",
@@ -1742,6 +1902,38 @@
       "split_required": false,
       "split_target": "",
       "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/statements_and_bindings.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/stdlib_surfaces.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/trait_instantiation_and_operators.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/traits.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
     },
     "loaves/compiler/incan_frontend/src/typechecker/validate_rust_module.rs": {
       "disposition": "keep",
