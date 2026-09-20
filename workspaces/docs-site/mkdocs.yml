@@ -326,6 +326,7 @@ nav:
           - Benchmarks & profiling (repository): contributing/how-to/benchmarks_and_profiling.md
           - Oven Alpha benchmark protocol: contributing/how-to/oven_alpha_benchmark.md
           - CI & automation (repository): contributing/how-to/ci_and_automation.md
+          - Work the test inventory: contributing/how-to/work_the_test_inventory.md
           - Writing RFCs: contributing/how-to/writing_rfcs.md
       - Explanation:
           - Architecture: contributing/explanation/architecture.md
@@ -340,6 +341,7 @@ nav:
       - Reference:
           - Backend behavior inventory: contributing/reference/backend_behavior_inventory.md
           - Replacement compatibility inventory: contributing/reference/replacement_compatibility_inventory.md
+          - Test corpus inventory: contributing/reference/test_corpus_inventory.md
           - Generated Rust stdlib coverage: contributing/reference/generated_rust_stdlib_coverage.md
           - Hees.ai v0.5 dependency inventory: contributing/reference/hees_ai_v05_dependency_inventory.md
           - Rust-source backend deprecation policy: contributing/reference/rust_source_backend_deprecation.md

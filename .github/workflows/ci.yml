@@ -116,6 +116,8 @@ jobs:
             base_ref="HEAD^"
           fi
           python3 scripts/check_changed_rustdocs.py --base "$base_ref"
+      - name: Check the test corpus inventory
+        run: make test-inventory-check
 
   clippy:
     name: Clippy

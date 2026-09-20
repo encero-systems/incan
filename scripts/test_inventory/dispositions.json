@@ -1,0 +1,3521 @@
+{
+  "schema": 1,
+  "split_threshold_lines": 1500,
+  "fixture_roots": {
+    "loaves/compiler/incan_test_support/fixtures": {
+      "pattern": "*.incn",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "top-level regression programs run by CLI integration tests (rfc023/rfc030/rfc064/rfc088 behaviour, reflection, model traits)."
+    },
+    "loaves/compiler/incan_test_support/fixtures/valid": {
+      "pattern": "**/*.incn",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "typechecked in bulk by test_valid_fixtures (keep) and run one by one as std surface programs by CLI tests (re-point)."
+    },
+    "loaves/compiler/incan_test_support/fixtures/invalid": {
+      "pattern": "**/*.incn",
+      "disposition": "keep",
+      "owner": 1561,
+      "notes": "diagnostics through the checker only (test_invalid_fixtures)."
+    },
+    "loaves/compiler/incan_test_support/fixtures/oven_project_bake": {
+      "pattern": "**/*.incn",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "Incan project baked under Oven by the compiler suite; the program's route changes, the bake harness does not."
+    },
+    "loaves/compiler/incan_test_support/fixtures/oven_release_app_bake": {
+      "pattern": "**/*.incn",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "release-profile Oven bake of an Incan app."
+    },
+    "loaves/compiler/incan_test_support/fixtures/oven_release_bytes_io": {
+      "pattern": "**/*.incn",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "release-profile Oven bake exercising bytes I/O."
+    },
+    "loaves/compiler/incan_test_support/fixtures/oven_release_file_lock": {
+      "pattern": "**/*.incn",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "release-profile Oven bake exercising file locks."
+    },
+    "loaves/compiler/incan_emit/tests/codegen_snapshots": {
+      "pattern": "**/*.incn",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "snapshot corpus inputs considered as programs; the .snap outputs retire with codegen_snapshot_tests.rs."
+    },
+    "loaves/compiler/incan_driver/tests/fixtures": {
+      "pattern": "**/*.incn",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "driver integration fixtures (generated_rust_* artifact projects, callability, native consumer); their owner tests are retire-class."
+    },
+    "loaves/toolchain/incan-cli/tests/fixtures": {
+      "pattern": "**/*.incn",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "CLI integration fixtures (layering, package boundary facade, pub union consumer, vocab guardrails)."
+    },
+    "loaves/oven/oven_rustc/src/fixtures": {
+      "pattern": "**/*.incn",
+      "disposition": "unaffected",
+      "owner": 1561,
+      "notes": "Oven rustc fixtures."
+    },
+    "examples": {
+      "pattern": "**/*.incn",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "typechecked and run by scripts/run_examples.sh (`make examples`); vocab and library examples are baked."
+    },
+    "workspaces/docs-site/docs/_snippets/language/examples": {
+      "pattern": "verified_*.incn",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "verified documentation examples checked by scripts/check_docs_examples.sh."
+    },
+    "workspaces/oven/src": {
+      "pattern": "test_*.incn",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "Incan tests of the Oven release-policy project (workspaces/oven), run through `incan test`."
+    },
+    "workspaces/oven/tests/fixtures": {
+      "pattern": "**/*.incn",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "fixtures of the Oven release-policy project's tests."
+    }
+  },
+  "files": {
+    "loaves/compiler/incan_driver/src/backend/c_abi.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "clang verification of checked C signatures; not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/backend/project/cargo_toml.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "generated Cargo project shape; dies with the generated-project route unless #654 keeps generated projects for inspection."
+    },
+    "loaves/compiler/incan_driver/src/backend/project/generator.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "generated Cargo project shape; dies with the generated-project route unless #654 keeps generated projects for inspection."
+    },
+    "loaves/compiler/incan_driver/src/backend/project/lock_projection.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "generated Cargo project shape; dies with the generated-project route unless #654 keeps generated projects for inspection."
+    },
+    "loaves/compiler/incan_driver/src/backend/project/plan.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "generated Cargo project shape; dies with the generated-project route unless #654 keeps generated projects for inspection."
+    },
+    "loaves/compiler/incan_driver/src/backend/project/runner.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "project runner: builds and runs the generated project; the run contract (profiles, rebuild triggers) is re-pointed at the replacement route."
+    },
+    "loaves/compiler/incan_driver/src/backend/project/tests/codegen_generator.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "codegen into a generated project; asserts generated Rust text."
+    },
+    "loaves/compiler/incan_driver/src/backend/project/tests/lock_payload.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "generated Cargo project shape; dies with the generated-project route unless #654 keeps generated projects for inspection."
+    },
+    "loaves/compiler/incan_driver/src/backend/shadow/abs_sum_profile_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route."
+    },
+    "loaves/compiler/incan_driver/src/backend/shadow/enumerate_zip_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route."
+    },
+    "loaves/compiler/incan_driver/src/backend/shadow/json_stringify_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route."
+    },
+    "loaves/compiler/incan_driver/src/backend/shadow/legacy_oven.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route."
+    },
+    "loaves/compiler/incan_driver/src/backend/shadow/len_string_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route."
+    },
+    "loaves/compiler/incan_driver/src/backend/shadow/tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. Result-report transport tests are the comparison harness itself.",
+      "tests": {
+        "the_generated_entrypoint_writes_a_typed_result_without_touching_program_streams": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "asserts generated Rust text"
+        }
+      }
+    },
+    "loaves/compiler/incan_driver/src/build/bake.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/build/caller_owned.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/build/inline_command.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/build/library_exports.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "library re-export resolution and Rust ABI query paths from checked declarations."
+    },
+    "loaves/compiler/incan_driver/src/build/library_outputs.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/build/library_publication.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/build/mod.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/build/output_materialization.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/build/output_paths.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/build/output_selection.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/build/oven_project.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/build/package_loafs.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/build/plan_authority.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/build/plan_selection.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/build/prepare_project.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "prunes the generated project's Cargo dependencies; generated Cargo project shape; dies with the generated-project route unless #654 keeps generated projects for inspection."
+    },
+    "loaves/compiler/incan_driver/src/build/provider_compilation.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/build/provider_metadata.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "provider operation metadata projected from checked declaration facts."
+    },
+    "loaves/compiler/incan_driver/src/build/publication.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/build/replacement.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "replacement build pipeline (session projection, exact numeric report)."
+    },
+    "loaves/compiler/incan_driver/src/build/reuse.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/build/source_authority.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/build_unit.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/cargo_policy.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Cargo flag policy of the generated-project route."
+    },
+    "loaves/compiler/incan_driver/src/generated_cache.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "generated-project cache identity and pruning; dies with the generated-project route."
+    },
+    "loaves/compiler/incan_driver/src/inspect/closure.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/inspect/codegraph.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "codegraph projection from checked facts."
+    },
+    "loaves/compiler/incan_driver/src/lock/mod.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/lock/registry_sources.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/lock/resolution.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/lock/rust_inspect.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/lock/test_inputs.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/lock/workspace.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/modules.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "module collection and Rust dependency use discovery through the parser."
+    },
+    "loaves/compiler/incan_driver/src/project.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build orchestration over Oven (loafs, providers, publication, locks); not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/replacement_compatibility.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "replacement compatibility inventory collector and validator."
+    },
+    "loaves/compiler/incan_driver/src/rust_inspect_workspace.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "generated rust-inspect Cargo workspace that feeds the checker with Rust metadata; not the Rust backend."
+    },
+    "loaves/compiler/incan_driver/src/session.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "CompilationSession analysis (provider plan reuse, feature projection)."
+    },
+    "loaves/compiler/incan_driver/src/shadow_support.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route."
+    },
+    "loaves/compiler/incan_driver/src/testing/discovery.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "test discovery through the parser."
+    },
+    "loaves/compiler/incan_driver/src/testing/module_graph.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "test-runner module graph through the parser."
+    },
+    "loaves/compiler/incan_driver/src/tests/executable_session.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "canonical frames through a checked cycle."
+    },
+    "loaves/compiler/incan_driver/src/typecheck.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typecheck over the import graph."
+    },
+    "loaves/compiler/incan_driver/tests/duration_artifact_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs a program and checks the duration artifact."
+    },
+    "loaves/compiler/incan_driver/tests/emitted_symbol_projection_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "RFC 120 emitted symbol projection and demangling; generated Rust shape."
+    },
+    "loaves/compiler/incan_driver/tests/fixtures/generated_rust_native_consumer/consumer/src/lib.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "fixture consumer of generated_rust_native_consumer_tests; follows its owner."
+    },
+    "loaves/compiler/incan_driver/tests/generated_cache_integration.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "generated-project cache across builds; dies with the generated-project route."
+    },
+    "loaves/compiler/incan_driver/tests/generated_rust_artifact_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "public generated-Rust artifact contract (RFC 120 projections, native consumers, audit); survives only if #654 keeps generated artifacts as inspection output."
+    },
+    "loaves/compiler/incan_driver/tests/generated_rust_audit_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "public generated-Rust artifact contract (RFC 120 projections, native consumers, audit); survives only if #654 keeps generated artifacts as inspection output."
+    },
+    "loaves/compiler/incan_driver/tests/generated_rust_callability_artifact_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "public generated-Rust artifact contract (RFC 120 projections, native consumers, audit); survives only if #654 keeps generated artifacts as inspection output."
+    },
+    "loaves/compiler/incan_driver/tests/generated_rust_native_consumer_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "public generated-Rust artifact contract (RFC 120 projections, native consumers, audit); survives only if #654 keeps generated artifacts as inspection output."
+    },
+    "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "the parity corpus: slice 7's own measurement instrument (RFC 120 coverage, replacement receipts, corpus validation)."
+    },
+    "loaves/compiler/incan_driver/tests/protected_builtin_binding_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "lex/parse/typecheck only."
+    },
+    "loaves/compiler/incan_driver/tests/protected_generic_binding_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "lex/parse/typecheck only."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_abs_sum_profile_shadow_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_abs_sum_profile_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep. Two tests compare against the legacy backend.",
+      "tests": {
+        "replacement_refuses_a_nominal_pattern_after_its_exact_target_identity_is_removed": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "generated-text hit is a diagnostic string"
+        },
+        "both_backends_render_a_multi_argument_print_the_same_way": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "compares replacement output with IrCodegen output; the replacement-only assertion is the twin"
+        }
+      }
+    },
+    "loaves/compiler/incan_driver/tests/replacement_bool_truthiness_shadow_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_bool_truthiness_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_collection_len_shadow_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_collection_len_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_compatibility_registry_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_enumerate_zip_boundary_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_enumerate_zip_parity_cases.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_enumerate_zip_shadow_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_enumerate_zip_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_example_coverage.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_hashed_container_boundary_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_hashed_execution_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_hashed_shadow_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_isinstance_shadow_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_isinstance_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_program_io_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_scalar_conversion_shadow_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_scalar_conversion_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_sorted_int_list_shadow_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_sorted_int_list_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_stream_writer_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_string_helper_execution_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_string_helper_shadow_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_string_len_execution_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_string_len_shadow_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_typed_numeric_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep."
+    },
+    "loaves/compiler/incan_driver/tests/shadow_comparison_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route."
+    },
+    "loaves/compiler/incan_driver/tests/stdlib_version_artifact_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "asserts the stdlib version check inside the generated artifact."
+    },
+    "loaves/compiler/incan_emit/src/checked_program/borrowed_rust_enum.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "checked-program codegen of borrowed Rust enums."
+    },
+    "loaves/compiler/incan_emit/src/checked_program/embedded_fragment.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "checked-program codegen of embedded fragments."
+    },
+    "loaves/compiler/incan_emit/src/checked_program/rust_supertrait_codegen.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "asserts generated Rust text."
+    },
+    "loaves/compiler/incan_emit/src/checked_program/rust_trait_receiver_codegen.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "asserts generated Rust text."
+    },
+    "loaves/compiler/incan_emit/src/checked_program/sdk_module_derives.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "SDK module derive requirements flowing into codegen; two tests assert the metadata round trip only.",
+      "tests": {
+        "sdk_module_derives_metadata_round_trip_preserves_exact_membership": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "metadata round trip through the checker, no codegen"
+        },
+        "sdk_module_derives_missing_membership_stays_rejected": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "checker rejection, no codegen"
+        }
+      }
+    },
+    "loaves/compiler/incan_emit/src/checked_program/tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "checked-program facts (callable shapes, forwarding metadata, vocab refusal); one test drives codegen.",
+      "tests": {
+        "rust_trait_associated_call_uses_callable_shape_from_dependency_namespace_source": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "drives IrCodegen directly"
+        }
+      }
+    },
+    "loaves/compiler/incan_emit/src/codegen.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "IrCodegen entry point and emitter-side metadata; every test drives IrCodegen or emitter-owned merges (manifest type refs, native-union capture). Split with the retirement, not before."
+    },
+    "loaves/compiler/incan_emit/src/codegen/capability_bridge.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "codegen capability activation for generated projects."
+    },
+    "loaves/compiler/incan_emit/src/codegen/dependency_metadata.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "which stdlib and provider items the generated project links; generated-project shape."
+    },
+    "loaves/compiler/incan_emit/src/conversions.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "Rust conversion policy (to_string/borrow/clone plans) for emission; the duckborrower facts in Body IR are the twin surface."
+    },
+    "loaves/compiler/incan_emit/src/emit/decls/functions.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+    },
+    "loaves/compiler/incan_emit/src/emit/decls/mod.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+    },
+    "loaves/compiler/incan_emit/src/emit/decls/structures.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+    },
+    "loaves/compiler/incan_emit/src/emit/errors.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+    },
+    "loaves/compiler/incan_emit/src/emit/expressions/builtins.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+    },
+    "loaves/compiler/incan_emit/src/emit/expressions/calls.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+    },
+    "loaves/compiler/incan_emit/src/emit/expressions/indexing.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+    },
+    "loaves/compiler/incan_emit/src/emit/expressions/mod.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+    },
+    "loaves/compiler/incan_emit/src/emit/expressions/structs_enums.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+    },
+    "loaves/compiler/incan_emit/src/emit/mod.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+    },
+    "loaves/compiler/incan_emit/src/emit/native_unions.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+    },
+    "loaves/compiler/incan_emit/src/emit/program.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+    },
+    "loaves/compiler/incan_emit/src/emit/statements.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+    },
+    "loaves/compiler/incan_emit/src/emit/types.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+    },
+    "loaves/compiler/incan_emit/src/ownership.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "emitter-side ownership and argument plans (borrow/clone/move for generated Rust); twins belong to Body IR ownership facts."
+    },
+    "loaves/compiler/incan_emit/src/reference_shape.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Rust reference-shape helper for emitted callbacks."
+    },
+    "loaves/compiler/incan_emit/src/replacement/executable_resolution_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "replacement route (executable resolution, provider preflight, source profile)."
+    },
+    "loaves/compiler/incan_emit/src/replacement/hashed/tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "replacement route (executable resolution, provider preflight, source profile)."
+    },
+    "loaves/compiler/incan_emit/src/replacement/mod.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "replacement route (executable resolution, provider preflight, source profile)."
+    },
+    "loaves/compiler/incan_emit/src/replacement/provider/tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "replacement route (executable resolution, provider preflight, source profile)."
+    },
+    "loaves/compiler/incan_emit/src/replacement/provider/tests/host_preflight_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "replacement route (executable resolution, provider preflight, source profile)."
+    },
+    "loaves/compiler/incan_emit/src/replacement/source_profile.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "replacement route (executable resolution, provider preflight, source profile)."
+    },
+    "loaves/compiler/incan_emit/src/selection.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "backend selection policy (replacement vs legacy); survives as the replacement route's own selection."
+    },
+    "loaves/compiler/incan_emit/src/tests/lowering_through_emission.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "lowering through emission end to end."
+    },
+    "loaves/compiler/incan_emit/src/trait_bound_inference.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "infers Rust trait bounds for generated generics; Rust-shape concern."
+    },
+    "loaves/compiler/incan_emit/tests/checked_empty_collection_constructor_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "empty-collection constructors: generated-text and snapshot assertions retire; the checked-type and Body IR aggregate assertions stay.",
+      "tests": {
+        "checked_empty_collection_constructors_lower_to_existing_aggregate_shapes_issue1247": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "checked result type or Body IR aggregate shape"
+        },
+        "checked_empty_list_constructor_lowers_to_the_list_aggregate_issue1464": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "checked result type or Body IR aggregate shape"
+        },
+        "mismatched_typed_empty_collection_constructor_contexts_remain_errors_issue1247": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "checked result type or Body IR aggregate shape"
+        },
+        "missing_checked_collection_constructor_facts_do_not_guess_aggregate_lowering_issue1247": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "checked result type or Body IR aggregate shape"
+        },
+        "shadowed_collection_constructors_do_not_gain_aggregate_lowering_issue1247": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "checked result type or Body IR aggregate shape"
+        },
+        "checked_typed_empty_dict_reaches_existing_aggregate_emission_issue1247": {
+          "disposition": "retire",
+          "twin": "loaves/compiler/incan_emit/tests/checked_empty_collection_constructor_tests.rs::checked_empty_collection_constructors_lower_to_existing_aggregate_shapes_issue1247",
+          "notes": "snapshot of the emitted aggregate"
+        }
+      }
+    },
+    "loaves/compiler/incan_emit/tests/closure_local_call_codegen_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "asserts generated Rust text."
+    },
+    "loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "insta snapshot corpus of generated Rust; the .incn inputs under loaves/compiler/incan_emit/tests/codegen_snapshots are inventoried as a fixture root (re-point) and are the twin surface once run as programs."
+    },
+    "loaves/compiler/incan_emit/tests/construction_diagnostics_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker diagnostics for model construction."
+    },
+    "loaves/compiler/incan_emit/tests/constructor_argument_order_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs::named_constructor_arguments_evaluate_in_written_order_issue1462",
+      "split_required": false,
+      "split_target": "",
+      "notes": "argument sequencing asserted through the legacy IR and generated Rust; the CLI regression for issue 1462 runs the same program."
+    },
+    "loaves/compiler/incan_emit/tests/empty_list_comparison_operand_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "checker facts for empty-list operands; the lowered/generated assertions retire.",
+      "tests": {
+        "lowered_empty_list_operand_carries_the_element_type": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "legacy IR shape"
+        },
+        "generated_rust_names_the_element_type_on_the_empty_operand": {
+          "disposition": "retire",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs::empty_list_equality_operands_build_with_json_cohort_issue1476",
+          "notes": "asserts generated Rust text"
+        }
+      }
+    },
+    "loaves/compiler/incan_emit/tests/enumerate_value_codegen_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "asserts generated Rust text."
+    },
+    "loaves/compiler/incan_emit/tests/fallible_entrypoint_codegen_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "snapshot of the generated entrypoint."
+    },
+    "loaves/compiler/incan_emit/tests/generated_stdlib_version_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "the stdlib line the emitter declares in generated code; the version contract moves with the emitter."
+    },
+    "loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "implicit borrowing asserted on generated Rust; duckborrower facts are the twin surface."
+    },
+    "loaves/compiler/incan_emit/tests/lowering_error_propagation.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "legacy IR lowering error propagation."
+    },
+    "loaves/compiler/incan_emit/tests/match_arm_ownership_codegen_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "asserts generated Rust text."
+    },
+    "loaves/compiler/incan_emit/tests/nested_list_loop_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "checker facts for nested empty lists (issue 1471); one generated-text and one legacy IR assertion retire.",
+      "tests": {
+        "nested_list_empty_holes_retain_checked_string_types": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "legacy IR shape"
+        },
+        "nested_list_loop_emits_owned_strings_without_caller_annotation": {
+          "disposition": "retire",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs::nested_empty_first_list_runs_without_a_caller_annotation_issue1471",
+          "notes": "asserts generated Rust text"
+        }
+      }
+    },
+    "loaves/compiler/incan_emit/tests/qualified_type_annotation_codegen_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "asserts generated Rust text."
+    },
+    "loaves/compiler/incan_emit/tests/return_operand_ownership_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs::returning_a_loop_variable_from_a_list_of_lists_issue1489",
+      "split_required": false,
+      "split_target": "",
+      "notes": "return-operand move/read decisions asserted through the legacy IR; the CLI regression for issue 1489 runs the loop-variable case, the other cases still need Body IR ownership twins."
+    },
+    "loaves/compiler/incan_emit/tests/stdlib_generated_rust_snapshot_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "insta snapshots of generated stdlib Rust."
+    },
+    "loaves/compiler/incan_emit/tests/string_helper_codegen_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "snapshot and generated text."
+    },
+    "loaves/compiler/incan_emit/tests/string_len_codegen_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "asserts generated Rust text."
+    },
+    "loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "generated clone placement for zip aliases; three assignment-plan unit tests are emitter ownership plans and retire with them."
+    },
+    "loaves/compiler/incan_format/src/config.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "formatter; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/incan_format/src/formatter/tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "formatter; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/incan_format/src/lib.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "formatter; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/incan_format/src/writer.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "formatter; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/incan_format/tests/property_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "formatter; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/incan_frontend/src/api_metadata.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/body_ir.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/compiler_stack.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/contract_metadata.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/hir.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/library_exports.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/library_manifest/artifact.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/library_manifest/published_layout.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/library_manifest/tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/library_manifest/type_projection.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/library_manifest_index.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/module.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/provider/features.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/provider/plan.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/provider/sdk.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/provider/stdlib_sources.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/resolved_type_subst.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/rust_type_display.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/surface_semantics.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/symbols.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/testing_markers.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/canonical_identity_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/collect/stdlib_imports.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/identity_surface_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/rust_supertraits.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/rust_trait_import_candidates.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/rust_trait_qualified_calls.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/validate_rust_module.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/vocab_ast_bridge.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/vocab_desugar_pass/helper_bindings.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/src/vocab_desugar_pass/runtime.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/tests/checked_string_helper_identity_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/tests/checked_string_len_identity_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/tests/declaration_identity_corpus.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/tests/semantic_core_parity.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/tests/semantic_core_parity_strings.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/tests/semantic_digest_invariants.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_frontend/tests/stdlib_module_trait_tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+    },
+    "loaves/compiler/incan_ir/src/decl.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+    },
+    "loaves/compiler/incan_ir/src/expr.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+    },
+    "loaves/compiler/incan_ir/src/lib.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+    },
+    "loaves/compiler/incan_ir/src/lower/decl/helpers.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+    },
+    "loaves/compiler/incan_ir/src/lower/decl/methods.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+    },
+    "loaves/compiler/incan_ir/src/lower/decl/traits.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+    },
+    "loaves/compiler/incan_ir/src/lower/expr/calls.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+    },
+    "loaves/compiler/incan_ir/src/lower/expr/mod.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+    },
+    "loaves/compiler/incan_ir/src/lower/mod.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+    },
+    "loaves/compiler/incan_ir/src/lower/types.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+    },
+    "loaves/compiler/incan_ir/src/types.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Rust-source backend lowering (AstLowering, IrProgram, IrType, Rust name spellings); #654 removes it with the emitter. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+    },
+    "loaves/compiler/incan_oven_facet/src/lib.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven facet of the compiler; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/incan_oven_facet/tests/oven_pr_regressions.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven facet of the compiler; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/incan_provider/src/compiled_sdk.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/incan_provider/src/dependency_resolver.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/incan_provider/src/inventory.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/incan_provider/src/lock_semantics.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/incan_provider/src/requirements.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/incan_provider/src/sdk_build.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/incan_provider/src/sdk_store.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/incan_provider/src/vocab_extraction.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/incan_provider/tests/stdlib_effect_digest.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/incan_test_support/src/builtin_stdlib.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "test-support helper for the builtin stdlib inventory."
+    },
+    "loaves/compiler/incan_test_support/src/emitted_symbol_artifact.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "helpers over emitted symbol projections (RFC 120 physical names)."
+    },
+    "loaves/compiler/rust_inspect/src/cache_tests.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/rust_inspect/src/digest/tests.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/rust_inspect/src/extractor.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/rust_inspect/src/lib.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/rust_inspect/src/loader.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/rust_inspect/src/mir_digest.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/rust_inspect/src/receiver_contract.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Rust metadata extraction that feeds the checker; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_codegraph/src/lib.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "codegraph record format. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/src/bin/generate_vscode_grammar_keywords.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/src/errors.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/src/interop/coercions.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/src/interop/metadata.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/src/lang/builtins.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/src/lang/c_abi.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/src/lang/callables.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/src/lang/conventions.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/src/lang/highlighting.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/src/lang/keywords.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/src/lang/stdlib.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/src/lang/text_codecs.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/src/lang/traits.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/src/lang/types/numerics.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/src/lib.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/src/numeric_strings.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/src/numeric_values.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/src/strings.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/tests/lang_registry_guardrails.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/tests/string_len_semantics.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_semantics_core/src/authority.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_semantics_core/src/body_ir.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_semantics_core/src/closure_digest.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_semantics_core/src/dependencies.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_semantics_core/src/emitted_symbol.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_semantics_core/src/executable_representation.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_semantics_core/src/facts.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_semantics_core/src/hir.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_semantics_core/src/namespace.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_semantics_core/src/receipts.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_semantics_core/src/semantic_digest.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_semantics_core/src/stable_identity.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_semantics_core/src/types.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_syntax/src/ast/types.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_syntax/src/diagnostics/base.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_syntax/src/diagnostics/stable.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_syntax/src/lexer/mod.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_syntax/src/parser/embedded/tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_syntax/src/parser/tests.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_vocab/src/lib.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "vocab registration contract crate. Reviewed at crate level."
+    },
+    "loaves/oven/oven_cargo_compat/src/cargo_process.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_cargo_compat/src/compiler_suite_foundation.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_cargo_compat/src/harvest.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_cargo_compat/src/lib.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_cargo_compat/src/loaf_bake.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_cargo_compat/src/loaf_bake/vocab_support.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_cargo_compat/src/registry_sources.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_cargo_compat/src/rustc_trace.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_cargo_compat/src/selected_graph_projection.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_cargo_compat/src/selected_unit_capture.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_interop/src/lib.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_model/src/loaf_registry.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_model/src/lock.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_model/src/manifest.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_model/src/oven_interop.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_model/src/project_lifecycle/env.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_model/src/project_lifecycle/toolchain.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_model/src/project_lifecycle/version.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_model/src/toolchain_layout.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_model/src/workspace.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_rustc/src/loaf.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_rustc/src/loaf_mirror.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_rustc/src/native_test.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_rustc/src/native_test/case_slice.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_rustc/src/native_test/evidence.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_rustc/src/plan/composition.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_rustc/src/plan/selection.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_rustc/src/rustc.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_rustc/src/rustc/compiled_unit.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_rustc/src/rustc/inspection.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_rustc/src/rustc/runtime_closure.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_rustc/src/rustc/runtime_executor.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_rustc/src/rustc/runtime_foundation.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_rustc/src/rustc/selected_unit.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_rustc/src/rustc/substitution.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_rustc/src/rustc/toolchain.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_store/src/closure_proof.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_store/src/lib.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_store/src/process.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_store/src/progress.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_store/src/store.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/oven/oven_store/src/store_mirror.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level."
+    },
+    "loaves/stdlib/async/rust/src/channel.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/stdlib/async/rust/src/race.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/stdlib/async/rust/src/runtime.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/stdlib/async/rust/src/sync.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/stdlib/async/rust/src/task.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/stdlib/async/rust/src/time.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/stdlib/core/rust/src/collections.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/stdlib/core/rust/src/conversions.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/stdlib/core/rust/src/frozen.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/stdlib/core/rust/src/iter.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/stdlib/core/rust/src/num.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/stdlib/core/rust/src/strings.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/stdlib/core/rust/src/version.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/stdlib/core/rust/tests/errors.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/stdlib/core/rust/tests/string_len.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/stdlib/data/rust/src/collections.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/stdlib/data/rust/src/json.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/stdlib/derive/incan_web_macros/src/lib.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/stdlib/derive/incan_web_macros/tests/route_runtime.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/stdlib/interop/vocab_companion/src/lib.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/stdlib/testing/rust/src/lib.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level."
+    },
+    "loaves/third_party/ra_ap_proc_macro_api/src/legacy_protocol/msg.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "vendored crate. Reviewed at crate level."
+    },
+    "loaves/toolchain/incan-cli/src/bin/generate_feature_inventory.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics."
+    },
+    "loaves/toolchain/incan-cli/src/commands/build.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "build command over checked facts (contract step, library publication); the rustc-failure classification tests belong to the generated build.",
+      "tests": {
+        "classify_signature_mismatch_for_rust_extern_context": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "maps a rustc failure of the generated build back to source"
+        },
+        "classify_unresolved_backing_item_for_rust_extern_context": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "maps a rustc failure of the generated build back to source"
+        },
+        "wraps_rust_extern_failure_back_to_incan_declaration_span": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "maps a rustc failure of the generated build back to source"
+        }
+      }
+    },
+    "loaves/toolchain/incan-cli/src/commands/cache.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics."
+    },
+    "loaves/toolchain/incan-cli/src/commands/debug.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics."
+    },
+    "loaves/toolchain/incan-cli/src/commands/init.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics."
+    },
+    "loaves/toolchain/incan-cli/src/commands/lifecycle.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics."
+    },
+    "loaves/toolchain/incan-cli/src/commands/representation_inspect.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "representation inspection from checked facts."
+    },
+    "loaves/toolchain/incan-cli/src/commands/tools_boundary_tests.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics."
+    },
+    "loaves/toolchain/incan-cli/src/commands/workspace.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics."
+    },
+    "loaves/toolchain/incan-cli/src/lib.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "CLI surface (argument parsing, scaffolding, lifecycle, cache); no compiler semantics."
+    },
+    "loaves/toolchain/incan-cli/src/test_runner/execution.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "`incan test` today lowers Incan tests into a Rust libtest harness; the harness-shape tests retire with it, the discovery and session tests stay.",
+      "tests": {
+        "merge_test_runner_dependencies_promotes_dev_deps_into_dependencies": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "libtest harness of the generated test crate"
+        },
+        "merge_test_runner_dependencies_unifies_normal_and_dev_features": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "libtest harness of the generated test crate"
+        },
+        "parse_libtest_outcomes_detects_ok_and_failed": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "libtest harness of the generated test crate"
+        },
+        "parse_libtest_outcomes_normalizes_prefixed_names": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "libtest harness of the generated test crate"
+        },
+        "successful_native_batch_preserves_a_passing_harness_result_issue996": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "libtest harness of the generated test crate"
+        },
+        "extracts_unindented_libtest_panic_payloads_from_a_batch": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "libtest harness of the generated test crate"
+        },
+        "runner_crate_name_is_derived_from_batch_suffix": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "libtest harness of the generated test crate"
+        },
+        "native_test_outputs_do_not_alias_distinct_execution_groups": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "libtest harness of the generated test crate"
+        },
+        "batch_suffix_is_path_independent_but_content_sensitive": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "libtest harness of the generated test crate"
+        },
+        "inject_file_test_harness_emits_tests_module": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "libtest harness of the generated test crate"
+        },
+        "inject_file_test_harness_wraps_async_tests_and_fixtures": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "libtest harness of the generated test crate"
+        }
+      }
+    },
+    "loaves/toolchain/incan-cli/src/test_runner/mod.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "test collection, parametrize expansion, marker selection and scheduling."
+    },
+    "loaves/toolchain/incan-cli/tests/canonical_item_imports.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7."
+    },
+    "loaves/toolchain/incan-cli/tests/cli_catalogue_forms_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7."
+    },
+    "loaves/toolchain/incan-cli/tests/cli_codegraph_and_inspection_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7."
+    },
+    "loaves/toolchain/incan-cli/tests/cli_decorator_and_partial_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7."
+    },
+    "loaves/toolchain/incan-cli/tests/cli_float_display_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7."
+    },
+    "loaves/toolchain/incan-cli/tests/cli_interop_target_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7."
+    },
+    "loaves/toolchain/incan-cli/tests/cli_issue1370_phantom_type_param_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7."
+    },
+    "loaves/toolchain/incan-cli/tests/cli_issue1668_stdlib_gaps_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7."
+    },
+    "loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire."
+    },
+    "loaves/toolchain/incan-cli/tests/cli_layering_guardrails.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "layering baseline of what the CLI may reach; names codegen types without using them."
+    },
+    "loaves/toolchain/incan-cli/tests/cli_provider_boundary_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire."
+    },
+    "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire.",
+      "tests": {
+        "cold_library_build_preserves_rust_string_compound_assignment_issue896": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "asserts generated Rust text"
+        }
+      }
+    },
+    "loaves/toolchain/incan-cli/tests/cli_std_environ_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7."
+    },
+    "loaves/toolchain/incan-cli/tests/cli_surface_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire."
+    },
+    "loaves/toolchain/incan-cli/tests/cli_workspace_and_lock_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7."
+    },
+    "loaves/toolchain/incan-cli/tests/example_capability_coverage.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "examples cover the stable capability registry."
+    },
+    "loaves/toolchain/incan-cli/tests/integration_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire.",
+      "tests": {
+        "build_explicit_mutable_rust_generic_reaches_codegen_through_normal_cli_path": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "generated text or IrCodegen"
+        },
+        "build_lib_imported_static_decorator_receiver_materializes_string_arg_issue671": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "generated text or IrCodegen"
+        },
+        "decorated_method_explicit_mutable_rust_generic_keeps_static_and_wrapper_abi": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "generated text or IrCodegen"
+        },
+        "test_class_with_traits": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_compound_assign_float_with_int_rhs": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_fixture_decorator": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_generic_instance_method_full_pipeline": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_generic_type": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_hello_world_codegen": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "generated text or IrCodegen"
+        },
+        "test_imported_static_initializer_does_not_deadlock_issue680": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "generated text or IrCodegen"
+        },
+        "test_invalid_fixtures": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_list_comprehension": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_match_with_case": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_method_alias_codegen_rewrites_to_target_method": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "generated text or IrCodegen"
+        },
+        "test_method_with_mut_self": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_model_with_decorator": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_python_like_numeric_ops_compile": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_rfc009_numeric_resize_and_decimal_codegen_smoke": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "generated text or IrCodegen"
+        },
+        "test_rfc041_rust_coercion_codegen_smoke": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "generated text or IrCodegen"
+        },
+        "test_rfc041_rusttype_interop_typechecks_end_to_end": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_rfc041_rusttype_with_methods_typechecks": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_rfc041_structural_coercion_codegen_smoke": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "generated text or IrCodegen"
+        },
+        "test_rust_crate_import": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_rust_from_import": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_trait_constructor_rejected_in_full_pipeline": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_trait_supertraits_compile_source": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_valid_fixtures": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_yield_expression": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "lexer_token_surface_cases": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lexer only"
+        }
+      }
+    },
+    "loaves/toolchain/incan-cli/tests/layering_guard.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "crate and stdlib layering guards."
+    },
+    "loaves/toolchain/incan-cli/tests/package_boundary_facade_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire."
+    },
+    "loaves/toolchain/incan-cli/tests/package_executable_representation.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire."
+    },
+    "loaves/toolchain/incan-cli/tests/repository_path_tests.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "repository path resolution for the compiler command."
+    },
+    "loaves/toolchain/incan-cli/tests/rfc031_pub_import_integration_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire.",
+      "tests": {
+        "compiled_provider_preserves_shared_rust_interop_contracts_issues834_835_961": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "asserts generated Rust text"
+        },
+        "consumer_build_plans_source_backed_pub_helper_calls_with_defaults_and_unions_issue729": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "asserts generated Rust text"
+        },
+        "consumer_build_plans_source_backed_vocab_helper_calls_with_defaults_and_unions_issue729": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "asserts generated Rust text"
+        },
+        "consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "asserts generated Rust text"
+        }
+      }
+    },
+    "loaves/toolchain/incan-cli/tests/script_target_diagnostics.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7."
+    },
+    "loaves/toolchain/incan-cli/tests/std_encoding_algorithm_modules.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7."
+    },
+    "loaves/toolchain/incan-cli/tests/toolchain_installer_tests.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "installer, archive packager and release manifest."
+    },
+    "loaves/toolchain/incan-cli/tests/vocab_guardrails.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "source audits (semantic string audit, stringly vocab checks)."
+    },
+    "loaves/toolchain/incan-lsp/src/backend.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "language server over the checker; no codegen. Reviewed at crate level."
+    },
+    "loaves/toolchain/incan-lsp/src/call_site_type_args.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language server over the checker; no codegen. Reviewed at crate level."
+    },
+    "loaves/toolchain/incan-lsp/src/diagnostics.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language server over the checker; no codegen. Reviewed at crate level."
+    },
+    "loaves/toolchain/incan-lsp/src/main.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language server over the checker; no codegen. Reviewed at crate level."
+    },
+    "loaves/toolchain/incan-lsp/src/semantic_tokens.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language server over the checker; no codegen. Reviewed at crate level."
+    },
+    "loaves/toolchain/incan-lsp/tests/rfc081_embedded_conformance.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "RFC 081 embedded-fragment conformance through desugar, typecheck and formatter; one test asserts the emitter refuses.",
+      "tests": {
+        "every_submode_survives_desugar_typecheck_and_lowering_then_refuses_emission": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "asserts an emitter refusal; the refusal moves to the replacement route's source profile"
+        }
+      }
+    },
+    "loaves/toolchain/oven-cli/src/commands/oven.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": true,
+      "split_target": "",
+      "notes": "Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level."
+    },
+    "loaves/toolchain/oven-cli/src/commands/oven/case_partition.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level."
+    },
+    "loaves/toolchain/oven-cli/src/commands/oven/harvest.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level."
+    },
+    "loaves/toolchain/oven-cli/src/commands/oven/suite_environment.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level."
+    },
+    "loaves/toolchain/oven-cli/src/commands/tools.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "Oven tools command; the build_run hit is a Cargo config hint, not an Incan build."
+    }
+  }
+}
