@@ -1,0 +1,24 @@
+# behavior: each resize policy follows its contract (lossless widening, checked, wrapping, saturating) and a decimal literal keeps its scale
+# retires: loaves/toolchain/incan-cli/tests/integration_tests.rs::test_rfc009_numeric_resize_and_decimal_codegen_smoke
+# expect-stdout:
+#   120
+#   none
+#   44
+#   127
+#   19.99
+
+def main() -> None:
+    small: i8 = 120
+    wide: int = small.resize()
+    println(wide)
+    over: int = 300
+    maybe: Option[i8] = over.try_resize()
+    match maybe:
+        Some(value) => println(value)
+        None => println("none")
+    wrapped: i8 = over.wrapping_resize()
+    println(wrapped)
+    capped: i8 = over.saturating_resize()
+    println(capped)
+    price: decimal[5, 2] = 19.99d
+    println(price)

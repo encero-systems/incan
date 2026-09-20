@@ -1,0 +1,10 @@
+# behavior: a decorator factory called on an imported static receiver with a str argument leaves the decorated function callable (#671)
+# retires: loaves/toolchain/incan-cli/tests/integration_tests.rs::build_lib_imported_static_decorator_receiver_materializes_string_arg_issue671
+# expect-stdout:
+#   7
+
+from probe_decorated import decorated
+
+
+def main() -> None:
+    println(decorated(7))

@@ -1,0 +1,15 @@
+# behavior: bindings annotated Option[int], List[str] and Dict[str, float] accept their literal values and read back
+# retires: loaves/toolchain/incan-cli/tests/integration_tests.rs::test_rfc041_structural_coercion_codegen_smoke
+# expect-stdout:
+#   1
+#   a b 2
+#   1.5
+
+def main() -> None:
+    maybe: Option[int] = Some(1)
+    names: List[str] = ["a", "b"]
+    scores: Dict[str, float] = {"latency": 1.5}
+    if let Some(value) = maybe:
+        println(value)
+    println(f"{names[0]} {names[1]} {len(names)}")
+    println(scores["latency"])
