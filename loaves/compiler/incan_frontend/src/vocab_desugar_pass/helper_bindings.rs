@@ -503,11 +503,13 @@ mod tests {
 
     /// Injectivity is a property of the construction, not of the handful of pairs above: over every dependency key
     /// of up to three characters drawn from an alphabet that mixes identifier characters, the escape lead, hex digits
-    /// and a package-name dash, paired with every short export, no two pairs may share an alias.
+    /// and a package-name dash, paired with every short export, no two pairs may share an alias. The export alphabet
+    /// carries a digit so an export can end where the next component's length prefix begins, but never leads with
+    /// one, since an export is an identifier.
     #[test]
     fn helper_import_aliases_are_injective_over_a_small_exhaustive_alphabet() {
         let dependency_alphabet = ['a', '_', '-', '2', 'd', '.'];
-        let export_alphabet = ['a', '_', 'd'];
+        let export_alphabet = ['a', '_', 'd', '2'];
         let words = |alphabet: &[char], max_len: usize| -> Vec<String> {
             let mut words = vec![String::new()];
             let mut frontier = vec![String::new()];

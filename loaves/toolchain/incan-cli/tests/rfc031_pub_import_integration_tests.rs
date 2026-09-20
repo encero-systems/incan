@@ -6940,7 +6940,7 @@ def reject_mismatched_owner(left: list[f32], right: list[f32]) -> f32:
 
         let generated_main_rs = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
         assert!(
-            !generated_main_rs.contains("__incan_vocab_helper_9_filterkit_filter"),
+            !generated_main_rs.contains("__incan_vocab_helper_"),
             "expected generated Rust to avoid hidden helper aliases, got:\n{generated_main_rs}"
         );
         assert!(
