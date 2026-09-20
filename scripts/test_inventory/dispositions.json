@@ -2286,6 +2286,14 @@
       "split_target": "",
       "notes": "SDK provider store, lock semantics, vocab extraction; no emit/driver dependency. Reviewed at crate level."
     },
+    "loaves/compiler/incan_test_support/src/behavior_fixtures.rs": {
+      "disposition": "unaffected",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "test-support helper for the behaviour-fixture family: header grammar, discovery, materialization and observable comparison, with no compiler call."
+    },
     "loaves/compiler/incan_test_support/src/builtin_stdlib.rs": {
       "disposition": "unaffected",
       "owner": 1561,
@@ -3440,6 +3448,30 @@
       "split_target": "",
       "notes": "test collection, parametrize expansion, marker selection and scheduling."
     },
+    "loaves/toolchain/incan-cli/tests/behavior_driver_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs every behaviour fixture of the driver area as a program and compares its observables; the route changes under it, the fixtures do not."
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_harness_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs the harness area's self-proof fixtures as programs; the route changes under it, the fixtures do not."
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_smoke_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs every behaviour fixture of the smoke area as a program and compares its observables; the route changes under it, the fixtures do not."
+    },
     "loaves/toolchain/incan-cli/tests/canonical_item_imports.rs": {
       "disposition": "re-point",
       "owner": 1561,
@@ -4397,38 +4429,6 @@
       "split_required": false,
       "split_target": "",
       "notes": "Oven tools command; the build_run hit is a Cargo config hint, not an Incan build."
-    },
-    "loaves/compiler/incan_test_support/src/behavior_fixtures.rs": {
-      "disposition": "unaffected",
-      "owner": 1561,
-      "twin": "",
-      "split_required": false,
-      "split_target": "",
-      "notes": "test-support helper for the behaviour-fixture family: header grammar, discovery, materialization and observable comparison, with no compiler call."
-    },
-    "loaves/toolchain/incan-cli/tests/behavior_smoke_tests.rs": {
-      "disposition": "re-point",
-      "owner": 1561,
-      "twin": "",
-      "split_required": false,
-      "split_target": "",
-      "notes": "runs every behaviour fixture of the smoke area as a program and compares its observables; the route changes under it, the fixtures do not."
-    },
-    "loaves/toolchain/incan-cli/tests/behavior_harness_tests.rs": {
-      "disposition": "re-point",
-      "owner": 1561,
-      "twin": "",
-      "split_required": false,
-      "split_target": "",
-      "notes": "runs the harness area's self-proof fixtures as programs; the route changes under it, the fixtures do not."
-    },
-    "loaves/toolchain/incan-cli/tests/behavior_driver_tests.rs": {
-      "disposition": "re-point",
-      "owner": 1561,
-      "twin": "",
-      "split_required": false,
-      "split_target": "",
-      "notes": "runs every behaviour fixture of the driver area as a program and compares its observables; the route changes under it, the fixtures do not."
     }
   }
 }
