@@ -16,8 +16,8 @@ use crate::reference_shape::{expr_has_rust_reference_shape, type_has_rust_refere
 use incan_ir::FunctionSignature;
 use incan_ir::decl::{FunctionParam, FunctionParamDefault};
 use incan_ir::expr::{
-    CollectionMethodKind, InternalMethodKind, IrCallArg, IrCallArgKind, IrExprKind, IrMethodDispatch,
-    MethodCallArgPolicy, MethodKind, TypedExpr, VarAccess, VarRefKind,
+    CollectionMethodKind, InternalMethodKind, IrCallArg, IrCallArgKind, IrExprKind, IrInteropCoercionKind,
+    IrMethodDispatch, MethodCallArgPolicy, MethodKind, TypedExpr, VarAccess, VarRefKind,
 };
 use incan_ir::types::IrType;
 use incan_lang::interop::{
@@ -531,7 +531,11 @@ impl<'a> IrEmitter<'a> {
                         }
                     };
                 }
-                if idx == 0 && method == "by_ref" {
+                // A receiver borrow the typechecker recorded from the trait's declared receiver is already in
+                // `emitted`, and it is the single source of that argument's shape (#1375). The `by_ref` plan is the
+                // compatibility shape for receivers with no such fact, where a `RefMut` guard still needs its
+                // dereferenced reborrow; stacking it on a recorded borrow spelled `&mut *&mut input`.
+                if idx == 0 && method == "by_ref" && !Self::expr_carries_recorded_rust_borrow(arg) {
                     emitted = plan_read_by_ref_receiver(&arg.ty).apply(emitted);
                 }
                 if idx == 0
@@ -634,6 +638,20 @@ impl<'a> IrEmitter<'a> {
     /// Return whether a metadata-free receiver is eligible for std::io-style compatibility borrowing.
     fn receiver_allows_io_method_fallback(receiver: &TypedExpr) -> bool {
         !Self::expr_is_type_like(receiver) && !Self::receiver_type_matches_any(receiver, &["BytesIO", "_BytesIO"])
+    }
+
+    /// Return whether an argument already carries the Rust borrow the typechecker recorded for it.
+    ///
+    /// Lowering wraps such an argument in an `InteropCoerce` whose kind is a Rust boundary borrow; the emitter then
+    /// spells exactly that borrow and must not reshape the receiver a second time from a method name or type shape.
+    fn expr_carries_recorded_rust_borrow(arg: &TypedExpr) -> bool {
+        matches!(
+            &arg.kind,
+            IrExprKind::InteropCoerce {
+                kind: IrInteropCoercionKind::RustBorrow { .. } | IrInteropCoercionKind::TraitObjectBorrow { .. },
+                ..
+            }
+        )
     }
 
     /// Return whether a metadata-free method receiver is an external Rust associated-call target.

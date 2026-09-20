@@ -17,7 +17,7 @@ use incan_lang::interop::{
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 /// A class holding a foreign handle, updated and finished through trait-qualified calls.
-const SOURCE: &str = r#"
+const FIELD_RECEIVERS: &str = r#"
 from rust::demo import Engine, Mac
 
 pub class Signer:
@@ -31,6 +31,28 @@ pub class Signer:
 
     def finish(self) -> bytes:
         return Mac.finalize(self.handle)
+"#;
+
+/// Owned local receivers passed through the same trait-qualified calls, including the `by_ref` spelling the emitter
+/// once reshaped on its own.
+const OWNED_LOCAL_RECEIVERS: &str = r#"
+from rust::demo import Engine, Mac
+
+pub def update_local(chunk: bytes) -> None:
+    mut input = Engine.default()
+    Mac.update(input, chunk.as_slice())
+
+pub def reborrow_local() -> None:
+    mut input = Engine.default()
+    _ = Mac.by_ref(input)
+
+pub def ready_local() -> bool:
+    input = Engine.default()
+    return Mac.is_ready(input)
+
+pub def finish_local() -> bytes:
+    input = Engine.default()
+    return Mac.finalize(input)
 "#;
 
 /// A trait method signature whose first parameter is the declared receiver.
@@ -56,9 +78,9 @@ fn trait_method(name: &str, receiver: &str, params: &[(&str, &str)], return_type
     }
 }
 
-/// Generate Rust for [`SOURCE`] with the trait's three methods declared through inspected metadata.
-fn generate_with_trait_metadata() -> Result<String, Box<dyn std::error::Error>> {
-    let tokens = lexer::lex(SOURCE).map_err(|errors| format!("lex: {errors:?}"))?;
+/// Generate Rust for `source` with the trait's methods declared through inspected metadata.
+fn generate_with_trait_metadata(source: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let tokens = lexer::lex(source).map_err(|errors| format!("lex: {errors:?}"))?;
     let ast = parser::parse(&tokens).map_err(|errors| format!("parse: {errors:?}"))?;
     let workspace = seeded_rust_inspect_workspace()?;
     let manifest_dir = workspace.path().to_path_buf();
@@ -99,6 +121,7 @@ fn generate_with_trait_metadata() -> Result<String, Box<dyn std::error::Error>> 
                 kind: RustItemKind::Trait(RustTraitInfo {
                     items: vec![
                         trait_method("update", "&mut self", &[("data", "&[u8]")], "()"),
+                        trait_method("by_ref", "&mut self", &[], "&mut Self"),
                         trait_method("is_ready", "&self", &[], "bool"),
                         trait_method("finalize", "self", &[], "Vec<u8>"),
                     ],
@@ -120,7 +143,7 @@ fn generate_with_trait_metadata() -> Result<String, Box<dyn std::error::Error>> 
 /// Each receiver mode the trait declares is the borrow the generated call passes.
 #[test]
 fn trait_qualified_calls_pass_the_declared_receiver_mode() -> TestResult {
-    let rust = generate_with_trait_metadata()?;
+    let rust = generate_with_trait_metadata(FIELD_RECEIVERS)?;
     assert!(
         rust.contains("Mac::update(&mut self.handle, chunk.as_slice())"),
         "`&mut self` must become an exclusive borrow of the explicit receiver:\n{rust}"
@@ -136,6 +159,37 @@ fn trait_qualified_calls_pass_the_declared_receiver_mode() -> TestResult {
     assert!(
         !rust.contains("Mac::update(&self.handle"),
         "the `&mut self` receiver must never degrade to a shared borrow:\n{rust}"
+    );
+    Ok(())
+}
+
+/// An owned local receiver is borrowed exactly once, by the recorded receiver mode, and never reborrowed on top.
+///
+/// The emitter keeps a type-shape reborrow for `by_ref` receivers it has no fact for (the metadata-free stdlib lane
+/// passes `RefMut` guards there). Once the typechecker has recorded the receiver borrow, that fact is the single
+/// source of the argument's shape: `&mut *&mut input` was the two stacked.
+#[test]
+fn owned_local_receivers_are_borrowed_once_by_the_recorded_mode() -> TestResult {
+    let rust = generate_with_trait_metadata(OWNED_LOCAL_RECEIVERS)?;
+    assert!(
+        rust.contains("Mac::update(&mut input, chunk.as_slice())"),
+        "`&mut self` must borrow the local exclusively, once:\n{rust}"
+    );
+    assert!(
+        rust.contains("Mac::by_ref(&mut input)"),
+        "a `by_ref` receiver with a recorded borrow must not gain the guard reborrow:\n{rust}"
+    );
+    assert!(
+        !rust.contains("&mut *&mut input") && !rust.contains("&mut *input"),
+        "the recorded borrow and the emitter reborrow must not stack:\n{rust}"
+    );
+    assert!(
+        rust.contains("Mac::is_ready(&input)"),
+        "`&self` must borrow the local shared, once:\n{rust}"
+    );
+    assert!(
+        rust.contains("Mac::finalize(input)"),
+        "a by-value `self` receiver must move the local:\n{rust}"
     );
     Ok(())
 }
