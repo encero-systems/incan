@@ -1,0 +1,9 @@
+# behavior: an empty expect-stdout block means the program prints nothing at all
+# expect-stdout:
+
+def main() -> None:
+    mut total = 0
+    for value in [1, 2, 3]:
+        total = total + value
+    if total < 0:
+        println("never printed")

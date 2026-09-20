@@ -1,0 +1,5 @@
+# behavior: a fixture whose only declared observable is its exit code passes on the exit code alone; stdout is not compared
+# expect-exit: 0
+
+def main() -> None:
+    println("this line is not compared")
