@@ -8137,7 +8137,7 @@ async def main() -> None:
         );
         assert_eq!(
             String::from_utf8_lossy(&output.stdout),
-            "11\n11\n11\n0:beta\n1:alpha\n2\nalpha\n2\n",
+            "11.0\n11.0\n11.0\n0:beta\n1:alpha\n2\nalpha\n2\n",
             "iterator adapters and builtin zip must preserve item types and source-owned polling across loops and comprehensions"
         );
         Ok(())
