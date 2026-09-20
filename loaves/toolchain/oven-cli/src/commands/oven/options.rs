@@ -11,6 +11,7 @@ pub use incan_driver::oven_store::OvenStoreCommandOptions;
 use serde::Serialize;
 
 use crate::{OvenInteropAdapterArgument, OvenLoafEnvelopeArgument, OvenOutputFormat};
+use oven_model::manifest::RustBinaryRole;
 use oven_store::OvenBuildIntent;
 
 /// Inputs for `incan oven import`.
@@ -229,6 +230,23 @@ pub struct OvenLoafBakeCommandOptions {
     ///
     /// TODO(#1561): temporary; retires with the Cargo-observed harvest once incan.pub records govern the corpus.
     pub harvest_dir: Option<PathBuf>,
+}
+
+/// Inputs for baking a toolchain Loaf's declared Rust binaries from the stored compiler-suite plans (#1698).
+#[derive(Debug, Clone)]
+pub struct OvenToolchainBuildCommandOptions {
+    /// The workspace root the stored compiler-suite plans were published for; every plan's source is relative to it.
+    pub compiler_root: PathBuf,
+    /// The Loaf whose `[[rust.bin]]` roles are baked; the roles' paths are relative to this directory.
+    pub project_root: PathBuf,
+    /// The binary roles to bake, as the Loaf declares them.
+    pub binaries: Vec<RustBinaryRole>,
+    /// Optional explicit Rust compiler; the active toolchain is resolved when absent.
+    pub rustc: Option<PathBuf>,
+    /// The compiler-suite store holding the receipt-bound plans.
+    pub store: OvenStoreCommandOptions,
+    /// Caller-owned output directory; `target/incan/oven/toolchain` below the workspace root when absent.
+    pub output: Option<PathBuf>,
 }
 
 /// Inputs for the direct-rustc compiler workspace-test consumer.

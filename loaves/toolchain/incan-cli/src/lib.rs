@@ -1356,6 +1356,15 @@ impl BuildCommandRequest {
                 self.report_options,
             );
         }
+        if self.file.is_none() {
+            let cwd = env::current_dir()
+                .map_err(|e| CliError::failure(format!("Error: failed to read current directory: {e}")))?;
+            if let Some(manifest) = incan_driver::project::discover_effective_project_manifest(&cwd)?
+                && let Some(exit) = build_toolchain_binaries_if_declared(&manifest, manifest.project_root(), &self)?
+            {
+                return Ok(exit);
+            }
+        }
         let file = resolve_build_entry_file(self.file)?;
         commands::build_file(
             &file.to_string_lossy(),
@@ -1364,6 +1373,74 @@ impl BuildCommandRequest {
             self.report_options,
         )
     }
+}
+
+/// Whether a plain `incan build` of this Loaf means its `[[rust.bin]]` roles rather than an Incan entrypoint.
+///
+/// A Loaf that declares Rust binary roles and no `[project.scripts].main` is a toolchain Loaf: its product is the
+/// declared executables. One that names a `main` script is an Incan project, with or without a Rust facet, and a
+/// plain build keeps building that script; its Rust roles are selected another way.
+fn builds_toolchain_binaries(manifest: &ProjectManifest) -> bool {
+    let has_main_script = manifest
+        .project
+        .as_ref()
+        .is_some_and(|project| project.scripts.contains_key("main"));
+    !manifest.rust_binary_roles().is_empty() && !has_main_script
+}
+
+/// Bake the `[[rust.bin]]` roles a toolchain Loaf declares when `incan build` names no entrypoint (#1698).
+///
+/// `None` keeps the ordinary entrypoint resolution: the Loaf declares no Rust binary role, or it names an Incan
+/// `main` script, in which case it is an Incan project with a Rust facet and its Incan entrypoint is what a plain
+/// `incan build` means. `workspace_root` is the compiler root the stored direct-rustc plans are relative to — the
+/// active workspace's root for a member, the Loaf itself otherwise. The compiler-suite store is named by
+/// `INCAN_OVEN_COMPILER_SUITE_STORE`, as the suite runner is told it; an explicit output directory is honoured and
+/// the report surface is refused rather than silently narrowed, since a toolchain binary has no generated project to
+/// report on.
+fn build_toolchain_binaries_if_declared(
+    manifest: &ProjectManifest,
+    workspace_root: &Path,
+    request: &BuildCommandRequest,
+) -> CliResult<Option<ExitCode>> {
+    if !builds_toolchain_binaries(manifest) {
+        return Ok(None);
+    }
+    let roles = manifest.rust_binary_roles();
+    if request.report_options.enabled() {
+        return Err(CliError::failure(
+            "incan build --report is not available for a toolchain binary build; the build produces executables from stored direct-rustc plans, not a generated project (#1698)",
+        ));
+    }
+    let store_root = env::var_os(oven_cli::commands::OVEN_COMPILER_SUITE_STORE_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let reports =
+        oven_cli::commands::oven_build_toolchain_binaries(oven_cli::commands::OvenToolchainBuildCommandOptions {
+            compiler_root: workspace_root.to_path_buf(),
+            project_root: manifest.project_root().to_path_buf(),
+            binaries: roles.to_vec(),
+            rustc: None,
+            store: oven_cli::commands::OvenStoreCommandOptions {
+                root: store_root,
+                max_physical_bytes: None,
+                max_domain_physical_bytes: None,
+                max_domain_logical_bytes: None,
+            },
+            output: request.output_dir.as_ref().map(PathBuf::from),
+        })?;
+    for report in reports {
+        println!(
+            "Built {} -> {} ({}, Cargo not started)",
+            report.name,
+            report.output.display(),
+            if report.reused {
+                "reused by receipt"
+            } else {
+                "compiled by direct rustc"
+            }
+        );
+    }
+    Ok(Some(ExitCode::SUCCESS))
 }
 
 /// Return whether this build should resolve and fan out an RFC 077 workspace scope.
@@ -1430,6 +1507,46 @@ fn execute_build(
             println!("workspace member {}: {}", member.name(), member.root().display());
         }
 
+        if !request.lib_mode && request.file.is_none() {
+            // A toolchain Loaf declares Rust binaries rather than an Incan main script; its build is the stored
+            // direct-rustc plan for those binaries (#1698). The workspace root is the compiler root every stored
+            // plan is relative to. A refusal is this member's failure, reported the way the fan-out reports every
+            // other member failure.
+            let member_manifest = incan_driver::project::discover_effective_project_manifest(member.root())?;
+            let toolchain_build = member_manifest
+                .as_ref()
+                .map(|manifest| build_toolchain_binaries_if_declared(manifest, scope.workspace_root(), &request))
+                .transpose()
+                .map(Option::flatten);
+            match toolchain_build {
+                Ok(None) => {}
+                Ok(Some(_)) => {
+                    results.push(serde_json::json!({
+                        "member": {
+                            "name": member.name(),
+                            "root": member.root().display().to_string(),
+                        },
+                        "ok": true,
+                    }));
+                    continue;
+                }
+                Err(error) => {
+                    if !error.message.is_empty() {
+                        eprintln!("{}", error.message);
+                    }
+                    failures.push(member.name().to_string());
+                    results.push(serde_json::json!({
+                        "member": {
+                            "name": member.name(),
+                            "root": member.root().display().to_string(),
+                        },
+                        "ok": false,
+                        "error": error.message,
+                    }));
+                    continue;
+                }
+            }
+        }
         let target = if request.lib_mode {
             match request.file.as_ref() {
                 Some(path) => workspace_member_relative_path(path, member.root()),
@@ -2214,6 +2331,25 @@ mod tests {
 
     fn expected_command(name: &str) -> clap::Error {
         clap::Error::raw(ErrorKind::InvalidSubcommand, format!("expected {name} command"))
+    }
+
+    #[test]
+    fn a_plain_build_means_the_rust_binaries_only_for_a_loaf_without_an_incan_entrypoint()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = Path::new("loaf.toml");
+        let toolchain_loaf = ProjectManifest::from_str(
+            "[project]\nname = \"incan-cli\"\n\n[[rust.bin]]\nname = \"incan\"\npath = \"src/main.rs\"\n",
+            path,
+        )?;
+        assert!(builds_toolchain_binaries(&toolchain_loaf));
+        let incan_project_with_rust_facet = ProjectManifest::from_str(
+            "[project]\nname = \"mixed\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[[rust.bin]]\nname = \"tool\"\npath = \"rust/src/main.rs\"\n",
+            path,
+        )?;
+        assert!(!builds_toolchain_binaries(&incan_project_with_rust_facet));
+        let plain = ProjectManifest::from_str("[project]\nname = \"plain\"\n", path)?;
+        assert!(!builds_toolchain_binaries(&plain));
+        Ok(())
     }
 
     #[test]

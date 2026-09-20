@@ -503,6 +503,23 @@ pub struct RustSourceSection {
     pub root: String,
 }
 
+/// One binary build role of this Loaf's Rust unit, from `[[rust.bin]]` (RFC 119, #1698).
+///
+/// A conventional Rust Loaf declares nothing for `src/main.rs`: that binary takes the project's name. A binary whose
+/// name or root departs from the convention is declared here the way Cargo's `[[bin]]` names it — the `incan`
+/// command is a binary of the `incan-cli` Loaf, so its name cannot be derived. A role is a build of the Loaf's own
+/// unit: it selects which stored direct-rustc plan `incan build` bakes for this Loaf and never declares a second
+/// crate, which RFC 119 makes a sibling Loaf.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustBinaryRole {
+    /// Executable name, also the crate name after `-` becomes `_`; unique among this Loaf's binaries.
+    pub name: String,
+    /// The binary's root source, relative to the project directory and below the Rust root (`src/main.rs` for the
+    /// conventional binary, `<rust.source root>/src/bin/<name>.rs` for a mixed Loaf).
+    pub path: String,
+}
+
 /// One RFC 119 declared-fact record: the build facts of this Loaf's Rust unit for one exact selection.
 ///
 /// A build script is inert source inventory; what it would have discovered is declared here instead. A probe's
@@ -758,6 +775,8 @@ pub struct ProjectManifest {
     pub rust_source: Option<RustSourceSection>,
     /// `[[rust.facts]]`: RFC 119 declared build facts of the Rust unit, one record per bound selection.
     pub rust_facts: Vec<RustFactRecord>,
+    /// `[[rust.bin]]`: the binary build roles of the Rust unit whose name or root departs from convention.
+    pub rust_bins: Vec<RustBinaryRole>,
     /// `[source]`: the registry publication this manifest describes (registry-published manifests only).
     pub source: Option<RegistrySourceSection>,
     /// `[workspace]` topology metadata when this manifest is a workspace root.
@@ -877,6 +896,14 @@ impl ProjectManifest {
     /// Dev-only Rust dependencies from the manifest.
     pub fn rust_dev_dependencies(&self) -> &HashMap<String, DependencySpec> {
         &self.rust_dev_dependencies
+    }
+
+    /// The `[[rust.bin]]` roles this Loaf declares for its Rust unit, in declaration order.
+    ///
+    /// Empty for a Loaf without a Rust facet and for a conventional Rust Loaf whose one binary is `src/main.rs`
+    /// under the project's name; a declared role is what `incan build` selects a stored binary plan by.
+    pub fn rust_binary_roles(&self) -> &[RustBinaryRole] {
+        &self.rust_bins
     }
 
     /// Explicit Incan library dependencies inherited from an active workspace root.
@@ -1159,6 +1186,8 @@ struct RustTables {
     source: Option<RustSourceSection>,
     #[serde(default)]
     facts: Vec<RustFactRecord>,
+    #[serde(default)]
+    bin: Vec<RustBinaryRole>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -1284,6 +1313,83 @@ pub fn is_sha256_identity(value: &str) -> bool {
                 .bytes()
                 .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
     })
+}
+
+/// Refuse `[[rust.bin]]` roles that could not select exactly one binary of this Loaf's own Rust unit.
+///
+/// A role names an executable and its root source. The name must be usable as a file name and a crate name; the
+/// path must be a plain relative path to a `.rs` file inside the project and, when `[rust.source]` names the Rust
+/// root, below that root — a binary outside the Rust root would belong to another unit, which RFC 119 makes a
+/// sibling Loaf rather than a role of this one. Names and paths are unique across roles so a selection by either is
+/// unambiguous.
+fn validate_rust_binary_roles(
+    roles: &[RustBinaryRole],
+    rust_source: Option<&RustSourceSection>,
+    path: &Path,
+    spans: &ManifestSpans,
+) -> Result<(), ManifestError> {
+    let invalid = |index: usize, message: String| {
+        manifest_invalid(
+            path,
+            spans.table_location(&["rust", "bin"]),
+            format!("[[rust.bin]][{index}] {message}"),
+        )
+    };
+    let mut names = HashSet::new();
+    let mut paths = HashSet::new();
+    for (index, role) in roles.iter().enumerate() {
+        let name = role.name.trim();
+        if name.is_empty()
+            || name != role.name
+            || !name
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+        {
+            return Err(invalid(
+                index,
+                format!(
+                    "name `{}` must be a non-empty executable name made of ASCII letters, digits, `-` and `_`",
+                    role.name
+                ),
+            ));
+        }
+        let relative = Path::new(&role.path);
+        let plain = !role.path.trim().is_empty()
+            && role.path.trim() == role.path
+            && relative.is_relative()
+            && relative
+                .components()
+                .all(|component| matches!(component, Component::Normal(_)))
+            && relative.extension().is_some_and(|extension| extension == "rs");
+        if !plain {
+            return Err(invalid(
+                index,
+                format!(
+                    "path `{}` must be a plain relative path to a `.rs` file inside the project directory",
+                    role.path
+                ),
+            ));
+        }
+        if let Some(rust_source) = rust_source
+            && !relative.starts_with(rust_source.root.trim())
+        {
+            return Err(invalid(
+                index,
+                format!(
+                    "path `{}` must lie below the declared Rust root `{}`; a binary outside it is another unit, \
+                     which is a sibling Loaf rather than a role of this one",
+                    role.path, rust_source.root
+                ),
+            ));
+        }
+        if !names.insert(name) {
+            return Err(invalid(index, format!("name `{name}` is declared twice")));
+        }
+        if !paths.insert(role.path.as_str()) {
+            return Err(invalid(index, format!("path `{}` is declared twice", role.path)));
+        }
+    }
+    Ok(())
 }
 
 /// Refuse a declared-fact record set that is not closed, sorted, bound once, and free of reserved or foreign keys.
@@ -1525,6 +1631,13 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
 
     let rust_facts = raw.rust.as_ref().map(|rust| rust.facts.clone()).unwrap_or_default();
     validate_rust_fact_records(&rust_facts, path, &spans)?;
+    let rust_bins = raw.rust.as_ref().map(|rust| rust.bin.clone()).unwrap_or_default();
+    validate_rust_binary_roles(
+        &rust_bins,
+        raw.rust.as_ref().and_then(|rust| rust.source.as_ref()),
+        path,
+        &spans,
+    )?;
     if let Some(source) = raw.source.as_ref() {
         if source.registry.trim().is_empty() {
             return Err(manifest_invalid(
@@ -1552,6 +1665,7 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         interop: raw.interop,
         rust_source: raw.rust.as_ref().and_then(|rust| rust.source.clone()),
         rust_facts,
+        rust_bins,
         source: raw.source,
         workspace: raw.workspace,
         library_dependencies: library_dependencies.specs,
@@ -3278,6 +3392,120 @@ toml = "0.9"
                 Ok(_) => panic!("expected `{root}` to be refused"),
             };
             assert!(rendered.contains(expected), "`{root}`: {rendered}");
+        }
+    }
+
+    #[test]
+    fn a_rust_loaf_declares_the_binaries_convention_cannot_name() -> TestResult {
+        let content = r#"
+[project]
+name = "incan-cli"
+
+[[rust.bin]]
+name = "incan"
+path = "src/main.rs"
+
+[[rust.bin]]
+name = "incan-probe"
+path = "src/bin/probe.rs"
+"#;
+        let manifest = ProjectManifest::from_str(content, Path::new("loaf.toml"))?;
+        let roles = manifest.rust_binary_roles();
+        assert_eq!(
+            roles,
+            [
+                RustBinaryRole {
+                    name: "incan".to_string(),
+                    path: "src/main.rs".to_string(),
+                },
+                RustBinaryRole {
+                    name: "incan-probe".to_string(),
+                    path: "src/bin/probe.rs".to_string(),
+                },
+            ]
+        );
+        let mixed = ProjectManifest::from_str(
+            "[project]\nname = \"incan_stdlib_web\"\n\n[rust.source]\nroot = \"rust\"\n\n[[rust.bin]]\nname = \"web-tool\"\npath = \"rust/src/bin/tool.rs\"\n",
+            Path::new("loaf.toml"),
+        )?;
+        assert_eq!(mixed.rust_binary_roles().len(), 1);
+        let conventional = ProjectManifest::from_str("[project]\nname = \"plain\"\n", Path::new("loaf.toml"))?;
+        assert!(conventional.rust_binary_roles().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_rust_binary_role_must_select_one_binary_of_this_loaf_s_own_unit() {
+        for (body, expected) in [
+            (
+                "name = \"\"\npath = \"src/main.rs\"",
+                "must be a non-empty executable name",
+            ),
+            (
+                "name = \"in can\"\npath = \"src/main.rs\"",
+                "must be a non-empty executable name",
+            ),
+            (
+                "name = \"bin/incan\"\npath = \"src/main.rs\"",
+                "must be a non-empty executable name",
+            ),
+            ("name = \"incan\"\npath = \"\"", "plain relative path to a `.rs` file"),
+            (
+                "name = \"incan\"\npath = \"/abs/main.rs\"",
+                "plain relative path to a `.rs` file",
+            ),
+            (
+                "name = \"incan\"\npath = \"../elsewhere/main.rs\"",
+                "plain relative path to a `.rs` file",
+            ),
+            (
+                "name = \"incan\"\npath = \"src/main.incn\"",
+                "plain relative path to a `.rs` file",
+            ),
+            (
+                "name = \"incan\"\npath = \"src/main.rs\"\n\n[[rust.bin]]\nname = \"incan\"\npath = \"src/bin/other.rs\"",
+                "name `incan` is declared twice",
+            ),
+            (
+                "name = \"incan\"\npath = \"src/main.rs\"\n\n[[rust.bin]]\nname = \"other\"\npath = \"src/main.rs\"",
+                "path `src/main.rs` is declared twice",
+            ),
+        ] {
+            let content = format!("[project]\nname = \"demo\"\n\n[[rust.bin]]\n{body}\n");
+            let rendered = match ProjectManifest::from_str(&content, Path::new("loaf.toml")) {
+                Err(err) => err.to_string(),
+                Ok(_) => panic!("expected `{body}` to be refused"),
+            };
+            assert!(rendered.contains("[[rust.bin]]"), "`{body}`: {rendered}");
+            assert!(rendered.contains(expected), "`{body}`: {rendered}");
+        }
+        let outside_rust_root = ProjectManifest::from_str(
+            "[project]\nname = \"incan_stdlib_web\"\n\n[rust.source]\nroot = \"rust\"\n\n[[rust.bin]]\nname = \"tool\"\npath = \"src/bin/tool.rs\"\n",
+            Path::new("loaf.toml"),
+        );
+        let rendered = match outside_rust_root {
+            Err(err) => err.to_string(),
+            Ok(_) => panic!("expected a binary outside the Rust root to be refused"),
+        };
+        assert!(
+            rendered.contains("must lie below the declared Rust root `rust`"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("sibling Loaf"), "{rendered}");
+    }
+
+    #[test]
+    fn a_rust_binary_role_declares_both_its_name_and_its_path() {
+        for (body, expected) in [
+            ("name = \"incan\"", "missing field `path`"),
+            ("path = \"src/main.rs\"", "missing field `name`"),
+        ] {
+            let content = format!("[project]\nname = \"demo\"\n\n[[rust.bin]]\n{body}\n");
+            let rendered = match ProjectManifest::from_str(&content, Path::new("loaf.toml")) {
+                Err(err) => err.to_string(),
+                Ok(_) => panic!("expected `{body}` to be refused"),
+            };
+            assert!(rendered.contains(expected), "`{body}`: {rendered}");
         }
     }
 
