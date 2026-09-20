@@ -303,8 +303,8 @@
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
       "category": "quarantined metadata-free method compatibility",
-      "expected_count": 11,
-      "expected_fingerprint": "0x78afd8a9c8305f8a"
+      "expected_count": 9,
+      "expected_fingerprint": "0xda04e8bad8739a99"
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/fast_paths.rs",
@@ -393,8 +393,8 @@
     {
       "path": "loaves/compiler/incan_frontend/src/typechecker/canonical_identity_tests.rs",
       "category": "RFC 120 canonical identity conformance assertions",
-      "expected_count": 35,
-      "expected_fingerprint": "0x6564955906f965ce"
+      "expected_count": 36,
+      "expected_fingerprint": "0x3e3a6056cc403a33"
     },
     {
       "path": "loaves/compiler/incan_frontend/src/typechecker/check_decl.rs",
@@ -478,7 +478,7 @@
       "path": "loaves/compiler/incan_frontend/src/typechecker/mod.rs",
       "category": "Rust display type parsing, provider ABI lookup, shared nominal String canonicalization, source type-name validation, stdlib derive compatibility, and dependency registry owner paths",
       "expected_count": 43,
-      "expected_fingerprint": "0x2277a136a6feb452"
+      "expected_fingerprint": "0x3d6c1ed08c968480"
     },
     {
       "path": "loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs",
@@ -519,8 +519,8 @@
     {
       "path": "loaves/compiler/incan_ir/src/lower/expr/calls.rs",
       "category": "public dependency call, checked C string construction, default lowering, and assert-raises policy",
-      "expected_count": 8,
-      "expected_fingerprint": "0xd7fbb13ceabbe8ed"
+      "expected_count": 9,
+      "expected_fingerprint": "0xdb9c44814b8b15c5"
     },
     {
       "path": "loaves/compiler/incan_ir/src/lower/expr/mod.rs",
@@ -543,8 +543,8 @@
     {
       "path": "loaves/compiler/incan_ir/src/lower/types.rs",
       "category": "lowered primitive and type-token spelling compatibility",
-      "expected_count": 9,
-      "expected_fingerprint": "0xeeb0ca6fafb43da6"
+      "expected_count": 10,
+      "expected_fingerprint": "0x4c54bad63f087d60"
     },
     {
       "path": "loaves/compiler/incan_provider/src/dependency_resolver.rs",
