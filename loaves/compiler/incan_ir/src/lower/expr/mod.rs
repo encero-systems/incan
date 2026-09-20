@@ -664,12 +664,12 @@ impl AstLowering {
                 let stdlib_module = module_path
                     .as_deref()
                     .filter(|segments| segments.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT));
+                let declaration_name = self.dispatch_trait_declaration_name(&trait_name);
                 let source_json_module = stdlib_module.filter(|segments| {
-                    stdlib::is_stdlib_json_trait_module_path(segments)
-                        && stdlib::stdlib_json_trait_id(&trait_name).is_some()
+                    stdlib::stdlib_json_trait_id_for_identity(segments, &declaration_name).is_some()
                 });
                 let trait_path = if let Some(segments) = source_json_module {
-                    self.lower_stdlib_trait_dispatch_path(segments, &trait_name, receiver)
+                    self.lower_stdlib_trait_dispatch_path(segments, &declaration_name, receiver)
                 } else if stdlib::stdlib_json_trait_scope_import_id(&trait_name).is_some() {
                     if stdlib::is_canonical_stdlib_json_trait_name(&trait_name) {
                         let canonical_module = vec![
@@ -687,7 +687,7 @@ impl AstLowering {
                 } else if let Some(rust_path) = trait_bounds::incan_to_rust(&trait_name) {
                     rust_path.to_string()
                 } else if let Some(segments) = stdlib_module {
-                    self.lower_stdlib_trait_dispatch_path(segments, &trait_name, receiver)
+                    self.lower_stdlib_trait_dispatch_path(segments, &declaration_name, receiver)
                 } else {
                     trait_name
                 };
@@ -736,6 +736,18 @@ impl AstLowering {
                     .collect(),
             })
             .collect()
+    }
+
+    /// Return the declaration name behind the trait spelling a checked dispatch carries.
+    ///
+    /// The checker records the trait as the call site spelled it: `JsonSerialize` for an aliased import,
+    /// `json.Serialize` for a module-qualified one. A stdlib dispatch path is built from the declaring module plus the
+    /// declaration name, so the spelling is resolved exactly as adopted-trait lowering resolves it -- through the
+    /// import identity the frontend proved (#1431), else the written import alias -- and an alias never reaches the
+    /// generated path (#1712). A spelling with no import behind it is its own declaration name.
+    fn dispatch_trait_declaration_name(&self, visible_name: &str) -> String {
+        let (_, declaration_name) = self.canonical_trait_identity(visible_name);
+        declaration_name.unwrap_or_else(|| visible_name.to_string())
     }
 
     /// Resolve one source-owned stdlib trait through the provider, public package, or provider-local facade that owns

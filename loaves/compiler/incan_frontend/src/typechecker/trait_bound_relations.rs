@@ -7,7 +7,7 @@ use crate::diagnostics::errors::GenericBoundTarget;
 use crate::resolved_type_subst::substitute_resolved_type;
 use crate::symbols::{ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo};
 use crate::typechecker::helpers::collection_type_id;
-use incan_lang::interop::is_rust_capability_bound;
+use incan_lang::interop::{is_rust_callable_capability_bound, is_rust_capability_bound};
 use incan_lang::lang::callables;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::trait_capabilities::{
@@ -90,6 +90,9 @@ impl TypeChecker {
         if let Some(satisfies) = self.function_type_satisfies_callable_bound(ty, bound, bindings) {
             return satisfies;
         }
+        if let Some(satisfies) = self.function_type_satisfies_callable_marker(ty, bound, bindings) {
+            return satisfies;
+        }
         if let Some(capability) = self.temporary_trait_capability_for_bound_info(bound, bindings)
             && let Some(satisfies) = self.temporary_trait_capability_supports_type(capability, ty)
         {
@@ -140,6 +143,35 @@ impl TypeChecker {
             .zip(&expected[..arity])
             .all(|(actual, expected)| self.types_compatible(&actual.ty, expected));
         Some(params_match && self.types_compatible(return_type, &expected[arity]))
+    }
+
+    /// Match a function value against the parameter list of an RFC 041 `Fn`-family capability marker.
+    ///
+    /// `Fn[int]`, `FnMut[int]` and `FnOnce[int]` name the callable's parameters and nothing else: the return type is
+    /// whatever the value passed returns. The generated Rust asks for exactly that shape (the canonical `CallableN`
+    /// bound with a free return type, #1716), so a function whose arity or parameter types do not match the marker is
+    /// refused here rather than by rustc. A value that is not a function answers `None`: a nominal type can satisfy
+    /// the callable requirement through its own `__call__` adoption, which the marker cannot see.
+    fn function_type_satisfies_callable_marker(
+        &self,
+        ty: &ResolvedType,
+        bound: &TypeBoundInfo,
+        bindings: &HashMap<String, ResolvedType>,
+    ) -> Option<bool> {
+        if !is_rust_callable_capability_bound(&bound.name) {
+            return None;
+        }
+        let ResolvedType::Function(params, _) = ty else {
+            return None;
+        };
+        if params.len() != bound.type_args.len() {
+            return Some(false);
+        }
+        let params_match = params
+            .iter()
+            .zip(&bound.type_args)
+            .all(|(actual, expected)| self.types_compatible(&actual.ty, &substitute_resolved_type(expected, bindings)));
+        Some(params_match)
     }
 
     /// Resolve a checked bound to the canonical source callable trait registry.

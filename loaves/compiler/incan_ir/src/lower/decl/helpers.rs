@@ -3,13 +3,13 @@
 use std::collections::{HashMap, HashSet};
 
 use super::super::super::decl::{
-    IrRustAttrArg, IrRustAttribute, IrRustLintAllow, IrTraitBound, IrTypeParam, StructField,
+    IrRustAttrArg, IrRustAttribute, IrRustLintAllow, IrTraitBound, IrTraitBoundOrigin, IrTypeParam, StructField,
 };
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use incan_frontend::ast::{self, Spanned};
 use incan_frontend::decorator_resolution;
-use incan_lang::interop::is_rust_capability_bound;
+use incan_lang::interop::{is_rust_callable_capability_bound, is_rust_capability_bound};
 use incan_lang::lang::callables;
 use incan_lang::lang::decorators::{self, DecoratorId};
 use incan_lang::lang::derives::{self, DeriveId};
@@ -61,12 +61,10 @@ impl AstLowering {
                 && is_rust_capability_bound(tp.name.as_str())
                 && let Some(prev) = lowered.last_mut()
             {
-                let prev_is_capability_bounded = prev.bounds.iter().any(|bound| {
-                    matches!(
-                        bound.origin,
-                        super::super::super::decl::IrTraitBoundOrigin::RustCapability
-                    )
-                });
+                let prev_is_capability_bounded = prev
+                    .bounds
+                    .iter()
+                    .any(|bound| matches!(bound.origin, IrTraitBoundOrigin::RustCapability));
                 if prev_is_capability_bounded
                     && !prev.bounds.iter().any(|bound| {
                         bound.trait_path == tp.name && bound.type_args.is_empty() && bound.assoc_types.is_empty()
@@ -81,6 +79,68 @@ impl AstLowering {
             lowered.push(self.lower_type_param(tp, &type_param_names));
         }
         lowered
+    }
+
+    /// Lower the type parameters of a callable declaration, giving each RFC 041 `Fn`-family marker its callable shape.
+    ///
+    /// `F with Fn[int]` asks for a Rust `Fn(i64) -> R`: a parameter list the marker names and a return type it does
+    /// not. Rust spells that requirement only in its parenthesized form; the angle-bracket `Fn<i64>` a plain trait
+    /// path produces is the unstable form rustc refuses (#1716). The canonical `std.traits.callable.CallableN[Args...,
+    /// R]` trait carries exactly that shape, and its generated declaration provides the blanket implementation for
+    /// native functions and closures, so each marker lowers to that nominal bound by arity. The return type becomes a
+    /// hidden type parameter the caller's argument determines, appended after the declared parameters like the other
+    /// hidden parameters of a callable; an arity the callable vocabulary does not cover keeps the marker as written.
+    ///
+    /// Nominal owners (models, classes, enums, traits, newtypes) keep [`Self::lower_type_params`]: a hidden parameter
+    /// there would change the type's arity everywhere it is named.
+    pub(in crate::lower) fn lower_callable_type_params(&self, ast_params: &[ast::TypeParam]) -> Vec<IrTypeParam> {
+        let mut type_params = self.lower_type_params(ast_params);
+        let mut hidden_return_types = Vec::new();
+        for type_param in &mut type_params {
+            for bound in &mut type_param.bounds {
+                let Some(callable) = Self::callable_marker_trait(bound) else {
+                    continue;
+                };
+                let hidden_name = format!("__IncanFnReturn{}", hidden_return_types.len());
+                let mut type_args = std::mem::take(&mut bound.type_args);
+                type_args.push(IrType::Generic(hidden_name.clone()));
+                *bound = IrTraitBound::source_callable(Self::source_callable_trait_path(callable), type_args);
+                hidden_return_types.push(IrTypeParam {
+                    name: hidden_name,
+                    bounds: Vec::new(),
+                });
+            }
+        }
+        type_params.extend(hidden_return_types);
+        type_params
+    }
+
+    /// Return the callable trait an `Fn`-family capability marker bound stands for, by its parameter count.
+    ///
+    /// Only a marker that came in as a Rust capability (`Fn`, `FnMut`, `FnOnce` from `std.rust`) qualifies; a
+    /// same-spelled trait from any other origin is not a capability marker.
+    fn callable_marker_trait(bound: &IrTraitBound) -> Option<callables::CallableTraitId> {
+        if bound.origin != IrTraitBoundOrigin::RustCapability
+            || !is_rust_callable_capability_bound(&bound.trait_path)
+            || !bound.assoc_types.is_empty()
+        {
+            return None;
+        }
+        callables::for_arity(bound.type_args.len())
+    }
+
+    /// Return the generated Rust path of one canonical callable trait, qualified from the crate root.
+    ///
+    /// The `std.rust` markers emit no `use` of their own (`std.rust` is a checker-only namespace), so the bound must
+    /// name the trait absolutely; the compiled stdlib is mounted at `crate::__incan_std` in every generated crate.
+    fn source_callable_trait_path(callable: callables::CallableTraitId) -> String {
+        format!(
+            "{}::{}::{}::{}",
+            keywords::as_str(KeywordId::Crate),
+            stdlib::INCAN_STD_NAMESPACE,
+            callables::generated_module(),
+            callables::info_for(callable).name
+        )
     }
 
     /// Return the declared type parameters that no lowered field type mentions, in declaration order.

@@ -63,6 +63,26 @@ pub fn info_for(id: CallableTraitId) -> &'static CallableTraitInfo {
     }
 }
 
+/// Return the callable trait that takes exactly `arity` input parameters, when the vocabulary has one.
+///
+/// The RFC 041 `Fn`-family capability markers name a parameter list and nothing else; this is how lowering finds
+/// the nominal trait carrying that arity (#1716). An arity the vocabulary does not cover answers `None`.
+pub fn for_arity(arity: usize) -> Option<CallableTraitId> {
+    CALLABLE_TRAITS
+        .iter()
+        .find(|info| info.arity == arity)
+        .map(|info| info.id)
+}
+
+/// Return the generated-provider module that owns the callable traits, relative to the compiler's stdlib namespace.
+///
+/// `std.traits.callable` is compiled below the `__incan_std` mount, so generated Rust reaches the traits at
+/// `crate::__incan_std::traits::callable::CallableN`; this is the `traits::callable` part of that path.
+#[must_use]
+pub fn generated_module() -> String {
+    MODULE_PATH[1..].join("::")
+}
+
 /// Return whether a segmented source module path is `std.traits.callable`.
 pub fn module_path_matches(module_path: &[String]) -> bool {
     module_path.len() == MODULE_PATH.len()
@@ -85,5 +105,14 @@ mod tests {
         assert_eq!(from_str("Callable1"), Some(CallableTraitId::Callable1));
         assert_eq!(from_str("Callable3"), None);
         assert_eq!(METHOD_NAMES, ["__call__"]);
+    }
+
+    #[test]
+    fn arity_lookup_mirrors_the_registry() {
+        assert_eq!(for_arity(0), Some(CallableTraitId::Callable0));
+        assert_eq!(for_arity(1), Some(CallableTraitId::Callable1));
+        assert_eq!(for_arity(2), Some(CallableTraitId::Callable2));
+        assert_eq!(for_arity(3), None);
+        assert_eq!(generated_module(), "traits::callable");
     }
 }

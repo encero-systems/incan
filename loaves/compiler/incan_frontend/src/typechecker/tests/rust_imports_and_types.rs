@@ -773,6 +773,78 @@ def run_fn_once[F with FnOnce[int]](_f: F) -> None:
     assert_check_ok(source);
 }
 
+/// #1716: an `Fn`-family marker names the callable's parameter list. A function value whose parameters match is
+/// admitted whatever it returns (the return type is the marker's free part); one whose arity or parameter types differ
+/// is refused at the call site rather than by rustc. A non-function value is not judged by the marker.
+#[test]
+fn test_std_rust_fn_capability_bound_checks_the_parameter_list() {
+    let accepted = r#"
+from std.rust import Fn, FnMut, FnOnce
+
+def run_fn[F with Fn[int]](_f: F) -> None:
+  pass
+
+def run_fn_mut[F with FnMut[int, str]](_f: F) -> None:
+  pass
+
+def run_fn_once[F with FnOnce[int]](_f: F) -> None:
+  pass
+
+def double(value: int) -> int:
+  return value * 2
+
+def label(value: int, name: str) -> str:
+  return f"{name}:{value}"
+
+def shout(value: int) -> None:
+  println(value)
+
+def main() -> None:
+  run_fn(double)
+  run_fn_mut(label)
+  run_fn_once(shout)
+"#;
+    assert_check_ok(accepted);
+
+    let wrong_arity = r#"
+from std.rust import Fn
+
+def run_fn[F with Fn[int]](_f: F) -> None:
+  pass
+
+def label(value: int, name: str) -> str:
+  return f"{name}:{value}"
+
+def main() -> None:
+  run_fn(label)
+"#;
+    let errs = check_str_err(wrong_arity, "a two-parameter function must not satisfy Fn[int]");
+    assert!(
+        errs.iter()
+            .any(|error| error.message.contains("violates generic bound")),
+        "expected a generic-bound violation for the arity mismatch; got: {errs:?}"
+    );
+
+    let wrong_parameter_type = r#"
+from std.rust import Fn
+
+def run_fn[F with Fn[int]](_f: F) -> None:
+  pass
+
+def greet(name: str) -> str:
+  return f"hello {name}"
+
+def main() -> None:
+  run_fn(greet)
+"#;
+    let errs = check_str_err(wrong_parameter_type, "a str-taking function must not satisfy Fn[int]");
+    assert!(
+        errs.iter()
+            .any(|error| error.message.contains("violates generic bound")),
+        "expected a generic-bound violation for the parameter type mismatch; got: {errs:?}"
+    );
+}
+
 #[test]
 fn test_structural_coercion_option_int_to_option_i64() {
     let checker = TypeChecker::new();

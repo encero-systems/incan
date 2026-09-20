@@ -1,0 +1,47 @@
+# behavior: std.rust capability markers in with-clauses: Send, Sync and Static accept ordinary values, alone and combined, a Static-bounded identity returns its argument, and Fn, FnMut and FnOnce accept a named function taking the marker's parameter (RFC 041, #1716)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc041_std_rust_capability_bounds_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc041_capability_bounds_full_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc041_emit_static_bound_codegen
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::fn_family_capability_markers_lower_to_the_callable_bound_issue1716
+# expect-stdout:
+#   ran
+#   7
+
+# RFC 041: `std.rust` capability markers in generic `with` clauses (surface + codegen smoke).
+# Note: `std.rust` is the Incan namespace for bound markers (`Send`, `Sync`, ...). That is not `rust::std::...`,
+# which imports Rust's standard library as foreign items (e.g. `Instant`).
+from std.rust import Send, Sync, Static, Fn, FnMut, FnOnce
+
+def run[T with Send, Sync](_t: T) -> None:
+  pass
+
+def run_static[T with Send, Static](_t: T) -> None:
+  pass
+
+def run_all[T with Send, Sync, Static](_value: T) -> None:
+  pass
+
+def run_fn[F with Fn[int]](_f: F) -> None:
+  pass
+
+def run_fn_mut[F with FnMut[int], Send](_f: F) -> None:
+  pass
+
+def run_fn_once[F with FnOnce[int], Static](_f: F) -> None:
+  pass
+
+def pin[T with Static](value: T) -> T:
+  return value
+
+def double(value: int) -> int:
+  return value * 2
+
+def main() -> None:
+  run(1)
+  run_static("text")
+  run_all(2.5)
+  run_fn(double)
+  run_fn_mut(double)
+  run_fn_once(double)
+  println("ran")
+  println(pin(7))
