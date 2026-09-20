@@ -708,7 +708,7 @@ impl AstLowering {
                     // the shape the backend prints and Rust accepts in place of `..` for accessible fields.
                     if let Some(rest) = self.pattern_rest_fields_for(name.span) {
                         for field in rest {
-                            if !named_fields.iter().any(|(named, _)| named == field) {
+                            if !named_fields.iter().any(|(named, _)| *named == field) {
                                 named_fields.push((field.clone(), Pattern::Wildcard));
                             }
                         }

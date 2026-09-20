@@ -3087,8 +3087,8 @@ fn test_issue1464_list_constructor_codegen() {
         "an empty list() must adopt its annotated element type; generated:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("(source).into_iter().collect::<Vec<_>>()"),
-        "list() over a generator must consume it through IntoIterator; generated:\n{rust_code}"
+        rust_code.contains("::std::iter::Iterator::collect::<Vec<_>>(source)"),
+        "list() over a generator must collect it through the Iterator trait, not the wrapper's inherent collect; generated:\n{rust_code}"
     );
     assert!(
         rust_code.contains("let mut __incan_iter = pairs;"),
@@ -3098,7 +3098,8 @@ fn test_issue1464_list_constructor_codegen() {
 }
 
 /// A comprehension over a by-value Rust iterator (or a generator) consumes it through `IntoIterator`, as the `for`
-/// statement over the same value already does, instead of borrowing it with `.iter()` (#1490).
+/// statement over the same value already does, instead of borrowing it with `.iter()` (#1490). A generator moves as
+/// the `Iterator` trait's iterator so the chain's adapters are the trait's, not the runtime wrapper's (#1464).
 #[test]
 fn test_issue1490_comprehension_over_rust_iterator_codegen() {
     let source = load_test_file("issue1490_comprehension_over_rust_iterator");
@@ -3114,8 +3115,8 @@ fn test_issue1490_comprehension_over_rust_iterator_codegen() {
         "the comprehension must consume the iterator through IntoIterator; generated:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("((source).into_iter())"),
-        "a generator source must be consumed by value as well; generated:\n{rust_code}"
+        rust_code.contains("(::std::iter::Iterator::fuse(source).into_iter())"),
+        "a generator source must be consumed by value as the Iterator trait's iterator; generated:\n{rust_code}"
     );
     assert_codegen_snapshot!("issue1490_comprehension_over_rust_iterator", rust_code);
 }

@@ -12,14 +12,14 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3128 | 189 | 7 |
-| re-point | 491 | 48 | 408 |
-| retire | 1114 | 74 | 0 |
+| keep | 3132 | 189 | 7 |
+| re-point | 493 | 48 | 412 |
+| retire | 1117 | 75 | 0 |
 | unaffected | 1436 | 134 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **6169** | **445** | **420** |
+| **Total** | **6178** | **446** | **424** |
 
-- Retire-class tests: 1114, of which twinned 38, dies 115, open 961 (neither yet).
+- Retire-class tests: 1117, of which twinned 41, dies 115, open 961 (neither yet).
 - Retire-class files with open rows: 61 (a file whose retire tests are all twinned or recorded `dies` is done).
 - Files whose test region exceeds the split threshold of 1500 lines: 22, of which 10 in the durable corpus (keep or re-point).
 - Unreviewed files: 0.
@@ -78,8 +78,10 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_test_support/fixtures/behavior/driver` | `<name>.incn or <name>/` | 3 | re-point | #1561 | behavior fixtures twinning incan_driver retire tests whose surviving observable is a program's output or a check-time diagnostic rather than the generated project they inspected; run by behavior_driver_tests.rs. Each names the retire tests it twins in `# retires:` lines. |
 | `loaves/compiler/incan_test_support/fixtures/behavior/harness` | `<name>.incn or <name>/` | 8 | re-point | #1561 | the behavior-fixture harness proving itself: one fixture per shape of the format (refused program with one code and with two, non-zero exit, exit code as the only observable, empty stdout, contained lines, module directory, project directory), run by behavior_harness_tests.rs. They twin nothing; they exist so a runner or route change is caught here before it is caught in a twin. Header refusals are unit tests of parse_header, not fixtures. |
 | `loaves/compiler/incan_test_support/fixtures/behavior/smoke` | `<name>.incn or <name>/` | 5 | re-point | #1561 | behavior fixtures: programs with their expected observables in the header, run by behavior_smoke_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines. |
-| `loaves/compiler/incan_test_support/fixtures/behavior/snapshots_enums_and_matching` | `<name>.incn or <name>/` | 2 | re-point | #1561 | behaviour fixtures twinning codegen snapshot tests over enums, patterns, match, unions and `isinstance`; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines. |
+| `loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings` | `<name>.incn or <name>/` | 2 | re-point | #1561 | behaviour fixtures twinning codegen snapshot tests over lists, dicts, sets, comprehensions, iterators, strings and builtins; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines. |
+| `loaves/compiler/incan_test_support/fixtures/behavior/snapshots_enums_and_matching` | `<name>.incn or <name>/` | 3 | re-point | #1561 | behaviour fixtures twinning codegen snapshot tests over enums, patterns, match, unions and `isinstance`; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines. |
 | `loaves/compiler/incan_test_support/fixtures/behavior/snapshots_models_and_classes` | `<name>.incn or <name>/` | 1 | re-point | #1561 | behaviour fixtures twinning codegen snapshot tests over models, classes, fields, constructors and properties; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines. |
+| `loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib` | `<name>.incn or <name>/` | 1 | re-point | #1561 | behaviour fixtures twinning codegen snapshot tests over stdlib module surfaces (math, fs, tempfile, testing, async, derives, registry, graph, uuid, regex, compression, traits, web); run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines. |
 | `loaves/compiler/incan_test_support/fixtures/invalid` | `**/*.incn` | 7 | keep | #1561 | diagnostics through the checker only (test_invalid_fixtures). |
 | `loaves/compiler/incan_test_support/fixtures/oven_project_bake` | `**/*.incn` | 1 | re-point | #1561 | Incan project baked under Oven by the compiler suite; the program's route changes, the bake harness does not. |
 | `loaves/compiler/incan_test_support/fixtures/oven_release_app_bake` | `**/*.incn` | 1 | re-point | #1561 | release-profile Oven bake of an Incan app. |
@@ -247,7 +249,7 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_ex
 | `replacement_refuses_a_nominal_pattern_after_its_exact_target_identity_is_removed` | keep | - | - | replacement, checker, parser | generated-text hit is a diagnostic string |
 | `both_backends_render_a_multi_argument_print_the_same_way` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/driver/println_multi_argument.incn` | - | codegen, replacement, checker, parser | compared the replacement executor's rendering of `println("count", 3, true)` with the IrCodegen placeholder count; the twin runs the program and reads `count 3 true` from its stdout, and the replacement-only half stays in the keep sibling replacement_executes_print_by_recording_its_output. |
 
-### `loaves/compiler/incan_emit` (924 tests in 55 files: keep 100, retire 822, unaffected 2)
+### `loaves/compiler/incan_emit` (927 tests in 56 files: keep 100, retire 825, unaffected 2)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -268,6 +270,7 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_ex
 | `loaves/compiler/incan_emit/src/emit/expressions/builtins.rs` | 5 | 1087 | 174 | retire | 0/5 | 0 | - | #1561 | codegen 3, legacy_ir 4 | emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. |
 | `loaves/compiler/incan_emit/src/emit/expressions/calls.rs` | 29 | 2805 | 1278 | retire | 0/29 | 0 | - | #1561 | codegen 29, legacy_ir 29 | emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. |
 | `loaves/compiler/incan_emit/src/emit/expressions/indexing.rs` | 2 | 474 | 68 | retire | 0/2 | 0 | - | #1561 | codegen 2, legacy_ir 2 | emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. |
+| `loaves/compiler/incan_emit/src/emit/expressions/methods.rs` | 2 | 1533 | 60 | retire (retire 2) | 2/2 | 0 | - | #1561 | codegen 2, legacy_ir 2 | emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. |
 | `loaves/compiler/incan_emit/src/emit/expressions/mod.rs` | 52 | 4409 | 2798 | retire | 0/52 | 0 | required | #1561 | codegen 52, legacy_ir 52 | emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. |
 | `loaves/compiler/incan_emit/src/emit/expressions/structs_enums.rs` | 1 | 145 | 20 | retire | 0/1 | 0 | - | #1561 | codegen 1, legacy_ir 1 | emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. |
 | `loaves/compiler/incan_emit/src/emit/mod.rs` | 20 | 4605 | 952 | retire | 0/20 | 0 | - | #1561 | codegen 15, checker 4, legacy_ir 18 | emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. |
@@ -275,7 +278,7 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_ex
 | `loaves/compiler/incan_emit/src/emit/program.rs` | 10 | 4635 | 348 | retire | 0/10 | 0 | - | #1561 | codegen 10, text 2, checker 6, legacy_ir 10 | emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. |
 | `loaves/compiler/incan_emit/src/emit/statements.rs` | 8 | 1942 | 315 | retire | 0/8 | 0 | - | #1561 | codegen 7, text 4, legacy_ir 8 | emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. |
 | `loaves/compiler/incan_emit/src/emit/types.rs` | 3 | 689 | 61 | retire | 0/3 | 0 | - | #1561 | codegen 3, legacy_ir 2 | emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. |
-| `loaves/compiler/incan_emit/src/ownership.rs` | 45 | 1947 | 853 | retire | 0/45 | 0 | - | #1561 | legacy_ir 45 | emitter-side ownership and argument plans (borrow/clone/move for generated Rust); twins belong to Body IR ownership facts. |
+| `loaves/compiler/incan_emit/src/ownership.rs` | 46 | 2014 | 895 | retire (retire 46) | 1/46 | 0 | - | #1561 | legacy_ir 46 | emitter-side ownership and argument plans (borrow/clone/move for generated Rust); twins belong to Body IR ownership facts. |
 | `loaves/compiler/incan_emit/src/reference_shape.rs` | 3 | 107 | 65 | retire | 0/3 | 0 | - | #1561 | legacy_ir 3 | Rust reference-shape helper for emitted callbacks. |
 | `loaves/compiler/incan_emit/src/replacement/executable_resolution_tests.rs` | 17 | 1102 | 1102 | keep | - | - | - | #1561 | codegen 1, replacement 16, checker 17, parser 17 | replacement route (executable resolution, provider preflight, source profile). |
 | `loaves/compiler/incan_emit/src/replacement/hashed/tests.rs` | 15 | 314 | 314 | keep | - | - | - | #1561 | replacement 15 | replacement route (executable resolution, provider preflight, source profile). |
@@ -288,7 +291,7 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_ex
 | `loaves/compiler/incan_emit/src/trait_bound_inference.rs` | 15 | 4401 | 703 | retire | 0/15 | 0 | - | #1561 | codegen 5, legacy_ir 15 | infers Rust trait bounds for generated generics; Rust-shape concern. |
 | `loaves/compiler/incan_emit/tests/checked_empty_collection_constructor_tests.rs` | 14 | 675 | 675 | retire (keep 5, retire 9) | 1/9 | 0 | - | #1561 | codegen 9, snapshot 1, text 8, replacement 4, checker 14, parser 14 | empty-collection constructors: generated-text and snapshot assertions retire; the checked-type and Body IR aggregate assertions stay. |
 | `loaves/compiler/incan_emit/tests/closure_local_call_codegen_tests.rs` | 4 | 208 | 208 | retire | 0/4 | 0 | - | #1561 | codegen 4, text 1, checker 4, parser 4 | asserts generated Rust text. |
-| `loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs` | 289 | 6771 | 6771 | retire | 0/289 | 0 | required | #1561 | codegen 289, snapshot 1, text 31, checker 7, parser 289 | insta snapshot corpus of generated Rust; the .incn inputs under loaves/compiler/incan_emit/tests/codegen_snapshots are inventoried as a fixture root (re-point) and are the twin surface once run as programs. |
+| `loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs` | 289 | 6772 | 6772 | retire | 0/289 | 0 | required | #1561 | codegen 289, snapshot 1, text 31, checker 7, parser 289 | insta snapshot corpus of generated Rust; the .incn inputs under loaves/compiler/incan_emit/tests/codegen_snapshots are inventoried as a fixture root (re-point) and are the twin surface once run as programs. |
 | `loaves/compiler/incan_emit/tests/construction_diagnostics_tests.rs` | 2 | 52 | 52 | keep | - | - | - | #1561 | checker 2, parser 2 | typechecker diagnostics for model construction. |
 | `loaves/compiler/incan_emit/tests/constructor_argument_order_tests.rs` | 4 | 161 | 161 | retire | 4/4 | 0 | - | #1561 | codegen 1, checker 3, parser 4, legacy_ir 3 | argument sequencing asserted through the legacy IR and generated Rust; the CLI regression for issue 1462 runs the same program. |
 | `loaves/compiler/incan_emit/tests/emitter_freeze_tests.rs` | 2 | 103 | 103 | unaffected | - | - | - | #1561 | - | emitter freeze gate (#1687); runs the fingerprint checker and goes with the emitter tree. |
@@ -331,6 +334,19 @@ Per-test overrides in `loaves/compiler/incan_emit/src/codegen.rs`:
 | `test_struct_instantiation` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/smoke/model_fields.incn` | - | codegen, checker, legacy_ir | twinned by a program that builds the model with named arguments and prints each field. |
 | `test_enum_generation` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/smoke/enum_variants.incn` | - | codegen, checker, legacy_ir | twinned by a program that matches each variant and prints its name. |
 
+Per-test overrides in `loaves/compiler/incan_emit/src/emit/expressions/methods.rs`:
+
+| Test | Disposition | Twin | Dies | Lanes | Notes |
+|---|---|---|---|---|---|
+| `copy_payload_named_observer_is_borrowed_through_a_closure_issue1718` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/result_inspect_named_observer_copy_payload.incn` | - | codegen, legacy_ir | asserts the closure the emitter passes for a named observer over a Copy payload (#1718); the twin runs inspect and inspect_err over int payloads with named functions and reads what the observers print. |
+| `non_copy_payload_named_observer_keeps_the_adapter_route` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/result_inspect_named_observer_copy_payload.incn` | - | codegen, legacy_ir | asserts the adapter or bare item the emitter passes for a named observer over a non-Copy payload; the twin runs inspect over a model payload with a named function and reads what the observer prints. |
+
+Per-test overrides in `loaves/compiler/incan_emit/src/ownership.rs`:
+
+| Test | Disposition | Twin | Dies | Lanes | Notes |
+|---|---|---|---|---|---|
+| `generator_sources_are_consumed_through_the_iterator_trait` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings/list_and_comprehension_over_generator.incn` | - | legacy_ir | asserts the plans list(generator) and a comprehension over a generator take so the chain reaches the Iterator trait's adapters (#1464); the twin materializes generators through list(), comprehensions and the generator's own adapters and prints the results. |
+
 Per-test overrides in `loaves/compiler/incan_emit/tests/checked_empty_collection_constructor_tests.rs`:
 
 | Test | Disposition | Twin | Dies | Lanes | Notes |
@@ -366,7 +382,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (1723 tests in 83 files: keep 1723)
+### `loaves/compiler/incan_frontend` (1727 tests in 83 files: keep 1727)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -425,8 +441,8 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 | `loaves/compiler/incan_frontend/src/typechecker/tests/generics_and_type_tokens.rs` | 35 | 932 | 932 | keep | - | - | - | #1561 | checker 22, parser 9 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/imports_and_stdlib_modules.rs` | 42 | 1155 | 1155 | keep | - | - | - | #1561 | checker 31, parser 7 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/models_enums_and_newtypes.rs` | 51 | 963 | 963 | keep | - | - | - | #1561 | checker 37, parser 2 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
-| `loaves/compiler/incan_frontend/src/typechecker/tests/narrowing_and_matching.rs` | 55 | 1094 | 1094 | keep | - | - | - | #1561 | checker 55, parser 3 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
-| `loaves/compiler/incan_frontend/src/typechecker/tests/numerics_const_and_static.rs` | 62 | 983 | 983 | keep | - | - | - | #1561 | checker 61 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/narrowing_and_matching.rs` | 57 | 1203 | 1203 | keep | - | - | - | #1561 | checker 57, parser 3 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/numerics_const_and_static.rs` | 64 | 1042 | 1042 | keep | - | - | - | #1561 | checker 63 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/partials_and_callable_aliases.rs` | 33 | 1117 | 1117 | keep | - | - | - | #1561 | checker 33, parser 12 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/pub_imports_namespaces_and_fields.rs` | 21 | 819 | 819 | keep | - | - | - | #1561 | checker 21, parser 16 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/pub_imports_symbols_and_identity.rs` | 30 | 1038 | 1038 | keep | - | - | - | #1561 | checker 29, parser 5 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
@@ -564,7 +580,7 @@ Per-test overrides in `loaves/compiler/incan_ir/src/lower/tests/unary_operand_gr
 | `loaves/kernel/incan_syntax/src/parser/tests/types_and_bounds.rs` | 21 | 412 | 412 | keep | - | - | - | #1561 | checker 13, parser 21 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/vocab_scoped_symbols.rs` | 14 | 824 | 824 | keep | - | - | - | #1561 | parser 14 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 
-### `loaves/toolchain/incan-cli` (629 tests in 44 files: keep 117, re-point 353, retire 34, unaffected 125)
+### `loaves/toolchain/incan-cli` (631 tests in 44 files: keep 117, re-point 355, retire 34, unaffected 125)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -585,7 +601,7 @@ Per-test overrides in `loaves/compiler/incan_ir/src/lower/tests/unary_operand_gr
 | `loaves/toolchain/incan-cli/tests/behavior_driver_tests.rs` | 1 | 18 | 18 | re-point | - | - | - | #1561 | - | runs every behavior fixture of the driver area as a program and compares its observables; the route changes under it, the fixtures do not. |
 | `loaves/toolchain/incan-cli/tests/behavior_harness_tests.rs` | 1 | 21 | 21 | re-point | - | - | - | #1561 | - | runs the harness area's self-proof fixtures as programs; the route changes under it, the fixtures do not. |
 | `loaves/toolchain/incan-cli/tests/behavior_smoke_tests.rs` | 1 | 16 | 16 | re-point | - | - | - | #1561 | - | runs every behavior fixture of the smoke area as a program and compares its observables; the route changes under it, the fixtures do not. |
-| `loaves/toolchain/incan-cli/tests/behavior_snapshots_tests.rs` | 2 | 24 | 24 | re-point | - | - | - | #1561 | - | runs every behaviour fixture of the snapshots_* areas (one libtest case per leaf area) as a program and compares its observables; the route changes under it, the fixtures do not. |
+| `loaves/toolchain/incan-cli/tests/behavior_snapshots_tests.rs` | 4 | 37 | 37 | re-point | - | - | - | #1561 | - | runs every behaviour fixture of the snapshots_* areas (one libtest case per leaf area) as a program and compares its observables; the route changes under it, the fixtures do not. |
 | `loaves/toolchain/incan-cli/tests/canonical_item_imports.rs` | 3 | 229 | 229 | re-point (keep 1, re-point 2) | - | - | - | #1561 | run 2 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7; the one `check`- or `inspect`-only test is keep (override). |
 | `loaves/toolchain/incan-cli/tests/cli_catalog_forms_tests.rs` | 1 | 113 | 113 | re-point | - | - | - | #1561 | run 1 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. |
 | `loaves/toolchain/incan-cli/tests/cli_codegraph_and_inspection_tests.rs` | 16 | 2016 | 2016 | re-point (keep 8, re-point 7, retire 1) | 0/1 | 1 | required | #1561 | run 7 | runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. `inspect codegraph`/`inspect bindings`/`check`-only tests are keep; `inspect rust` asserts the generated-project report and generated Rust text and retires unless #654 keeps that inspection path (overrides). |
