@@ -1,0 +1,37 @@
+pub model IntLiteralExpr:
+  pub value: int
+
+pub model StringLiteralExpr:
+  pub value: str
+
+pub type LiteralValue = Union[int, str]
+pub type ColumnExpr = Union[IntLiteralExpr, StringLiteralExpr]
+
+pub model AggregateMeasure:
+  pub expr: ColumnExpr
+  pub label: str
+
+pub const DEFAULT_LABEL: str = "orders"
+pub const COUNT_SENTINEL: str = "__querykit_count_no_argument__"
+
+pub def lit(value: LiteralValue) -> ColumnExpr:
+  match value:
+    int(number) => return IntLiteralExpr(value=number)
+    str(text) => return StringLiteralExpr(value=text)
+
+pub def col(name: str) -> ColumnExpr:
+  return StringLiteralExpr(value=name)
+
+pub def count(expr: ColumnExpr = col(COUNT_SENTINEL)) -> ColumnExpr:
+  return expr
+
+pub def aggregate_as(expr: ColumnExpr, output_name: str) -> AggregateMeasure:
+  return AggregateMeasure(expr=expr, label=output_name)
+
+pub def aggregate_default(expr: ColumnExpr, output_name: str = DEFAULT_LABEL) -> AggregateMeasure:
+  return AggregateMeasure(expr=expr, label=output_name)
+
+pub def describe(measure: AggregateMeasure) -> str:
+  match measure.expr:
+    IntLiteralExpr(expr) => return f"{measure.label}={expr.value}"
+    StringLiteralExpr(expr) => return f"{measure.label}={expr.value}"
