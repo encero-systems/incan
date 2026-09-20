@@ -12,9 +12,9 @@ pub mod cli;
 pub mod commands;
 
 pub use cli::{
-    LockArgs, OvenCommand, OvenInteropAdapterArgument, OvenInteropCommand, OvenLegacyCargoCommand,
-    OvenLoafEnvelopeArgument, OvenOutputFormat, OvenPlanCommand, OvenStoreCliFlags, OvenStoreCommand,
-    PackageFeatureCliFlags, SdkProfileCliFlags, ToolsCommand, ToolsMetadataCommand,
+    LockArgs, OvenCommand, OvenHarvestProfileArgument, OvenInteropAdapterArgument, OvenInteropCommand,
+    OvenLegacyCargoCommand, OvenLoafEnvelopeArgument, OvenOutputFormat, OvenPlanCommand, OvenStoreCliFlags,
+    OvenStoreCommand, PackageFeatureCliFlags, SdkProfileCliFlags, ToolsCommand, ToolsMetadataCommand,
 };
 pub use incan_driver::error::{CliError, CliResult, ExitCode};
 
@@ -48,6 +48,25 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
             profile,
             features,
             source_inputs,
+            output,
+            format,
+        }),
+        OvenCommand::Harvest {
+            project,
+            target,
+            profile,
+            cargo,
+            rustc,
+            cargo_lock,
+            output,
+            format,
+        } => commands::oven_harvest(commands::OvenHarvestCommandOptions {
+            project,
+            target,
+            profile: profile.as_str().to_string(),
+            cargo,
+            rustc,
+            cargo_lock,
             output,
             format,
         }),
@@ -131,6 +150,8 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
                 max_domain_logical_bytes,
                 format,
                 loaf_registry,
+                loaf_registry_commit,
+                harvest_dir,
             } => commands::oven_legacy_cargo_bake_loafs(commands::OvenLoafBakeCommandOptions {
                 compiler_root,
                 output,
@@ -147,6 +168,8 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
                 max_domain_logical_bytes,
                 format,
                 loaf_registry,
+                loaf_registry_commit,
+                harvest_dir,
             }),
         },
         OvenCommand::CompilerLibtests {

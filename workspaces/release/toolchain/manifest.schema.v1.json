@@ -33,6 +33,15 @@
       "uniqueItems": true,
       "minItems": 1
     },
+    "loaf_registry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "index_commit"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "index_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+      }
+    },
     "hosts": {
       "type": "object",
       "minProperties": 1,

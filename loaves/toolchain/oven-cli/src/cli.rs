@@ -31,6 +31,25 @@ pub enum OvenInteropAdapterArgument {
     Ios,
 }
 
+/// The profile a harvested fact record binds; the registry admits exactly these two.
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OvenHarvestProfileArgument {
+    /// Cargo's `--release` profile.
+    Release,
+    /// Cargo's default profile.
+    Debug,
+}
+
+impl OvenHarvestProfileArgument {
+    /// The profile name as a fact record and the publisher spell it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Release => "release",
+            Self::Debug => "debug",
+        }
+    }
+}
+
 /// Built-in compiler-owned Loaf envelope selected by the hidden baker.
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OvenLoafEnvelopeArgument {
@@ -170,6 +189,36 @@ pub enum OvenCommand {
         /// Receipt output path; defaults to `.incan/oven/receipt.json` below --project
         #[arg(long, value_name = "PATH")]
         output: Option<PathBuf>,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: OvenOutputFormat,
+    },
+    /// Harvest incan.pub fact proposals from one compatibility-publisher observation of a checked manifest
+    Harvest {
+        /// Checked Loaf manifest (`loaf.toml`-shaped) or a directory holding one; its registry `[rust-dependencies]`
+        /// select the closure Cargo builds once
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        project: PathBuf,
+        /// Exact target triple the facts are bound to
+        #[arg(long, value_name = "TRIPLE")]
+        target: String,
+        /// Build profile the facts are bound to
+        #[arg(long, value_enum, default_value = "release")]
+        profile: OvenHarvestProfileArgument,
+        /// Explicit Cargo executable used only for this publisher observation
+        #[arg(long, value_name = "PATH")]
+        cargo: PathBuf,
+        /// Explicit Rust compiler whose identity the facts are bound to
+        #[arg(long, value_name = "PATH")]
+        rustc: PathBuf,
+        /// Existing `Cargo.lock` whose registry identities the observation must resolve within; without it Cargo
+        /// resolves the closure afresh
+        #[arg(long = "cargo-lock", value_name = "PATH")]
+        cargo_lock: Option<PathBuf>,
+        /// Directory receiving `<name>-<version>-<profile>/proposal.json`, its `out/` members, and
+        /// `refusals-<profile>.json`
+        #[arg(long, value_name = "PATH")]
+        output: PathBuf,
         /// Output format
         #[arg(long = "format", value_enum, default_value = "text")]
         format: OvenOutputFormat,
@@ -465,6 +514,12 @@ pub enum OvenLegacyCargoCommand {
         /// Registered Loaf registry checkout whose adoption manifests govern captured registry units
         #[arg(long = "loaf-registry", value_name = "PATH")]
         loaf_registry: Option<PathBuf>,
+        /// Index commit the registry checkout must be at; the bake refuses any other revision
+        #[arg(long = "loaf-registry-commit", value_name = "SHA", requires = "loaf_registry")]
+        loaf_registry_commit: Option<String>,
+        /// Directory receiving incan.pub harvest proposals and refusals from the release runtime-foundation capture
+        #[arg(long = "harvest-dir", value_name = "PATH")]
+        harvest_dir: Option<PathBuf>,
     },
 }
 
