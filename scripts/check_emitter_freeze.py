@@ -18,8 +18,8 @@ recorded change. `--record --prune-deletions` drops every missing file from the 
 entry that carries no note; under `frozen` it is refused, because there a deletion is a recorded change like any other.
 
 Exit status: 0 when the tree matches the manifest under its policy, 1 on drift or a refused record, 2 on a malformed
-manifest or a usage error. The contributor reference is
-`workspaces/docs-site/docs/contributing/reference/emitter_freeze.md`.
+manifest or a usage error. The frozen path set, the policy states, the manifest schema and the checker's modes are
+recorded on the owning issue: https://github.com/encero-systems/incan/issues/1561#issuecomment-5750178488.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = "loaves/compiler/incan_emit/tests/fixtures/emitter_freeze/manifest.json"
-REFERENCE_PAGE = "workspaces/docs-site/docs/contributing/reference/emitter_freeze.md"
+REFERENCE_PAGE = "https://github.com/encero-systems/incan/issues/1561#issuecomment-5750178488"
 POLICIES = ("frozen", "deletions-only")
 # A `change` entry is a recorded change with its migration note; a `deletion` entry is a prune under `deletions-only`.
 CHANGE_KINDS = ("change", "deletion")
