@@ -20559,6 +20559,150 @@ def main() -> str:
 }
 
 #[test]
+fn test_user_module_derive_bound_survives_exported_enum_variant_spelled_like_the_trait() -> Result<(), String> {
+    // #1429: a dependency's exported enum variant with the same spelling as its derivable trait must not steal the
+    // trait's lookup binding while the dependency interface is collected. The variant is a member convenience binding
+    // in the enum's namespace; the trait bound and the module derive resolve the trait declaration whichever of the
+    // two is declared first.
+    for codec_source in [
+        r#"
+__derives__ = [Ready]
+
+@rust.derive("Debug")
+pub trait Ready:
+  pass
+
+pub enum Kind(str):
+  Ready = "ready"
+
+pub def encode[T with Ready](value: T) -> None:
+  pass
+"#,
+        r#"
+__derives__ = [Ready]
+
+pub enum Kind(str):
+  Ready = "ready"
+
+@rust.derive("Debug")
+pub trait Ready:
+  pass
+
+pub def encode[T with Ready](value: T) -> None:
+  pass
+"#,
+    ] {
+        // The module derive and the directly imported trait derive both resolve the trait declaration; the second
+        // form reported the derive as unknown when the variant had taken the binding.
+        for source in [
+            r#"
+import codec
+
+@derive(codec)
+model Item:
+  value: int
+
+def main() -> None:
+  codec.encode(Item(value=1))
+"#,
+            r#"
+from codec import Ready, encode
+
+@derive(Ready)
+model Item:
+  value: int
+
+def main() -> None:
+  encode(Item(value=1))
+"#,
+        ] {
+            let codec_ast = parse_program(codec_source, "codec module");
+            let ast = parse_program(source, "consumer");
+            let mut checker = TypeChecker::new();
+            checker
+                .check_with_imports(&ast, &[("codec", &codec_ast)])
+                .map_err(|errs| {
+                    format!("the derive should satisfy the bound despite the same-spelled variant: {errs:?}\n{source}")
+                })?;
+        }
+    }
+    Ok(())
+}
+
+/// #1431: a stdlib trait reached through a facade re-export binds the stdlib trait itself, and the recorded import
+/// identity names the declaring `std.serde.json` module rather than the facade. Lowering keys the trait's protocol on
+/// that identity, so the written import path (which names only the facade) must not be the only fact available.
+#[test]
+fn test_facade_reexported_stdlib_trait_records_declaring_identity() -> Result<(), String> {
+    let facade_source = "from std.serde.json import Serialize, Deserialize\n";
+    let source = r#"
+from facade import Serialize, Deserialize
+
+model Payload with Serialize, Deserialize:
+  value: int
+
+  def from_json(json_str: str) -> Result[Payload, str]:
+    return Ok(Payload(value=len(json_str)))
+
+def main() -> None:
+  println(Payload(value=1).to_json())
+"#;
+    let facade_ast = parse_program(facade_source, "facade");
+    let ast = parse_program(source, "consumer");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_with_imports(&ast, &[("facade", &facade_ast)])
+        .map_err(|errs| format!("facade re-export should typecheck: {errs:?}"))?;
+
+    let json_module = vec!["std".to_string(), "serde".to_string(), "json".to_string()];
+    for trait_name in ["Serialize", "Deserialize"] {
+        let identity = checker
+            .type_info()
+            .resolved_import_identity(trait_name)
+            .ok_or_else(|| format!("no resolved import identity recorded for facade-re-exported {trait_name}"))?;
+        if identity.origin != SymbolOrigin::Module(json_module.clone())
+            || identity.declaration_name != trait_name
+            || identity.kind != SemanticSourceTargetKind::Trait
+        {
+            return Err(format!(
+                "{trait_name} identity must name the declaring stdlib module: {identity:?}"
+            ));
+        }
+        if checker.lookup_trait_info(trait_name).is_none() {
+            return Err(format!(
+                "{trait_name} must bind the stdlib trait, not an import placeholder"
+            ));
+        }
+        // The written import path keeps its meaning: it names the facade the consumer actually imported from.
+        if checker.import_binding_path(trait_name) != Some(["facade".to_string(), trait_name.to_string()].as_slice()) {
+            return Err(format!(
+                "{trait_name} import binding path must stay the written facade path"
+            ));
+        }
+    }
+
+    // A direct stdlib import records the same identity through the loading lookup.
+    let direct = parse_program(
+        "from std.serde.json import Serialize\n\nmodel Payload with Serialize:\n  value: int\n",
+        "direct",
+    );
+    let mut direct_checker = TypeChecker::new();
+    direct_checker
+        .check_program(&direct)
+        .map_err(|errs| format!("direct stdlib import should typecheck: {errs:?}"))?;
+    let direct_identity = direct_checker
+        .type_info()
+        .resolved_import_identity("Serialize")
+        .ok_or("no resolved import identity recorded for a direct stdlib trait import")?;
+    if direct_identity.origin != SymbolOrigin::Module(json_module) {
+        return Err(format!(
+            "direct identity must name the declaring stdlib module: {direct_identity:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn test_aliased_partial_serde_derive_adopts_trait_for_methods_and_bounds() {
     let source = r#"
 from std.serde.json import Serialize as JsonSerialize
