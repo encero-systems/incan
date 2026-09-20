@@ -1,4 +1,4 @@
-//! Typechecker unit tests, one module per subject; `support` holds the shared helpers.
+//! Typechecker unit tests, one module per subject; `helpers` holds the shared helpers.
 
 use super::type_info::{
     CBindingDescriptor, CBindingParameter, CBindingResource, CBindingSymbol, CBindingType, CResourceAccess,
@@ -53,7 +53,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-mod support;
+mod helpers;
 
 mod async_and_iteration;
 mod bounds_and_derives;
@@ -84,7 +84,7 @@ mod stdlib_surfaces;
 mod trait_instantiation_and_operators;
 mod traits;
 
-use support::{
+use helpers::{
     assert_check_ok, check_str, check_str_err, check_str_warnings, check_str_with_library_index,
     check_str_with_library_index_err, has_private_field_error, has_unknown_symbol_error,
     library_index_with_mylib_exports, parse_program, shadowed_trait_name, synthetic_artifact_root,
