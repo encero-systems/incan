@@ -3180,9 +3180,12 @@ impl AstLowering {
                 .map(|ty| self.lower_resolved_type(ty))
                 .unwrap_or(IrType::Unknown);
 
-            // ---- Checked empty dictionary: use the existing aggregate emitter rather than a constructor builtin ----
+            // ---- Checked empty dict or list: reuse the aggregate emitters rather than a constructor builtin ----
             if constructor == CollectionTypeId::Dict && args.is_empty() {
                 return Ok((IrExprKind::Dict(Vec::new()), result_ty));
+            }
+            if constructor == CollectionTypeId::List && args.is_empty() {
+                return Ok((IrExprKind::List(Vec::new()), result_ty));
             }
             let args_ir = self.lower_call_args(args)?.into_iter().map(|arg| arg.expr).collect();
             return Ok((

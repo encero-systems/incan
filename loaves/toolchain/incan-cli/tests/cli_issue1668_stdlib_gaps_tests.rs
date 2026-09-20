@@ -7,7 +7,7 @@
 //! has no program-argument passthrough.
 //!
 //! A second program covers the dict-view conversions the same tool tripped over: `sorted(dict.keys())` driving a
-//! `for` loop (#1461).
+//! `for` loop (#1461) and `list(dict.keys())` / `list(dict.values())` materializing a list (#1464).
 
 use std::fs;
 use std::process::Command;
@@ -163,9 +163,24 @@ fn stdlib_gaps_argv_text_codecs_and_dict_surfaces_issue1668() -> Result<(), Box<
     Ok(())
 }
 
-/// Dict views handed to `sorted()`; every line of its output is asserted below.
-const DICT_VIEWS_SOURCE: &str = r#"def ordered_keys(values: Dict[str, int]) -> list[str]:
+/// Dict views handed to `sorted()` and `list()`; every line of its output is asserted below.
+const DICT_VIEWS_SOURCE: &str = r#"const TEXTS: FrozenList[str] = ["b", "a"]
+
+def ordered_keys(values: Dict[str, int]) -> list[str]:
     return sorted(values.keys())
+
+def key_list(values: Dict[str, int]) -> list[str]:
+    return list(values.keys())
+
+def value_total(values: Dict[str, int]) -> int:
+    mut total = 0
+    for value in list(values.values()):
+        total += value
+    return total
+
+def appended(mut names: list[str]) -> list[str]:
+    names.append("d")
+    return list(names)
 
 def main() -> None:
     values: Dict[str, int] = {"b": 2, "a": 1, "c": 3}
@@ -174,27 +189,46 @@ def main() -> None:
     for value in sorted(values.values()):
         println(value)
     println(",".join(ordered_keys(values)))
+    for key in list(values.keys()):
+        println(key in values)
+    println(",".join(sorted(key_list(values))))
+    println(value_total(values))
+    println(",".join(appended(["z"])))
+    println(",".join(sorted(list(values))))
+    println(len(list("abc")))
+    println(",".join(sorted(list(TEXTS))))
+    names: list[str] = list()
+    println(len(names))
 "#;
 
-/// `sorted(dict.keys())` and `sorted(dict.values())` drive a `for` loop through a real build (#1461): the emitted
-/// Rust must sort a materialized list, never the borrowed `Keys` / `Values` iterator.
+/// `sorted(dict.keys())` and `sorted(dict.values())` drive a `for` loop through a real build (#1461), and
+/// `list(...)` over dict views, a dict, a list, a `mut` list parameter, text, a frozen list of text, and nothing at
+/// all materializes a list (#1464): the emitted Rust must never sort or re-iterate the borrowed `Keys` / `Values`
+/// iterator, nor call an undefined `list` function.
 #[test]
-fn sorted_dict_views_drive_loops_issue1461() -> Result<(), Box<dyn std::error::Error>> {
+fn sorted_and_listed_dict_views_issues1461_1464() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
-    write_minimal_project(tmp.path(), "dict_views_1461", "")?;
+    write_minimal_project(tmp.path(), "dict_views_1461_1464", "")?;
     fs::write(tmp.path().join("src/main.incn"), DICT_VIEWS_SOURCE)?;
 
     // Same suite-versus-standalone split as the #1668 program above: bake only where no Loaf authority exists yet.
     if !incan_test_support::oven_compiler_suite_is_active() {
         let bake = run_explicit_oven_bake(tmp.path())?;
-        assert_success(&bake, "prepare the #1461 dict-views fixture");
+        assert_success(&bake, "prepare the #1461 / #1464 dict-views fixture");
     }
     let run = run_incan(tmp.path(), &["run", "src/main.incn"])?;
-    assert_success(&run, "run the #1461 dict-views program");
+    assert_success(&run, "run the #1461 / #1464 dict-views program");
     assert_eq!(
         String::from_utf8(run.stdout)?.lines().collect::<Vec<_>>(),
-        vec!["a", "b", "c", "1", "2", "3", "a,b,c"],
-        "sorted dict views must yield ordered keys and values"
+        vec![
+            // sorted() over dict views driving loops and a join.
+            "a", "b", "c", "1", "2", "3", "a,b,c",
+            // list() over dict views: every listed key is a member, and the listed keys sort back to the same order.
+            "true", "true", "true", "a,b,c", "6",
+            // list() over a mut list parameter, a dict (its keys), text, a frozen list of text, and no source at all.
+            "z,d", "a,b,c", "3", "a,b", "0",
+        ],
+        "sorted and listed dict views must yield the expected keys and values"
     );
     Ok(())
 }

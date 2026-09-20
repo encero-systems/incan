@@ -328,6 +328,131 @@ def main(left: List[str], right: List[str]) -> None:
     );
 }
 
+/// `list(source)` records the canonical List constructor identity and types its elements by the loop-header
+/// iteration rule, so lowering never treats the call as an ordinary function named `list` (#1464).
+#[test]
+fn list_constructor_calls_record_canonical_collection_identity_issue1464() -> Result<(), String> {
+    let source = r#"
+def main(values: Dict[str, int], names: list[str], text: str) -> None:
+  keys = list(values.keys())
+  counts = list(values.values())
+  copied = list(names)
+  key_view = list(values)
+  characters = list(text)
+  empty: list[int] = list()
+"#;
+    let ast = parse_program(source, "issue1464 list constructor identity");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errors| format!("list constructors should typecheck: {errors:?}"))?;
+
+    let constructors = checker
+        .type_info()
+        .calls
+        .resolved_collection_constructors
+        .values()
+        .copied()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        constructors,
+        vec![CollectionTypeId::List; 6],
+        "every accepted list() spelling should resolve through the canonical List identity"
+    );
+
+    let expr_type = |call: &str| -> Result<ResolvedType, String> {
+        let start = source.find(call).ok_or_else(|| format!("missing `{call}`"))?;
+        checker
+            .type_info()
+            .expr_type(Span::new(start, start + call.len()))
+            .cloned()
+            .ok_or_else(|| format!("`{call}` should retain a checked type"))
+    };
+    let list_of = crate::typechecker::helpers::list_ty;
+    assert_eq!(expr_type("list(values.keys())")?, list_of(ResolvedType::Str));
+    assert_eq!(expr_type("list(values.values())")?, list_of(ResolvedType::Int));
+    assert_eq!(expr_type("list(names)")?, list_of(ResolvedType::Str));
+    assert_eq!(
+        expr_type("list(values)")?,
+        list_of(ResolvedType::Str),
+        "a dict yields its keys"
+    );
+    assert_eq!(expr_type("list(text)")?, list_of(ResolvedType::Str));
+    assert_eq!(
+        expr_type("list()")?,
+        list_of(ResolvedType::Int),
+        "an empty list() adopts the annotated element type"
+    );
+    Ok(())
+}
+
+#[test]
+fn list_constructor_rejects_sources_iteration_rejects_issue1464() {
+    let errors = check_str_err(
+        r#"
+def main(count: int, pair: (int, str)) -> None:
+  from_scalar = list(count)
+  from_tuple = list(pair)
+"#,
+        "list() should reject sources a loop cannot iterate",
+    );
+
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("list() expects an iterable collection, str, bytes, or Iterator, got int")),
+        "expected a source diagnostic for the scalar before lowering, got {errors:?}"
+    );
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("list() expects an iterable collection, str, bytes, or Iterator, got (int, str)")),
+        "expected a source diagnostic for the tuple before lowering, got {errors:?}"
+    );
+}
+
+#[test]
+fn list_constructor_rejects_more_than_one_source_issue1464() {
+    let errors = check_str_err(
+        r#"
+def main(left: List[str], right: List[str]) -> None:
+  invalid = list(left, right)
+"#,
+        "list() should reject multiple sources",
+    );
+
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("list() expects at most 1 argument(s), got 2")),
+        "expected a source diagnostic before lowering, got {errors:?}"
+    );
+}
+
+#[test]
+fn user_defined_list_call_does_not_record_collection_constructor_issue1464() -> Result<(), String> {
+    let ast = parse_program(
+        r#"
+def list(values: List[str]) -> int:
+  return len(values)
+
+def main(values: List[str]) -> None:
+  count = list(values)
+"#,
+        "issue1464 shadowed list function",
+    );
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errors| format!("shadowing source function should typecheck: {errors:?}"))?;
+
+    assert!(
+        checker.type_info().calls.resolved_collection_constructors.is_empty(),
+        "a user-defined list function must not be lowered as the List collection constructor"
+    );
+    Ok(())
+}
+
 #[test]
 fn stdlib_module_function_calls_accept_default_arguments() -> Result<(), String> {
     let source = r#"

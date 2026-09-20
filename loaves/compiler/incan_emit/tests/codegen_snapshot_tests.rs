@@ -3038,6 +3038,38 @@ fn test_issue1461_sorted_dict_keys_codegen() {
     assert_codegen_snapshot!("issue1461_sorted_dict_keys", rust_code);
 }
 
+/// `list(source)` lowers through the checker's collection-constructor fact and collects the items a loop over the
+/// same source yields (#1464); it must never reach emission as a call to an undefined Rust `list` function.
+#[test]
+fn test_issue1464_list_constructor_codegen() {
+    let source = load_test_file("issue1464_list_constructor");
+    let rust_code = generate_rust(&source);
+    let calls_undefined_list = rust_code.match_indices("list(").any(|(index, _)| {
+        !rust_code[..index]
+            .chars()
+            .next_back()
+            .is_some_and(|previous| previous.is_alphanumeric() || previous == '_')
+    });
+    assert!(
+        !calls_undefined_list,
+        "list() must never emit an undefined Rust function call; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("((values).keys().cloned()).collect::<Vec<_>>()")
+            && rust_code.contains("((values).values().cloned()).collect::<Vec<_>>()"),
+        "list() over a dict view must collect the view directly; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("(args()).into_iter().collect::<Vec<_>>()"),
+        "list() over an opaque Rust iterable must consume it through IntoIterator; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("let names: Vec<String> = Vec::<String>::new();"),
+        "an empty list() must adopt its annotated element type; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1464_list_constructor", rust_code);
+}
+
 #[test]
 fn test_std_tempfile_import_codegen() {
     let source = load_test_file("std_tempfile_import");
