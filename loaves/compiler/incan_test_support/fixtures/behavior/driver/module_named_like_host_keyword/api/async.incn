@@ -1,0 +1,6 @@
+"""A nested module whose name is a keyword of the host language."""
+
+
+pub def nested_launch() -> str:
+    """Return the line the entrypoint prints for the nested module."""
+    return "nested launched"

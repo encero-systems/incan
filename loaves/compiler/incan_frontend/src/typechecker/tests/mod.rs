@@ -58,6 +58,7 @@ mod helpers;
 mod async_and_iteration;
 mod bounds_and_derives;
 mod calls_decorators_and_builtins;
+mod canonical_identity;
 mod capabilities;
 mod checked_facts_and_registries;
 mod collections_strings_and_bytes;

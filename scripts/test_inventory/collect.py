@@ -16,7 +16,8 @@ Modes:
   for a reviewer to fold into `dispositions.json` by hand;
 - `--check`: exit non-zero when a test has no disposition, a disposition names a test that no longer exists, a twin
   does not resolve, a behaviour fixture and the row it retires disagree, a `dies` row has no reason, a recorded
-  split flag disagrees with the measured test region, or the rendered page is stale;
+  split flag disagrees with the measured test region, the `files` or `fixture_roots` record is not sorted by key,
+  or the rendered page is stale;
 - `--dispositions <path>`: read another dispositions file, for scratch probes that must not edit the tracked record.
 
 A `retire` row leaves the corpus one of two ways. Its `twin` names what proves the behaviour after the cutover: a
@@ -58,7 +59,12 @@ DIES = "dies"
 # Every declared fixture root under this directory is a behaviour-fixture area: its cases carry a header whose
 # `# retires:` lines name the tests they twin (see the family's README.md).
 BEHAVIOR_FIXTURES_ROOT = "loaves/compiler/incan_test_support/fixtures/behavior"
-RETIRES_RE = re.compile(r"^#\s*retires:\s*(\S+)\s*$")
+# A `retires:` directive as the Rust runner (`incan_test_support::behavior_fixtures::parse_header`) reads it: `#`,
+# at most one space, the key, a colon. Two or more spaces after `#` make a block item there, so they are not a
+# directive here either. The value is validated separately by `retires_key_problem`, with the runner's rule.
+RETIRES_RE = re.compile(r"^# ?retires:(.*)$")
+# The record's two top-level maps that stay sorted by key, so a row is found by position and merges stay clean.
+SORTED_SECTIONS = ("fixture_roots", "files")
 
 TEST_ATTR_RE = re.compile(r"^\s*#\[\s*(?:test|tokio::test(?:\([^)]*\))?)\s*\]\s*$")
 ATTR_RE = re.compile(r"^\s*#\s*\[")
@@ -948,7 +954,9 @@ def behavior_fixture_header_file(fixture: str) -> Path:
 
 
 def read_retires(header_file: Path) -> list[str]:
-    """The `# retires:` test keys of a fixture header: the leading `#` lines, read the way the Rust runner reads them."""
+    """The raw `# retires:` values of a fixture header: the leading `#` lines, read the way the Rust runner reads them.
+
+    The values are stripped but not validated; `retires_key_problem` says whether one is a test key."""
     if not header_file.is_file():
         return []
     retires = []
@@ -957,17 +965,34 @@ def read_retires(header_file: Path) -> list[str]:
             break
         match = RETIRES_RE.match(line)
         if match:
-            retires.append(match.group(1))
+            retires.append(match.group(1).strip())
     return retires
 
 
+def retires_key_problem(value: str) -> str | None:
+    """None when `value` is a test key as the Rust runner accepts it -- `<path>.rs::<fn>`, no whitespace, the function
+    part module-qualified when the inventory needs it -- else what is wrong, in the runner's words."""
+    if any(char.isspace() for char in value):
+        return "not `<path>.rs::<fn>` (no whitespace)"
+    path, separator, test = value.partition("::")
+    if not separator or not path.endswith(".rs") or path == ".rs" or not test:
+        return "not `<path>.rs::<fn>`"
+    return None
+
+
 def behavior_retires(dispositions: dict) -> tuple[dict[str, str], list[str]]:
-    """Map every test a behaviour fixture retires to the fixture that retires it, plus the conflicts found."""
+    """Map every test a behaviour fixture retires to the fixture that retires it, plus the conflicts found.
+
+    A value that is not a test key is a failure line naming the fixture, never a key in the map."""
     retired_by: dict[str, str] = {}
     failures: list[str] = []
     for area in behavior_areas(dispositions):
         for fixture in behavior_fixture_paths(area):
             for test in read_retires(behavior_fixture_header_file(fixture)):
+                problem = retires_key_problem(test)
+                if problem is not None:
+                    failures.append(f"`{fixture}` retires `{test}`, which is {problem}")
+                    continue
                 other = retired_by.get(test)
                 if other is not None and other != fixture:
                     failures.append(f"`{fixture}` and `{other}` both retire `{test}`; a test has one twin")
@@ -1038,6 +1063,18 @@ def dies_failures(path: str, key: str, entry: dict) -> list[str]:
     return failures
 
 
+def unsorted_section_failure(dispositions: dict, section: str) -> str | None:
+    """The gate line for a top-level map whose keys are not in sorted order, naming the first pair out of order."""
+    keys = list(dispositions.get(section, {}))
+    for previous, current in zip(keys, keys[1:]):
+        if current < previous:
+            return (
+                f"`{section}` is not sorted by key: `{current}` comes after `{previous}`; "
+                "keep the record sorted so a row is found by position and merges stay clean"
+            )
+    return None
+
+
 def check(corpus: Corpus, dispositions: dict, rendered_page_stale: str | None) -> list[str]:
     """Every gate failure as one line; an empty list means the inventory is green."""
     failures: list[str] = []
@@ -1046,6 +1083,12 @@ def check(corpus: Corpus, dispositions: dict, rendered_page_stale: str | None) -
     scanned = corpus.by_path()
     retired_by, conflicts = behavior_retires(dispositions)
     failures.extend(conflicts)
+
+    # ---- The record stays sorted by key ----
+    for section in SORTED_SECTIONS:
+        unsorted = unsorted_section_failure(dispositions, section)
+        if unsorted is not None:
+            failures.append(unsorted)
 
     # ---- Every scanned test has a disposition ----
     for file in corpus.files:
@@ -1084,14 +1127,14 @@ def check(corpus: Corpus, dispositions: dict, rendered_page_stale: str | None) -
                 failures.extend(dies_failures(file.path, key, entry))
             elif twin:
                 twins.setdefault(twin, key)
+                if effective_dies(entry, key):
+                    failures.append(f"`{file.path}::{key}`: a `dies` reason beside a twin that is not `dies`")
             elif effective_dies(entry, key):
                 failures.append(f"`{file.path}::{key}`: a `dies` reason needs `\"twin\": \"dies\"` beside it")
         for twin, key in twins.items():
             reason = resolve_twin(twin, corpus, dispositions)
             if reason is not None:
                 failures.append(f"`{file.path}::{key}`: {reason}")
-            if effective_dies(entry, key):
-                failures.append(f"`{file.path}::{key}`: a `dies` reason beside a twin that is not `dies`")
         # ---- A row that points at a behaviour fixture must be named back by that fixture ----
         for key in file.keys:
             twin = effective_twin(entry, key)
@@ -1108,7 +1151,7 @@ def check(corpus: Corpus, dispositions: dict, rendered_page_stale: str | None) -
 
     # ---- Every behaviour fixture's `# retires:` line names a retire test whose row points back at it ----
     for test, fixture in sorted(retired_by.items()):
-        path, key = test.split("::", 1)
+        path, _, key = test.partition("::")
         file = scanned.get(path)
         if file is None or key not in file.keys:
             failures.append(f"`{fixture}` retires `{test}`, which is not a test in the tree")
