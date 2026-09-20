@@ -61,6 +61,26 @@ pub(crate) struct OvenLoafBakeReport {
     pub(crate) loafs: Vec<OvenLoafBakeEntryReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) compiler_suite: Option<OvenCompilerSuiteBakeReport>,
+    /// incan.pub harvest written from the release runtime-foundation capture, when `--harvest-dir` asked for it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) harvest: Option<OvenLoafHarvestReport>,
+    /// The Loaf registry record that governed each adopted registry unit of the release capture, in the shape a
+    /// consumer lock will carry under `semantic.registry_records` once the resolver records adoptions (RFC 125).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) registry_records: Vec<oven_model::lock::RegistryRecord>,
+}
+
+/// Where the release bake wrote its harvest and what it held.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct OvenLoafHarvestReport {
+    /// Directory holding `<name>-<version>-<profile>/proposal.json` entries and `refusals-<profile>.json`.
+    pub(crate) output: PathBuf,
+    /// Proposal directories, in report order.
+    pub(crate) proposals: Vec<String>,
+    /// Number of refused units; the reasons are in `refusals-<profile>.json`.
+    pub(crate) refused: usize,
+    /// Hazard tokens recorded on every proposal; non-empty means admission will refuse them all.
+    pub(crate) hazards: Vec<String>,
 }
 
 /// Product-owned elapsed-time attribution for one Loaf-baker invocation.
@@ -589,6 +609,8 @@ pub(crate) fn reuse_complete_loaf_envelope(
         evidence: evidence.clone(),
         loafs: reports,
         compiler_suite: None,
+        harvest: None,
+        registry_records: Vec::new(),
     }))
 }
 

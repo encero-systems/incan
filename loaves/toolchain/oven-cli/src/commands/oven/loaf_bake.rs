@@ -17,29 +17,33 @@ use oven_cargo_compat::loaf_bake::{
     prepare_loaf_from_generated_project_with_selected_units, republish_loaf_under_final_receipt,
 };
 use oven_cargo_compat::{
-    LoafRegistryAuthority, OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, OvenLegacyCargoCompilerSuiteResult,
-    OvenLegacyCargoFoundationSelection, encode_selected_graph_policy_request, finalize_compiler_support_selected_graph,
-    legacy_cargo_build_script_closure_digest, legacy_cargo_foundation_projection,
-    legacy_cargo_generated_archive_bindings, legacy_cargo_generated_output_bindings,
-    runtime_foundation_from_compiled_loaf, runtime_foundation_inventories_from_policy_response,
+    HarvestEvidenceInputs, HarvestPublisherIdentity, LoafRegistryAuthority,
+    OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, OvenLegacyCargoCompilerSuiteResult,
+    OvenLegacyCargoFoundationSelection, OvenLegacyCargoSelectedUnitCapture, ambient_harvest_hazards,
+    encode_selected_graph_policy_request, finalize_compiler_support_selected_graph, harvest_notes_for_checkout,
+    harvest_registry_units, legacy_cargo_build_script_closure_digest, legacy_cargo_foundation_projection,
+    legacy_cargo_generated_archive_bindings, legacy_cargo_generated_output_bindings, proposal_directory_names,
+    runtime_foundation_from_compiled_loaf, runtime_foundation_inventories_from_policy_response, write_harvest_report,
 };
+use oven_model::loaf_registry::{LoafRegistry, checkout_head_commit};
 use oven_model::manifest::ProjectManifest;
 use oven_rustc::loaf::{
     OVEN_RELEASE_RUNTIME_CLOSURE_MEMBER_SCHEMA_VERSION, OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION,
     OVEN_RELEASE_STORE_MEMBER_SCHEMA_VERSION, OvenLoaf, OvenReleaseRuntimeClosureMember,
     OvenReleaseRuntimeFoundationMember, OvenReleaseStoreMember, OvenReleaseToolchainMember,
-    committed_release_runtime_members, stage_release_runtime_foundation_toolchain,
+    committed_release_runtime_members, direct_rustc_compiler_closure_identity,
+    stage_release_runtime_foundation_toolchain,
 };
 use oven_rustc::rustc::{
     OvenRuntimeCompilerClosure, OvenRuntimeFoundationAsset, execute_runtime_foundation_rebuild,
     publish_runtime_closure, publish_runtime_foundation_asset,
 };
 use oven_store::process::{BoundedProcessLimits, BoundedProcessTermination, run_bounded_process};
-use oven_store::receipt_with_build_unit_input;
 use oven_store::store::{
     OvenArtifactKind, OvenArtifactMaterializedDirectory, OvenArtifactMaterializedFile, OvenArtifactPublishRequest,
     OvenStore, PublishedOvenStore,
 };
+use oven_store::{OvenReceipt, receipt_with_build_unit_input};
 
 const POLICY_EXCHANGE_MAX_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -52,9 +56,9 @@ use super::{
     OvenLegacyCargoDirectDependencyClosure, OvenLegacyCargoInspectionSource, OvenLegacyCargoPrepareRequest,
     OvenLegacyCargoPublicationKind, OvenLoafBakeCommandOptions, OvenLoafBakeEntryReport, OvenLoafBakePhaseTiming,
     OvenLoafBakeReport, OvenLoafBakerContext, OvenLoafEnvelope, OvenLoafEnvelopeArgument, OvenLoafEnvelopeManifest,
-    OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenOutputFormat, OvenStoreCommandOptions, OvenStoreLimits,
-    acquire_exclusive_loaf_generation_lock, announce_oven_progress, commit_loaf_generation, compiler_libtests_receipt,
-    elapsed_detail, env, human_bytes, import_loaf_envelope_from_configured_mirrors,
+    OvenLoafEnvelopeMember, OvenLoafFixtureAction, OvenLoafHarvestReport, OvenOutputFormat, OvenStoreCommandOptions,
+    OvenStoreLimits, acquire_exclusive_loaf_generation_lock, announce_oven_progress, commit_loaf_generation,
+    compiler_libtests_receipt, elapsed_detail, env, human_bytes, import_loaf_envelope_from_configured_mirrors,
     isolate_loaf_fixture_toolchain_data, legacy_cargo_inspection_sources, legacy_cargo_resolved_registry_sources,
     loaf_compiler_lock_path, loaf_compiler_manifest_path, loaf_directory_byte_counts,
     loaf_envelope_compatibility_map_with_release_member, loaf_envelope_evidence, loaf_envelope_inspection_packages,
@@ -67,6 +71,21 @@ use super::{
 
 /// Generation evidence key binding the exact registry content whose declarations governed adopted units.
 const OVEN_LOAF_REGISTRY_AUTHORITY_EVIDENCE: &str = "loaf_registry_authority_digest";
+
+/// The release stdlib fixture's exact physical capture, and what the foundation steps after the fixture loop need
+/// beside it.
+struct ReleaseFoundationCapture {
+    /// The generated-project receipt the publisher ran under.
+    receipt: OvenReceipt,
+    /// Every Cargo-selected physical unit, with registry sources bound.
+    capture: OvenLegacyCargoSelectedUnitCapture,
+    /// The staged registry source catalogs the capture was bound against.
+    sources: Vec<OvenLegacyCargoInspectionSource>,
+    /// The checked fixture manifest text.
+    manifest_source: String,
+    /// Identity of the provisional Loaf the capture was exported into (`<staged root>/<identity>.loaf`).
+    loaf_identity: String,
+}
 
 /// The bounded compiler/sysroot closure one release generation retains as its selected graph's Toolchain owner.
 struct StagedReleaseToolchain {
@@ -124,6 +143,12 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         OvenLoafEnvelopeArgument::Release => OvenLoafEnvelope::Release,
         OvenLoafEnvelopeArgument::CompilerSuite => OvenLoafEnvelope::CompilerSuite,
     };
+    if options.harvest_dir.is_some() && envelope != OvenLoafEnvelope::Release {
+        return Err(CliError::failure(
+            "--harvest-dir harvests the release runtime-foundation capture; the compiler-suite envelope has none"
+                .to_string(),
+        ));
+    }
     let publisher_input = release_policy_publisher_input(
         envelope,
         options.policy_engine_store.as_deref(),
@@ -255,7 +280,12 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     let (release_member_logical_bytes, release_member_physical_bytes) =
         release_store_member_byte_counts(&staged_root, release_store_member.as_ref(), limits)?;
     let mut pending = Vec::new();
-    let mut release_foundation_capture = None;
+    let mut release_foundation_capture: Option<ReleaseFoundationCapture> = None;
+    // TODO(#1561): temporary with `--harvest-dir` (see `harvest_release_entry`).
+    // Harvest state: the compiler closure identity is computed once for every harvested entry and later checked
+    // against the retained Toolchain owner; the report accumulates over both stdlib profiles.
+    let mut harvest_compiler_closure: Option<String> = None;
+    let mut harvest_report: Option<OvenLoafHarvestReport> = None;
     let envelope_inspection_packages = loaf_envelope_inspection_packages(envelope).map_err(CliError::failure)?;
     // A cold first bake cannot consume a Loaf that does not exist yet. Resolve its Rust inspection sources once at
     // this already explicit Cargo boundary, then hand the typed locked authority to every no-Cargo fixture child.
@@ -442,6 +472,41 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             &generated_project,
         )
         .map_err(oven_error)?;
+        // The harvest reads the gate's own capture for every entry that binds registry sources (both stdlib
+        // profiles): no second Cargo run stands in for the observation, and the retained OUT_DIR members come from
+        // the provisional Loaf the publisher just staged.
+        if let Some(harvest_dir) = options.harvest_dir.as_deref()
+            && specification.role.provides_source_authority()
+        {
+            let compiler_closure = match harvest_compiler_closure.as_deref() {
+                Some(identity) => identity.to_string(),
+                None => {
+                    let identity = direct_rustc_compiler_closure_identity(&options.rustc, &receipt.intent.target)
+                        .map_err(oven_error)?;
+                    harvest_compiler_closure = Some(identity.clone());
+                    identity
+                }
+            };
+            let entry_report = harvest_release_entry(
+                harvest_dir,
+                &prepared,
+                &receipt,
+                specification.profile,
+                &compiler_closure,
+                &options.compiler_root,
+                &staged_root,
+                &fixture_subject,
+            )?;
+            harvest_report = Some(match harvest_report.take() {
+                Some(mut accumulated) => {
+                    accumulated.proposals.extend(entry_report.proposals);
+                    accumulated.refused += entry_report.refused;
+                    accumulated.hazards = entry_report.hazards;
+                    accumulated
+                }
+                None => entry_report,
+            });
+        }
         if envelope == OvenLoafEnvelope::Release
             && specification.label == "stdlib"
             && specification.profile == "release"
@@ -451,15 +516,13 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 .clone()
                 .ok_or_else(|| CliError::failure("release stdlib publisher produced no exact selected-unit capture"))?;
             if release_foundation_capture
-                .replace((
-                    receipt.clone(),
-                    selected_units,
-                    inspection_sources.to_vec(),
-                    specification.manifest.to_string(),
-                    prepared.preparation.loaf_identity.clone(),
-                    generated_project.clone(),
-                    inspection_packages.clone(),
-                ))
+                .replace(ReleaseFoundationCapture {
+                    receipt: receipt.clone(),
+                    capture: selected_units,
+                    sources: inspection_sources.to_vec(),
+                    manifest_source: specification.manifest.to_string(),
+                    loaf_identity: prepared.preparation.loaf_identity.clone(),
+                })
                 .is_some()
             {
                 return Err(CliError::failure(
@@ -521,11 +584,11 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     // The selected graph names its Toolchain owner by the bounded compiler/sysroot closure digest, which is the
     // identity of the physical members the generation retains for that owner. Stage that closure first so the graph
     // is sealed against exactly what will ship, rather than against the compiler's version string.
-    let release_toolchain = if let Some((receipt, ..)) = release_foundation_capture.as_ref() {
+    let release_toolchain = if let Some(foundation) = release_foundation_capture.as_ref() {
         let relative_path = PathBuf::from("runtime-foundations/rust-toolchain");
         let root = staged_root.join(&relative_path);
         let (compiler_closure_identity, members) =
-            stage_release_runtime_foundation_toolchain(&options.rustc, &receipt.intent.target, &root)
+            stage_release_runtime_foundation_toolchain(&options.rustc, &foundation.receipt.intent.target, &root)
                 .map_err(oven_error)?;
         Some(StagedReleaseToolchain {
             relative_path,
@@ -536,72 +599,96 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     } else {
         None
     };
-    let finalized_release_graph =
-        if let (Some((receipt, capture, sources, manifest_source, _loaf_identity, _, _)), Some(toolchain)) =
-            (release_foundation_capture.as_ref(), release_toolchain.as_ref())
-        {
-            let toolchain_owner = toolchain.compiler_closure_identity.as_str();
-            let manifest = ProjectManifest::from_str(manifest_source, Path::new("incan.toml"))
-                .map_err(|error| CliError::failure(format!("release foundation manifest is invalid: {error}")))?;
-            // A registered Loaf registry supplies RFC 119 declarations for captured registry units; where one binds
-            // the exact captured source and selection it governs that unit, and the observation must agree with it.
-            let registry_authority = match options.loaf_registry.as_deref() {
-                Some(root) => {
-                    let registry = oven_model::loaf_registry::LoafRegistry::open(root)
-                        .map_err(|error| CliError::failure(error.to_string()))?;
-                    LoafRegistryAuthority::resolve(capture, &registry, &receipt.intent.profile).map_err(oven_error)?
-                }
-                None => LoafRegistryAuthority::none(),
-            };
-            let (_, generated) = legacy_cargo_generated_output_bindings(capture).map_err(oven_error)?;
-            let linked = legacy_cargo_generated_archive_bindings(capture, &generated).map_err(oven_error)?;
-            let provisional = legacy_cargo_foundation_projection(
-                capture,
-                receipt,
-                sources,
-                &receipt.identity,
-                toolchain_owner,
-                &linked,
-                &registry_authority,
-            )
-            .map_err(oven_error)?;
-            let closure_digest =
-                legacy_cargo_build_script_closure_digest(capture, &provisional.build_scripts).map_err(oven_error)?;
-            let capture_receipt =
-                receipt_with_build_unit_input(receipt, OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, closure_digest)
-                    .map_err(oven_error)?;
-            let projection = legacy_cargo_foundation_projection(
-                capture,
-                receipt,
-                sources,
-                &capture_receipt.identity,
-                toolchain_owner,
-                &linked,
-                &registry_authority,
-            )
-            .map_err(oven_error)?;
-            let finalized = finalize_compiler_support_selected_graph(
-                capture,
-                &projection,
-                &manifest,
-                &BTreeSet::new(),
-                toolchain_owner,
-                receipt,
-            )
-            .map_err(oven_error)?;
-            Some((finalized, registry_authority.evidence_digest()))
-        } else {
-            None
-        };
-    let (finalized_release_graph, loaf_registry_evidence) = match finalized_release_graph {
-        Some((finalized, evidence)) => (Some(finalized), evidence),
-        None => (None, None),
-    };
-    if let (
-        Some(finalized),
-        Some((_, expected_capture, _sources, _, capture_loaf_identity, _generated_project, _inspection_packages)),
-    ) = (finalized_release_graph.as_ref(), release_foundation_capture.as_ref())
+    // The harvest named the compiler by the same closure digest the retained Toolchain owner carries; a
+    // disagreement would mean the proposals describe a compiler this generation does not ship.
+    if let (Some(harvested), Some(toolchain)) = (harvest_compiler_closure.as_deref(), release_toolchain.as_ref())
+        && harvested != toolchain.compiler_closure_identity
     {
+        return Err(CliError::failure(format!(
+            "harvest named compiler closure {harvested}, but the retained Toolchain owner is {}",
+            toolchain.compiler_closure_identity
+        )));
+    }
+    let finalized_release_graph = if let (Some(foundation), Some(toolchain)) =
+        (release_foundation_capture.as_ref(), release_toolchain.as_ref())
+    {
+        let ReleaseFoundationCapture {
+            receipt,
+            capture,
+            sources,
+            manifest_source,
+            ..
+        } = foundation;
+        let toolchain_owner = toolchain.compiler_closure_identity.as_str();
+        let manifest = ProjectManifest::from_str(manifest_source, Path::new("incan.toml"))
+            .map_err(|error| CliError::failure(format!("release foundation manifest is invalid: {error}")))?;
+        // A registered Loaf registry supplies RFC 119 declarations for captured registry units; where one binds
+        // the exact captured source and selection it governs that unit, and the observation must agree with it.
+        // A pinned registry opens only at the index commit the release is settled against.
+        let registry_authority = match (
+            options.loaf_registry.as_deref(),
+            options.loaf_registry_commit.as_deref(),
+        ) {
+            (Some(root), Some(commit)) => {
+                let registry =
+                    LoafRegistry::open_pinned(root, commit).map_err(|error| CliError::failure(error.to_string()))?;
+                LoafRegistryAuthority::resolve(capture, &registry, &receipt.intent.profile).map_err(oven_error)?
+            }
+            (Some(root), None) => {
+                let registry = LoafRegistry::open(root).map_err(|error| CliError::failure(error.to_string()))?;
+                LoafRegistryAuthority::resolve(capture, &registry, &receipt.intent.profile).map_err(oven_error)?
+            }
+            (None, _) => LoafRegistryAuthority::none(),
+        };
+        let registry_records = registry_authority.registry_records();
+        let (_, generated) = legacy_cargo_generated_output_bindings(capture).map_err(oven_error)?;
+        let linked = legacy_cargo_generated_archive_bindings(capture, &generated).map_err(oven_error)?;
+        let provisional = legacy_cargo_foundation_projection(
+            capture,
+            receipt,
+            sources,
+            &receipt.identity,
+            toolchain_owner,
+            &linked,
+            &registry_authority,
+        )
+        .map_err(oven_error)?;
+        let closure_digest =
+            legacy_cargo_build_script_closure_digest(capture, &provisional.build_scripts).map_err(oven_error)?;
+        let capture_receipt =
+            receipt_with_build_unit_input(receipt, OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, closure_digest)
+                .map_err(oven_error)?;
+        let projection = legacy_cargo_foundation_projection(
+            capture,
+            receipt,
+            sources,
+            &capture_receipt.identity,
+            toolchain_owner,
+            &linked,
+            &registry_authority,
+        )
+        .map_err(oven_error)?;
+        let finalized = finalize_compiler_support_selected_graph(
+            capture,
+            &projection,
+            &manifest,
+            &BTreeSet::new(),
+            toolchain_owner,
+            receipt,
+        )
+        .map_err(oven_error)?;
+        Some((finalized, registry_authority.evidence_digest(), registry_records))
+    } else {
+        None
+    };
+    let (finalized_release_graph, loaf_registry_evidence, registry_records) = match finalized_release_graph {
+        Some((finalized, evidence, records)) => (Some(finalized), evidence, records),
+        None => (None, None, Vec::new()),
+    };
+    if let (Some(finalized), Some(foundation)) = (finalized_release_graph.as_ref(), release_foundation_capture.as_ref())
+    {
+        let expected_capture = &foundation.capture;
+        let capture_loaf_identity = &foundation.loaf_identity;
         // Bind each compiled physical unit to the selected identity projected from it. Run-custom-build units are
         // edge endpoints, not graph units; every other unit must map to exactly one distinct identity.
         let compiled_units = finalized
@@ -670,37 +757,36 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             .ok_or_else(|| CliError::failure("release stdlib result is absent"))?;
         final_entry.result = republished;
     }
-    let release_policy_inventories =
-        if let (Some(finalized), Some(policy), Some((_, capture, sources, _, _, _, _)), Some(toolchain)) = (
-            finalized_release_graph.as_ref(),
-            release_policy_output.as_ref(),
-            release_foundation_capture.as_ref(),
-            release_toolchain.as_ref(),
-        ) {
-            let request = encode_selected_graph_policy_request(
-                &finalized.graph,
-                capture,
-                sources,
-                &toolchain.compiler_closure_identity,
-            )
-            .map_err(oven_error)?;
-            let exchange_root = scratch.path().join("rust-policy-exchange");
-            let response = run_release_rust_policy(policy, &exchange_root, &request)?;
-            match runtime_foundation_inventories_from_policy_response(&finalized.graph, &response) {
-                Ok(inventories) => Some(inventories),
-                Err(error) => {
-                    // The scratch exchange is discarded with the publisher; retain the refused exchange where an
-                    // investigation can replay it against the policy engine and its tests.
-                    let retained = retain_refused_policy_exchange(&exchange_root).map_err(oven_error)?;
-                    return Err(CliError::failure(format!(
-                        "{error}; the refused exchange is retained at {}",
-                        retained.display()
-                    )));
-                }
+    let release_policy_inventories = if let (Some(finalized), Some(policy), Some(foundation), Some(toolchain)) = (
+        finalized_release_graph.as_ref(),
+        release_policy_output.as_ref(),
+        release_foundation_capture.as_ref(),
+        release_toolchain.as_ref(),
+    ) {
+        let request = encode_selected_graph_policy_request(
+            &finalized.graph,
+            &foundation.capture,
+            &foundation.sources,
+            &toolchain.compiler_closure_identity,
+        )
+        .map_err(oven_error)?;
+        let exchange_root = scratch.path().join("rust-policy-exchange");
+        let response = run_release_rust_policy(policy, &exchange_root, &request)?;
+        match runtime_foundation_inventories_from_policy_response(&finalized.graph, &response) {
+            Ok(inventories) => Some(inventories),
+            Err(error) => {
+                // The scratch exchange is discarded with the publisher; retain the refused exchange where an
+                // investigation can replay it against the policy engine and its tests.
+                let retained = retain_refused_policy_exchange(&exchange_root).map_err(oven_error)?;
+                return Err(CliError::failure(format!(
+                    "{error}; the refused exchange is retained at {}",
+                    retained.display()
+                )));
             }
-        } else {
-            None
-        };
+        }
+    } else {
+        None
+    };
     if envelope == OvenLoafEnvelope::Release && release_policy_inventories.is_none() {
         return Err(CliError::failure(
             "release envelope did not produce admitted Rust policy inventories".to_string(),
@@ -758,7 +844,10 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 limits,
                 started,
             })? {
-                let report = finish_loaf_bake_after_publication(publication_lock, &options, envelope, report, started)?;
+                let mut report =
+                    finish_loaf_bake_after_publication(publication_lock, &options, envelope, report, started)?;
+                report.harvest = harvest_report;
+                report.registry_records = registry_records.clone();
                 verify_committed_release_policy_output(
                     &options.output,
                     release_store_member.as_ref(),
@@ -1042,6 +1131,8 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         evidence,
         loafs: pending,
         compiler_suite: None,
+        harvest: harvest_report,
+        registry_records: registry_records.clone(),
     };
     // `finish_loaf_bake` opens the committed Loafs as a normal shared-lease consumer. Publication and retirement
     // are complete, so release exclusive authority before crossing into that consumer phase.
@@ -1528,6 +1619,70 @@ pub(crate) fn compiler_suite_store_path(options: &OvenLoafBakeCommandOptions) ->
     Ok(suite_store)
 }
 
+/// Harvest incan.pub proposals from one release entry's capture into `harvest_dir`.
+///
+/// TODO(#1561): temporary. This is the release bake's half of the Cargo-observed harvest: it proposes records from
+/// the compatibility publisher's capture of the release family, and retires with that capture once incan.pub records
+/// govern the corpus and the bake settles from records alone. The registry pin beside it (`--loaf-registry-commit`,
+/// `LoafRegistryAuthority`) is not temporary.
+///
+/// The evidence names the receipt the publisher ran under, the compiler closure identity the generation will
+/// retain as its Toolchain owner, and the hazard tokens this process carries; the note names the compiler checkout
+/// the release was baked from. The OUT_DIR members are verified and copied out of the provisional Loaf under
+/// `staged_root`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one harvest names its capture, receipt, profile, compiler, checkout and staging explicitly"
+)]
+fn harvest_release_entry(
+    harvest_dir: &Path,
+    prepared: &oven_cargo_compat::loaf_bake::OvenPreparedLoafWithSelectedUnits,
+    receipt: &OvenReceipt,
+    profile: &str,
+    compiler_closure: &str,
+    compiler_root: &Path,
+    staged_root: &Path,
+    subject: &str,
+) -> CliResult<OvenLoafHarvestReport> {
+    let capture = prepared.selected_units.as_ref().ok_or_else(|| {
+        CliError::failure(format!(
+            "release entry {subject} retained no selected-unit capture to harvest"
+        ))
+    })?;
+    let notes = checkout_head_commit(compiler_root)
+        .ok()
+        .map(|head| harvest_notes_for_checkout(&head));
+    let evidence = HarvestEvidenceInputs::from_loaf_publisher(
+        &prepared.publisher,
+        HarvestPublisherIdentity::new(&receipt.identity, compiler_closure, ambient_harvest_hazards(), notes),
+    );
+    let report = harvest_registry_units(capture, &evidence, profile).map_err(oven_error)?;
+    let loaf_name = prepared
+        .preparation
+        .loaf_identity
+        .strip_prefix("sha256:")
+        .unwrap_or(&prepared.preparation.loaf_identity);
+    let retained_root = staged_root.join(format!("{loaf_name}.loaf"));
+    write_harvest_report(&report, harvest_dir, &retained_root).map_err(oven_error)?;
+    let proposals = proposal_directory_names(&report).map_err(oven_error)?;
+    announce_oven_progress(
+        "HARVESTED",
+        subject,
+        Some(&format!(
+            "{} proposal(s), {} refusal(s) into {}",
+            proposals.len(),
+            report.refusals.len(),
+            harvest_dir.display()
+        )),
+    );
+    Ok(OvenLoafHarvestReport {
+        output: harvest_dir.to_path_buf(),
+        proposals,
+        refused: report.refusals.len(),
+        hazards: report.hazards,
+    })
+}
+
 /// Render one complete baker result without making Make or CI reconstruct product accounting.
 pub(crate) fn print_loaf_bake_report(report: &OvenLoafBakeReport, format: OvenOutputFormat) -> CliResult<()> {
     match format {
@@ -1548,6 +1703,20 @@ pub(crate) fn print_loaf_bake_report(report: &OvenLoafBakeReport, format: OvenOu
                     "not used"
                 },
             );
+            if let Some(harvest) = &report.harvest {
+                println!(
+                    "Harvested {} incan.pub proposal(s) and {} refusal(s) into {}.",
+                    harvest.proposals.len(),
+                    harvest.refused,
+                    harvest.output.display()
+                );
+                if !harvest.hazards.is_empty() {
+                    println!(
+                        "Harvest hazards: {} (admission refuses every proposal of this harvest).",
+                        harvest.hazards.join(", ")
+                    );
+                }
+            }
             if let Some(suite) = &report.compiler_suite {
                 println!(
                     "Compiler-suite standard-library family: {} ({} logical, {} physical).",

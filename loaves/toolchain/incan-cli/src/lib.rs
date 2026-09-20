@@ -2407,6 +2407,159 @@ mod tests {
                 && source_inputs == ["generated=target/oven/test.rs"]
         ));
 
+        let harvest = parse_cli([
+            "incan",
+            "oven",
+            "harvest",
+            "--project",
+            "loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml",
+            "--target",
+            "aarch64-apple-darwin",
+            "--profile",
+            "debug",
+            "--cargo",
+            "/toolchain/bin/cargo",
+            "--rustc",
+            "/toolchain/bin/rustc",
+            "--cargo-lock",
+            "Cargo.lock",
+            "--output",
+            "target/harvest",
+            "--format",
+            "json",
+        ])?;
+        let Some(Command::Oven {
+            command:
+                OvenCommand::Harvest {
+                    project,
+                    target,
+                    profile,
+                    cargo,
+                    rustc,
+                    cargo_lock,
+                    output,
+                    format,
+                },
+        }) = harvest.command
+        else {
+            return Err(expected_command("oven harvest"));
+        };
+        assert_eq!(
+            project,
+            PathBuf::from("loaves/oven/oven_rustc/src/fixtures/release_stdlib.toml")
+        );
+        assert_eq!(target, "aarch64-apple-darwin");
+        assert_eq!(profile.as_str(), "debug");
+        assert_eq!(cargo, PathBuf::from("/toolchain/bin/cargo"));
+        assert_eq!(rustc, PathBuf::from("/toolchain/bin/rustc"));
+        assert_eq!(cargo_lock, Some(PathBuf::from("Cargo.lock")));
+        assert_eq!(output, PathBuf::from("target/harvest"));
+        assert_eq!(format, OvenOutputFormat::Json);
+        let default_profile = parse_cli([
+            "incan",
+            "oven",
+            "harvest",
+            "--target",
+            "aarch64-apple-darwin",
+            "--cargo",
+            "cargo",
+            "--rustc",
+            "rustc",
+            "--output",
+            "harvest",
+        ])?;
+        assert!(matches!(
+            default_profile.command,
+            Some(Command::Oven {
+                command: OvenCommand::Harvest { profile, project, .. }
+            }) if profile.as_str() == "release" && project == Path::new(".")
+        ));
+        assert!(
+            parse_cli([
+                "incan",
+                "oven",
+                "harvest",
+                "--target",
+                "t",
+                "--profile",
+                "bench",
+                "--cargo",
+                "c",
+                "--rustc",
+                "r",
+                "--output",
+                "o",
+            ])
+            .is_err(),
+            "a fact record binds release or debug only"
+        );
+
+        let bake_loafs = parse_cli([
+            "incan",
+            "oven",
+            "legacy-cargo",
+            "bake-loafs",
+            "--output",
+            "loafs",
+            "--envelope",
+            "release",
+            "--sdk-inventory",
+            "sdk-inventory.json",
+            "--cargo",
+            "cargo",
+            "--rustc",
+            "rustc",
+            "--loaf-registry",
+            "incan.pub-index",
+            "--loaf-registry-commit",
+            "8d40e1d0000000000000000000000000000000000",
+            "--harvest-dir",
+            "harvest",
+        ])?;
+        let Some(Command::Oven {
+            command:
+                OvenCommand::LegacyCargo {
+                    command:
+                        OvenLegacyCargoCommand::BakeLoafs {
+                            loaf_registry,
+                            loaf_registry_commit,
+                            harvest_dir,
+                            ..
+                        },
+                },
+        }) = bake_loafs.command
+        else {
+            return Err(expected_command("oven legacy-cargo bake-loafs"));
+        };
+        assert_eq!(loaf_registry, Some(PathBuf::from("incan.pub-index")));
+        assert_eq!(
+            loaf_registry_commit.as_deref(),
+            Some("8d40e1d0000000000000000000000000000000000")
+        );
+        assert_eq!(harvest_dir, Some(PathBuf::from("harvest")));
+        assert!(
+            parse_cli([
+                "incan",
+                "oven",
+                "legacy-cargo",
+                "bake-loafs",
+                "--output",
+                "loafs",
+                "--envelope",
+                "release",
+                "--sdk-inventory",
+                "sdk-inventory.json",
+                "--cargo",
+                "cargo",
+                "--rustc",
+                "rustc",
+                "--loaf-registry-commit",
+                "abc",
+            ])
+            .is_err(),
+            "a pin without a registry checkout pins nothing"
+        );
+
         let test = parse_cli([
             "incan",
             "oven",

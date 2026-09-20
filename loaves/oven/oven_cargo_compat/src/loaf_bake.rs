@@ -64,6 +64,20 @@ pub struct OvenLoafBakerContext<'a> {
 pub struct OvenPreparedLoafWithSelectedUnits {
     pub preparation: OvenLoafPreparation,
     pub selected_units: Option<super::OvenLegacyCargoSelectedUnitCapture>,
+    /// What the publisher ran under, so a harvest of `selected_units` can record its evidence without a second
+    /// look at the discarded temporary store.
+    pub publisher: OvenLoafPublisherProvenance,
+}
+
+/// The Cargo identity and manifest/lock digests one Loaf publication observed at the explicit Cargo boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OvenLoafPublisherProvenance {
+    /// `cargo --version` as observed.
+    pub cargo_version: String,
+    /// Digest of the generated `Cargo.toml` the publisher built.
+    pub cargo_manifest_digest: String,
+    /// Digest of the `Cargo.lock` the publisher wrote or verified.
+    pub cargo_lock_digest: String,
 }
 
 /// Export one compiler-owned Loaf from an already receipted generated Incan project.
@@ -201,6 +215,11 @@ pub fn prepare_loaf_from_generated_project_with_selected_unit_bindings(
     Ok(OvenPreparedLoafWithSelectedUnits {
         preparation: result,
         selected_units,
+        publisher: OvenLoafPublisherProvenance {
+            cargo_version: publication.cargo_version,
+            cargo_manifest_digest: publication.cargo_manifest_digest,
+            cargo_lock_digest: publication.cargo_lock_digest,
+        },
     })
 }
 

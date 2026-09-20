@@ -16,6 +16,7 @@ use cargo_json::*;
 mod compiler_suite_catalog;
 mod compiler_suite_foundation;
 mod compiler_suite_targets;
+mod harvest;
 mod inspection_sources;
 mod loaf_registry_authority;
 mod lock;
@@ -34,6 +35,7 @@ use compiler_suite_foundation::{
     select_or_import_compiler_suite_foundation_family, selected_partition_materialized_files,
 };
 pub use compiler_suite_targets::*;
+pub use harvest::*;
 pub use inspection_sources::*;
 pub use loaf_registry_authority::*;
 pub use lock::*;

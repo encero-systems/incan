@@ -185,6 +185,7 @@ fn semantic_lock_state_from_provider_identities(
         providers,
         oven,
         workspace_members: Vec::new(),
+        registry_records: Vec::new(),
     })
 }
 

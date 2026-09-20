@@ -34,6 +34,27 @@ pub struct OvenImportCommandOptions {
     pub format: OvenOutputFormat,
 }
 
+/// Inputs for `incan oven harvest`.
+#[derive(Debug, Clone)]
+pub struct OvenHarvestCommandOptions {
+    /// Checked Loaf manifest file, or a directory whose `loaf.toml` is the manifest.
+    pub project: PathBuf,
+    /// Exact target triple the harvested facts bind.
+    pub target: String,
+    /// `release` or `debug`.
+    pub profile: String,
+    /// Explicit Cargo executable for the one publisher observation.
+    pub cargo: PathBuf,
+    /// Explicit Rust compiler whose `-vV` identity the facts bind.
+    pub rustc: PathBuf,
+    /// Optional existing `Cargo.lock` the observation must resolve within.
+    pub cargo_lock: Option<PathBuf>,
+    /// Directory receiving the proposals and the refusal list.
+    pub output: PathBuf,
+    /// Requested rendering format.
+    pub format: OvenOutputFormat,
+}
+
 /// Inputs for `incan inspect oven` receipt and build-unit inspection.
 #[derive(Debug, Clone)]
 pub struct OvenReceiptInspectCommandOptions {
@@ -202,6 +223,12 @@ pub struct OvenLoafBakeCommandOptions {
     pub format: OvenOutputFormat,
     /// Registered Loaf registry checkout whose adoption manifests govern captured registry units (release only).
     pub loaf_registry: Option<PathBuf>,
+    /// Index commit `loaf_registry` must be checked out at; any other revision refuses the bake.
+    pub loaf_registry_commit: Option<String>,
+    /// Directory receiving harvest proposals and refusals from the release runtime-foundation capture (release only).
+    ///
+    /// TODO(#1561): temporary; retires with the Cargo-observed harvest once incan.pub records govern the corpus.
+    pub harvest_dir: Option<PathBuf>,
 }
 
 /// Inputs for the direct-rustc compiler workspace-test consumer.
