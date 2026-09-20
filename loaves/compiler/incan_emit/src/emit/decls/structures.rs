@@ -6,7 +6,10 @@ use quote::{format_ident, quote};
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
 
-use super::super::{EmitError, IrEmitter, SERDE_DESERIALIZE_DERIVE, SERDE_SERIALIZE_DERIVE, StructConstructorSurface};
+use super::super::{
+    EmitError, IrEmitter, PHANTOM_TYPE_PARAMS_FIELD, SERDE_DESERIALIZE_DERIVE, SERDE_SERIALIZE_DERIVE,
+    StructConstructorSurface, phantom_marker_type,
+};
 use crate::conversions::exact_float_value_validation;
 use incan_ir::decl::{IrEnum, IrEnumValue, IrEnumValueType, IrStruct, IrTypeParam, StructField, VariantFields};
 use incan_ir::types::IrType;
@@ -94,6 +97,16 @@ impl<'a> IrEmitter<'a> {
         let field_value_reflection_reads_fields = Self::struct_emits_field_value_reflection(s);
 
         if is_tuple_struct {
+            // A newtype's construction sites are positional and pass through checked-constructor and deserialization
+            // paths that name `Self(value)` directly, so a trailing marker element has no single owner to thread it.
+            // Refuse the shape with the declaration named rather than letting rustc report E0392 on the generated
+            // crate. See #1370.
+            if let Some(param) = s.phantom_type_params.first() {
+                return Err(EmitError::Unsupported(format!(
+                    "newtype '{}' declares type parameter '{param}' that its underlying type does not mention",
+                    s.name
+                )));
+            }
             let tuple_fields: Vec<TokenStream> = s
                 .fields
                 .iter()
@@ -182,7 +195,7 @@ impl<'a> IrEmitter<'a> {
                 #reflection_impls
             })
         } else {
-            let fields: Vec<TokenStream> = s
+            let mut fields: Vec<TokenStream> = s
                 .fields
                 .iter()
                 .map(|f| {
@@ -205,6 +218,30 @@ impl<'a> IrEmitter<'a> {
                     quote! { #dead_code_expect #serde_attr #fvis #fname: #fty }
                 })
                 .collect();
+
+            // ---- Phantom type parameters: one compiler-owned marker field, recorded by lowering (#1370) ----
+            // The marker is public so a struct literal in another generated module can initialise it; it is skipped
+            // by Serde because it is not source data, and rustc exempts `PhantomData` fields from dead-code analysis.
+            //
+            // Compatibility issue: #1370 — a type parameter used only in method signatures emitted a struct rustc
+            // rejects with E0392, and every construction site then failed with E0282.
+            // Behavior evidence: `codegen_snapshot_tests::test_issue1370_phantom_type_param_codegen` and the
+            // `cli_issue1370_phantom_type_param_tests` root, which builds and runs the issue's program.
+            // Semantic owner: `IrStruct::phantom_type_params`, recorded by lowering; this emitter and the
+            // struct-literal emitters (`StructConstructorMetadata::phantom_marker_initializer`) only
+            // realise the marker. Retirement condition: removal of the Rust-source backend (#654); a
+            // replacement backend consumes the same recorded fact for its own representation.
+            let phantom_marker = (!s.phantom_type_params.is_empty()).then(|| {
+                let marker_field = Self::rust_ident(PHANTOM_TYPE_PARAMS_FIELD);
+                let marker_ty = phantom_marker_type(&s.phantom_type_params);
+                let serde_attr = if has_serde {
+                    quote! { #[serde(skip)] }
+                } else {
+                    quote! {}
+                };
+                fields.push(quote! { #serde_attr pub #marker_field: #marker_ty });
+                quote! { #marker_field: std::marker::PhantomData }
+            });
 
             let constructor_surface = self.struct_constructor_surface(s);
             let constructor = if matches!(
@@ -260,6 +297,7 @@ impl<'a> IrEmitter<'a> {
                     StructConstructorSurface::DirectStructLiteral | StructConstructorSurface::Absent => quote! {},
                 };
 
+                field_assigns.extend(phantom_marker.iter().cloned());
                 quote! {
                     #[allow(non_snake_case, clippy::too_many_arguments)]
                     #constructor_visibility fn #name #generics (#(#param_tokens),*) -> #name #generics_bare {
@@ -409,44 +447,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Return whether a field type mentions one of the owning struct's type parameters.
     fn field_type_mentions_type_param(ty: &IrType, type_params: &[IrTypeParam]) -> bool {
-        let is_type_param = |name: &str| type_params.iter().any(|param| param.name == name);
-        match ty {
-            IrType::Generic(name) | IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) => {
-                is_type_param(name)
-            }
-            IrType::NamedGeneric(name, args) => {
-                is_type_param(name)
-                    || args
-                        .iter()
-                        .any(|arg| Self::field_type_mentions_type_param(arg, type_params))
-            }
-            IrType::List(inner)
-            | IrType::Set(inner)
-            | IrType::Option(inner)
-            | IrType::Ref(inner)
-            | IrType::RefMut(inner)
-            | IrType::TypeToken(inner) => Self::field_type_mentions_type_param(inner, type_params),
-            IrType::Dict(key, value) | IrType::Result(key, value) => {
-                Self::field_type_mentions_type_param(key, type_params)
-                    || Self::field_type_mentions_type_param(value, type_params)
-            }
-            IrType::Tuple(items) => items
-                .iter()
-                .any(|item| Self::field_type_mentions_type_param(item, type_params)),
-            IrType::Function { params, ret } => {
-                params
-                    .iter()
-                    .any(|param| Self::field_type_mentions_type_param(param, type_params))
-                    || Self::field_type_mentions_type_param(ret, type_params)
-            }
-            IrType::ExternalUnion { union, .. } => Self::field_type_mentions_type_param(union, type_params),
-            IrType::ImplTrait(bound) => bound
-                .type_args
-                .iter()
-                .chain(bound.assoc_types.iter().map(|(_, ty)| ty))
-                .any(|arg| Self::field_type_mentions_type_param(arg, type_params)),
-            _ => false,
-        }
+        type_params.iter().any(|param| ty.mentions_type_param(&param.name))
     }
 
     /// Emit the string value used by generic field-value reflection for one concrete field.

@@ -303,6 +303,11 @@ pub enum IrExprKind {
     // Struct construction
     Struct {
         name: String,
+        /// Explicit source type arguments on the constructor (`Column[T](...)`), lowered in declaration order.
+        ///
+        /// Empty when the source wrote none. Emission threads these onto the constructed path so a construction
+        /// whose type argument no field value determines — a phantom parameter, #1370 — still names it for Rust.
+        type_args: Vec<IrType>,
         fields: Vec<(String, IrExpr)>,
         /// Fill omitted imported Rust named fields with `Default::default()`.
         fill_defaults: bool,

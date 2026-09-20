@@ -2447,6 +2447,7 @@ impl AstLowering {
                 (
                     IrExprKind::Struct {
                         name: name.clone(),
+                        type_args: Vec::new(),
                         fields,
                         fill_defaults: false,
                     },

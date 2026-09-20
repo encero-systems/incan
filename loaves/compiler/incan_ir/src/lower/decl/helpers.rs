@@ -2,7 +2,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::super::super::decl::{IrRustAttrArg, IrRustAttribute, IrRustLintAllow, IrTraitBound, IrTypeParam};
+use super::super::super::decl::{
+    IrRustAttrArg, IrRustAttribute, IrRustLintAllow, IrTraitBound, IrTypeParam, StructField,
+};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use incan_frontend::ast::{self, Spanned};
@@ -78,6 +80,20 @@ impl AstLowering {
             lowered.push(self.lower_type_param(tp, &type_param_names));
         }
         lowered
+    }
+
+    /// Return the declared type parameters that no lowered field type mentions, in declaration order.
+    ///
+    /// This is the phantom-parameter fact recorded on every struct-shaped nominal (model, class, newtype). It is
+    /// computed once here, after the fields are lowered with the owner's parameters in scope, so the answer does not
+    /// depend on which declaration kind produced the fields. See [`IrStruct::phantom_type_params`] and #1370.
+    ///
+    /// [`IrStruct::phantom_type_params`]: super::super::super::decl::IrStruct::phantom_type_params
+    pub(in crate::lower) fn phantom_type_params(type_params: &[IrTypeParam], fields: &[StructField]) -> Vec<String> {
+        super::super::super::decl::phantom_type_params(
+            type_params.iter().map(|param| param.name.as_str()),
+            fields.iter().map(|field| &field.ty),
+        )
     }
 
     /// Lower a single AST type parameter to its IR representation.
@@ -766,5 +782,39 @@ mod tests {
             expanded_default.trait_path,
             "crate::__incan_std::traits::callable::Callable1"
         );
+    }
+
+    fn field(name: &str, ty: IrType) -> StructField {
+        StructField {
+            name: name.to_string(),
+            ty,
+            surface_type_name: None,
+            visibility: crate::decl::Visibility::Public,
+            is_type_private: false,
+            default: None,
+            alias: None,
+            description: None,
+        }
+    }
+
+    /// Issue #1370: a parameter no field type mentions is phantom; a mention anywhere inside a field type, including a
+    /// bare nominal spelling left by a declaration lowered without its parameters in scope, is not.
+    #[test]
+    fn phantom_type_params_are_the_parameters_no_field_mentions() {
+        let type_params = vec![IrTypeParam::bare("T"), IrTypeParam::bare("U"), IrTypeParam::bare("V")];
+        let fields = vec![
+            field("sql", IrType::String),
+            field("items", IrType::List(Box::new(IrType::Generic("U".to_string())))),
+            field("raw", IrType::Struct("V".to_string())),
+        ];
+        assert_eq!(
+            AstLowering::phantom_type_params(&type_params, &fields),
+            vec!["T".to_string()]
+        );
+        assert_eq!(
+            AstLowering::phantom_type_params(&type_params, &[field("value", IrType::Int)]),
+            vec!["T".to_string(), "U".to_string(), "V".to_string()]
+        );
+        assert!(AstLowering::phantom_type_params(&[], &fields).is_empty());
     }
 }

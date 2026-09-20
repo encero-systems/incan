@@ -134,6 +134,8 @@ impl AstLowering {
             derives.push(derives::INCAN_CLASS_DERIVE_NAME.to_string());
         }
 
+        let type_params = self.lower_type_params(&c.type_params);
+        let phantom_type_params = Self::phantom_type_params(&type_params, &fields);
         Ok(IrStruct {
             kind: IrStructKind::Class,
             name: c.name.clone(),
@@ -141,7 +143,8 @@ impl AstLowering {
             fields,
             derives,
             visibility: self.map_type_visibility(c.visibility),
-            type_params: self.lower_type_params(&c.type_params),
+            type_params,
+            phantom_type_params,
             derive_rust_modules,
             lint_allows: self.extract_rust_lint_allows(&c.decorators),
         })

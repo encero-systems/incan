@@ -3489,6 +3489,7 @@ def main() -> None:
             derives: Vec::new(),
             visibility: Visibility::Private,
             type_params: Vec::new(),
+            phantom_type_params: Vec::new(),
             derive_rust_modules: std::collections::HashMap::new(),
             lint_allows: Vec::new(),
         })));
@@ -3507,6 +3508,7 @@ def main() -> None:
                     value: TypedExpr::new(
                         IrExprKind::Struct {
                             name: String::from("Widget"),
+                            type_args: Vec::new(),
                             fields: Vec::new(),
                             fill_defaults: false,
                         },

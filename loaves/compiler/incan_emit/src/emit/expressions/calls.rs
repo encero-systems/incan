@@ -775,7 +775,10 @@ impl<'a> IrEmitter<'a> {
                     let values = out_fields.iter().map(|(_, value)| value);
                     return Ok(quote! { #f(#(#values),*) });
                 }
-                let fields = out_fields.iter().map(|(field, value)| quote! { #field: #value });
+                let fields = out_fields
+                    .iter()
+                    .map(|(field, value)| quote! { #field: #value })
+                    .chain(metadata.phantom_marker_initializer());
                 return Ok(quote! { #f { #(#fields),* } });
             }
         }
@@ -1685,11 +1688,11 @@ mod tests {
         let mut emitter = IrEmitter::new(&registry);
         emitter.pub_dependency_constructor_metadata.insert(
             ("sealed".to_string(), vec!["Vault".to_string()]),
-            StructConstructorMetadata::from_manifest_fields("sealed", IrStructKind::Class, &sealed_fields),
+            StructConstructorMetadata::from_manifest_fields("sealed", IrStructKind::Class, &[], &sealed_fields),
         );
         emitter.pub_dependency_constructor_metadata.insert(
             ("decoy".to_string(), vec!["Vault".to_string()]),
-            StructConstructorMetadata::from_manifest_fields("decoy", IrStructKind::Class, &decoy_fields),
+            StructConstructorMetadata::from_manifest_fields("decoy", IrStructKind::Class, &[], &decoy_fields),
         );
         let func = TypedExpr::new(
             IrExprKind::Var {
@@ -1752,7 +1755,7 @@ mod tests {
                     "HyperquantIndex".to_string(),
                 ],
             ),
-            StructConstructorMetadata::from_manifest_fields("modulelib", IrStructKind::Model, &fields),
+            StructConstructorMetadata::from_manifest_fields("modulelib", IrStructKind::Model, &[], &fields),
         );
         let defaulted_class_fields = vec![FieldExport {
             name: "size".to_string(),
@@ -1777,7 +1780,12 @@ mod tests {
                     "IndexBuilder".to_string(),
                 ],
             ),
-            StructConstructorMetadata::from_manifest_fields("modulelib", IrStructKind::Class, &defaulted_class_fields),
+            StructConstructorMetadata::from_manifest_fields(
+                "modulelib",
+                IrStructKind::Class,
+                &[],
+                &defaulted_class_fields,
+            ),
         );
         let module = || {
             TypedExpr::new(
@@ -1877,6 +1885,7 @@ mod tests {
         TypedExpr::new(
             IrExprKind::Struct {
                 name: constructors::as_str(constructor).to_string(),
+                type_args: Vec::new(),
                 fields: vec![(String::new(), payload)],
                 fill_defaults: false,
             },
@@ -2065,6 +2074,7 @@ mod tests {
             TypedExpr::new(
                 IrExprKind::Struct {
                     name: "Pair".to_string(),
+                    type_args: Vec::new(),
                     fields: vec![("x".to_string(), TypedExpr::new(IrExprKind::Int(1), IrType::Int))],
                     fill_defaults: false,
                 },
@@ -2406,6 +2416,7 @@ mod tests {
         let argument = TypedExpr::new(
             IrExprKind::Struct {
                 name: "Charge".into(),
+                type_args: Vec::new(),
                 fields: Vec::new(),
                 fill_defaults: false,
             },

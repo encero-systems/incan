@@ -1359,9 +1359,10 @@ impl<'a> IrEmitter<'a> {
 
             IrExprKind::Struct {
                 name,
+                type_args,
                 fields,
                 fill_defaults,
-            } => self.emit_struct_expr(name, fields, *fill_defaults),
+            } => self.emit_struct_expr(name, type_args, fields, *fill_defaults),
 
             IrExprKind::If {
                 condition,

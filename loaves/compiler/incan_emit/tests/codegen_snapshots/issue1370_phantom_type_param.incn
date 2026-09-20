@@ -1,0 +1,18 @@
+"""Issue #1370: a model type parameter used only in method signatures is a phantom parameter."""
+
+@derive(Debug)
+model Column[T]:
+  sql: str
+
+  def __mul__(self, other: T) -> Column[T]:
+    return Column[T](sql=f"({self.sql} * {other})")
+
+def col[T](name: str) -> Column[T]:
+  return Column[T](sql=name)
+
+def main() -> None:
+  amount: Column[float] = col("amount")
+  total = amount * 2.0
+  println(f"{total.sql}")
+  label = Column[str](sql="label")
+  println(f"{(label * "x").sql}")

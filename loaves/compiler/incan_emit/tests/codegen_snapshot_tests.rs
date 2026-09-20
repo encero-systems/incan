@@ -3258,6 +3258,29 @@ fn test_generic_model_field_access_codegen() {
     assert_codegen_snapshot!("generic_model_field_access", rust_code);
 }
 
+/// Issue #1370: a model type parameter that no field mentions is a phantom parameter. Lowering records it on the
+/// struct; emission carries it as one `PhantomData` marker field, initialises the marker at every struct literal,
+/// and threads the explicit constructor type argument so a binding without an annotation still names `T`.
+#[test]
+fn test_issue1370_phantom_type_param_codegen() {
+    let source = load_test_file("issue1370_phantom_type_param");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("pub __incan_phantom: std::marker::PhantomData<T>,"),
+        "a phantom type parameter must be carried by a marker field; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("Column::<T> {") && rust_code.contains("Column::<String> {"),
+        "explicit constructor type arguments must reach the constructed path; generated:\n{rust_code}"
+    );
+    assert_eq!(
+        rust_code.matches("__incan_phantom: std::marker::PhantomData,").count(),
+        3,
+        "every struct literal must initialise the marker; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1370_phantom_type_param", rust_code);
+}
+
 #[test]
 fn test_lowercase_types_codegen() {
     let source = load_test_file("lowercase_types");
