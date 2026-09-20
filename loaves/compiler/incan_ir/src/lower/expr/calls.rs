@@ -3984,15 +3984,105 @@ impl AstLowering {
                 }
             })
             .collect::<Result<Vec<_>, LoweringError>>()?;
+        let (argument_stmts, fields) = self.sequence_reordered_constructor_arguments(call_span, fields);
+        let construction = IrExprKind::Struct {
+            name: name.to_string(),
+            type_args: self.lower_call_site_type_args(call_span, type_args),
+            fields,
+            fill_defaults: false,
+        };
+        if argument_stmts.is_empty() {
+            return Ok((construction, struct_ty));
+        }
         Ok((
-            IrExprKind::Struct {
-                name: name.to_string(),
-                type_args: self.lower_call_site_type_args(call_span, type_args),
-                fields,
-                fill_defaults: false,
+            IrExprKind::Block {
+                stmts: argument_stmts,
+                value: Some(Box::new(TypedExpr::new(construction, struct_ty.clone()))),
             },
             struct_ty,
         ))
+    }
+
+    /// Bind the arguments of a construction written out of declaration order to temporaries, in written order.
+    ///
+    /// The emitter assembles a nominal construction in declared field order, and Rust evaluates a struct literal's
+    /// fields in the order they are spelled, so a caller that names fields out of declaration order would otherwise
+    /// have its arguments evaluated in declaration order: `Document(intent=inspect(source),
+    /// evidence=Evidence(source=source))` moved `source` into `evidence` before `intent` read it (#1462). The
+    /// typechecker records which declared slot each written argument fills (#1158); when those slots are not already
+    /// ascending, every argument whose evaluation is observable is bound to a temporary here, in written order, and the
+    /// construction reads the temporaries instead. Ownership planning then sees the reads in the order the source
+    /// wrote them, so the last read of a local is its move wherever that field sits in the declaration. A bare literal
+    /// stays inline: evaluating one has no effect and no owner, so its position cannot be observed.
+    ///
+    /// Returns the temporaries' `let` statements (empty when nothing needed sequencing) and the fields to construct
+    /// with. Positional and spread arguments never take this path: the typechecker records no binding for them, and
+    /// the fact is deliberately absent rather than partial.
+    fn sequence_reordered_constructor_arguments(
+        &self,
+        call_span: ast::Span,
+        fields: Vec<(String, TypedExpr)>,
+    ) -> (Vec<IrStmt>, Vec<(String, TypedExpr)>) {
+        let written_order_differs = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.constructor_field_binding(call_span))
+            .is_some_and(|binding| {
+                binding.argument_slots.len() == fields.len()
+                    && binding.argument_slots.windows(2).any(|pair| pair[0] > pair[1])
+            });
+        if !written_order_differs || fields.iter().any(|(field, _)| field.is_empty()) {
+            return (Vec::new(), fields);
+        }
+
+        let mut argument_stmts = Vec::new();
+        let sequenced = fields
+            .into_iter()
+            .enumerate()
+            .map(|(index, (field, value))| {
+                if Self::constructor_argument_is_bare_literal(&value) {
+                    return (field, value);
+                }
+                let ty = value.ty.clone();
+                let temporary = format!("__incan_ctor_arg_{index}");
+                argument_stmts.push(IrStmt::new(IrStmtKind::Let {
+                    name: temporary.clone(),
+                    ty: ty.clone(),
+                    type_annotation: None,
+                    mutability: Mutability::Immutable,
+                    value,
+                }));
+                let read = TypedExpr::new(
+                    IrExprKind::Var {
+                        name: temporary,
+                        access: if ty.is_copy() { VarAccess::Copy } else { VarAccess::Move },
+                        ref_kind: VarRefKind::Value,
+                    },
+                    ty,
+                );
+                (field, read)
+            })
+            .collect();
+        (argument_stmts, sequenced)
+    }
+
+    /// Whether a lowered constructor argument is a literal whose evaluation order cannot be observed.
+    ///
+    /// Such an argument reads no binding and has no effect, so it can stay inline when its siblings are sequenced.
+    fn constructor_argument_is_bare_literal(value: &TypedExpr) -> bool {
+        matches!(
+            value.kind,
+            IrExprKind::Unit
+                | IrExprKind::None
+                | IrExprKind::Bool(_)
+                | IrExprKind::Int(_)
+                | IrExprKind::IntLiteral(_)
+                | IrExprKind::Float(_)
+                | IrExprKind::Decimal(_)
+                | IrExprKind::String(_)
+                | IrExprKind::Bytes(_)
+                | IrExprKind::Literal(_)
+        )
     }
 
     /// Lower imported stdlib type construction through a source-defined static `__incan_new` method when present.

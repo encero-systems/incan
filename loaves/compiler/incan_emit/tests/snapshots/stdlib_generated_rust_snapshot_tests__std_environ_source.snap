@@ -120,7 +120,7 @@ pub fn EnvironError(
     detail: String,
 ) -> EnvironError {
     EnvironError {
-        _kind: _kind.unwrap_or_else(|| EnvironErrorKind::Other.clone()),
+        _kind: _kind.unwrap_or_else(|| EnvironErrorKind::Other),
         key,
         detail,
     }
@@ -645,17 +645,17 @@ fn _error_from_raw_kind(
     let _ = match kind {
         EnvironErrorKind::Missing => {
             return EnvironError::missing(
-                key.to_string(),
+                key,
             );
         }
         EnvironErrorKind::InvalidKey => {
             return EnvironError::invalid_key(
-                key.to_string(),
+                key,
             );
         }
         EnvironErrorKind::NotUnicode => {
             return EnvironError::not_unicode(
-                key.to_string(),
+                key,
             );
         }
         _ => {

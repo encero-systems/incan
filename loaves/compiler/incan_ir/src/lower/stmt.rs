@@ -3,7 +3,7 @@
 //! This module handles lowering of all statement types: let bindings, assignments, control flow (if/while/for), and
 //! returns.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::super::expr::{
     IrCallArg, IrCallArgKind, IrExprKind, Literal as IrLiteral, MatchArm, MethodCallArgPolicy, Pattern as IrPattern,
@@ -12,8 +12,8 @@ use super::super::expr::{
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::{IrType, isinstance_type_matches, isinstance_union_variant_indices};
 use super::super::{IrSpan, Mutability, TypedExpr};
-use super::AstLowering;
 use super::errors::LoweringError;
+use super::{AstLowering, ReturnOperandContext};
 use incan_frontend::ast::{self, Spanned};
 use incan_frontend::typechecker::ResolvedOperatorKind;
 use incan_lang::lang::builtins::BuiltinFnId;
@@ -130,6 +130,48 @@ impl AstLowering {
             },
             ty,
         )
+    }
+
+    /// Lower the operand of a `return` statement.
+    ///
+    /// The operand is lowered with its own read counters so that the final read of an owned local inside it is
+    /// recognised as that local's last use on the path (see
+    /// [`AstLowering::select_var_access_for_ident`](super::AstLowering::select_var_access_for_ident) and
+    /// [`ReturnOperandContext`]); the enclosing block counters stay in step because nested reads were already
+    /// counted there.
+    fn lower_return_operand(&mut self, expr: &Spanned<ast::Expr>) -> Result<TypedExpr, LoweringError> {
+        let mut read_counts = HashMap::new();
+        self.count_expr_ident_reads(&expr.node, &mut read_counts);
+        let frame = self.remaining_ident_reads.len();
+        self.remaining_ident_reads.push(read_counts);
+        let enclosing = self.return_operand.replace(ReturnOperandContext {
+            frame,
+            depth: self.non_linear_context_depth,
+        });
+        let lowered = self.lower_expr_spanned(expr);
+        self.return_operand = enclosing;
+        let _ = self.remaining_ident_reads.pop();
+        let value = lowered?;
+        Ok(self.coerce_checked_c_return_value(expr, value))
+    }
+
+    /// Collect every name a `for` pattern binds, at any nesting depth.
+    fn collect_pattern_binding_names(pattern: &ast::Pattern, names: &mut HashSet<String>) {
+        match pattern {
+            ast::Pattern::Binding(name) => {
+                names.insert(name.clone());
+            }
+            ast::Pattern::Tuple(items) => {
+                for item in items {
+                    Self::collect_pattern_binding_names(&item.node, names);
+                }
+            }
+            ast::Pattern::Wildcard
+            | ast::Pattern::Literal(_)
+            | ast::Pattern::Constructor(_, _)
+            | ast::Pattern::Group(_)
+            | ast::Pattern::Or(_) => {}
+        }
     }
 
     /// Register all loop bindings before lowering the loop body so body reads resolve to local variables.
@@ -1167,13 +1209,7 @@ impl AstLowering {
             }
 
             ast::Statement::Return(opt) => {
-                let value = opt
-                    .as_ref()
-                    .map(|expr| {
-                        self.lower_expr_spanned(expr)
-                            .map(|value| self.coerce_checked_c_return_value(expr, value))
-                    })
-                    .transpose()?;
+                let value = opt.as_ref().map(|expr| self.lower_return_operand(expr)).transpose()?;
                 IrStmtKind::Return(value)
             }
 
@@ -1323,10 +1359,14 @@ impl AstLowering {
                     }
                 };
                 self.define_for_pattern_bindings(&f.pattern.node, &loop_var_ty);
+                let mut loop_bindings = HashSet::new();
+                Self::collect_pattern_binding_names(&f.pattern.node, &mut loop_bindings);
+                self.loop_pattern_bindings.push(loop_bindings);
 
                 self.non_linear_context_depth += 1;
                 let body_result = self.lower_statements(&f.body);
                 self.non_linear_context_depth -= 1;
+                let _ = self.loop_pattern_bindings.pop();
                 let body = body_result?;
                 self.pop_scope();
 

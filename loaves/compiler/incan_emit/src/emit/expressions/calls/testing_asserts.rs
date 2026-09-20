@@ -125,6 +125,18 @@ impl<'a> IrEmitter<'a> {
         args.first().map(|arg| &arg.expr)
     }
 
+    /// Return the declared payload type of a `Result` constructor expression for the side `constructor` builds.
+    ///
+    /// The `Ok` side reads the result's success type and the `Err` side its error type; a result whose type is not a
+    /// recorded `Result` yields `Unknown`, which the payload plan treats as "no target" rather than as a type.
+    fn result_payload_type(expr: &TypedExpr, constructor: ConstructorId) -> &IrType {
+        match (&expr.ty, constructor) {
+            (IrType::Result(ok_ty, _), ConstructorId::Ok) => ok_ty,
+            (IrType::Result(_, err_ty), ConstructorId::Err) => err_ty,
+            _ => &IrType::Unknown,
+        }
+    }
+
     /// Emit a generated assertion failure.
     fn emit_assert_failure(
         &self,
@@ -255,7 +267,8 @@ impl<'a> IrEmitter<'a> {
     fn emit_assert_result_ok(&self, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
         let result = Self::canonical_assert_arg(TestingAssertHelperId::AssertIsOk, args, 0)?;
         if let Some(payload) = Self::result_constructor_payload(result, ConstructorId::Ok) {
-            let payload_tokens = Self::emit_result_payload_tokens(payload, self.emit_expr(payload)?);
+            let payload_tokens =
+                self.emit_result_payload(payload, Self::result_payload_type(result, ConstructorId::Ok))?;
             return Ok(quote! { #payload_tokens });
         }
         let result_tokens = self.emit_expr(result)?;
@@ -278,7 +291,8 @@ impl<'a> IrEmitter<'a> {
     fn emit_assert_result_err(&self, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
         let result = Self::canonical_assert_arg(TestingAssertHelperId::AssertIsErr, args, 0)?;
         if let Some(payload) = Self::result_constructor_payload(result, ConstructorId::Err) {
-            let payload_tokens = Self::emit_result_payload_tokens(payload, self.emit_expr(payload)?);
+            let payload_tokens =
+                self.emit_result_payload(payload, Self::result_payload_type(result, ConstructorId::Err))?;
             return Ok(quote! { #payload_tokens });
         }
         let result_tokens = self.emit_expr(result)?;

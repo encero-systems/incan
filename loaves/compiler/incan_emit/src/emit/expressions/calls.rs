@@ -135,16 +135,25 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
-    /// Promote string literals used as `Result` payloads to owned `String` tokens.
+    /// Emit an `Ok`/`Err` payload through the owned-slot plan its declared payload type selects.
     ///
-    /// Incan `str` values lower to owned Rust `String` in `Result[T, E]` payload positions. This helper keeps `Ok` and
-    /// `Err` constructor emission aligned across the different seeding paths.
-    fn emit_result_payload_tokens(inner_expr: &TypedExpr, inner_tokens: TokenStream) -> TokenStream {
-        if matches!(inner_expr.kind, IrExprKind::String(_)) {
-            quote! { (#inner_tokens).to_string() }
-        } else {
-            inner_tokens
-        }
+    /// The payload is stored into the `Result`, which is the struct-field slot `ownership::ValueUseSite::StructField`
+    /// describes and the slot `trait_bound_inference` already assumes for every constructor field. A declared type
+    /// that is still unresolved is withheld rather than passed, so the plan falls back to the target-free rules (a
+    /// bare string literal still materializes as an owned `String`) instead of shaping the payload against `_`.
+    ///
+    /// Compatibility issue: #1489. The payload used to be emitted with no value-use site, so a by-reference loop
+    /// binding reached `Ok(row)` as `&Vec<String>` where the `Result` needed the owned value, and string literals
+    /// were promoted by a local `.to_string()` patch rather than by ownership planning. Behavior evidence:
+    /// `test_issue1489_loop_variable_returned_owned_codegen` (codegen snapshot),
+    /// `ownership::tests::result_payload_read_of_a_loop_binding_materializes_the_owned_value`, and
+    /// `returning_a_loop_variable_from_a_list_of_lists_issue1489` (`cli_language_regression_tests`). Semantic owner:
+    /// Duckborrower facts and Body IR own the move/clone/materialize decision; this emitter only applies the plan
+    /// `ownership::plan_value_use` returns for the slot. Retirement condition: removal of the Rust-source backend
+    /// (#654), whose replacement consumes the same plan.
+    fn emit_result_payload(&self, payload: &TypedExpr, declared_ty: &IrType) -> Result<TokenStream, EmitError> {
+        let target_ty = (!Self::is_unresolved_type(declared_ty)).then_some(declared_ty);
+        self.emit_expr_for_use(payload, ValueUseSite::StructField { target_ty })
     }
 
     /// Return whether an argument can be wrapped directly as `Some(inner)`.
@@ -473,9 +482,9 @@ impl<'a> IrEmitter<'a> {
                 let Some(first_arg) = args.first() else {
                     return Ok(None);
                 };
-                let inner = Self::emit_result_payload_tokens(&first_arg.expr, self.emit_expr(&first_arg.expr)?);
 
                 if name == constructors::as_str(ConstructorId::Ok) {
+                    let inner = self.emit_result_payload(&first_arg.expr, ok_ty)?;
                     // For `Ok`, keep unresolved `T` as `_` so Rust can infer it
                     // from usage while still stabilizing `E`.
                     let ok_tokens = if Self::is_unresolved_call_seed_type(ok_ty) {
@@ -494,6 +503,7 @@ impl<'a> IrEmitter<'a> {
                 }
 
                 if name == constructors::as_str(ConstructorId::Err) {
+                    let inner = self.emit_result_payload(&first_arg.expr, err_ty)?;
                     // Mirror `Ok` strategy: anchor the opposite side with `()`
                     // and leave the payload side as `_` when unresolved.
                     let ok_tokens = if Self::is_unresolved_call_seed_type(ok_ty) {
@@ -516,9 +526,9 @@ impl<'a> IrEmitter<'a> {
                 let Some((_, first_arg)) = fields.first() else {
                     return Ok(None);
                 };
-                let inner = Self::emit_result_payload_tokens(first_arg, self.emit_expr(first_arg)?);
 
                 if name == constructors::as_str(ConstructorId::Ok) {
+                    let inner = self.emit_result_payload(first_arg, ok_ty)?;
                     let ok_tokens = if Self::is_unresolved_call_seed_type(ok_ty) {
                         quote! { _ }
                     } else {
@@ -533,6 +543,7 @@ impl<'a> IrEmitter<'a> {
                 }
 
                 if name == constructors::as_str(ConstructorId::Err) {
+                    let inner = self.emit_result_payload(first_arg, err_ty)?;
                     let ok_tokens = if Self::is_unresolved_call_seed_type(ok_ty) {
                         quote! { () }
                     } else {
@@ -554,7 +565,8 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit `Ok`/`Err` constructors with explicit generic context from an expected `Result<T, E>` type.
     ///
-    /// String literals in `Ok` and `Err` payload positions are promoted to owned `String` values when emitted to Rust.
+    /// The payload is emitted through [`Self::emit_result_payload`], so its ownership follows the struct-field plan
+    /// for the declared payload type rather than the bare expression.
     pub fn emit_result_constructor_with_context(
         &self,
         constructor_name: &str,
@@ -562,16 +574,13 @@ impl<'a> IrEmitter<'a> {
         ok_ty: &IrType,
         err_ty: &IrType,
     ) -> Result<Option<TokenStream>, EmitError> {
-        // ---- Context: normalize payload before we seed constructor generics ----
-        let inner = if matches!(inner_expr.kind, IrExprKind::None) && matches!(ok_ty, IrType::Unit) {
-            quote! { () }
-        } else {
-            self.emit_expr(inner_expr)?
-        };
-        let inner = Self::emit_result_payload_tokens(inner_expr, inner);
-
         // ---- Context: seed `Ok` using the expected result type ----
         if constructor_name == constructors::as_str(ConstructorId::Ok) {
+            let inner = if matches!(inner_expr.kind, IrExprKind::None) && matches!(ok_ty, IrType::Unit) {
+                quote! { () }
+            } else {
+                self.emit_result_payload(inner_expr, ok_ty)?
+            };
             let ok_tokens = if Self::is_unresolved_type(ok_ty) {
                 quote! { _ }
             } else {
@@ -587,6 +596,7 @@ impl<'a> IrEmitter<'a> {
 
         // ---- Context: seed `Err` using the expected result type ----
         if constructor_name == constructors::as_str(ConstructorId::Err) {
+            let inner = self.emit_result_payload(inner_expr, err_ty)?;
             let ok_tokens = if Self::is_unresolved_type(ok_ty) {
                 quote! { () }
             } else {
@@ -1363,25 +1373,11 @@ impl<'a> IrEmitter<'a> {
         Ok(Some(path_tokens))
     }
 
-    /// Emit a binary operation expression. Emit one binary operand, letting an empty list literal borrow its element
-    /// type from the other side.
+    /// Emit a binary operation, folding static string additions.
     ///
-    /// Only the empty case needs this: a populated literal infers from its own elements.
-    fn emit_comparison_operand(&self, operand: &TypedExpr, other_ty: &IrType) -> Result<TokenStream, EmitError> {
-        if let IrExprKind::List(entries) = &operand.kind
-            && entries.is_empty()
-            && !matches!(&operand.ty, IrType::List(elem) if !matches!(elem.as_ref(), IrType::Unknown))
-            && let IrType::List(elem) = other_ty
-            && !matches!(elem.as_ref(), IrType::Unknown)
-        {
-            let ty_tokens = self.emit_type(elem.as_ref());
-            return Ok(quote! { Vec::<#ty_tokens>::new() });
-        }
-        self.emit_expr(operand)
-    }
-
-    /// Emit a binary operation, folding static string additions and lending an empty-list operand the other side's
-    /// element type so the generated comparison is not an ambiguous `PartialEq`.
+    /// An empty list operand carries its element type on the literal itself: the typechecker records the partner
+    /// operand's `List[T]` for it (#1476), lowering carries that onto `TypedExpr::ty`, and list emission spells
+    /// `Vec::<T>::new()` from it. Nothing here re-derives the type from the other side.
     pub(in super::super) fn emit_binop_expr(
         &self,
         op: &BinOp,
@@ -1395,11 +1391,8 @@ impl<'a> IrEmitter<'a> {
             return Ok(tokens);
         }
 
-        // An empty list literal carries no element type of its own. As an initializer the binding supplies one, but
-        // as a comparison operand -- `features == []` -- nothing does, and rustc reports an ambiguous `PartialEq`.
-        // The other operand is the only thing that knows, so take the element type from it.
-        let mut l_raw = self.emit_comparison_operand(left, &right.ty)?;
-        let mut r_raw = self.emit_comparison_operand(right, &left.ty)?;
+        let mut l_raw = self.emit_expr(left)?;
+        let mut r_raw = self.emit_expr(right)?;
 
         // Comparison is an observation boundary for exact floats. Validate the source operands before any concrete
         // f32-to-f64 widening so values injected through a public Rust surface cannot silently compare as IEEE
@@ -2208,7 +2201,7 @@ mod tests {
         let tokens = emitter
             .emit_call_expr(&func, &[], &[pos_arg(err)], None, Some(&path))
             .map_err(|err| std::io::Error::other(format!("canonical assert_is_err should emit: {err:?}")))?;
-        assert_eq!(render(tokens), "(\"boom\").to_string()");
+        assert_eq!(render(tokens), "\"boom\".to_string()");
         Ok(())
     }
 

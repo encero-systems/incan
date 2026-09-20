@@ -41,7 +41,7 @@ fn collect_keys(d: std::collections::HashMap<String, i64>) -> Vec<String> {
     for key in (d).keys().cloned() {
         let _ = out.push(key.to_string());
     }
-    return out.clone();
+    return out;
 }
 fn doubled(d: std::collections::HashMap<String, i64>) -> Vec<i64> {
     return {

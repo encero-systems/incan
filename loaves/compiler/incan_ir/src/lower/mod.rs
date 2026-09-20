@@ -82,6 +82,21 @@ pub struct ImportedAliasTarget {
     pub path: Vec<String>,
 }
 
+/// The `return` operand being lowered, which turns its final reads of owned locals into moves.
+///
+/// `frame` indexes the operand's own read counters in `AstLowering::remaining_ident_reads`; a read is the operand's
+/// last only when that frame and every frame pushed inside it are exhausted for the name. `depth` is the non-linear
+/// context depth at the `return` itself: a read at a deeper depth sits inside a closure, comprehension, or loop
+/// expression within the operand, where the binding may be a per-item borrow or a repeatable capture, so it keeps the
+/// ordinary conservative policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReturnOperandContext {
+    /// Index of the operand's read-counter frame.
+    pub frame: usize,
+    /// Non-linear context depth at the `return` statement.
+    pub depth: usize,
+}
+
 /// AST to IR lowering context.
 ///
 /// Maintains state needed during the lowering pass:
@@ -197,6 +212,19 @@ pub struct AstLowering {
     /// Captures remain non-consuming because a closure can run repeatedly. Parameters are freshly owned by each
     /// invocation, but nested non-linear contexts inside the closure must still suppress syntactic last-use moves.
     pub closure_param_scopes: Vec<(usize, HashSet<String>)>,
+    /// Names bound by the patterns of the `for` loops enclosing the statement being lowered, innermost last.
+    ///
+    /// A loop binding's Rust shape is the emitter's iteration plan rather than the binding's source type: a list of
+    /// owned values ordinarily iterates by shared reference, so the binding is a borrow of the collection's element.
+    /// Its reads therefore never claim a last-use move, even inside a `return` operand, and every owned sink
+    /// materializes the item through the ordinary non-consuming read policy (#1489).
+    pub loop_pattern_bindings: Vec<HashSet<String>>,
+    /// The `return` operand currently being lowered, when there is one.
+    ///
+    /// A `return` leaves the function, so the final read of an owned local inside its operand is that local's last
+    /// use on the path however many loops or match arms surround the statement. See
+    /// [`ReturnOperandContext`] for the two facts that scope this claim.
+    pub return_operand: Option<ReturnOperandContext>,
     /// Import alias map for decorator/derive passthrough resolution.
     pub import_aliases: HashMap<String, Vec<String>>,
     /// Direct Rust import aliases mapped to Rust path segments.
@@ -659,6 +687,8 @@ impl AstLowering {
             remaining_ident_reads: Vec::new(),
             non_linear_context_depth: 0,
             closure_param_scopes: Vec::new(),
+            loop_pattern_bindings: Vec::new(),
+            return_operand: None,
             import_aliases: HashMap::new(),
             rust_import_aliases: HashMap::new(),
             callable_param_scopes: Vec::new(),
@@ -1623,7 +1653,9 @@ impl AstLowering {
     /// This implements a local #121-style heuristic:
     /// - copy types stay `Copy`,
     /// - mutable/non-linear/non-tracked reads stay non-consuming (`Read`),
-    /// - immutable last reads in straight-line blocks become `Move`.
+    /// - immutable last reads in straight-line blocks become `Move`,
+    /// - the final read of an owned local inside a `return` operand becomes `Move` wherever the `return` sits, because
+    ///   the function exits there (see [`ReturnOperandContext`] and [`Self::return_operand_read_can_move`]).
     pub fn select_var_access_for_ident(&mut self, name: &str, ty: &IrType) -> VarAccess {
         if ty.is_copy() {
             return VarAccess::Copy;
@@ -1638,6 +1670,22 @@ impl AstLowering {
 
         // Keep counters in sync even when we intentionally disable moves.
         let is_last_use_here = self.consume_ident_read(name);
+
+        if let Some(context) = self.return_operand
+            && context.depth == self.non_linear_context_depth
+            && self.return_operand_read_can_move(name)
+        {
+            // Every frame from the operand inward must be exhausted: a later read of the same name elsewhere in the
+            // operand, outside the arm or block this read sits in, still has to see the value.
+            let consumed_within_operand = self.remaining_ident_reads[context.frame..]
+                .iter()
+                .all(|reads| reads.get(name).is_none_or(|remaining| *remaining == 0));
+            return if consumed_within_operand {
+                VarAccess::Move
+            } else {
+                VarAccess::Read
+            };
+        }
 
         let is_mutable = self.mutable_vars.get(name).copied().unwrap_or(false);
         let closure_param_can_move = self.closure_param_scopes.last().is_some_and(|(entry_depth, params)| {
@@ -1660,6 +1708,21 @@ impl AstLowering {
         }
 
         VarAccess::Move
+    }
+
+    /// Whether a read of `name` inside a `return` operand may consume the binding once it is the operand's final read.
+    ///
+    /// The `return` ends every enclosing loop and arm, so the usual non-linear-context caution does not apply, and a
+    /// `mut` local has no later assignment to protect. Two bindings are still never consumed here: a `for` pattern
+    /// binding, whose Rust shape is the emitter's iteration plan and is ordinarily a borrow of the element (#1489),
+    /// and a static binding, which is storage rather than a value. Reads nested in a closure, comprehension, or loop
+    /// expression inside the operand are excluded by depth before this is consulted.
+    fn return_operand_read_can_move(&self, name: &str) -> bool {
+        !self.is_static_binding(name)
+            && !self
+                .loop_pattern_bindings
+                .iter()
+                .any(|bindings| bindings.contains(name))
     }
 
     /// Enter a nested lowering scope for locals, live static bindings, and local callable signatures.

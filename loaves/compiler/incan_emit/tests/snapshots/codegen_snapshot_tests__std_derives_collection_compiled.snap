@@ -941,7 +941,7 @@ impl<
                         T,
                         bool,
                     >::__call__(&predicate, item.clone()) {
-                        return Ok::<Option<T>, E>(Some(item.clone()));
+                        return Ok::<Option<T>, E>(Some(item));
                     }
                 }
                 Ok(None) => {
@@ -1032,7 +1032,7 @@ impl<
                         T,
                         bool,
                     >::__call__(&predicate, item.clone()) {
-                        return Ok::<Option<T>, E>(Some(item.clone()));
+                        return Ok::<Option<T>, E>(Some(item));
                     }
                 }
                 Ok(None) => {
@@ -1396,7 +1396,7 @@ impl<
                     )
                     .clone();
                 self.index = self.index + 1;
-                return Ok::<Option<Output>, E>(Some(item.clone()));
+                return Ok::<Option<Output>, E>(Some(item));
             }
             let _ = match self.source.__next__() {
                 Ok(Some(item)) => {
@@ -1516,7 +1516,7 @@ for FlatMapFallibleIterator<T, E, Source, Output, StoredExpand> {
                     )
                     .clone();
                 self.index = self.index + 1;
-                return Ok::<Option<Output>, E>(Some(item.clone()));
+                return Ok::<Option<Output>, E>(Some(item));
             }
             let _ = match self.source.__next__() {
                 Ok(Some(item)) => {
@@ -3676,7 +3676,7 @@ impl<T: Clone, Source: Iterator<T> + Clone> FilterIterator<T, Source> {
                 Some(item) => {
                     let f = self.f.clone();
                     if f(item.clone()) {
-                        return Some(item.clone());
+                        return Some(item);
                     }
                 }
                 None => {
@@ -3726,7 +3726,7 @@ impl<T: Clone, Source: Iterator<T> + Clone> Iterator<T> for FilterIterator<T, So
                 Some(item) => {
                     let f = self.f.clone();
                     if f(item.clone()) {
-                        return Some(item.clone());
+                        return Some(item);
                     }
                 }
                 None => {
@@ -3825,7 +3825,7 @@ impl<T: Clone, Source: Iterator<T> + Clone, U: Clone> FlatMapIterator<T, Source,
                     )
                     .clone();
                 self.index = self.index + 1;
-                return Some(item.clone());
+                return Some(item);
             }
             let _ = match self.source.__next__() {
                 Some(item) => {
@@ -3902,7 +3902,7 @@ for FlatMapIterator<T, Source, U> {
                     )
                     .clone();
                 self.index = self.index + 1;
-                return Some(item.clone());
+                return Some(item);
             }
             let _ = match self.source.__next__() {
                 Some(item) => {
@@ -4744,7 +4744,7 @@ for TakeWhileIterator<T, Source> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone, Source: Iterator<T>> TakeWhileIterator<T, Source> {
+impl<T: Clone, Source: Iterator<T> + Clone> TakeWhileIterator<T, Source> {
     /// Yield source items until the predicate rejects one.
     pub fn __next__(&mut self) -> Option<T> {
         let _ = "\n        Yield source items until the predicate rejects one.\n        ";
@@ -4802,13 +4802,14 @@ impl<T: Clone, Source: Iterator<T>> TakeWhileIterator<T, Source> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone, Source: Iterator<T>> TakeWhileIterator<T, Source> {
+impl<T: Clone, Source: Iterator<T> + Clone> TakeWhileIterator<T, Source> {
     #[inline(never)]
     pub fn __next__(&mut self) -> Option<T> {
         self.__next__()
     }
 }
-impl<T: Clone, Source: Iterator<T>> Iterator<T> for TakeWhileIterator<T, Source> {
+impl<T: Clone, Source: Iterator<T> + Clone> Iterator<T>
+for TakeWhileIterator<T, Source> {
     fn __next__(&mut self) -> Option<T> {
         let _ = "\n        Yield source items until the predicate rejects one.\n        ";
         if self.done {
@@ -4904,7 +4905,7 @@ impl<T: Clone, Source: Iterator<T> + Clone> SkipWhileIterator<T, Source> {
                     let f = self.f.clone();
                     if !f(item.clone()) {
                         self.skipping = false;
-                        return Some(item.clone());
+                        return Some(item);
                     }
                 }
                 None => {
@@ -4966,7 +4967,7 @@ for SkipWhileIterator<T, Source> {
                     let f = self.f.clone();
                     if !f(item.clone()) {
                         self.skipping = false;
-                        return Some(item.clone());
+                        return Some(item);
                     }
                 }
                 None => {
@@ -5044,7 +5045,7 @@ for BatchIterator<T, Source> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone, Source: Iterator<T>> BatchIterator<T, Source> {
+impl<T: Clone, Source: Iterator<T> + Clone> BatchIterator<T, Source> {
     /// Build and return the next non-empty batch.
     pub fn __next__(&mut self) -> Option<Vec<T>> {
         let _ = "\n        Build and return the next non-empty batch.\n        ";
@@ -5057,13 +5058,13 @@ impl<T: Clone, Source: Iterator<T>> BatchIterator<T, Source> {
                 Some(item) => items.push(item.clone()),
                 None => {
                     if ::std::convert::identity(items.len() as i64) > 0 {
-                        return Some(items.clone());
+                        return Some(items);
                     }
                     return None::<_>;
                 }
             };
         }
-        return Some(items.clone());
+        return Some(items);
     }
     /// Returns field metadata for this type.
     pub fn __fields__(
@@ -5101,13 +5102,14 @@ impl<T: Clone, Source: Iterator<T>> BatchIterator<T, Source> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone, Source: Iterator<T>> BatchIterator<T, Source> {
+impl<T: Clone, Source: Iterator<T> + Clone> BatchIterator<T, Source> {
     #[inline(never)]
     pub fn __next__(&mut self) -> Option<Vec<T>> {
         self.__next__()
     }
 }
-impl<T: Clone, Source: Iterator<T>> Iterator<Vec<T>> for BatchIterator<T, Source> {
+impl<T: Clone, Source: Iterator<T> + Clone> Iterator<Vec<T>>
+for BatchIterator<T, Source> {
     fn __next__(&mut self) -> Option<Vec<T>> {
         let _ = "\n        Build and return the next non-empty batch.\n        ";
         if self.size <= 0 {
@@ -5119,12 +5121,12 @@ impl<T: Clone, Source: Iterator<T>> Iterator<Vec<T>> for BatchIterator<T, Source
                 Some(item) => items.push(item.clone()),
                 None => {
                     if ::std::convert::identity(items.len() as i64) > 0 {
-                        return Some(items.clone());
+                        return Some(items);
                     }
                     return None::<_>;
                 }
             };
         }
-        return Some(items.clone());
+        return Some(items);
     }
 }

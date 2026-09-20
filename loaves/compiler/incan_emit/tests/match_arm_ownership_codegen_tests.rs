@@ -88,8 +88,11 @@ pub def preserve[T](value: T, choose_first: bool) -> T:
     Ok(())
 }
 
+/// A guard decides whether its arm body runs; once the body runs, a `return` inside it is that path's last use of
+/// every local it reads (#1489). The guard expression itself keeps the conservative counter, because a guard can read
+/// a value, fail, and let a later arm execute.
 #[test]
-fn guarded_match_arms_retain_conservative_clone_planning() -> TestResult {
+fn guarded_match_arm_returns_move_once_the_guard_admits_the_arm() -> TestResult {
     let (generated, rust) = generated_and_compact_rust(
         r#"
 pub def guarded[T](value: T, choose_first: bool, admit_first: bool) -> T:
@@ -102,17 +105,46 @@ pub def guarded[T](value: T, choose_first: bool, admit_first: bool) -> T:
 
     assert!(
         rust.contains(&format!(
-            "pubfn{guarded}<T:Clone,>(value:T,choose_first:bool,admit_first:bool)->T"
+            "pubfn{guarded}<T,>(value:T,choose_first:bool,admit_first:bool)->T"
         )),
-        "a guarded arm may fail before a later arm executes, so ownership planning must remain conservative:\n{rust}"
+        "returning from each arm consumes the value on that path alone, so no Clone bound is needed:\n{rust}"
+    );
+    assert_eq!(
+        rust.matches("returnvalue;").count(),
+        2,
+        "both the guarded arm and the fallback arm return the value by move:\n{rust}"
     );
     assert!(
-        rust.contains("returnvalue.clone();"),
-        "the guarded arm must not consume a value that the fallback arm may still need:\n{rust}"
+        !rust.contains("value.clone()"),
+        "a return inside an admitted guarded arm must not clone:\n{rust}"
     );
+    Ok(())
+}
+
+/// A guard that reads a non-Copy value keeps the conservative read: the guard can fail and a later arm still needs
+/// the value, so the read inside the guard clones while the admitted arm's `return` moves.
+#[test]
+fn guard_expression_reads_stay_conservative_while_the_admitted_return_moves() -> TestResult {
+    let (_, rust) = generated_and_compact_rust(
+        r#"
+def admits(value: list[str]) -> bool:
+    return len(value) > 0
+
+pub def guarded(value: list[str], choose_first: bool) -> list[str]:
+    match choose_first:
+        case true if admits(value): return value
+        case _: return value
+"#,
+    )?;
+
     assert!(
-        rust.contains("returnvalue;"),
-        "the final fallback arm may consume the value after the guarded arm is ruled out:\n{rust}"
+        rust.contains("(value.clone(),)=>{returnvalue;}"),
+        "the guard may fail, so its read must not consume the value:\n{rust}"
+    );
+    assert_eq!(
+        rust.matches("returnvalue;").count(),
+        2,
+        "each arm body returns the value by move once it runs:\n{rust}"
     );
     Ok(())
 }

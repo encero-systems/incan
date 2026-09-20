@@ -27,7 +27,7 @@ fn describe(verdict: Verdict) -> String {
             label = reason;
         }
     };
-    return label.clone();
+    return label;
 }
 fn classify(code: String, strict: bool) -> String {
     let mut kind: String = "other".to_string();
@@ -48,7 +48,7 @@ fn classify(code: String, strict: bool) -> String {
             let _ = ();
         }
     };
-    return kind.clone();
+    return kind;
 }
 fn main() {
     std::panic::set_hook(

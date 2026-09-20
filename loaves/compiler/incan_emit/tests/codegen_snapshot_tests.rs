@@ -4924,15 +4924,15 @@ fn test_issue367_result_ok_string_literal_emits_owned_strings() {
     let rust_code = generate_rust(&source);
 
     assert!(
-        rust_code.contains("(\"from_call\").to_string()"),
+        rust_code.contains("\"from_call\".to_string()"),
         "expected call-argument seeding path to coerce Ok string literals to owned String"
     );
     assert!(
-        rust_code.contains("(\"from_local\").to_string()"),
+        rust_code.contains("\"from_local\".to_string()"),
         "expected assignment seeding path to coerce Ok string literals to owned String"
     );
     assert!(
-        rust_code.contains("(\"from_return\").to_string()"),
+        rust_code.contains("\"from_return\".to_string()"),
         "expected return-context seeding path to coerce Ok string literals to owned String"
     );
     assert!(
@@ -5139,6 +5139,158 @@ fn test_issue1493_empty_list_comparison_codegen() {
     assert!(
         !rust_code.contains("== vec![]"),
         "an untyped `vec![]` operand leaves `PartialEq` ambiguous (E0283):\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_issue1462_named_constructor_evaluation_order_codegen() {
+    let source = load_test_file("issue1462_named_constructor_evaluation_order");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1462_named_constructor_evaluation_order", rust_code);
+    let compact = compact_rust(&rust_code);
+    let intent = compact.find("__incan_ctor_arg_0=inspect(source.to_string())");
+    let evidence = compact.find("__incan_ctor_arg_1=Evidence{source:source}");
+    assert!(
+        intent.is_some() && evidence.is_some(),
+        "reordered named arguments must be bound to temporaries in written order:\n{rust_code}"
+    );
+    assert!(
+        intent < evidence,
+        "`intent` was written first, so its read of `source` must precede the move into `evidence`:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("Document{evidence:__incan_ctor_arg_1,intent:__incan_ctor_arg_0,}"),
+        "the construction must read the temporaries rather than re-evaluate the arguments:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_issue1489_loop_variable_returned_owned_codegen() {
+    let source = load_test_file("issue1489_loop_variable_returned_owned");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1489_loop_variable_returned_owned", rust_code);
+    let compact = compact_rust(&rust_code);
+    assert!(
+        compact.contains("returnOk::<Vec<String>,String>(row.clone());"),
+        "a loop binding iterated by reference must be materialized when it becomes the `Ok` payload:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("returnOk::<String,String>(candidate.to_string());"),
+        "a borrowed string loop binding must become an owned `String` payload:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("returnOk::<Vec<String>,String>(found);"),
+        "an owned local returned inside the loop is its last use and must move, not clone:\n{rust_code}"
+    );
+}
+
+/// Issue #1489: a loop binding returned as an `Ok` payload is cloned, and the `T` it clones needs `Clone`. Free
+/// functions already received the bound; a method's own type parameters were never augmented, which surfaced as
+/// E0599 in `std.data.toml` once the payload went through planning. The field read out of a last-use local is the
+/// contrast: it moves the field, so `decode` and `unwrap` need no bound at all.
+#[test]
+fn test_issue1489_method_type_param_clone_bound_codegen() {
+    let source = load_test_file("issue1489_method_type_param_clone_bound");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1489_method_type_param_clone_bound", rust_code);
+    let compact = compact_rust(&rust_code);
+    for expected in [
+        "pubfnpick<T:Marker+Clone>(&self,items:Vec<T>)->Result<T,String>",
+        "pubfnpick_plain<T:Clone>(&self,items:Vec<T>)->Result<T,String>",
+        "pubfnfirst<T:Clone>(items:Vec<T>)->Result<T,String>",
+    ] {
+        assert!(
+            compact.contains(expected),
+            "a cloned loop binding must bind `Clone` on the callable's own type parameter: {expected}\n{rust_code}"
+        );
+    }
+    for expected in [
+        "pubfndecode<T:Marker>(&self,decoded:Decoded<T>)->Result<T,String>",
+        "pubfnunwrap<T>(decoded:Decoded<T>)->Result<T,String>",
+        "returnOk::<T,String>(decoded.value);",
+    ] {
+        assert!(
+            compact.contains(expected),
+            "a field moved out of a last-use local plans no clone and needs no bound: {expected}\n{rust_code}"
+        );
+    }
+}
+
+/// Issue #1489: the owned-storage policy lets a field move out of a last-use local, but a field the checker resolved
+/// through `Json[T]` or `Query[T]` is reached through the wrapper's `Deref`, so it must still clone at a struct
+/// field, a collection element, and an assignment; a bare `query.q` there is E0507 (found by
+/// `build_typed_web_extractors_and_scalar_captures_issue867` in `cli_rust_interop_tests`).
+#[test]
+fn test_issue1489_web_extractor_field_read_clones_codegen() {
+    let source = load_test_file("issue1489_web_extractor_field_read_clones");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1489_web_extractor_field_read_clones", rust_code);
+    let compact = compact_rust(&rust_code);
+    for expected in [
+        "Reply{value:query.q.clone()}",
+        "letpicked=query.q.clone();",
+        "letvalues=vec![query.q.clone()];",
+    ] {
+        assert!(
+            compact.contains(expected),
+            "a field read through the extractor's `Deref` must clone: {expected}\n{rust_code}"
+        );
+    }
+    assert!(
+        !compact.contains("value:query.q}") && !compact.contains("=query.q;") && !compact.contains("vec![query.q]"),
+        "a move out of the wrapper's dereference is E0507:\n{rust_code}"
+    );
+}
+
+/// Issue #1494: a string literal handed to a collection method must reach the `String` parameter owned. The
+/// `Deque[str]` case was the live one -- `resolve_type_index_expression` dropped the type application's argument, so
+/// the receiver reached emission as `Deque[Unknown]` and the literal had no target to convert toward (fixed in #1529);
+/// the builtin list, set and dict receivers already converted through `CollectionElement`.
+#[test]
+fn test_issue1494_collection_method_literal_arguments_codegen() {
+    let source = load_test_file("issue1494_collection_method_literal_arguments");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1494_collection_method_literal_arguments", rust_code);
+    let compact = compact_rust(&rust_code);
+    for expected in [
+        "Deque::<String>::from_iter(requested)",
+        "pending.append(\"default\".into())",
+        "pending.appendleft(\"first\".into())",
+        "names.push(\"default\".to_string())",
+        "(&mutseen).insert(\"default\".to_string())",
+        "labels.insert(\"default\".to_string(),\"value\".to_string())",
+        "labels.insert(\"first\".to_string(),\"value\".to_string())",
+    ] {
+        assert!(
+            compact.contains(expected),
+            "expected the literal to reach the collection method owned: {expected}\n{rust_code}"
+        );
+    }
+    assert!(
+        !compact.contains("Deque::<Unknown>") && !compact.contains("append(\"default\")"),
+        "the receiver must keep its element type and the literal must not pass unconverted:\n{rust_code}"
+    );
+}
+
+/// Issue #1476: the element type of an empty list operand is recorded by the checker and carried by lowering, so
+/// emission spells it from the literal's own type in either operand position and for either equality operator.
+#[test]
+fn test_issue1476_empty_list_equality_operands_codegen() {
+    let source = load_test_file("issue1476_empty_list_equality_operands");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1476_empty_list_equality_operands", rust_code);
+    let compact = compact_rust(&rust_code);
+    assert!(
+        compact.contains("returnvalues==Vec::<String>::new();"),
+        "the right-hand empty operand must name the element type:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("returnVec::<String>::new()!=values;"),
+        "the left-hand empty operand must name the element type:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("Vec::<_>::new()") && !compact.contains("vec![]"),
+        "an untyped empty operand leaves `PartialEq` ambiguous (E0283):\n{rust_code}"
     );
 }
 

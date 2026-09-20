@@ -31,6 +31,19 @@ pub fn list_index_assignment_element_type(object_ty: &IrType) -> Option<&IrType>
     }
 }
 
+/// Return the owned element type behind a list or set receiver, including explicit reference wrappers.
+///
+/// `list.append(item)` and `set.add(item)` store `item` as an element, so emission and clone-bound inference both
+/// plan that argument as a `CollectionElement` of this type; sharing the projection keeps the two phases on the same
+/// boundary decision (#1489).
+pub fn collection_element_type(receiver_ty: &IrType) -> Option<&IrType> {
+    match receiver_ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => collection_element_type(inner),
+        IrType::List(elem_ty) | IrType::Set(elem_ty) => Some(elem_ty.as_ref()),
+        _ => None,
+    }
+}
+
 /// Return the owned key and value types behind a dict receiver, including explicit reference wrappers.
 ///
 /// A `mut Dict` parameter reaches emission as `RefMut(Dict)`. Every dict-shaped decision (index assignment, key
@@ -1110,6 +1123,49 @@ mod tests {
         assert_eq!(
             plan_dict_lookup_key(&int_keys, &IrType::Int),
             DictLookupKeyPlan::BorrowShared
+        );
+    }
+
+    /// A `for` binding over `list[list[str]]` reaches the body as a non-consuming read of an owned element type; the
+    /// emitter iterates such a list by shared reference, so storing the binding into an `Ok` payload -- a struct-field
+    /// slot -- must clone it (#1489). An owned local whose read is its last use moves instead.
+    #[test]
+    fn result_payload_read_of_a_loop_binding_materializes_the_owned_value() {
+        let row_ty = IrType::List(Box::new(IrType::String));
+        let loop_binding = IrExpr::new(
+            IrExprKind::Var {
+                name: "row".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            row_ty.clone(),
+        );
+        assert_eq!(
+            plan_value_use(
+                &loop_binding,
+                ValueUseSite::StructField {
+                    target_ty: Some(&row_ty)
+                }
+            ),
+            OwnershipPlan::Clone
+        );
+
+        let last_use = IrExpr::new(
+            IrExprKind::Var {
+                name: "found".to_string(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            row_ty.clone(),
+        );
+        assert_eq!(
+            plan_value_use(
+                &last_use,
+                ValueUseSite::StructField {
+                    target_ty: Some(&row_ty)
+                }
+            ),
+            OwnershipPlan::None
         );
     }
 

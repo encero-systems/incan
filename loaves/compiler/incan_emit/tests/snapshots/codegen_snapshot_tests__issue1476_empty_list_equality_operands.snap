@@ -7,23 +7,11 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 // __INCAN_INSERT_MODS__
 
 incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[derive(Debug, Clone, PartialEq)]
-enum RootKind {
-    A,
-    B,
+fn is_empty(values: Vec<String>) -> bool {
+    return values == Vec::<String>::new();
 }
-impl incan_std_core::reflection::HasTypeClassName for RootKind {
-    fn __class_name__() -> &'static str {
-        "RootKind"
-    }
-}
-fn matches_any(root_kind: RootKind, required: Vec<RootKind>) -> bool {
-    for expected in required.iter().cloned() {
-        if expected == root_kind {
-            return true;
-        }
-    }
-    return false;
+fn is_not_empty(values: Vec<String>) -> bool {
+    return Vec::<String>::new() != values;
 }
 fn main() {
     std::panic::set_hook(
@@ -37,5 +25,14 @@ fn main() {
             }
         }),
     );
-    let _ = println!("{}", matches_any(RootKind::A.clone(), vec![RootKind::A]));
+    let _ = if !(is_empty(Vec::<String>::new())) {
+        panic!("AssertionError");
+    };
+    let _ = if is_empty(vec!["value".to_string()]) {
+        panic!("AssertionError");
+    };
+    let _ = if !(is_not_empty(vec!["value".to_string()])) {
+        panic!("AssertionError");
+    };
+    let _ = println!("{}", "ok");
 }
