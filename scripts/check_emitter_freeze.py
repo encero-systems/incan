@@ -2,16 +2,20 @@
 """Fail when the frozen Rust-emission tree drifts from its fingerprint manifest without a migration note.
 
 The Rust-emission backend, every `.rs` file under `loaves/compiler/incan_emit/src/emit/`, is frozen at the end of
-v0.6 slice 6 (#1561). This gate fingerprints that tree (sha256 and line count per file), compares it with
-`loaves/compiler/incan_emit/tests/fixtures/emitter_freeze/manifest.json`, and applies the manifest's `policy`:
+v0.6 slice 6 (#1561). This gate fingerprints that tree (sha256 and line count per file, `\\r\\n` read as `\\n`),
+compares it with `loaves/compiler/incan_emit/tests/fixtures/emitter_freeze/manifest.json`, and applies the manifest's
+`policy`:
 
 - `frozen`: no additions; a modification or a deletion needs a migration note.
-- `deletions-only`: deletions pass without a note; a modification needs a migration note; no additions.
+- `deletions-only`: no additions; a modification needs a migration note; a deletion needs no note, only a prune, so
+  that the manifest lists only files that exist.
 
-`--record` rewrites the fingerprints for the current tree and appends one change entry carrying the four
+`--record` rewrites the fingerprints for the current tree and appends one `change` entry carrying the four
 migration-note fields of the Rust-source backend deprecation policy (compatibility issue, behavior evidence, semantic
-owner, retirement condition). It refuses when any field is missing, when there is nothing to record, or when the
-tree gained a file. `--policy` flips the policy as part of a recorded change.
+owner, retirement condition). It refuses when any field is missing, when there is nothing to record, when the tree
+gained a file, or, under `deletions-only`, while a deletion is still unpruned. `--policy` flips the policy as part of a
+recorded change. `--record --prune-deletions` drops every missing file from the manifest and appends one `deletion`
+entry that carries no note; under `frozen` it is refused, because there a deletion is a recorded change like any other.
 
 Exit status: 0 when the tree matches the manifest under its policy, 1 on drift or a refused record, 2 on a malformed
 manifest or a usage error. The contributor reference is
@@ -32,6 +36,8 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = "loaves/compiler/incan_emit/tests/fixtures/emitter_freeze/manifest.json"
 REFERENCE_PAGE = "workspaces/docs-site/docs/contributing/reference/emitter_freeze.md"
 POLICIES = ("frozen", "deletions-only")
+# A `change` entry is a recorded change with its migration note; a `deletion` entry is a prune under `deletions-only`.
+CHANGE_KINDS = ("change", "deletion")
 # An addition is never recordable, so a change entry only ever lists these two kinds.
 RECORDABLE_CHANGES = ("modified", "deleted")
 
@@ -43,10 +49,14 @@ NOTE_FIELDS = (
     ("owner", "semantic_owner", "<the future semantic owner: stable IDs, semantic facts, Body IR, ...>"),
     ("retirement", "retirement_condition", "<what lets this emitter path disappear or become a thin adapter>"),
 )
+NOTE_KEYS = tuple(key for _, key, _ in NOTE_FIELDS)
 MANIFEST_KEYS = ("tree", "policy", "files", "changes")
 FILE_KEYS = ("path", "sha256", "lines")
-CHANGE_KEYS = ("pr", "policy", "files") + tuple(key for _, key, _ in NOTE_FIELDS)
+# A `deletion` entry stops after `files`; a `change` entry carries the four note keys as well.
+DELETION_KEYS = ("kind", "pr", "policy", "files")
+CHANGE_KEYS = DELETION_KEYS + NOTE_KEYS
 CHANGED_FILE_KEYS = ("path", "change")
+PR_PLACEHOLDER = "[--pr <pull request number>]"
 
 
 class ManifestError(ValueError):
@@ -81,8 +91,12 @@ class Drift:
 
 
 def fingerprint_file(root: Path, path: Path) -> Fingerprint:
-    """Digest one file's bytes and count its lines the way Python's `splitlines` does (a final unterminated line counts)."""
-    data = path.read_bytes()
+    """Digest one file's bytes with `\\r\\n` read as `\\n`, and count its lines the way Python's `splitlines` does.
+
+    The normalization makes a CRLF checkout (Windows, `core.autocrlf`) fingerprint the same as an LF one; a final
+    unterminated line counts as a line.
+    """
+    data = path.read_bytes().replace(b"\r\n", b"\n")
     return Fingerprint(
         path=path.relative_to(root).as_posix(),
         sha256=hashlib.sha256(data).hexdigest(),
@@ -91,14 +105,20 @@ def fingerprint_file(root: Path, path: Path) -> Fingerprint:
 
 
 def fingerprint_tree(root: Path, tree: str) -> list[Fingerprint]:
-    """Fingerprint every `.rs` file under `tree`, recursively, sorted by path so the manifest is deterministic.
+    """Fingerprint every `.rs` file under `tree`, recursively, sorted by repository-relative POSIX path.
 
-    A missing tree is an empty tree, not an error: under `deletions-only` the last file may legitimately be gone.
+    That string is the key `render_manifest` sorts by and `load_manifest` checks, so a manifest written straight from
+    this list loads. (Sorting `Path` objects would order `x/y.rs` before `x.rs`; the string key orders them the other
+    way round.) A missing tree is an empty tree, not an error: under `deletions-only` the last file may legitimately be
+    gone.
     """
     directory = root / tree
     if not directory.is_dir():
         return []
-    files = sorted(path for path in directory.rglob("*.rs") if path.is_file())
+    files = sorted(
+        (path for path in directory.rglob("*.rs") if path.is_file()),
+        key=lambda path: path.relative_to(root).as_posix(),
+    )
     return [fingerprint_file(root, path) for path in files]
 
 
@@ -139,8 +159,20 @@ def parse_fingerprint(what: str, tree: str, value: object) -> Fingerprint:
 
 
 def parse_change(what: str, tree: str, value: object) -> dict:
-    """Validate one `changes` entry: a PR number or null, the policy in force after it, its files and the four note fields."""
-    entry = require_keys(what, value, CHANGE_KEYS)
+    """Validate one `changes` entry and return it in its canonical shape.
+
+    Both kinds carry `kind`, a PR number or null, the policy in force after the entry, and the files it covers. A
+    `change` entry carries the four non-blank note fields as well. A `deletion` entry, written by `--prune-deletions`,
+    carries no note (a null note field is tolerated and dropped), lists at least one file, every one `deleted`, and
+    leaves the policy `deletions-only`, the only policy under which a deletion needs no note.
+    """
+    if not isinstance(value, dict):
+        raise ManifestError(f"{what} must be a JSON object")
+    kind = value.get("kind")
+    if kind not in CHANGE_KINDS:
+        raise ManifestError(f"{what}.kind must be one of {list(CHANGE_KINDS)}, found {kind!r}")
+    keys = CHANGE_KEYS if kind == "change" or tuple(value) == CHANGE_KEYS else DELETION_KEYS
+    entry = require_keys(what, value, keys)
     pr = entry["pr"]
     if pr is not None and (not isinstance(pr, int) or isinstance(pr, bool) or pr <= 0):
         raise ManifestError(f"{what}.pr must be a positive integer or null")
@@ -156,9 +188,21 @@ def parse_change(what: str, tree: str, value: object) -> dict:
             raise ManifestError(f"{changed_what}.path `{path}` is not a `.rs` file under `{tree}/`")
         if changed_entry["change"] not in RECORDABLE_CHANGES:
             raise ManifestError(f"{changed_what}.change must be one of {list(RECORDABLE_CHANGES)}")
-    for _, key, _ in NOTE_FIELDS:
-        require_text(f"{what}.{key}", entry[key])
-    return entry
+        if kind == "deletion" and changed_entry["change"] != "deleted":
+            raise ManifestError(f"{changed_what}.change must be 'deleted' in a deletion entry")
+
+    if kind == "change":
+        for key in NOTE_KEYS:
+            require_text(f"{what}.{key}", entry[key])
+        return entry
+    if entry["policy"] != "deletions-only":
+        raise ManifestError(f"{what}.policy must be 'deletions-only' in a deletion entry, found {entry['policy']!r}")
+    if not entry["files"]:
+        raise ManifestError(f"{what}.files must list at least one deleted file in a deletion entry")
+    for key in NOTE_KEYS:
+        if entry.get(key) is not None:
+            raise ManifestError(f"{what}.{key} must be absent or null in a deletion entry, which carries no migration note")
+    return {key: entry[key] for key in DELETION_KEYS}
 
 
 def load_manifest(path: Path) -> dict:
@@ -194,7 +238,10 @@ def load_manifest(path: Path) -> dict:
 
 
 def render_manifest(manifest: dict) -> str:
-    """Serialize the manifest in its one canonical form: fixed key order, sorted files, two-space indent, final newline."""
+    """Serialize the manifest in its one canonical form: fixed key order, sorted files, two-space indent, final newline.
+
+    A `deletion` entry ends after `files`; `load_manifest` already dropped any null note field it tolerated.
+    """
     document = {
         "tree": manifest["tree"],
         "policy": manifest["policy"],
@@ -202,7 +249,7 @@ def render_manifest(manifest: dict) -> str:
             {"path": entry.path, "sha256": entry.sha256, "lines": entry.lines}
             for entry in sorted(manifest["files"], key=lambda entry: entry.path)
         ],
-        "changes": [{key: change[key] for key in CHANGE_KEYS} for change in manifest["changes"]],
+        "changes": [{key: change[key] for key in CHANGE_KEYS if key in change} for change in manifest["changes"]],
     }
     return json.dumps(document, indent=2, ensure_ascii=False) + "\n"
 
@@ -229,8 +276,8 @@ def compare(manifest_files: list[Fingerprint], tree_files: list[Fingerprint]) ->
     return drifts
 
 
-def rule_broken(policy: str, kind: str) -> str | None:
-    """Name the rule a drift of `kind` breaks under `policy`, or `None` when the policy permits it."""
+def rule_broken(policy: str, kind: str) -> str:
+    """Name the rule a drift of `kind` breaks under `policy`; every drift breaks one, what resolves it is `remedy`."""
     if policy == "frozen":
         return {
             "added": "the frozen tree takes no new files",
@@ -240,8 +287,21 @@ def rule_broken(policy: str, kind: str) -> str | None:
     return {
         "added": "the deletions-only tree takes no new files",
         "modified": "a change to the deletions-only tree needs a migration note",
-        "deleted": None,
+        "deleted": "a permitted deletion the manifest still lists; prune it",
     }[kind]
+
+
+def remedy(policy: str, kind: str) -> str:
+    """What resolves a drift of `kind` under `policy`.
+
+    `note` is a recorded change with its migration note, `prune` is `--record --prune-deletions` (a deletion under
+    `deletions-only`), and `none` is an addition, which nothing admits.
+    """
+    if kind == "added":
+        return "none"
+    if kind == "deleted" and policy == "deletions-only":
+        return "prune"
+    return "note"
 
 
 def plural(count: int, noun: str) -> str:
@@ -268,15 +328,28 @@ def display_path(root: Path, path: Path) -> str:
     return path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path)
 
 
-def record_invocation(policy: str | None = None) -> str:
-    """The exact `--record` command the next step needs, with a placeholder per migration-note field."""
+def record_invocation(passthrough: list[tuple[str, str]], policy: str | None = None) -> str:
+    """The exact `--record` command the next step needs, relative to the repository root.
+
+    `passthrough` carries the `--root` and `--manifest` the check itself ran with, so the hint targets the same
+    manifest; every note field gets a placeholder, and `--pr` is shown optional.
+    """
     lines = ["  python3 scripts/check_emitter_freeze.py --record \\"]
+    lines.extend(f"      {option} {value} \\" for option, value in passthrough)
     if policy is not None:
         lines.append(f"      --policy {policy} \\")
     for option, _, placeholder in NOTE_FIELDS:
         lines.append(f"      --{option} '{placeholder}' \\")
-    lines.append("      --pr <pull request number>")
+    lines.append(f"      {PR_PLACEHOLDER}")
     return "\n".join(lines)
+
+
+def prune_invocation(passthrough: list[tuple[str, str]]) -> str:
+    """The exact `--record --prune-deletions` command the next step needs, with the check's own `--root`/`--manifest`."""
+    command = ["python3 scripts/check_emitter_freeze.py --record --prune-deletions"]
+    command.extend(f"{option} {value}" for option, value in passthrough)
+    command.append(PR_PLACEHOLDER)
+    return "  " + " ".join(command)
 
 
 # ============================================================================
@@ -284,67 +357,98 @@ def record_invocation(policy: str | None = None) -> str:
 # ============================================================================
 
 
-def check(manifest: dict, root: Path, manifest_path: Path) -> int:
-    """Report every drift with the rule it breaks under the current policy; exit 1 when any rule is broken."""
+def check(manifest: dict, root: Path, manifest_path: Path, passthrough: list[tuple[str, str]]) -> int:
+    """Report every drift with the rule it breaks and the command that resolves it; exit 1 when the tree drifted at all.
+
+    A deletion under `deletions-only` breaks no policy rule but still fails the check while the manifest lists the file,
+    because the manifest only ever lists files that exist; the hint for it is the prune, not a migration note.
+    """
     policy = manifest["policy"]
     drifts = compare(manifest["files"], fingerprint_tree(root, manifest["tree"]))
-    violations = [(drift, rule_broken(policy, drift.kind)) for drift in drifts]
-    broken = [(drift, rule) for drift, rule in violations if rule is not None]
-    permitted = [drift for drift, rule in violations if rule is None]
-
-    if not broken:
+    if not drifts:
         print(
             f"emitter freeze gate passed: {plural(len(manifest['files']), 'recorded file')} under {manifest['tree']}/** "
             f"(policy: {policy})"
         )
-        for drift in permitted:
-            print(f"  permitted under {policy}: {describe(drift)}")
         return 0
 
     print(f"emitter freeze gate: {manifest['tree']}/** drifted from {display_path(root, manifest_path)} (policy: {policy})")
     print()
-    for drift, rule in broken:
-        print(f"- {describe(drift)} -- {rule}")
-    for drift in permitted:
-        print(f"- {describe(drift)} -- permitted under {policy}")
+    for drift in drifts:
+        print(f"- {describe(drift)} -- {rule_broken(policy, drift.kind)}")
     print()
-    print("The Rust-emission backend is frozen (#1561). Fix the root in the middle end where possible; the emitter only")
-    print("consumes recorded facts. If the change must stay in the emitter, record it with its migration note:")
-    print()
-    print(record_invocation())
-    if any(drift.kind == "added" for drift, _ in broken):
+
+    # ---- Remedies: the prune first, then the migration note, then the inadmissible addition ----
+    prunable = [drift for drift in drifts if remedy(policy, drift.kind) == "prune"]
+    noted = [drift for drift in drifts if remedy(policy, drift.kind) == "note"]
+    added = [drift for drift in drifts if drift.kind == "added"]
+    if prunable:
+        print(
+            "A deletion under deletions-only needs no migration note, only a prune so that the manifest lists files that "
+            "exist" + (" (prune first: a record with a note refuses while a deletion is pending):" if noted else ":")
+        )
         print()
-        print("An added file cannot be recorded: put the code in an existing file, or fix the root outside the emitter.")
-    print()
+        print(prune_invocation(passthrough))
+        print()
+    if noted or added:
+        print("The Rust-emission backend is frozen (#1561). Fix the root in the middle end where possible; the emitter only")
+        print("consumes recorded facts." + (" If the change must stay in the emitter, record it with its migration note:" if noted else ""))
+        if noted:
+            print()
+            print(record_invocation(passthrough))
+        if added:
+            print()
+            print("An added file cannot be recorded: put the code in an existing file, or fix the root outside the emitter.")
+        print()
     print(f"See {REFERENCE_PAGE}.")
     return 1
 
 
-def record(manifest: dict, root: Path, manifest_path: Path, args: argparse.Namespace) -> int:
-    """Rewrite the fingerprints for the current tree and append the change entry; refuse an incomplete or empty record."""
+def refuse_additions(policy: str, added: list[Drift]) -> int:
+    """Refuse any record while the tree has a file the manifest does not list: an addition is never admissible."""
+    print(f"emitter freeze gate: --record refused, the {policy} tree takes no new files:")
+    for drift in added:
+        print(f"- {describe(drift)}")
+    print()
+    print("Put the code in an existing file, or fix the root outside the emitter.")
+    return 1
+
+
+def record(
+    manifest: dict, root: Path, manifest_path: Path, args: argparse.Namespace, passthrough: list[tuple[str, str]]
+) -> int:
+    """Rewrite the fingerprints for the current tree and append a `change` entry.
+
+    Refused when the note is incomplete, when the tree gained a file, while a deletion under `deletions-only` is still
+    unpruned (so a note's `files` never sweeps up an unrelated deletion), and when there is nothing to record.
+    """
     missing = [option for option, _, _ in NOTE_FIELDS if not (getattr(args, option) or "").strip()]
     if missing:
         print("emitter freeze gate: --record refused, the migration note is incomplete.")
         print(f"Missing: {', '.join(f'--{option}' for option in missing)}. Every recorded change carries all four fields:")
         print()
-        print(record_invocation(args.policy))
+        print(record_invocation(passthrough, args.policy))
         return 1
 
     new_policy = args.policy or manifest["policy"]
     drifts = compare(manifest["files"], fingerprint_tree(root, manifest["tree"]))
     added = [drift for drift in drifts if drift.kind == "added"]
     if added:
-        print(f"emitter freeze gate: --record refused, the {new_policy} tree takes no new files:")
-        for drift in added:
+        return refuse_additions(new_policy, added)
+    unpruned = [drift for drift in drifts if remedy(manifest["policy"], drift.kind) == "prune"]
+    if unpruned:
+        print("emitter freeze gate: --record refused, prune deletions first so that the note covers only its own files:")
+        for drift in unpruned:
             print(f"- {describe(drift)}")
         print()
-        print("Put the code in an existing file, or fix the root outside the emitter.")
+        print(prune_invocation(passthrough))
         return 1
     if not drifts and new_policy == manifest["policy"]:
         print(f"emitter freeze gate: --record refused, the tree matches the manifest and the policy is already {new_policy}.")
         return 1
 
     change = {
+        "kind": "change",
         "pr": args.pr,
         "policy": new_policy,
         "files": [{"path": drift.path, "change": drift.kind} for drift in drifts],
@@ -369,25 +473,77 @@ def record(manifest: dict, root: Path, manifest_path: Path, args: argparse.Names
     return 0
 
 
+def prune(
+    manifest: dict, root: Path, manifest_path: Path, args: argparse.Namespace, passthrough: list[tuple[str, str]]
+) -> int:
+    """Drop every missing file from the manifest and append a `deletion` entry that carries no migration note.
+
+    Refused under `frozen`, where a deletion is a recorded change with its note; while the tree has an added file,
+    which nothing admits; and when every listed file exists. Modified files keep their recorded fingerprints, so a
+    pending modification still fails the check afterwards until it is recorded with its note.
+    """
+    if manifest["policy"] != "deletions-only":
+        print(f"emitter freeze gate: --prune-deletions refused, a deletion from the {manifest['policy']} tree needs a migration note:")
+        print()
+        print(record_invocation(passthrough))
+        return 1
+    drifts = compare(manifest["files"], fingerprint_tree(root, manifest["tree"]))
+    added = [drift for drift in drifts if drift.kind == "added"]
+    if added:
+        return refuse_additions(manifest["policy"], added)
+    deleted = [drift for drift in drifts if drift.kind == "deleted"]
+    if not deleted:
+        print("emitter freeze gate: --prune-deletions refused, every file the manifest lists exists.")
+        return 1
+
+    gone = {drift.path for drift in deleted}
+    change = {
+        "kind": "deletion",
+        "pr": args.pr,
+        "policy": manifest["policy"],
+        "files": [{"path": drift.path, "change": "deleted"} for drift in deleted],
+    }
+    updated = {
+        "tree": manifest["tree"],
+        "policy": manifest["policy"],
+        "files": [entry for entry in manifest["files"] if entry.path not in gone],
+        "changes": [*manifest["changes"], change],
+    }
+    manifest_path.write_text(render_manifest(updated), encoding="utf-8")
+    print(
+        f"emitter freeze gate: pruned {plural(len(deleted), 'deletion')} from {display_path(root, manifest_path)} "
+        f"as change #{len(updated['changes'])} (policy: {manifest['policy']})"
+    )
+    for drift in deleted:
+        print(f"- {describe(drift)}")
+    return 0
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    """Parse the gate's options: check by default, `--record` with the four note fields, `--policy` to flip."""
+    """Parse the gate's options: check by default, `--record` with the four note fields or `--prune-deletions`, `--policy` to flip."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--root", type=Path, default=ROOT, help="repository root (default: this checkout)")
+    parser.add_argument("--root", type=Path, help="repository root (default: the checkout containing this script)")
     parser.add_argument("--manifest", type=Path, help=f"manifest to check or rewrite (default: {MANIFEST_PATH})")
     parser.add_argument(
         "--record",
         action="store_true",
         help="rewrite the fingerprints for the current tree and append a change entry (needs the four note fields)",
     )
+    parser.add_argument(
+        "--prune-deletions",
+        action="store_true",
+        help="with --record: drop every missing file from the manifest as a deletion entry (deletions-only, no note)",
+    )
     parser.add_argument("--policy", choices=POLICIES, help="with --record: the policy in force after this change")
     for option, key, _ in NOTE_FIELDS:
         parser.add_argument(f"--{option}", help=f"with --record: the migration note's `{key}`")
     parser.add_argument("--pr", type=int, help="with --record: the pull request number carrying the change")
     args = parser.parse_args(argv)
-    if not args.record and any(
-        value is not None for value in (args.policy, args.pr, *(getattr(args, option) for option, _, _ in NOTE_FIELDS))
-    ):
-        parser.error("--policy, --pr and the migration-note fields only apply with --record")
+    note = tuple(getattr(args, option) for option, _, _ in NOTE_FIELDS)
+    if not args.record and (args.prune_deletions or any(value is not None for value in (args.policy, args.pr, *note))):
+        parser.error("--prune-deletions, --policy, --pr and the migration-note fields only apply with --record")
+    if args.prune_deletions and (args.policy is not None or any(value is not None for value in note)):
+        parser.error("--prune-deletions records a deletion entry, which carries no --policy and no migration note")
     if args.pr is not None and args.pr <= 0:
         parser.error("--pr must be a positive pull request number")
     return args
@@ -396,16 +552,22 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     """Run the gate; 0 on pass, 1 on drift or a refused record, 2 on a malformed manifest or usage error."""
     args = parse_args(sys.argv[1:] if argv is None else argv)
-    root = args.root.resolve()
+    root = (args.root if args.root is not None else ROOT).resolve()
     manifest_path = (args.manifest if args.manifest is not None else root / MANIFEST_PATH).resolve()
+    # The hints echo `--root` and `--manifest` as given, so the next command targets the same manifest.
+    passthrough = [
+        (option, str(value)) for option, value in (("--root", args.root), ("--manifest", args.manifest)) if value is not None
+    ]
     try:
         manifest = load_manifest(manifest_path)
     except ManifestError as error:
         print(f"emitter freeze gate: {error}", file=sys.stderr)
         return 2
+    if args.record and args.prune_deletions:
+        return prune(manifest, root, manifest_path, args, passthrough)
     if args.record:
-        return record(manifest, root, manifest_path, args)
-    return check(manifest, root, manifest_path)
+        return record(manifest, root, manifest_path, args, passthrough)
+    return check(manifest, root, manifest_path, passthrough)
 
 
 if __name__ == "__main__":

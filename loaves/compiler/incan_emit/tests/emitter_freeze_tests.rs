@@ -15,13 +15,18 @@ use std::process::{Command, Output};
 const MANIFEST: &str = "loaves/compiler/incan_emit/tests/fixtures/emitter_freeze/manifest.json";
 
 /// Run the gate from the checkout root with `args`, so relative paths in its output match the committed layout.
+///
+/// A spawn failure names the interpreter and the script, so a machine without `python3` on `PATH` reads the cause
+/// rather than a bare `NotFound`.
 fn run_gate(args: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
     let root = repo_root();
+    let script = root.join("scripts/check_emitter_freeze.py");
     Ok(Command::new("python3")
-        .arg(root.join("scripts/check_emitter_freeze.py"))
+        .arg(&script)
         .args(args)
         .current_dir(&root)
-        .output()?)
+        .output()
+        .map_err(|error| format!("could not run `python3 {}`: {error}", script.display()))?)
 }
 
 /// The script's stdout and stderr, for assertion messages that show what the gate said.
