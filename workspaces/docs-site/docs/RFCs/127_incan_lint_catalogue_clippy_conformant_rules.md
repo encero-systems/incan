@@ -10,7 +10,7 @@
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 118 (Incan and Oven command-line surfaces)
     - RFC 119 (Oven-native Rust build facets; the home of `[rust.lints]`)
-- **Issue:** —
+- **Issue:** [#1703](https://github.com/encero-systems/incan/issues/1703)
 - **RFC PR:** —
 - **Written against:** v0.6.0-dev.6
 - **Shipped in:** —
