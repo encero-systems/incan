@@ -9,7 +9,9 @@
     - RFC 105 (`incan architect` rule engine; the engine and finding contract this catalogue is evaluated by)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 118 (Incan and Oven command-line surfaces)
-    - RFC 119 (Oven-native Rust build facets; the home of `[rust.lints]`)
+    - RFC 119 (Oven-native Rust build facets; where #1698's `[rust.lints]` will be recorded)
+    - #159 (trivia-aware formatter)
+    - #1698 (`[rust.lints]` in `loaf.toml`)
 - **Issue:** [#1703](https://github.com/encero-systems/incan/issues/1703)
 - **RFC PR:** —
 - **Written against:** v0.6.0-dev.6
@@ -31,7 +33,7 @@ This RFC defines one catalogue of Incan lint rules and the contract that configu
 
 ## Motivation
 
-Incan today decides "style" in three places, and none of them is a catalogue. The formatter normalizes layout by rules stated in RFC 053 and the style guide, but reports every deviation as "file would be reformatted". The checker emits a handful of advisories (an unused binding, an unused import, a wildcard match arm, unreachable code after `return`) with no way to set their level. RFC 105 proposes an engine for design findings with its own categories and leaves suppression, configuration, and the relationship to formatting unresolved. A project that also carries Rust facets configures clippy in a fourth place. A Rust developer who reaches for `needless_bool` or `unwrap_used` finds nothing by that name; a Python developer who expects Ruff's "format and lint in one tool" finds a formatter that does not lint.
+Incan today decides "style" in three places, and none of them is a catalogue. The formatter normalizes layout by rules stated in RFC 053 and the style guide, but reports every deviation as "file would be reformatted". The checker emits one lint-shaped diagnostic, unreachable code after `return` (`INCAN-T0101`), and four warnings about interop and async contracts (an async call that is not awaited, a `rust.module()` directive with no effect, a public function that calls a checked C symbol, dot-notation in a `rust` import), none with a level anyone can set. RFC 105 proposes an engine for design findings with its own categories and leaves suppression, configuration, and the relationship to formatting unresolved. A project that also carries Rust facets configures clippy in a fourth place. A Rust developer who reaches for `needless_bool` or `unwrap_used` finds nothing by that name; a Python developer who expects Ruff's "format and lint in one tool" finds a formatter that does not lint.
 
 Clippy is the right reference for three reasons. First, expectations: Incan's audience includes Rust developers, and a rule that has the same name and the same meaning as the clippy lint they already know costs nothing to learn. Second, the compiler itself: the toolchain's own Rust facets are linted with clippy, and #1698 moves that configuration into `loaf.toml` as `[rust.lints]`; if Incan's rules used other names, levels, or defaults, one repository would carry two vocabularies for the same intent. Third, calibration: clippy's group boundaries (`correctness` denied; `suspicious`, `style`, `complexity`, and `perf` warned; `pedantic` and `restriction` opt-in) encode years of judgement about what a default-on lint may cost, so adopting them means Incan starts from a defensible default set rather than inventing one.
 
@@ -53,7 +55,7 @@ Clippy is not a template to copy blindly. A large share of its catalogue exists 
 - Replacing `incan check`. Type errors, resolution errors, and exhaustiveness are the checker's and stay errors, not lints.
 - Redefining RFC 105's engine, finding record, evidence model, profiles, priorities, or confidence. RFC 105 defines the engine and the finding contract; this RFC defines the rule set and the configuration that engine evaluates.
 - Auto-fixing anything the formatter cannot decide from the syntax tree. `incan architect` reports; it does not rewrite. A later RFC may define engine-applied fixes.
-- Linting generated Rust. `[rust.lints]` (#1698, RFC 119) and `@rust.allow(...)` (RFC 057) own the Rust side.
+- Linting generated Rust. `[rust.lints]` (#1698, to be recorded in RFC 119) and `@rust.allow(...)` (RFC 057) own the Rust side.
 - A `# fmt: off` region or any other formatter opt-out. None exists today and this RFC adds none.
 - Statement-level suppression. `@allow(...)` attaches to declarations; a narrower form is an unresolved question.
 - Porting all of clippy. The catalogue grows by correspondence entries; this RFC fixes the model and seeds it with the entries in the tables below.
@@ -112,7 +114,7 @@ root = "sources/incan"
 [rust.source]
 root = "sources/rust"
 
-# Rust facets: rustc and clippy lints with Cargo's [lints] semantics (#1698, RFC 119).
+# Rust facets: rustc and clippy lints with Cargo's [lints] semantics (#1698).
 [rust.lints]
 unsafe_code = "forbid"
 clippy.all = { level = "warn", priority = -1 }
@@ -140,7 +142,7 @@ def decode_header(version: int, flags: int, length: int, stream: int, offset: in
     ...
 ```
 
-`@allow(...)` is the Incan twin of `@rust.allow(...)`: a compiler-owned decorator, string arguments that name catalogue rules or groups, an optional `reason`, and an effect limited to the declaration it decorates. A `@rust.allow("clippy::unwrap_used")` on the same declaration still means the generated Rust; the two decorators never name each other's rules.
+`@allow(...)` is the Incan twin of `@rust.allow(...)`: a compiler-owned decorator, string arguments that name catalogue rules or groups, an optional `reason`, and an effect limited to the declaration it decorates. A `@rust.allow("clippy::unwrap_used")` on the same declaration still means the generated Rust; the two decorators never name each other's rules. The twin is not a copy: RFC 057 rejects keyword arguments, group names, and the module position, and the reference-level explanation says where and why `@allow(...)` differs.
 
 ### What does not translate, and why
 
@@ -170,7 +172,7 @@ Naming rules:
 - A rule whose origin is `clippy-renamed` must not collide with any current clippy lint name, and its catalogue entry must record the clippy lint it corresponds to and the reason for the different name.
 - A rule whose origin is `incan` must not collide with any current clippy lint name. Formatter-owned rules use the `fmt_` prefix; other Incan-only rules are named for the Incan construct they report on (`fstring_`, `comprehension_`, `docstring_`, `ellipsis_`, and so on).
 - The catalogue records the clippy release it was last reconciled against. A conformance check must verify every `clippy` and `clippy-renamed` entry against that release's lint list.
-- In RFC 105's finding record, the rule code is the group-qualified name (`complexity.needless_bool`). The qualifier is derived from the entry's group and is never authored by users; configuration and suppression use the bare name.
+- In RFC 105's finding record, the rule code field carries the entry's **qualified name**, the group-qualified rule name (`complexity.needless_bool`). The qualifier is derived from the entry's group and is never authored by users; configuration and suppression use the bare name, and the stable code is a separate field.
 
 ### Groups, levels, priority, and defaults
 
@@ -186,18 +188,18 @@ The groups and their default levels mirror clippy's:
 | `pedantic` | `allow` | no | rules that are strict or have occasional false positives |
 | `restriction` | `allow` | no | rules that restrict a construct a project may want to forbid; enabled one rule at a time |
 | `format` | fixed | n/a | formatter normalizations; always applied, not configurable |
-| RFC 105's `arch`, `safety`, `idiom`, `maintainability`, `risk`, `experimental` | as RFC 105 defines | `experimental` never | evidence-backed design findings |
+| RFC 105's `arch`, `safety`, `idiom`, `maintainability`, `risk` | as RFC 105 defines | no | evidence-backed design findings; RFC 105's `experimental` is a profile, not a category, and selects nothing here |
 
 Level semantics must match rustc's and clippy's:
 
 - `allow`: the rule is not evaluated for reporting and the formatter does not apply its fix.
-- `warn`: the rule is reported; the exit code is unaffected; the formatter applies its fix when the entry is fixable.
+- `warn`: the rule is reported; `incan architect`'s exit code is unaffected; the formatter applies its fix when the entry is fixable, and `incan fmt --check` exits non-zero on the pending rewrite as it does for any rewrite, whatever the level.
 - `deny`: the rule is reported; `incan architect` exits non-zero; the formatter applies its fix when the entry is fixable, after which the finding no longer exists.
 - `forbid`: as `deny`, and no lower layer (a member manifest or `@allow`) may relax it.
 
-Priority semantics must match Cargo's `[lints]` table: every entry has an integer `priority`, `0` by default; entries apply in ascending priority order, so a higher priority wins; a group is expected to be given a negative priority so that single rules override it. A group and one of its member rules at the same priority is a manifest refusal, not a warning (clippy's `lint_groups_priority` becomes a refusal because RFC 117 validates manifests strictly).
+Priority semantics must match Cargo's `[lints]` table: every entry has an integer `priority`, `0` by default; entries apply in ascending priority order, so a higher priority wins; a group is expected to be given a negative priority so that single rules override it. A tie is a manifest refusal, not a warning (clippy's `lint_groups_priority` becomes a refusal because RFC 117 validates manifests strictly). Two entries tie when they are in the same table, at the same priority, both cover one rule, and disagree on its level: a group and one of its member rules, or two overlapping groups such as `all` and `style`. Overlapping entries at the same priority and the same level are accepted. The refusal never reaches across layers: a workspace entry and a member entry at the same priority are not a tie, because the member table is resolved after the workspace table and its entries override the workspace's entry by entry.
 
-`all` names the default-on set: `correctness`, `suspicious`, `style`, `complexity`, and `perf`. It never includes `pedantic`, `restriction`, `format`, or `experimental`. A rule belongs to exactly one group, and its default level is its group's default level; clippy has no exceptions to that and neither does this catalogue.
+`all` names the default-on set: `correctness`, `suspicious`, `style`, `complexity`, and `perf`. It never includes `pedantic`, `restriction`, or `format`, and RFC 105's `experimental` profile is never part of it. A rule belongs to exactly one group, and its default level is its group's default level; clippy has no exceptions to that and neither does this catalogue.
 
 ### Declared facts, evaluator, and fix mode
 
@@ -246,7 +248,7 @@ The effective level of a rule at a source location is resolved in this order, ea
 3. `[lints.incan]` in the member's own `loaf.toml`, in priority order;
 4. `@allow(...)` on the enclosing declarations, innermost last.
 
-A member manifest may raise or lower a level the workspace set, except that it must not relax a workspace `forbid`. `@allow(...)` may lower any level except `forbid`. There are no command-line level flags: the manifest is the single source of truth, and a flag would be a second one.
+A member manifest may raise a level the workspace set and must not lower it: the workspace table is the floor, which is what RFC 117's "narrow but not replace" means for lint policy. `@allow(...)` may lower any level except `forbid`, because it is targeted at one declaration and carries a reason, where a member table would relax the rule for a whole package. This layering diverges from Cargo's `[lints] workspace = true`, which is all-or-nothing: a Cargo member either inherits the whole workspace table or writes its own, and cannot merge the two. The divergence is deliberate and is recorded in the design decisions. There are no command-line level flags: the manifest is the single source of truth, and a flag would be a second one.
 
 ### Manifest refusals
 
@@ -254,20 +256,21 @@ Oven must refuse a manifest, with the diagnostic naming the offending entry, whe
 
 - a key names neither a catalogue rule nor a group; when the key is a clippy lint the catalogue records as renamed, the diagnostic must name the Incan rule; when it is a clippy lint the catalogue records as untranslatable, the diagnostic must quote the recorded reason;
 - a level is not one of the four level strings;
-- a group and one of its member rules are given the same priority;
-- a member manifest lowers a level the workspace root set to `forbid`;
+- two entries tie as defined above: a group and one of its member rules, or two overlapping groups, at the same priority with different levels;
+- a member manifest lowers a level the workspace root set;
 - an entry targets the `format` group, an `fmt_*` rule, or the `restriction` group as a whole;
 - a parameter is unknown for the rule, has the wrong type, or appears on a group entry.
 
 ### `@allow(...)`
 
-`@allow(...)` is a compiler-owned decorator, defined by analogy with RFC 057:
+`@allow(...)` is a compiler-owned decorator, defined by analogy with RFC 057. The name `allow` is reserved: a user-defined decorator (RFC 036) must not take it. RFC 057's argument rules are the starting point, and this RFC departs from them in three places, each stated below with its reason:
 
-- It must take one or more string literal arguments, each naming a catalogue rule or group, and may take a `reason` keyword argument whose value is a string literal. An empty argument list, a non-string argument, a duplicate name, and an unknown name must be rejected.
-- It may appear on any declaration that owns a scope: a function, an `async def`, a method, a class, a model, a trait, an enum, a newtype, a type alias, a `const` or `static` binding, and, in the module-decorator position, the module itself. It must be rejected on statements, expressions, imports, and fields.
+- It must take one or more string literal arguments, each naming a catalogue rule or group, and may take a `reason` keyword argument whose value is a string literal. An empty argument list, a non-string argument, a duplicate name, and an unknown name must be rejected. RFC 057 rejects every keyword argument; `@allow(...)` accepts exactly `reason`, because a suppression with a recorded reason is what `allow_without_reason` exists to ask for and what the finding's provenance reports.
+- A group name is accepted, except `all`, which must be rejected: allowing every default-on rule for a declaration is a blanket, and the manifest is the place for blankets. RFC 057 rejects every group because a Rust lint group on generated code would hide Rust diagnostics the author cannot see; an Incan group on an Incan declaration hides nothing the author did not write.
+- It may appear on any declaration that owns a scope: a function, an `async def`, a method, a class, a model, a trait, an enum, a newtype, a type alias, a `const` or `static` binding, and, in the module-decorator position, the module itself. It must be rejected on statements, expressions, imports, and fields. RFC 057 is item-only and forbids the module position, because a module-level Rust suppression would widen into crate-wide Rust warning policy; a module-level `@allow(...)` narrows an Incan rule for one file, which is the smallest scope a file-wide rule has.
 - Its effect is to set the named rules to `allow` for the decorated declaration and everything lexically inside it. Naming a group allows every rule in the group.
 - Naming a rule whose effective level is `forbid` must produce a diagnostic at the decorator, as rustc does for an `allow` under a `forbid`.
-- Naming an `fmt_*` rule must be rejected: this RFC provides no formatter opt-out.
+- Naming an `fmt_*` rule or the `format` group must be rejected: this RFC provides no formatter opt-out.
 - `@allow(...)` never names a Rust lint; `@rust.allow(...)` never names an Incan rule. Each must reject the other's names.
 - The restriction rule `allow_without_reason` reports an `@allow(...)` with no `reason`.
 
@@ -276,15 +279,17 @@ Oven must refuse a manifest, with the diagnostic naming the offending entry, whe
 `incan architect` (RFC 105) is the evaluator for every entry whose evaluator is `architect`:
 
 - It must resolve the effective level of every rule from the precedence chain above and must not evaluate rules at `allow`.
-- It must include entries the checker emits (evaluator `check`) by projecting the codegraph's diagnostic records into findings rather than re-evaluating them, so a checker advisory is never reported twice.
-- Findings must carry RFC 105's record (rule code, category, priority, confidence, evidence, suggestions, risks) and, for catalogue entries, the rule name, the stable code, the group, the effective level, and the manifest layer that set it.
+- It must include entries the checker emits (evaluator `check`) by projecting the codegraph's diagnostic records into findings rather than re-evaluating them, so a checker diagnostic is never reported twice.
+- Findings must carry RFC 105's record (the qualified name in the rule code field, category, priority, confidence, evidence, suggestions, risks) and, for catalogue entries, the bare rule name, the stable code, the group, the effective level, and the manifest layer that set it.
 - `--profile` selects groups; the level table decides what is on. A `syntax`-tier rule must run over a file the checker rejects, and a `semantic`-tier rule must be reported as skipped for that file.
+- `incan architect --list-rules` is a new flag on RFC 105's command surface, added by this RFC: it must print every catalogue entry with its effective level and the layer that set it, and with `--format json` it must print the same table as a record per entry.
 
 ### `incan fmt` fixes the fixable subset
 
 `incan fmt` keeps its command surface (`incan fmt [PATH]`, `--check`, `--diff`, `--workspace`, `--member`) and gains catalogue identities:
 
-- Formatting applies every `format`-group entry and every entry whose fix mode is `fmt` and whose effective level is not `allow`.
+- Formatting applies every `format`-group entry and every entry whose fix mode is `fmt` and whose effective level is not `allow`. To know which those are, the formatter must resolve the same precedence chain as the engine: catalogue default, `[workspace.lints.incan]`, `[lints.incan]`, and `@allow(...)`.
+- The `format` group is canonical: its output is the same for every project. The `fmt`-fixable lint subset is project-selected, because a level table can switch an entry off, so `incan fmt` output is canonical only within one project's configuration. This is Ruff's split between `format` and `check --fix`, and it is stated plainly so nobody expects two projects with different `[lints.incan]` tables to format identically.
 - `--check` must report each construct that formatting would change by rule name, location, and a one-line reason, and must exit non-zero when any file would change.
 - `--diff` shows the rewrite as today.
 - `incan fmt` must not report entries it does not fix. Reporting is `incan architect`'s job; the two commands share the syntactic rule implementations, not the output.
@@ -293,7 +298,7 @@ Oven must refuse a manifest, with the diagnostic naming the offending entry, whe
 
 ### Machine-readable output
 
-`incan fmt --check --format json` must emit a report whose envelope is `schema_version`, `ok`, and `diagnostics`, and whose `diagnostics` entries are diagnostic records in the shape `incan check --format json` (schema 2) uses: a stable `code`, `severity`, `phase`, `origin`, the primary source span in line and column form, `message`, `notes`, `hints`, related spans, and the `incan explain` hook. Each record must additionally carry `rule`, `group`, `level`, `level_source`, and `fix`. The `phase` of a formatter record is `format`.
+`incan fmt --check --format json` must emit a report whose envelope is `schema_version`, `ok`, and `diagnostics`, and whose `diagnostics` entries are diagnostic records in the shape `incan check --format json` (schema 2) uses: a stable `code`, `severity`, `phase`, `origin`, a `primary_span` with the file and `start` and `end` positions in line, column, and offset form, `message`, `notes`, `hints`, related spans, and the `incan explain` hook. Each record must additionally carry `rule`, `group`, `level`, `level_source`, and `fix`. The `phase` of a formatter record is `format`. A consumer that reads `incan check --format json` today must read this report unchanged: the shared fields keep their names and shapes, and the added fields are ignorable.
 
 ```json
 {
@@ -310,7 +315,11 @@ Oven must refuse a manifest, with the diagnostic naming the offending entry, whe
       "severity": "warning",
       "phase": "format",
       "origin": "fmt",
-      "span": { "file": "src/users.incn", "line": 12, "column": 5 },
+      "primary_span": {
+        "file": "src/users.incn",
+        "start": { "line": 12, "column": 5, "offset": 214 },
+        "end": { "line": 16, "column": 21, "offset": 318 }
+      },
       "message": "an `if` whose branches only return `true` and `false`",
       "hints": ["return the condition itself: `return age >= 18`"],
       "explain": "incan explain INCAN-L0042"
@@ -319,7 +328,7 @@ Oven must refuse a manifest, with the diagnostic naming the offending entry, whe
 }
 ```
 
-`incan architect --format json` keeps RFC 105's finding record and adds the same five fields. A consumer that already reads `incan check --format json` must be able to read `incan fmt --check --format json` by ignoring the added fields.
+`incan architect --format json` keeps RFC 105's finding record and adds the same five fields.
 
 `incan explain INCAN-L0042` must resolve every catalogue entry to its name, group, default level, origin, clippy counterpart when there is one, fact tier, fix mode, parameters, and a description with a before-and-after example.
 
@@ -328,29 +337,36 @@ Oven must refuse a manifest, with the diagnostic naming the offending entry, whe
 | Command | 0 | 1 |
 | --- | --- | --- |
 | `incan fmt` | files formatted (or nothing to do) | a file could not be parsed or written |
-| `incan fmt --check` | no file would change | at least one file would change, or an operational error |
+| `incan fmt --check` | no file would change | at least one file would change, at any level other than `allow`, or an operational error |
 | `incan architect` | no finding at `deny` or `forbid` | at least one finding at `deny` or `forbid`, or an operational error |
 
 A manifest refusal is an operational error for every command that reads the manifest.
 
-### Advisories the checker emits today
+### Diagnostics the checker emits today
 
-The checker emits four advisories as by-products of resolution and flow analysis: an unused local binding, an unused import, a wildcard `_` arm in a `match`, and code after a `return`. They become catalogue entries with evaluator `check`, keep their text, and gain levels:
+The checker emits one lint-shaped diagnostic today: unreachable code after `return`, stable code `INCAN-T0101`, a warning produced by flow analysis. It becomes a catalogue entry with evaluator `check`, keeps its code, its text, and its position in output, and gains a level:
 
 | Today | Catalogue entry | Origin | Group | Default |
 | --- | --- | --- | --- | --- |
-| unused variable hint | `unused_variables` | `rustc` | `style` | `warn` |
-| unused import hint | `unused_imports` | `rustc` | `style` | `warn` |
 | unreachable code after `return` (`INCAN-T0101`) | `unreachable_code` | `rustc` | `suspicious` | `warn` |
-| wildcard match hint | `wildcard_enum_match_arm` | `clippy` | `restriction` | `allow` (clippy's) |
 
-The last row is a behaviour change: clippy classifies a wildcard arm on an enum as a restriction lint, off by default, and this RFC follows clippy unless the unresolved question below is answered the other way. `incan check` must read `[lints.incan]` for the level of these four entries and no others; it must not evaluate any `architect` or `fmt` entry.
+Nothing else the checker emits is a lint. An unused binding, an unused import, and a wildcard `_` arm are not reported today: the exhaustiveness check treats `_` as covering the remaining cases and says nothing. The three entries that cover them are new, not renamed. `unused_variables` and `unused_imports` are by-products of name resolution, which the checker already performs, so their evaluator is `check` and they join `unreachable_code` as the checker's catalogue entries. `wildcard_enum_match_arm` needs the scrutinee's enum type and clippy's restriction-group judgement, so its evaluator is `architect`:
+
+| Entry | Origin | Group | Default | Facts | Evaluator |
+| --- | --- | --- | --- | --- | --- |
+| `unused_variables` | `rustc` | `style` | `warn` | semantic | `check` |
+| `unused_imports` | `rustc` | `style` | `warn` | semantic | `check` |
+| `wildcard_enum_match_arm` | `clippy` | `restriction` | `allow` (clippy's) | semantic | `architect` |
+
+The last row follows clippy: a wildcard arm on an enum is a restriction lint, off by default, unless the unresolved question below answers that Incan should diverge. `incan check` must read `[lints.incan]` for the level of its three `check`-evaluated entries and no others; it must not evaluate any `architect` or `fmt` entry.
+
+The checker's four other warnings stay outside the catalogue: an async call that is not awaited, a `rust.module()` directive with no `@rust.extern` item, a public function that directly calls a checked C symbol (RFC 116), and dot-notation in a `rust` import (RFC 005). Each reports a contract its own RFC owns, at a severity that RFC fixed, and none is a style choice a project would set a level for. A later revision of this catalogue may take one in once a project has a reason to configure it.
 
 ## Design details
 
 ### Correspondence catalogue
 
-The tables below are the seed catalogue. Each row is one clippy lint and fills exactly one of the three Incan columns. Parenthesised markers give the fact tier (`syntax` or `semantic`) and, where the fix mode is `fmt`, say so; every other translated entry has fix mode `suggest`. Group membership and default levels follow clippy's; the `restriction` and `pedantic` rows are `allow` by default. Lints in clippy's `nursery`, `cargo`, and `deprecated` groups are out of scope. The clippy names and groups were reconciled against the clippy `master` lint list published on 2026-09-20; the catalogue records that as its reconciliation baseline.
+The tables below are the seed catalogue. Each row is one clippy lint and fills exactly one of the three Incan columns. Parenthesised markers give the fact tier (`syntax` or `semantic`) and, where the fix mode is `fmt`, say so; every other translated entry has fix mode `suggest` unless its row says `none`. Group membership and default levels follow clippy's; the `restriction` and `pedantic` rows are `allow` by default. Lints in clippy's `nursery`, `cargo`, and `deprecated` groups are out of scope. The clippy names and groups in this draft were reconciled against the clippy `master` lint list published on 2026-09-20; the catalogue itself records, as its reconciliation baseline, the clippy release that ships with the Rust release the toolchain pins.
 
 #### Correctness (default `deny`)
 
@@ -358,19 +374,23 @@ The tables below are the seed catalogue. Each row is one clippy lint and fills e
 | --- | --- | --- | --- |
 | `absurd_extreme_comparisons` | a comparison against a bound the operand's numeric type cannot cross, such as `n < 0` for a `u8` (semantic) | | |
 | `almost_swapped` | `a = b` immediately followed by `b = a` (syntax) | | |
-| `approx_constant` | a float literal that approximates a `std.math` constant, such as `3.14159` for `math.pi` (syntax) | | |
+| `approx_constant` | a float literal that approximates a `std.math` constant, such as `3.14159` for `math.PI` (syntax) | | |
 | `bad_bit_mask` | `x & mask == value` that can never hold for the literal mask and value (syntax) | | |
 | `char_indices_as_byte_indices` | | | `len` and indexing on `str` count Unicode scalars; there is no byte-index API to confuse them with |
+| `derive_ord_xor_partial_ord` | | | `@derive(Ord)` implies `PartialOrd`, and `@derive(Ord)` beside a hand-written `__lt__` is a checker error, not a lint |
 | `derived_hash_with_manual_eq` | `@derive(Hash)` beside a hand-written `__eq__` (semantic) | | |
 | `eq_op` | identical operands on both sides of `==`, `!=`, `<`, `-`, `//`, `and`, or `or` (syntax) | | |
 | `erasing_op` | `x * 0`, `0 * x`, `0 // x`, `x & 0` (syntax) | | |
 | `ifs_same_cond` | an `if`/`elif` chain that repeats a condition (syntax) | | |
 | `impossible_comparisons` | `x < 5 and x > 10` and other constant double comparisons that cannot hold (syntax) | | |
+| `ineffective_bit_mask` | a constant mask applied with `^` or bitwise or, followed by a comparison the mask cannot change, such as `x ^ 1 < 4` (syntax) | | |
+| `inherent_to_string_shadow_display` | a `def to_string(self) -> str` method; every `model`, `class`, `enum`, and `newtype` carries Display, so the method shadows `__str__` (syntax) | | |
 | `invalid_regex` | a `std.regex` pattern literal that does not compile (syntax) | | |
 | `invisible_characters` | zero-width and other invisible Unicode in source text (syntax) | | |
 | `iter_skip_zero` | `.skip(0)` on an iterator (syntax) | | |
 | `iterator_step_by_zero` | | `range_step_zero`: `range(a, b, 0)` raises `ValueError` at run time; the construct is the `range` builtin, not an adapter | |
 | `lint_groups_priority` | | | not a lint: a group and one of its rules at the same priority is a manifest refusal |
+| `match_str_case_mismatch` | `match s.lower():` or `match s.upper():` with a string arm the case-folded value can never equal (syntax) | | |
 | `min_max` | `min(max(x, hi), lo)` with the bounds reversed so the result is constant (syntax) | | |
 | `modulo_one` | `x % 1` (syntax) | | |
 | `never_loop` | a `for`, `while`, or `loop` whose body always leaves on the first iteration (syntax) | | |
@@ -378,11 +398,12 @@ The tables below are the seed catalogue. Each row is one clippy lint and fills e
 | `out_of_bounds_indexing` | a constant index into a list literal of known length (syntax) | | |
 | `panicking_unwrap` | `.unwrap()` on a value the enclosing branch has already narrowed to `None` or `Err` (semantic) | | |
 | `possible_missing_comma` | a bracketed literal in which a line starts with a binary operator, so two elements silently merge (syntax) | | |
+| `recursive_format_impl` | `f"{self}"` or `str(self)` inside `__str__`, which calls `__str__` again (syntax) | | |
 | `redundant_comparisons` | `x > 5 and x > 3` (syntax) | | |
-| `reversed_empty_ranges` | `range(10, 0)`, `10..0`, or a slice with constant reversed bounds (syntax) | | |
+| `reversed_empty_ranges` | `range(10, 0)`, `range(10..0)`, or a slice with constant reversed bounds (syntax) | | |
 | `self_assignment` | `x = x`, `self.a = self.a` (syntax) | | |
 | `serde_api_misuse` | | | derives are compiler-owned; there is no serde surface to misuse |
-| `unit_cmp` | | | there is no unit value in expression position; a comparison to `None` is `Option` narrowing, which `incan check` owns |
+| `unit_cmp` | | | there is no unit value in expression position; `x == None` is the `comparison_to_none` entry |
 | `uninit_assumed_init` | | | no uninitialized memory in Incan |
 | `while_immutable_condition` | a `while` whose condition reads only bindings the body never assigns (semantic) | | |
 | `wrong_transmute` | | | no `transmute` in Incan |
@@ -406,7 +427,7 @@ The tables below are the seed catalogue. Each row is one clippy lint and fills e
 | `print_in_format_impl` | `print` inside a `__str__` implementation (syntax) | | |
 | `suspicious_assignment_formatting` | `x =- 1` where `x -= 1` was likely meant; `=!` and `=*` have no Incan counterpart (syntax) | | |
 | `suspicious_else_formatting` | | | `else` is positioned by indentation; there is no brace layout to get wrong |
-| `suspicious_unary_op_formatting` | `a -b`, a space before a unary operator and none after it in a binary position; the `format` group's `fmt_horizontal_spacing` rewrites it (syntax; fmt) | | |
+| `suspicious_unary_op_formatting` | `a -b`, a space before a unary operator and none after it in a binary position; fix mode `none`, because the `format` group's `fmt_horizontal_spacing` normalizes the spacing and the construct does not survive formatting, so the entry owns no rewrite of its own (syntax) | | |
 | `test_attr_in_doctest` | | | docstrings are not executed as tests |
 | `unconditional_recursion` | a method that calls itself on the same receiver on every path, such as `__eq__` written as `return self == other` (semantic) | | |
 
@@ -419,23 +440,23 @@ The tables below are the seed catalogue. Each row is one clippy lint and fills e
 | `blocks_in_conditions` | | | conditions are expressions; there is no block expression to put in one |
 | `bool_assert_comparison` | `assert x == true` where `assert x` is meant (syntax) | | |
 | `collapsible_if` | a nested `if` with no `else` whose conditions can join with `and` (syntax) | | |
-| `comparison_to_empty` | `s == ""` where `s.is_empty()` is meant; `xs == []` where `not xs` is meant (semantic) | | |
+| `comparison_to_empty` | `s == ""` where `s.is_empty()` is meant; `str` and the frozen collections only, since `list` and `dict` have no `is_empty`, `not xs` on a list is a type error, and `xs == []` has no shorter spelling (semantic) | | |
 | `disallowed_names` | binding names from a configured list, `foo`, `bar`, and `baz` by default (syntax; parameter `names`) | | |
 | `disallowed_methods` | calls to functions or methods from a configured list of paths (semantic; parameter `paths`) | | |
 | `duplicate_underscore_argument` | parameters `x` and `_x` on one signature (syntax) | | |
-| `enum_variant_names` | variants that repeat the enum's name as prefix or suffix, such as `enum Color: ColorRed` (syntax) | | |
+| `enum_variant_names` | variants that repeat the enum's name as prefix or suffix, such as a `ColorRed` variant declared inside `enum Color:` (syntax) | | |
 | `excessive_precision` | a float literal with more digits than its type can represent (syntax) | | |
 | `if_same_then_else` | `if` and `else` bodies that are identical (syntax) | | |
 | `inconsistent_digit_grouping` | `1_00_000` (syntax; fmt) | | |
-| `inherent_to_string` | a `def to_string(self) -> str` method where `__str__` is the Display protocol (syntax) | | |
-| `len_zero` | `len(xs) == 0` where `not xs` is meant; `len(s) == 0` where `s.is_empty()` is meant (semantic) | | |
+| `inherent_to_string` | | | every type carries Display, so a `to_string` method always shadows it: `inherent_to_string_shadow_display` is the rule |
+| `len_zero` | `len(s) == 0` where `s.is_empty()` is meant; `str` and the frozen collections only, since `list` and `dict` have no `is_empty` and `len(items) > 0` is their documented idiom (semantic) | | |
 | `let_and_return` | a binding returned by the very next statement (syntax) | | |
 | `let_unit_value` | | `bind_none_value`: binding the `None` result of a `-> None` call, `x = print(...)` (semantic) | |
 | `main_recursion` | `main` calling `main` (syntax) | | |
-| `manual_map` | `match r:` with `Ok(v) => Ok(f(v))` and `Err(e) => Err(e)` where `r.map(f)` is meant; `Result` only, since `Option` has no `map` on the surface (syntax) | | |
+| `manual_map` | | `manual_result_map`: `match r:` with `Ok(v) => Ok(f(v))` and `Err(e) => Err(e)` where `r.map(f)` is meant; clippy's lint is `Option`-shaped and Incan's `Option` has `copied`, `unwrap_or`, and `unwrap` but no `map`, so the name says `Result`. RFC 105's `idiom.result_combinator_candidate` yields the `map` shape to this entry and keeps the `map_err`, `and_then`, `or_else`, and `inspect` shapes (syntax) | |
 | `manual_ok_or` | | | `Option` has no `ok_or` on the Incan surface |
 | `match_like_matches_macro` | | | no `matches!`; a unit variant compares with `==`, and a payload variant has no boolean pattern form |
-| `match_ref_pats` | | | patterns never mention references; duckborrowing owns that |
+| `match_ref_pats` | | | patterns never mention references; the compiler decides how generated Rust binds them |
 | `needless_borrow` | | | no borrow syntax in Incan source |
 | `needless_else` | `else: pass` (syntax; fmt) | | |
 | `needless_range_loop` | `for i in range(len(xs)):` whose body only reads `xs[i]`, where `for x in xs:` or `enumerate(xs)` is meant (syntax) | | |
@@ -444,10 +465,10 @@ The tables below are the seed catalogue. Each row is one clippy lint and fills e
 | `partialeq_to_none` | | `comparison_to_none`: `x == None` and `x != None` where `x is None` and `x is not None` are meant (syntax) | |
 | `print_literal` | | | `print` takes values, not a format string; `useless_fstring` covers the f-string side |
 | `print_with_newline` | `print("...\n")`: `print` already ends the line, so the output gains a blank line (syntax) | | |
-| `println_empty_string` | `print("")` where `print()` is meant (syntax; fmt) | | |
+| `println_empty_string` | | | `print("")` is the documented spelling of an empty line; `print` has no documented zero-argument form to prefer |
 | `ptr_arg` | | | parameter types are value types; there is no `&String` or `&Vec` to take |
-| `question_mark` | a `match` on a `Result` that returns the `Err` arm unchanged, where `?` is meant; RFC 105's Result-match candidate is this entry (syntax) | | |
-| `redundant_closure` | | | no anonymous function syntax; function values are named |
+| `question_mark` | a `match` on a `Result` that returns the `Err` arm unchanged, where `?` is meant (syntax) | | |
+| `redundant_closure` | an arrow closure `(x) => f(x)` where `f` itself is meant (syntax) | | |
 | `redundant_field_names` | | | keyword construction `User(name=name)` has no shorthand to prefer |
 | `redundant_pattern_matching` | `match x:` with `None => true` and `_ => false` where `x is None` is meant; `Option` only, since `Result` has no `is_ok` on the surface (syntax) | | |
 | `redundant_static_lifetimes` | | | no lifetimes |
@@ -459,7 +480,7 @@ The tables below are the seed catalogue. Each row is one clippy lint and fills e
 | `trim_split_whitespace` | `s.strip().split_whitespace()` where `s.split_whitespace()` is meant (semantic) | | |
 | `unused_unit` | | | `-> None` is the required spelling of a value-less return type; there is no `()` to drop |
 | `unwrap_or_default` | | | no `unwrap_or_default`; `unwrap_or([])` is the spelling |
-| `upper_case_acronyms` | `class HTTPClient` where the style guide's `UpperCamelCase` gives `HttpClient` (syntax) | | |
+| `upper_case_acronyms` | `class HTTPClient` where `HttpClient` is meant; the style guide's `UpperCamelCase` rule does not yet say how an acronym is cased, so this entry needs that ruling before it ships (syntax) | | |
 | `while_let_on_iterator` | | | no `while let`; `for` is the iteration form |
 | `wrong_self_convention` | `is_`, `to_`, and `as_` prefixes checked against `self` versus `mut self`; `into_` has no consuming receiver and is not checked (syntax) | | |
 
@@ -472,7 +493,7 @@ The tables below are the seed catalogue. Each row is one clippy lint and fills e
 | `bytes_count_to_len` | | | `len(s)` counts scalars and `len(s.encode())` counts bytes; they are different values, so neither replaces the other |
 | `double_comparisons` | `x == y or x > y` where `x >= y` is meant (syntax) | | |
 | `double_parens` | `((x))` and `f((x))` (syntax; fmt) | | |
-| `excessive_nesting` | blocks nested past a threshold (syntax; parameter `threshold`) | | |
+| `excessive_nesting` | blocks nested past a threshold; clippy's default is off until a threshold is configured, and so is this entry's: `threshold` defaults to `0`, meaning never (syntax; parameter `threshold`) | | |
 | `explicit_auto_deref` | | | no dereference operator |
 | `explicit_counter_loop` | a counter initialised before a `for` and incremented once per iteration, where `enumerate` is meant (syntax) | | |
 | `identity_op` | `x + 0`, `x * 1`, `x // 1`, and a bitwise or with `0` (syntax) | | |
@@ -492,7 +513,7 @@ The tables below are the seed catalogue. Each row is one clippy lint and fills e
 | `single_element_loop` | `for x in [item]:` (syntax) | | |
 | `too_many_arguments` | more parameters than the threshold, 7 by default (syntax; parameter `threshold`) | | |
 | `type_complexity` | a type expression nested past the threshold, such as `Dict[str, list[Result[Option[int], E]]]` (syntax; parameter `threshold`) | | |
-| `unnecessary_cast` | | | no `as`; conversions are the checked `int`, `float`, `str`, and `bool` builtins, covered by `useless_conversion` |
+| `unnecessary_cast` | a `resize()`, `try_resize()`, `wrapping_resize()`, or `saturating_resize()` whose target type is the operand's own type; the builtin conversions `int`, `float`, `str`, and `bool` belong to `useless_conversion` (semantic) | | |
 | `unnecessary_literal_unwrap` | `Some(1).unwrap()` and `Ok(v).unwrap()` (syntax) | | |
 | `unnecessary_unwrap` | `.unwrap()` on a binding the enclosing `is not None` narrowing already unwrapped (semantic) | | |
 | `useless_conversion` | `int(x)` where `x` is already an `int`, `str(s)` on a `str`, `float(f)` on a `float` (semantic) | | |
@@ -505,17 +526,17 @@ The tables below are the seed catalogue. Each row is one clippy lint and fills e
 | clippy lint | translates | translates renamed | does not translate |
 | --- | --- | --- | --- |
 | `box_collection` | | | no `Box` |
-| `cmp_owned` | | | duckborrowing plans conversions; source never spells an owned or borrowed comparison |
+| `cmp_owned` | | | the compiler plans the conversions generated Rust needs for a comparison; source never spells one |
 | `collapsible_str_replace` | | | `replace` takes one pattern; there is no multi-pattern form to collapse into |
 | `expect_fun_call` | | | no `expect` on the surface |
 | `format_in_format_args` | | `nested_fstring`: an f-string placeholder that is itself an f-string (syntax; fmt) | |
-| `iter_overeager_cloned` | | | duckborrowing |
+| `iter_overeager_cloned` | | | the iterator surface has no `cloned` adapter; the compiler decides where generated Rust clones |
 | `large_enum_variant` | | | the source language has no layout model; variant sizes are a backend fact |
 | `manual_retain` | | | a filtering comprehension is the idiom; `retain` is not on the list surface |
 | `map_entry` | | | no entry API; `contains_key` followed by `insert` is the spelling |
 | `regex_creation_in_loops` | a `std.regex` pattern compiled from a literal inside a loop body (syntax) | | |
 | `to_string_in_format_args` | | `str_in_fstring`: `f"{str(x)}"` where `f"{x}"` is meant; both go through the Display protocol (syntax; fmt) | |
-| `unnecessary_to_owned` | | | duckborrowing |
+| `unnecessary_to_owned` | | | no `to_owned` on the surface; the compiler decides how generated Rust owns a value |
 | `useless_vec` | | | `list` is the only sequence type; there is no array or slice to prefer |
 | `vec_init_then_push` | | `list_init_then_append`: `xs = []` followed only by `xs.append(...)` statements, where a list literal is meant (syntax; fmt) | |
 
@@ -523,8 +544,8 @@ The tables below are the seed catalogue. Each row is one clippy lint and fills e
 
 | clippy lint | translates | translates renamed | does not translate |
 | --- | --- | --- | --- |
-| `bool_to_int_with_if` | `1 if c else 0` where `int(c)` is meant (syntax) | | |
-| `cast_possible_truncation` | | | no `as`; `int(x)` is a checked conversion with documented numeric semantics |
+| `bool_to_int_with_if` | `if c: x = 1` with `else: x = 0`, or the same pair of `return` statements, where `int(c)` is meant (syntax) | | |
+| `cast_possible_truncation` | | | `resize()` is accepted only for lossless conversions and `wrapping_resize()` truncates by declaration; `as_conversions` is the rule for the lossy forms |
 | `doc_markdown` | | | docstring rendering conventions are RFC 082's; until it fixes the format there is nothing to check against |
 | `explicit_iter_loop` | `for x in xs.iter():` where `for x in xs:` is meant (syntax) | | |
 | `float_cmp` | `==` or `!=` between floats (semantic) | | |
@@ -538,20 +559,20 @@ The tables below are the seed catalogue. Each row is one clippy lint and fills e
 | `match_bool` | `match flag:` with `true =>` and `false =>` arms, where `if` is meant (syntax) | | |
 | `match_same_arms` | arms with identical bodies (syntax) | | |
 | `match_wildcard_for_single_variants` | a `_` arm that covers exactly one remaining variant (semantic) | | |
-| `missing_errors_doc` | | `missing_errors_docstring`: a `pub def` returning `Result` whose docstring has no errors section; the section convention follows RFC 082 (syntax) | |
+| `missing_errors_doc` | | `missing_errors_docstring`: a `pub def` returning `Result` whose docstring has no errors section; the recognized docstring sections are `Args`, `Parameters`, `Returns`, `Fields`, `Aliases`, and `Decorators`, so this entry needs an errors-section convention from RFC 082 before it ships, as `unsorted_imports` needs its ordering ruling (syntax) | |
 | `needless_continue` | `continue` as the last statement of a loop body, or an `if ... continue` that an `else` avoids (syntax) | | |
 | `needless_for_each` | `.for_each(f)` where a `for` loop reads better (syntax) | | |
-| `needless_pass_by_value` | | | duckborrowing: parameters are values in source, and the planner decides the Rust shape |
+| `needless_pass_by_value` | | | parameters are values in source, and the compiler decides the Rust shape |
 | `option_option` | `Option[Option[T]]` in a signature (syntax) | | |
-| `range_minus_one` | `a..=(b - 1)` where `a..b` is meant (syntax; fmt) | | |
-| `range_plus_one` | `a..(b + 1)` where `a..=b` is meant (syntax; fmt) | | |
+| `range_minus_one` | `range(a..=(b - 1))` where `range(a..b)` is meant (syntax; fmt) | | |
+| `range_plus_one` | `range(a..(b + 1))` where `range(a..=b)` is meant (syntax; fmt) | | |
 | `redundant_else` | an `else` after a branch that always returns, breaks, or continues (syntax; fmt) | | |
 | `semicolon_if_nothing_returned` | | | no semicolons |
 | `similar_names` | bindings in one scope that differ by one character (syntax) | | |
 | `struct_excessive_bools` | | `model_excessive_bools`: more `bool` fields on a `model` or `class` than the threshold (syntax; parameter `max`) | |
 | `struct_field_names` | | `model_field_names`: fields that repeat the type's name as prefix or suffix (syntax) | |
 | `too_many_lines` | a function body longer than the threshold (syntax; parameter `threshold`) | | |
-| `trivially_copy_pass_by_ref` | | | duckborrowing |
+| `trivially_copy_pass_by_ref` | | | no by-reference parameter spelling |
 | `unicode_not_nfc` | a string literal not in NFC (syntax) | | |
 | `uninlined_format_args` | | | f-strings inline their arguments by construction |
 | `unnecessary_wraps` | a non-`pub` function that only ever returns `Ok(...)` (semantic) | | |
@@ -559,7 +580,7 @@ The tables below are the seed catalogue. Each row is one clippy lint and fills e
 | `unused_async` | `async def` with no `await` (syntax) | | |
 | `unused_self` | a method that never reads `self`, where `@staticmethod` or a free function is meant (semantic) | | |
 | `used_underscore_binding` | reading a binding named with a leading underscore (semantic) | | |
-| `wildcard_imports` | `from module import *`; the parser already refuses it for user modules and a stdlib prelude is exempt as in clippy, so the rule reports only under `warn_on_all_wildcard_imports` (syntax; parameter) | | |
+| `wildcard_imports` | | | the parser refuses every `from module import *`; there is no wildcard import to report |
 
 #### Restriction (default `allow`)
 
@@ -567,7 +588,7 @@ The tables below are the seed catalogue. Each row is one clippy lint and fills e
 | --- | --- | --- | --- |
 | `allow_attributes_without_reason` | | `allow_without_reason`: `@allow("...")` with no `reason` (syntax) | |
 | `arbitrary_source_item_ordering` | declarations out of a configured order (syntax; parameter `order`) | | |
-| `as_conversions` | | | no `as` |
+| `as_conversions` | `wrapping_resize()` and `saturating_resize()`, the lossy integer resizes (syntax) | | |
 | `dbg_macro` | | | no `dbg`; `print_stdout` covers debug output |
 | `else_if_without_else` | an `if`/`elif` chain with no final `else` (syntax) | | |
 | `expect_used` | | | no `expect`; `unwrap_used` is the rule |
@@ -581,18 +602,21 @@ The tables below are the seed catalogue. Each row is one clippy lint and fills e
 | `missing_docs_in_private_items` | | `missing_docstrings`: a declaration without a docstring; `pub` declarations follow RFC 082's checked-documentation conventions (syntax; parameter `scope`) | |
 | `modulo_arithmetic` | `%` where an operand may be negative; Incan's `%` takes the sign of the divisor, which differs from Rust's (semantic) | | |
 | `non_ascii_literal` | non-ASCII characters in string literals (syntax) | | |
-| `panic`, `todo`, `unimplemented`, `unreachable` | | `ellipsis_body`: a function or method whose body is only `...` (syntax) | |
-| `pattern_type_mismatch` | | | duckborrowing |
+| `panic` | | | no `panic` call on the surface; `assert` and `raise` are the failure forms |
+| `pattern_type_mismatch` | | | patterns never mention references |
 | `print_stdout` | any `print` call (syntax) | | |
 | `question_mark_used` | any use of `?` (syntax) | | |
 | `redundant_type_annotations` | `x: int = 1` where the literal already fixes the type (semantic) | | |
 | `renamed_function_params` | a trait method implementation whose parameter names differ from the trait's, which changes keyword call sites (semantic) | | |
 | `single_call_fn` | a function called from exactly one place (semantic); RFC 105's `maintainability.single_use_trivial_helper` is the evidence-backed neighbour and stays a separate entry | | |
 | `string_slice` | | | string indexing and slicing count scalars and cannot split a code point |
-| `tests_outside_test_module` | | | tests are `test_*` functions discovered by `std.testing`; there is no test module |
+| `tests_outside_test_module` | a `test_*` function declared outside a `module tests:` block and outside a test file (syntax) | | |
+| `todo` | | `ellipsis_body`: a function or method whose body is only `...`, which the grammar reads as `pass` (syntax) | |
 | `undocumented_unsafe_blocks` | | | no `unsafe` |
+| `unimplemented` | | `ellipsis_body`, shared with `todo`: the two clippy lints report one Incan construct | |
+| `unreachable` | | | no `unreachable` call on the surface; a `match` the checker proves exhaustive needs none |
 | `unwrap_used` | `.unwrap()` on an `Option` or `Result` (syntax) | | |
-| `wildcard_enum_match_arm` | a `_` arm in a `match` over an enum; the advisory `incan check` emits today (semantic; evaluator `check`) | | |
+| `wildcard_enum_match_arm` | a `_` arm in a `match` over an enum (semantic) | | |
 
 ### Entries without a clippy counterpart
 
@@ -601,16 +625,16 @@ Rules clippy has no notion of: rustc lints that translate, rules for Python-shap
 | Rule | Group | Origin | Facts | Fix | Reports |
 | --- | --- | --- | --- | --- | --- |
 | `fstring_over_concat` | `style` | `incan` | semantic | suggest | a `+` chain whose operands are strings and `str(...)` calls, where one f-string is meant |
-| `comprehension_over_loop` | `style` | `incan` | syntax | suggest | `out = []` followed by a `for` whose body only appends to `out`, where a list comprehension is meant; RFC 105's append-only builder candidate is this entry |
+| `comprehension_over_loop` | `style` | `incan` | syntax | suggest | `out = []` followed by a `for` whose body only appends to `out`, where a list comprehension is meant; RFC 105's `idiom.comprehension_candidate` is this entry |
 | `unnecessary_comprehension` | `style` | `incan` | syntax | suggest | `[x for x in xs]`, where the source list itself, or `xs.clone()` when a copy is meant, is the spelling |
-| `generator_over_list` | `perf` | `incan` | syntax | suggest | a list comprehension consumed once by `sum`, `min`, `max`, `any`, `all`, or a `for`, where a generator expression is meant |
+| `generator_over_list` | `perf` | `incan` | syntax | suggest | a list comprehension consumed once by `sum`, `min`, `max`, a `for`, or the `any` and `all` iterator methods, where a generator expression is meant |
 | `needless_bare_return` | `style` | `incan` | syntax | fmt | a bare `return` as the last statement of a `-> None` body |
 | `redundant_pass` | `style` | `incan` | syntax | fmt | `pass` in a block that has other statements |
 | `while_true` | `style` | `rustc` | syntax | fmt | `while true:` where `loop:` is meant |
 | `unused_mut` | `style` | `rustc` | semantic | suggest | a `mut` binding, or a `mut self` receiver, that is never mutated |
 | `unsorted_imports` | `pedantic` | `incan` | syntax | fmt | import statements out of the canonical order (`std` modules, then dependencies, then local modules, alphabetical within each block); the order needs a style-guide ruling before this entry ships |
-| `unused_variables` | `style` | `rustc` | semantic | suggest | an unused local binding; evaluator `check` |
-| `unused_imports` | `style` | `rustc` | semantic | suggest | an unused import; evaluator `check` |
+| `unused_variables` | `style` | `rustc` | semantic | suggest | an unused local binding; new, evaluator `check` |
+| `unused_imports` | `style` | `rustc` | semantic | suggest | an unused import; new, evaluator `check` |
 | `unreachable_code` | `suspicious` | `rustc` | semantic | suggest | statements after a `return` in the same block; evaluator `check`; keeps `INCAN-T0101` |
 
 ### Formatter entries (the `format` group)
@@ -636,17 +660,17 @@ Formatter invariants apply to the group as a whole and to every `fmt`-fixable en
 
 RFC 105 defines the engine and the finding contract; this RFC defines the rule set and the configuration that engine evaluates. Concretely:
 
-- RFC 105's categories `arch`, `safety`, `idiom`, `maintainability`, `risk`, and `experimental` are groups of this catalogue. Their default levels are RFC 105's to set; `experimental` is never in `all`, and RFC 105's rule that it may not fail CI by default holds because its level is never `deny` by default.
-- An RFC 105 candidate that coincides with a clippy lint takes the clippy name and the clippy group: the compound-assignment candidate is `assign_op_pattern`, the Result-match candidate is `question_mark`, the append-only builder is `comprehension_over_loop`. RFC 105's own names remain for evidence-backed, project-scope rules that a clippy lint does not express: `safety.fail_fast_boundary_call` is not `unwrap_used` (it reasons about reachability from a public boundary), and `maintainability.single_use_trivial_helper` is not `single_call_fn` (it reasons about triviality and domain meaning). Both members of each pair are catalogue entries.
+- RFC 105's categories `arch`, `safety`, `idiom`, `maintainability`, and `risk` are groups of this catalogue. Their default levels are RFC 105's to set, and this RFC does not decide them. RFC 105's `experimental` is a profile, not a category: a rule in that profile keeps its category's group here, the profile is never part of `all`, and RFC 105's rule that experimental findings may not fail CI by default holds because no such rule is `deny` by default.
+- An RFC 105 candidate that coincides with a clippy lint takes the clippy name and the clippy group: `idiom.compound_assignment_candidate` is `assign_op_pattern` and `idiom.comprehension_candidate` is `comprehension_over_loop`. `idiom.result_combinator_candidate` is the `map`, `map_err`, `and_then`, `or_else`, and `inspect` rewrite of an RFC 070 match; it yields the `map` shape to `manual_result_map` and keeps the others, which no single clippy lint expresses. `question_mark` has no RFC 105 counterpart: `?` propagation is not a combinator. RFC 105's own names remain for evidence-backed, project-scope rules that a clippy lint does not express: `safety.fail_fast_boundary_call` is not `unwrap_used` (it reasons about reachability from a public boundary), and `maintainability.single_use_trivial_helper` is not `single_call_fn` (it reasons about triviality and domain meaning). Both members of each pair are catalogue entries.
 - Priority, confidence, evidence, suggestions, and risks are RFC 105's finding fields. Level, group, and fix mode are this RFC's. A finding at `deny` fails the command regardless of its priority; a `P1` finding at `warn` does not.
-- `@allow(...)` answers RFC 105's open suppression question for catalogue entries. Baselines remain RFC 105's.
+- `@allow(...)` answers RFC 105's open suppression question for catalogue entries, and `incan architect --list-rules` is a flag this RFC adds to RFC 105's command surface. Baselines remain RFC 105's.
 
 ### Interaction with existing features
 
 - **async/await**: `unused_async` translates. The lock-holding lints do not, because Incan's `Mutex` and `RwLock` are the async runtime's own locks.
-- **Traits and derives**: the dunder protocol is what makes `derived_hash_with_manual_eq`, `inherent_to_string`, `print_in_format_impl`, `unconditional_recursion`, and `renamed_function_params` translate: `__eq__`, `__str__`, `__hash__`, and `__lt__` are the manual implementations clippy's lints reason about.
-- **Imports and modules**: `wildcard_imports` translates with clippy's prelude exemption; `unsorted_imports` and `unused_imports` are Incan-side. `pub from module import Item` re-exports are ordinary declarations to every rule.
-- **Result, Option, and `?`**: `question_mark`, `manual_map`, `unwrap_used`, `panicking_unwrap`, `unnecessary_unwrap`, and `redundant_pattern_matching` translate on the methods the surface has (`map`, `map_err`, `and_then`, `or_else`, `inspect`, `inspect_err`, `unwrap`, `unwrap_or`) and on `is None` narrowing. Methods the surface lacks (`map_or`, `ok_or`, `expect`, `unwrap_or_default`, `is_ok`) are recorded as untranslatable; when a later RFC adds such a method, the clippy entry moves from "does not translate" to "translates" without a rename.
+- **Traits and derives**: the dunder protocol is what makes `derived_hash_with_manual_eq`, `inherent_to_string_shadow_display`, `recursive_format_impl`, `print_in_format_impl`, `unconditional_recursion`, and `renamed_function_params` translate: `__eq__`, `__str__`, `__hash__`, and `__lt__` are the manual implementations clippy's lints reason about, and every `model`, `class`, `enum`, and `newtype` carries Display.
+- **Imports and modules**: `wildcard_imports` does not translate because the parser refuses the form; `unsorted_imports` and `unused_imports` are Incan-side. `pub from module import Item` re-exports are ordinary declarations to every rule.
+- **Result, Option, and `?`**: `question_mark`, `manual_result_map`, `unwrap_used`, `panicking_unwrap`, `unnecessary_unwrap`, and `redundant_pattern_matching` translate on the methods the surface has (`map`, `map_err`, `and_then`, `or_else`, `inspect`, `inspect_err`, `unwrap`, and `unwrap_or` on `Result`; `copied`, `unwrap_or`, and `unwrap` on `Option`) and on `is None` narrowing. Methods the surface lacks (`Option.map`, `map_or`, `ok_or`, `expect`, `unwrap_or_default`, `is_ok`) are recorded as untranslatable or narrow the entry to `Result`; when a later RFC adds such a method, the clippy entry moves from "does not translate" to "translates" without a rename.
 - **Rust interop**: `rust::` imports and `@rust.*` decorators are the Rust side. `[rust.lints]` and `@rust.allow(...)` own them; `@allow(...)` rejects a Rust lint name and `@rust.allow(...)` rejects an Incan rule name.
 - **Expression vocab blocks**: a brace-form vocab block is opaque to every rule except the `format` group's preservation of its surface. A vocab may register its own catalogue entries under a later RFC.
 - **Conditional compilation**: `semantic`-tier rules evaluate the checked configuration; `syntax`-tier rules and the `format` group see every branch.
@@ -655,15 +679,24 @@ RFC 105 defines the engine and the finding contract; this RFC defines the rule s
 
 - A project with no `[lints.incan]` gets the catalogue defaults. Nothing needs to be written to keep today's behaviour.
 - Formatter output on already-formatted code does not change until an `fmt`-fixable entry lands. Each such entry changes formatter output for code that matches it; each is listed in the release notes and projects see it as a one-time reformat.
-- The four checker advisories keep their text and their positions in output. Their levels become configurable. The wildcard-arm hint follows clippy's `allow` default unless the unresolved question below decides otherwise.
+- `INCAN-T0101` keeps its code, its text, and its position in output; its level becomes configurable. `unused_variables` and `unused_imports` are new checker by-products at `warn`, so a project sees them on upgrade as it would any new rustc lint; `wildcard_enum_match_arm` is new at clippy's `allow` default and reports nothing unless the unresolved question below decides otherwise or a project enables it.
 - `[rust.lints]` and `@rust.allow(...)` are untouched.
 - `incan.toml` is not a manifest after RFC 117; there is no legacy lint configuration to migrate.
+
+## Prior art
+
+- **clippy**: lint groups and default levels, `renamed_and_removed_lints`, `lint_groups_priority`, `blanket_clippy_restriction_lints`, suggestion applicability. The correspondence tables are drawn against clippy's published lint list.
+- **rustc**: the four lint levels, `forbid` being unrelaxable, `allow(..., reason = "...")`, and the `unused` family this catalogue adopts as `rustc`-origin entries.
+- **Cargo's `[lints]` table**: the `"level"` and `{ level, priority }` entry forms and the priority ordering, adopted verbatim so `[lints.incan]` and `[rust.lints]` read the same; its all-or-nothing `workspace = true` inheritance is not adopted, as the design decisions record.
+- **Ruff**: one tool for formatting and lint rules, fix safety classes, rule code plus rule name, per-file configuration in the project manifest, and isort-style import ordering.
+- **Black**: the canonical, non-configurable formatter that this RFC keeps the `format` group faithful to.
+- **The mypy, pylint, Ruff triad**: the analogy behind "three tools, three jobs": types, design advice, and style, respectively `incan check`, `incan architect`, and `incan fmt`.
 
 ## Alternatives considered
 
 ### A separate `incan lint` command
 
-Ruff ships `ruff check` beside `ruff format`. An `incan lint` would be a third analyser beside `incan check` and `incan architect`, consuming the same facts as RFC 105's engine and reporting in a third shape. Rejected: RFC 105's engine already exists for exactly this evaluation, and `incan fmt` already runs in every CI pipeline, so the fixable subset reaches users through a command they run today.
+Ruff ships `ruff check` beside `ruff format`. An `incan lint` would be a third analyser beside `incan check` and `incan architect`, consuming the same facts as RFC 105's engine and reporting in a third shape. Rejected: the engine is already specified by RFC 105 for exactly this evaluation, and `incan fmt` already runs in every CI pipeline, so the fixable subset reaches users through a command they run today.
 
 ### Rule codes as the primary identity
 
@@ -693,20 +726,11 @@ The formatter could typecheck before formatting and then fix `comparison_to_empt
 
 `fmt_blank_lines = "allow"` would let a project keep three blank lines. Rejected: RFC 053 and the style guide are non-configurable by design, and a formatter whose output depends on a level table is no longer a canonical formatter.
 
-## Prior art
-
-- **clippy**: lint groups and default levels, `renamed_and_removed_lints`, `lint_groups_priority`, `blanket_clippy_restriction_lints`, suggestion applicability. The correspondence tables are drawn against clippy's published lint list.
-- **rustc**: the four lint levels, `forbid` being unrelaxable, `allow(..., reason = "...")`, and the `unused` family this catalogue adopts as `rustc`-origin entries.
-- **Cargo's `[lints]` table**: the `"level"` and `{ level, priority }` entry forms and the priority ordering, adopted verbatim so `[lints.incan]` and `[rust.lints]` read the same.
-- **Ruff**: one tool for formatting and lint rules, fix safety classes, rule code plus rule name, per-file configuration in the project manifest, and isort-style import ordering.
-- **Black**: the canonical, non-configurable formatter that this RFC keeps the `format` group faithful to.
-- **The mypy, pylint, Ruff triad**: the analogy behind "three tools, three jobs": types, design advice, and style, respectively `incan check`, `incan architect`, and `incan fmt`.
-
 ## Drawbacks
 
 - The catalogue drifts from clippy unless someone reconciles it: clippy renames, deprecates, and regroups lints between releases. The pinned reconciliation baseline and the conformance check make drift visible, not impossible.
 - Two identities per rule (name and code) cost documentation and a lookup table, in exchange for names people know and codes that never move.
-- `incan check` reads `[lints.incan]` for four entries, which couples the checker to the manifest for the first time.
+- `incan check` reads `[lints.incan]` for its three `check`-evaluated entries. The checker already reads `loaf.toml` for compilation, so this adds a table to a dependency that exists, not a new dependency.
 - Every `fmt`-fixable entry added later changes formatter output, and a project that pins nothing sees a reformat on upgrade.
 - `syntax`-tier heuristics can over-report where types would have said otherwise; the fact tier is declared per entry so the trade is explicit, and the `semantic` tier is available when the heuristic is not good enough.
 - The seed catalogue is large. The size is the point, since a partial correspondence table would leave a Rust developer guessing, but it is a review burden.
@@ -717,18 +741,17 @@ This section is non-normative. It describes a recommended shape, not a task list
 
 - **The catalogue is a registry.** Like the language's other registries that generate reference tables, the catalogue is a compiler-owned table of entries (name, code, group, default level, origin, clippy counterpart, fact tier, evaluator, fix mode, parameters, description, example) from which the docs-site reference page and `incan explain` are generated. A conformance test compares every `clippy` and `clippy-renamed` entry with the pinned clippy lint list.
 - **One rule implementation per entry, one engine.** `syntax`-tier rules are functions over the trivia-aware syntax tree; `semantic`-tier rules are functions over RFC 105's typed fact views. `incan architect` runs both tiers; `incan fmt` runs the `syntax` tier for entries with fix mode `fmt` and applies their rewrites. The formatter holds no rule logic of its own beyond the `format` group.
-- **Relationship to #159.** Rules are defined against the trivia-aware tree that #159 introduces, so comment and docstring trivia are inputs to a rule rather than repair work after it. The current AST-based formatter can host the `format` group and those `fmt`-fixable entries whose rewrite does not depend on trivia (`needless_else`, `double_parens`, `useless_fstring`, `nested_fstring`, `list_init_then_append`, `range_plus_one`, `range_minus_one`, `unreadable_literal`, `inconsistent_digit_grouping`, `while_true`, `redundant_pass`, `needless_bare_return`); entries that move comments (`redundant_else`, `if_not_else`, `empty_line_after_decorator`, `unsorted_imports`) wait for #159.
-- **Phasing.** A first phase lands the registry, `[lints.incan]` and `[workspace.lints.incan]` parsing with the refusals, `@allow(...)`, `incan explain` for `INCAN-L` codes, and the four checker advisories as catalogue entries. A second phase lands the `correctness`, `suspicious`, and `style` entries in the engine's `syntax` tier, `incan fmt --check` output by rule, and the first `fmt`-fixable entries. A third phase lands `complexity`, `perf`, `pedantic`, and `restriction`, the `semantic` tier, parameters, workspace precedence, and editor surfacing. Reconciliation against clippy becomes a maintenance rule, run when the toolchain's pinned Rust release changes.
+- **Relationship to #159.** Rules are defined against the trivia-aware tree that #159 introduces, so comment and docstring trivia are inputs to a rule rather than repair work after it. The `fmt`-fixable set is the twenty entries the tables mark `(syntax; fmt)` or list with fix mode `fmt`: sixteen from the clippy tables and four without a clippy counterpart. The current AST-based formatter can host the `format` group and the sixteen fixable entries whose rewrite does not move a comment (`needless_bool`, `needless_bool_assign`, `needless_else`, `double_parens`, `precedence`, `useless_fstring` for the placeholder-free form, `nested_fstring`, `str_in_fstring`, `list_init_then_append`, `range_plus_one`, `range_minus_one`, `unreadable_literal`, `inconsistent_digit_grouping`, `while_true`, `redundant_pass`, `needless_bare_return`); the four that move comments or reorder declarations (`redundant_else`, `if_not_else`, `empty_line_after_decorator`, `unsorted_imports`) wait for #159.
 
 ## Layers affected
 
-- **Parser / AST**: `@allow(...)` as a compiler-owned decorator on the declarations listed above and in the module-decorator position; no grammar change. The trivia-aware tree is #159's, and every `syntax`-tier rule is defined against it.
-- **Typechecker**: no new checks. The four advisories it emits become catalogue entries with levels read from the manifest. `@allow(...)` validation (unknown name, `forbid` conflict, Rust lint name, `fmt_*` name) is reported as an ordinary diagnostic.
+- **Parser / AST**: `@allow(...)` as a compiler-owned decorator on the declarations listed above and in the module-decorator position; no grammar change. `allow` becomes a reserved, compiler-owned decorator name that a user-defined decorator may not take. The trivia-aware tree is #159's, and every `syntax`-tier rule is defined against it.
+- **Typechecker**: `unreachable_code` keeps its emitter and reads its level from the manifest; `unused_variables` and `unused_imports` are two new by-products of name resolution, emitted through the same channel. `@allow(...)` validation (unknown name, `forbid` conflict, Rust lint name, `fmt_*` name) is reported as an ordinary diagnostic.
 - **Lowering / emission**: unaffected.
 - **Stdlib / runtime**: unaffected.
 - **Manifest / Oven (RFC 117)**: `[lints.incan]` and `[workspace.lints.incan]` parsing, precedence, and the refusals; the manifest ownership map gains a `[lints.incan]` line owned by this RFC.
-- **CLI / tooling**: `incan architect` resolves levels from the manifest and carries the five catalogue fields in its findings; `incan fmt --check` reports by rule and gains `--format json`; `incan explain` resolves `INCAN-L` codes; `incan architect --list-rules` lists the catalogue with effective levels.
-- **LSP / formatter**: the formatter hosts the `format` group and the `fmt`-fixable entries; the language server surfaces catalogue findings through the engine, which is an unresolved question below.
+- **CLI / tooling**: `incan architect` resolves levels from the manifest and carries the five catalogue fields in its findings; `incan fmt --check` reports by rule and gains `--format json`; `incan explain` resolves `INCAN-L` codes; `incan architect --list-rules` is a new flag on RFC 105's surface and lists the catalogue with effective levels.
+- **LSP / formatter**: the formatter hosts the `format` group and the `fmt`-fixable entries, and for the fixable entries it now resolves the manifest, workspace, and `@allow(...)` chain that the engine resolves, which it never needed before; the language server surfaces catalogue findings through the engine, which is an unresolved question below.
 - **Documentation**: a generated catalogue reference page; the formatting how-to and the style guide gain their rule names; the CLI reference documents `[lints.incan]`, `@allow(...)`, the `--check` output, and the exit codes.
 
 ## Inspectability and tooling surface
@@ -744,24 +767,30 @@ This section is non-normative. It describes a recommended shape, not a task list
 This RFC is done when:
 
 - the catalogue registry holds every entry in the tables above with name, code, group, default level, origin, fact tier, evaluator, fix mode, and parameters, and a conformance test checks every `clippy` and `clippy-renamed` entry against the pinned clippy lint list;
-- `[lints.incan]` and `[workspace.lints.incan]` parse with every refusal listed above, and precedence is covered by tests for each layer, for `forbid` stickiness, and for the same-priority conflict;
-- `@allow(...)` is accepted on the listed declarations and in the module-decorator position, rejected elsewhere, and diagnosed under `forbid`, for a Rust lint name, and for an `fmt_*` name;
-- `incan architect --format json` findings carry rule, code, group, effective level, and level source, and checker advisories appear once;
-- `incan fmt --check` reports by rule name and fails on the `format` group and every `fmt`-fixable entry at a level other than `allow`; `incan fmt` applies them, and the idempotency property test covers each fixable entry;
+- `[lints.incan]` and `[workspace.lints.incan]` parse with every refusal listed above, and precedence is covered by tests for each layer, for the member floor, for `forbid` stickiness, and for the same-priority conflict;
+- `@allow(...)` is accepted on the listed declarations and in the module-decorator position, rejected elsewhere, and diagnosed under `forbid`, for `all`, for a Rust lint name, and for an `fmt_*` name;
+- `incan architect --format json` findings carry rule, code, group, effective level, and level source, and the checker's entries appear once;
+- `incan fmt --check` reports by rule name, fails on the `format` group and every `fmt`-fixable entry at a level other than `allow`, and emits the schema-2-shaped report under `--format json`; `incan fmt` applies them, and the idempotency property test covers each fixable entry;
 - `incan explain` resolves every `INCAN-L` code, and `incan architect --list-rules` prints the effective table;
 - the generated catalogue reference page exists, and the formatting how-to, the style guide, and the CLI reference name the rules and the table.
 
+## Design Decisions
+
+- **Formatter rules are not configurable.** `fmt_line_length`, `fmt_indentation`, `fmt_quote_style`, and `fmt_trailing_comma` take no project values, even though the library formatter can accept them. RFC 053 places any formatter configurability in a separate RFC and the style guide is non-configurable by design; a `format` group whose output depends on a level table is no longer a canonical formatter.
+- **Reconciliation follows the toolchain's Rust release.** The catalogue pins the clippy lint list that ships with the Rust release the toolchain pins, and reconciliation runs when that release changes, as #1698 does for `[rust.lints]`. There is no separate schedule: a clippy release the toolchain does not build with is not one users meet.
+- **Members raise, they do not lower.** A member `[lints.incan]` may raise a level the workspace set and may not lower it, with `forbid` unrelaxable by any layer below the one that set it. This is RFC 117's "narrow but not replace" applied to lint policy, and it diverges from Cargo's all-or-nothing `[lints] workspace = true`, which cannot merge a member table with the workspace's.
+- **`@allow("all")` is rejected.** A group name is accepted on a declaration; `all` is not, because allowing every default-on rule for a declaration is a blanket, and blankets belong in the manifest.
+- **RFC 105's group defaults are RFC 105's.** The default levels of `arch`, `safety`, `idiom`, `maintainability`, and `risk` are decided in RFC 105, whose default profile is open there. This RFC gives those groups a place in the level table and nothing more.
+
 ## Unresolved questions
 
-- Which entries are `fmt`-fixable and which stay `suggest`? This draft marks the type-independent rewrites (`needless_bool`, `needless_bool_assign`, `needless_else`, `double_parens`, `precedence`, `useless_fstring` for the placeholder-free form, `nested_fstring`, `str_in_fstring`, `list_init_then_append`, `if_not_else`, `redundant_else`, `range_plus_one`, `range_minus_one`, `unreadable_literal`, `inconsistent_digit_grouping`, `empty_line_after_decorator`, `needless_bare_return`, `redundant_pass`, `while_true`, `unsorted_imports`) and leaves everything type-dependent as a suggestion. The marker is the entry's fix mode; confirm the set or move entries across.
+Three of these gate the move to Planned: the table spelling, the fixable set, and the `wildcard_enum_match_arm` default. The others carry this draft's answer and become design decisions at that move unless review overturns them.
+
+- **Gates Planned.** `[lints.incan]` beside `[rust.lints]` names the same kind of table with two roots. Settle one spelling for both: `[lints.incan]` with `[lints.rust]`, or `[incan.lints]` with `[rust.lints]`.
+- **Gates Planned.** Which entries are `fmt`-fixable and which stay `suggest`? This draft marks twenty type-independent rewrites, the entries the tables mark `(syntax; fmt)` or list with fix mode `fmt`: `needless_bool`, `needless_bool_assign`, `needless_else`, `double_parens`, `precedence`, `useless_fstring` for the placeholder-free form, `nested_fstring`, `str_in_fstring`, `list_init_then_append`, `if_not_else`, `redundant_else`, `range_plus_one`, `range_minus_one`, `unreadable_literal`, `inconsistent_digit_grouping`, `empty_line_after_decorator`, `needless_bare_return`, `redundant_pass`, `while_true`, and `unsorted_imports`. Everything type-dependent stays a suggestion. One of the twenty needs a ruling before it can ship as a fix: `unsorted_imports` waits for the style guide to fix the canonical import order. The marker is the entry's fix mode; confirm the set or move entries across.
+- **Gates Planned.** Should Incan diverge from clippy's `allow` default for `wildcard_enum_match_arm` and report a wildcard arm on an enum by default, or follow clippy? This draft follows clippy.
 - One invocation or two: should `incan fmt` also print the `syntax`-tier findings it does not fix, or is `incan architect` the only reporting surface? This draft says `incan fmt` reports only what it fixes.
-- `[lints.incan]` beside `[rust.lints]` names the same kind of table with two roots. Settle one spelling for both: `[lints.incan]` with `[lints.rust]`, or `[incan.lints]` with `[rust.lints]`.
-- Should the wildcard-arm advisory keep firing by default, diverging from clippy's `allow` for `wildcard_enum_match_arm`, or follow clippy?
-- Statement-scope suppression: is a trailing `# allow: rule` directive wanted, or is declaration scope enough?
-- Should `fmt_line_length`, `fmt_indentation`, `fmt_quote_style`, and `fmt_trailing_comma` accept project values, as the library formatter already can, or does the style guide stay non-configurable?
-- Default levels for RFC 105's groups: RFC 105 leaves its default profile open. Are they decided there, or here once the catalogue lands?
-- Editor surfacing: should `incan check` run the `syntax` tier so style findings reach the editor through the existing diagnostics channel, or does the language server call the engine?
-- `unsorted_imports` needs a style-guide ruling on canonical import order before it can be `fmt`-fixable.
-- Reconciliation cadence: which clippy release the catalogue pins, and whether reconciliation follows the toolchain's pinned Rust release or a fixed schedule.
+- Statement-scope suppression: is a trailing `# allow: rule` directive wanted, or is declaration scope enough? This draft stops at declaration scope.
+- Editor surfacing: should `incan check` run the `syntax` tier so style findings reach the editor through the existing diagnostics channel, or does the language server call the engine? This draft says the language server calls the engine.
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
