@@ -12,6 +12,7 @@ use incan_driver::backend::shadow::{
 };
 use incan_driver::shadow_support::compare_source_observable;
 use incan_lang::lang::types::numerics::NumericTypeId;
+use incan_lang::numeric_strings::float_to_string;
 
 #[path = "support/shadow_capability.rs"]
 mod shadow_capability;
@@ -191,7 +192,7 @@ fn every_admitted_scalar_conversion_pair_matches_the_native_route() -> Result<()
     let expected = SourceObservable::Completed {
         result: TypedFunctionResult {
             kind: FunctionResultKind::Str,
-            value: "42 true false text 3.14 1 0 1000 3 10 3.14 1000.5".to_string(),
+            value: "42 true false text 3.14 1 0 1000 3 10.0 3.14 1000.5".to_string(),
         },
     };
     assert_eq!(legacy.observation.observable, expected);
@@ -219,7 +220,7 @@ fn ordinary_float_literal_display_matches_the_native_route() -> Result<(), Box<d
     let expected = SourceObservable::Completed {
         result: TypedFunctionResult {
             kind: FunctionResultKind::Str,
-            value: "1000.5 125".to_string(),
+            value: "1000.5 125.0".to_string(),
         },
     };
     assert_eq!(legacy.observation.observable, expected);
@@ -334,13 +335,15 @@ fn typed_integer_transport_and_cast_edges_match_the_native_route() -> Result<(),
     let expected = SourceObservable::Completed {
         result: TypedFunctionResult {
             kind: FunctionResultKind::Str,
+            // The two `float(...)` results are ordinary floats, so both routes spell them the way Python does
+            // (#1372): in exponent form here, since neither magnitude fits positional notation.
             value: format!(
                 "{} {} {} {} {}",
                 i128::MIN,
                 i128::MIN as i64,
                 u128::MAX as i64,
-                i128::MIN as f64,
-                u128::MAX as f64
+                float_to_string(i128::MIN as f64),
+                float_to_string(u128::MAX as f64)
             ),
         },
     };

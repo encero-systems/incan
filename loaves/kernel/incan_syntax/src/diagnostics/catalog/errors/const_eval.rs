@@ -23,6 +23,22 @@ pub fn const_dependency_cycle(cycle: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Const dependency cycle detected: {}", cycle), span)
 }
 
+/// Report a `const` annotated with a mutable container type (`list`, `dict`, `set`) at the annotation itself.
+///
+/// A const is deeply immutable and is represented by the frozen wrapper (`FrozenList[T]`, `FrozenDict[K, V]`,
+/// `FrozenSet[T]`; RFC 030), which does not read where the mutable container is expected. Accepting the written
+/// annotation would silently retype the binding and surface the contradiction only at its first use site, in a
+/// diagnostic naming a type the author never wrote (#1488). `written` is the annotation as the source spells it and
+/// `frozen` the representation the const actually has; `span` is the annotation's own span.
+pub fn const_mutable_collection_annotation(name: &str, written: &str, frozen: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("const '{name}' is annotated '{written}', but a const is deeply immutable and is represented as '{frozen}'"),
+        span,
+    )
+    .with_note("A frozen collection does not read where the mutable container is expected, so the written annotation could not be honoured at any use site")
+    .with_hint(format!("Annotate the const as '{frozen}', or omit the annotation to infer it"))
+}
+
 pub fn const_non_const_name(name: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Non-const name '{}' is not allowed in a const initializer", name),

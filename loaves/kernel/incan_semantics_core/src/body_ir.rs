@@ -1643,9 +1643,10 @@ impl MatchArm {
 /// or RFC 021 field-alias resolution for named struct-pattern fields (`resolve_field_alias`, private to that backend's
 /// own lowering pass, with no Body IR v0 equivalent). Both are backend-owned refinements layered on top of the same
 /// closed vocabulary below, not part of the vocabulary itself, and out of scope for this bucket; a pattern that
-/// would need either still lowers structurally through the plain (non-narrowed) mapping, at the cost of the
-/// resulting field types sometimes falling back to [`IncanType::Unknown`] where the existing backend's richer
-/// resolution would have found something more precise.
+/// would need either still lowers structurally through the plain (non-narrowed) mapping. The *types* its bindings
+/// carry are not part of that gap: every [`PatternBinding`]'s local is typed from the typechecker's recorded
+/// per-pattern-node type (#1245), so a destructured payload's local carries its declared type and an ownership fact
+/// that follows from it, whichever pattern shape delivered it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Pattern {
     /// `_`: matches anything, binds nothing.

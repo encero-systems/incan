@@ -348,32 +348,62 @@ fn issue_1592_std_io_is_invariant_to_collection_comment() -> TestResult {
     let workspace = tempfile::tempdir()?;
     let checkout_stdlib = support::repo_root().join("loaves/stdlib");
     let baseline_root = workspace.path().join("baseline-stdlib");
-    let shifted_root = workspace.path().join("shifted-stdlib");
     copy_stdlib_tree(&checkout_stdlib, &baseline_root)?;
-    copy_stdlib_tree(&checkout_stdlib, &shifted_root)?;
-
-    let collection_path = shifted_root.join("core/src/derives/collection.incn");
-    let collection = fs::read_to_string(&collection_path)?;
-    let shifted = collection.replacen(
-        "\npub trait FallibleIterator[T, E]:",
-        "\n# Issue 1592 inert source-location shift.\npub trait FallibleIterator[T, E]:",
-        1,
-    );
-    if shifted == collection {
-        return Err(err_box("#1592 fixture could not find FallibleIterator insertion point"));
-    }
-    fs::write(collection_path, shifted)?;
-
     let baseline_output = workspace.path().join("baseline.rs");
-    let shifted_output = workspace.path().join("shifted.rs");
     generate_std_io_from_root(&baseline_root, &baseline_output)?;
-    generate_std_io_from_root(&shifted_root, &shifted_output)?;
-
     let baseline = fs::read_to_string(baseline_output)?;
-    let shifted = fs::read_to_string(shifted_output)?;
-    assert_eq!(
-        baseline, shifted,
-        "an inert collection.incn comment changed generated std.io Rust"
+
+    // Two inert edits, each moving every `FallibleIterator` default method by a few bytes: a comment line ahead of
+    // the trait, and the issue's own reproduction, a trailing comment on the `raise_value_error` import line.
+    let shifts: [(&str, &str, &str); 2] = [
+        (
+            "comment-before-trait",
+            "\npub trait FallibleIterator[T, E]:",
+            "\n# Issue 1592 inert source-location shift.\npub trait FallibleIterator[T, E]:",
+        ),
+        (
+            "comment-on-import-line",
+            "import raise_value_error\n",
+            "import raise_value_error  # x\n",
+        ),
+    ];
+    // Every shift is generated and compared before any verdict, so a failure names each edit that moved the output
+    // rather than only the first one tried.
+    let mut changed = Vec::new();
+    for (label, needle, replacement) in shifts {
+        let shifted_root = workspace.path().join(format!("{label}-stdlib"));
+        copy_stdlib_tree(&checkout_stdlib, &shifted_root)?;
+        let collection_path = shifted_root.join("core/src/derives/collection.incn");
+        let collection = fs::read_to_string(&collection_path)?;
+        let shifted = collection.replacen(needle, replacement, 1);
+        if shifted == collection {
+            return Err(err_box(format!(
+                "#1592 fixture `{label}` could not find its insertion point"
+            )));
+        }
+        fs::write(collection_path, shifted)?;
+
+        let shifted_output = workspace.path().join(format!("{label}.rs"));
+        generate_std_io_from_root(&shifted_root, &shifted_output)?;
+        let shifted = fs::read_to_string(shifted_output)?;
+        if shifted != baseline {
+            let mut differing_lines: Vec<String> = baseline
+                .lines()
+                .zip(shifted.lines())
+                .filter(|(before, after)| before != after)
+                .map(|(before, after)| format!("-{before}\n+{after}"))
+                .collect();
+            let (baseline_lines, shifted_lines) = (baseline.lines().count(), shifted.lines().count());
+            if baseline_lines != shifted_lines {
+                differing_lines.push(format!("line count {baseline_lines} -> {shifted_lines}"));
+            }
+            changed.push(format!("{label}:\n{}", differing_lines.join("\n")));
+        }
+    }
+    assert!(
+        changed.is_empty(),
+        "inert collection.incn edits changed generated std.io Rust:\n{}",
+        changed.join("\n")
     );
     Ok(())
 }

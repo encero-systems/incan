@@ -98,6 +98,8 @@ Incan supports two const “families” because Rust’s `const` rules are stric
 
 Important detail: in `const` context, Incan treats `str`/`bytes` and common containers as **frozen** to preserve deep immutability. In other words, `const` is not “just a `let` that runs earlier”.
 
+How that shows up in annotations differs by family. A `str` or `bytes` annotation is accepted as written: the const carries `FrozenStr`/`FrozenBytes`, and those read anywhere `str`/`bytes` is expected, so the annotation holds at every use site. A mutable container annotation (`list[T]`, `dict[K, V]`, `set[T]`) is **rejected at the declaration**, because the `FrozenList[T]`/`FrozenDict[K, V]`/`FrozenSet[T]` the const actually has is a different type wherever the mutable container is expected — accepting the annotation would only move the mismatch to the first call that passes the const along. Write the frozen type, or omit the annotation and let it be inferred.
+
 !!! info "Coming from Rust?"
     This is similar to Rust’s split between “things that can be `const`” and “things that need `'static` backing data and a safe API”.
 
@@ -134,6 +136,7 @@ const LIMIT: int = BASE * 2
 - If the initializer is not const-evaluable (calls, comprehensions, ranges, f-strings, non-const variables).
 - If a const dependency cycle exists (consts reference each other in a loop).
 - If types do not match (explicit type annotation incompatible with the initializer).
+- If a `const` is annotated with a mutable container type (`list[T]`, `dict[K, V]`, `set[T]`); the diagnostic points at the annotation and names the frozen type to write instead.
 
 ## See also
 

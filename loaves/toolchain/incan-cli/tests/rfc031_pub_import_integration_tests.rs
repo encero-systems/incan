@@ -7056,7 +7056,7 @@ def reject_mismatched_owner(left: list[f32], right: list[f32]) -> f32:
 
         let generated_main_rs = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
         assert!(
-            !generated_main_rs.contains("__incan_vocab_helper_filterkit_filter"),
+            !generated_main_rs.contains("__incan_vocab_helper_"),
             "expected generated Rust to avoid hidden helper aliases, got:\n{generated_main_rs}"
         );
         assert!(
@@ -7112,7 +7112,7 @@ def main() -> None:
         assert!(
             normalized.contains("helperkit::aggregate_as(helperkit::lit(5),\"total\".to_string()")
                 || normalized.contains(
-                    "__incan_vocab_helper_helperkit_aggregate_as(__incan_vocab_helper_helperkit_lit(5),\"total\".to_string()"
+                    "__incan_vocab_helper_9_helperkit_aggregate_as(__incan_vocab_helper_9_helperkit_lit(5),\"total\".to_string()"
                 ),
             "expected nested helper calls to keep independent call planning, got:\n{generated_main_rs}"
         );
@@ -7157,11 +7157,11 @@ def main() -> None:
 
         assert!(
             generated_main_rs.contains("querykit::count(")
-                || generated_main_rs.contains("__incan_vocab_helper_querykit_count("),
+                || generated_main_rs.contains("__incan_vocab_helper_8_querykit_count("),
             "expected omitted count() argument to be filled from the helper's default expression, got:\n{generated_main_rs}"
         );
         assert!(
-            !generated_main_rs.contains("__incan_vocab_helper_querykit_count()"),
+            !generated_main_rs.contains("__incan_vocab_helper_8_querykit_count()"),
             "helper default planning must not emit a zero-argument Rust count call, got:\n{generated_main_rs}"
         );
         assert!(
@@ -7217,12 +7217,12 @@ def main() -> None:
         );
         assert!(
             generated_main_rs.contains("querykit::count(")
-                || generated_main_rs.contains("__incan_vocab_helper_querykit_count("),
+                || generated_main_rs.contains("__incan_vocab_helper_8_querykit_count("),
             "expected omitted count() argument to be filled from the helper's default expression, got:\n{generated_main_rs}"
         );
         assert!(
             !generated_main_rs.contains("querykit::count()")
-                && !generated_main_rs.contains("__incan_vocab_helper_querykit_count()"),
+                && !generated_main_rs.contains("__incan_vocab_helper_8_querykit_count()"),
             "ordinary pub helper default planning must not emit a zero-argument Rust count call, got:\n{generated_main_rs}"
         );
         assert!(

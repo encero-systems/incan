@@ -146,7 +146,11 @@ def main() -> str:
     let module = lower_typed_body_ir(source)?;
     let execution = execute_free_function(&module, "main", &[])?;
 
-    assert_eq!(execution.value, ReplacementValue::Str("1000 1 1000.5 10 3".to_string()));
+    // `float(10)` spells itself as `10.0`: a `float` stays visibly a float in display positions (#1372).
+    assert_eq!(
+        execution.value,
+        ReplacementValue::Str("1000 1 1000.5 10.0 3".to_string())
+    );
     assert!(execution.emitted_output().is_empty());
     Ok(())
 }
@@ -228,7 +232,7 @@ def main() -> str:
     let execution = execute_free_function(&module, "main", &[])?;
     assert_eq!(
         execution.value,
-        ReplacementValue::Str("1000.5 125 1000.5 12500000000".to_string())
+        ReplacementValue::Str("1000.5 125.0 1000.5 12500000000.0".to_string())
     );
     Ok(())
 }
@@ -473,7 +477,7 @@ def float(value: int) -> float:
 def main() -> str:
   return str(float(42))
 "#,
-            ReplacementValue::Str("99".to_string()),
+            ReplacementValue::Str("99.0".to_string()),
         ),
     ] {
         let module = lower_typed_body_ir(source)?;
@@ -734,9 +738,10 @@ fn replacement_cli_executes_unchanged_type_conversions_with_receipt() -> Result<
         .output()?;
 
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    // `float(10)` prints `10.0`: an ordinary `float` spells itself the way Python does (#1372).
     assert_eq!(
         output.stdout,
-        b"String '42' -> int 42\nInt 123 -> string '123'\nString '3.14' -> float 3.14\nInt 10 -> float 10\n10 + 20 = 30\n"
+        b"String '42' -> int 42\nInt 123 -> string '123'\nString '3.14' -> float 3.14\nInt 10 -> float 10.0\n10 + 20 = 30\n"
     );
     assert!(
         output.stderr.is_empty(),
@@ -780,7 +785,7 @@ fn replacement_cli_executes_unchanged_type_conversions_with_receipt() -> Result<
             "String '42' -> int 42",
             "Int 123 -> string '123'",
             "String '3.14' -> float 3.14",
-            "Int 10 -> float 10",
+            "Int 10 -> float 10.0",
             "10 + 20 = 30"
         ])
     );

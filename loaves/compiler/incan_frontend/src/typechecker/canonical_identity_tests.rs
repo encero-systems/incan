@@ -12,7 +12,7 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolNa
 use super::{CompileError, TypeChecker};
 use crate::ast::{Declaration, Program, Span};
 use crate::provider::ProviderPlan;
-use crate::symbols::{SymbolKind, TypeInfo};
+use crate::symbols::{ResolvedType, SymbolKind, TypeInfo};
 use crate::{lexer, parser};
 use std::sync::Arc;
 
@@ -3034,6 +3034,199 @@ def is_ready(signal: Signal) -> bool:
             .resolved_identity(nth_span(source, "Signal.Ready", 1)?),
         Some(&identity),
         "the qualified variant pattern must retain the same canonical variant at its exact label span"
+    );
+    Ok(())
+}
+
+/// A module-qualified type annotation (`errors.TomlError`) resolves to the declaration a direct import of the same
+/// name binds, and records that proof for lowering (#1437).
+///
+/// The two spellings must agree in both facts a consumer reads: the resolved type of the annotated signature, so a
+/// value checked against one spelling is compatible with the other, and the canonical identity at the reference
+/// site, so nothing downstream has to re-resolve the dotted spelling. The recorded fact carries the module path the
+/// spelling walked, which is what places the type in generated code without an import binding for its bare name.
+#[test]
+fn a_module_qualified_type_annotation_resolves_like_the_direct_import_issue1437() -> Result<(), String> {
+    let errors = parse(
+        "pub model TomlError:\n  pub message: str\n",
+        "qualified type annotation provider",
+    )?;
+    let qualified_source = "import errors\n\npub def result() -> Result[None, errors.TomlError]:\n  return Ok(None)\n";
+    let direct_source =
+        "from errors import TomlError\n\npub def result() -> Result[None, TomlError]:\n  return Ok(None)\n";
+
+    let mut qualified = TypeChecker::new();
+    qualified.set_current_module_path(Some(vec!["consumer".to_string()]));
+    qualified
+        .check_with_imports(
+            &parse(qualified_source, "qualified type annotation consumer")?,
+            &[("errors", &errors)],
+        )
+        .map_err(|errors| format!("the qualified annotation should typecheck: {errors:?}"))?;
+    let mut direct = TypeChecker::new();
+    direct.set_current_module_path(Some(vec!["consumer".to_string()]));
+    direct
+        .check_with_imports(&parse(direct_source, "direct import consumer")?, &[("errors", &errors)])
+        .map_err(|errors| format!("the direct import control should typecheck: {errors:?}"))?;
+
+    let return_type = |checker: &TypeChecker, context: &str| {
+        checker
+            .type_info()
+            .declarations
+            .function_bindings
+            .get("result")
+            .map(|binding| binding.return_type.clone())
+            .ok_or_else(|| format!("{context}: `result` must record a checked signature"))
+    };
+    assert_eq!(
+        return_type(&qualified, "qualified")?,
+        return_type(&direct, "direct")?,
+        "both spellings must resolve the signature to the same checked type"
+    );
+
+    let reference = qualified
+        .type_info()
+        .qualified_type_reference("errors.TomlError")
+        .ok_or("the checker must record the proof under the dotted spelling")?;
+    let imported = direct
+        .type_info()
+        .resolved_import_identity("TomlError")
+        .ok_or("the direct import must prove an identity")?;
+    assert_eq!(&reference.identity, imported, "both spellings select one declaration");
+    assert_eq!(reference.identity.kind, SemanticSourceTargetKind::Model);
+    assert_eq!(
+        reference.identity.origin,
+        SymbolOrigin::Module(vec!["errors".to_string()])
+    );
+    assert_eq!(reference.module_path, vec!["errors".to_string()]);
+    assert_eq!(
+        identity_at(
+            &qualified,
+            nth_span(qualified_source, "errors.TomlError", 0)?,
+            "qualified annotation reference"
+        )?,
+        *imported,
+        "the reference site carries the same identity"
+    );
+    Ok(())
+}
+
+/// A dotted type spelling the checker cannot prove is refused at the annotation instead of resolving to `Unknown`.
+///
+/// Before #1437 such a spelling passed the checker silently and reached Rust emission as a dotted identifier, which
+/// panicked. Each unsupported shape names what was wrong: a module that declares no such type, a module member that
+/// is a function rather than a type, and a root that is not a module at all. The module is named by the path the
+/// root is bound to, so an aliased import (`import errors as e`) is reported and hinted as `errors`, the spelling an
+/// author can actually import from.
+#[test]
+fn a_module_qualified_spelling_that_names_no_type_is_refused_issue1437() -> Result<(), String> {
+    let errors = parse(
+        "pub model TomlError:\n  pub message: str\n\npub def make() -> TomlError:\n  return TomlError(message=\"x\")\n",
+        "refused qualified type provider",
+    )?;
+    let cases = [
+        (
+            "import errors\n\ndef result() -> Result[None, errors.Missing]:\n  return Ok(None)\n",
+            "`errors.Missing` is not a type: module `errors` declares no type or trait named `Missing`",
+            Some("`from errors import Missing`"),
+        ),
+        (
+            "import errors as e\n\ndef result() -> Result[None, e.Missing]:\n  return Ok(None)\n",
+            "`e.Missing` is not a type: module `errors` declares no type or trait named `Missing`",
+            Some("`from errors import Missing`"),
+        ),
+        (
+            "import errors\n\ndef result() -> errors.make:\n  return errors.make()\n",
+            "`errors.make` is not a type: module `errors` declares no type or trait named `make`",
+            None,
+        ),
+        (
+            "model Config:\n  value: int\n\ndef result() -> Config.Value:\n  return 1\n",
+            "`Config.Value` is not a type: `Config` is not a module binding",
+            None,
+        ),
+    ];
+    for (source, expected, hint) in cases {
+        let program = parse(source, "refused qualified type consumer")?;
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["consumer".to_string()]));
+        let diagnostics = match checker.check_with_imports(&program, &[("errors", &errors)]) {
+            Ok(()) => return Err(format!("the annotation must be refused:\n{source}")),
+            Err(diagnostics) => diagnostics,
+        };
+        let refusals = diagnostics
+            .iter()
+            .filter(|error| error.message == expected)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            refusals.len(),
+            1,
+            "expected the refusal `{expected}` exactly once per annotation, got {diagnostics:?}"
+        );
+        if let Some(hint) = hint {
+            assert!(
+                refusals[0].hints.iter().any(|candidate| candidate.contains(hint)),
+                "the hint must import from the bound module: {refusals:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// A module-qualified spelling of a source type alias denotes the alias target, as the direct import does (#1437).
+///
+/// `from errors import Id` registers the alias so expansion replaces `Id` with `int`; the qualified spelling has no
+/// local registration, so the recorded fact carries the target itself. Without that, `errors.Id` stayed a nominal
+/// `Id` and a value of type `int` was refused against it.
+#[test]
+fn a_module_qualified_type_alias_denotes_its_target_issue1437() -> Result<(), String> {
+    let errors = parse("pub type Id = int\n", "qualified alias provider")?;
+    let source = "import errors\n\ndef ident(value: errors.Id) -> int:\n  return value\n\ndef call() -> int:\n  return ident(1)\n";
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["consumer".to_string()]));
+    checker
+        .check_with_imports(&parse(source, "qualified alias consumer")?, &[("errors", &errors)])
+        .map_err(|errors| format!("the qualified alias must check like the direct import: {errors:?}"))?;
+    let reference = checker
+        .type_info()
+        .qualified_type_reference("errors.Id")
+        .ok_or("the checker must record the proof under the dotted spelling")?;
+    assert_eq!(reference.identity.kind, SemanticSourceTargetKind::TypeAlias);
+    assert_eq!(
+        reference.resolved,
+        ResolvedType::Int,
+        "the fact carries the alias target"
+    );
+    Ok(())
+}
+
+/// The C interop namespace is the one dotted root that is not a module, and its vocabulary spellings stay accepted
+/// in ordinary annotations after #1437 refuses unprovable qualified types.
+///
+/// `from std.interop import c` binds `c` to the namespace's marker type, not to a module, and `c.i32` or
+/// `c.ConstPtr[c.u8]` names a carrier the checked-binding facet interprets rather than a module member. A safe
+/// facade over a binding writes those spellings in its own signature, so the refusal must not reach them; before
+/// the qualified-type resolution they passed the checker, and they still must.
+#[test]
+fn c_vocabulary_spellings_in_ordinary_annotations_stay_accepted_issue1437() -> Result<(), String> {
+    let source = concat!(
+        "from std.interop import c\n",
+        "\n",
+        "def carrier(value: c.i32) -> c.i32:\n",
+        "  return value\n",
+        "\n",
+        "def view(pointer: c.ConstPtr[c.u8]) -> None:\n",
+        "  pass\n",
+    );
+    let program = parse(source, "C vocabulary facade")?;
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["consumer".to_string()]));
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("the C vocabulary annotations must keep checking: {errors:?}"))?;
+    assert!(
+        checker.type_info().qualified_type_reference("c.i32").is_none(),
+        "a vocabulary carrier is not a module member and records no qualified type proof"
     );
     Ok(())
 }

@@ -268,7 +268,7 @@ pub fn describe_wide_match(value: __IncanUnion43fbd19e99c1db05) -> String {
             return n.to_string();
         }
         __IncanUnion43fbd19e99c1db05::V2(f) => {
-            return f.to_string();
+            return incan_std_core::strings::float_to_string(f);
         }
         __IncanUnion43fbd19e99c1db05::V0(s) => {
             return incan_std_core::strings::str_upper(&s);

@@ -313,7 +313,15 @@ impl TypeChecker {
     }
 
     /// Type-check a pattern against an expected type, defining bindings in the current scope.
+    ///
+    /// Every pattern node's checked type is recorded at its own span before it is dispatched on, the way a `for`
+    /// pattern's item type is (#1125). Lowering has no way to rebuild a payload type on its own -- a user enum's
+    /// variant payloads, an imported or Rust-backed enum's, a model field's declared type, or the borrow wrapper
+    /// [`borrowed_pattern_payload`] applies -- so this recorded fact is what lets a destructured binding carry its
+    /// declared type rather than an unresolved one (#1245). The record is unconditional: a node checked against
+    /// [`ResolvedType::Unknown`] records that honestly, and a consumer treats it as "no fact" rather than as a type.
     pub(in crate::typechecker) fn check_pattern(&mut self, pattern: &Spanned<Pattern>, expected_ty: &ResolvedType) {
+        self.record_expr_type(pattern.span, expected_ty.clone());
         match &pattern.node {
             Pattern::Wildcard => {}
             Pattern::Binding(name) => {

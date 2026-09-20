@@ -912,6 +912,16 @@ pub struct DeclarationArtifacts {
     /// written path, so the proven identity is recorded here and is simply absent when resolution did not prove one.
     /// A re-export resolves to the identity of the module that *declares* the member, never to the facade.
     pub resolved_import_identities: HashMap<String, CanonicalSymbolId>,
+    /// Module-qualified type annotations the checker resolved, keyed by their dotted source spelling.
+    ///
+    /// `mod.Type` in type position reaches a declaration through a module binding rather than through a local type
+    /// name, so no import binding carries it and lowering has no local symbol to consult (#1437). The spelling is a
+    /// module-scope fact: its root is a module binding and its tail names a member of that module, so one spelling
+    /// resolves to one declaration wherever it appears in the module. The checker resolves it once through the
+    /// module member registry and records the proven identity here; lowering reads it to place the nominal type at
+    /// its declaring module and must never rebuild that placement from the written segments. An absent entry means
+    /// the checker did not prove a type and reported that at the annotation.
+    pub qualified_type_references: HashMap<String, QualifiedTypeReferenceInfo>,
     /// RFC 120 identities of this module's own top-level declarations, keyed by declaration span.
     ///
     /// Exported from the symbol table's minting after checking as a compatibility view for span-keyed declaration
@@ -1523,6 +1533,24 @@ pub enum IdentKind {
     Trait,
 }
 
+/// One module-qualified type annotation (`mod.Type`) resolved to the declaration it names.
+///
+/// Each part serves a different consumer. The identity is the RFC 120 proof of which declaration was selected, for
+/// reference-site facts. The module path is the checked path the spelling walked -- the module binding's resolved
+/// path plus any nested segments -- which is where lowering places the nominal reference, since this module holds no
+/// import binding for the bare type name; it is the same path a call through the binding is emitted against. The
+/// resolved type is what a direct import of the same declaration would have bound, so a value checked against the
+/// qualified spelling is compatible with one checked against the imported name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QualifiedTypeReferenceInfo {
+    /// Canonical identity of the declaration the qualified spelling names.
+    pub identity: CanonicalSymbolId,
+    /// Checked module path the spelling reached the declaration through (`["std", "toml"]`, `["pub", "widgets"]`).
+    pub module_path: Vec<String>,
+    /// The nominal type the annotation denotes, exactly as a direct import of the declaration resolves it.
+    pub resolved: ResolvedType,
+}
+
 /// Compiler-proven source declaration target for codegraph call/reference records.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceTargetInfo {
@@ -2021,6 +2049,14 @@ impl TypeCheckInfo {
     /// [`DeclarationArtifacts::resolved_import_identities`].
     pub fn resolved_import_identity(&self, local_name: &str) -> Option<&CanonicalSymbolId> {
         self.declarations.resolved_import_identities.get(local_name)
+    }
+
+    /// Return the declaration a module-qualified type annotation resolved to, keyed by its dotted spelling.
+    ///
+    /// Absent means the checker did not prove a type for that spelling and reported it at the annotation; lowering
+    /// must not fall back to the written segments: see [`DeclarationArtifacts::qualified_type_references`].
+    pub fn qualified_type_reference(&self, spelling: &str) -> Option<&QualifiedTypeReferenceInfo> {
+        self.declarations.qualified_type_references.get(spelling)
     }
 
     /// Return a compiler-proven source target for the expression at `span`, if one was recorded.

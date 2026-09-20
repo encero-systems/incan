@@ -29,5 +29,5 @@ fn main() {
         }),
     );
     let result = mixed_ops(2, 3.5);
-    let _ = println!("{}", result);
+    let _ = println!("{}", incan_std_core::strings::float_to_string(result));
 }

@@ -1,0 +1,20 @@
+"""Issue #1372: a `float` in a display position renders through the runtime's Python-shaped spelling."""
+
+# An integral value keeps its decimal point (`100.0`, not `100`). Debug interpolation and the exact `f64` carrier
+# keep Rust's own formatting.
+model Reading:
+    value: float
+
+
+def describe(reading: Reading, exact: f64) -> str:
+    total: float = 100.0
+    quarter = total / 4.0
+    interpolated = f"total={total} quarter={quarter} field={reading.value} debug={total:?} exact={exact}"
+    converted = str(total) + " " + str(reading.value)
+    println(total, quarter)
+    println(str(quarter))
+    return interpolated + " " + converted
+
+
+def main() -> None:
+    println(describe(Reading(value=2.0), 3.0))
