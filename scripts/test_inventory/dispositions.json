@@ -473,7 +473,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "Two tests die with the Cargo command line (arg ordering, `INCAN_CARGO_ARGS`); two are open: the `INCAN_LOCKED/FROZEN/OFFLINE` env defaults, the `--no-locked/--no-offline/--no-frozen` negations and frozen ⇒ locked+offline feed the Oven lock policy (`loaves/compiler/incan_driver/src/lock/resolution.rs` reads `CargoPolicy.locked || .frozen` for the strict `oven.lock` check; probed: `INCAN_LOCKED=1 incan build` with no lock → exit 1 `oven.lock is missing`, `--no-locked` → exit 0), which is not a Cargo field.",
+      "notes": "Two tests die with the Cargo command line (arg ordering, `INCAN_CARGO_ARGS`); the `INCAN_LOCKED/FROZEN/OFFLINE` env defaults, the `--no-locked/--no-offline/--no-frozen` negations and frozen ⇒ locked+offline survive as Oven lock-policy inputs (maintainer ruling, 2026-09-20) and are twinned by re-point CLI tests.",
       "tests": {
         "cargo_command_flags_order_policy_features_then_extra_args": {
           "twin": "dies",
@@ -484,12 +484,12 @@
           "dies": "`INCAN_CARGO_ARGS` ordering against CLI extra args on the Cargo command line; dies with #654."
         },
         "cargo_policy_resolves_env_defaults_and_frozen_implication": {
-          "twin": "",
-          "notes": "OPEN (maintainer): do the `INCAN_LOCKED/FROZEN/OFFLINE` env defaults and the frozen ⇒ locked+offline implication survive as oven.lock policy inputs? If yes, the twin is a re-point CLI test (env set + missing/stale lock → refusal); not fixture-expressible (env + flags). If no, dies."
+          "twin": "loaves/toolchain/incan-cli/tests/cli_workspace_and_lock_tests.rs::build_lock_policy_env_defaults_refuse_a_missing_lock",
+          "notes": "`INCAN_LOCKED=1` and `INCAN_FROZEN=1` (frozen ⇒ locked) refuse a project without `oven.lock` and create none; the `INCAN_CARGO_ARGS` half dies with the Cargo command line."
         },
         "cargo_policy_cli_disable_flags_override_env_defaults": {
-          "twin": "",
-          "notes": "OPEN (maintainer): do the `--no-locked/--no-offline/--no-frozen` negations of the env defaults survive as oven.lock policy inputs? Same twin shape as the sibling row."
+          "twin": "loaves/toolchain/incan-cli/tests/cli_workspace_and_lock_tests.rs::build_no_flags_override_lock_policy_env_defaults",
+          "notes": "`--no-locked` / `--no-frozen` negate the environment defaults on the command line."
         }
       }
     },
@@ -682,8 +682,8 @@
       "notes": "generated-project cache across builds; dies with the generated-project route.",
       "tests": {
         "explicitly_baked_project_reuses_release_json_authority_without_cargo": {
-          "twin": "",
-          "notes": "OPEN. Beyond the Cargo-boundary assertions (dies) this test pins four surviving observables: (i) `reused sealed project Loaf` on `build --locked` after a bake — carried by `rfc031_pub_import_integration_tests.rs` (re-point); (ii) edit-after-bake: no replay, the stderr warning `the sealed project output … no longer matches this source tree`, and the build still succeeds — asserted nowhere else; maintainer: does the warning survive? If yes, twin = a re-point CLI test (bake → edit → build), not a fixture shape; (iii) `--locked` after a manifest edit → `oven.lock is out of date` — carried by `cli_workspace_and_lock_tests.rs`, `cli_interop_target_tests.rs`; (iv) `incan test tests --fail-on-empty` on a baked project using `std.json` (#1056) — carried by no other test."
+          "twin": "dies",
+          "dies": "the `sealed project output … no longer matches this source tree` warning after an edit dies (maintainer ruling, 2026-09-20: a stale bake is re-baked transparently, no explicit rebake — the DX requirement is recorded on #1142, slice 8, with its re-point CLI test). The other observables are carried: `reused sealed project Loaf` on `build --locked` after a bake by `rfc031_pub_import_integration_tests.rs`; `oven.lock is out of date` after a manifest edit by `cli_workspace_and_lock_tests.rs` and `cli_interop_target_tests.rs`; `incan test tests --fail-on-empty` on a baked `std.json` project (#1056) by no other test — folded into the #1142 requirement as well."
         }
       }
     },
@@ -3463,19 +3463,19 @@
           "disposition": "retire",
           "twin": "dies",
           "notes": "maps a rustc failure of the generated build back to source",
-          "dies": "classifies a rustc `error[E0308]` line in the generated Cargo build's stderr back to the `@rust.extern` item; there is no rustc stderr to classify once nothing is generated (#654)."
+          "dies": "classifies a rustc `error[E0308]` line in the generated Cargo build's stderr back to the `@rust.extern` item; there is no rustc stderr to classify once nothing is generated (#654). The helpers under test are `#[allow(dead_code)]` with no production caller; the tests pin nothing reachable today."
         },
         "classify_unresolved_backing_item_for_rust_extern_context": {
           "disposition": "retire",
           "twin": "dies",
           "notes": "maps a rustc failure of the generated build back to source",
-          "dies": "classifies a rustc `error[E0425]` line in the generated Cargo build's stderr as an unresolved `@rust.extern` backing item; there is no rustc stderr to classify once nothing is generated (#654)."
+          "dies": "classifies a rustc `error[E0425]` line in the generated Cargo build's stderr as an unresolved `@rust.extern` backing item; there is no rustc stderr to classify once nothing is generated (#654). The helpers under test are `#[allow(dead_code)]` with no production caller; the tests pin nothing reachable today."
         },
         "wraps_rust_extern_failure_back_to_incan_declaration_span": {
           "disposition": "retire",
           "twin": "dies",
           "notes": "maps a rustc failure of the generated build back to source",
-          "dies": "renders a rustc `error[E0425]` of the generated build as a diagnostic at the `@rust.extern` declaration span; the rustc failure it wraps dies with the generated build (#654)."
+          "dies": "renders a rustc `error[E0425]` of the generated build as a diagnostic at the `@rust.extern` declaration span; the rustc failure it wraps dies with the generated build (#654). The helpers under test are `#[allow(dead_code)]` with no production caller; the tests pin nothing reachable today."
         }
       }
     },
@@ -3555,13 +3555,13 @@
           "disposition": "retire",
           "twin": "dies",
           "notes": "libtest harness of the generated test crate",
-          "dies": "merges `[dependencies]` and `[dev-dependencies]` into the generated test-runner crate's Cargo dependency set (`promoted_oven_test_dependencies`); the generated crate dies with #654."
+          "dies": "merges `[dependencies]` and `[dev-dependencies]` into the generated test-runner crate's Cargo dependency set (`promoted_oven_test_dependencies`); the generated crate dies with #654. Its user-visible half — a test file using a `[rust-dev-dependencies]` crate through `incan test` — is untwinned: no CLI test uses `rust-dev-dependencies`; it goes with #1337's interop spec (slice 7)."
         },
         "merge_test_runner_dependencies_unifies_normal_and_dev_features": {
           "disposition": "retire",
           "twin": "dies",
           "notes": "libtest harness of the generated test crate",
-          "dies": "unions Cargo feature lists and refuses a version conflict inside the generated test-runner crate's Cargo dependency set; the generated crate dies with #654."
+          "dies": "unions Cargo feature lists and refuses a version conflict inside the generated test-runner crate's Cargo dependency set; the generated crate dies with #654. Its user-visible half — a normal/dev version conflict surfacing as an `incan test` failure naming the crate — is untwinned and goes with #1337's interop spec (slice 7)."
         },
         "parse_libtest_outcomes_detects_ok_and_failed": {
           "disposition": "retire",
@@ -3573,7 +3573,7 @@
           "disposition": "retire",
           "twin": "dies",
           "notes": "libtest harness of the generated test crate",
-          "dies": "strips the generated runner crate's name from libtest's qualified test names in the transcript; the crate and its transcript die with #654."
+          "dies": "strips the generated runner crate's name from libtest's qualified test names in the transcript; the crate and its transcript die with #654. The `.incn::fn` identity in the report is carried by `e2e_generated_harness_success_reports_the_incan_test_identity_issue996` (re-point)."
         },
         "successful_native_batch_preserves_a_passing_harness_result_issue996": {
           "disposition": "retire",
@@ -3585,7 +3585,7 @@
           "disposition": "retire",
           "twin": "dies",
           "notes": "libtest harness of the generated test crate",
-          "dies": "extracts assertion payloads from the `thread '...' panicked at` lines of the generated test crate's transcript; the transcript dies with #654. The assertion message reaching the `incan test` report (`AssertionError: custom boom`) is the re-point `integration_tests.rs::e2e_failure_skip_and_assert_reporting_share_one_project`."
+          "dies": "extracts assertion payloads from the `thread '...' panicked at` lines of the generated test crate's transcript; the transcript dies with #654. The assertion message reaching the `incan test` report (`AssertionError: custom boom`) is the re-point `integration_tests.rs::e2e_failure_skip_and_assert_reporting_share_one_project`. Teardown payload lines are carried by `e2e_fixture_teardown_failure_scenarios_share_one_project` (re-point)."
         },
         "runner_crate_name_is_derived_from_batch_suffix": {
           "disposition": "retire",
@@ -3597,7 +3597,7 @@
           "disposition": "retire",
           "twin": "dies",
           "notes": "libtest harness of the generated test crate",
-          "dies": "names the native test binary of one generated execution group so two groups of the same file do not overwrite each other's receipt-verified output; the generated crate and its outputs die with #654."
+          "dies": "names the native test binary of one generated execution group so two groups of the same file do not overwrite each other's receipt-verified output; the generated crate and its outputs die with #654. Report correctness across normal and xfail groups of one file is carried by `e2e_markers_parametrize_timeout_and_collection_errors_share_projects` (re-point)."
         },
         "batch_suffix_is_path_independent_but_content_sensitive": {
           "disposition": "retire",
@@ -3609,7 +3609,7 @@
           "disposition": "retire",
           "twin": "dies",
           "notes": "libtest harness of the generated test crate",
-          "dies": "asserts the injected `mod __incan_file_tests` text with one `fn incan_harness_<i>_<name>` per case and the `set_current_dir` guard; generated Rust text, dies with #654."
+          "dies": "asserts the injected `mod __incan_file_tests` text with one `fn incan_harness_<i>_<name>` per case and the `set_current_dir` guard; generated Rust text, dies with #654. The cwd guard is carried by `e2e_test_runner_preserves_fixture_cwd_for_file_and_batch_runs` (re-point)."
         },
         "inject_file_test_harness_wraps_async_tests_and_fixtures": {
           "disposition": "retire",
@@ -3749,7 +3749,7 @@
         "test_facade_reexport_preserves_declared_source_import_alias_target_issue57": {
           "disposition": "retire",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/facade_reexport_alias_target",
-          "notes": "twinned by the #57 program run to completion: the facade's `col`, `count` and `count_expr` resolve through the modules that imported their same-named builders under an alias. The retired test only asserted that `--emit-rust` succeeded."
+          "notes": "twinned by the InQL #57 program run to completion: the facade's `col`, `count` and `count_expr` resolve through the modules that imported their same-named builders under an alias. The retired test only asserted that `--emit-rust` succeeded."
         }
       }
     },
@@ -4089,10 +4089,9 @@
           "dies": "IrCodegen text of `examples/hello.incn` (`fn main()`, `println!`, the message). The test returns early because that path no longer exists (the example is `examples/simple/hello.incn`), so it proves nothing today; the example itself is a case of the re-point `examples` fixture root, run by `make examples`."
         },
         "test_imported_static_initializer_does_not_deadlock_issue680": {
-          "disposition": "retire",
-          "twin": "dies",
-          "notes": "runs the #680 program and asserts `ok` and no deadlock, then reads generated module text; the run assertion stays, the generated-text assertion drops in slice 7.",
-          "dies": "generated-text half (the `__incan_init_module_statics` guard chain in `direct_user.rs` and `facade.rs`); the run assertion in the same test (`incan run` prints `ok` within 30s with the static shared through the facade) is re-point and survives."
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "Builds and runs (prints `ok` within 30 s with a static reached directly and through a facade, #680) and also reads the generated Rust; the run assertion stays, the generated-text assertion drops in slice 7. Re-point, not retire: the run half has no other coverage."
         },
         "test_invalid_fixtures": {
           "disposition": "keep",
