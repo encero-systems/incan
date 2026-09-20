@@ -1,0 +1,9 @@
+[project]
+name = "dependency_helper_defaults_and_unions"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+querykit = { path = "deps/querykit" }

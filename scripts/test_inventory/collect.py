@@ -18,6 +18,8 @@ Modes:
   does not resolve, a behaviour fixture and the row it retires disagree, a `dies` row has no reason, a recorded
   split flag disagrees with the measured test region, the `files` or `fixture_roots` record is not sorted by key,
   or the rendered page is stale;
+- `--sort`: rewrite the dispositions file with `fixture_roots`, `files` and every nested `tests` map sorted by key,
+  in the file's own layout (idempotent), so a lane that appended rows sorts before committing;
 - `--dispositions <path>`: read another dispositions file, for scratch probes that must not edit the tracked record.
 
 A `retire` row leaves the corpus one of two ways. Its `twin` names what proves the behaviour after the cutover: a
@@ -1063,6 +1065,25 @@ def dies_failures(path: str, key: str, entry: dict) -> list[str]:
     return failures
 
 
+def sorted_dispositions(dispositions: dict) -> dict:
+    """The record with `fixture_roots`, `files` and every file's nested `tests` map sorted by key; every other value
+    is kept as it is, so writing the result back in the file's layout changes nothing but row order."""
+    sorted_record = dict(dispositions)
+    for section in SORTED_SECTIONS:
+        sorted_record[section] = dict(sorted(dispositions.get(section, {}).items()))
+    sorted_record["files"] = {
+        path: ({**entry, "tests": dict(sorted(entry["tests"].items()))} if "tests" in entry else entry)
+        for path, entry in sorted_record["files"].items()
+    }
+    return sorted_record
+
+
+def write_dispositions(dispositions: dict, path: Path) -> None:
+    """Write the record in the layout the tracked file uses (two-space indent, unescaped non-ASCII, one trailing
+    newline), so a rewrite that changes nothing produces no diff."""
+    path.write_text(json.dumps(dispositions, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def unsorted_section_failure(dispositions: dict, section: str) -> str | None:
     """The gate line for a top-level map whose keys are not in sorted order, naming the first pair out of order."""
     keys = list(dispositions.get(section, {}))
@@ -1219,6 +1240,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--propose", action="store_true", help="write proposals.json with mechanical dispositions")
     parser.add_argument("--json", action="store_true", help="print the scanned corpus as JSON instead of a summary")
     parser.add_argument(
+        "--sort",
+        action="store_true",
+        help="rewrite the dispositions file with fixture_roots, files and every nested tests map sorted by key",
+    )
+    parser.add_argument(
         "--dispositions",
         type=Path,
         default=DISPOSITIONS_PATH,
@@ -1259,6 +1285,13 @@ def main(argv: list[str] | None = None) -> int:
     """Entry point."""
     args = parse_args(sys.argv[1:] if argv is None else argv)
     dispositions = load_dispositions(args.dispositions)
+
+    if args.sort:
+        write_dispositions(sorted_dispositions(dispositions), args.dispositions)
+        shown = args.dispositions.relative_to(ROOT) if args.dispositions.is_relative_to(ROOT) else args.dispositions
+        print(f"sorted {shown}")
+        return 0
+
     corpus = collect(dispositions)
 
     if args.json:
