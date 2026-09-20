@@ -22,6 +22,12 @@ fn behavior_snapshots_enums_and_matching_fixtures_hold() -> Result<(), Box<dyn s
     assert_area_green("snapshots_enums_and_matching")
 }
 
+/// Run the functions, calls, decorators, aliases, partials and RFC 120 projection fixtures.
+#[test]
+fn behavior_snapshots_functions_and_projections_fixtures_hold() -> Result<(), Box<dyn std::error::Error>> {
+    assert_area_green("snapshots_functions_and_projections")
+}
+
 /// Run the lists, dicts, sets, comprehensions, iterators, strings and builtins fixtures.
 #[test]
 fn behavior_snapshots_collections_and_strings_fixtures_hold() -> Result<(), Box<dyn std::error::Error>> {

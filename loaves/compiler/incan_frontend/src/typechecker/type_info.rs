@@ -920,6 +920,16 @@ pub struct DeclarationArtifacts {
     /// written path, so the proven identity is recorded here and is simply absent when resolution did not prove one.
     /// A re-export resolves to the identity of the module that *declares* the member, never to the facade.
     pub resolved_import_identities: HashMap<String, CanonicalSymbolId>,
+    /// The name the declaring module binds each resolved source import under, keyed by the local import name.
+    ///
+    /// Recorded beside [`Self::resolved_import_identities`] for imports that resolved through the source module
+    /// graph. A facade may re-export a declaration under a new name, and the written item name then says nothing
+    /// about how the declaring module spells it; the identity's `declaration_name` does not answer either, because an
+    /// `alias` declaration binds one identity under a second name of its own. Lowering spells a projected import
+    /// (function, partial, static) by this name so a re-export rename lowers exactly like a direct import of the
+    /// declaration, and an `alias` declaration keeps its own spelling (#1710). Absent for an import that resolved
+    /// through a compiled provider's manifest, whose public names carry no such fact.
+    pub resolved_import_declared_names: HashMap<String, String>,
     /// Module-qualified type annotations the checker resolved, keyed by their dotted source spelling.
     ///
     /// `mod.Type` in type position reaches a declaration through a module binding rather than through a local type
@@ -2068,6 +2078,17 @@ impl TypeCheckInfo {
     /// [`DeclarationArtifacts::resolved_import_identities`].
     pub fn resolved_import_identity(&self, local_name: &str) -> Option<&CanonicalSymbolId> {
         self.declarations.resolved_import_identities.get(local_name)
+    }
+
+    /// Return the name the declaring module binds an imported source symbol under, if resolution recorded it.
+    ///
+    /// Absent for imports the source module graph did not resolve (compiled providers): see
+    /// [`DeclarationArtifacts::resolved_import_declared_names`].
+    pub fn resolved_import_declared_name(&self, local_name: &str) -> Option<&str> {
+        self.declarations
+            .resolved_import_declared_names
+            .get(local_name)
+            .map(String::as_str)
     }
 
     /// Return the declaration a module-qualified type annotation resolved to, keyed by its dotted spelling.

@@ -224,6 +224,32 @@ impl MemberBindingKind {
     }
 }
 
+/// One imported dependency member as import resolution proved it: the declaration it binds and the name the
+/// declaring module binds that declaration under.
+///
+/// `declared_name` is the written item name for a direct import and the last re-export hop's target name for a facade
+/// chain. It differs from `identity.declaration_name` exactly when the declaring module binds one declaration under
+/// a second name (`pub scale_alias = alias scale`); a facade's `… import calculate as facade_calculate` is not that,
+/// so a consumer of `facade_calculate` resolves to `declared_name == "calculate"`. Lowering reads the pair to spell a
+/// projected import the way its declaring module does (#1710).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedDependencyMember {
+    /// Canonical identity of the declaration the import binds.
+    pub identity: CanonicalSymbolId,
+    /// The name the declaring module binds `identity` under.
+    pub declared_name: String,
+}
+
+impl ResolvedDependencyMember {
+    /// Pair an identity with the name the walk looked it up by in the module that answered.
+    fn declared_as(identity: CanonicalSymbolId, declared_name: &str) -> Self {
+        Self {
+            identity,
+            declared_name: declared_name.to_string(),
+        }
+    }
+}
+
 /// Canonical nominal identity for one type exported through a compiled public-library dependency.
 ///
 /// Local aliases and provider-qualified internal signature spellings map to this value. Admitted artifacts compare
@@ -7461,12 +7487,31 @@ impl TypeChecker {
     /// A symbol kind, name, module key, and span are insufficient proof: absent canonical data must stay absent rather
     /// than being reconstructed into a plausible but invented declaration.
     pub fn dependency_member_identity(&self, module: &ImportPath, item_name: &str) -> Option<CanonicalSymbolId> {
+        self.dependency_member_resolution(module, item_name)
+            .map(|member| member.identity)
+    }
+
+    /// Resolve an imported member to its declaring identity and to the name its declaring module binds it under.
+    ///
+    /// The identity half is [`Self::dependency_member_identity`]. The name half is what a facade chain loses: a
+    /// re-export may publish a declaration under a new name (`pub from provider import calculate as
+    /// facade_calculate`), and a consumer of `facade_calculate` binds exactly the projection a direct import of
+    /// `calculate` binds. The written item name therefore says nothing about how the declaring module spells the
+    /// declaration, and lowering must not read a re-export rename as an `alias` declaration, which is a second name
+    /// the declaring module itself binds to one identity. The walk knows the answer at its last hop: the item name it
+    /// stopped at is the declaring module's own spelling, `calculate` for a re-export rename and `scale_alias` for
+    /// `pub scale_alias = alias scale` (#1710).
+    pub fn dependency_member_resolution(
+        &self,
+        module: &ImportPath,
+        item_name: &str,
+    ) -> Option<ResolvedDependencyMember> {
         // Resolve through the consumer's own module graph first. `dependency_source_import_candidates` already
         // orders a granted SDK provider ahead of ordinary candidates for a `std.*` path, so provider precedence is
         // preserved without keying on the spelling here.
         let current_module_path = self.current_module_path.as_deref().unwrap_or_default();
-        if let Some(identity) = self.dependency_member_identity_from(current_module_path, module, item_name, 0) {
-            return Some(identity);
+        if let Some(member) = self.dependency_member_resolution_from(current_module_path, module, item_name, 0) {
+            return Some(member);
         }
 
         // Fall back to the provider registry keyed by the spelled path. A compiled provider is reachable by the path
@@ -7477,20 +7522,22 @@ impl TypeChecker {
         // render` inside `pkg.app` selects the sibling `pkg.helpers`, but a root `helpers` declaring the same member
         // answered instead -- a module the import did not select.
         self.sdk_provider_member_identity(module, item_name)
+            .map(|identity| ResolvedDependencyMember::declared_as(identity, item_name))
     }
 
     /// Resolve one imported member to its declaring identity, using `from_module_path` as the resolution base.
     ///
     /// The base is the *consumer's* module for a direct import and the *facade's* module when following a re-export,
     /// because a facade's own relative import paths resolve against where the facade lives, not where the consumer
-    /// does.
-    fn dependency_member_identity_from(
+    /// does. Every arm that stops the walk answers by a direct lookup of `item_name` in the module it stopped at, so
+    /// that name is the declaring module's spelling the result carries.
+    fn dependency_member_resolution_from(
         &self,
         from_module_path: &[String],
         module: &ImportPath,
         item_name: &str,
         depth: usize,
-    ) -> Option<CanonicalSymbolId> {
+    ) -> Option<ResolvedDependencyMember> {
         if depth >= Self::MAX_REEXPORT_DEPTH {
             return None;
         }
@@ -7515,7 +7562,8 @@ impl TypeChecker {
                     .dependency_direct_member_identities
                     .get(&key)
                     .and_then(|identities| identities.get(item_name))
-                    .cloned();
+                    .cloned()
+                    .map(|identity| ResolvedDependencyMember::declared_as(identity, item_name));
             }
 
             // Otherwise the member arrived here as a re-export. Follow it to the declaration it names, resolving
@@ -7524,8 +7572,11 @@ impl TypeChecker {
             // reaches the same provider registry and source metadata the binding itself came from, in the same order.
             let (target_module, target_name) = self.dependency_member_reexports.get(&key)?.get(item_name)?;
             return self
-                .dependency_member_identity_from(&owner, target_module, target_name, depth + 1)
-                .or_else(|| self.stdlib_reexport_identity(target_module, target_name));
+                .dependency_member_resolution_from(&owner, target_module, target_name, depth + 1)
+                .or_else(|| {
+                    self.stdlib_reexport_identity(target_module, target_name)
+                        .map(|identity| ResolvedDependencyMember::declared_as(identity, target_name))
+                });
         }
         // A chain that ends in a compiler-owned stdlib module has no dependency candidate to stop at; the stdlib
         // cache holds that module's declaration identities. Only a chain reaches here with a stdlib path: a direct
@@ -7533,7 +7584,10 @@ impl TypeChecker {
         if depth > 0 && module.parent_levels == 0 && !module.is_absolute {
             let module_path = canonicalize_source_module_segments(&module.segments);
             if module_path.first().map(String::as_str) == Some(incan_lang::lang::stdlib::STDLIB_ROOT) {
-                return self.stdlib_cache.cached_identity(&module_path, item_name);
+                return self
+                    .stdlib_cache
+                    .cached_identity(&module_path, item_name)
+                    .map(|identity| ResolvedDependencyMember::declared_as(identity, item_name));
             }
         }
         None
