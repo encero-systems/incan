@@ -6868,7 +6868,14 @@ impl TypeChecker {
             .insert(module_name.to_string(), member_projections);
     }
 
-    /// Resolve a re-exported member from either another source dependency or the compiler-owned stdlib metadata.
+    /// Resolve a re-exported member from another source dependency, an active SDK provider, or the compiler-owned
+    /// stdlib source metadata, in that order.
+    ///
+    /// A facade that republishes `std.*` must bind the same declaration a direct `from std.x import f` binds. When an
+    /// active provider owns the module, that is the provider's checked declaration: its identity is what lets lowering
+    /// recover the compiled signature, defaults included. Falling back to the source cache there would hand the
+    /// source tree semantic authority again and leave the re-export identity-less, so it stays reserved for sessions
+    /// no provider serves.
     ///
     /// A facade that writes `from std.serde.json import Serialize` re-exports that trait exactly as it re-exports a
     /// function, so a consumer importing the spelling from the facade must bind the stdlib trait rather than a module
@@ -6887,6 +6894,17 @@ impl TypeChecker {
         if module_path.first().map(String::as_str) != Some(incan_lang::lang::stdlib::STDLIB_ROOT) {
             return None;
         }
+        if let Some(kind) = self.sdk_provider_member_symbol(module, item_name).filter(|kind| {
+            matches!(
+                kind,
+                SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_) | SymbolKind::Trait(_)
+            )
+        }) {
+            return Some(kind);
+        }
+        if self.checked_sdk_provider_owns_module(&module_path) {
+            return None;
+        }
         self.stdlib_cache
             .lookup_function_symbol(&module_path, item_name)
             .or_else(|| {
@@ -6894,6 +6912,55 @@ impl TypeChecker {
                     .lookup_trait(&module_path, item_name)
                     .map(SymbolKind::Trait)
             })
+    }
+
+    /// Return the checked symbol an active SDK provider publishes under one spelled `std.*` member path.
+    ///
+    /// Provider modules are seeded under their public dotted spelling rather than the underscore-joined keys source
+    /// dependencies use, so ordinary candidate resolution never reaches them. This is the one lookup both direct
+    /// imports and facade re-exports share for that registry.
+    fn sdk_provider_member_symbol(&self, module: &ImportPath, item_name: &str) -> Option<SymbolKind> {
+        if module.parent_levels != 0 {
+            return None;
+        }
+        let provider_key = canonicalize_source_module_segments(&module.segments).join(".");
+        self.dependency_direct_member_symbols
+            .get(&provider_key)?
+            .get(item_name)
+            .cloned()
+    }
+
+    /// Return the canonical identity an active SDK provider publishes under one spelled `std.*` member path.
+    ///
+    /// The identity is absent for a provider overload set, whose spelling selects no single declaration, and stays
+    /// absent rather than being reconstructed from the member symbol.
+    fn sdk_provider_member_identity(&self, module: &ImportPath, item_name: &str) -> Option<CanonicalSymbolId> {
+        if module.parent_levels != 0 {
+            return None;
+        }
+        let provider_key = canonicalize_source_module_segments(&module.segments).join(".");
+        if !self
+            .dependency_direct_member_symbols
+            .get(&provider_key)
+            .is_some_and(|members| members.contains_key(item_name))
+        {
+            return None;
+        }
+        self.dependency_direct_member_identities
+            .get(&provider_key)
+            .and_then(|identities| identities.get(item_name))
+            .cloned()
+    }
+
+    /// Return whether a checked, manifest-backed SDK provider owns one canonical `std.*` module path.
+    ///
+    /// Where it does, the stdlib source cache is never consulted for that module. This is the refusal the direct
+    /// import route applies, and the facade hops apply it identically so a re-export cannot hand the source tree the
+    /// semantic authority a direct import denies it, nor bind a symbol whose identity the provider never published.
+    fn checked_sdk_provider_owns_module(&self, module_path: &[String]) -> bool {
+        self.provider_plan
+            .active_sdk_provider_for_module(module_path)
+            .is_some_and(|provider| provider.manifest.is_some())
     }
 
     /// Cache direct declarations owned by one dependency module.
@@ -7334,21 +7401,7 @@ impl TypeChecker {
         // It must stay a fallback. Running it first let the spelling pre-empt resolution: `from helpers import
         // render` inside `pkg.app` selects the sibling `pkg.helpers`, but a root `helpers` declaring the same member
         // answered instead -- a module the import did not select.
-        if module.parent_levels == 0 {
-            let provider_key = canonicalize_source_module_segments(&module.segments).join(".");
-            if self
-                .dependency_direct_member_symbols
-                .get(&provider_key)
-                .is_some_and(|members| members.contains_key(item_name))
-            {
-                return self
-                    .dependency_direct_member_identities
-                    .get(&provider_key)
-                    .and_then(|identities| identities.get(item_name))
-                    .cloned();
-            }
-        }
-        None
+        self.sdk_provider_member_identity(module, item_name)
     }
 
     /// Resolve one imported member to its declaring identity, using `from_module_path` as the resolution base.
@@ -7392,9 +7445,12 @@ impl TypeChecker {
 
             // Otherwise the member arrived here as a re-export. Follow it to the declaration it names, resolving
             // against the facade's own module — the same base `cache_dependency_member_symbols` used when it bound
-            // that link, so the identity names exactly the declaration the binding selected.
+            // that link, so the identity names exactly the declaration the binding selected. A link into `std.*`
+            // reaches the same provider registry and source metadata the binding itself came from, in the same order.
             let (target_module, target_name) = self.dependency_member_reexports.get(&key)?.get(item_name)?;
-            return self.dependency_member_identity_from(&owner, target_module, target_name, depth + 1);
+            return self
+                .dependency_member_identity_from(&owner, target_module, target_name, depth + 1)
+                .or_else(|| self.stdlib_reexport_identity(target_module, target_name));
         }
         // A chain that ends in a compiler-owned stdlib module has no dependency candidate to stop at; the stdlib
         // cache holds that module's declaration identities. Only a chain reaches here with a stdlib path: a direct
@@ -7406,6 +7462,32 @@ impl TypeChecker {
             }
         }
         None
+    }
+
+    /// Return the identity behind a facade re-export of a `std.*` member: the active SDK provider's, or the source
+    /// metadata's where no checked provider serves the module.
+    ///
+    /// This is the identity half of [`Self::dependency_reexported_member_symbol`] and follows it hop for hop, so the
+    /// identity a facade records is the identity of the symbol it bound: a chain that ends in a compiler-owned stdlib
+    /// module has no dependency candidate to stop at, and the provider registry or the stdlib cache holds that
+    /// module's declaration identities. The source identity is read from the already-populated cache because the
+    /// facade's binding loaded the module while it resolved the member symbol; a module that was never loaded never
+    /// bound the re-export in the first place. A direct stdlib import proves its identity through the loading lookup
+    /// instead.
+    fn stdlib_reexport_identity(&self, module: &ImportPath, item_name: &str) -> Option<CanonicalSymbolId> {
+        if let Some(identity) = self.sdk_provider_member_identity(module, item_name) {
+            return Some(identity);
+        }
+        if module.parent_levels != 0 || module.is_absolute {
+            return None;
+        }
+        let module_path = canonicalize_source_module_segments(&module.segments);
+        if module_path.first().map(String::as_str) != Some(incan_lang::lang::stdlib::STDLIB_ROOT)
+            || self.checked_sdk_provider_owns_module(&module_path)
+        {
+            return None;
+        }
+        self.stdlib_cache.cached_identity(&module_path, item_name)
     }
 
     /// Return one imported registry's checked defining contract and canonical owner path.
