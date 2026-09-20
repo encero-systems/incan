@@ -822,6 +822,31 @@ impl AstLowering {
         }
     }
 
+    /// Type a field read on a public dependency's nominal so a provider-owned union stays owned by the provider.
+    ///
+    /// The checker records the field's type with the provider's union alias expanded to its members, which a
+    /// consumer would otherwise lower as a structural, consumer-local union: a `match` on the field then narrows
+    /// through bare constructor patterns and the consumer emits an unused wrapper of its own (#1697). The provider's
+    /// field metadata names the owning crate, so its declared type is lowered in the provider's context and every
+    /// union position of the checked type is replaced by that carrier; other positions keep the checked inference. A
+    /// receiver that is not a public dependency's nominal, or a field the provider does not declare, leaves the type
+    /// unknown for the ordinary checked-type merge in `lower_expr_spanned`.
+    fn pub_dependency_field_read_type(&self, receiver: &TypedExpr, field: &str, span: ast::Span) -> IrType {
+        let Some(declared) = self
+            .public_library_for_method_receiver(receiver)
+            .and_then(|library| self.declared_field_type_for_imported_pub_type(&library, &receiver.ty, field))
+        else {
+            return IrType::Unknown;
+        };
+        let inferred = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(span))
+            .map(|ty| self.lower_resolved_type(ty))
+            .unwrap_or(IrType::Unknown);
+        Self::retain_provider_owned_union_representation(inferred, &declared)
+    }
+
     /// Return the library key from a canonical `pub::<library>::...` path.
     fn public_library_from_canonical_path(path: &[String]) -> Option<String> {
         if path.first().map(String::as_str) == Some("pub") {
@@ -2199,12 +2224,13 @@ impl AstLowering {
                         Some(struct_name) => self.resolve_field_alias(struct_name, f),
                         None => f.clone(),
                     };
+                    let field_ty = self.pub_dependency_field_read_type(&obj, f, expr_span);
                     (
                         IrExprKind::Field {
                             object: Box::new(obj),
                             field,
                         },
-                        IrType::Unknown,
+                        field_ty,
                     )
                 }
             }
