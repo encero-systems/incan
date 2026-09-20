@@ -1,0 +1,10 @@
+# behavior: a module named `lib`, the host language's reserved library root filename, imports and runs beside the entrypoint
+# retires: loaves/compiler/incan_driver/src/backend/project/generator.rs::test_generate_nested_avoids_cargo_root_filenames_for_top_level_modules
+# expect-stdout:
+#   from lib
+
+from lib import from_lib
+
+
+def main() -> None:
+    println(from_lib())

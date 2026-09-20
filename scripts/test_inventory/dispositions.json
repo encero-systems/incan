@@ -115,6 +115,12 @@
       "disposition": "re-point",
       "owner": 1561,
       "notes": "the behaviour-fixture harness proving itself: one fixture per shape of the format (refused program, non-zero exit, contained lines, module directory, project directory), run by behavior_harness_tests.rs. They twin nothing; they exist so a runner or route change is caught here before it is caught in a twin."
+    },
+    "loaves/compiler/incan_test_support/fixtures/behavior/driver": {
+      "pattern": "<name>.incn or <name>/",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "behaviour fixtures twinning incan_driver retire tests whose surviving observable is a program's output or a check-time diagnostic rather than the generated project they inspected; run by behavior_driver_tests.rs. Each names the retire tests it twins in `# retires:` lines."
     }
   },
   "files": {
@@ -129,7 +135,8 @@
     "loaves/compiler/incan_driver/src/backend/project/cargo_toml.rs": {
       "disposition": "retire",
       "owner": 1561,
-      "twin": "",
+      "twin": "dies",
+      "dies": "every test renders the generated project's Cargo.toml (`generate_cargo_toml`, `dependency_spec_to_toml`, `path_dependency`) and asserts its text or parsed tables: [package] name/version/license, [[bin]]/[lib] targets, registry/git/path/optional/dev dependency sources, feature gates, the stdlib facet and toolchain support-crate paths. Generated projects die with #654; there is no manifest to render.",
       "split_required": false,
       "split_target": "",
       "notes": "generated Cargo project shape; dies with the generated-project route unless #654 keeps generated projects for inspection."
@@ -137,15 +144,59 @@
     "loaves/compiler/incan_driver/src/backend/project/generator.rs": {
       "disposition": "retire",
       "owner": 1561,
-      "twin": "",
+      "twin": "dies",
+      "dies": "the generated Cargo project's layout and text: `mod` declarations and `#[path]`/`r#` escapes in the generated `main.rs`/`lib.rs`, the `std` -> `__incan_std` module transform and its helpers, compiled-provider `pub use ...::__incan_std::*` facades and `#![allow]` lints, the public-namespace `pub use child::*` plan (#948), unchanged-write detection, stale-file cleanup, the Cargo.lock manifest witness, and SDK path-dependency rebinding checked against the artifact's Cargo.toml (#911). Generated projects die with #654; the #948 namespace behaviour is covered by the typechecker's pub_imports_namespaces_and_fields.rs (keep) and rfc031_pub_import_integration_tests.rs (re-point).",
       "split_required": false,
       "split_target": "",
-      "notes": "generated Cargo project shape; dies with the generated-project route unless #654 keeps generated projects for inspection."
+      "notes": "generated Cargo project shape; dies with the generated-project route unless #654 keeps generated projects for inspection.",
+      "tests": {
+        "test_is_stdlib_path": {
+          "twin": "dies",
+          "dies": "predicate of the generator's `std` -> `__incan_std` Rust module renaming; a data-structure invariant of the dying generated-project crate."
+        },
+        "test_transform_stdlib_path": {
+          "twin": "dies",
+          "dies": "the generator's `std` -> `__incan_std` Rust module renaming, which exists only to keep generated `mod std;` from shadowing Rust's `std`; a data-structure invariant of the dying generated-project crate."
+        },
+        "checked_namespace_facades_skip_children_fully_bound_by_the_parent_issue948": {
+          "twin": "dies",
+          "dies": "asserts the generator's `public_namespace_facades` map, the plan for which `pub use child::*` lines a generated `mod.rs` carries so rustc sees no ambiguous glob re-export (#948); a generated-Rust facade plan. The user-facing namespace behaviour is covered by the typechecker's pub_imports_namespaces_and_fields.rs (keep) and rfc031_pub_import_integration_tests.rs (re-point)."
+        },
+        "test_generate_multi_escapes_keyword_module_names": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/driver/module_named_like_host_keyword",
+          "notes": "asserted the `r#async` raw-identifier escape and `#[path]` attribute in generated module declarations; the twin imports a top-level and a nested module named `async` (soft keyword in Incan, hard in the host language) and reads their output. The retired test's `type` module is unreachable from source: `type` is a hard Incan keyword and the parser refuses it as a module path segment."
+        },
+        "test_generate_nested_escapes_keyword_submodule_names": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/driver/module_named_like_host_keyword",
+          "notes": "asserted the `r#async` raw-identifier escape and `#[path]` attribute in generated module declarations; the twin imports a top-level and a nested module named `async` (soft keyword in Incan, hard in the host language) and reads their output. The retired test's `type` module is unreachable from source: `type` is a hard Incan keyword and the parser refuses it as a module path segment."
+        },
+        "test_generate_nested_avoids_cargo_root_filenames_for_top_level_modules": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/driver/module_named_like_host_root_file",
+          "notes": "asserted the `__incan_mod_main.rs`/`__incan_mod_lib.rs` renames that keep top-level modules named `main`/`lib` out of the host project's root filenames; the twin imports a sibling module named `lib` beside the entrypoint and reads its output. A module named `main` beside `main.incn` is the entrypoint itself, so only `lib` is reachable from a script."
+        },
+        "generated_lock_is_discarded_when_its_manifest_no_longer_matches": {
+          "twin": "dies",
+          "dies": "the generated project's Cargo.lock and the manifest witness that decides whether Cargo's `--locked` may reuse it; the generated project's Cargo.lock dies with #654."
+        },
+        "generated_consumer_rebinds_absent_private_sdk_cache_root_issue911": {
+          "twin": "dies",
+          "dies": "rebinds a compiled artifact's Cargo path dependencies from an absent SDK cache root to the active one, asserts the projected Cargo.toml paths, and links the rebound Rust with direct rustc (#911); the compiled artifact's Cargo graph and the generated consumer that projects it die with #654."
+        },
+        "nested_compiled_artifacts_propagate_sdk_projection_issue911": {
+          "twin": "dies",
+          "dies": "asserts that a nested compiled artifact's SDK Cargo path dependencies are re-projected through its parent's shadow (`.incan-sdk-rebound-ready`, artifact digest) and that the rebound Rust links with direct rustc (#911); the compiled artifact's Cargo graph dies with #654."
+        },
+        "sdk_projection_rejects_cargo_source_mismatch_before_cargo_issue911": {
+          "twin": "dies",
+          "dies": "asserts that a compiled artifact whose Cargo.toml path or `default-features` disagrees with its checked `.incnlib` descriptor is refused before Cargo runs, and that the projected Cargo.toml normalises `default-features = false` (#911); a Cargo-manifest consistency check of the compiled artifact, which dies with #654."
+        }
+      }
     },
     "loaves/compiler/incan_driver/src/backend/project/lock_projection.rs": {
       "disposition": "retire",
       "owner": 1561,
-      "twin": "",
+      "twin": "dies",
+      "dies": "pure validation of the Cargo-owned projection of the canonical Cargo.lock payload: exact canonical root selection, checksum and dependency-reference checks, forged generated-root and transitive edges, byte convergence, the reconciliation pass limit and canonical registry-version offers to Cargo. The generated project's Cargo.lock dies with #654.",
       "split_required": false,
       "split_target": "",
       "notes": "generated Cargo project shape; dies with the generated-project route unless #654 keeps generated projects for inspection."
@@ -153,7 +204,8 @@
     "loaves/compiler/incan_driver/src/backend/project/plan.rs": {
       "disposition": "retire",
       "owner": 1561,
-      "twin": "",
+      "twin": "dies",
+      "dies": "`plan_cargo_target_dir` resolves the generated project's Cargo `target` directory from a relative or absolute output path; there is no Cargo target directory after #654.",
       "split_required": false,
       "split_target": "",
       "notes": "generated Cargo project shape; dies with the generated-project route unless #654 keeps generated projects for inspection."
@@ -169,7 +221,8 @@
     "loaves/compiler/incan_driver/src/backend/project/tests/codegen_generator.rs": {
       "disposition": "retire",
       "owner": 1561,
-      "twin": "",
+      "twin": "dies",
+      "dies": "`generated_rust_warning_clean` compiles the generated Rust of a small program with `-Dwarnings`; the three `rust_inspect` tests assert emitted borrow shapes in generated Rust text (`flock(&file, ...)`, `consume(&state, &plan).await`) for `rust::` free-function calls resolved through a generated lock workspace. Generated Rust and the generated project die with #654; the checker facts about `rust::` imports that those programs rely on are #1337's spec (see the `rust_*` typechecker rows), not this crate's generated text.",
       "split_required": false,
       "split_target": "",
       "notes": "codegen into a generated project; asserts generated Rust text."
@@ -177,7 +230,8 @@
     "loaves/compiler/incan_driver/src/backend/project/tests/lock_payload.rs": {
       "disposition": "retire",
       "owner": 1561,
-      "twin": "",
+      "twin": "dies",
+      "dies": "writes the canonical lock payload as the generated project's Cargo.lock and reads it back from disk; the generated project's Cargo.lock dies with #654.",
       "split_required": false,
       "split_target": "",
       "notes": "generated Cargo project shape; dies with the generated-project route unless #654 keeps generated projects for inspection."
@@ -345,7 +399,8 @@
     "loaves/compiler/incan_driver/src/build/prepare_project.rs": {
       "disposition": "retire",
       "owner": 1561,
-      "twin": "",
+      "twin": "dies",
+      "dies": "asserts that the generated Cargo.toml `[dependencies]` of a script run omits the project's unused `[rust-dependencies]`; an assertion on the generated manifest, which dies with #654.",
       "split_required": false,
       "split_target": "",
       "notes": "prunes the generated project's Cargo dependencies; generated Cargo project shape; dies with the generated-project route unless #654 keeps generated projects for inspection."
@@ -409,7 +464,8 @@
     "loaves/compiler/incan_driver/src/cargo_policy.rs": {
       "disposition": "retire",
       "owner": 1561,
-      "twin": "",
+      "twin": "dies",
+      "dies": "`CargoPolicy` folds `--offline/--locked/--frozen`, their `--no-*` negations, `INCAN_OFFLINE/LOCKED/FROZEN` and `INCAN_CARGO_ARGS` into the Cargo command line and the build report's Cargo policy fields; the ruling retires the build-report Cargo fields and the Cargo command line with #654.",
       "split_required": false,
       "split_target": "",
       "notes": "Cargo flag policy of the generated-project route."
@@ -417,7 +473,8 @@
     "loaves/compiler/incan_driver/src/generated_cache.rs": {
       "disposition": "retire",
       "owner": 1561,
-      "twin": "",
+      "twin": "dies",
+      "dies": "the managed cache of Cargo `target` data shared by generated projects (`<INCAN_HOME>/cache/generated-cargo/v1`): compatibility identity from rustc/cargo/lock/feature/flag selectors, the sealed no-Cargo identity, lease acquisition, dirty-domain recovery, oversized rebuildable-target discard, aggregate and selective pruning, orphan inspection and managed Cargo flag validation. Without generated projects there is no Cargo target data to cache; the `incan cache` commands that front it are twin-h-cli's rows.",
       "split_required": false,
       "split_target": "",
       "notes": "generated-project cache identity and pruning; dies with the generated-project route."
@@ -577,7 +634,8 @@
     "loaves/compiler/incan_driver/tests/emitted_symbol_projection_tests.rs": {
       "disposition": "retire",
       "owner": 1561,
-      "twin": "",
+      "twin": "dies",
+      "dies": "RFC 120 `incan-v1` emitted-symbol recovery from a native artifact built with the pinned Rust release (DD-0002): functions, generic specialisations, methods and statics recovered from mangled symbols. The emitted-name projection is the generated-Rust identifier scheme (`inspect rust` reports declarations under it) and dies with #654.",
       "split_required": false,
       "split_target": "",
       "notes": "RFC 120 emitted symbol projection and demangling; generated Rust shape."
@@ -585,7 +643,8 @@
     "loaves/compiler/incan_driver/tests/fixtures/generated_rust_native_consumer/consumer/src/lib.rs": {
       "disposition": "retire",
       "owner": 1561,
-      "twin": "",
+      "twin": "dies",
+      "dies": "a native Rust crate calling the generated library's public Rust items (`AllPublic { value }`, `make_counter`, `Admission::admitted()`); the generated Rust library it links dies with #654. Follows its owner, generated_rust_native_consumer_tests.rs.",
       "split_required": false,
       "split_target": "",
       "notes": "fixture consumer of generated_rust_native_consumer_tests; follows its owner."
@@ -593,7 +652,8 @@
     "loaves/compiler/incan_driver/tests/generated_cache_integration.rs": {
       "disposition": "retire",
       "owner": 1561,
-      "twin": "",
+      "twin": "dies",
+      "dies": "end-to-end probes of the generated-Cargo boundary: a normal build refusing `--generated-cargo-target-dir`, sealed-input reuse across projects and after source drift proven by a guarded `cargo` executable that must never launch, `--locked` refusing an `oven.lock` whose Cargo payload drifted after a `[rust-dependencies]` edit, and concurrent normal builds ignoring Cargo's `RUSTC_WRAPPER` while leaving no generated-Cargo state behind. Every assertion is whether Cargo (or a Cargo control) was consulted or refused; without a generated project none of it exists. The sealed project-output replay these probes ride on is Oven's own behaviour (unaffected class).",
       "split_required": false,
       "split_target": "",
       "notes": "generated-project cache across builds; dies with the generated-project route."
@@ -604,12 +664,37 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "public generated-Rust artifact contract (RFC 120 projections, native consumers, audit); survives only if #654 keeps generated artifacts as inspection output."
+      "notes": "public generated-Rust artifact contract (RFC 120 projections, baseline generated projects); three rows die with the generated project, two stay open on questions the maintainer decides (the `.incnlib` manifest's fate and a provider bake the fixture runner does not perform).",
+      "tests": {
+        "generated_application_artifact_matches_baseline": {
+          "twin": "dies",
+          "dies": "the generated application project compared with a baseline: required files (`Cargo.toml` and a `main.rs` under `src`), no Cargo.lock, `main.rs` fragments, and the Cargo `[package]` table (name, version, edition, license; `license-files` not becoming Cargo's `license-file`) with `incan_std_core`/`incan_derive` dependencies. Generated projects die with #654."
+        },
+        "generated_application_without_package_metadata_uses_compiler_defaults": {
+          "twin": "dies",
+          "dies": "the generated Cargo.toml `[package]` version defaulting to the compiler's and carrying no license when `loaf.toml` declares none; a generated-manifest assertion, dies with #654."
+        },
+        "generated_library_and_pub_dependency_consumer_artifacts_match_baseline": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "OPEN. The generated `lib.rs`/`widgets.rs`/consumer `main.rs` fragments and both Cargo manifests die with #654, but the test also pins the library's `.incnlib` (name, version, semantic source digest, `Widget`/`make_widget` exports), which is what a consumer builds against. Two questions: does the `.incnlib` manifest survive #654 as the library's public artifact, and how is the consumer side twinned? A consumer-run fixture (`from pub::widgets import Widget, make_widget`, print `w.name`) needs the in-fixture provider baked first: `incan run` refuses an unbaked `pub::` provider (`Oven Alpha requires a baked package Loaf`) and the runner bakes only the fixture project itself (verified 2026-09-20). Either the runner grows a provider bake for project fixtures, or the row points at the existing re-point coverage in rfc031_pub_import_integration_tests.rs."
+        },
+        "path_dependency_artifact_rebuilds_for_a_b_a_feature_projections": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "OPEN. Two observables: (a) `incan build --no-default-features` refusing a feature-gated `pub::` export with INCAN-I0103 and the `features = [\"alpha\"]` remedy, reproducible today as a refused-program project fixture (`incan check` prepares an unbaked provider's metadata itself; verified 2026-09-20); (b) the alpha/beta/alpha re-bake sequence proving the dependency artifact is re-projected per feature set, whose generated `lib.rs` assertions die with #654 and whose `.incnlib` `active_features`/`fact_requirements` assertions are a bake-sequence observable the fixture format cannot drive (one `check` or `run`, no flags). Question: is (a) alone the twin, with a `feature_gated_export_refused/` fixture landing in a follow-up, or does (b) need its own re-point coverage first?"
+        },
+        "a_package_projects_a_call_into_its_own_sibling_module": {
+          "twin": "dies",
+          "dies": "asserts the RFC 120 `__incan_v1_` projected wrapper name, not the source spelling `c.bumped()`, in a package's generated `lib.rs` (#1174 emitted-name recoverability); the emitted-name projection and the legacy `incan_ir` lowering that required it die with generated Rust. The package-calls-its-own-sibling behaviour is reachable only through a `--lib`/SDK component build, which is not a run the fixture format can express."
+        }
+      }
     },
     "loaves/compiler/incan_driver/tests/generated_rust_audit_tests.rs": {
       "disposition": "retire",
       "owner": 1561,
-      "twin": "",
+      "twin": "dies",
+      "dies": "`scripts/generated_rust_audit.py` reporting clone/allocation/eager-collection markers over generated Rust artifacts: JSON and Markdown reports, repo-relative paths, missing and no-Rust artifacts, `--fail-on-missing`. The audited artifacts are generated Rust and die with #654, and the audit script with them.",
       "split_required": false,
       "split_target": "",
       "notes": "public generated-Rust artifact contract (RFC 120 projections, native consumers, audit); survives only if #654 keeps generated artifacts as inspection output."
@@ -620,12 +705,13 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "public generated-Rust artifact contract (RFC 120 projections, native consumers, audit); survives only if #654 keeps generated artifacts as inspection output."
+      "notes": "OPEN. The generated Cargo manifests and the `transforms.rs`/`main.rs` text (fn-pointer parameters, qualified provider calls) die with #654, but the test also runs the consumer and reads `2 3 4`: a `Callable` value passed across a `pub::` package boundary, which no other test runs (integration_tests.rs uses callables inside one program). A twin needs the in-fixture producer baked before `incan run` (`Oven Alpha requires a baked package Loaf`), which the runner does not do for project fixtures (verified 2026-09-20). Question: extend the runner to bake a project fixture's `[dependencies]` path packages first and twin it, or cover the boundary in a re-point CLI test?"
     },
     "loaves/compiler/incan_driver/tests/generated_rust_native_consumer_tests.rs": {
       "disposition": "retire",
       "owner": 1561,
-      "twin": "",
+      "twin": "dies",
+      "dies": "builds a library with `incan build --lib`, asserts the generated Rust library's Cargo.toml and `lib.rs` root exist without a `private_interfaces` lint, then compiles a native Rust consumer against it and a forge crate that must fail at sealed private constructors. The generated Rust library and its Rust-visible surface die with #654 (generated Rust is not a stable ABI).",
       "split_required": false,
       "split_target": "",
       "notes": "public generated-Rust artifact contract (RFC 120 projections, native consumers, audit); survives only if #654 keeps generated artifacts as inspection output."
@@ -685,8 +771,8 @@
         },
         "both_backends_render_a_multi_argument_print_the_same_way": {
           "disposition": "retire",
-          "twin": "",
-          "notes": "compares replacement output with IrCodegen output; the replacement-only assertion is the twin"
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/driver/println_multi_argument.incn",
+          "notes": "compared the replacement executor's rendering of `println(\"count\", 3, true)` with the IrCodegen placeholder count; the twin runs the program and reads `count 3 true` from its stdout, and the replacement-only half stays in the keep sibling replacement_executes_print_by_recording_its_output."
         }
       }
     },
@@ -909,7 +995,8 @@
     "loaves/compiler/incan_driver/tests/stdlib_version_artifact_tests.rs": {
       "disposition": "retire",
       "owner": 1561,
-      "twin": "",
+      "twin": "dies",
+      "dies": "asserts the `incan_std_core::__incan_stdlib_version_check!` invocation the emitter writes into every generated program and links that program with rustc against stdlib contract artifacts at the exact, patch-ahead (accepted) and major-ahead (rejected) versions. The emitted check is generated Rust and dies with #654; how the replacement route pins its stdlib line is slice 7's own contract.",
       "split_required": false,
       "split_target": "",
       "notes": "asserts the stdlib version check inside the generated artifact."
@@ -4334,6 +4421,14 @@
       "split_required": false,
       "split_target": "",
       "notes": "runs the harness area's self-proof fixtures as programs; the route changes under it, the fixtures do not."
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_driver_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs every behaviour fixture of the driver area as a program and compares its observables; the route changes under it, the fixtures do not."
     }
   }
 }
