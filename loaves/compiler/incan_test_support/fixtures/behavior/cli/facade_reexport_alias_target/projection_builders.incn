@@ -1,0 +1,13 @@
+pub model ColumnRefExpr:
+    pub name: str
+
+
+pub model ScalarFunctionExpr:
+    pub name: str
+
+
+pub type ColumnExpr = Union[ColumnRefExpr, ScalarFunctionExpr]
+
+
+pub def col(name: str) -> ColumnRefExpr:
+    return ColumnRefExpr(name=name)
