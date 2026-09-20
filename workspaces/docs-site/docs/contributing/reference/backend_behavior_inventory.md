@@ -29,6 +29,10 @@ Use more than one lane when a behavior can cross boundaries.
 | Vocab/test-batch lanes          | Vocab desugarer tests, formatter/test-runner activation paths.                | File-scoped activation and generated helper behavior outside ordinary direct builds.        |
 | Downstream proof lanes          | IncQL or Hees.ai acceptance runs when the surface is exercised there.          | Cross-repo behavior and installed-SDK assumptions that synthetic fixtures may miss.         |
 
+## Test-level counterpart
+
+The [test corpus inventory](test_corpus_inventory.md) is this inventory's test-level counterpart for the slice-7 cutover: every Rust test and `.incn` fixture root carries a disposition (`keep`, `re-point`, `retire`, `unaffected`) by what it proves and how, with lane signals as evidence, a named twin for each retire-class test before it may be deleted, and the split flag for oversized test files. Where a row of the behavior matrix below names its evidence lane, the test inventory says which tests in that lane survive the cutover untouched, which are re-pointed at the replacement route, and which retire with the emitter.
+
 ## Representative repo anchors
 
 These are starting points for reviewers. They are not exhaustive, and new backend work should add tighter tests when a behavior lacks a direct anchor.

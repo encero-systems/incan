@@ -234,6 +234,16 @@ emitter-freeze-ci:
 doc-paths:
 	@python3 scripts/check_doc_paths.py
 
+.PHONY: test-inventory  ## quality - Regenerate the test corpus inventory page from the tree and dispositions.json
+test-inventory:
+	@python3 scripts/test_inventory/render.py
+
+.PHONY: test-inventory-check  ## quality - Fail when a test has no disposition, a twin does not resolve, or the inventory page is stale
+test-inventory-check:
+	@python3 -m unittest discover -q -s scripts/test_inventory -p 'test_collect.py' >/dev/null 2>&1 \
+		|| python3 -m unittest discover -s scripts/test_inventory -p 'test_collect.py'
+	@python3 scripts/test_inventory/collect.py --check
+
 .PHONY: version-gate  ## quality - Require hand-written version literals to match the workspace version
 version-gate:
 	@python3 scripts/check_release_version_consistency.py
@@ -298,6 +308,10 @@ pre-commit-fast:
 	$(MAKE) -s doc-paths; \
 	echo "\033[32mDONE\033[0m"; \
 	t2docs=$$(date +%s); \
+	printf "\033[1mChecking the test corpus inventory...\033[0m "; \
+	$(MAKE) -s test-inventory-check; \
+	echo "\033[32mDONE\033[0m"; \
+	t2inv=$$(date +%s); \
 	printf "\033[1mChecking version consistency...\033[0m "; \
 	$(MAKE) -s version-gate; \
 	echo "\033[32mDONE\033[0m"; \
@@ -315,7 +329,7 @@ pre-commit-fast:
 	echo "\033[32mDONE\033[0m"; \
 	t4=$$(date +%s); \
 	echo "\033[32m✓ Pre-commit checks passed (fast)\033[0m"; \
-	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, rustdoc=$$((t2-t1))s, emitter-freeze=$$((t2freeze-t2))s, doc-paths=$$((t2docs-t2freeze))s, version-gate=$$((t2a-t2docs))s, agents-doc-sync=$$((t2b-t2a))s, check=$$((t3-t2b))s, oven-ring=$$((t4-t3))s, total=$$((t4-start))s"
+	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, rustdoc=$$((t2-t1))s, emitter-freeze=$$((t2freeze-t2))s, doc-paths=$$((t2docs-t2freeze))s, test-inventory=$$((t2inv-t2docs))s, version-gate=$$((t2a-t2inv))s, agents-doc-sync=$$((t2b-t2a))s, check=$$((t3-t2b))s, oven-ring=$$((t4-t3))s, total=$$((t4-start))s"
 
 .PHONY: pre-commit-full-gate  ## quality - Full local gate core: fmt-check + tests + clippy + cargo-deny with phase timing
 pre-commit-full-gate:

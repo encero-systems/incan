@@ -11,10 +11,11 @@ if [ "$EVENT_NAME" = "pull_request" ]; then
 
   while IFS= read -r -d '' file; do
     changed=true
-    # The two generated reference pages are derived from the compiler,
-    # so they must retain the full generated-reference check.
+    # The generated reference pages are derived from the compiler (the language reference and feature
+    # inventory) or from the tests in the tree (the test corpus inventory), so a change to one must keep
+    # the job that regenerates and checks it; a hand edit is not a docs-only change.
     case "$file" in
-      workspaces/docs-site/docs/language/reference/language.md|workspaces/docs-site/docs/language/reference/feature_inventory.md|workspaces/docs-site/docs/_snippets/language/examples/verified_*.incn)
+      workspaces/docs-site/docs/language/reference/language.md|workspaces/docs-site/docs/language/reference/feature_inventory.md|workspaces/docs-site/docs/_snippets/language/examples/verified_*.incn|workspaces/docs-site/docs/contributing/reference/test_corpus_inventory.md)
         docs_only=false
         break
         ;;
