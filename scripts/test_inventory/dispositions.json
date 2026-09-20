@@ -3966,6 +3966,11 @@
       "split_target": "",
       "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. `workspace check`/`workspace fmt` tests are keep; `lock`/`workspace inspect`-only tests are unaffected; one build test also reads generated Rust and loses that assertion in slice 7 (overrides).",
       "tests": {
+        "a_plain_build_of_a_toolchain_loaf_selects_its_rust_binaries_and_names_the_interim_receipt_inputs_issue1698": {
+          "disposition": "unaffected",
+          "twin": "",
+          "notes": "`incan build` dispatch for a toolchain Loaf (`[[rust.bin]]`, #1698): asserts the stored-plan route is taken and its refusals; no Incan compilation, not the Rust backend."
+        },
         "rooted_workspace_cold_lock_and_selected_member_preserve_identity_issues908_909_931": {
           "disposition": "re-point",
           "twin": "",
@@ -3986,17 +3991,17 @@
           "twin": "",
           "notes": "`incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend."
         },
+        "workspace_lock_concurrent_publishers_leave_one_parseable_root_lock": {
+          "disposition": "unaffected",
+          "twin": "",
+          "notes": "`incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend."
+        },
         "workspace_lock_scopes_command_feature_flags_to_the_invoking_member_issue1414": {
           "disposition": "unaffected",
           "twin": "",
           "notes": "`incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend."
         },
         "workspace_root_library_without_a_script_publishes_the_canonical_lock_issue997": {
-          "disposition": "unaffected",
-          "twin": "",
-          "notes": "`incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend."
-        },
-        "workspace_lock_concurrent_publishers_leave_one_parseable_root_lock": {
           "disposition": "unaffected",
           "twin": "",
           "notes": "`incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend."

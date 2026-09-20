@@ -58,6 +58,7 @@ use oven_interop::{
     receipt_interop_execution, selected_interop_toolchain_identity, stage_interop_adapter,
     write_interop_execution_receipt,
 };
+use oven_model::manifest::LOAF_MANIFEST_FILENAME;
 use oven_model::oven_interop::{LockedInteropTarget, ToolchainRequirement};
 use oven_rustc::loaf::{
     LoafTemporaryDirectory, OVEN_LOAF_ENV, OVEN_LOAF_ENVELOPE_MANIFEST_SCHEMA_VERSION, OvenLoafEnvelope,
@@ -77,13 +78,14 @@ use oven_rustc::native_test::{
     run_native_tests_exact_in_directory_with_timeout,
 };
 use oven_rustc::rustc::{
-    OvenCallerOwnedRustcLibrary, OvenRustcArtifactManifest, OvenRustcArtifactPlan, OvenStoredDirectRustcRunRequest,
-    OvenStoredDirectRustcTestRequest, OvenTrustedDirectRustcTargetRequest, OvenTrustedRustcArtifactRoot,
-    OvenTrustedRustdocTestRequest, attach_caller_owned_rustc_libraries, bake_stored_direct_rustc_run,
-    bake_stored_direct_rustc_test, bake_trusted_direct_rustc_dylib, bake_trusted_direct_rustc_library,
-    bake_trusted_direct_rustc_proc_macro, bake_trusted_direct_rustc_run, bake_trusted_direct_rustc_test,
-    clear_inherited_cargo_environment, resolve_active_rustc, resolve_compile_environment_value,
-    run_trusted_rustdoc_test, rustc_dynamic_library_environment, rustc_host_target, rustc_identity,
+    OvenCallerOwnedRustcLibrary, OvenDirectRustcBake, OvenRustcArtifactManifest, OvenRustcArtifactPlan,
+    OvenStoredDirectRustcRunRequest, OvenStoredDirectRustcTestRequest, OvenTrustedDirectRustcTargetRequest,
+    OvenTrustedRustcArtifactRoot, OvenTrustedRustdocTestRequest, attach_caller_owned_rustc_libraries,
+    bake_stored_direct_rustc_run, bake_stored_direct_rustc_test, bake_trusted_direct_rustc_dylib,
+    bake_trusted_direct_rustc_library, bake_trusted_direct_rustc_proc_macro, bake_trusted_direct_rustc_run,
+    bake_trusted_direct_rustc_test, clear_inherited_cargo_environment, resolve_active_rustc,
+    resolve_compile_environment_value, run_trusted_rustdoc_test, rustc_dynamic_library_environment, rustc_host_target,
+    rustc_identity,
 };
 use oven_store::compiler_suite_env::{
     OVEN_COMPILER_SUITE_CAPABILITY_ENV, OVEN_COMPILER_SUITE_EXPLICIT_BAKE_CARGO_ENV,
@@ -820,15 +822,6 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
         None
     };
     let warning_check_shards = warning_check_shards.as_deref().unwrap_or(&shard_executions);
-    let cli_artifact_closure = match suite.schema_version {
-        8 => suite.test_artifact_closure.as_ref().ok_or_else(|| {
-            CliError::failure("stored compiler-suite payload has no direct-rustc test closure".to_string())
-        })?,
-        9..=OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION => suite.cli_artifact_closure.as_ref().ok_or_else(|| {
-            CliError::failure("stored indexed compiler-suite payload has no compiler CLI closure".to_string())
-        })?,
-        _ => unreachable!("schema was validated above"),
-    };
     if suite.schema_version == 8 && suite.test_targets.is_empty() {
         return Err(CliError::failure(
             "stored compiler-suite payload has no direct-rustc native test targets".to_string(),
@@ -899,76 +892,22 @@ pub fn oven_run_compiler_libtests(options: OvenCompilerLibtestsRunCommandOptions
                 ))
             })?
     };
-    let cli_target = suite.cli_target.as_ref().ok_or_else(|| {
-        CliError::failure("stored compiler-suite payload has no direct-rustc compiler CLI target".to_string())
-    })?;
-    if cli_target.runner != "rustc-run" {
-        return Err(CliError::failure(
-            "stored compiler-suite CLI target must use the direct-rustc run executor".to_string(),
-        ));
-    }
-    if suite.schema_version < 11
-        && (!suite.cli_workspace_libraries.is_empty()
-            || !suite.cli_foundation_references.is_empty()
-            || !cli_target.workspace_library_dependencies.is_empty())
-    {
-        return Err(CliError::failure(
-            "schema-10-or-earlier Oven compiler suite declares workspace-library edges that its stored schema cannot execute",
-        ));
-    }
-    let cli_artifacts = cli_artifact_closure.manifest_for_target(cli_target, manifest.intent.clone());
-    let cli_workspace_library_outputs = if suite.schema_version >= 11 {
-        bake_planned_compiler_suite_workspace_libraries(
-            &suite.cli_workspace_libraries,
-            cli_artifact_closure,
-            &manifest.intent,
-            &receipt,
-            &artifact_root,
-            &rustc,
-            &options.compiler_root,
-            &output_directory,
-            &suite.cli_foundation_references,
-            Some(&foundation_executions),
-            &mut workspace_library_cache,
-        )?
-    } else {
-        BTreeMap::new()
-    };
-    let mut cli_artifact_plan = if suite.schema_version >= 11 {
-        compiler_suite_composed_artifact_plan(
-            &cli_artifacts,
-            &suite.cli_foundation_references,
-            &foundation_executions,
-            &manifest.intent,
-        )?
-    } else {
-        cli_artifacts
-            .materialize_trusted_store(&artifact_root, &manifest.intent)
-            .map_err(oven_error)?
-    };
-    attach_compiler_suite_target_workspace_libraries(
-        &mut cli_artifact_plan,
-        cli_target,
-        &suite.cli_workspace_libraries,
-        &cli_workspace_library_outputs,
-    )?;
-    let cli_source = compiler_suite_target_source(&options.compiler_root, cli_target)?;
     let cli_output = compiler_suite_cli_output(&output_directory);
-    let cli_bake = bake_trusted_direct_rustc_run(&OvenTrustedDirectRustcTargetRequest {
-        receipt: &receipt,
-        artifacts: &cli_artifacts,
-        artifact_root: &artifact_root,
-        artifact_plan: Some(&cli_artifact_plan),
-        rustc: &rustc,
-        source: &cli_source,
-        output: &cli_output,
-        crate_name: &cli_target.crate_name,
-        edition: &cli_target.edition,
-        source_evidence_key: &cli_target.source_evidence_key,
-        features: &cli_target.features,
-        prefer_dynamic: compiler_suite_workspace_outputs_include_dylib(&cli_workspace_library_outputs),
-    })
-    .map_err(oven_error)?;
+    let CompilerSuiteCliBake {
+        artifact_plan: cli_artifact_plan,
+        bake: cli_bake,
+    } = bake_stored_compiler_suite_cli(
+        &suite,
+        &manifest.intent,
+        &receipt,
+        &artifact_root,
+        &rustc,
+        &options.compiler_root,
+        &output_directory,
+        &cli_output,
+        &foundation_executions,
+        &mut workspace_library_cache,
+    )?;
     let mut environment = compiler_suite_environment_with_vocab(
         &options.compiler_root,
         &stored_sdk_inventory,
@@ -3022,6 +2961,281 @@ fn native_test_failure_summary(output: &str) -> String {
         summary.push_str("\n… libtest transcript truncated");
     }
     summary
+}
+
+/// The compiler CLI a stored suite bakes by direct rustc: the inputs it was linked against and its executable.
+struct CompilerSuiteCliBake {
+    /// The composed third-party and caller-owned workspace-library inputs the executable was linked against.
+    artifact_plan: OvenRustcArtifactPlan,
+    /// The caller-owned executable with its receipt-bound reuse evidence.
+    bake: OvenDirectRustcBake,
+}
+
+/// Bake the stored suite's `incan` CLI plan by direct rustc into `output`, materializing the workspace-library DAG it
+/// declares below `output_directory` first.
+///
+/// This is the one place a stored index's CLI plan executes. The suite runner needs the executable as the fixture
+/// command its integration roots spawn; `incan build` at a toolchain Loaf needs the same executable as its product
+/// (#1698), which is why the two share one bake rather than two readings of the plan. The schema branches are the
+/// runner's: schema 11 introduced caller-owned workspace-library edges linked against separately admitted foundations,
+/// and earlier schemas materialize the one trusted artifact root they retained.
+#[allow(clippy::too_many_arguments)]
+fn bake_stored_compiler_suite_cli(
+    suite: &OvenCompilerTestSuitePayload,
+    intent: &OvenBuildIntent,
+    receipt: &OvenReceipt,
+    artifact_root: &Path,
+    rustc: &Path,
+    compiler_root: &Path,
+    output_directory: &Path,
+    output: &Path,
+    foundation_executions: &BTreeMap<String, CompilerSuiteFoundationExecution>,
+    workspace_library_cache: &mut BTreeMap<String, OvenCallerOwnedRustcLibrary>,
+) -> CliResult<CompilerSuiteCliBake> {
+    let cli_artifact_closure = match suite.schema_version {
+        8 => suite.test_artifact_closure.as_ref().ok_or_else(|| {
+            CliError::failure("stored compiler-suite payload has no direct-rustc test closure".to_string())
+        })?,
+        9..=OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION => suite.cli_artifact_closure.as_ref().ok_or_else(|| {
+            CliError::failure("stored indexed compiler-suite payload has no compiler CLI closure".to_string())
+        })?,
+        _ => {
+            return Err(CliError::failure(format!(
+                "stored Oven compiler suite payload schema {} is unsupported",
+                suite.schema_version
+            )));
+        }
+    };
+    let cli_target = suite.cli_target.as_ref().ok_or_else(|| {
+        CliError::failure("stored compiler-suite payload has no direct-rustc compiler CLI target".to_string())
+    })?;
+    if cli_target.runner != "rustc-run" {
+        return Err(CliError::failure(
+            "stored compiler-suite CLI target must use the direct-rustc run executor".to_string(),
+        ));
+    }
+    if suite.schema_version < 11
+        && (!suite.cli_workspace_libraries.is_empty()
+            || !suite.cli_foundation_references.is_empty()
+            || !cli_target.workspace_library_dependencies.is_empty())
+    {
+        return Err(CliError::failure(
+            "schema-10-or-earlier Oven compiler suite declares workspace-library edges that its stored schema cannot execute",
+        ));
+    }
+    let cli_artifacts = cli_artifact_closure.manifest_for_target(cli_target, intent.clone());
+    let cli_workspace_library_outputs = if suite.schema_version >= 11 {
+        bake_planned_compiler_suite_workspace_libraries(
+            &suite.cli_workspace_libraries,
+            cli_artifact_closure,
+            intent,
+            receipt,
+            artifact_root,
+            rustc,
+            compiler_root,
+            output_directory,
+            &suite.cli_foundation_references,
+            Some(foundation_executions),
+            workspace_library_cache,
+        )?
+    } else {
+        BTreeMap::new()
+    };
+    let mut artifact_plan = if suite.schema_version >= 11 {
+        compiler_suite_composed_artifact_plan(
+            &cli_artifacts,
+            &suite.cli_foundation_references,
+            foundation_executions,
+            intent,
+        )?
+    } else {
+        cli_artifacts
+            .materialize_trusted_store(artifact_root, intent)
+            .map_err(oven_error)?
+    };
+    attach_compiler_suite_target_workspace_libraries(
+        &mut artifact_plan,
+        cli_target,
+        &suite.cli_workspace_libraries,
+        &cli_workspace_library_outputs,
+    )?;
+    let source = compiler_suite_target_source(compiler_root, cli_target)?;
+    let bake = bake_trusted_direct_rustc_run(&OvenTrustedDirectRustcTargetRequest {
+        receipt,
+        artifacts: &cli_artifacts,
+        artifact_root,
+        artifact_plan: Some(&artifact_plan),
+        rustc,
+        source: &source,
+        output,
+        crate_name: &cli_target.crate_name,
+        edition: &cli_target.edition,
+        source_evidence_key: &cli_target.source_evidence_key,
+        features: &cli_target.features,
+        prefer_dynamic: compiler_suite_workspace_outputs_include_dylib(&cli_workspace_library_outputs),
+    })
+    .map_err(oven_error)?;
+    Ok(CompilerSuiteCliBake { artifact_plan, bake })
+}
+
+/// The compiler-suite store `incan build` bakes a toolchain Loaf from (#1698).
+///
+/// The toolchain's direct-rustc plans live in the compiler-suite store, which `make test-one` names explicitly and
+/// which is bounded apart from the ordinary project store. Until incan.pub records govern the workspace's third-party
+/// closure that warm store is the interim substrate, so a toolchain build names it the way the suite runner does;
+/// unset, the ordinary compiler-owned store is opened and a missing suite is reported as such.
+pub const OVEN_COMPILER_SUITE_STORE_ENV: &str = "INCAN_OVEN_COMPILER_SUITE_STORE";
+
+/// Where a toolchain build's caller-owned outputs live below the workspace root.
+///
+/// Beside the suite runner's `target/incan/oven/compiler-tests`: both are Oven-owned direct-rustc products of the same
+/// checkout, and `target` is outside every receipt's source scan.
+pub const OVEN_TOOLCHAIN_BUILD_OUTPUT_RELATIVE_PATH: &str = "target/incan/oven/toolchain";
+
+/// One binary `oven_build_toolchain_binaries` produced.
+#[derive(Debug, Clone, Serialize)]
+pub struct OvenToolchainBinaryReport {
+    /// The declared `[[rust.bin]]` name.
+    pub name: String,
+    /// The caller-owned executable.
+    pub output: PathBuf,
+    /// Whether the receipt- and plan-verified output was reused without launching rustc.
+    pub reused: bool,
+}
+
+/// Bake a toolchain Loaf's declared `[[rust.bin]]` roles from the stored compiler-suite plans by direct rustc (#1698).
+///
+/// This is `incan build` at a Loaf of the toolchain workspace. The compiler-suite index already carries one
+/// direct-rustc plan for the `incan` binary — its source root, edition, features, workspace-library DAG and
+/// third-party externs — published for the workspace's exact receipt; this command selects that plan by the role the
+/// Loaf declares (its `path` must be the plan's source and its `name` the plan's target) and executes it into the
+/// workspace's Oven output, Cargo never launched. A role with no stored plan is refused by name so the missing plan
+/// is a named gap rather than a silent skip: the index carries only the CLI as a normal binary today, so `incan-lsp`
+/// and `oven` refuse until packet 2 plans every workspace binary. The receipt is recomputed from the current tree, so
+/// an edited compiler source is recompiled by direct rustc and an unchanged one is reused by its recorded digests;
+/// a changed manifest or a new source path changes the build unit and reports that the suite must be republished.
+pub fn oven_build_toolchain_binaries(
+    options: OvenToolchainBuildCommandOptions,
+) -> CliResult<Vec<OvenToolchainBinaryReport>> {
+    if options.binaries.is_empty() {
+        return Err(CliError::failure(format!(
+            "{} declares no [[rust.bin]] role to build",
+            options.project_root.join(LOAF_MANIFEST_FILENAME).display()
+        )));
+    }
+    // The stored plans are published under the compiler-suite receipt, which is still keyed by the workspace's
+    // Cargo manifest and lock until incan.pub records govern the third-party closure (#1698 packet 5). Name that
+    // interim dependency rather than letting the receipt report a missing Cargo input as if Cargo were wanted.
+    for input in ["Cargo.toml", "Cargo.lock"] {
+        if !options.compiler_root.join(input).is_file() {
+            return Err(CliError::failure(format!(
+                "toolchain binaries are baked from the stored compiler-suite plans, whose receipt is still keyed by the workspace {input}; {} has none (the plans move to the registry-governed closure in #1698 packet 5)",
+                options.compiler_root.display()
+            )));
+        }
+    }
+    let rustc = match options.rustc {
+        Some(rustc) => rustc,
+        None => resolve_active_rustc().map_err(oven_error)?,
+    };
+    let compiler_data_root = oven_model::toolchain_layout::compiler_owned_oven_data_root().ok_or_else(|| {
+        CliError::failure(
+            "no committed compiler-owned Oven Loaf envelope is available for this toolchain build; run the explicit Loaf baker first",
+        )
+    })?;
+    let loaf_root = compiler_data_root.join("share/incan/oven/loafs");
+    let (receipt, _) = compiler_libtests_receipt(&options.compiler_root, &rustc, &[], Some(&loaf_root))?;
+    let store = open_store_with_defaults(
+        &options.store,
+        OvenStoreLimits::new(
+            DEFAULT_OVEN_COMPILER_SUITE_MAX_PHYSICAL_BYTES,
+            DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_PHYSICAL_BYTES,
+            DEFAULT_OVEN_COMPILER_SUITE_MAX_DOMAIN_LOGICAL_BYTES,
+        ),
+    )?;
+    let selected_suite = select_compiler_test_suite(&store, &receipt, &options.compiler_root, &rustc)?;
+    let (manifest, artifact_root, payload, _suite_lease) = selected_suite.into_parts();
+    if manifest.kind != OvenArtifactKind::CompilerTestSuite
+        || manifest.build_unit_identity != receipt.build_unit_identity
+        || manifest.intent != receipt.intent
+    {
+        return Err(CliError::failure(
+            "selected Oven compiler suite is not authorized by the current compiler receipt".to_string(),
+        ));
+    }
+    let suite = serde_json::from_slice::<OvenCompilerTestSuitePayload>(&payload)
+        .map_err(|error| CliError::failure(format!("stored Oven compiler suite payload is invalid: {error}")))?;
+    if !matches!(suite.schema_version, 11..=OVEN_COMPILER_TEST_SUITE_SCHEMA_VERSION) {
+        return Err(CliError::failure(format!(
+            "stored Oven compiler suite payload schema {} does not carry the workspace-library plans a toolchain build needs; republish the Oven suite",
+            suite.schema_version
+        )));
+    }
+    let cli_target = suite.cli_target.as_ref().ok_or_else(|| {
+        CliError::failure("stored compiler-suite payload has no direct-rustc compiler CLI target".to_string())
+    })?;
+    let foundation_executions = select_compiler_suite_foundations(&store, &receipt, &suite.foundation_references)?;
+    let output_directory = match options.output {
+        Some(output) => output,
+        None => options.compiler_root.join(OVEN_TOOLCHAIN_BUILD_OUTPUT_RELATIVE_PATH),
+    };
+    fs::create_dir_all(output_directory.join("bin")).map_err(|error| {
+        CliError::failure(format!(
+            "cannot create toolchain build output directory {}: {error}",
+            output_directory.display()
+        ))
+    })?;
+    let compiler_root = fs::canonicalize(&options.compiler_root).map_err(|error| {
+        CliError::failure(format!(
+            "cannot canonicalize workspace root {}: {error}",
+            options.compiler_root.display()
+        ))
+    })?;
+    let stored_cli_source = compiler_root.join(&cli_target.source_relative_path);
+    let mut workspace_library_cache = BTreeMap::new();
+    let mut reports = Vec::with_capacity(options.binaries.len());
+    for role in &options.binaries {
+        let declared_source = fs::canonicalize(options.project_root.join(&role.path)).map_err(|error| {
+            CliError::failure(format!(
+                "[[rust.bin]] `{}` names {} which cannot be read: {error}",
+                role.name,
+                options.project_root.join(&role.path).display()
+            ))
+        })?;
+        if role.name != cli_target.target_name || declared_source != stored_cli_source {
+            return Err(CliError::failure(format!(
+                "[[rust.bin]] `{}` ({}) has no stored direct-rustc plan; the compiler-suite index carries a normal binary plan only for `{}` ({}), so every other workspace binary waits for its plan (#1698 packet 2)",
+                role.name, role.path, cli_target.target_name, cli_target.source_relative_path
+            )));
+        }
+        let output = output_directory.join("bin").join(&role.name);
+        let phase = PhaseProgress::start(format!("toolchain binary `{}`", role.name));
+        let CompilerSuiteCliBake { bake, .. } = bake_stored_compiler_suite_cli(
+            &suite,
+            &manifest.intent,
+            &receipt,
+            &artifact_root,
+            &rustc,
+            &compiler_root,
+            &output_directory,
+            &output,
+            &foundation_executions,
+            &mut workspace_library_cache,
+        )?;
+        phase.finish();
+        if bake.cargo_process_started {
+            return Err(CliError::failure(format!(
+                "toolchain binary `{}` was not produced by direct rustc",
+                role.name
+            )));
+        }
+        reports.push(OvenToolchainBinaryReport {
+            name: role.name.clone(),
+            output: bake.output.clone(),
+            reused: bake.reused,
+        });
+    }
+    Ok(reports)
 }
 
 /// The name the compiler suite's receipts record for this workspace.
