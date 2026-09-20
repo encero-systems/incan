@@ -129,7 +129,7 @@ class Hasher:
         Digest.update(self.handle, chunk.as_slice())
 ```
 
-You pass the receiver as a value, the way you pass any argument. The compiler reads how the trait declares that method's receiver from the trait's inspected metadata and passes the value accordingly — the same duckborrowing that shapes every Rust boundary call, so `Update.update(self.handle, …)` and `Digest.update(self.handle, …)` need no annotation to tell them apart even though the two traits declare their receivers differently. The compiler does not guess for a trait it recognizes: when the import is known to be a trait but no signature is available for the method, the trait-qualified call is an error naming the trait and method, and `value.method(...)` remains available when the method is unambiguous on the receiver. A method the trait does not declare is also rejected, since Rust resolves `Trait::method` only against the trait's own items. An import the compiler has no metadata for at all is treated as an ordinary associated call, and native compilation remains the authority for it.
+The receiver is passed like any other argument. The compiler does not guess for a trait it recognizes: when the import is known to be a trait but no signature is available for the method, the trait-qualified call is an error naming the trait and method, and `value.method(...)` remains available when the method is unambiguous on the receiver. A method the trait does not declare is also rejected, since Rust resolves `Trait::method` only against the trait's own items. An import the compiler has no metadata for at all is treated as an ordinary associated call, and native compilation remains the authority for it.
 
 ### Extension traits stay in scope for the methods they provide
 
