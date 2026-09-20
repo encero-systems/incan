@@ -417,7 +417,9 @@ pub struct IrStruct {
     /// mention every parameter it declares, so lowering records which parameters are phantom and emission owns the
     /// marker representation. Emission must not rediscover this by scanning a source declaration's fields; a compiled
     /// dependency's manifest records no phantom list, so for that route the emitter applies the same
-    /// [`phantom_type_params`] rule to the manifest's recorded type parameters and field types. See #1370.
+    /// [`phantom_type_params`] rule to the manifest's recorded type parameters and field types. Only a model or
+    /// class can carry a phantom parameter: the typechecker refuses a newtype whose underlying type does not
+    /// mention one (`type_param_not_stored`), so a newtype's list is always empty. See #1370.
     pub phantom_type_params: Vec<String>,
     /// Derive names that should be qualified with a Rust module path.
     ///

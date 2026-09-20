@@ -96,6 +96,31 @@ pub struct TypeConstraint {
     pub value: IntLiteral,
 }
 
+impl Type {
+    /// Return whether this annotation mentions `name` as a bare or applied type name anywhere in its structure.
+    ///
+    /// This is a purely syntactic query over the annotation: `name` counts when it is the whole type (`T`), the head
+    /// of a generic application (`T[int]`), a generic argument (`list[T]`, `(int, T)`, `(T) -> int`), or a
+    /// constrained-primitive base. Namespace-qualified and Rust-qualified paths are compared by their first segment
+    /// only, which is never a type parameter, so they do not count. The typechecker uses this to decide whether a
+    /// declared type parameter is stored by a declaration's representation (#1370).
+    pub fn mentions_name(&self, name: &str) -> bool {
+        match self {
+            Type::Simple(ident) | Type::ConstrainedPrimitive(ident, _) => ident == name,
+            Type::Generic(head, args) => head == name || args.iter().any(|arg| arg.node.mentions_name(name)),
+            Type::DottedGeneric(_, args) => args.iter().any(|arg| arg.node.mentions_name(name)),
+            Type::Function(params, ret) => {
+                params.iter().any(|param| param.node.mentions_name(name)) || ret.node.mentions_name(name)
+            }
+            Type::Ref(inner) | Type::RefMut(inner) => inner.node.mentions_name(name),
+            Type::Tuple(elems) => elems.iter().any(|elem| elem.node.mentions_name(name)),
+            Type::Qualified(_) | Type::Dotted(_) | Type::IntLiteral(_) | Type::Unit | Type::SelfType | Type::Infer => {
+                false
+            }
+        }
+    }
+}
+
 impl fmt::Display for Type {
     /// Format a type using Incan source syntax.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -182,5 +207,45 @@ impl fmt::Display for Type {
             Type::SelfType => write!(f, "Self"),
             Type::Infer => write!(f, "_"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::Span;
+    use super::{Spanned, Type};
+
+    fn spanned(ty: Type) -> Spanned<Type> {
+        Spanned::new(ty, Span::default())
+    }
+
+    fn simple(name: &str) -> Spanned<Type> {
+        spanned(Type::Simple(name.to_string()))
+    }
+
+    /// Issue #1370: a parameter counts wherever it appears as a type name, and a qualified path's segments are
+    /// never parameters.
+    #[test]
+    fn mentions_name_finds_the_parameter_at_any_nesting() {
+        assert!(Type::Simple("T".to_string()).mentions_name("T"));
+        assert!(!Type::Simple("str".to_string()).mentions_name("T"));
+        assert!(Type::Generic("T".to_string(), vec![simple("int")]).mentions_name("T"));
+        assert!(
+            Type::Generic(
+                "Dict".to_string(),
+                vec![
+                    simple("str"),
+                    spanned(Type::Generic("list".to_string(), vec![simple("T")]))
+                ]
+            )
+            .mentions_name("T")
+        );
+        assert!(Type::Tuple(vec![simple("int"), simple("T")]).mentions_name("T"));
+        assert!(Type::Function(vec![simple("int")], Box::new(simple("T"))).mentions_name("T"));
+        assert!(Type::Ref(Box::new(simple("T"))).mentions_name("T"));
+        assert!(Type::DottedGeneric(vec!["c".to_string(), "Ptr".to_string()], vec![simple("T")]).mentions_name("T"));
+        assert!(!Type::Qualified(vec!["T".to_string(), "Inner".to_string()]).mentions_name("T"));
+        assert!(!Type::Dotted(vec!["T".to_string(), "Inner".to_string()]).mentions_name("T"));
+        assert!(!Type::SelfType.mentions_name("T"));
     }
 }

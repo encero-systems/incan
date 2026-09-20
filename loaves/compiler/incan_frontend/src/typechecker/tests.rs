@@ -7061,10 +7061,12 @@ def use_widget(w: Widget) -> str:
 #[cfg(feature = "rust_inspect")]
 #[test]
 fn test_rusttype_return_coercion_recorded_for_generic_newtype_method_call() -> Result<(), Box<dyn std::error::Error>> {
+    // The wrapper's parameter must be stored by the underlying Rust type (#1370 refuses an unused one), so the
+    // probe wraps a generic Rust type whose only method returns a borrowed `&str`.
     let source = r#"
-from rust::std::string import String as RustString
+from rust::std::vec import Vec as RustVec
 
-type Label[T] = rusttype RustString:
+type Label[T] = rusttype RustVec[T]:
     def as_str(self) -> str:
         ...
 
@@ -7082,11 +7084,11 @@ def render[T](value: Label[T]) -> str:
         .insert_test_item(
             &manifest_dir,
             RustItemMetadata {
-                canonical_path: "std::string::String".to_string(),
-                definition_path: Some("std::string::String".to_string()),
+                canonical_path: "std::vec::Vec".to_string(),
+                definition_path: Some("std::vec::Vec".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
-                    type_params: Vec::new(),
+                    type_params: vec!["T".to_string()],
                     type_param_defaults: Vec::new(),
                     mutable_reference_type_params: Vec::new(),
                     expanded_derive_traits: Vec::new(),
@@ -13028,6 +13030,139 @@ enum Box[T](str):
         errs.iter()
             .any(|e| e.message.contains("cannot declare type parameters")),
         "expected generic value enum diagnostic, got {errs:?}"
+    );
+}
+
+/// Issue #1370: a newtype has exactly its underlying type, so a declared parameter the underlying type does not
+/// mention has nowhere to live; the checker refuses it at the parameter's span instead of the generated Rust failing.
+#[test]
+fn issue1370_newtype_type_param_not_in_underlying_type_is_refused() -> Result<(), String> {
+    let source = r#"
+type Tag[T] = newtype str:
+  def label(self) -> str:
+    return self.0
+"#;
+    let errs = check_str_err(source, "expected the phantom newtype parameter to be refused");
+    let refusal = errs
+        .iter()
+        .find(|e| e.message == "Type parameter 'T' of newtype 'Tag' is not used by its underlying type")
+        .ok_or_else(|| format!("expected the type_param_not_stored diagnostic, got {errs:?}"))?;
+    assert_eq!(
+        refusal.hints,
+        vec!["Use 'T' in the underlying type, for example `newtype list[T]`, or remove it"]
+    );
+    let param_offset = source
+        .find("[T]")
+        .ok_or_else(|| "fixture must declare [T]".to_string())?
+        + 1;
+    assert_eq!(
+        refusal.span.start, param_offset,
+        "the diagnostic points at the parameter, got {:?}",
+        refusal.span
+    );
+
+    let rusttype = r#"
+from rust::std::collections import HashMap
+
+type Index[K, V] = rusttype HashMap[K, str]
+"#;
+    let errs = check_str_err(rusttype, "expected the unused rusttype parameter to be refused");
+    assert!(
+        errs.iter()
+            .any(|e| e.message == "Type parameter 'V' of newtype 'Index' is not used by its underlying type"),
+        "a rusttype takes the same rule, and only the unused parameter is named; got {errs:?}"
+    );
+    assert!(
+        !errs.iter().any(|e| e.message.contains("'K' of newtype")),
+        "a parameter the underlying type mentions is accepted; got {errs:?}"
+    );
+    Ok(())
+}
+
+/// Issue #1370: a newtype whose parameter appears anywhere in the underlying type is the accepted shape.
+#[test]
+fn issue1370_newtype_type_param_in_underlying_type_is_accepted() {
+    assert_check_ok(
+        r#"
+type Bare[T] = newtype T
+
+type Many[T] = newtype list[T]:
+  def count(self) -> int:
+    return len(self.0)
+
+type Pair[K, V] = newtype (K, list[V])
+"#,
+    );
+}
+
+/// Issue #1370: an enum stores its parameters in variant payloads; a parameter no payload mentions is refused at the
+/// parameter's span rather than reaching rustc as an unused type parameter.
+#[test]
+fn issue1370_enum_type_param_not_in_any_payload_is_refused() -> Result<(), String> {
+    let source = r#"
+enum Slot[T]:
+  Filled
+  Empty
+
+  def describe(self) -> str:
+    return "slot"
+"#;
+    let errs = check_str_err(source, "expected the phantom enum parameter to be refused");
+    let refusal = errs
+        .iter()
+        .find(|e| e.message == "Type parameter 'T' of enum 'Slot' is not used by any variant payload")
+        .ok_or_else(|| format!("expected the type_param_not_stored diagnostic, got {errs:?}"))?;
+    assert_eq!(
+        refusal.hints,
+        vec!["Give a variant a payload that mentions 'T', for example `Some(T)`, or remove it"]
+    );
+    let param_offset = source
+        .find("[T]")
+        .ok_or_else(|| "fixture must declare [T]".to_string())?
+        + 1;
+    assert_eq!(
+        refusal.span.start, param_offset,
+        "the diagnostic points at the parameter, got {:?}",
+        refusal.span
+    );
+
+    let partly_stored = r#"
+enum Outcome[T, E]:
+  Done(T)
+  Pending
+"#;
+    let errs = check_str_err(partly_stored, "expected the unused enum parameter to be refused");
+    assert!(
+        errs.iter()
+            .any(|e| e.message == "Type parameter 'E' of enum 'Outcome' is not used by any variant payload"),
+        "only the parameter no payload mentions is named; got {errs:?}"
+    );
+    assert!(
+        !errs.iter().any(|e| e.message.contains("'T' of enum")),
+        "a parameter some payload mentions is accepted; got {errs:?}"
+    );
+    Ok(())
+}
+
+/// Issue #1370: an enum whose parameter appears in at least one payload, at any nesting, is the accepted shape.
+#[test]
+fn issue1370_enum_type_param_in_a_payload_is_accepted() {
+    assert_check_ok(
+        r#"
+enum Maybe[T]:
+  Some(T)
+  Nothing
+
+enum Batch[T, E]:
+  Items(list[T])
+  Failed(str, E)
+  Empty
+
+  def is_empty(self) -> bool:
+    match self:
+      Batch.Empty => return true
+      _ => return false
+"#,
     );
 }
 

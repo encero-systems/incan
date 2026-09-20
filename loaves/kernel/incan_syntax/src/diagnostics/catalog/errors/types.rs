@@ -81,6 +81,40 @@ pub fn immutable_builtin_redefinition(name: &str, span: Span) -> CompileError {
         .with_hint("Use a different name; `print` and `println` are reserved language functions")
 }
 
+/// The declaration kind whose representation must store every declared type parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredTypeParamOwner {
+    /// A `newtype` or `rusttype`: the parameter must appear in the underlying type.
+    Newtype,
+    /// An `enum`: the parameter must appear in at least one variant payload.
+    Enum,
+}
+
+/// Report a declared type parameter that the declaration's representation does not store.
+///
+/// A model or class can carry such a parameter (it becomes a phantom marker, #1370), but a newtype has exactly its
+/// underlying type and an enum has exactly its variant payloads, so a parameter neither mentions has nowhere to
+/// live; the generated Rust would be rejected as an unused type parameter. Reported at the parameter's own span.
+pub fn type_param_not_stored(owner: StoredTypeParamOwner, owner_name: &str, param: &str, span: Span) -> CompileError {
+    let (kind, storage, hint) = match owner {
+        StoredTypeParamOwner::Newtype => (
+            "newtype",
+            "its underlying type",
+            format!("Use '{param}' in the underlying type, for example `newtype list[{param}]`, or remove it"),
+        ),
+        StoredTypeParamOwner::Enum => (
+            "enum",
+            "any variant payload",
+            format!("Give a variant a payload that mentions '{param}', for example `Some({param})`, or remove it"),
+        ),
+    };
+    CompileError::type_error(
+        format!("Type parameter '{param}' of {kind} '{owner_name}' is not used by {storage}"),
+        span,
+    )
+    .with_hint(hint)
+}
+
 /// Report a value enum declaration that attempts to use type parameters.
 pub fn value_enum_type_params_not_supported(enum_name: &str, span: Span) -> CompileError {
     CompileError::type_error(
