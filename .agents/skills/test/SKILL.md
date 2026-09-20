@@ -34,7 +34,7 @@ Did you change the parser?
   → Add a test to the subject's module under loaves/kernel/incan_syntax/src/parser/tests/ (shared helpers live in helpers.rs)
 
 Did you change the typechecker?
-  → Add a test to the subject's module under loaves/compiler/incan_frontend/src/typechecker/tests/ (shared helpers live in support.rs)
+  → Add a test to the subject's module under loaves/compiler/incan_frontend/src/typechecker/tests/ (shared helpers live in helpers.rs)
 
 Did you change lowering or emission (codegen output)?
   → Add a .incn file in loaves/compiler/incan_emit/tests/codegen_snapshots/
@@ -83,7 +83,7 @@ Helpers available from `helpers.rs`: `parse_str(source)`, `parse_str_err(source,
 
 ### Typechecker test pattern
 
-Directory: `loaves/compiler/incan_frontend/src/typechecker/tests/` — one module per subject (for example `traits.rs`, `narrowing_and_matching.rs`, `rust_imports_and_types.rs`); every module starts with `use super::*;`, which brings in the crate imports from `mod.rs` and the shared helpers from `support.rs`. Add a test to the module whose subject it belongs to, and keep every module under the inventory's 1,500-line split threshold.
+Directory: `loaves/compiler/incan_frontend/src/typechecker/tests/` — one module per subject (for example `traits.rs`, `narrowing_and_matching.rs`, `rust_imports_and_types.rs`); every module starts with `use super::*;`, which brings in the crate imports from `mod.rs` and the shared helpers from `helpers.rs`. Add a test to the module whose subject it belongs to, and keep every module under the inventory's 1,500-line split threshold.
 
 ```rust
 #[test]
