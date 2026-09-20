@@ -5,6 +5,9 @@
 //! Dict` parameter, a `mut str` local reassigned inside a `match` arm, and `dict.keys()` / `dict.values()` outside a
 //! comprehension. The built executable is run directly so the argument vector carries real arguments; `incan run`
 //! has no program-argument passthrough.
+//!
+//! A second program covers the dict-view conversions the same tool tripped over: `sorted(dict.keys())` driving a
+//! `for` loop (#1461).
 
 use std::fs;
 use std::process::Command;
@@ -156,6 +159,42 @@ fn stdlib_gaps_argv_text_codecs_and_dict_surfaces_issue1668() -> Result<(), Box<
             "round-trip ok",
         ],
         "the #1668 program must print every surface's expected value"
+    );
+    Ok(())
+}
+
+/// Dict views handed to `sorted()`; every line of its output is asserted below.
+const DICT_VIEWS_SOURCE: &str = r#"def ordered_keys(values: Dict[str, int]) -> list[str]:
+    return sorted(values.keys())
+
+def main() -> None:
+    values: Dict[str, int] = {"b": 2, "a": 1, "c": 3}
+    for key in sorted(values.keys()):
+        println(key)
+    for value in sorted(values.values()):
+        println(value)
+    println(",".join(ordered_keys(values)))
+"#;
+
+/// `sorted(dict.keys())` and `sorted(dict.values())` drive a `for` loop through a real build (#1461): the emitted
+/// Rust must sort a materialized list, never the borrowed `Keys` / `Values` iterator.
+#[test]
+fn sorted_dict_views_drive_loops_issue1461() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    write_minimal_project(tmp.path(), "dict_views_1461", "")?;
+    fs::write(tmp.path().join("src/main.incn"), DICT_VIEWS_SOURCE)?;
+
+    // Same suite-versus-standalone split as the #1668 program above: bake only where no Loaf authority exists yet.
+    if !incan_test_support::oven_compiler_suite_is_active() {
+        let bake = run_explicit_oven_bake(tmp.path())?;
+        assert_success(&bake, "prepare the #1461 dict-views fixture");
+    }
+    let run = run_incan(tmp.path(), &["run", "src/main.incn"])?;
+    assert_success(&run, "run the #1461 dict-views program");
+    assert_eq!(
+        String::from_utf8(run.stdout)?.lines().collect::<Vec<_>>(),
+        vec!["a", "b", "c", "1", "2", "3", "a,b,c"],
+        "sorted dict views must yield ordered keys and values"
     );
     Ok(())
 }

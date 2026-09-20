@@ -3020,6 +3020,24 @@ fn test_issue1668_dict_keys_outside_comprehension_codegen() {
     assert_codegen_snapshot!("issue1668_dict_keys_outside_comprehension", rust_code);
 }
 
+/// `sorted(dict.keys())` / `sorted(dict.values())` sort the materialized list the typechecker reports, including as a
+/// `for` iterable (#1461); the `HashMap::Keys` iterator itself is never cloned or sorted.
+#[test]
+fn test_issue1461_sorted_dict_keys_codegen() {
+    let source = load_test_file("issue1461_sorted_dict_keys");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("let mut __v = (values.keys().cloned().collect::<Vec<_>>()).clone();")
+            && rust_code.contains("let mut __v = (values.values().cloned().collect::<Vec<_>>()).clone();"),
+        "sorted() over a dict view must sort a materialized Vec; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("(values.keys()).clone()") && !rust_code.contains("(values.values()).clone()"),
+        "the Keys / Values iterator must never be cloned for sorting; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1461_sorted_dict_keys", rust_code);
+}
+
 #[test]
 fn test_std_tempfile_import_codegen() {
     let source = load_test_file("std_tempfile_import");
