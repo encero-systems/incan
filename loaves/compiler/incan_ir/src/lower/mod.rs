@@ -765,6 +765,7 @@ impl AstLowering {
     /// imported, or generic declarations yield the annotation as declared; retention leaves positions without an
     /// admitted carrier untouched.
     fn decorator_declared_result_type(&self, decorators: &[ast::Spanned<ast::Decorator>]) -> Option<IrType> {
+        // ---- Context: the outermost user-defined decorator and the declaration it resolved to ----
         let decorator = decorators
             .iter()
             .find(|decorator| self.is_user_defined_decorator_candidate(&decorator.node))?;
@@ -773,6 +774,7 @@ impl AstLowering {
         if identity.kind != SemanticSourceTargetKind::Function {
             return None;
         }
+        // ---- Context: only a declaration of this module has a lowered annotation to read ----
         let declaration_span = (identity.declaration_span.start, identity.declaration_span.end);
         let declares_locally = info
             .declarations
@@ -782,6 +784,7 @@ impl AstLowering {
         if !declares_locally {
             return None;
         }
+        // ---- Context: the declared surface, unwrapped once for a factory decorator ----
         let declared = self.local_function_declared_returns.get(&declaration_span)?.clone();
         if !decorator.node.is_call {
             return Some(declared);
@@ -3196,8 +3199,7 @@ impl AstLowering {
                 f,
                 &emitted_name,
                 &original_registry_key,
-                &callable_params,
-                &original_params,
+                surface_params,
                 return_type,
                 &original.params,
                 &original.return_type,
@@ -3435,27 +3437,23 @@ impl AstLowering {
     /// A module-level static can store a monomorphic decorated function value, but it cannot store "the decorated
     /// version of `f[T]` for every `T`". For generic declarations, the wrapper keeps the source type parameters and
     /// applies the decorator chain to `__incan_original_f::<T>` at the call site before invoking the result.
+    ///
+    /// `params`, `return_type`, and `decorated_ty` are the one settled decorated surface: the wrapper forwards exactly
+    /// the parameters the decorated value accepts, carriers included, rather than rebuilding them from the checked
+    /// callable surface.
     #[allow(clippy::too_many_arguments)]
     fn generic_decorated_function_wrapper(
         &mut self,
         f: &ast::FunctionDecl,
         wrapper_name: &str,
         original_name: &str,
-        callable_params: &[CallableParam],
-        original_params: &[CallableParam],
+        params: Vec<FunctionParam>,
         return_type: IrType,
         original_function_params: &[FunctionParam],
         original_return_type: &IrType,
         type_params: Vec<IrTypeParam>,
         decorated_ty: IrType,
     ) -> Result<super::decl::IrFunction, LoweringError> {
-        let defaults = self.decorated_param_defaults_for_surface(callable_params, original_params, &f.params)?;
-        let params = self.function_params_from_callable_surface(
-            callable_params,
-            &defaults,
-            Some(&f.params),
-            Some(original_params),
-        );
         let type_args = type_params
             .iter()
             .map(|param| IrType::Generic(param.name.clone()))

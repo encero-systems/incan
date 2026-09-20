@@ -40,7 +40,7 @@ use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::surface::types as surface_types;
 use incan_lang::lang::testing::{self, TestingAssertHelperId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
-use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
 const TYPE_CONSTRUCTOR_HOOK: &str = "__incan_new";
 const API_CRATE_ROOT_SEGMENT: &str = "crate";
@@ -582,6 +582,18 @@ impl AstLowering {
         ) {
             return None;
         }
+        self.sdk_provider_declaration_path(identity)
+    }
+
+    /// Return the `std.*` declaration path a checked identity names when an active SDK provider declares it.
+    ///
+    /// A compiled provider publishes its declarations under `SymbolOrigin::Package` with the provider's library name
+    /// and the module path below the `std` root, while the provider's checked API and the compiler's stdlib registries
+    /// are keyed on the public `std.*` spelling that origin projects to. A consumer that imports through a facade
+    /// holds only the facade's written path, so this projection is what lets lowering reach the declaration the
+    /// frontend proved, for a callable's signature and for a trait's protocol alike. An identity owned by a project
+    /// module, a `pub::` library that is not an active SDK provider, or a Rust crate yields nothing.
+    pub(in crate::lower) fn sdk_provider_declaration_path(&self, identity: &CanonicalSymbolId) -> Option<Vec<String>> {
         let SymbolOrigin::Package { library, module_path } = &identity.origin else {
             return None;
         };
