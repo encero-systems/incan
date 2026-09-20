@@ -24,9 +24,9 @@ workspaces/docs-site/docs/contributing/how-to/work_the_test_inventory.md	scripts
 workspaces/docs-site/docs/contributing/explanation/generated_rust_quality.md	src/**	The generated project's source tree inside a package artifact
 workspaces/docs-site/docs/contributing/how-to/authoring_vocab_crates.md	src/lib.rs	The example vocab companion crate's library root
 
-# Paths inside a shipped toolchain archive, named by the document that describes the archive layout.
-workspaces/docs-site/docs/contributing/how-to/ci_and_automation.md	crates/Cargo.lock	The support workspace lock as the packager ships it inside the toolchain archive, not a repository path
-
 # The source-build recipe pins the v0.5.0 tag and names that checkout's layout, not the current tree.
 workspaces/docs-site/docs/_snippets/learning/development_toolchain.md	crates/incan_stdlib/stdlib	The v0.5.0 checkout the recipe pins keeps the standard library there
 workspaces/docs-site/docs/_snippets/learning/development_toolchain.md	crates	The v0.5.0 checkout the recipe pins keeps the support crates there
+
+# The installed toolchain layout: the packager ships the support workspace lock beside the compiler, not in this tree.
+workspaces/docs-site/docs/contributing/how-to/ci_and_automation.md	crates/Cargo.lock	The reduced support workspace lock as an installed toolchain lays it out beside the compiler
