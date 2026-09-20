@@ -4317,6 +4317,7 @@ mod tests {
             derives: Vec::new(),
             visibility: Visibility::Public,
             type_params: Vec::new(),
+            phantom_type_params: Vec::new(),
             derive_rust_modules: HashMap::new(),
             lint_allows: Vec::new(),
         })));

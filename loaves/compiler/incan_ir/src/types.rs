@@ -292,6 +292,54 @@ impl IrType {
         }
     }
 
+    /// Return whether this type mentions the named type parameter anywhere in its structure.
+    ///
+    /// A parameter lowers as [`IrType::Generic`], but a nominal position can still carry the bare name when a
+    /// declaration type reached lowering without its owner's parameters in scope, so a same-named `Struct`, `Enum`,
+    /// or `Trait` leaf counts as a mention too. Lowering uses this to decide which of a declaration's parameters are
+    /// phantom (#1370); the emitter uses it to decide whether a field type is written in its owner's vocabulary.
+    pub fn mentions_type_param(&self, name: &str) -> bool {
+        match self {
+            IrType::Generic(leaf) | IrType::Struct(leaf) | IrType::Enum(leaf) | IrType::Trait(leaf) => leaf == name,
+            IrType::NamedGeneric(head, args) => head == name || args.iter().any(|arg| arg.mentions_type_param(name)),
+            IrType::List(inner)
+            | IrType::Set(inner)
+            | IrType::Option(inner)
+            | IrType::Ref(inner)
+            | IrType::RefMut(inner)
+            | IrType::TypeToken(inner) => inner.mentions_type_param(name),
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                key.mentions_type_param(name) || value.mentions_type_param(name)
+            }
+            IrType::Tuple(items) => items.iter().any(|item| item.mentions_type_param(name)),
+            IrType::Function { params, ret } => {
+                params.iter().any(|param| param.mentions_type_param(name)) || ret.mentions_type_param(name)
+            }
+            IrType::ExternalUnion { union, .. } => union.mentions_type_param(name),
+            IrType::ImplTrait(bound) => bound
+                .type_args
+                .iter()
+                .chain(bound.assoc_types.iter().map(|(_, ty)| ty))
+                .any(|arg| arg.mentions_type_param(name)),
+            IrType::Unit
+            | IrType::Bool
+            | IrType::Int
+            | IrType::Float
+            | IrType::Numeric(_)
+            | IrType::Decimal { .. }
+            | IrType::String
+            | IrType::Bytes
+            | IrType::StaticStr
+            | IrType::StaticBytes
+            | IrType::FrozenStr
+            | IrType::FrozenBytes
+            | IrType::StrRef
+            | IrType::RustDisplay(_)
+            | IrType::SelfType
+            | IrType::Unknown => false,
+        }
+    }
+
     /// Check if this type is Copy in Rust
     ///
     /// Returns true for primitive types (unit, bool, int, float) and string references (`&str`, `&'static str`) since

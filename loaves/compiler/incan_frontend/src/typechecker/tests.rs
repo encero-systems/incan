@@ -7122,10 +7122,12 @@ def use_widget(w: Widget) -> str:
 #[cfg(feature = "rust_inspect")]
 #[test]
 fn test_rusttype_return_coercion_recorded_for_generic_newtype_method_call() -> Result<(), Box<dyn std::error::Error>> {
+    // The wrapper's parameter must be stored by the underlying Rust type (#1370 refuses an unused one), so the
+    // probe wraps a generic Rust type whose only method returns a borrowed `&str`.
     let source = r#"
-from rust::std::string import String as RustString
+from rust::std::vec import Vec as RustVec
 
-type Label[T] = rusttype RustString:
+type Label[T] = rusttype RustVec[T]:
     def as_str(self) -> str:
         ...
 
@@ -7143,11 +7145,11 @@ def render[T](value: Label[T]) -> str:
         .insert_test_item(
             &manifest_dir,
             RustItemMetadata {
-                canonical_path: "std::string::String".to_string(),
-                definition_path: Some("std::string::String".to_string()),
+                canonical_path: "std::vec::Vec".to_string(),
+                definition_path: Some("std::vec::Vec".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
-                    type_params: Vec::new(),
+                    type_params: vec!["T".to_string()],
                     type_param_defaults: Vec::new(),
                     mutable_reference_type_params: Vec::new(),
                     expanded_derive_traits: Vec::new(),
@@ -13089,6 +13091,139 @@ enum Box[T](str):
         errs.iter()
             .any(|e| e.message.contains("cannot declare type parameters")),
         "expected generic value enum diagnostic, got {errs:?}"
+    );
+}
+
+/// Issue #1370: a newtype has exactly its underlying type, so a declared parameter the underlying type does not
+/// mention has nowhere to live; the checker refuses it at the parameter's span instead of the generated Rust failing.
+#[test]
+fn issue1370_newtype_type_param_not_in_underlying_type_is_refused() -> Result<(), String> {
+    let source = r#"
+type Tag[T] = newtype str:
+  def label(self) -> str:
+    return self.0
+"#;
+    let errs = check_str_err(source, "expected the phantom newtype parameter to be refused");
+    let refusal = errs
+        .iter()
+        .find(|e| e.message == "Type parameter 'T' of newtype 'Tag' is not used by its underlying type")
+        .ok_or_else(|| format!("expected the type_param_not_stored diagnostic, got {errs:?}"))?;
+    assert_eq!(
+        refusal.hints,
+        vec!["Use 'T' in the underlying type, for example `newtype list[T]`, or remove it"]
+    );
+    let param_offset = source
+        .find("[T]")
+        .ok_or_else(|| "fixture must declare [T]".to_string())?
+        + 1;
+    assert_eq!(
+        refusal.span.start, param_offset,
+        "the diagnostic points at the parameter, got {:?}",
+        refusal.span
+    );
+
+    let rusttype = r#"
+from rust::std::collections import HashMap
+
+type Index[K, V] = rusttype HashMap[K, str]
+"#;
+    let errs = check_str_err(rusttype, "expected the unused rusttype parameter to be refused");
+    assert!(
+        errs.iter()
+            .any(|e| e.message == "Type parameter 'V' of newtype 'Index' is not used by its underlying type"),
+        "a rusttype takes the same rule, and only the unused parameter is named; got {errs:?}"
+    );
+    assert!(
+        !errs.iter().any(|e| e.message.contains("'K' of newtype")),
+        "a parameter the underlying type mentions is accepted; got {errs:?}"
+    );
+    Ok(())
+}
+
+/// Issue #1370: a newtype whose parameter appears anywhere in the underlying type is the accepted shape.
+#[test]
+fn issue1370_newtype_type_param_in_underlying_type_is_accepted() {
+    assert_check_ok(
+        r#"
+type Bare[T] = newtype T
+
+type Many[T] = newtype list[T]:
+  def count(self) -> int:
+    return len(self.0)
+
+type Pair[K, V] = newtype (K, list[V])
+"#,
+    );
+}
+
+/// Issue #1370: an enum stores its parameters in variant payloads; a parameter no payload mentions is refused at the
+/// parameter's span rather than reaching rustc as an unused type parameter.
+#[test]
+fn issue1370_enum_type_param_not_in_any_payload_is_refused() -> Result<(), String> {
+    let source = r#"
+enum Slot[T]:
+  Filled
+  Empty
+
+  def describe(self) -> str:
+    return "slot"
+"#;
+    let errs = check_str_err(source, "expected the phantom enum parameter to be refused");
+    let refusal = errs
+        .iter()
+        .find(|e| e.message == "Type parameter 'T' of enum 'Slot' is not used by any variant payload")
+        .ok_or_else(|| format!("expected the type_param_not_stored diagnostic, got {errs:?}"))?;
+    assert_eq!(
+        refusal.hints,
+        vec!["Give a variant a payload that mentions 'T', for example `Some(T)`, or remove it"]
+    );
+    let param_offset = source
+        .find("[T]")
+        .ok_or_else(|| "fixture must declare [T]".to_string())?
+        + 1;
+    assert_eq!(
+        refusal.span.start, param_offset,
+        "the diagnostic points at the parameter, got {:?}",
+        refusal.span
+    );
+
+    let partly_stored = r#"
+enum Outcome[T, E]:
+  Done(T)
+  Pending
+"#;
+    let errs = check_str_err(partly_stored, "expected the unused enum parameter to be refused");
+    assert!(
+        errs.iter()
+            .any(|e| e.message == "Type parameter 'E' of enum 'Outcome' is not used by any variant payload"),
+        "only the parameter no payload mentions is named; got {errs:?}"
+    );
+    assert!(
+        !errs.iter().any(|e| e.message.contains("'T' of enum")),
+        "a parameter some payload mentions is accepted; got {errs:?}"
+    );
+    Ok(())
+}
+
+/// Issue #1370: an enum whose parameter appears in at least one payload, at any nesting, is the accepted shape.
+#[test]
+fn issue1370_enum_type_param_in_a_payload_is_accepted() {
+    assert_check_ok(
+        r#"
+enum Maybe[T]:
+  Some(T)
+  Nothing
+
+enum Batch[T, E]:
+  Items(list[T])
+  Failed(str, E)
+  Empty
+
+  def is_empty(self) -> bool:
+    match self:
+      Batch.Empty => return true
+      _ => return false
+"#,
     );
 }
 
@@ -21831,6 +21966,178 @@ def run() -> int:
             .any(|e| e.message.contains("expects 1 explicit type argument(s), got 2")),
         "expected explicit type argument arity diagnostic, got {errs:?}"
     );
+}
+
+/// Issue #1373 (1): a `with` bound naming a type is not a trait, so the hint must not ask for an implementation of
+/// `float`, and it must not point at the value arguments when the explicit type argument is what mismatched.
+#[test]
+fn issue1373_type_bound_violation_hint_names_the_type_not_an_implementation() -> Result<(), String> {
+    let source = r#"
+def cast[T with float](x: int) -> float:
+  return 1.0
+
+def main() -> None:
+  a = cast[int](1)
+"#;
+    let errs = check_str_err(source, "expected the float bound to reject cast[int]");
+    let bound_error = errs
+        .iter()
+        .find(|e| {
+            e.message == "Call to 'cast' violates generic bound: type parameter 'T' requires 'float' but got 'int'"
+        })
+        .ok_or_else(|| format!("expected the bound-violation error, got {errs:?}"))?;
+    let hint = bound_error.hints.join("\n");
+    assert!(
+        hint.contains("'float' is a type, not a trait") && hint.contains("declare the parameter as 'float'"),
+        "the hint must explain that a type in bound position cannot be implemented, got {hint:?}"
+    );
+    assert!(
+        !hint.contains("implements 'float'") && !hint.contains("the argument type"),
+        "the hint must not ask to implement a type or blame the value arguments, got {hint:?}"
+    );
+    Ok(())
+}
+
+/// Issue #1373 (1): with a trait bound, an explicit type argument that fails it is named as the type argument.
+#[test]
+fn issue1373_explicit_type_argument_bound_violation_hint_names_the_type_argument() -> Result<(), String> {
+    let source = r#"
+@requires(message: str)
+trait Displayable:
+  def display(self) -> str:
+    return self.message
+
+class NotDisplayable:
+  value: int
+
+def show[T with Displayable](value: T) -> T:
+  return value
+
+def main() -> None:
+  _ = show[NotDisplayable](NotDisplayable(value=1))
+"#;
+    let errs = check_str_err(source, "expected the Displayable bound to reject show[NotDisplayable]");
+    let bound_error = errs
+        .iter()
+        .find(|e| e.message.contains("violates generic bound"))
+        .ok_or_else(|| format!("expected the bound-violation error, got {errs:?}"))?;
+    let hint = bound_error.hints.join("\n");
+    assert!(
+        hint.contains("Type argument 'NotDisplayable' for 'T' must implement 'Displayable'"),
+        "an explicit type argument is named as such, got {hint:?}"
+    );
+    assert!(
+        !hint.contains("the argument type"),
+        "the value arguments are not what mismatched, got {hint:?}"
+    );
+    Ok(())
+}
+
+/// Issue #1373 (2): a call that no overload accepts lists every candidate and what each one wanted, instead of only
+/// the first-declared candidate's bound.
+#[test]
+fn issue1373_overload_set_rejection_lists_every_candidate() -> Result<(), String> {
+    let source = r#"
+def cast[T with float](x: int) -> float:
+  return 1.0
+
+def cast[T with int](x: int) -> int:
+  return 1
+
+def main() -> None:
+  c = cast[str](1)
+"#;
+    let errs = check_str_err(source, "expected cast[str] to match no overload");
+    let summary = errs
+        .iter()
+        .find(|e| e.message == "Call to 'cast' matches none of its 2 overloads")
+        .ok_or_else(|| format!("expected the overload summary diagnostic, got {errs:?}"))?;
+    assert_eq!(
+        summary.notes,
+        vec![
+            "candidate `cast[T with float](x: int) -> float` rejected: Call to 'cast' violates generic bound: type \
+             parameter 'T' requires 'float' but got 'str'",
+            "candidate `cast[T with int](x: int) -> int` rejected: Call to 'cast' violates generic bound: type \
+             parameter 'T' requires 'int' but got 'str'",
+        ],
+        "each candidate is listed with the reason it was rejected"
+    );
+    Ok(())
+}
+
+/// Issue #1373 (3): an unknown name in a signature's type position is most likely an undeclared type parameter, so
+/// the hint shows the declaration rather than sending the reader to their imports.
+#[test]
+fn issue1373_undeclared_type_parameter_suggests_declaring_it() -> Result<(), String> {
+    let source = r#"
+model Column[T]:
+  name: str
+
+def widen(x: Column[U]) -> None:
+  println(f"{x.name}")
+"#;
+    let errs = check_str_err(source, "expected the undeclared U to be rejected");
+    let unknown = errs
+        .iter()
+        .find(|e| e.message == "Unknown symbol 'U'")
+        .ok_or_else(|| format!("expected the unknown-symbol error, got {errs:?}"))?;
+    assert_eq!(
+        unknown.hints.first().map(String::as_str),
+        Some("'U' is not declared as a type parameter of 'widen'; did you mean `def widen[U](...)`?"),
+        "the first hint shows where the declaration goes, got {:?}",
+        unknown.hints
+    );
+    assert!(
+        !unknown.hints.iter().any(|hint| hint.contains("forget to import")),
+        "the generic import hint must not lead, got {:?}",
+        unknown.hints
+    );
+
+    let generic_owner = r#"
+def pair[T](x: T, y: U) -> T:
+  return x
+"#;
+    let errs = check_str_err(generic_owner, "expected the undeclared U to be rejected");
+    let unknown = errs
+        .iter()
+        .find(|e| e.message == "Unknown symbol 'U'")
+        .ok_or_else(|| format!("expected the unknown-symbol error, got {errs:?}"))?;
+    assert_eq!(
+        unknown.hints.first().map(String::as_str),
+        Some("'U' is not declared as a type parameter of 'pair'; did you mean `def pair[T, U](...)`?"),
+        "declared parameters are kept ahead of the missing one, got {:?}",
+        unknown.hints
+    );
+    Ok(())
+}
+
+/// Issue #1373 (4): RFC 054 keeps an explicit bracket list arity-complete, so a short list names the parameters it
+/// left unbound and shows the `_` placeholder that infers them, rather than only counting.
+#[test]
+fn issue1373_partial_explicit_type_arguments_hint_shows_the_inference_placeholder() -> Result<(), String> {
+    let source = r#"
+def convert[T, U](x: U) -> T:
+  return x
+
+def main() -> None:
+  a: float = convert[float](1)
+"#;
+    let errs = check_str_err(source, "expected the partial bracket list to be rejected");
+    let arity = errs
+        .iter()
+        .find(|e| e.message == "convert expects 2 explicit type argument(s), got 1")
+        .ok_or_else(|| format!("expected the arity error, got {errs:?}"))?;
+    assert_eq!(
+        arity.notes,
+        vec!["'convert' declares type parameters [T, U]; an explicit list binds every one of them in that order"],
+        "the note names the declared parameters"
+    );
+    assert_eq!(
+        arity.hints,
+        vec!["Write `_` for a parameter the value arguments determine (U): convert[float, _](...)"],
+        "the hint completes the written list with the inference placeholder"
+    );
+    Ok(())
 }
 
 #[test]

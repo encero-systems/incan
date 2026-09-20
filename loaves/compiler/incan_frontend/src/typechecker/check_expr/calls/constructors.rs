@@ -335,8 +335,8 @@ impl TypeChecker {
         if type_args.len() != type_params.len() {
             self.errors.push(errors::explicit_type_arg_arity(
                 name,
-                type_params.len(),
-                type_args.len(),
+                type_params,
+                &Self::written_type_args(type_args),
                 span,
             ));
             return Some((ResolvedType::Unknown, std::collections::HashMap::new()));
@@ -534,8 +534,8 @@ impl TypeChecker {
         if !type_args.is_empty() && type_args.len() != type_params.len() {
             self.errors.push(errors::explicit_type_arg_arity(
                 type_name,
-                type_params.len(),
-                type_args.len(),
+                type_params,
+                &Self::written_type_args(type_args),
                 span,
             ));
             return Some(ResolvedType::Unknown);
