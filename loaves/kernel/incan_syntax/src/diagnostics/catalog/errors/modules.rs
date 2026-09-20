@@ -66,6 +66,35 @@ pub fn stdlib_import_not_exported(name: &str, module: &str, span: Span) -> Compi
     .with_hint("To import from the Rust standard library, use: `from rust::std::... import ...`")
 }
 
+/// A module-qualified type annotation (`mod.Type`) named a member the module does not declare as a type.
+///
+/// The root resolved to a module binding, so the spelling was a real module walk; it is the tail that fails. Naming
+/// the module keeps the message about the declaration the author was after rather than about the syntax. `module`
+/// is the import spelling of the module the root is bound to (`beta`, `std.toml`, `pub::widgets.catalog`), not the
+/// local alias, so the hint's `from ... import` line is one the author can paste.
+pub fn qualified_type_not_declared(spelling: &str, module: &str, member: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("`{spelling}` is not a type: module `{module}` declares no type or trait named `{member}`"),
+        span,
+    )
+    .with_hint(format!(
+        "Check the module's public declarations, or import the type directly with `from {module} import {member}`"
+    ))
+}
+
+/// A module-qualified type annotation (`name.Type`) has a root that is bound to something other than a module.
+///
+/// Only a module binding can qualify a type name. A value, type, or trait in root position is a different construct
+/// that type position has no meaning for, so it is refused here instead of reaching a later stage that would have to
+/// guess -- the previous behavior was an emitter panic on the dotted spelling (#1437).
+pub fn qualified_type_root_not_a_module(spelling: &str, root: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("`{spelling}` is not a type: `{root}` is not a module binding"),
+        span,
+    )
+    .with_hint("Qualify a type with an imported module (`import pkg.mod` then `mod.Type`), or import the type directly")
+}
+
 /// A crate-root `import rust::crate_name` binding was used in type position.
 ///
 /// RFC 041: crate-root imports name the crate as a namespace, not a concrete Rust type. Authors should import a

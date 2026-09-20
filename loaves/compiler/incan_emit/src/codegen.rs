@@ -3041,6 +3041,88 @@ pub root = math.sqrt
         }
     }
 
+    /// #1434: a module import used only by a module derive is still a use of that module, because the emitted
+    /// `impl module::Trait for T` names its binding. An aliased import must therefore survive generated-use pruning
+    /// under the binding the source chose; an unaliased root module needs no `use` because the project declares it.
+    #[test]
+    fn module_derive_retains_its_trait_module_import() -> Result<(), Box<dyn std::error::Error>> {
+        let codec = parse_program("__derives__ = [Encode]\n\n@rust.derive(\"Debug\")\npub trait Encode:\n  pass\n");
+        for (import, binding, expected_import) in [
+            ("import codec", "codec", None),
+            ("import codec as formats", "formats", Some("usecrate::codecasformats;")),
+        ] {
+            let main = parse_program(&format!(
+                "{import}\n\n@derive({binding})\nmodel Item:\n  value: int\n\ndef main() -> None:\n  item = Item(value=1)\n  println(item.value)\n"
+            ));
+            let mut codegen = IrCodegen::new();
+            codegen.add_module("codec", &codec);
+            let (main_code, _modules) = codegen.try_generate_multi_file(&main, &["codec"])?;
+            let compact = compact_rust(&main_code);
+            match expected_import {
+                Some(expected_import) => assert!(compact.contains(expected_import), "{import}: {main_code}"),
+                None => assert!(!compact.contains("usecrate::codec"), "{import}: {main_code}"),
+            }
+            assert!(
+                compact.contains(&format!("impl{binding}::EncodeforItem{{}}")),
+                "{import}: {main_code}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #1434: a compiled-SDK derive bundle reached through a root `std` import keeps the provider-qualified import
+    /// projection, so `impl toml::TomlSerialize` resolves the SDK namespace rather than the external `toml` crate.
+    #[test]
+    fn std_root_module_derive_retains_sdk_facade_import() {
+        for (import, binding) in [("toml", "toml"), ("toml as manifest", "manifest")] {
+            let source = format!(
+                "from std import {import}\n\n@derive({binding})\nmodel Project:\n  name: str\n\ndef main() -> None:\n  project = Project(name=\"demo\")\n  println(project.name)\n"
+            );
+            let code = generate_with_sdk_provider_modules(&source, vec![vec!["toml".to_string()]]);
+            let compact = compact_rust(&code);
+            let expected_import = if binding == "toml" {
+                "usecrate::__incan_std::toml;".to_string()
+            } else {
+                format!("usecrate::__incan_std::tomlas{binding};")
+            };
+            assert!(compact.contains(&expected_import), "{import}: {code}");
+            assert!(
+                compact.contains(&format!("impl{binding}::TomlSerializeforProject{{}}"))
+                    && compact.contains(&format!("impl{binding}::TomlDeserializeforProject{{}}")),
+                "{import}: {code}"
+            );
+            assert!(!compact.contains("usetoml"), "{import}: {code}");
+        }
+    }
+
+    /// #1431: a facade that re-exports a compiled-SDK `std.serde.json` trait still hands the consumer the stdlib
+    /// trait identity, so the serde derive is forwarded and the backend `to_json` default is emitted, while the
+    /// facade itself re-exports the SDK projection the consumer's `use` resolves through.
+    #[test]
+    fn sdk_facade_reexported_serde_json_trait_keeps_its_protocol() -> Result<(), Box<dyn std::error::Error>> {
+        let facade = parse_program("from std.serde.json import Serialize\n");
+        let main = parse_program(
+            "from facade import Serialize\n\nmodel Payload with Serialize:\n  value: int\n\ndef main() -> None:\n  println(Payload(value=1).to_json())\n",
+        );
+        let mut codegen = IrCodegen::new();
+        codegen.set_sdk_provider_module_paths(vec![vec!["serde".to_string(), "json".to_string()]]);
+        codegen.add_module("facade", &facade);
+        let (main_code, modules) = codegen.try_generate_multi_file(&main, &["facade"])?;
+        let compact = compact_rust(&main_code);
+        assert!(compact.contains("serde::Serialize,"), "{main_code}");
+        assert!(
+            compact.contains("implSerializeforPayload{fnto_json(&self)->String"),
+            "{main_code}"
+        );
+        assert!(compact.contains("usecrate::facade::Serialize;"), "{main_code}");
+        let facade_code = modules.get("facade").ok_or("missing facade output")?;
+        assert!(
+            compact_rust(facade_code).contains("pubusecrate::__incan_std::serde::json::Serialize;"),
+            "{facade_code}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn rust_std_root_module_import_keeps_rust_namespace() {
         let code =
@@ -3344,6 +3426,7 @@ def main() -> None:
                         trait_path: String::from("rand::Rng"),
                         definition_path: None,
                         methods: vec![String::from("gen_range")],
+                        methods_known: true,
                     }),
                 },
                 IrImportItem {
@@ -3465,6 +3548,7 @@ def main() -> None:
                         trait_path: String::from("demo::AlphaRender"),
                         definition_path: None,
                         methods: vec![String::from("render")],
+                        methods_known: true,
                     }),
                 },
                 IrImportItem {
@@ -3477,6 +3561,7 @@ def main() -> None:
                         trait_path: String::from("demo::BetaRender"),
                         definition_path: None,
                         methods: vec![String::from("render")],
+                        methods_known: true,
                     }),
                 },
             ],
@@ -3525,7 +3610,7 @@ def main() -> None:
                         )),
                         method: String::from("render"),
                         dispatch: Some(IrMethodDispatch::RustExtensionTraitImport {
-                            binding: String::from("AlphaRender"),
+                            bindings: vec![String::from("AlphaRender")],
                         }),
                         type_args: Vec::new(),
                         args: Vec::new(),
@@ -3693,6 +3778,7 @@ def main() -> None:
                         trait_path: String::from("sha2::Digest"),
                         definition_path: Some(String::from("digest::digest::Digest")),
                         methods: vec![String::from("digest")],
+                        methods_known: true,
                     }),
                 },
                 IrImportItem {

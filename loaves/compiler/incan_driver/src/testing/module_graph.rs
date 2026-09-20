@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::modules::{topologically_sort_modules, uses_iterator_adapter_surface, uses_result_combinator_surface};
+use crate::modules::{
+    source_identity_key, topologically_sort_modules, uses_iterator_adapter_surface, uses_result_combinator_surface,
+};
 use crate::project::resolve_stdlib_module_source_path;
 use incan_frontend::ParsedModule;
 use incan_frontend::ast::Program;
@@ -136,8 +138,14 @@ fn queue_implicit_stdlib_helpers(
 }
 
 /// Return the stable key used for dependency graph edges.
+///
+/// [`topologically_sort_modules`] correlates edges against a module map keyed by [`source_identity_key`], so edges
+/// must be keyed the same way or an edge whose spelling differs from the module's silently drops out of the sort.
+/// Every path this collector feeds is already canonical (the import resolver and the stdlib source lookup both
+/// canonicalize), so the key rarely changes a spelling here; routing it through the shared helper keeps that an
+/// invariant rather than a coincidence.
 fn dependency_edge_key(path: &Path) -> String {
-    path.to_string_lossy().to_string()
+    source_identity_key(&path.to_string_lossy())
 }
 
 /// Collect source modules referenced by a test file's imports.

@@ -1,0 +1,15 @@
+# #1450: an explicitly imported Rust extension trait stays in scope when generated code calls
+# one of its methods, even when the compiler has no inspected metadata for the trait.
+# `Borrow` has no metadata and no fallback vocabulary here, so `.borrow()` is attributed to it
+# as a candidate and its `use` survives generated-use pruning.
+
+from rust::std::borrow import Borrow
+from rust::std::path import PathBuf
+
+
+pub def borrowed(value: &PathBuf) -> &PathBuf:
+    return value.borrow()
+
+
+def main() -> None:
+    pass

@@ -77,6 +77,55 @@ fn a_closure_argument_to_a_rust_method_keeps_its_callee_identity_issue1492() -> 
     Ok(())
 }
 
+/// The shape the issue reports: a closure handed to a method of a type imported from a Rust crate that carries no
+/// inspection metadata, capturing an enclosing local, beside a direct call of the same function.
+///
+/// The `rust::std` case above proves the fact survives the deferral; this one proves it on the path the original
+/// bake took. With no metadata the receiver's method signature is never selected, so the closure is never checked
+/// again contextually -- the deferred check is the only pass that records the callee's identity, and lowering has
+/// to find it there. A capture is included because the closure's environment is what distinguishes a closure body
+/// from a plain nested call. Both sites must name one projection, and no site may emit the bare source name.
+#[test]
+fn a_closure_argument_to_a_metadata_free_crate_method_keeps_its_callee_identity_issue1492()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "from rust::cfg_expr import Expression, Predicate\n",
+        "\n",
+        "model CfgSnapshot:\n",
+        "    target: str\n",
+        "\n",
+        "def cfg_predicate(predicate: &Predicate, snapshot: CfgSnapshot) -> Option[bool]:\n",
+        "    return Some(true)\n",
+        "\n",
+        "pub def evaluate(expression: Expression, predicate: &Predicate, snapshot: CfgSnapshot) -> Option[bool]:\n",
+        "    if cfg_predicate(predicate, snapshot) == None:\n",
+        "        return None\n",
+        "    return expression.eval((predicate) => cfg_predicate(predicate, snapshot))\n",
+    );
+    let rust = generated(source)?;
+
+    let projected = rust
+        .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .filter(|token| token.starts_with("__incan_v1_"))
+        .find(|token| rust.matches(token).count() > 1)
+        .ok_or("the direct call should emit a projected identity to compare against")?
+        .to_string();
+    assert_eq!(
+        rust.matches("cfg_predicate(").count(),
+        0,
+        "`cfg_predicate` was called by its bare source name inside the closure:\n{rust}"
+    );
+    let closure_body = rust
+        .split_once(".eval(")
+        .map(|(_, rest)| rest)
+        .ok_or("the closure should be emitted as an `eval` argument")?;
+    assert!(
+        closure_body.contains(&projected),
+        "the closure site must call `{projected}`, the identity the direct call resolved to:\n{closure_body}"
+    );
+    Ok(())
+}
+
 /// The shapes that already worked must keep working, so the fix cannot be a blanket change to closure lowering.
 ///
 /// Each of these resolves correctly today. They are pinned because the natural over-broad repair — forcing a

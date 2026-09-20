@@ -741,6 +741,15 @@ def main() -> None:
     c = Settings.default()       # OK
 ```
 
+`Default` is also a generic bound. A type parameter constrained with `with Default` accepts any type that derives or implements it, and `T.default()` constructs the value:
+
+```incan
+def make[T with Default]() -> T:
+    return T.default()
+
+settings: Settings = make()
+```
+
 ---
 
 ## Serialize

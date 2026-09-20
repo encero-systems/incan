@@ -1707,6 +1707,40 @@ mod tests {
         Ok(())
     }
 
+    /// A receiver whose borrow the typechecker recorded is emitted with that borrow and nothing else (#1375).
+    ///
+    /// The lowered argument is the `InteropCoerce` wrapper around the owned reader; its IR type is already `&mut
+    /// Stdin`, which the guard-reborrow shape would otherwise read as a `&mut`-typed binding to reborrow.
+    #[test]
+    fn read_by_ref_receiver_with_recorded_borrow_is_not_reborrowed_again() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let reader_ty = IrType::Struct("std::io::Stdin".to_string());
+        let mut call = read_by_ref_call("input", reader_ty.clone());
+        let IrExprKind::MethodCall { args, .. } = &mut call.kind else {
+            return Err("read_by_ref_call must build a method call".to_string());
+        };
+        let Some(receiver_arg) = args.first_mut() else {
+            return Err("read_by_ref_call must pass the receiver as its first argument".to_string());
+        };
+        let owned = receiver_arg.expr.clone();
+        receiver_arg.expr = TypedExpr::new(
+            IrExprKind::InteropCoerce {
+                expr: Box::new(owned),
+                from_ty: reader_ty.clone(),
+                to_ty: IrType::RefMut(Box::new(reader_ty.clone())),
+                kind: IrInteropCoercionKind::RustBorrow { mutable: true },
+            },
+            IrType::RefMut(Box::new(reader_ty)),
+        );
+        let emitted = emitter
+            .emit_expr(&call)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+
+        assert_eq!(emitted.to_string(), "Read :: by_ref (& mut input)");
+        Ok(())
+    }
+
     #[test]
     fn read_by_ref_receiver_reborrows_through_refmut_guard() -> Result<(), String> {
         let registry = FunctionRegistry::new();

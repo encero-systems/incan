@@ -13,17 +13,26 @@ fn canonical_frames_reenter_the_entry_module_through_a_checked_cycle() -> Result
     use crate::session::{CompilationSession, scoped_compilation_session_analysis_invocations};
 
     let temporary = tempfile::tempdir()?;
-    // Module collection keys files by the spelling it reaches them through and deliberately does not resolve
-    // symlinks (#1357); on macOS the temporary directory sits behind one (`/var` → `/private/var`), so the entry
-    // must be spelled the way its own import cycle reaches it back, or it collects twice.
-    let project = temporary.path().canonicalize()?;
-    fs::create_dir(project.join("src"))?;
+    let project = temporary.path().join("real");
+    fs::create_dir_all(project.join("src"))?;
     fs::write(project.join("loaf.toml"), "[project]\nname = \"frame_cycle\"\n")?;
-    let entry_path = project.join("src/main.incn");
     fs::write(
-        &entry_path,
+        project.join("src/main.incn"),
         "from helper import bounce\n\npub def step(value: int) -> int:\n    if value == 0:\n        return 42\n    return bounce(value - 1)\n\ndef main() -> int:\n    return step(4)\n",
     )?;
+    // The entry is deliberately spelled through a symlink rather than canonically. The import cycle reaches the
+    // entry back under its canonical path, and collection keying files by spelling collected it twice, which the
+    // graph then refused as a duplicate module identity (#1557). Windows cannot create the symlink without
+    // privileges, so there the entry keeps its plain spelling.
+    #[cfg(unix)]
+    let entry_root = {
+        let linked = temporary.path().join("linked");
+        std::os::unix::fs::symlink(&project, &linked)?;
+        linked
+    };
+    #[cfg(not(unix))]
+    let entry_root = project.clone();
+    let entry_path = entry_root.join("src/main.incn");
     fs::write(
         project.join("src/helper.incn"),
         "from main import step\n\npub def bounce(value: int) -> int:\n    return step(value)\n",

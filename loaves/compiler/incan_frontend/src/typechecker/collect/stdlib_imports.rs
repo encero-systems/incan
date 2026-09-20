@@ -1363,12 +1363,25 @@ impl TypeChecker {
     }
 
     /// Define one imported item under its local alias after root namespace validation.
+    ///
+    /// The proven declaring identity is attached to the binding and recorded as a checked fact: lowering keys a
+    /// stdlib trait's protocol on that identity, and a spelling alone cannot tell `std.serde.json.Serialize` from an
+    /// unrelated trait of the same name (#1431).
     fn define_from_import_symbol(&mut self, module: &ImportPath, item: &ImportItem, kind: SymbolKind, span: Span) {
         let local_name = Self::import_item_local_name(item);
         let target_identity = self
             .dependency_member_identity(module, &item.name)
             .or_else(|| self.stdlib_cache.lookup_identity(&module.segments, &item.name));
-        self.define_named_import_symbol(module, item, local_name, kind, target_identity, span);
+        let symbol_id =
+            self.define_named_import_symbol(module, item, local_name.clone(), kind, target_identity.clone(), span);
+        if let Some(identity) = target_identity
+            && self.symbols.is_active_lookup_binding(symbol_id)
+        {
+            self.type_info
+                .declarations
+                .resolved_import_identities
+                .insert(local_name, identity);
+        }
     }
 
     /// Return the exact source dependency member targeted by a `from module import item` declaration.
@@ -4641,20 +4654,27 @@ impl TypeChecker {
         if !self.symbols.is_active_lookup_binding(symbol_id) {
             return;
         }
-        if !trait_methods.is_empty() {
-            self.type_info.rust.trait_imports.insert(
-                name.clone(),
-                RustTraitImportInfo {
-                    trait_path: info.path.clone(),
-                    definition_path: info
-                        .metadata
-                        .as_ref()
-                        .and_then(|metadata| metadata.definition_path.clone()),
-                    methods: trait_methods,
-                    method_signatures: trait_method_signatures,
-                },
-            );
+        // An import with a declared method surface is a trait Rust method lookup can use. An import with no
+        // metadata at all may still be one: nothing says which methods it provides, so it stays a candidate for
+        // every method call that no inspected surface resolves rather than being pruned as unused (#1450). Metadata
+        // that names a non-trait item settles the question, and the binding is left out.
+        let methods_known = !trait_methods.is_empty();
+        if !methods_known && info.metadata.is_some() {
+            return;
         }
+        self.type_info.rust.trait_imports.insert(
+            name.clone(),
+            RustTraitImportInfo {
+                trait_path: info.path.clone(),
+                definition_path: info
+                    .metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.definition_path.clone()),
+                methods: trait_methods,
+                methods_known,
+                method_signatures: trait_method_signatures,
+            },
+        );
     }
 
     /// Define a symbol for a Rust crate import.
