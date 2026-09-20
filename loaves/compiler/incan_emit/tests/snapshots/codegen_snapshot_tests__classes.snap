@@ -461,8 +461,10 @@ fn main() {
     let circumference: f64 = circle.circumference();
     let _ = println!(
         "{}", { let __parts : [& str; 3usize] = ["Circle area: ", ", circumference: ",
-        ""]; let __args : Vec < String > = vec![format!("{}", area), format!("{}",
-        circumference)]; incan_std_core::strings::fstring(& __parts, & __args) }
+        ""]; let __args : Vec < String > =
+        vec![incan_std_core::strings::float_to_string(area),
+        incan_std_core::strings::float_to_string(circumference)];
+        incan_std_core::strings::fstring(& __parts, & __args) }
     );
     let mut counter: Counter = Counter { count: 0 };
     let _ = counter.increment();

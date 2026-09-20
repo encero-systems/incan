@@ -1,8 +1,10 @@
-//! Shared parsing policy for Incan's runtime numeric-string conversions.
+//! Shared parsing and rendering policy for Incan's runtime numeric-string conversions.
 //!
 //! Rust's numeric `FromStr` implementations do not accept underscore separators, while Incan source numerics do.
 //! These helpers validate separators before removing them so generated code and direct execution cannot drift or
-//! accidentally accept leading, trailing, or repeated underscores.
+//! accidentally accept leading, trailing, or repeated underscores. The same module owns the opposite direction for
+//! `float`: [`float_to_string`] is the one spelling of a `float` as text, so `str(x)`, `f"{x}"`, `println(x)`, and
+//! the replacement executor's observable text all render it identically.
 
 use std::borrow::Cow;
 
@@ -22,6 +24,41 @@ pub fn parse_int_string(input: &str) -> Option<i64> {
 /// `ValueError`.
 pub fn parse_float_string(input: &str) -> Option<f64> {
     normalize_numeric_string(input)?.parse().ok()
+}
+
+/// Render an Incan `float` the way Python spells a float: always visibly a float.
+///
+/// Rust's `Display for f64` drops the fractional part of an integral value (`100.0` prints as `100`), so a program
+/// writing SQL, JSON, or CSV emits an integer where it meant a float and a downstream reader infers the wrong
+/// type (#1372). Python's `repr` keeps the value recognisably a float in every case, and this follows it exactly:
+///
+/// - the shortest digit string that round-trips, with at least one fractional digit (`100.0`, `1.5`, `0.0`, `-2.0`);
+/// - positional notation while `1e-4 <= |value| < 1e16` and exponential outside it (`10000000000.0` for `1e10`, but
+///   `1e+16` and `1e-05`), the same switch-over Python uses;
+/// - an exponent spelled with an explicit sign and at least two digits (`1e+16`, `1.5e-07`);
+/// - `inf`, `-inf`, and `nan` for the non-finite values, in Python's lower-case spelling.
+///
+/// The digits and the positional/exponential switch come from Rust's `Debug for f64`, which already selects the
+/// shortest round-trip representation at those thresholds; only the exponent spelling and `nan` differ, and both
+/// are normalised here. This is deliberately `float` only: the exact `f32`/`f64` carriers keep their native Rust
+/// spelling, which the replacement profile pins as their checked-carrier behaviour.
+pub fn float_to_string(value: f64) -> String {
+    if value.is_nan() {
+        return "nan".to_string();
+    }
+    if value.is_infinite() {
+        return if value.is_sign_negative() { "-inf" } else { "inf" }.to_string();
+    }
+    let shortest = format!("{value:?}");
+    let Some((mantissa, exponent)) = shortest.split_once('e') else {
+        return shortest;
+    };
+    // Python writes the exponent with its sign and at least two digits.
+    let (sign, digits) = match exponent.strip_prefix('-') {
+        Some(digits) => ('-', digits),
+        None => ('+', exponent),
+    };
+    format!("{mantissa}e{sign}{digits:0>2}")
 }
 
 /// Validate underscore placement and remove separators only after that validation succeeds.
@@ -54,6 +91,33 @@ pub fn normalize_numeric_string(input: &str) -> Option<Cow<'_, str>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn renders_floats_as_python_spells_them() {
+        for (value, expected) in [
+            (100.0, "100.0"),
+            (1.5, "1.5"),
+            (0.0, "0.0"),
+            (-0.0, "-0.0"),
+            (-2.0, "-2.0"),
+            (25.0, "25.0"),
+            (1e10, "10000000000.0"),
+            (1e15, "1000000000000000.0"),
+            (1e16, "1e+16"),
+            (1.5e16, "1.5e+16"),
+            (1e-4, "0.0001"),
+            (1e-5, "1e-05"),
+            (1.5e-7, "1.5e-07"),
+            (1e100, "1e+100"),
+            (0.1 + 0.2, "0.30000000000000004"),
+            (f64::MAX, "1.7976931348623157e+308"),
+            (f64::INFINITY, "inf"),
+            (f64::NEG_INFINITY, "-inf"),
+            (f64::NAN, "nan"),
+        ] {
+            assert_eq!(float_to_string(value), expected, "value `{value:?}`");
+        }
+    }
 
     #[test]
     fn parses_valid_integer_separator_placements() {

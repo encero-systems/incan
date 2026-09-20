@@ -46,7 +46,7 @@ use incan_lang::{
     lang::surface::iterator_methods::{self, IteratorMethodId},
     lang::types::collections::{self, CollectionTypeId},
     lang::types::numerics::{self, NumericTypeId},
-    numeric_strings::{parse_float_string, parse_int_string},
+    numeric_strings::{float_to_string, parse_float_string, parse_int_string},
     numeric_values::{IntegerBounds, decimal_value_fits, format_decimal_value, integer_bounds},
     python_floor_div_i64, python_mod_i64,
 };
@@ -824,7 +824,9 @@ impl ReplacementValue {
             Self::Int(value) => value.to_string(),
             Self::Bool(value) => value.to_string(),
             Self::Str(value) => value.clone(),
-            Self::Float(value) => value.to_string(),
+            // An ordinary `float` spells itself the way generated code does (#1372): through the shared
+            // `incan_lang` rendering, so an integral value stays visibly a float on both routes.
+            Self::Float(value) => float_to_string(*value),
             Self::Numeric(value) => value.observable_text(),
             Self::Unit => constructor_name(ConstructorId::None).to_string(),
             Self::Range { next, end, step } => format!("range({next}, {end}, {step})"),
@@ -2754,7 +2756,7 @@ fn format_interpolation(
         (ReplacementValue::Bool(value), _) => Ok(value.to_string()),
         (ReplacementValue::Str(text), FormatStyle::Display) => Ok(text.clone()),
         (ReplacementValue::Str(text), FormatStyle::Debug) => Ok(format!("{text:?}")),
-        (ReplacementValue::Float(value), FormatStyle::Display) => Ok(value.to_string()),
+        (ReplacementValue::Float(value), FormatStyle::Display) => Ok(float_to_string(*value)),
         (ReplacementValue::Numeric(value), FormatStyle::Display) => Ok(value.observable_text()),
         (other, _) => Err(unsupported(
             format!("f-string interpolation of {}", value_kind(other)),
@@ -5216,7 +5218,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
                 ReplacementValue::Int(value) => Ok(ReplacementValue::Str(value.to_string())),
                 ReplacementValue::Bool(value) => Ok(ReplacementValue::Str(value.to_string())),
                 ReplacementValue::Str(value) => Ok(ReplacementValue::Str(value)),
-                ReplacementValue::Float(value) => Ok(ReplacementValue::Str(value.to_string())),
+                ReplacementValue::Float(value) => Ok(ReplacementValue::Str(float_to_string(value))),
                 ReplacementValue::Numeric(value) => Ok(ReplacementValue::Str(value.observable_text())),
                 other => Err(unsupported(format!("`str` of {}", value_kind(&other)), span)),
             },

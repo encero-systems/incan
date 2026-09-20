@@ -146,7 +146,11 @@ def main() -> str:
     let module = lower_typed_body_ir(source)?;
     let execution = execute_free_function(&module, "main", &[])?;
 
-    assert_eq!(execution.value, ReplacementValue::Str("1000 1 1000.5 10 3".to_string()));
+    // `float(10)` spells itself as `10.0`: a `float` stays visibly a float in display positions (#1372).
+    assert_eq!(
+        execution.value,
+        ReplacementValue::Str("1000 1 1000.5 10.0 3".to_string())
+    );
     assert!(execution.emitted_output().is_empty());
     Ok(())
 }
@@ -228,7 +232,7 @@ def main() -> str:
     let execution = execute_free_function(&module, "main", &[])?;
     assert_eq!(
         execution.value,
-        ReplacementValue::Str("1000.5 125 1000.5 12500000000".to_string())
+        ReplacementValue::Str("1000.5 125.0 1000.5 12500000000.0".to_string())
     );
     Ok(())
 }
@@ -473,7 +477,7 @@ def float(value: int) -> float:
 def main() -> str:
   return str(float(42))
 "#,
-            ReplacementValue::Str("99".to_string()),
+            ReplacementValue::Str("99.0".to_string()),
         ),
     ] {
         let module = lower_typed_body_ir(source)?;

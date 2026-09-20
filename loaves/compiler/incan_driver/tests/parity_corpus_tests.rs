@@ -1335,8 +1335,9 @@ fn replacement_body_v0_022_arguments() -> Vec<ReplacementValue> {
     vec![]
 }
 
+/// `float(10)` renders as `10.0`: a `float` spells itself the way Python does on both routes (#1372).
 fn replacement_body_v0_022_expected() -> ReplacementValue {
-    ReplacementValue::Str("42 3.14 10".to_string())
+    ReplacementValue::Str("42 3.14 10.0".to_string())
 }
 
 /// The selected list-iteration fixture has no entry arguments.
@@ -3746,7 +3747,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             title: "Checked scalar conversions preserve typed results and program output through both routes",
             category: BehaviorCategory::SupportedLanguageContract,
             lane: EvidenceLane::DirectReplacementBodyIr,
-            evidence: "#1249; loaves/compiler/incan_driver/tests/replacement_scalar_conversion_tests.rs::replacement_executes_checked_unary_scalar_conversions; loaves/compiler/incan_driver/tests/replacement_scalar_conversion_shadow_tests.rs::scalar_conversion_failure_keeps_its_canonical_class_before_legacy_substring_heuristics",
+            evidence: "#1249; #1372 (a `float` renders as Python spells it through `incan_lang::numeric_strings::float_to_string` on both routes); loaves/compiler/incan_driver/tests/replacement_scalar_conversion_tests.rs::replacement_executes_checked_unary_scalar_conversions; loaves/compiler/incan_driver/tests/replacement_scalar_conversion_shadow_tests.rs::scalar_conversion_failure_keeps_its_canonical_class_before_legacy_substring_heuristics",
             disposition: Disposition::Preserved,
             source: REPLACEMENT_BODY_V0_022_SRC,
             evaluate: None,
@@ -5456,7 +5457,7 @@ fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output() -> R
         )
         .into());
     };
-    let stdout = b"converted: 42 3.14 10\n";
+    let stdout = b"converted: 42 3.14 10.0\n";
     let stdout_digest = format!("sha256:{:x}", Sha256::digest(stdout));
     let stderr_digest = format!("sha256:{:x}", Sha256::digest(b""));
     assert_eq!(
@@ -5467,7 +5468,7 @@ fn the_scalar_conversions_row_carries_two_route_receipts_and_exact_output() -> R
     assert_eq!(
         observable,
         &format!(
-            "completed(Str, \"42 3.14 10\"); stdout={} bytes ({stdout_digest}); stderr=0 bytes ({stderr_digest})",
+            "completed(Str, \"42 3.14 10.0\"); stdout={} bytes ({stdout_digest}); stderr=0 bytes ({stderr_digest})",
             stdout.len()
         )
     );

@@ -2585,9 +2585,12 @@ def main() -> None:
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    // Same-carrier `f32` arithmetic keeps Rust's native spelling (`13`, `5`, ...); a mixed `f32`/`f64` or
+    // `f32`/`int` operation is checked as ordinary `float`, which renders as Python spells it (#1372): `13.0`,
+    // `2.0`, `1.0`, `6561.0`, `10.0`.
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "13\n5\n36\n2.25\n2\n1\n6561\n13\n2.25\n2\n1\n6561\n9.5\n10\ntrue\nfalse\ntrue\n"
+        "13\n5\n36\n2.25\n2\n1\n6561\n13.0\n2.25\n2.0\n1.0\n6561.0\n9.5\n10.0\ntrue\nfalse\ntrue\n"
     );
     Ok(())
 }

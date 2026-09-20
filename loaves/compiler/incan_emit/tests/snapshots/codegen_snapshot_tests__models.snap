@@ -669,8 +669,8 @@ fn main() {
     let dist: f64 = distance_from_origin(coord);
     let _ = println!(
         "{}", { let __parts : [& str; 2usize] = ["Distance: ", ""]; let __args : Vec <
-        String > = vec![format!("{}", dist)]; incan_std_core::strings::fstring(& __parts,
-        & __args) }
+        String > = vec![incan_std_core::strings::float_to_string(dist)];
+        incan_std_core::strings::fstring(& __parts, & __args) }
     );
     let address: Address = Address {
         street: "123 Main St".to_string(),

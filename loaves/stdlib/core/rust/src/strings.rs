@@ -5,6 +5,7 @@
 
 use crate::errors::raise;
 use incan_lang::errors::IncanError;
+use incan_lang::numeric_strings::float_to_string as semantics_float_to_string;
 use incan_lang::strings::{
     StringAccessError, fstring as semantics_fstring, str_char_at as semantics_str_char_at,
     str_cmp as semantics_str_cmp, str_concat as semantics_str_concat, str_contains as semantics_str_contains,
@@ -339,4 +340,65 @@ pub fn str_contains<H: AsRef<str>, N: AsRef<str>>(haystack: H, needle: N) -> boo
 /// `parts` length must be one greater than `args` length.
 pub fn fstring(parts: &[&str], args: &[String]) -> String {
     semantics_fstring(parts, args)
+}
+
+/// Render an Incan `float` as text the way Python spells it: always visibly a float.
+///
+/// Generated code calls this wherever a `float` reaches a display position -- `str(x)`, an f-string `{x}`,
+/// `print(x)`/`println(x)` -- instead of Rust's `Display for f64`, which prints `100.0` as `100` and so writes an
+/// integer into any text a program emits (#1372). The spelling is owned by
+/// [`incan_lang::numeric_strings::float_to_string`] so direct execution renders the same text.
+///
+/// ## Parameters
+///
+/// - `value`: the float, by value or by reference (a generated read may be either).
+///
+/// ## Returns
+///
+/// - (`String`): `100.0`, `1.5`, `-2.0`, `10000000000.0`, `1e+16`, `1e-05`, `inf`, `-inf`, or `nan`.
+pub fn float_to_string<F: std::borrow::Borrow<f64>>(value: F) -> String {
+    semantics_float_to_string(*value.borrow())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn float_to_string_keeps_an_integral_value_visibly_a_float() {
+        assert_eq!(float_to_string(100.0), "100.0");
+        assert_eq!(float_to_string(0.0), "0.0");
+        assert_eq!(float_to_string(-2.0), "-2.0");
+        assert_eq!(float_to_string(100.0 / 4.0), "25.0");
+    }
+
+    #[test]
+    fn float_to_string_keeps_a_fractional_value_as_is() {
+        assert_eq!(float_to_string(1.5), "1.5");
+        assert_eq!(float_to_string(0.1 + 0.2), "0.30000000000000004");
+    }
+
+    #[test]
+    fn float_to_string_switches_to_an_exponent_where_python_does() {
+        assert_eq!(float_to_string(1e10), "10000000000.0");
+        assert_eq!(float_to_string(1e15), "1000000000000000.0");
+        assert_eq!(float_to_string(1e16), "1e+16");
+        assert_eq!(float_to_string(1e-4), "0.0001");
+        assert_eq!(float_to_string(1e-5), "1e-05");
+        assert_eq!(float_to_string(1.5e-7), "1.5e-07");
+    }
+
+    #[test]
+    fn float_to_string_spells_non_finite_values_as_python_does() {
+        assert_eq!(float_to_string(f64::INFINITY), "inf");
+        assert_eq!(float_to_string(f64::NEG_INFINITY), "-inf");
+        assert_eq!(float_to_string(f64::NAN), "nan");
+    }
+
+    #[test]
+    fn float_to_string_accepts_a_borrowed_read() {
+        // A generated field or element read can reach the helper as `&f64`; the bound is what admits it.
+        let borrowed: &f64 = &3.0;
+        assert_eq!(float_to_string(borrowed), "3.0");
+    }
 }

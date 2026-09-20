@@ -2894,6 +2894,25 @@ fn test_mixed_numeric_codegen() {
     assert_codegen_snapshot!("mixed_numeric", rust_code);
 }
 
+/// Issue #1372: every display position of a `float` -- f-string interpolation, `str(x)`, and `println(x)` -- routes
+/// through `incan_std_core::strings::float_to_string` so an integral value renders as `100.0`, while Debug
+/// interpolation and the exact `f64` carrier keep Rust's own formatting.
+#[test]
+fn test_float_display_codegen() {
+    let source = load_test_file("float_display");
+    let rust_code = generate_rust(&source);
+    assert_eq!(
+        rust_code.matches("incan_std_core::strings::float_to_string(").count(),
+        8,
+        "three interpolations, three `str()` calls, and two printed floats route through the runtime spelling:\n{rust_code}"
+    );
+    assert!(
+        compact_rust(&rust_code).contains("format!(\"{:?}\",total)"),
+        "Debug interpolation keeps Rust's Debug formatting:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("float_display", rust_code);
+}
+
 #[test]
 fn test_std_math_codegen() {
     let source = load_test_file("std_math");
@@ -4004,8 +4023,12 @@ pub def observe_ieee(value: float) -> bool:
             "exact public/Rust ingress and observation must be finite-checked ({expected}); generated:\n{rust_code}"
         );
     }
+    // The ordinary `float` prints through the runtime's spelling (#1372) but stays unguarded: no finite check
+    // wraps its read or its comparison.
     assert!(
-        compact.contains("pubfnobserve_ieee(value:f64)->bool{let_=println!(\"{}\",value);returnvalue<value;"),
+        compact.contains(
+            "pubfnobserve_ieee(value:f64)->bool{let_=println!(\"{}\",incan_std_core::strings::float_to_string(value));returnvalue<value;"
+        ),
         "ordinary float must retain unguarded IEEE observation behavior:\n{rust_code}"
     );
 }

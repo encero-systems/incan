@@ -26,5 +26,7 @@ fn main() {
         + crate::__incan_std::math::hypot(3.0, 4.0);
     let ints = crate::__incan_std::math::gcd(54, 24)
         + crate::__incan_std::math::lcm(6, 8);
-    let _ = println!("{}", constants + funcs + (ints) as f64);
+    let _ = println!(
+        "{}", incan_std_core::strings::float_to_string(constants + funcs + (ints) as f64)
+    );
 }
