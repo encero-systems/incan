@@ -1,0 +1,16 @@
+# behavior: std.serde.json Serialize imported under an alias derives and bounds like the direct import (RFC 024)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc024_partial_alias_derive_codegen
+# expect-stdout:
+#   {"value":1}
+
+from std.serde.json import Serialize as JsonSerialize
+
+@derive(JsonSerialize)
+model Payload:
+    value: int
+
+def encode[T with JsonSerialize](value: T) -> str:
+    return value.to_json()
+
+def main() -> None:
+    println(encode(Payload(value=1)))

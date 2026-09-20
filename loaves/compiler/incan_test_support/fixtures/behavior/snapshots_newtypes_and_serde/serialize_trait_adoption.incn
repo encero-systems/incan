@@ -1,4 +1,4 @@
-# behavior: a model adopting std.serde.json Serialize gains to_json and keeps its ordinary methods, and a generic json.Serialize bound accepts a json-derived model (RFC 024)
+# behavior: a model adopting std.serde.json Serialize gains to_json and keeps its ordinary methods, and a json-derived model serializes through a generic json.Serialize bound and decodes back through from_json (RFC 024)
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_serde_with_serialize_trait_codegen
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_with_serialize_keeps_ordinary_methods_inherent
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc024_module_derive_json_codegen
@@ -7,6 +7,7 @@
 #   hello
 #   {"value":"hello"}
 #   {"value":2}
+#   3
 
 from std.serde import json
 from std.serde.json import Serialize
@@ -33,3 +34,6 @@ def main() -> None:
     println(text.display_text())
     println(text.to_json())
     println(encode(Derived(value=2)))
+    match Derived.from_json("{\"value\":3}"):
+        Ok(decoded) => println(decoded.value)
+        Err(_) => println("decode failed")

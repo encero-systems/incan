@@ -1,11 +1,15 @@
-# behavior: one generic decorator factory decorates a free function and a method, and both remain callable with their original results
+# behavior: one generic decorator factory runs once per decorated declaration, when the bindings are initialized before main starts, decorates a free function and a method, and both remain callable with their original results
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::decorator_factory_calls_use_the_resolved_projection_for_free_and_method_wrappers
 # expect-stdout:
+#   preserving
+#   preserving
+#   main
 #   3
 #   11
 #   14
 
 def preserve[F]() -> ((F) -> F):
+  println("preserving")
   return (func) => func
 
 @preserve()
@@ -20,6 +24,7 @@ class Box:
     return self.base + extra
 
 def main() -> None:
+  println("main")
   box = Box(base=5)
   println(decorated_total(1, 2))
   println(box.total(6))

@@ -1,4 +1,4 @@
-# behavior: Result map and and_then take named functions, inspect takes a callable object or a named function over a non-Copy payload, and unwrap reads an Ok payload whose error type has no Debug (RFC 070)
+# behavior: Result map and and_then take named functions, inspect takes a callable object or a named function over a non-Copy payload, and unwrap reads an Ok payload inside a function generic over an unbounded error type, so no Debug on the error is needed (RFC 070)
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc070_result_combinators_codegen
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc070_result_unwrap_codegen_does_not_require_debug_err
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc070_result_inspect_non_copy_observer_borrows_payload
@@ -32,7 +32,7 @@ def pipeline(result: Result[int, str]) -> Result[int, str]:
 model PlainError:
   message: str
 
-pub def direct(result: Result[int, PlainError]) -> int:
+pub def direct[E](result: Result[int, E]) -> int:
   return result.unwrap()
 
 model Payload:
@@ -59,7 +59,8 @@ def main() -> None:
   match pipeline(Ok(-3)):
     Ok(value) => println(f"ok {value}")
     Err(error) => println(error)
-  println(direct(Ok(9)))
+  plain: Result[int, PlainError] = Ok(9)
+  println(direct(plain))
   match transform_with_observer(transform(Ok(Payload(name="orders")))):
     Ok(payload) => println(f"ok {payload.name}")
     Err(error) => println(error)

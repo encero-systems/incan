@@ -1,0 +1,19 @@
+# behavior: a Rust standard-library path type imported through `rust::` is built from Incan text and answers whether the path exists, is a directory and is relative
+# expect-stdout:
+#   false
+#   true
+#   true
+#   false
+
+from rust::std::path import Path
+
+
+def describe(candidate: str) -> bool:
+    return Path.new(candidate).exists()
+
+
+def main() -> None:
+    println(describe("missing/nested/leaf.txt"))
+    println(Path.new(".").is_dir())
+    println(Path.new("a/b.txt").is_relative())
+    println(Path.new("a/b.txt").is_absolute())

@@ -1,0 +1,23 @@
+# behavior: std.rust Fn, FnMut and FnOnce markers in with-clauses accept a named function (RFC 041)
+# expect-stdout:
+#   ran
+
+from std.rust import Send, Static, Fn, FnMut, FnOnce
+
+def run_fn[F with Fn[int]](_f: F) -> None:
+  pass
+
+def run_fn_mut[F with FnMut[int], Send](_f: F) -> None:
+  pass
+
+def run_fn_once[F with FnOnce[int], Static](_f: F) -> None:
+  pass
+
+def double(value: int) -> int:
+  return value * 2
+
+def main() -> None:
+  run_fn(double)
+  run_fn_mut(double)
+  run_fn_once(double)
+  println("ran")

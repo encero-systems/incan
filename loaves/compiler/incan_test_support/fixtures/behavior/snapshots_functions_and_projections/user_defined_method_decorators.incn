@@ -1,8 +1,11 @@
-# behavior: a user-defined decorator on an instance method replaces the method with the callable it returns, and the replacement is what the call runs (RFC 036)
+# behavior: a user-defined decorator on an instance method runs once, when the method binding is initialized before main starts and not again per call, and replaces the method with the callable it returns, which is what each call runs (RFC 036)
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_user_defined_method_decorators_codegen
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::decorated_method_declaration_and_call_share_one_projection
 # expect-stdout:
+#   decorating label
+#   main
 #   8
+#   10
 
 # RFC 036: user-defined method decorators
 
@@ -17,11 +20,14 @@ def parse(box: &Box, value: int) -> int:
     return value + 1
 
 def as_int(func: (&Box, int) -> str) -> (&Box, int) -> int:
+    println("decorating label")
     return parse
 
-def run(box: Box) -> int:
-    return box.label(7)
+def run(box: Box, value: int) -> int:
+    return box.label(value)
 
 def main() -> None:
+    println("main")
     box = Box(value=1)
-    println(run(box))
+    println(run(box, 7))
+    println(run(box, 9))

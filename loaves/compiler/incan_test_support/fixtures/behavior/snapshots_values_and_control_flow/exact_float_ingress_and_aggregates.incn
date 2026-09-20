@@ -1,12 +1,16 @@
-# behavior: exact f32 and f64 values are observed through println, str(), f-strings and comparisons, an extern finite check passes a finite value through, scalars extracted from a model, an Option and a list are finite, and a NaN reaching an exact parameter aborts the run
+# behavior: exact f32 and f64 values are observed through println, str() and f-strings (an integral f32 prints as 4 where the ordinary float path prints nan), an extern finite check passes a finite value through, scalars extracted from a model field, an Option field and a list are finite, and a NaN parsed into an exact f64 return aborts the run at that conversion before the callee is entered
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::exact_float_public_and_rust_ingress_is_guarded_before_observation
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::exact_float_scalars_extracted_from_aggregates_are_guarded_before_use
 # expect-stdout:
 #   2.5
+#   3
+#   2.5
 #   true
 #   nan
 #   false
-#   2.5
+#   4
+#   1
+#   4
 #   false
 #   true
 # expect-exit: 101
@@ -21,6 +25,8 @@ pub def observe_exact(left: f32, right: f64) -> bool:
     println(left)
     rendered = str(right)
     formatted = f"{left}"
+    println(rendered)
+    println(formatted)
     return left < right
 
 pub def observe_ieee(value: float) -> bool:
@@ -34,16 +40,20 @@ pub model ExactSamples:
 
 pub def observe_aggregate(samples: ExactSamples, values: list[f64]) -> bool:
     forwarded = require_finite_f32(samples.narrow)
-    return not samples.narrow.is_nan() and values[0].is_finite() and samples.wide.is_finite() and forwarded.is_finite()
+    maybe_finite = match samples.maybe:
+        Some(inner) => inner.is_finite()
+        None => false
+    return not samples.narrow.is_nan() and values[0].is_finite() and samples.wide.is_finite() and forwarded.is_finite() and maybe_finite
 
 def parsed_exact(value: str) -> f64:
     return float(value)
 
 def main() -> None:
     narrow: f32 = 2.5
+    whole: f32 = 4.0
     println(observe_exact(narrow, 3.0))
     println(observe_ieee(float("nan")))
-    println(observe_exact(require_finite_f32(narrow), 1.0))
+    println(observe_exact(require_finite_f32(whole), 1.0))
     samples = ExactSamples(narrow=narrow, wide=1.5, maybe=Some(narrow))
     println(observe_aggregate(samples, [0.5]))
     println(observe_exact(narrow, parsed_exact("nan")))

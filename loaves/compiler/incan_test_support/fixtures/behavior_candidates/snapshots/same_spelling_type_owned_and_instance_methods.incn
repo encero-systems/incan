@@ -1,0 +1,32 @@
+# behavior: a static method and an instance method that share one spelling are each selected by their receiver, including a stored field of the same name read at the end of a fluent chain
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::type_owned_and_instance_owned_methods_with_one_spelling_project_separately
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::field_factory_and_accumulator_with_one_spelling_codegen_as_a_fluent_chain
+# expect-stdout:
+#   5
+#   -5
+
+model Counter:
+  value: int
+
+  @staticmethod
+  def next(value: int) -> Counter:
+    return Counter(value=value)
+
+  def next(self) -> int:
+    return self.value + 1
+
+model Span:
+  days: int
+
+  @staticmethod
+  def days(value: int) -> Span:
+    return Span(days=value)
+
+  def days(self, value: int) -> Span:
+    return Span(days=self.days + value)
+
+def main() -> None:
+  counter = Counter.next(4)
+  println(counter.next())
+  span = Span.days(-7).days(2)
+  println(span.days)

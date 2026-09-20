@@ -31,7 +31,7 @@ def clone_nodes(nodes: List[Node]) -> List[Node]:
 
 def main() -> None:
     drain_items()
-    mut nodes = [Node(id=1), Node(id=2)]
+    nodes = [Node(id=1), Node(id=2)]
     mut copy = clone_nodes(nodes)
     print(len(copy))
     copy.append(Node(id=3))

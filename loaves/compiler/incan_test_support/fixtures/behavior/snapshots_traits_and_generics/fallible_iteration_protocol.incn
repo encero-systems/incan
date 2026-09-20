@@ -7,6 +7,8 @@
 #   done
 #   chunk 1
 #   failed: broken at 2
+#   chunk 1
+#   failed: broken at 2
 
 model ChunkStream:
   next_value: int
@@ -46,8 +48,8 @@ model TraitStream with FallibleStream[int, str]:
 def chunks(fail_at: int) -> FallibleStream[int, str]:
   return TraitStream(next_value=1, fail_at=fail_at)
 
-def drain_concrete() -> Result[None, str]:
-  for chunk in ChunkStream(next_value=1, fail_at=0)?:
+def drain_concrete(fail_at: int) -> Result[None, str]:
+  for chunk in ChunkStream(next_value=1, fail_at=fail_at)?:
     println(f"chunk {chunk}")
   return Ok(None)
 
@@ -57,7 +59,10 @@ def drain_trait(fail_at: int) -> Result[None, str]:
   return Ok(None)
 
 def main() -> None:
-  match drain_concrete():
+  match drain_concrete(0):
+    Ok(_) => println("done")
+    Err(error) => println(f"failed: {error}")
+  match drain_concrete(2):
     Ok(_) => println("done")
     Err(error) => println(f"failed: {error}")
   match drain_trait(2):

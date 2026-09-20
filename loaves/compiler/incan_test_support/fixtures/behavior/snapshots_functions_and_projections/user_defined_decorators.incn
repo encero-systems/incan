@@ -1,8 +1,11 @@
-# behavior: a user-defined decorator replaces the decorated function with the callable it returns, so calling the decorated name runs the replacement (RFC 036)
+# behavior: a user-defined decorator runs once, when the decorated binding is initialized before main starts and not again per call, and replaces the decorated function with the callable it returns, so each call of the decorated name runs the replacement (RFC 036)
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_user_defined_decorators_codegen
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::decorated_function_emits_one_source_projection_and_distinct_generated_helpers
 # expect-stdout:
+#   decorating label
+#   main
 #   7
+#   9
 
 # RFC 036: user-defined decorators
 
@@ -10,14 +13,17 @@ def parse(value: int) -> int:
     return value
 
 def as_int(func: (int) -> str) -> (int) -> int:
+    println("decorating label")
     return parse
 
 @as_int
 def label(value: int) -> str:
     return "value"
 
-def run() -> int:
-    return label(7)
+def run(value: int) -> int:
+    return label(value)
 
 def main() -> None:
-    println(run())
+    println("main")
+    println(run(7))
+    println(run(9))

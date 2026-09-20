@@ -6,7 +6,7 @@
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_traits_prelude_compiled_codegen
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_traits_convert_compiled_codegen
 # expect-stdout:
-#   30 -5
+#   30 -5 18
 #   Validation failed for 'age': cannot be negative
 #   b
 #   12
@@ -76,7 +76,8 @@ model PositiveInt with TryFrom[int]:
 def main() -> None:
     total = Money(cents=10) + Money(cents=20)
     negated = -Money(cents=5)
-    println(f"{total.cents} {negated.cents}")
+    difference = Money(cents=30) - Money(cents=12)
+    println(f"{total.cents} {negated.cents} {difference.cents}")
     match validate_age(-5):
         Ok(age) => println(f"Valid age: {age}")
         Err(error) => println(error.message())

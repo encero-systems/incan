@@ -1,0 +1,18 @@
+# behavior: str() over an arithmetic expression renders the whole expression's value, not the left operand joined to the rendered right operand
+# expect-stdout:
+#   3
+#   7
+#   12
+#   9
+
+model Reading:
+    value: int
+
+def main() -> None:
+    a = 1
+    b = 2
+    println(str(a + b))
+    println(str(a * 5 + b))
+    reading = Reading(value=10)
+    println(str(reading.value + b))
+    println(str(a + b) + str(a * 6))

@@ -1,14 +1,16 @@
-# behavior: models with Debug, Clone and json derives, Option fields, nested collections and nested models are constructible and readable
+# behavior: models with Debug, Clone and json derives, Option fields, nested collections and nested models are constructible and every declared field is readable
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_models_codegen
 # expect-stdout:
-#   User: Alice, Age: 30
-#   Product ID: 123
-#   Config port: 8080
-#   optional value 42
-#   none none
-#   Student: Bob
+#   User: Alice, Age: 30, alice@example.com
+#   Product ID: 123, Laptop at 999.99
+#   Config port: 8080, localhost, timeout 30
+#   must have: optional value 42
+#   also must have: none none
+#   Student: Bob, 4 grades, school MIT
+#   Point: (1, 2)
+#   Complex: 2 ids, 1 mapped, 1 optional, 3 nested
 #   Distance: 5.0
-#   Contact: Charlie in Boston
+#   Contact: Charlie in Boston, 123 Main St 02101, phone 555-1234
 #   {"endpoint":"/users","method":"GET","payload":""}
 
 """Test model definitions with various decorators"""
@@ -118,7 +120,7 @@ def describe_optional(data: OptionalData) -> str:
     match data.maybe_number:
         Some(value) => number = str(value)
         None => number = "none"
-    return f"{text} {number}"
+    return f"{data.required}: {text} {number}"
 
 
 def main() -> None:
@@ -128,7 +130,7 @@ def main() -> None:
         age=30,
         email="alice@example.com"
     )
-    print(f"User: {user.name}, Age: {user.age}")
+    print(f"User: {user.name}, Age: {user.age}, {user.email}")
 
     # Test model with Debug derive
     product: Product = Product(
@@ -136,7 +138,7 @@ def main() -> None:
         name="Laptop",
         price=999.99
     )
-    print(f"Product ID: {product.id}")
+    print(f"Product ID: {product.id}, {product.name} at {product.price}")
 
     # Test model with Clone derive
     config: Config = Config(
@@ -144,7 +146,7 @@ def main() -> None:
         port=8080,
         timeout=30
     )
-    print(f"Config port: {config.port}")
+    print(f"Config port: {config.port}, {config.host}, timeout {config.timeout}")
 
     # Test model with Option fields
     data1: OptionalData = OptionalData(
@@ -167,7 +169,24 @@ def main() -> None:
         grades=[85, 90, 88, 92],
         metadata={"school": "MIT", "year": "2024"}
     )
-    print(f"Student: {student.name}")
+    school: str = student.metadata["school"]
+    print(f"Student: {student.name}, {len(student.grades)} grades, school {school}")
+
+    point: Point = Point(x=1, y=2)
+    print(f"Point: ({point.x}, {point.y})")
+
+    complex: ComplexModel = ComplexModel(
+        ids=[1, 2],
+        mapping={"a": 1},
+        optional_list=Some(["x"]),
+        nested_dict={"k": [1, 2, 3]}
+    )
+    mut optional_count: int = 0
+    match complex.optional_list:
+        Some(values) => optional_count = len(values)
+        None => optional_count = 0
+    nested: list[int] = complex.nested_dict["k"]
+    print(f"Complex: {len(complex.ids)} ids, {len(complex.mapping)} mapped, {optional_count} optional, {len(nested)} nested")
 
     # Test function with models
     coord: Coordinate = create_coordinate(3.0, 4.0)
@@ -186,7 +205,7 @@ def main() -> None:
         address=address,
         phone="555-1234"
     )
-    print(f"Contact: {contact.name} in {contact.address.city}")
+    print(f"Contact: {contact.name} in {contact.address.city}, {contact.address.street} {contact.address.zipcode}, phone {contact.phone}")
 
     request: ApiRequest = ApiRequest(endpoint="/users", method="GET", payload="")
     print(request.to_json())

@@ -1,0 +1,9 @@
+# behavior: a function re-exported under a new alias at each of two facade modules is callable from the consumer through the last alias
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::reexport_chain_preserves_the_provider_projection_without_alias_guessing
+# expect-stdout:
+#   42
+
+from crate.public_api import exported_calculate as compute
+
+def main() -> None:
+  println(compute(41))

@@ -1,0 +1,11 @@
+from std.derives.collection import FallibleIterator
+
+pub model Stream[R] with FallibleIterator[int, str]:
+    pub value: R
+    pub remaining: int = 2
+
+    def __next__(mut self) -> Result[Option[int], str]:
+        if self.remaining == 0:
+            return Ok(None)
+        self.remaining -= 1
+        return Ok(Some(self.remaining))
