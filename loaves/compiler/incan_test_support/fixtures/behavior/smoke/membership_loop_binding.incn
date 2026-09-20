@@ -1,0 +1,19 @@
+# behavior: `not in` on a set inside a loop leaves the loop binding usable in the branch that follows (#1057)
+# retires: loaves/compiler/incan_emit/src/codegen.rs::string_membership_probe_borrows_loop_binding_used_later_in_branch_issue1057
+# expect-stdout:
+#   missing:missing
+
+def names() -> list[str]:
+    return ["orders", "missing"]
+
+
+def first_missing() -> str:
+    registered = set(["orders"])
+    for name in names():
+        if name not in registered:
+            return f"missing:{name}"
+    return ""
+
+
+def main() -> None:
+    println(first_missing())

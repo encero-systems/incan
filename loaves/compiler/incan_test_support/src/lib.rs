@@ -5,8 +5,10 @@
 //! This crate is a dev-dependency of every ring whose integration tests launch the compiler or read the checkout, so a
 //! root can live in the package it exercises and still share one harness. It links ring crates only; the parity
 //! corpus's two helpers (`parity_corpus`, `shadow_capability`) live beside the driver's roots, which are the only ones
-//! that use them.
+//! that use them. The behaviour-fixture family (`fixtures/behavior/`, run by `behavior_fixtures`) is the route-agnostic
+//! twin corpus of the #1561 cutover.
 
+pub mod behavior_fixtures;
 pub mod builtin_stdlib;
 pub mod canonical_projection;
 pub mod cli_project;

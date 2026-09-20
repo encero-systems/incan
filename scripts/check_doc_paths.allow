@@ -15,6 +15,8 @@
 .agents/skills/test/SKILL.md	loaves/compiler/incan_test_support/fixtures/invalid/my_error_case.incn	Illustrative example filename in skill template or example project
 .agents/skills/test/SKILL.md	loaves/compiler/incan_emit/tests/snapshots/codegen_snapshot_tests__my_feature.snap	Illustrative example filename in skill template or example project
 README.md	src/main.incn	Illustrative example filename in skill template or example project
+loaves/compiler/incan_test_support/fixtures/behavior/README.md	src/main.incn	The entrypoint of a materialized fixture project, named relative to that scratch project
+loaves/compiler/incan_test_support/fixtures/behavior/README.md	loaves/toolchain/incan-cli/tests/behavior_	The per-area root pattern `behavior_<area>_tests.rs`; the placeholder ends the token
 workspaces/docs-site/docs/contributing/how-to/authoring_vocab_crates.md	src/lib.incn	Illustrative example filename in skill template or example project
 
 # A package's or an example project's own source directory, named relative to the document; the workspace root has had no `src/` since the root crate ceased to exist (#1478).

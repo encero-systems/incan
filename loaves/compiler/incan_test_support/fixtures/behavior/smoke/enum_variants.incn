@@ -1,0 +1,20 @@
+# behavior: a unit-variant enum's variants are distinct values a match can tell apart
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_enum_generation
+# expect-stdout:
+#   active
+#   inactive
+
+pub enum Status:
+    Active
+    Inactive
+
+
+def describe(status: Status) -> str:
+    match status:
+        Status.Active => return "active"
+        Status.Inactive => return "inactive"
+
+
+def main() -> None:
+    println(describe(Status.Active))
+    println(describe(Status.Inactive))
