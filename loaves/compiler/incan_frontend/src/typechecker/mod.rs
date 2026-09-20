@@ -71,8 +71,6 @@ pub use type_info::{
 };
 pub use type_info::{ClassFieldDefaultInfo, semantic_type_from_resolved};
 #[cfg(test)]
-mod canonical_identity_tests;
-#[cfg(test)]
 mod identity_surface_tests;
 #[cfg(test)]
 pub mod tests;
