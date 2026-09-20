@@ -1201,10 +1201,7 @@ impl<T: Clone> MultiDiGraph<T> {
                 (index) as i64,
             )
             .clone();
-        return Ok::<
-            (NodeId, NodeId),
-            GraphError,
-        >((stored.from_.clone(), stored.to.clone()));
+        return Ok::<(NodeId, NodeId), GraphError>((stored.from_.clone(), stored.to));
     }
     /// Return outgoing neighbors for `node`.
     pub fn successors(&self, node: NodeId) -> Result<Vec<NodeId>, GraphError> {

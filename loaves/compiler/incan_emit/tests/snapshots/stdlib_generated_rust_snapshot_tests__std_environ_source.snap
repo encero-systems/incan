@@ -120,7 +120,7 @@ pub fn EnvironError(
     detail: String,
 ) -> EnvironError {
     EnvironError {
-        _kind: _kind.unwrap_or_else(|| EnvironErrorKind::Other.clone()),
+        _kind: _kind.unwrap_or_else(|| EnvironErrorKind::Other),
         key,
         detail,
     }
@@ -424,17 +424,17 @@ fn _get_raw(
         || incan_std_core::strings::str_contains(&key, &"=")
         || incan_std_core::strings::str_contains(&key, &"\\0")
     {
-        return Err::<String, EnvironErrorKind>(EnvironErrorKind::InvalidKey.clone());
+        return Err::<String, EnvironErrorKind>(EnvironErrorKind::InvalidKey);
     }
     let _ = match env_var(&key) {
         Ok(value) => {
             return Ok::<String, EnvironErrorKind>(value);
         }
         Err(VarError::NotPresent) => {
-            return Err::<String, EnvironErrorKind>(EnvironErrorKind::Missing.clone());
+            return Err::<String, EnvironErrorKind>(EnvironErrorKind::Missing);
         }
         Err(VarError::NotUnicode(_)) => {
-            return Err::<String, EnvironErrorKind>(EnvironErrorKind::NotUnicode.clone());
+            return Err::<String, EnvironErrorKind>(EnvironErrorKind::NotUnicode);
         }
     };
 }

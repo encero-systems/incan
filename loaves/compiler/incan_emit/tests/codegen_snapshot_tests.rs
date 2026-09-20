@@ -5044,6 +5044,38 @@ fn test_issue1489_loop_variable_returned_owned_codegen() {
 /// `Deque[str]` case was the live one -- `resolve_type_index_expression` dropped the type application's argument, so
 /// the receiver reached emission as `Deque[Unknown]` and the literal had no target to convert toward (fixed in #1529);
 /// the builtin list, set and dict receivers already converted through `CollectionElement`.
+/// Issue #1489: a loop binding returned as an `Ok` payload is cloned, and the `T` it clones needs `Clone`. Free
+/// functions already received the bound; a method's own type parameters were never augmented, which surfaced as
+/// E0599 in `std.data.toml` once the payload went through planning. The field read out of a last-use local is the
+/// contrast: it moves the field, so `decode` and `unwrap` need no bound at all.
+#[test]
+fn test_issue1489_method_type_param_clone_bound_codegen() {
+    let source = load_test_file("issue1489_method_type_param_clone_bound");
+    let rust_code = generate_rust(&source);
+    assert_codegen_snapshot!("issue1489_method_type_param_clone_bound", rust_code);
+    let compact = compact_rust(&rust_code);
+    for expected in [
+        "pubfnpick<T:Marker+Clone>(&self,items:Vec<T>)->Result<T,String>",
+        "pubfnpick_plain<T:Clone>(&self,items:Vec<T>)->Result<T,String>",
+        "pubfnfirst<T:Clone>(items:Vec<T>)->Result<T,String>",
+    ] {
+        assert!(
+            compact.contains(expected),
+            "a cloned loop binding must bind `Clone` on the callable's own type parameter: {expected}\n{rust_code}"
+        );
+    }
+    for expected in [
+        "pubfndecode<T:Marker>(&self,decoded:Decoded<T>)->Result<T,String>",
+        "pubfnunwrap<T>(decoded:Decoded<T>)->Result<T,String>",
+        "returnOk::<T,String>(decoded.value);",
+    ] {
+        assert!(
+            compact.contains(expected),
+            "a field moved out of a last-use local plans no clone and needs no bound: {expected}\n{rust_code}"
+        );
+    }
+}
+
 #[test]
 fn test_issue1494_collection_method_literal_arguments_codegen() {
     let source = load_test_file("issue1494_collection_method_literal_arguments");

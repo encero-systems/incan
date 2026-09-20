@@ -100,7 +100,7 @@ impl Codec {
         let _ = "\n        Return the stable codec order used by default autodetection filters.\n\n        Raw Snappy block compression is intentionally absent because it has no framing signature.\n        ";
         return vec![
             Codec::Gzip.clone(), Codec::Zlib.clone(), Codec::Deflate.clone(), Codec::Zstd
-            .clone(), Codec::Bz2.clone(), Codec::Lzma.clone(), Codec::Snappy.clone()
+            .clone(), Codec::Bz2.clone(), Codec::Lzma.clone(), Codec::Snappy
         ];
     }
     /// Return the stable codec order used by default autodetection filters.

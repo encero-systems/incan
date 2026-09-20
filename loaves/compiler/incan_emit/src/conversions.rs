@@ -604,8 +604,10 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
 ///
 /// Struct fields and collection elements share most of this policy: literals and static `str` reads must become owned
 /// `String`s when the destination type is Incan `str`, while non-Copy field reads and repeated local reads preserve
-/// source-level value semantics by cloning. Unknown struct fields are also allowed to materialize borrowed string-like
-/// values because inspected Rust structs can still be constructible even when field type metadata is unavailable.
+/// source-level value semantics by cloning. A field read out of an owned local at its last use is the exception: the
+/// local is not read again, so the field moves into the slot as it does for an assignment. Unknown struct fields are
+/// also allowed to materialize borrowed string-like values because inspected Rust structs can still be constructible
+/// even when field type metadata is unavailable.
 fn determine_owned_storage_conversion(
     expr: &IrExpr,
     target_ty: Option<&IrType>,
@@ -645,8 +647,11 @@ fn determine_owned_storage_conversion(
             VarAccess::Move => Conversion::None,
             _ => Conversion::Clone,
         },
-        (IrExprKind::Field { .. }, _) if matches!(expr.ty, IrType::String) => Conversion::Clone,
-        (IrExprKind::Field { .. }, _) if !expr.ty.is_copy() => Conversion::Clone,
+        // A field read out of an owned local at its last use moves the field into the slot, exactly as the
+        // `Assignment` context already plans it; every other field read keeps its owner intact by cloning (#1489).
+        (IrExprKind::Field { .. }, _) if !expr.ty.is_copy() && field_read_needs_owned_materialization(expr) => {
+            Conversion::Clone
+        }
         _ => Conversion::None,
     }
 }
@@ -2084,6 +2089,47 @@ mod tests {
 
         let conv = determine_conversion(&expr, None, ConversionContext::StructField);
         assert_eq!(conv, Conversion::ToString);
+    }
+
+    /// A field read out of an owned local at its last use moves the field into the slot; any other field read
+    /// clones so its owner stays intact (#1489). Collection elements follow the same owned-storage policy.
+    #[test]
+    fn test_owned_storage_field_read_moves_only_out_of_a_last_use_local() {
+        let field_read = |access: VarAccess, object_ty: IrType| {
+            IrExpr::new(
+                IrExprKind::Field {
+                    object: Box::new(IrExpr::new(
+                        IrExprKind::Var {
+                            name: "decoded".to_string(),
+                            access,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        object_ty,
+                    )),
+                    field: "value".to_string(),
+                },
+                IrType::List(Box::new(IrType::String)),
+            )
+        };
+        let owned = IrType::Struct("Decoded".to_string());
+        let borrowed = IrType::Ref(Box::new(IrType::Struct("Decoded".to_string())));
+        for context in [ConversionContext::StructField, ConversionContext::CollectionElement] {
+            assert_eq!(
+                determine_conversion(&field_read(VarAccess::Move, owned.clone()), None, context),
+                Conversion::None,
+                "{context:?}: the last read of the owner moves the field"
+            );
+            assert_eq!(
+                determine_conversion(&field_read(VarAccess::Read, owned.clone()), None, context),
+                Conversion::Clone,
+                "{context:?}: an owner read again later keeps its field"
+            );
+            assert_eq!(
+                determine_conversion(&field_read(VarAccess::Move, borrowed.clone()), None, context),
+                Conversion::Clone,
+                "{context:?}: a field behind a borrow cannot move"
+            );
+        }
     }
 
     #[test]

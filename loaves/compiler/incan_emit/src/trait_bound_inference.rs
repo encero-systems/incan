@@ -27,8 +27,11 @@
 
 use std::collections::{HashMap, HashSet};
 
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::{magic_methods, trait_bounds::rust as tb};
+
+use crate::emit::IrEmitter;
 
 use crate::ownership::{
     RegularMethodArgumentContext, ValueUseSite, collection_element_type, dict_entry_types,
@@ -233,11 +236,21 @@ fn infer_backend_clone_bounds(program: &mut IrProgram) {
                         .get(&impl_block.target_type)
                         .unwrap_or(&unknown_impl_clone_params),
                 );
-                for method in &impl_block.methods {
+                for method in &mut impl_block.methods {
                     augment_callable_type_params_for_backend_return_clones(
                         &mut impl_block.type_params,
                         &method.body,
                         self_clone_params,
+                        &clone_context,
+                    );
+                    // A method's own type parameters need the same treatment as a free function's: a planned clone
+                    // of a `T` the method introduced must bind `T: Clone` on the method header, which the owner-level
+                    // pass above never sees. They are the callable's own, so `None` keeps the owner fallbacks off:
+                    // neither `self` nor a concrete nominal can carry them (#1489).
+                    augment_callable_type_params_for_backend_return_clones(
+                        &mut method.type_params,
+                        &method.body,
+                        None,
                         &clone_context,
                     );
                 }
@@ -638,6 +651,8 @@ struct BackendCloneInferenceContext {
 struct BackendCallCloneContext<'a> {
     callable_signature: Option<&'a incan_ir::FunctionSignature>,
     in_return: bool,
+    /// The call expression's own type, which names the payload slot of an `Ok`/`Err` construction.
+    result_ty: &'a IrType,
 }
 
 impl BackendCloneInferenceContext {
@@ -776,6 +791,7 @@ fn collect_backend_clone_bounds_in_stmt(
                     BackendCallCloneContext {
                         callable_signature: callable_signature.as_ref(),
                         in_return: true,
+                        result_ty: &expr.ty,
                     },
                     type_param_names,
                     self_clone_params,
@@ -1212,6 +1228,24 @@ fn collect_backend_clone_bounds_in_call(
     clone_context: &BackendCloneInferenceContext,
     clone_params: &mut HashSet<String>,
 ) {
+    if let Some(payload_ty) = result_constructor_payload_slot(func, call_context.result_ty) {
+        // `Ok(x)` / `Err(x)` store `x` into the `Result`: emission plans the payload as a struct-field slot of the
+        // declared payload type (`IrEmitter::emit_result_payload`), so the bound follows that plan, not a call's.
+        if let Some(arg) = args.first() {
+            let target_ty = (!IrEmitter::is_unresolved_type(payload_ty)).then_some(payload_ty);
+            if value_use_requires_clone_bound(&arg.expr, ValueUseSite::StructField { target_ty }) {
+                add_backend_clone_bounds_for_cloned_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
+            }
+            collect_backend_clone_bounds_in_expr(
+                &arg.expr,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
+        }
+        return;
+    }
     if call_args_use_incan_clone_policy(func) {
         for (idx, arg) in args.iter().enumerate() {
             let sig_param = call_context.callable_signature.and_then(|sig| sig.params.get(idx));
@@ -1371,6 +1405,7 @@ fn collect_backend_clone_bounds_in_expr(
             BackendCallCloneContext {
                 callable_signature: callable_signature.as_ref(),
                 in_return: false,
+                result_ty: &expr.ty,
             },
             type_param_names,
             self_clone_params,
@@ -1882,6 +1917,21 @@ fn receiver_ref_kind(receiver: &IrExpr) -> Option<VarRefKind> {
 }
 
 /// Return whether a call expression targets an Incan callable rather than an external Rust symbol.
+/// Return the declared payload type when `func` is the `Ok` or `Err` constructor of a `Result`-typed call.
+///
+/// Mirrors the emitter's constructor seeding: the `Ok` side reads the result's success type and the `Err` side its
+/// error type. Any other callee, or a call whose type is not a recorded `Result`, is an ordinary call.
+fn result_constructor_payload_slot<'a>(func: &IrExpr, result_ty: &'a IrType) -> Option<&'a IrType> {
+    let IrExprKind::Var { name, .. } = &func.kind else {
+        return None;
+    };
+    match result_ty {
+        IrType::Result(ok_ty, _) if name == constructors::as_str(ConstructorId::Ok) => Some(ok_ty),
+        IrType::Result(_, err_ty) if name == constructors::as_str(ConstructorId::Err) => Some(err_ty),
+        _ => None,
+    }
+}
+
 fn call_args_use_incan_clone_policy(func: &IrExpr) -> bool {
     !matches!(
         &func.kind,
@@ -1950,9 +2000,11 @@ struct CloneExpressionDependencies {
 
 /// Record generic type parameters that need `Clone` because `expr` is cloned by backend ownership planning.
 ///
-/// `self` is special: cloning `self` can imply all or a subset of the impl's type parameters, depending on the derived
-/// `Clone` implementation for the receiver type. For erased borrowed method results, inspect the borrowed inner type in
-/// addition to the expression's outer type.
+/// `self_clone_params` says whose parameters are being inferred. `Some` means the owner's: cloning `self` can imply
+/// all or a subset of them, depending on the derived `Clone` implementation for the receiver type, and an erased
+/// nominal local may hide them too. `None` means a callable's own parameters, which neither `self` nor a concrete
+/// nominal can carry; only a value whose type was lost entirely keeps the conservative fallback there. For erased
+/// borrowed method results, inspect the borrowed inner type in addition to the expression's outer type.
 fn add_backend_clone_bounds_for_cloned_expr(
     expr: &IrExpr,
     type_param_names: &HashSet<&str>,
@@ -1960,14 +2012,15 @@ fn add_backend_clone_bounds_for_cloned_expr(
     clone_params: &mut HashSet<String>,
 ) {
     if matches!(&expr.kind, IrExprKind::Var { name, .. } if name == "self") {
+        // `self` is typed by the owner alone. Cloning it binds the owner parameters its derived `Clone` depends on --
+        // every one of them when that set is unknown -- and never a callable's own parameters, which is what `None`
+        // denotes (a free function's, or a method's own, see `infer_backend_clone_bounds`).
         if let Some(self_clone_params) = self_clone_params {
             if self_clone_params.is_empty() {
                 clone_params.extend(type_param_names.iter().map(|name| (*name).to_string()));
             } else {
                 clone_params.extend(self_clone_params.iter().cloned());
             }
-        } else {
-            clone_params.extend(type_param_names.iter().map(|name| (*name).to_string()));
         }
         if matches!(expr.ty, IrType::SelfType) {
             return;
@@ -3817,6 +3870,94 @@ mod tests {
         let mut bounds = HashSet::new();
         add_backend_clone_bounds_for_cloned_expr(&expr, &parameters, Some(&unknown_owner_dependencies), &mut bounds);
         assert_eq!(bounds, HashSet::from(["T".to_string()]));
+    }
+
+    /// `None` names a callable's own parameters, which `self` cannot carry: cloning `self` inside a generic method
+    /// binds nothing on the method's own `T` (#1489).
+    #[test]
+    fn self_clone_binds_no_callable_own_parameters() {
+        let parameters = HashSet::from(["T"]);
+        let expr = TypedExpr::new(
+            IrExprKind::Var {
+                name: "self".to_string(),
+                access: VarAccess::Borrow,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("Codec".to_string()),
+        );
+        let mut bounds = HashSet::new();
+        add_backend_clone_bounds_for_cloned_expr(&expr, &parameters, None, &mut bounds);
+        assert!(bounds.is_empty(), "{bounds:?}");
+    }
+
+    /// An `Ok`/`Err` payload is planned as the `Result`'s field slot, so a field moved out of a last-use local binds
+    /// nothing while a cloned loop binding binds the callable's own parameter (#1489).
+    #[test]
+    fn result_payload_bounds_follow_the_struct_field_plan() {
+        let parameters = HashSet::from(["T"]);
+        let clone_context = BackendCloneInferenceContext {
+            incan_nominal_names: HashSet::new(),
+            rusttype_alias_names: HashSet::new(),
+        };
+        let ok_call = |payload: TypedExpr| {
+            TypedExpr::new(
+                IrExprKind::Call {
+                    func: Box::new(TypedExpr::new(
+                        IrExprKind::Var {
+                            name: constructors::as_str(ConstructorId::Ok).to_string(),
+                            access: VarAccess::Move,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Unknown,
+                    )),
+                    type_args: Vec::new(),
+                    args: vec![IrCallArg {
+                        name: None,
+                        kind: IrCallArgKind::Positional,
+                        expr: payload,
+                    }],
+                    callable_signature: None,
+                    canonical_path: None,
+                },
+                IrType::Result(Box::new(IrType::Generic("T".to_string())), Box::new(IrType::String)),
+            )
+        };
+        let moved_field = TypedExpr::new(
+            IrExprKind::Field {
+                object: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "decoded".to_string(),
+                        access: VarAccess::Move,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::NamedGeneric("Decoded".to_string(), vec![IrType::Generic("T".to_string())]),
+                )),
+                field: "value".to_string(),
+            },
+            IrType::Generic("T".to_string()),
+        );
+        let loop_binding = TypedExpr::new(
+            IrExprKind::Var {
+                name: "item".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Generic("T".to_string()),
+        );
+        for (payload, expected) in [
+            (moved_field, HashSet::new()),
+            (loop_binding, HashSet::from(["T".to_string()])),
+        ] {
+            let mut bounds = HashSet::new();
+            collect_backend_clone_bounds_in_stmt(
+                &IrStmt::new(IrStmtKind::Return(Some(ok_call(payload)))),
+                &parameters,
+                None,
+                &clone_context,
+                &mut bounds,
+            );
+            assert_eq!(bounds, expected);
+        }
     }
 
     fn function(name: &str, type_params: Vec<IrTypeParam>) -> IrFunction {
