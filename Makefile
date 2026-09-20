@@ -678,8 +678,8 @@ test-oven-release-smoke: test-prewarm-oven-release-loafs
 .PHONY: test-rust-inspect  ## test - Run focused rust-inspect regression tests
 test-rust-inspect:
 	@echo "\033[1mRunning rust-inspect focused tests...\033[0m"
-	@cargo test -p incan_frontend --lib --features rust_inspect typechecker::tests::test_rust_inspect_unavailable_stays_permissive_for_method_calls
-	@cargo test -p incan_frontend --lib --features rust_inspect typechecker::tests::test_rusttype_return_coercion_recorded_for_generic_newtype_method_call
+	@cargo test -p incan_frontend --lib --features rust_inspect typechecker::tests::rust_metadata_and_methods::test_rust_inspect_unavailable_stays_permissive_for_method_calls
+	@cargo test -p incan_frontend --lib --features rust_inspect typechecker::tests::rust_imports_and_types::test_rusttype_return_coercion_recorded_for_generic_newtype_method_call
 
 .PHONY: generated-rust-audit-gate  ## test - Run deterministic generated Rust audit helper checks
 generated-rust-audit-gate:
