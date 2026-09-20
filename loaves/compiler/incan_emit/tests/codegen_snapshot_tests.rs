@@ -5637,6 +5637,76 @@ fn test_std_serde_with_serialize_trait_codegen() {
     assert_codegen_snapshot!("std_serde_with_serialize_trait", rust_code);
 }
 
+/// #1431: a source trait that only shares the spelling of `std.serde.json.Serialize` / `Deserialize` carries no
+/// JSON protocol. Its adoption must not inject serde derives or the `to_json` / `from_json` backend defaults; the
+/// stdlib JSON behavior keys on the canonical trait identity, never on the basename.
+#[test]
+fn test_newtype_local_serde_named_traits_codegen() {
+    let source = load_test_file("newtype_local_serde_named_traits");
+    let rust_code = generate_rust(&source);
+    let compact = compact_rust(&rust_code);
+    assert!(
+        compact.contains("implSerializeforNumber{}") && compact.contains("implDeserializeforNumber{}"),
+        "expected empty impls for the local traits; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("serde::") && !compact.contains("to_json") && !compact.contains("from_json"),
+        "local traits spelled like the stdlib JSON traits must not receive serde derives or JSON methods; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("newtype_local_serde_named_traits", rust_code);
+}
+
+/// #1431: a `std.serde.json` trait imported through a facade re-export is still the stdlib trait. The consumer's
+/// written import names only the facade, so the protocol must key on the identity the frontend proved through the
+/// re-export: the serde derives are forwarded, the backend default `to_json` is emitted for `Serialize`, and the
+/// adopter's own `from_json` lands inside the `Deserialize` impl rather than being dropped as an unknown method.
+#[test]
+fn test_facade_reexported_std_serde_json_traits_keep_their_protocol() -> Result<(), Box<dyn std::error::Error>> {
+    let facade_source = "from std.serde.json import Serialize, Deserialize\n";
+    let consumer_source = r#"
+from facade import Serialize, Deserialize
+
+model Payload with Serialize, Deserialize:
+  value: int
+
+  def from_json(json_str: str) -> Result[Payload, str]:
+    return Ok(Payload(value=len(json_str)))
+
+def main() -> None:
+  println(Payload(value=1).to_json())
+  match Payload.from_json("{}"):
+    case Ok(restored):
+      println(restored.value)
+    case Err(message):
+      println(message)
+"#;
+    let facade_ast = parse_incan_program(facade_source, "facade");
+    let consumer_ast = parse_incan_program(consumer_source, "consumer");
+    let mut codegen = codegen_with_builtin_stdlib_inventory();
+    codegen.add_module_with_path_segments("facade", &facade_ast, vec!["facade".to_string()]);
+    let (consumer_code, _modules) = codegen
+        .try_generate_multi_file_nested(&consumer_ast, &[vec!["facade".to_string()]])
+        .map_err(|err| std::io::Error::other(format!("facade re-export should codegen: {err:?}")))?;
+    let compact = compact_rust(&consumer_code);
+    assert!(
+        compact.contains("serde::Serialize,") && compact.contains("serde::Deserialize,"),
+        "serde derives must be forwarded for the re-exported stdlib traits; generated:\n{consumer_code}"
+    );
+    assert!(
+        compact.contains("implSerializeforPayload{fnto_json(&self)->String"),
+        "the stdlib backend default must be emitted for the re-exported Serialize; generated:\n{consumer_code}"
+    );
+    assert!(
+        compact.contains("implDeserializeforPayload{fnfrom_json(json_str:String)->Result<Payload,String>"),
+        "the adopter's from_json must land in the re-exported Deserialize impl; generated:\n{consumer_code}"
+    );
+    assert!(
+        compact.contains("usecrate::facade::Serialize;") && compact.contains("usecrate::facade::Deserialize;"),
+        "the facade bindings must stay imported; generated:\n{consumer_code}"
+    );
+    Ok(())
+}
+
 #[test]
 fn test_newtype_with_serialize_trait_forwards_rust_derive() {
     let source = r#"

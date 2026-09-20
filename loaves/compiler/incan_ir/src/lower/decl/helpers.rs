@@ -12,6 +12,7 @@ use incan_lang::lang::callables;
 use incan_lang::lang::decorators::{self, DecoratorId};
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::keywords::{self, KeywordId};
+use incan_lang::lang::stdlib;
 use incan_lang::lang::trait_bounds;
 use incan_lang::lang::traits as core_traits;
 
@@ -491,36 +492,42 @@ impl AstLowering {
         Self::push_unique(derives, path);
     }
 
-    /// Forward explicit `with Serialize` / `with Deserialize` adoption into Rust derive emission.
+    /// Forward explicit `with Serialize` / `with Deserialize` adoption of the `std.serde.json` traits into Rust derive
+    /// emission.
     ///
     /// This keeps direct-interop serde trait defaults honest: a type that adopts the stdlib serde trait surface must
-    /// also satisfy the matching Rust-side serde capability when codegen expands those methods.
+    /// also satisfy the matching Rust-side serde capability when codegen expands those methods. The adoption is keyed
+    /// on the trait's canonical identity, so a source trait that only shares the spelling (a local `Serialize`, or a
+    /// `Serialize` exported by some other module) forwards nothing (#1431).
     pub(in crate::lower) fn extend_derives_with_adopted_serde_traits(
         &self,
         derives: &mut Vec<String>,
         trait_bounds: &[Spanned<ast::TraitBound>],
     ) {
-        fn has(derives: &[String], name: &str) -> bool {
-            derives.iter().any(|d| d == name)
-        }
-
         for bound in trait_bounds {
-            match bound.node.name.as_str() {
-                "Serialize" if !has(derives, SERDE_SERIALIZE_DERIVE) => {
-                    derives.push(SERDE_SERIALIZE_DERIVE.to_string());
-                }
-                "Deserialize" if !has(derives, SERDE_DESERIALIZE_DERIVE) => {
-                    derives.push(SERDE_DESERIALIZE_DERIVE.to_string());
-                }
-                name if name.ends_with(".Serialize") && !has(derives, SERDE_SERIALIZE_DERIVE) => {
-                    derives.push(SERDE_SERIALIZE_DERIVE.to_string());
-                }
-                name if name.ends_with(".Deserialize") && !has(derives, SERDE_DESERIALIZE_DERIVE) => {
-                    derives.push(SERDE_DESERIALIZE_DERIVE.to_string());
-                }
-                _ => {}
-            }
+            let Some(protocol) = self.stdlib_json_protocol_for_adopted_trait(&bound.node.name) else {
+                continue;
+            };
+            let derive = match protocol {
+                stdlib::StdlibJsonTraitId::Serialize => SERDE_SERIALIZE_DERIVE,
+                stdlib::StdlibJsonTraitId::Deserialize => SERDE_DESERIALIZE_DERIVE,
+            };
+            Self::push_unique(derives, derive.to_string());
         }
+    }
+
+    /// Return which `std.serde.json` protocol an adopted trait spelling names, by canonical trait identity.
+    ///
+    /// The visible spelling is resolved exactly as trait impl lowering resolves it: through the import identity the
+    /// frontend proved (which follows a facade re-export to the declaring module) and otherwise through the written
+    /// import alias. An alias (`JsonSerialize`), a module-qualified form (`json.Serialize`), the bare import, and a
+    /// facade re-export all identify the stdlib trait, while an unrelated trait with the same basename does not.
+    pub(in crate::lower) fn stdlib_json_protocol_for_adopted_trait(
+        &self,
+        visible_name: &str,
+    ) -> Option<stdlib::StdlibJsonTraitId> {
+        let (module_path, source_name) = self.canonical_trait_identity(visible_name);
+        stdlib::stdlib_json_trait_id_for_identity(module_path.as_deref()?, source_name.as_deref()?)
     }
 
     /// Extract passthrough Rust attributes from decorators.
@@ -720,6 +727,61 @@ mod tests {
                 Spanned::new(ast::Type::Simple("U".to_string()), ast::Span::default()),
             ],
         }
+    }
+
+    fn adopted_bound(name: &str) -> Spanned<ast::TraitBound> {
+        Spanned::new(
+            ast::TraitBound {
+                name: name.to_string(),
+                type_args: Vec::new(),
+            },
+            ast::Span::default(),
+        )
+    }
+
+    /// #1431: serde derive forwarding keys on the adopted trait's canonical identity, not on its basename.
+    #[test]
+    fn adopted_serde_derives_require_canonical_std_serde_json_owner() {
+        let mut lowering = AstLowering::new();
+        lowering.current_source_module_name = Some("main".to_string());
+        let bounds = [adopted_bound("Serialize"), adopted_bound("Deserialize")];
+
+        // A local (or otherwise unrelated) trait spelled `Serialize` forwards nothing.
+        let mut derives = Vec::new();
+        lowering.extend_derives_with_adopted_serde_traits(&mut derives, &bounds);
+        assert!(derives.is_empty(), "{derives:?}");
+        assert_eq!(lowering.stdlib_json_protocol_for_adopted_trait("Serialize"), None);
+
+        // A trait exported by another module under the same spelling forwards nothing either.
+        lowering.import_aliases.insert(
+            "Serialize".to_string(),
+            vec!["vendor".to_string(), "codec".to_string(), "Serialize".to_string()],
+        );
+        lowering.extend_derives_with_adopted_serde_traits(&mut derives, &bounds);
+        assert!(derives.is_empty(), "{derives:?}");
+
+        // The canonical stdlib traits forward the serde derives through every accepted spelling.
+        let json_module = vec!["std".to_string(), "serde".to_string(), "json".to_string()];
+        lowering.import_aliases.clear();
+        lowering.import_aliases.insert("json".to_string(), json_module.clone());
+        lowering.import_aliases.insert(
+            "JsonDeserialize".to_string(),
+            [json_module.as_slice(), &["Deserialize".to_string()]].concat(),
+        );
+        let stdlib_bounds = [adopted_bound("json.Serialize"), adopted_bound("JsonDeserialize")];
+        lowering.extend_derives_with_adopted_serde_traits(&mut derives, &stdlib_bounds);
+        assert_eq!(
+            derives,
+            vec![SERDE_SERIALIZE_DERIVE.to_string(), SERDE_DESERIALIZE_DERIVE.to_string()]
+        );
+        assert_eq!(
+            lowering.stdlib_json_protocol_for_adopted_trait("json.Serialize"),
+            Some(stdlib::StdlibJsonTraitId::Serialize)
+        );
+
+        // Forwarding is idempotent.
+        lowering.extend_derives_with_adopted_serde_traits(&mut derives, &stdlib_bounds);
+        assert_eq!(derives.len(), 2, "{derives:?}");
     }
 
     #[test]

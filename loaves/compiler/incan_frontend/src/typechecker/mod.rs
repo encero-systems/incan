@@ -6631,7 +6631,7 @@ impl TypeChecker {
             .unwrap_or_else(|| vec![module_name.to_string()]);
         for (exported_name, module, item_name) in Self::dependency_source_reexport_targets(module_ast) {
             reexports.insert(exported_name.clone(), (module.clone(), item_name.clone()));
-            if let Some(kind) = self.dependency_reexported_function_symbol(&facade_module_path, &module, &item_name) {
+            if let Some(kind) = self.dependency_reexported_member_symbol(&facade_module_path, &module, &item_name) {
                 member_symbols.insert(exported_name.clone(), kind);
             }
             if let Some(target) =
@@ -6656,8 +6656,13 @@ impl TypeChecker {
             .insert(module_name.to_string(), member_projections);
     }
 
-    /// Resolve a function re-export from either another source dependency or the compiler-owned stdlib metadata.
-    fn dependency_reexported_function_symbol(
+    /// Resolve a re-exported member from either another source dependency or the compiler-owned stdlib metadata.
+    ///
+    /// A facade that writes `from std.serde.json import Serialize` re-exports that trait exactly as it re-exports a
+    /// function, so a consumer importing the spelling from the facade must bind the stdlib trait rather than a module
+    /// placeholder: the placeholder let adoption and method calls through unproven, and lowering then had only the
+    /// spelling to key the trait's protocol on (#1431).
+    fn dependency_reexported_member_symbol(
         &mut self,
         base_module_path: &[String],
         module: &ImportPath,
@@ -6670,7 +6675,13 @@ impl TypeChecker {
         if module_path.first().map(String::as_str) != Some(incan_lang::lang::stdlib::STDLIB_ROOT) {
             return None;
         }
-        self.stdlib_cache.lookup_function_symbol(&module_path, item_name)
+        self.stdlib_cache
+            .lookup_function_symbol(&module_path, item_name)
+            .or_else(|| {
+                self.stdlib_cache
+                    .lookup_trait(&module_path, item_name)
+                    .map(SymbolKind::Trait)
+            })
     }
 
     /// Cache direct declarations owned by one dependency module.
@@ -7172,6 +7183,15 @@ impl TypeChecker {
             // that link, so the identity names exactly the declaration the binding selected.
             let (target_module, target_name) = self.dependency_member_reexports.get(&key)?.get(item_name)?;
             return self.dependency_member_identity_from(&owner, target_module, target_name, depth + 1);
+        }
+        // A chain that ends in a compiler-owned stdlib module has no dependency candidate to stop at; the stdlib
+        // cache holds that module's declaration identities. Only a chain reaches here with a stdlib path: a direct
+        // stdlib import proves its identity through the loading lookup instead.
+        if depth > 0 && module.parent_levels == 0 && !module.is_absolute {
+            let module_path = canonicalize_source_module_segments(&module.segments);
+            if module_path.first().map(String::as_str) == Some(incan_lang::lang::stdlib::STDLIB_ROOT) {
+                return self.stdlib_cache.cached_identity(&module_path, item_name);
+            }
         }
         None
     }

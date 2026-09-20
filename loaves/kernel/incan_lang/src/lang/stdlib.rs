@@ -199,6 +199,29 @@ pub fn is_stdlib_json_trait_module_path(segments: &[String]) -> bool {
     )
 }
 
+/// Canonical source declaration names of the `std.serde.json` protocol traits, indexed by their id.
+const STDLIB_JSON_TRAIT_SOURCE_NAMES: &[(StdlibJsonTraitId, &str)] = &[
+    (StdlibJsonTraitId::Serialize, "Serialize"),
+    (StdlibJsonTraitId::Deserialize, "Deserialize"),
+];
+
+/// Return the stdlib JSON trait id for a canonical trait identity: the declaring module path plus the source
+/// declaration name.
+///
+/// This is the identity-keyed form of [`stdlib_json_trait_id`]. A trait that merely shares the spelling `Serialize`
+/// or `Deserialize` but is declared anywhere other than `std.serde.json` carries no JSON protocol, so lowering and
+/// emission must consult this form whenever the trait's declaring module is known.
+#[must_use]
+pub fn stdlib_json_trait_id_for_identity(module_path: &[String], source_name: &str) -> Option<StdlibJsonTraitId> {
+    if !is_stdlib_json_trait_module_path(module_path) {
+        return None;
+    }
+    STDLIB_JSON_TRAIT_SOURCE_NAMES
+        .iter()
+        .find(|(_, name)| *name == source_name)
+        .map(|(id, _)| *id)
+}
+
 /// Return the stdlib JSON trait id for a resolved source import path.
 #[must_use]
 pub fn stdlib_json_trait_id_from_path(segments: &[String]) -> Option<StdlibJsonTraitId> {
@@ -222,18 +245,6 @@ pub fn stdlib_json_trait_scope_import_id(name: &str) -> Option<StdlibJsonTraitId
 #[must_use]
 pub fn is_canonical_stdlib_json_trait_name(name: &str) -> bool {
     STDLIB_JSON_CANONICAL_TRAIT_NAMES.contains(&name)
-}
-
-/// Return whether `name` refers to the stdlib JSON serialization trait.
-#[must_use]
-pub fn is_stdlib_json_serialize_trait_name(name: &str) -> bool {
-    stdlib_json_trait_id(name) == Some(StdlibJsonTraitId::Serialize)
-}
-
-/// Return whether `name` refers to the stdlib JSON deserialization trait.
-#[must_use]
-pub fn is_stdlib_json_deserialize_trait_name(name: &str) -> bool {
-    stdlib_json_trait_id(name) == Some(StdlibJsonTraitId::Deserialize)
 }
 
 const STDLIB_GRAPH_CONSTRUCTOR_TYPES: &[&str] = &["DiGraph", "Dag", "MultiDiGraph"];
@@ -1245,7 +1256,6 @@ mod tests {
             "std.serde.json.Serialize",
         ] {
             assert_eq!(stdlib_json_trait_id(name), Some(StdlibJsonTraitId::Serialize));
-            assert!(is_stdlib_json_serialize_trait_name(name));
         }
 
         for name in [
@@ -1255,7 +1265,6 @@ mod tests {
             "std.serde.json.Deserialize",
         ] {
             assert_eq!(stdlib_json_trait_id(name), Some(StdlibJsonTraitId::Deserialize));
-            assert!(is_stdlib_json_deserialize_trait_name(name));
         }
 
         assert_eq!(stdlib_json_trait_id("yaml.Serialize"), None);
@@ -1267,6 +1276,23 @@ mod tests {
         );
         let json_trait_module = vec!["std".to_string(), "serde".to_string(), "json".to_string()];
         assert!(is_stdlib_json_trait_module_path(&json_trait_module));
+        assert_eq!(
+            stdlib_json_trait_id_for_identity(&json_trait_module, "Serialize"),
+            Some(StdlibJsonTraitId::Serialize)
+        );
+        assert_eq!(
+            stdlib_json_trait_id_for_identity(&json_trait_module, "Deserialize"),
+            Some(StdlibJsonTraitId::Deserialize)
+        );
+        assert_eq!(
+            stdlib_json_trait_id_for_identity(&json_trait_module, "JsonSerialize"),
+            None
+        );
+        assert_eq!(stdlib_json_trait_id_for_identity(&segs(&["main"]), "Serialize"), None);
+        assert_eq!(
+            stdlib_json_trait_id_for_identity(&segs(&["std", "toml"]), "Serialize"),
+            None
+        );
         let serialize_path = vec![
             "std".to_string(),
             "serde".to_string(),
