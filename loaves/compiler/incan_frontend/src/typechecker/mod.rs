@@ -7240,6 +7240,15 @@ impl TypeChecker {
                 .dependency_member_identity_from(&owner, target_module, target_name, depth + 1)
                 .or_else(|| self.stdlib_reexport_identity(target_module, target_name));
         }
+        // A chain that ends in a compiler-owned stdlib module has no dependency candidate to stop at; the stdlib
+        // cache holds that module's declaration identities. Only a chain reaches here with a stdlib path: a direct
+        // stdlib import proves its identity through the loading lookup instead.
+        if depth > 0 && module.parent_levels == 0 && !module.is_absolute {
+            let module_path = canonicalize_source_module_segments(&module.segments);
+            if module_path.first().map(String::as_str) == Some(incan_lang::lang::stdlib::STDLIB_ROOT) {
+                return self.stdlib_cache.cached_identity(&module_path, item_name);
+            }
+        }
         None
     }
 

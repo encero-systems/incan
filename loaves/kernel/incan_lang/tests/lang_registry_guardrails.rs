@@ -14,6 +14,7 @@ use incan_lang::lang::surface::{
     types as surface_types,
 };
 use incan_lang::lang::testing;
+use incan_lang::lang::trait_bounds;
 use incan_lang::lang::traits;
 use incan_lang::lang::types::{collections, numerics, stringlike};
 use std::path::{Path, PathBuf};
@@ -260,6 +261,35 @@ fn derives_spellings_unique_and_resolvable() {
         from_str: derives::from_str,
         as_str: derives::as_str,
     });
+}
+
+/// A derive implements the Rust trait, so a bound spelled with the same name must lower to that Rust trait.
+///
+/// A source-owned builtin trait (one with a `std.derives` source module) otherwise lowers to the generated
+/// `__incan_std` trait, which no derived type implements and which a plain program never materializes (#1374).
+#[test]
+fn derivable_source_owned_traits_have_rust_bound_mappings() {
+    for derive in derives::DERIVES {
+        let Some(trait_id) = traits::from_str(derive.canonical) else {
+            continue;
+        };
+        if traits::source_module(trait_id).is_none() {
+            continue;
+        }
+        assert!(
+            trait_bounds::incan_to_rust(derive.canonical).is_some(),
+            "derivable source-owned trait `{}` has no Rust trait-bound mapping",
+            derive.canonical
+        );
+    }
+    assert_eq!(
+        trait_bounds::incan_to_rust(traits::as_str(traits::TraitId::Default)),
+        Some(trait_bounds::rust::DEFAULT)
+    );
+    assert_eq!(
+        trait_bounds::rust_path(trait_bounds::TraitBoundId::Default),
+        Some(trait_bounds::rust::DEFAULT)
+    );
 }
 
 #[test]

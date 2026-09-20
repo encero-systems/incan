@@ -181,6 +181,9 @@ pub struct IrRustTraitImport {
     pub definition_path: Option<String>,
     /// Method names this trait can place in Rust method-lookup scope.
     pub methods: Vec<String>,
+    /// Whether `methods` is the declared surface. An import with no metadata at all has an unknown surface: it is
+    /// retained only through the call-site candidates the typechecker recorded, never by matching a method name here.
+    pub methods_known: bool,
 }
 
 /// An item in a from ... import statement

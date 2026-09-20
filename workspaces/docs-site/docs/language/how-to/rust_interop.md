@@ -111,6 +111,40 @@ stream = device.build_output_stream[f32, _, _](
 
 Writing `build_output_stream[f32](...)` is an error because the method declares three type parameters. Incan reports the required and supplied arity during typechecking instead of emitting an incomplete Rust turbofish. The `_` entries are deliberate inference slots, not optional trailing arguments.
 
+### Calling a Rust trait method through the trait
+
+When two imported traits both provide a method with the same name, `value.method(...)` is ambiguous for Rust. Spell the call through the trait instead and pass the receiver as the first argument:
+
+```incan
+from rust::sha2 import Digest, Sha256
+from rust::sha3::digest import Update
+
+class Hasher:
+    handle: Sha256
+
+    def absorb(mut self, chunk: bytes) -> None:
+        Update.update(self.handle, chunk.as_slice())
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+```
+
+The receiver is passed like any other argument. The compiler does not guess for a trait it recognizes: when the import is known to be a trait but no signature is available for the method, the trait-qualified call is an error naming the trait and method, and `value.method(...)` remains available when the method is unambiguous on the receiver. A method the trait does not declare is also rejected, since Rust resolves `Trait::method` only against the trait's own items. An import the compiler has no metadata for at all is treated as an ordinary associated call, and native compilation remains the authority for it.
+
+### Extension traits stay in scope for the methods they provide
+
+Rust finds a trait method on a value only when the trait is imported. Generated code keeps only the imports it uses, and a trait used through method syntax never appears in the emitted call, so the compiler attributes each method call to the imported trait that provides it and retains that `use`:
+
+```incan
+from rust::std::borrow import Borrow
+from rust::std::path import PathBuf
+
+pub def borrowed(value: &PathBuf) -> &PathBuf:
+    return value.borrow()
+```
+
+With inspected metadata the attribution is exact. Without it the compiler cannot tell which imported item declares `borrow`, so a method call that no inspected surface resolves keeps every imported Rust item whose method surface is unknown, aliases included. A metadata-free import in a module with no such call is still pruned as unused, and an import whose metadata names a non-trait item is never retained on a method call's behalf.
+
 ### Passing callbacks that borrow Rust slices
 
 When an inspected Rust callback bound accepts a borrowed slice, write the corresponding named Incan callback with a borrowed `list[T]`. Incan keeps the inspected Rust spelling for emission, so `&mut list[f32]` becomes `&mut [f32]` at this call boundary rather than changing the representation of ordinary Incan lists:

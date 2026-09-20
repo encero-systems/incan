@@ -25320,6 +25320,8 @@ def f() -> None:
 }
 
 mod rust_supertraits;
+mod rust_trait_import_candidates;
+mod rust_trait_qualified_calls;
 
 #[test]
 fn admitted_legacy_nominals_keep_distinct_source_paths_and_consistent_hashes() {

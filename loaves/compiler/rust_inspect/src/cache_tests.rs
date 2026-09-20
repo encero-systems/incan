@@ -2037,9 +2037,22 @@ mod writer {
             let _ = header;
         }
     }
+
+    /// A trait whose methods declare every receiver mode.
+    pub trait Sink {
+        /// Consume bytes through an exclusive receiver.
+        fn update(&mut self, data: &[u8]);
+        /// Report readiness through a shared receiver.
+        fn is_ready(&self) -> bool;
+        /// Finish by value.
+        fn finish(self) -> Vec<u8>;
+        /// Finish a boxed receiver.
+        fn finish_boxed(self: Box<Self>) -> Vec<u8>;
+    }
 }
 
 pub use writer::Builder;
+pub use writer::Sink;
 "#,
     )?;
 
@@ -2082,11 +2095,38 @@ pub use writer::Builder;
         .find(|method| method.name == "append_data")
         .ok_or("expected append_data method metadata")?;
     assert_eq!(append_data.signature.params[1].type_display, "&mut source_dep::Header");
+    assert_eq!(
+        append_data.signature.params[0].type_display, "&mut self",
+        "the receiver keeps its declared mutability on the complete route"
+    );
     let repeated = complete_cache.get_or_extract_complete(&root, "source_dep::Builder", &|_| ())?;
     assert!(
         std::sync::Arc::ptr_eq(&metadata, &repeated),
         "a second complete lookup must reuse the complete in-memory type record"
     );
+
+    // The trait's own items are what a trait-qualified call reads its receiver mode from (#1375); every declared
+    // receiver mode must survive the rust-analyzer route as written.
+    let sink = complete_cache.get_or_extract_complete(&root, "source_dep::Sink", &|_| ())?;
+    let RustItemKind::Trait(sink_info) = &sink.kind else {
+        return Err("expected complete source dependency Sink trait metadata".into());
+    };
+    let receiver_display = |method: &str| -> Result<String, Box<dyn std::error::Error>> {
+        sink_info
+            .items
+            .iter()
+            .find_map(|item| match item {
+                RustTraitAssoc::Function { name, signature } if name == method => {
+                    signature.params.first().map(|param| param.type_display.clone())
+                }
+                _ => None,
+            })
+            .ok_or_else(|| format!("expected `{method}` trait method metadata").into())
+    };
+    assert_eq!(receiver_display("update")?, "&mut self");
+    assert_eq!(receiver_display("is_ready")?, "&self");
+    assert_eq!(receiver_display("finish")?, "self");
+    assert_eq!(receiver_display("finish_boxed")?, "Box<Self>");
     Ok(())
 }
 

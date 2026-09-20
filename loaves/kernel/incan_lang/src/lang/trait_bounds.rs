@@ -9,6 +9,10 @@
 //! - This registry only covers traits used as *bounds* on type parameters; the full trait vocabulary is in
 //!   [`crate::lang::traits`].
 //! - Unknown names are passed through as-is during lowering (allowing user-defined trait bounds).
+//! - Every `@derive(...)` name that is also a source-owned builtin trait (one with a
+//!   [`crate::lang::traits::source_module`]) must have an entry here. A derived implementation is the Rust trait's, so
+//!   a bound spelled with that name has to lower to the same Rust trait; without a mapping the bound lowers to the
+//!   generated `__incan_std` source trait, which no derived type implements (#1374).
 
 use super::registry::{RFC, RfcId, Since, Stability};
 
@@ -19,6 +23,7 @@ pub enum TraitBoundId {
     Ord,
     Hash,
     Clone,
+    Default,
     Debug,
     Display,
     Serialize,
@@ -74,6 +79,14 @@ pub const TRAIT_BOUNDS: &[TraitBoundMapping] = &[
         Since(0, 2),
     ),
     mapping(
+        TraitBoundId::Default,
+        "Default",
+        rust::DEFAULT,
+        "Default value construction — the Rust trait `@derive(Default)` implements.",
+        RFC::_023,
+        Since(0, 6),
+    ),
+    mapping(
         TraitBoundId::Debug,
         "Debug",
         "std::fmt::Debug",
@@ -122,8 +135,9 @@ pub mod rust {
     pub const EQ: &str = "Eq";
     pub const HASH: &str = "std::hash::Hash";
 
-    // Cloning
+    // Cloning and construction
     pub const CLONE: &str = "Clone";
+    pub const DEFAULT: &str = "std::default::Default";
 
     // Formatting
     pub const DEBUG: &str = "std::fmt::Debug";
