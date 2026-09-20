@@ -391,12 +391,6 @@
       "expected_fingerprint": "0x4d4acefa2e275e14"
     },
     {
-      "path": "loaves/compiler/incan_frontend/src/typechecker/canonical_identity_tests.rs",
-      "category": "RFC 120 canonical identity conformance assertions",
-      "expected_count": 36,
-      "expected_fingerprint": "0x3e3a6056cc403a33"
-    },
-    {
       "path": "loaves/compiler/incan_frontend/src/typechecker/check_decl.rs",
       "category": "declaration-level stdlib, derive, and checked registry compatibility",
       "expected_count": 24,

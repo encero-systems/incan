@@ -956,9 +956,9 @@ fn a_run_without_a_provider_runtime_refuses_visibly() -> TestResult {
 // A plan whose required authority does not name a capability is no longer testable from this layer, and that is
 // the right outcome rather than a lost case. #1213's rework rejects such provider metadata *before* lowering can
 // mint a plan, so the executor can no longer be handed one — see
-// `loaves/compiler/incan_frontend/src/body_ir/tests.rs`'s "corrupt provider metadata whose authority is not a
-// capability is rejected before lowering can mint a plan". Reconstructing it here would mean hand-filling a catalogue
-// no producer could publish, which is exactly what that rework closed off.
+// `loaves/compiler/incan_frontend/src/body_ir/tests/provider_plans.rs`'s "corrupt provider metadata whose authority is
+// not a capability is rejected before lowering can mint a plan". Reconstructing it here would mean hand-filling a
+// catalogue no producer could publish, which is exactly what that rework closed off.
 
 // ============================================================================
 // Evidence identity

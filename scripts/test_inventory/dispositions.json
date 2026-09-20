@@ -1511,13 +1511,93 @@
       "split_target": "",
       "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
     },
-    "loaves/compiler/incan_frontend/src/body_ir/tests.rs": {
+    "loaves/compiler/incan_frontend/src/body_ir/tests/async_and_race.rs": {
       "disposition": "keep",
       "owner": 1561,
       "twin": "",
-      "split_required": true,
+      "split_required": false,
       "split_target": "",
-      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+      "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/calls_and_arguments.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/closures_comprehensions_and_generators.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/control_flow_and_loops.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/for_patterns.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/identities_and_imports.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/input_contract_and_refusals.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/methods_and_defaults.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/operators_literals_and_assignment.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/patterns_and_assertions.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/body_ir/tests/provider_plans.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of body_ir/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
     },
     "loaves/compiler/incan_frontend/src/compiler_stack.rs": {
       "disposition": "keep",
@@ -1567,13 +1647,45 @@
       "split_target": "",
       "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
     },
-    "loaves/compiler/incan_frontend/src/library_manifest/tests.rs": {
+    "loaves/compiler/incan_frontend/src/library_manifest/tests/export_round_trips.rs": {
       "disposition": "keep",
       "owner": 1561,
       "twin": "",
-      "split_required": true,
+      "split_required": false,
       "split_target": "",
-      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+      "notes": "split of library_manifest/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/library_manifest/tests/formats_and_metadata.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of library_manifest/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/library_manifest/tests/identity_graph.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of library_manifest/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/library_manifest/tests/identity_validation.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of library_manifest/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/library_manifest/tests/vocab_and_scoped_surfaces.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of library_manifest/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
     },
     "loaves/compiler/incan_frontend/src/library_manifest/type_projection.rs": {
       "disposition": "keep",
@@ -1671,14 +1783,6 @@
       "split_target": "",
       "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
     },
-    "loaves/compiler/incan_frontend/src/typechecker/canonical_identity_tests.rs": {
-      "disposition": "keep",
-      "owner": 1561,
-      "twin": "",
-      "split_required": true,
-      "split_target": "",
-      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
-    },
     "loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs": {
       "disposition": "keep",
       "owner": 1561,
@@ -1735,6 +1839,38 @@
       "split_target": "",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/canonical_identity/declarations_and_scopes.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/canonical_identity_tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/canonical_identity/duplicates_and_collisions.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/canonical_identity_tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/canonical_identity/imports_and_dependencies.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/canonical_identity_tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/canonical_identity/references_calls_and_patterns.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of typechecker/canonical_identity_tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/capabilities.rs": {
       "disposition": "keep",
       "owner": 1561,
@@ -1765,7 +1901,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route."
     },
     "loaves/compiler/incan_frontend/src/typechecker/tests/fields_and_members.rs": {
       "disposition": "keep",
@@ -1853,7 +1989,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route."
     },
     "loaves/compiler/incan_frontend/src/typechecker/tests/rust_generics_and_traits.rs": {
       "disposition": "keep",
@@ -1861,7 +1997,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route."
     },
     "loaves/compiler/incan_frontend/src/typechecker/tests/rust_imports_and_types.rs": {
       "disposition": "keep",
@@ -1869,7 +2005,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route."
     },
     "loaves/compiler/incan_frontend/src/typechecker/tests/rust_metadata_and_methods.rs": {
       "disposition": "keep",
@@ -1877,7 +2013,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency."
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route."
     },
     "loaves/compiler/incan_frontend/src/typechecker/tests/rust_supertraits.rs": {
       "disposition": "keep",
@@ -1885,7 +2021,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route."
     },
     "loaves/compiler/incan_frontend/src/typechecker/tests/rust_trait_import_candidates.rs": {
       "disposition": "keep",
@@ -1893,7 +2029,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route."
     },
     "loaves/compiler/incan_frontend/src/typechecker/tests/rust_trait_qualified_calls.rs": {
       "disposition": "keep",
@@ -1901,7 +2037,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
+      "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route."
     },
     "loaves/compiler/incan_frontend/src/typechecker/tests/statements_and_bindings.rs": {
       "disposition": "keep",
@@ -2029,7 +2165,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
     },
     "loaves/compiler/incan_ir/src/expr.rs": {
       "disposition": "retire",
@@ -2037,7 +2173,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
     },
     "loaves/compiler/incan_ir/src/lib.rs": {
       "disposition": "retire",
@@ -2045,7 +2181,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
     },
     "loaves/compiler/incan_ir/src/lower/decl/helpers.rs": {
       "disposition": "retire",
@@ -2053,7 +2189,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
     },
     "loaves/compiler/incan_ir/src/lower/decl/methods.rs": {
       "disposition": "retire",
@@ -2061,7 +2197,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
     },
     "loaves/compiler/incan_ir/src/lower/decl/traits.rs": {
       "disposition": "retire",
@@ -2069,7 +2205,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
     },
     "loaves/compiler/incan_ir/src/lower/expr/calls.rs": {
       "disposition": "retire",
@@ -2077,7 +2213,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
     },
     "loaves/compiler/incan_ir/src/lower/expr/mod.rs": {
       "disposition": "retire",
@@ -2085,7 +2221,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
     },
     "loaves/compiler/incan_ir/src/lower/mod.rs": {
       "disposition": "retire",
@@ -2093,7 +2229,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
     },
     "loaves/compiler/incan_ir/src/lower/types.rs": {
       "disposition": "retire",
@@ -2101,7 +2237,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
     },
     "loaves/compiler/incan_ir/src/types.rs": {
       "disposition": "retire",
@@ -2109,7 +2245,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests.rs). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
     },
     "loaves/compiler/incan_oven_facet/src/lib.rs": {
       "disposition": "unaffected",
