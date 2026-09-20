@@ -127,6 +127,27 @@ impl TypeChecker {
         (collection_type_id(name) == Some(collection) && type_args.len() == arity).then_some(type_args)
     }
 
+    /// Return the element type `list(source)` collects, or `None` when the source is not iterable.
+    ///
+    /// The rule is the built-in loop-header rule (`infer_iterator_element_type`): a collection yields its items, a
+    /// dict its keys, text its one-character strings, bytes its integers, and an `Iterator[T]` or `Generator[T]` its
+    /// `T`. A Rust value the checker cannot see into (a `rust::` import or an unresolved type) is accepted with an
+    /// unknown element, as a loop over it is. Everything else is refused so the call never lowers to an undefined
+    /// conversion: a scalar, a tuple, an `Option`, and also a class or model that implements `__iter__` / `__next__`,
+    /// which a `for` statement accepts through `resolve_iteration_protocol` but which no `list(...)` lowering drives
+    /// yet.
+    fn list_constructor_item_type(&self, source_ty: &ResolvedType) -> Option<ResolvedType> {
+        match source_ty {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.list_constructor_item_type(inner),
+            ResolvedType::RustPath(_) | ResolvedType::Unknown => Some(ResolvedType::Unknown),
+            ResolvedType::Tuple(_) => None,
+            _ => {
+                let elem_ty = self.infer_iterator_element_type(source_ty);
+                (!matches!(elem_ty, ResolvedType::Unknown)).then_some(elem_ty)
+            }
+        }
+    }
+
     /// Typecheck a builtin call, optionally preserving ordinary root-name shadowing behavior.
     fn check_builtin_call_inner(
         &mut self,
@@ -653,7 +674,7 @@ impl TypeChecker {
             if has_call_root_binding {
                 return None;
             }
-            if cid == CollectionTypeId::Set && args.len() > 1 {
+            if matches!(cid, CollectionTypeId::Set | CollectionTypeId::List) && args.len() > 1 {
                 self.check_call_args(args);
                 self.errors
                     .push(errors::builtin_max_arity(name, 1, args.len(), call_span));
@@ -686,31 +707,26 @@ impl TypeChecker {
                     Some(dict_ty(key_ty, val_ty))
                 }
                 CollectionTypeId::List => {
+                    // `list(source)` collects exactly the items `for item in source` yields, so the element type
+                    // comes from the same iteration rule a loop header uses. The constructor identity is recorded
+                    // for lowering so the call never reaches emission as an ordinary function named `list` (#1464).
                     let elem_ty = if let Some(arg) = args.first() {
                         let arg_expr = Self::call_arg_expr(arg);
                         let arg_ty = self.check_expr(arg_expr);
-                        match &arg_ty {
-                            ResolvedType::Generic(name, type_args)
-                                if (name == surface_types::as_str(SurfaceTypeId::Vec)
-                                    || matches!(
-                                        collection_type_id(name.as_str()),
-                                        Some(
-                                            CollectionTypeId::List
-                                                | CollectionTypeId::Set
-                                                | CollectionTypeId::FrozenList
-                                                | CollectionTypeId::FrozenSet
-                                        )
-                                    ))
-                                    && !type_args.is_empty() =>
-                            {
-                                type_args[0].clone()
-                            }
-                            ResolvedType::Str => ResolvedType::Str,
-                            _ => ResolvedType::Unknown,
-                        }
+                        let Some(elem_ty) = self.list_constructor_item_type(&arg_ty) else {
+                            self.errors
+                                .push(errors::builtin_expects_iterable(name, &arg_ty.to_string(), call_span));
+                            return Some(ResolvedType::Unknown);
+                        };
+                        elem_ty
+                    } else if let Some(type_args) =
+                        Self::matching_collection_constructor_args(expected_return_ty, cid, 1)
+                    {
+                        type_args[0].clone()
                     } else {
                         ResolvedType::Unknown
                     };
+                    self.type_info.record_resolved_collection_constructor(call_span, cid);
                     Some(list_ty(elem_ty))
                 }
                 CollectionTypeId::Set => {

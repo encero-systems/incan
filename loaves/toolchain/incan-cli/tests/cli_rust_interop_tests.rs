@@ -1443,3 +1443,61 @@ def main() -> None:
     );
     Ok(())
 }
+
+/// A comprehension over a by-value Rust iterator (`std::env::Args` has no `.iter()`) consumes it exactly as the
+/// `for` statement over the same value does, and `list(args())` collects it the same way (#1490, #1464).
+#[test]
+fn comprehension_over_rust_iterator_consumes_it_by_value_issue1490() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "comprehension_rust_iterator_issue1490", "")?;
+    fs::write(
+        &main_path,
+        r#"from rust::std::env import args
+
+
+def lengths() -> list[int]:
+    return [len(argument) for argument in args()]
+
+
+def present_arguments() -> list[str]:
+    return [argument for argument in args() if len(argument) > 0]
+
+
+pub def main() -> None:
+    arguments: list[str] = [argument for argument in args()]
+    println(f"{len(arguments)}")
+    println(len(lengths()))
+    println(len(present_arguments()))
+    collected = list(args())
+    println(len(collected))
+    for argument in args():
+        println(len(argument) > 0)
+"#,
+    )?;
+
+    let bake_output = run_explicit_oven_bake(tmp.path())?;
+    assert_success(&bake_output, "explicit Oven bake for the #1490 comprehension program");
+    let run_output = run_incan(tmp.path(), &["run", "src/main.incn"])?;
+    assert_success(&run_output, "incan run for the #1490 comprehension program");
+    assert_eq!(
+        String::from_utf8(run_output.stdout)?.lines().collect::<Vec<_>>(),
+        vec!["1", "1", "1", "1", "true"],
+        "every argument-vector read must see exactly the program name"
+    );
+
+    let generated = fs::read_to_string(
+        tmp.path()
+            .join("target/incan/comprehension_rust_iterator_issue1490/src/main.rs"),
+    )?;
+    // prettyplease breaks a method chain across lines, so the guard compares without whitespace.
+    let compact = generated.split_whitespace().collect::<String>();
+    assert!(
+        !compact.contains("(args()).iter()") && !compact.contains("(args()).clone()"),
+        "a by-value Rust iterator must be neither borrowed with .iter() nor cloned:\n{generated}"
+    );
+    assert!(
+        generated.contains("((args()).into_iter())"),
+        "the comprehension must consume the iterator through IntoIterator:\n{generated}"
+    );
+    Ok(())
+}

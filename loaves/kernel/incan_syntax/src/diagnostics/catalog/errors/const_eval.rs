@@ -228,6 +228,14 @@ pub fn builtin_expects_list(name: &str, found: &str, span: Span) -> CompileError
     CompileError::type_error(format!("{name}() expects a list, got {}", found), span)
 }
 
+/// Report a conversion builtin whose source value cannot be iterated, so there is nothing to collect from it.
+pub fn builtin_expects_iterable(name: &str, found: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("{name}() expects an iterable collection, str, bytes, or Iterator, got {found}"),
+        span,
+    )
+}
+
 /// Report a direct `zip(left, right)` operand that cannot be adapted to the source-owned iterator protocol.
 pub fn builtin_zip_argument_not_supported(position: usize, found: &str, span: Span) -> CompileError {
     CompileError::type_error(

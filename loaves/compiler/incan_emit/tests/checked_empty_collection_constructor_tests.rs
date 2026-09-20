@@ -137,6 +137,7 @@ fn assert_empty_constructor(
         return Err("empty constructor must be an aggregate assignment, not a call".into());
     };
     match (expected_kind, rvalue) {
+        (CollectionTypeId::List, Rvalue::Aggregate(AggregateKind::List, entries)) if entries.is_empty() => {}
         (CollectionTypeId::Set, Rvalue::Aggregate(AggregateKind::Set, entries)) if entries.is_empty() => {}
         (CollectionTypeId::Dict, Rvalue::Dict(entries)) if entries.is_empty() => {}
         _ => return Err(format!("unexpected empty constructor rvalue: {rvalue:?}").into()),
@@ -233,6 +234,58 @@ fn checked_empty_collection_constructors_lower_to_existing_aggregate_shapes_issu
         if !body.render_snapshot().contains("allocator") {
             return Err("empty collection construction must retain its allocator requirement".into());
         }
+    }
+    Ok(())
+}
+
+/// Zero-argument `list()` lowers to the list aggregate from its retained constructor identity (#1464), while
+/// `list(source)` with a source keeps its call shape rather than being guessed into an aggregate.
+#[test]
+fn checked_empty_list_constructor_lowers_to_the_list_aggregate_issue1464() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def empty_names() -> list[str]:
+  return list()
+
+def copied(names: list[str]) -> list[str]:
+  return list(names)
+
+def annotated_local() -> None:
+  counts: list[int] = list()
+"#;
+    let (program, checker, module_path) = checked_source(source)?;
+    let return_span = call_span_at(source, "list()", 0)?;
+    let local_span = call_span_at(source, "list()", 1)?;
+    let conversion_span = call_span(source, "list(names)")?;
+    let str_list = ResolvedType::Generic("List".to_string(), vec![ResolvedType::Str]);
+    let int_list = ResolvedType::Generic("List".to_string(), vec![ResolvedType::Int]);
+    let type_info = checker.type_info();
+    for span in [return_span, local_span, conversion_span] {
+        if type_info.resolved_collection_constructor(span) != Some(CollectionTypeId::List) {
+            return Err("every list() spelling must retain its checked constructor identity".into());
+        }
+    }
+    assert_checked_result_type(&checker, return_span, &str_list)?;
+    assert_checked_result_type(&checker, local_span, &int_list)?;
+    let module = build_body_ir_module_v0(&program, &module_path, type_info);
+    let return_body = body_named(&module, "empty_names")?;
+    let local_body = body_named(&module, "annotated_local")?;
+    assert_empty_constructor(return_body, return_span, &str_list, CollectionTypeId::List)?;
+    assert_empty_constructor(local_body, local_span, &int_list, CollectionTypeId::List)?;
+    assert_named_local_type(local_body, "counts", &int_list)?;
+    let conversion_body = body_named(&module, "copied")?;
+    let conversion_is_aggregate = conversion_body.block.stmts.iter().any(|statement| {
+        statement.span.start == conversion_span.start
+            && statement.span.end == conversion_span.end
+            && matches!(
+                statement.kind,
+                StatementKind::Assign {
+                    rvalue: Rvalue::Aggregate(AggregateKind::List, _),
+                    ..
+                }
+            )
+    });
+    if conversion_is_aggregate {
+        return Err("list(source) must not be lowered as an empty aggregate".into());
     }
     Ok(())
 }

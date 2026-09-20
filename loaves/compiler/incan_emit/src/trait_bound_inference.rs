@@ -34,9 +34,9 @@ use incan_lang::lang::{magic_methods, trait_bounds::rust as tb};
 use crate::emit::IrEmitter;
 
 use crate::ownership::{
-    RegularMethodArgumentContext, ValueUseSite, collection_element_type, dict_entry_types,
-    list_index_assignment_element_type, regular_method_argument_use_site, value_use_requires_clone_bound,
-    value_use_site_target_ty,
+    RegularMethodArgumentContext, ValueUseSite, collection_element_type, dict_entry_types, list_constructor_item_type,
+    list_index_assignment_element_type, plan_list_constructor_source, regular_method_argument_use_site,
+    value_use_requires_clone_bound, value_use_site_target_ty,
 };
 use incan_ir::IrProgram;
 use incan_ir::decl::{FunctionParam, IrDeclKind, IrFunction, IrTraitBound, IrTypeParam};
@@ -1413,7 +1413,7 @@ fn collect_backend_clone_bounds_in_expr(
             clone_params,
         ),
         IrExprKind::BuiltinCall {
-            func: BuiltinFn::CollectionConstructor(CollectionTypeId::Set),
+            func: BuiltinFn::CollectionConstructor(CollectionTypeId::Set | CollectionTypeId::List),
             args,
         } => {
             for arg in args {
@@ -2495,6 +2495,25 @@ fn scan_expr_for_bounds(
                         if iteration == SetConstructorIteration::CloneBorrowedItems {
                             add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
                         }
+                    }
+                }
+                scan_expr_for_bounds(arg, type_params, params, bounds_map);
+            }
+        }
+
+        // ---- List construction: recurse and require `Clone` where the source plan clones its items ----
+        IrExprKind::BuiltinCall {
+            func: BuiltinFn::CollectionConstructor(CollectionTypeId::List),
+            args,
+        } => {
+            for arg in args {
+                if plan_list_constructor_source(&arg.ty).clones_items()
+                    && let Some(item_ty) = list_constructor_item_type(&arg.ty)
+                {
+                    let mut item_type_params = HashSet::new();
+                    collect_generic_type_param_names(item_ty, type_params, &mut item_type_params);
+                    for tp_name in item_type_params {
+                        add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
                     }
                 }
                 scan_expr_for_bounds(arg, type_params, params, bounds_map);

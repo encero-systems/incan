@@ -3039,6 +3039,87 @@ fn test_issue1668_dict_keys_outside_comprehension_codegen() {
     assert_codegen_snapshot!("issue1668_dict_keys_outside_comprehension", rust_code);
 }
 
+/// `sorted(dict.keys())` / `sorted(dict.values())` sort the materialized list the typechecker reports, including as a
+/// `for` iterable (#1461); the `HashMap::Keys` iterator itself is never cloned or sorted.
+#[test]
+fn test_issue1461_sorted_dict_keys_codegen() {
+    let source = load_test_file("issue1461_sorted_dict_keys");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("let mut __v = (values.keys().cloned().collect::<Vec<_>>()).clone();")
+            && rust_code.contains("let mut __v = (values.values().cloned().collect::<Vec<_>>()).clone();"),
+        "sorted() over a dict view must sort a materialized Vec; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("(values.keys()).clone()") && !rust_code.contains("(values.values()).clone()"),
+        "the Keys / Values iterator must never be cloned for sorting; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1461_sorted_dict_keys", rust_code);
+}
+
+/// `list(source)` lowers through the checker's collection-constructor fact and collects the items a loop over the
+/// same source yields (#1464); it must never reach emission as a call to an undefined Rust `list` function.
+#[test]
+fn test_issue1464_list_constructor_codegen() {
+    let source = load_test_file("issue1464_list_constructor");
+    let rust_code = generate_rust(&source);
+    let calls_undefined_list = rust_code.match_indices("list(").any(|(index, _)| {
+        !rust_code[..index]
+            .chars()
+            .next_back()
+            .is_some_and(|previous| previous.is_alphanumeric() || previous == '_')
+    });
+    assert!(
+        !calls_undefined_list,
+        "list() must never emit an undefined Rust function call; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("((values).keys().cloned()).collect::<Vec<_>>()")
+            && rust_code.contains("((values).values().cloned()).collect::<Vec<_>>()"),
+        "list() over a dict view must collect the view directly; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("(args()).into_iter().collect::<Vec<_>>()"),
+        "list() over an opaque Rust iterable must consume it through IntoIterator; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("let names: Vec<String> = Vec::<String>::new();"),
+        "an empty list() must adopt its annotated element type; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("(source).into_iter().collect::<Vec<_>>()"),
+        "list() over a generator must consume it through IntoIterator; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("let mut __incan_iter = pairs;"),
+        "list() over an Iterator[T] must poll the source-owned iterator; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1464_list_constructor", rust_code);
+}
+
+/// A comprehension over a by-value Rust iterator (or a generator) consumes it through `IntoIterator`, as the `for`
+/// statement over the same value already does, instead of borrowing it with `.iter()` (#1490).
+#[test]
+fn test_issue1490_comprehension_over_rust_iterator_codegen() {
+    let source = load_test_file("issue1490_comprehension_over_rust_iterator");
+    let rust_code = generate_rust(&source);
+    // prettyplease breaks a method chain across lines, so the guard compares without whitespace.
+    let compact = rust_code.split_whitespace().collect::<String>();
+    assert!(
+        !compact.contains("(args()).iter()") && !compact.contains("(args()).clone()"),
+        "a by-value Rust iterator must be neither borrowed with .iter() nor cloned; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("((args()).into_iter())"),
+        "the comprehension must consume the iterator through IntoIterator; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("((source).into_iter())"),
+        "a generator source must be consumed by value as well; generated:\n{rust_code}"
+    );
+    assert_codegen_snapshot!("issue1490_comprehension_over_rust_iterator", rust_code);
+}
+
 #[test]
 fn test_std_tempfile_import_codegen() {
     let source = load_test_file("std_tempfile_import");
