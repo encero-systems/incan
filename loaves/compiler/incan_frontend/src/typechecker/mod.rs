@@ -380,6 +380,18 @@ impl Drop for TypeCompatibilityDepthGuard<'_> {
     }
 }
 
+/// The callable whose signature and body annotations the checker is currently resolving.
+///
+/// Retained only to word the unknown-type-name diagnostic: the suggestion appends the unknown name to the callable's
+/// declared type parameters (#1373). It carries no semantic authority and is never exported.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AnnotationOwner {
+    /// Source-visible callable name.
+    name: String,
+    /// Type parameters the callable already declares, in declaration order.
+    declared_type_params: Vec<String>,
+}
+
 pub struct TypeChecker {
     /// Symbol table populated during the first pass.
     pub symbols: SymbolTable,
@@ -473,6 +485,11 @@ pub struct TypeChecker {
     validate_source_type_names: bool,
     /// Unbound source annotation diagnostics already emitted in the current program check.
     unknown_source_type_names_emitted: HashSet<(String, usize, usize)>,
+    /// The callable whose signature and body annotations are being checked, when one is active.
+    ///
+    /// An unknown type name inside a callable is most likely a type parameter that was never declared, so the
+    /// unknown-symbol diagnostic names this callable and its declared parameters in its suggestion (#1373).
+    annotation_owner: Option<AnnotationOwner>,
     /// Declaration-order index for each local static binding.
     pub static_decl_positions: HashMap<String, usize>,
     /// Whether the active expression is the initializer of a `RegistryEntry[K, T]` module static.
@@ -732,6 +749,7 @@ impl TypeChecker {
             dependency_import_type_alias_transaction: None,
             validate_source_type_names: false,
             unknown_source_type_names_emitted: HashSet::new(),
+            annotation_owner: None,
             static_decl_positions: HashMap::new(),
             checking_registry_entry_static_initializer: false,
             checking_callable_default: false,
@@ -5401,11 +5419,29 @@ impl TypeChecker {
     }
 
     /// Emit at most one unknown-symbol diagnostic for one source annotation occurrence.
+    ///
+    /// Inside a callable the diagnostic suggests declaring the name as a type parameter of that callable; elsewhere
+    /// it keeps the import-or-define remedy.
     fn emit_unknown_source_type_annotation_name(&mut self, name: &str, span: Span) {
         let key = (name.to_string(), span.start, span.end);
-        if self.unknown_source_type_names_emitted.insert(key) {
-            self.errors.push(errors::unknown_symbol(name, span));
+        if !self.unknown_source_type_names_emitted.insert(key) {
+            return;
         }
+        let error = match &self.annotation_owner {
+            Some(owner) => {
+                errors::unknown_type_parameter_candidate(name, &owner.name, &owner.declared_type_params, span)
+            }
+            None => errors::unknown_symbol(name, span),
+        };
+        self.errors.push(error);
+    }
+
+    /// Make `owner` the callable whose annotations are being checked, returning the previous owner to restore.
+    fn enter_annotation_owner(&mut self, name: &str, type_params: &[TypeParam]) -> Option<AnnotationOwner> {
+        self.annotation_owner.replace(AnnotationOwner {
+            name: name.to_string(),
+            declared_type_params: type_params.iter().map(|param| param.name.clone()).collect(),
+        })
     }
 
     /// Return whether a simple type name is reserved for a parameterized numeric family.

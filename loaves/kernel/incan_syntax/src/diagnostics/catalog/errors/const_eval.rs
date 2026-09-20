@@ -155,11 +155,41 @@ pub fn builtin_max_arity(name: &str, max: usize, found: usize, span: Span) -> Co
     CompileError::type_error(format!("{name}() expects at most {max} argument(s), got {found}"), span)
 }
 
-pub fn explicit_type_arg_arity(name: &str, expected: usize, found: usize, span: Span) -> CompileError {
-    CompileError::type_error(
+/// Report an explicit bracket list whose length differs from the callee's type parameter count.
+///
+/// RFC 054 makes an explicit list arity-complete, with `_` as the slot to infer, so a short list is completed with
+/// `_` in the hint rather than described as an unsupported partial application. `written` holds the type arguments
+/// as the call spelled them, in order. See #1373.
+pub fn explicit_type_arg_arity(name: &str, type_params: &[String], written: &[String], span: Span) -> CompileError {
+    let expected = type_params.len();
+    let found = written.len();
+    let error = CompileError::type_error(
         format!("{name} expects {expected} explicit type argument(s), got {found}"),
         span,
-    )
+    );
+    if expected == 0 {
+        return error.with_hint(format!(
+            "'{name}' declares no type parameters; remove the type argument list"
+        ));
+    }
+    let error = error.with_note(format!(
+        "'{name}' declares type parameters [{}]; an explicit list binds every one of them in that order",
+        type_params.join(", ")
+    ));
+    if found < expected {
+        let completed = written
+            .iter()
+            .map(String::as_str)
+            .chain(std::iter::repeat_n("_", expected - found))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let missing = type_params[found..].join(", ");
+        error.with_hint(format!(
+            "Write `_` for a parameter the value arguments determine ({missing}): {name}[{completed}](...)"
+        ))
+    } else {
+        error.with_hint(format!("Remove the extra type argument(s); '{name}' takes {expected}"))
+    }
 }
 
 pub fn call_site_type_inference_unresolved(callee: &str, type_param: &str, span: Span) -> CompileError {

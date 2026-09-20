@@ -5781,6 +5781,7 @@ impl TypeChecker {
         }
         let active_bounds = self.type_param_bound_details_from_type_params(&func.type_params);
         self.current_type_param_bound_details.push(active_bounds);
+        let previous_annotation_owner = self.enter_annotation_owner(&func.name, &func.type_params);
 
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&func.params);
 
@@ -5857,6 +5858,7 @@ impl TypeChecker {
         self.current_yield_context = prev_yield_context;
         self.current_return_error_type = None;
         self.current_type_param_bound_details.pop();
+        self.annotation_owner = previous_annotation_owner;
         self.symbols.exit_scope();
         self.apply_user_defined_function_decorators(func, decl_span);
     }
@@ -6130,6 +6132,7 @@ impl TypeChecker {
         let mut active_bounds = self.type_param_bound_details_from_type_params(owner_params);
         active_bounds.extend(self.type_param_bound_details_from_type_params(&method.type_params));
         self.current_type_param_bound_details.push(active_bounds);
+        let previous_annotation_owner = self.enter_annotation_owner(&method.name, &method.type_params);
 
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&method.params);
 
@@ -6286,6 +6289,7 @@ impl TypeChecker {
         self.current_return_error_type = None;
         self.current_classmethod_self_ty = previous_classmethod_self_ty;
         self.current_type_param_bound_details.pop();
+        self.annotation_owner = previous_annotation_owner;
         self.mutable_bindings.remove("self");
         self.symbols.exit_scope();
     }

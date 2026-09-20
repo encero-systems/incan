@@ -21535,6 +21535,178 @@ def run() -> int:
     );
 }
 
+/// Issue #1373 (1): a `with` bound naming a type is not a trait, so the hint must not ask for an implementation of
+/// `float`, and it must not point at the value arguments when the explicit type argument is what mismatched.
+#[test]
+fn issue1373_type_bound_violation_hint_names_the_type_not_an_implementation() -> Result<(), String> {
+    let source = r#"
+def cast[T with float](x: int) -> float:
+  return 1.0
+
+def main() -> None:
+  a = cast[int](1)
+"#;
+    let errs = check_str_err(source, "expected the float bound to reject cast[int]");
+    let bound_error = errs
+        .iter()
+        .find(|e| {
+            e.message == "Call to 'cast' violates generic bound: type parameter 'T' requires 'float' but got 'int'"
+        })
+        .ok_or_else(|| format!("expected the bound-violation error, got {errs:?}"))?;
+    let hint = bound_error.hints.join("\n");
+    assert!(
+        hint.contains("'float' is a type, not a trait") && hint.contains("declare the parameter as 'float'"),
+        "the hint must explain that a type in bound position cannot be implemented, got {hint:?}"
+    );
+    assert!(
+        !hint.contains("implements 'float'") && !hint.contains("the argument type"),
+        "the hint must not ask to implement a type or blame the value arguments, got {hint:?}"
+    );
+    Ok(())
+}
+
+/// Issue #1373 (1): with a trait bound, an explicit type argument that fails it is named as the type argument.
+#[test]
+fn issue1373_explicit_type_argument_bound_violation_hint_names_the_type_argument() -> Result<(), String> {
+    let source = r#"
+@requires(message: str)
+trait Displayable:
+  def display(self) -> str:
+    return self.message
+
+class NotDisplayable:
+  value: int
+
+def show[T with Displayable](value: T) -> T:
+  return value
+
+def main() -> None:
+  _ = show[NotDisplayable](NotDisplayable(value=1))
+"#;
+    let errs = check_str_err(source, "expected the Displayable bound to reject show[NotDisplayable]");
+    let bound_error = errs
+        .iter()
+        .find(|e| e.message.contains("violates generic bound"))
+        .ok_or_else(|| format!("expected the bound-violation error, got {errs:?}"))?;
+    let hint = bound_error.hints.join("\n");
+    assert!(
+        hint.contains("Type argument 'NotDisplayable' for 'T' must implement 'Displayable'"),
+        "an explicit type argument is named as such, got {hint:?}"
+    );
+    assert!(
+        !hint.contains("the argument type"),
+        "the value arguments are not what mismatched, got {hint:?}"
+    );
+    Ok(())
+}
+
+/// Issue #1373 (2): a call that no overload accepts lists every candidate and what each one wanted, instead of only
+/// the first-declared candidate's bound.
+#[test]
+fn issue1373_overload_set_rejection_lists_every_candidate() -> Result<(), String> {
+    let source = r#"
+def cast[T with float](x: int) -> float:
+  return 1.0
+
+def cast[T with int](x: int) -> int:
+  return 1
+
+def main() -> None:
+  c = cast[str](1)
+"#;
+    let errs = check_str_err(source, "expected cast[str] to match no overload");
+    let summary = errs
+        .iter()
+        .find(|e| e.message == "Call to 'cast' matches none of its 2 overloads")
+        .ok_or_else(|| format!("expected the overload summary diagnostic, got {errs:?}"))?;
+    assert_eq!(
+        summary.notes,
+        vec![
+            "candidate `cast[T with float](x: int) -> float` rejected: Call to 'cast' violates generic bound: type \
+             parameter 'T' requires 'float' but got 'str'",
+            "candidate `cast[T with int](x: int) -> int` rejected: Call to 'cast' violates generic bound: type \
+             parameter 'T' requires 'int' but got 'str'",
+        ],
+        "each candidate is listed with the reason it was rejected"
+    );
+    Ok(())
+}
+
+/// Issue #1373 (3): an unknown name in a signature's type position is most likely an undeclared type parameter, so
+/// the hint shows the declaration rather than sending the reader to their imports.
+#[test]
+fn issue1373_undeclared_type_parameter_suggests_declaring_it() -> Result<(), String> {
+    let source = r#"
+model Column[T]:
+  name: str
+
+def widen(x: Column[U]) -> None:
+  println(f"{x.name}")
+"#;
+    let errs = check_str_err(source, "expected the undeclared U to be rejected");
+    let unknown = errs
+        .iter()
+        .find(|e| e.message == "Unknown symbol 'U'")
+        .ok_or_else(|| format!("expected the unknown-symbol error, got {errs:?}"))?;
+    assert_eq!(
+        unknown.hints.first().map(String::as_str),
+        Some("'U' is not declared as a type parameter of 'widen'; did you mean `def widen[U](...)`?"),
+        "the first hint shows where the declaration goes, got {:?}",
+        unknown.hints
+    );
+    assert!(
+        !unknown.hints.iter().any(|hint| hint.contains("forget to import")),
+        "the generic import hint must not lead, got {:?}",
+        unknown.hints
+    );
+
+    let generic_owner = r#"
+def pair[T](x: T, y: U) -> T:
+  return x
+"#;
+    let errs = check_str_err(generic_owner, "expected the undeclared U to be rejected");
+    let unknown = errs
+        .iter()
+        .find(|e| e.message == "Unknown symbol 'U'")
+        .ok_or_else(|| format!("expected the unknown-symbol error, got {errs:?}"))?;
+    assert_eq!(
+        unknown.hints.first().map(String::as_str),
+        Some("'U' is not declared as a type parameter of 'pair'; did you mean `def pair[T, U](...)`?"),
+        "declared parameters are kept ahead of the missing one, got {:?}",
+        unknown.hints
+    );
+    Ok(())
+}
+
+/// Issue #1373 (4): RFC 054 keeps an explicit bracket list arity-complete, so a short list names the parameters it
+/// left unbound and shows the `_` placeholder that infers them, rather than only counting.
+#[test]
+fn issue1373_partial_explicit_type_arguments_hint_shows_the_inference_placeholder() -> Result<(), String> {
+    let source = r#"
+def convert[T, U](x: U) -> T:
+  return x
+
+def main() -> None:
+  a: float = convert[float](1)
+"#;
+    let errs = check_str_err(source, "expected the partial bracket list to be rejected");
+    let arity = errs
+        .iter()
+        .find(|e| e.message == "convert expects 2 explicit type argument(s), got 1")
+        .ok_or_else(|| format!("expected the arity error, got {errs:?}"))?;
+    assert_eq!(
+        arity.notes,
+        vec!["'convert' declares type parameters [T, U]; an explicit list binds every one of them in that order"],
+        "the note names the declared parameters"
+    );
+    assert_eq!(
+        arity.hints,
+        vec!["Write `_` for a parameter the value arguments determine (U): convert[float, _](...)"],
+        "the hint completes the written list with the inference placeholder"
+    );
+    Ok(())
+}
+
 #[test]
 fn explicit_method_type_args_specialize_generic_method_params() {
     assert_check_ok(

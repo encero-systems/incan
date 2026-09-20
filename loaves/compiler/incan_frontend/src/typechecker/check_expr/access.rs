@@ -2657,8 +2657,8 @@ impl TypeChecker {
         }
         self.errors.push(errors::explicit_type_arg_arity(
             method,
-            declared_type_params.len(),
-            type_args.len(),
+            declared_type_params,
+            &Self::written_type_args(type_args),
             span,
         ));
         false
