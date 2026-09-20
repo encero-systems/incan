@@ -1346,8 +1346,8 @@ module tests:
 module tests:
     from std.testing import mark
 
-    const TEST_MARKERS: List[str] = ["smoke"]
-    const TEST_MARKS: List[str] = ["smoke"]
+    const TEST_MARKERS: FrozenList[str] = ["smoke"]
+    const TEST_MARKS: FrozenList[str] = ["smoke"]
 
     @mark("smoke")
     def test_inline_marker() -> None:

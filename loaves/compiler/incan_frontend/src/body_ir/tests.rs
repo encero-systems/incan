@@ -2950,12 +2950,11 @@ fn lowers_an_enum_variant_pattern_that_binds_a_field() -> Result<(), Box<dyn std
     let module = build(source, &["m", "match_enum"])?;
     let snapshot = module.render_snapshot();
 
-    // `Some`'s field type is not resolved (v0 does not mirror the existing backend's constructor field-type
-    // projection -- see `Pattern`'s own docs), so the binding reads through the conservative
-    // non-Copy/projected-read fallback (`borrow`, never `move`) even though `value`'s actual type is `int`.
+    // `Some`'s payload is the checker's recorded pattern type (#1245), so the binding is typed `int` and reads
+    // `copy` rather than the non-Copy projected-read fallback an unresolved payload would force.
     assert!(
-        snapshot.contains("Some(bind(_1, borrow))"),
-        "a positional constructor pattern should bind its field: {snapshot}"
+        snapshot.contains("Some(bind(_1, copy))"),
+        "a positional constructor pattern should bind its typed field: {snapshot}"
     );
     assert!(
         snapshot.contains("const(none)"),
@@ -3064,10 +3063,152 @@ fn or_pattern_alternatives_share_one_local_for_a_bound_name() -> Result<(), Box<
     let snapshot = module.render_snapshot();
 
     assert!(
-        snapshot.contains("Circle(bind(_1, borrow)) canonical=")
-            && snapshot.contains("Square(bind(_1, borrow)) canonical="),
+        snapshot.contains("Circle(bind(_1, copy)) canonical=")
+            && snapshot.contains("Square(bind(_1, copy)) canonical="),
         "both canonical alternatives should bind the same shared local `_1`: {snapshot}"
     );
+    Ok(())
+}
+
+// ---- #1245: constructor pattern bindings carry their declared payload type ----
+
+/// The declared type and ownership fact of the sole local named `name`, as `(type, fact)` read off the one
+/// `bind(..)` occurrence for it in the rendered snapshot.
+fn bound_local_type_and_fact(
+    module: &bir::BodyIrModule,
+    body_name: &str,
+    name: &str,
+) -> Result<(IncanType, String), Box<dyn std::error::Error>> {
+    let body = body_named(module, body_name)?;
+    let local = sole_local_named(body, name)?;
+    let ty = body
+        .locals
+        .get(local.index())
+        .map(|decl| decl.ty.clone())
+        .ok_or("the bound local must be present in the body's locals")?;
+    let snapshot = module.render_snapshot();
+    let needle = format!("bind(_{}, ", local.0);
+    let fact = snapshot
+        .split(&needle)
+        .nth(1)
+        .and_then(|rest| rest.split(')').next())
+        .ok_or_else(|| format!("no `{needle}` occurrence in the snapshot: {snapshot}"))?
+        .to_string();
+    Ok((ty, fact))
+}
+
+#[test]
+fn a_user_enum_alternation_binds_its_declared_payload_type_in_a_match() -> Result<(), Box<dyn std::error::Error>> {
+    // The `?`-typed binding #1245 reports: every constructor other than `Ok`/`Err` used to lower its payload
+    // sub-patterns against `Unknown`, so `v` carried no type and an `Unknown` ownership fact.
+    let source = concat!(
+        "enum Shape:\n",
+        "  Circle(int)\n",
+        "  Square(int)\n",
+        "\n",
+        "def size(s: Shape) -> int:\n",
+        "  match s:\n",
+        "    case Shape.Circle(v) | Shape.Square(v):\n",
+        "      return v\n",
+    );
+    let module = build(source, &["m", "enum_payload_match"])?;
+    let (ty, fact) = bound_local_type_and_fact(&module, "size", "v")?;
+    assert_eq!(
+        ty,
+        IncanType::Primitive(IncanPrimitiveType::Int),
+        "`v` must carry the variant's declared `int` payload type: {}",
+        module.render_snapshot()
+    );
+    assert_eq!(
+        fact, "copy",
+        "an `int` payload reads by copy, not through the unknown-type fallback"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_user_enum_string_payload_binds_as_a_borrowed_str() -> Result<(), Box<dyn std::error::Error>> {
+    // A non-Copy payload proves the fact follows from the type: a projected read of a `str` borrows.
+    let source = concat!(
+        "enum Message:\n",
+        "  Text(str)\n",
+        "  Blank\n",
+        "\n",
+        "def body(m: Message) -> str:\n",
+        "  match m:\n",
+        "    case Message.Text(t):\n",
+        "      return t\n",
+        "    case Message.Blank:\n",
+        "      return \"\"\n",
+    );
+    let module = build(source, &["m", "enum_str_payload"])?;
+    let (ty, fact) = bound_local_type_and_fact(&module, "body", "t")?;
+    assert_eq!(
+        ty,
+        IncanType::Primitive(IncanPrimitiveType::Str),
+        "`t` must carry the variant's declared `str` payload type: {}",
+        module.render_snapshot()
+    );
+    assert_eq!(fact, "borrow", "a `str` payload read through a projection borrows");
+    Ok(())
+}
+
+#[test]
+fn an_if_let_option_payload_binds_its_element_type() -> Result<(), Box<dyn std::error::Error>> {
+    let source = concat!(
+        "def run(o: Option[int]) -> int:\n",
+        "  mut total = 0\n",
+        "  if let Some(v) = o:\n",
+        "    total = v\n",
+        "  return total\n",
+    );
+    let module = build(source, &["m", "if_let_option_payload"])?;
+    let (ty, fact) = bound_local_type_and_fact(&module, "run", "v")?;
+    assert_eq!(
+        ty,
+        IncanType::Primitive(IncanPrimitiveType::Int),
+        "`Some(v)` over `Option[int]` must bind `v : int`: {}",
+        module.render_snapshot()
+    );
+    assert_eq!(fact, "copy");
+    Ok(())
+}
+
+#[test]
+fn a_pattern_assertion_option_payload_binds_its_element_type() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def run(o: Option[str]) -> None:\n  assert o is Some(v)\n  print(v)\n";
+    let module = build(source, &["m", "assert_option_payload"])?;
+    let (ty, fact) = bound_local_type_and_fact(&module, "run", "v")?;
+    assert_eq!(
+        ty,
+        IncanType::Primitive(IncanPrimitiveType::Str),
+        "`Some(v)` over `Option[str]` must bind `v : str`: {}",
+        module.render_snapshot()
+    );
+    assert_eq!(fact, "borrow");
+    Ok(())
+}
+
+#[test]
+fn a_multi_payload_user_enum_variant_binds_each_positional_type() -> Result<(), Box<dyn std::error::Error>> {
+    // The checked fact is recorded per pattern node, so each positional payload carries its own declared type
+    // rather than one shared guess for the whole constructor.
+    let source = concat!(
+        "enum Pair:\n",
+        "  Both(int, str)\n",
+        "\n",
+        "def first(p: Pair) -> int:\n",
+        "  match p:\n",
+        "    case Pair.Both(n, label):\n",
+        "      return n\n",
+    );
+    let module = build(source, &["m", "enum_multi_payload"])?;
+    let (n_ty, n_fact) = bound_local_type_and_fact(&module, "first", "n")?;
+    let (label_ty, label_fact) = bound_local_type_and_fact(&module, "first", "label")?;
+    assert_eq!(n_ty, IncanType::Primitive(IncanPrimitiveType::Int));
+    assert_eq!(n_fact, "copy");
+    assert_eq!(label_ty, IncanType::Primitive(IncanPrimitiveType::Str));
+    assert_eq!(label_fact, "borrow");
     Ok(())
 }
 
@@ -7713,11 +7854,13 @@ fn if_let_lowers_an_alternated_pattern() -> Result<(), Box<dyn std::error::Error
         "`v` must be a source binding, not a temp or external: {}",
         bindings[0]
     );
-    // Its type is `?` here, and that is deliberately *not* asserted as a defect of this change: an equivalent
-    // statement `match` over the same alternated constructor pattern produces exactly the same `?`. This lowering
-    // reuses `lower_match_pattern` rather than reimplementing it, so it inherits that gap rather than widening it.
-    // Narrowing the generic constructor path's field types belongs with the same #1101 work that leaves
-    // `assert o is Some(v)` typed `?`.
+    // This lowering reuses `lower_match_pattern` rather than reimplementing it, so it shares the payload typing a
+    // statement `match` gets (#1245): `v` is the variant's declared `int`, not `?`.
+    assert!(
+        bindings[0].contains(" v : int "),
+        "`v` must carry the alternated variants' shared payload type: {}",
+        bindings[0]
+    );
     Ok(())
 }
 

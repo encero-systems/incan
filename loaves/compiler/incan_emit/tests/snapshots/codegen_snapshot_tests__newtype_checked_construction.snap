@@ -79,8 +79,8 @@ fn main() {
     let email = Email("alice@example.com".to_string());
     let _ = println!(
         "{}", { let __parts : [& str; 5usize] = ["", " ", " ", " ", ""]; let __args : Vec
-        < String > = vec![format!("{}", uid.0), format!("{}", ratio.0), format!("{}",
-        attempts.0), format!("{}", email.0)]; incan_std_core::strings::fstring(& __parts,
-        & __args) }
+        < String > = vec![format!("{}", uid.0),
+        incan_std_core::strings::float_to_string(ratio.0), format!("{}", attempts.0),
+        format!("{}", email.0)]; incan_std_core::strings::fstring(& __parts, & __args) }
     );
 }

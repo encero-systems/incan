@@ -64,7 +64,7 @@ fn test_int_builtin() {
 fn test_float_builtin() {
     let whole: i64 = 42;
     let decimal: f64 = (whole) as f64;
-    let _ = println!("{}", decimal);
+    let _ = println!("{}", incan_std_core::strings::float_to_string(decimal));
 }
 fn test_bool_builtin() {
     let value: i64 = 1;
