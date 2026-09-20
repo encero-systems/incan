@@ -1,0 +1,25 @@
+# behavior: deriving Serialize on a model propagates the derive to the enum inside its set field and to its newtype field, so the whole payload serializes
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_serde_propagation_respects_derives_and_containers
+# expect-stdout:
+#   {"tags":["A"],"id":7}
+
+from std.serde.json import Serialize
+
+
+@derive(Serialize)
+model Payload:
+    tags: set[Tag]
+    id: UserId
+
+
+@derive(Eq, Hash)
+enum Tag:
+    A
+    B
+
+
+type UserId = newtype int
+
+
+def main() -> None:
+    println(Payload(tags={Tag.A}, id=UserId(7)).to_json())

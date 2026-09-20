@@ -1,0 +1,2 @@
+pub def cast(value: str) -> str:
+    return f"<{value}>"

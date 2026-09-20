@@ -1,0 +1,17 @@
+# behavior: inside an imported trait's default body a local binding named like a model of the trait's module is the local value, not the model
+# retires: loaves/compiler/incan_ir/src/lower/types.rs::lower_trait_default_constructor_respects_active_local_binding
+# expect-stdout:
+#   5
+#   2
+
+from shapes import Counted
+
+
+model Thing with Counted:
+    pub x: int
+
+
+def main() -> None:
+    thing = Thing(x=1)
+    println(thing.count())
+    println(thing.width())

@@ -1,0 +1,34 @@
+# behavior: typed writes and reads on a stdlib BytesIO dispatch through the stdlib's own BinaryWrite and BinaryRead implementations for each width the static type context selects
+# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::a_dispatched_call_to_another_packages_method_is_not_projected
+# expect-stdout:
+#   5
+#   2
+#   772
+#   513
+
+from std.io import BytesIO, Endian, IoError
+
+
+def round_trip() -> Result[None, IoError]:
+    out = BytesIO()
+    small: u8 = 2
+    little: u16 = 772
+    big: u16 = 513
+    out.write(small, Endian.Little)?
+    out.write(little, Endian.Little)?
+    out.write(big, Endian.Big)?
+    println(len(out.getvalue()))
+    out.rewind()?
+    read_small: u8 = out.read(Endian.Little)?
+    read_little: u16 = out.read(Endian.Little)?
+    read_big: u16 = out.read(Endian.Big)?
+    println(read_small)
+    println(read_little)
+    println(read_big)
+    return Ok(None)
+
+
+def main() -> None:
+    match round_trip():
+        Ok(_) => pass
+        Err(err) => println(err.message())

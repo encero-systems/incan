@@ -1,0 +1,46 @@
+# behavior: a trait method dispatches on a generic receiver, on a nominal generic receiver over a type parameter, on a concrete receiver of a derived Clone and on a concrete adopter of a source trait
+# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::generic_receiver_keeps_trait_abi_dispatch
+# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::nominal_generic_receiver_can_use_source_projection
+# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::rust_native_trait_keeps_abi_dispatch_for_concrete_receiver
+# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::concrete_source_trait_can_use_recoverable_projection
+# expect-stdout:
+#   generic: item-a
+#   nominal generic: chunk of item-b
+#   clone: 3 3
+#   concrete: item-c
+
+trait Labelled:
+    def label(self) -> str: ...
+
+
+model Item with Labelled:
+    name: str
+
+    def label(self) -> str:
+        return f"item-{self.name}"
+
+
+model Chunks[R with Labelled]:
+    reader: R
+
+    def describe(self) -> str:
+        return f"chunk of {self.reader.label()}"
+
+
+@derive(Clone)
+model Counter:
+    value: int
+
+
+def label_of[T with Labelled](item: T) -> str:
+    return item.label()
+
+
+def main() -> None:
+    println(f"generic: {label_of(Item(name="a"))}")
+    chunks = Chunks[Item](reader=Item(name="b"))
+    println(f"nominal generic: {chunks.describe()}")
+    counter = Counter(value=3)
+    copy = counter.clone()
+    println(f"clone: {counter.value} {copy.value}")
+    println(f"concrete: {Item(name="c").label()}")
