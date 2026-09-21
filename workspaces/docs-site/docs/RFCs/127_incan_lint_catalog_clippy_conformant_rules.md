@@ -1029,3 +1029,5 @@ None of these gates the move to Planned. Each carries this draft's answer and be
 - The per-path allow table: is `[incan.lints.per-file-allow]` wanted, or is a module-position `@allow(...)` in each file enough? This draft adds the table, because a `tests/` directory otherwise carries one identical decorator per file, and keeps it to Ruff's single verb.
 - Exit codes: should `incan fmt --check`, `incan architect`, and `incan architect --fix --diff` adopt Ruff's `2` for an operational error, so CI can tell findings from a tool that did not run without parsing the JSON report? This draft keeps the toolchain's `0`/`1` and puts the distinction in the report; a `2` would be a toolchain-wide change under RFC 118, not this RFC's.
 - Editor surfacing: should `incan check` run the `syntax` tier so style findings reach the editor through the existing diagnostics channel, or does the language server call the engine? This draft says the language server calls the engine.
+
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
