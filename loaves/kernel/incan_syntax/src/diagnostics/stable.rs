@@ -227,6 +227,28 @@ const UNREACHABLE_CODE: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/functions/"),
 };
 
+const CALLABLE_MARKER_NOT_SUPPORTED: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0106",
+    title: "Callable marker cannot be spelled here",
+    severity: "error",
+    phase: "typecheck",
+    summary: "An `Fn`, `FnMut` or `FnOnce` marker from `std.rust` names more than two parameters, or bounds a type parameter of a model, class, enum, trait, newtype or type alias.",
+    explanation: "A callable marker's type arguments are the callable's parameter list; its return type is whatever the value passed at the call site returns. A marker can name at most two parameters today, and only a function or method has a call site to learn the return type from: on a nominal declaration's type parameter the marker has no call to complete it, so the bound must spell the return type itself.",
+    examples: &[
+        "from std.rust import Fn\n\ndef run[F with Fn[int, int, int]](f: F) -> None:\n    pass",
+        "from std.rust import Fn\n\nmodel Holder[F with Fn[int]]:\n    callback: F",
+    ],
+    common_causes: &[
+        "A callback that takes three or more arguments.",
+        "A model or class field that holds a callable, bounded with the marker instead of a callable trait.",
+    ],
+    fixes: &[
+        "Write at most two parameters, or gather the parameters into one model and write `Fn[ThatModel]`.",
+        "On a model, class, enum, trait, newtype or type alias, bound the parameter with `Callable1[int, R]` from `std.traits.callable`, which names the return type, or give the field a function type such as `(int) -> R`.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/how-to/rust_interop/"),
+};
+
 const IMPORT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-I0001",
     title: "Import or module resolution error",
@@ -341,6 +363,7 @@ const CATALOG: &[DiagnosticCatalogEntry] = &[
     PARSER_SYNTAX,
     TYPECHECK,
     UNREACHABLE_CODE,
+    CALLABLE_MARKER_NOT_SUPPORTED,
     IMPORT,
     SDK_COMPONENT_DISABLED,
     SDK_COMPONENT_UNAVAILABLE,
@@ -574,6 +597,34 @@ mod tests {
         for code in ["INCAN-I0101", "INCAN-I0102", "INCAN-I0103"] {
             assert!(explain(code).is_some(), "{code} must have a catalog explanation");
         }
+    }
+
+    #[test]
+    fn callable_marker_refusals_share_one_explainable_stable_code() {
+        let over_limit = errors::callable_marker_not_supported(
+            "Fn[int, int, int]",
+            "F",
+            &["int".to_string(), "int".to_string(), "int".to_string()],
+            errors::CallableMarkerRefusal::ParameterCount { count: 3, limit: 2 },
+            Span::default(),
+        );
+        let nominal = errors::callable_marker_not_supported(
+            "Fn[int]",
+            "F",
+            &["int".to_string()],
+            errors::CallableMarkerRefusal::NominalOwner {
+                owner_kind: "model",
+                owner_name: "Holder",
+            },
+            Span::default(),
+        );
+
+        assert_eq!(code_for_error(&over_limit, DiagnosticPhase::Typecheck), "INCAN-T0106");
+        assert_eq!(code_for_error(&nominal, DiagnosticPhase::Typecheck), "INCAN-T0106");
+        assert!(
+            explain("INCAN-T0106").is_some(),
+            "INCAN-T0106 must have a catalog explanation"
+        );
     }
 
     #[test]

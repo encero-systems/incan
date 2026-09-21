@@ -4102,9 +4102,16 @@ impl Default for AstLowering {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::expr::{BytesMethodKind, CollectionMethodKind, IrExprKind, MethodKind, StringMethodKind, UnaryOp};
+    use crate::decl::{IrFunction, IrTraitBound};
+    use crate::expr::{
+        BytesMethodKind, CollectionMethodKind, IrExprKind, IrMethodDispatch, MethodKind, StringMethodKind, UnaryOp,
+    };
     use crate::stmt::IrStmtKind;
     use incan_frontend::{lexer, parser, typechecker::TypeChecker};
+    use incan_lang::lang::trait_bounds;
+
+    mod builtin_str_arguments;
+    mod derive_vocabulary_imports;
 
     fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {
         match result {
@@ -4126,8 +4133,11 @@ mod tests {
         lowering.lower_program(&ast)
     }
 
-    /// Parse, check, and lower one source module, keeping the lowering pass for further inspection.
-    fn lower_source_with_lowering(source: &str) -> Result<(ast::Program, AstLowering), String> {
+    /// Parse, check, and lower one source module, keeping the program and the lowering pass for inspection.
+    ///
+    /// Unlike [`lower_source`], a program the checker refuses is an error here: a test about what a checked program
+    /// lowers to must not pass on one that never checked.
+    fn lower_source_with_lowering(source: &str) -> Result<(ast::Program, IrProgram, AstLowering), String> {
         let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
         let program = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
         let mut checker = TypeChecker::new();
@@ -4135,10 +4145,16 @@ mod tests {
             .check_program(&program)
             .map_err(|errors| format!("typechecker failed: {errors:?}"))?;
         let mut lowering = AstLowering::new_with_type_info(checker.type_info().clone());
-        lowering
+        let ir = lowering
             .lower_program(&program)
             .map_err(|errors| format!("lowering failed: {errors:?}"))?;
-        Ok((program, lowering))
+        Ok((program, ir, lowering))
+    }
+
+    /// Parse, check, and lower one source module the checker must accept, returning the lowered program.
+    fn lower_checked_source(source: &str) -> Result<IrProgram, String> {
+        let (_, ir, _) = lower_source_with_lowering(source)?;
+        Ok(ir)
     }
 
     /// Return the declaration of the named function in one parsed program.
@@ -4175,7 +4191,7 @@ def preserve(func: (Answer) -> Answer) -> ((Answer) -> Answer):
 def configure() -> (((Answer) -> Answer) -> ((Answer) -> Answer)):
   return preserve
 "#;
-        let (program, lowering) = lower_source_with_lowering(source)?;
+        let (program, _, lowering) = lower_source_with_lowering(source)?;
         // A local alias lowers under its own name; the retention this feeds only acts on admitted native carriers.
         let answer = IrType::Struct("Answer".to_string());
         let surface = IrType::Function {
@@ -5194,217 +5210,247 @@ def not_in_list(items: List[int]) -> bool:
         }
     }
 
-    /// Return the `str(...)` builtin-call arguments of the lowered program, in source order.
-    fn str_builtin_arguments(ir: &mut IrProgram) -> Vec<TypedExpr> {
-        struct Collect(Vec<TypedExpr>);
-        impl crate::visit::Visitor for Collect {
-            fn expr(&mut self, expr: &mut crate::IrExpr) {
-                if let IrExprKind::BuiltinCall {
-                    func: crate::expr::BuiltinFn::Str,
-                    args,
-                } = &expr.kind
-                {
-                    self.0.extend(args.iter().cloned());
-                }
-                crate::visit::walk_expr(expr, self);
-            }
-        }
-        let mut collect = Collect(Vec::new());
-        for decl in &mut ir.declarations {
-            if let IrDeclKind::Function(function) = &mut decl.kind {
-                for stmt in &mut function.body {
-                    crate::visit::walk_stmt(stmt, &mut collect);
-                }
-            }
-        }
-        collect.0
+    /// Return the named free function of a lowered program.
+    fn lowered_function<'a>(ir: &'a IrProgram, name: &str) -> Result<&'a IrFunction, String> {
+        ir.declarations
+            .iter()
+            .find_map(|decl| match &decl.kind {
+                IrDeclKind::Function(function) if function.name == name => Some(function),
+                _ => None,
+            })
+            .ok_or_else(|| format!("missing function `{name}`"))
     }
 
-    /// #1726: `str(a + b)` renders the whole sum. The conversion is a postfix method on the argument's tokens, so an
-    /// operator-shaped argument is handed over as one grouped value in its own type; an atomic argument is left as
-    /// written.
+    /// #1712: a `std.serde.json` trait imported under an alias dispatches through the declaration's own path.
+    ///
+    /// The checker records the trait as the call site spelled it (`JsonSerialize`); the generated `__incan_std` path
+    /// must name the declaration (`Serialize`), which the alias's proven import identity supplies (#1431). The derive
+    /// side already forwarded the serde derive by identity; this pins the dispatch side beside it.
     #[test]
-    fn str_over_an_operator_expression_lowers_a_grouped_argument_issue1726() -> Result<(), String> {
-        let mut ir = lower_source(
+    fn aliased_stdlib_json_trait_dispatch_names_the_declaration_issue1712() -> Result<(), String> {
+        let ir = lower_checked_source(
             r#"
-model Reading:
+from std.serde.json import Serialize as JsonSerialize
+
+@derive(JsonSerialize)
+model Payload:
   value: int
 
-def main() -> None:
-  a = 1
-  b = 2
-  reading = Reading(value=10)
-  println(str(a + b))
-  println(str(a * 5 + b))
-  println(str(reading.value + b))
-  println(str(-a))
-  println(str(a))
-  println(str(reading.value))
-"#,
-        )
-        .map_err(|errors| format!("lowering failed: {errors:?}"))?;
-        let arguments = str_builtin_arguments(&mut ir);
-        assert_eq!(arguments.len(), 6, "{arguments:?}");
+def encode[T with JsonSerialize](value: T) -> str:
+  return value.to_json()
 
-        for (argument, what) in arguments
+def main() -> str:
+  return encode(Payload(value=1))
+"#,
+        )?;
+
+        let payload = ir
+            .declarations
             .iter()
-            .take(4)
-            .zip(["a + b", "a * 5 + b", "reading.value + b", "-a"])
-        {
-            let IrExprKind::Block {
-                stmts,
-                value: Some(value),
-            } = &argument.kind
-            else {
-                return Err(format!(
-                    "`str({what})` must hand the emitter a grouped value, got {argument:?}"
-                ));
-            };
-            assert!(stmts.is_empty(), "a grouped value carries no statements: {stmts:?}");
-            assert_eq!(
-                argument.ty, value.ty,
-                "the group keeps the argument's type for `str({what})`"
-            );
-            assert!(
-                matches!(value.kind, IrExprKind::BinOp { .. } | IrExprKind::UnaryOp { .. }),
-                "the group wraps the operator expression itself for `str({what})`: {value:?}"
-            );
-        }
+            .find_map(|decl| match &decl.kind {
+                IrDeclKind::Struct(model) if model.name == "Payload" => Some(model),
+                _ => None,
+            })
+            .ok_or("missing model `Payload`")?;
         assert!(
-            matches!(arguments[4].kind, IrExprKind::Var { .. }),
-            "`str(a)` is one operand already and stays as written: {:?}",
-            arguments[4]
+            payload.derives.iter().any(|derive| derive == "serde::Serialize"),
+            "the aliased derive must forward the serde derive by identity: {:?}",
+            payload.derives
         );
-        assert!(
-            matches!(arguments[5].kind, IrExprKind::Field { .. }),
-            "`str(reading.value)` is one operand already and stays as written: {:?}",
-            arguments[5]
+
+        let encode = lowered_function(&ir, "encode")?;
+        let Some(IrStmt {
+            kind: IrStmtKind::Return(Some(returned)),
+            ..
+        }) = encode.body.last()
+        else {
+            return Err(format!("expected `encode` to end in a return, got {:?}", encode.body));
+        };
+        let dispatch = match &returned.kind {
+            IrExprKind::MethodCall {
+                dispatch: Some(IrMethodDispatch::Trait(dispatch) | IrMethodDispatch::SourceProjection(dispatch)),
+                ..
+            } => dispatch,
+            other => return Err(format!("expected a trait-dispatched `to_json` call, got {other:?}")),
+        };
+        let json_module = ["std", "serde", "json"].map(String::from);
+        assert_eq!(dispatch.trait_module_path.as_deref(), Some(json_module.as_slice()));
+        assert_eq!(
+            dispatch.trait_path, "crate::__incan_std::serde::json::Serialize",
+            "the dispatch path names the declaration, not the import alias"
         );
         Ok(())
     }
 
-    /// #1727: importing the stdlib's declaration stub of a derivable trait binds nothing in generated Rust, so the
-    /// import lowers to no IR import; the adopter's expanded stdlib adapter defaults keep the bare `Clone` bound the
-    /// stdlib trait itself compiles against, which the module's Rust prelude resolves once nothing shadows it. The
-    /// source-owned protocol and the callable trait keep their imports.
+    /// #1716: the RFC 041 `Fn`-family markers lower to the nominal callable bound Rust can spell.
+    ///
+    /// `F with Fn[int]` becomes `F: Callable1<i64, __IncanFnReturn0>` with the hidden return-type parameter appended
+    /// after the declared ones, and a trailing bare marker (`FnMut[int], Send`) still folds onto the same parameter.
+    /// Each of the three markers takes the same shape, since the callable vocabulary distinguishes arity only.
     #[test]
-    fn derive_vocabulary_imports_lower_to_no_ir_import_issue1727() -> Result<(), String> {
-        let ir = lower_source(
+    fn fn_family_capability_markers_lower_to_the_callable_bound_issue1716() -> Result<(), String> {
+        let ir = lower_checked_source(
             r#"
-from std.derives.collection import FallibleIterator
-from std.derives.copying import Clone
+from std.rust import Send, Static, Fn, FnMut, FnOnce
+
+def run_fn[F with Fn[int]](_f: F) -> None:
+  pass
+
+def run_fn_mut[F with FnMut[int], Send](_f: F) -> None:
+  pass
+
+def run_fn_once[F with FnOnce[int], Static](_f: F) -> None:
+  pass
+
+def run_both[F with Fn[int], G with Fn[int, str]](_f: F, _g: G) -> None:
+  pass
+"#,
+        )?;
+
+        let callable1 = "crate::__incan_std::traits::callable::Callable1";
+        let callable_bound = |return_index: usize| {
+            IrTraitBound::source_callable(
+                callable1,
+                vec![IrType::Int, IrType::Generic(format!("__IncanFnReturn{return_index}"))],
+            )
+        };
+        let hidden = |return_index: usize| IrTypeParam {
+            name: format!("__IncanFnReturn{return_index}"),
+            bounds: Vec::new(),
+        };
+
+        let run_fn = lowered_function(&ir, "run_fn")?;
+        assert_eq!(
+            run_fn.type_params,
+            vec![
+                IrTypeParam {
+                    name: "F".to_string(),
+                    bounds: vec![callable_bound(0)],
+                },
+                hidden(0),
+            ]
+        );
+
+        let run_fn_mut = lowered_function(&ir, "run_fn_mut")?;
+        assert_eq!(
+            run_fn_mut.type_params,
+            vec![
+                IrTypeParam {
+                    name: "F".to_string(),
+                    bounds: vec![
+                        callable_bound(0),
+                        IrTraitBound::with_type_args_classified("Send", Vec::new()),
+                    ],
+                },
+                hidden(0),
+            ],
+            "a trailing bare marker still folds onto the callable-bounded parameter"
+        );
+
+        let run_fn_once = lowered_function(&ir, "run_fn_once")?;
+        assert_eq!(
+            run_fn_once.type_params,
+            vec![
+                IrTypeParam {
+                    name: "F".to_string(),
+                    bounds: vec![
+                        callable_bound(0),
+                        IrTraitBound::with_type_args_classified("Static", Vec::new()),
+                    ],
+                },
+                hidden(0),
+            ]
+        );
+
+        let run_both = lowered_function(&ir, "run_both")?;
+        assert_eq!(
+            run_both.type_params,
+            vec![
+                IrTypeParam {
+                    name: "F".to_string(),
+                    bounds: vec![callable_bound(0)],
+                },
+                IrTypeParam {
+                    name: "G".to_string(),
+                    bounds: vec![IrTraitBound::source_callable(
+                        "crate::__incan_std::traits::callable::Callable2",
+                        vec![
+                            IrType::Int,
+                            IrType::String,
+                            IrType::Generic("__IncanFnReturn1".to_string()),
+                        ],
+                    )],
+                },
+                hidden(0),
+                hidden(1),
+            ],
+            "every marker gets its own hidden return type, numbered in declaration order"
+        );
+        Ok(())
+    }
+
+    /// An aliased builtin bound lowers to the Rust trait its declaration maps to, not to the alias or the generated
+    /// source trait.
+    ///
+    /// `from std.derives.comparison import Eq as Equality` then `T with Equality` is accepted by the checker as the
+    /// builtin `Eq`; the RFC 023 registry maps that declaration to Rust `PartialEq`, which a `@derive(Eq)` type
+    /// implements. Keyed on the spelling, the lookup missed the alias and the bound fell through to
+    /// `crate::__incan_std::derives::comparison::Eq`, which no derived type implements. The direct import is the
+    /// control.
+    #[test]
+    fn aliased_builtin_bound_lowers_to_the_rust_mapped_trait() -> Result<(), String> {
+        let ir = lower_checked_source(
+            r#"
 from std.derives.comparison import Eq as Equality
-from std.traits.callable import Callable1
 
-model Readings with FallibleIterator[int, str]:
-  items: list[int]
-  index: int
+@derive(Eq)
+model Point:
+  x: int
 
-  def __next__(mut self) -> Result[Option[int], str]:
-    if self.index >= len(self.items):
-      return Ok(None)
-    item = self.items[self.index]
-    self.index += 1
-    return Ok(Some(item))
-
-@derive(Clone, Eq)
-model Double with Callable1[int, int]:
-  def __call__(self, value: int) -> int:
-    return value * 2
-
-def pick[T with Equality](value: T) -> T:
+def require_equality[T with Equality](value: T) -> T:
   return value
 
-def main() -> None:
-  match Readings(items=[1, 2, 3], index=0).map(Double()).collect():
-    Ok(values) => println(len(values))
-    Err(error) => println(error)
-  chosen = pick(Double())
-  println(chosen(21))
+def main() -> int:
+  return require_equality(Point(x=1)).x
 "#,
-        )
-        .map_err(|errors| format!("lowering failed: {errors:?}"))?;
-
-        let imports = ir
-            .declarations
-            .iter()
-            .filter_map(|decl| match &decl.kind {
-                IrDeclKind::Import { path, items, .. } => Some((
-                    path.join("."),
-                    items.iter().map(|item| item.name.clone()).collect::<Vec<_>>(),
-                )),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert!(
-            imports.contains(&(
-                "std.derives.collection".to_string(),
-                vec!["FallibleIterator".to_string()]
-            )),
-            "the source-owned protocol keeps its import: {imports:?}"
-        );
-        assert!(
-            imports.contains(&("std.traits.callable".to_string(), vec!["Callable1".to_string()])),
-            "the callable trait keeps its import: {imports:?}"
-        );
-        assert!(
-            !imports
-                .iter()
-                .any(|(path, _)| path == "std.derives.copying" || path == "std.derives.comparison"),
-            "derive vocabulary binds nothing in generated Rust: {imports:?}"
+        )?;
+        let require_equality = lowered_function(&ir, "require_equality")?;
+        assert_eq!(
+            require_equality.type_params,
+            vec![IrTypeParam {
+                name: "T".to_string(),
+                bounds: vec![IrTraitBound::with_type_args_classified(
+                    trait_bounds::rust::PARTIAL_EQ,
+                    Vec::new()
+                )],
+            }],
+            "the alias resolves to the declaration `Eq`, which maps to Rust `PartialEq`"
         );
 
-        let adopter = ir
-            .declarations
-            .iter()
-            .find_map(|decl| match &decl.kind {
-                IrDeclKind::Impl(impl_block)
-                    if impl_block.target_type == "Readings"
-                        && impl_block.trait_name.as_deref() == Some("FallibleIterator") =>
-                {
-                    Some(impl_block)
-                }
-                _ => None,
-            })
-            .ok_or("the FallibleIterator adopter impl is missing")?;
-        let map = adopter
-            .methods
-            .iter()
-            .find(|method| method.name == "map")
-            .ok_or("the expanded `map` default is missing from the adopter")?;
-        let clone_bound = incan_lang::lang::trait_bounds::incan_to_rust(core_traits::as_str(TraitId::Clone))
-            .ok_or("the registry maps `Clone`")?;
-        let map_fn = map
+        let ir = lower_checked_source(
+            r#"
+from std.derives.comparison import Eq
+
+@derive(Eq)
+model Point:
+  x: int
+
+def require_equality[T with Eq](value: T) -> T:
+  return value
+
+def main() -> int:
+  return require_equality(Point(x=1)).x
+"#,
+        )?;
+        let bound = lowered_function(&ir, "require_equality")?
             .type_params
-            .iter()
-            .find(|param| param.name == "MapFn")
-            .ok_or("the expanded `map` default keeps its `MapFn` parameter")?;
-        assert!(
-            map_fn.bounds.iter().any(|bound| bound.trait_path == clone_bound),
-            "the expanded default spells the derive-owned `Clone` bound: {:?}",
-            map_fn.bounds
-        );
-
-        // The aliased derivable bound is the Rust trait its derive implements, never the generated stub.
-        let pick = ir
-            .declarations
-            .iter()
-            .find_map(|decl| match &decl.kind {
-                IrDeclKind::Function(function) if function.name == "pick" => Some(function),
-                _ => None,
-            })
-            .ok_or("the generic function `pick` is missing")?;
-        let equality_bound = incan_lang::lang::trait_bounds::incan_to_rust(core_traits::as_str(TraitId::Eq))
-            .ok_or("the registry maps `Eq`")?;
-        let t = pick
-            .type_params
-            .iter()
-            .find(|param| param.name == "T")
-            .ok_or("`pick` keeps its `T` parameter")?;
-        assert!(
-            t.bounds.iter().any(|bound| bound.trait_path == equality_bound),
-            "`T with Equality` lowers to the registry's Rust bound: {:?}",
-            t.bounds
+            .first()
+            .and_then(|type_param| type_param.bounds.first())
+            .ok_or("missing bound on `T`")?;
+        assert_eq!(
+            bound.trait_path,
+            trait_bounds::rust::PARTIAL_EQ,
+            "the direct import lowers exactly as before"
         );
         Ok(())
     }

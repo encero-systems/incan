@@ -1,5 +1,5 @@
 # behavior: str() over an arithmetic, negated or compound expression renders the whole expression's value, not the left operand joined to the rendered right operand
-# retires: loaves/compiler/incan_ir/src/lower/mod.rs::str_over_an_operator_expression_lowers_a_grouped_argument_issue1726
+# retires: loaves/compiler/incan_ir/src/lower/tests/builtin_str_arguments.rs::str_over_an_operator_expression_lowers_a_grouped_argument_issue1726
 # expect-stdout:
 #   3
 #   7

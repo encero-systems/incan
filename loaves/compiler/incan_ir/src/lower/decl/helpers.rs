@@ -3,13 +3,13 @@
 use std::collections::{HashMap, HashSet};
 
 use super::super::super::decl::{
-    IrRustAttrArg, IrRustAttribute, IrRustLintAllow, IrTraitBound, IrTypeParam, StructField,
+    IrRustAttrArg, IrRustAttribute, IrRustLintAllow, IrTraitBound, IrTraitBoundOrigin, IrTypeParam, StructField,
 };
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use incan_frontend::ast::{self, Spanned};
 use incan_frontend::decorator_resolution;
-use incan_lang::interop::is_rust_capability_bound;
+use incan_lang::interop::{is_rust_callable_capability_bound, is_rust_capability_bound};
 use incan_lang::lang::callables;
 use incan_lang::lang::decorators::{self, DecoratorId};
 use incan_lang::lang::derives::{self, DeriveId};
@@ -61,12 +61,10 @@ impl AstLowering {
                 && is_rust_capability_bound(tp.name.as_str())
                 && let Some(prev) = lowered.last_mut()
             {
-                let prev_is_capability_bounded = prev.bounds.iter().any(|bound| {
-                    matches!(
-                        bound.origin,
-                        super::super::super::decl::IrTraitBoundOrigin::RustCapability
-                    )
-                });
+                let prev_is_capability_bounded = prev
+                    .bounds
+                    .iter()
+                    .any(|bound| matches!(bound.origin, IrTraitBoundOrigin::RustCapability));
                 if prev_is_capability_bounded
                     && !prev.bounds.iter().any(|bound| {
                         bound.trait_path == tp.name && bound.type_args.is_empty() && bound.assoc_types.is_empty()
@@ -81,6 +79,68 @@ impl AstLowering {
             lowered.push(self.lower_type_param(tp, &type_param_names));
         }
         lowered
+    }
+
+    /// Lower the type parameters of a callable declaration, giving each RFC 041 `Fn`-family marker its callable shape.
+    ///
+    /// `F with Fn[int]` asks for a Rust `Fn(i64) -> R`: a parameter list the marker names and a return type it does
+    /// not. Rust spells that requirement only in its parenthesized form; the angle-bracket `Fn<i64>` a plain trait
+    /// path produces is the unstable form rustc refuses (#1716). The canonical `std.traits.callable.CallableN[Args...,
+    /// R]` trait carries exactly that shape, and its generated declaration provides the blanket implementation for
+    /// native functions and closures, so each marker lowers to that nominal bound by arity. The return type becomes a
+    /// hidden type parameter the caller's argument determines, appended after the declared parameters like the other
+    /// hidden parameters of a callable; an arity the callable vocabulary does not cover keeps the marker as written.
+    ///
+    /// Nominal owners (models, classes, enums, traits, newtypes) keep [`Self::lower_type_params`]: a hidden parameter
+    /// there would change the type's arity everywhere it is named.
+    pub(in crate::lower) fn lower_callable_type_params(&self, ast_params: &[ast::TypeParam]) -> Vec<IrTypeParam> {
+        let mut type_params = self.lower_type_params(ast_params);
+        let mut hidden_return_types = Vec::new();
+        for type_param in &mut type_params {
+            for bound in &mut type_param.bounds {
+                let Some(callable) = Self::callable_marker_trait(bound) else {
+                    continue;
+                };
+                let hidden_name = format!("__IncanFnReturn{}", hidden_return_types.len());
+                let mut type_args = std::mem::take(&mut bound.type_args);
+                type_args.push(IrType::Generic(hidden_name.clone()));
+                *bound = IrTraitBound::source_callable(Self::source_callable_trait_path(callable), type_args);
+                hidden_return_types.push(IrTypeParam {
+                    name: hidden_name,
+                    bounds: Vec::new(),
+                });
+            }
+        }
+        type_params.extend(hidden_return_types);
+        type_params
+    }
+
+    /// Return the callable trait an `Fn`-family capability marker bound stands for, by its parameter count.
+    ///
+    /// Only a marker that came in as a Rust capability (`Fn`, `FnMut`, `FnOnce` from `std.rust`) qualifies; a
+    /// same-spelled trait from any other origin is not a capability marker.
+    fn callable_marker_trait(bound: &IrTraitBound) -> Option<callables::CallableTraitId> {
+        if bound.origin != IrTraitBoundOrigin::RustCapability
+            || !is_rust_callable_capability_bound(&bound.trait_path)
+            || !bound.assoc_types.is_empty()
+        {
+            return None;
+        }
+        callables::for_arity(bound.type_args.len())
+    }
+
+    /// Return the generated Rust path of one canonical callable trait, qualified from the crate root.
+    ///
+    /// The `std.rust` markers emit no `use` of their own (`std.rust` is a checker-only namespace), so the bound must
+    /// name the trait absolutely; the compiled stdlib is mounted at `crate::__incan_std` in every generated crate.
+    fn source_callable_trait_path(callable: callables::CallableTraitId) -> String {
+        format!(
+            "{}::{}::{}::{}",
+            keywords::as_str(KeywordId::Crate),
+            stdlib::INCAN_STD_NAMESPACE,
+            callables::generated_module(),
+            callables::info_for(callable).name
+        )
     }
 
     /// Return the declared type parameters that no lowered field type mentions, in declaration order.
@@ -112,8 +172,10 @@ impl AstLowering {
 
     /// Map an Incan trait bound to the corresponding Rust trait bound.
     ///
-    /// Uses the `incan_lang::lang::trait_bounds` registry to resolve known Incan names to their Rust trait paths (e.g.,
-    /// Incan `Eq` → Rust `PartialEq`). Unknown names are passed through as-is, allowing user-defined trait bounds.
+    /// A bound on a builtin the `incan_lang::lang::trait_bounds` registry maps (Incan `Eq` to Rust `PartialEq`) is
+    /// resolved by the trait's identity through [`Self::rust_mapped_builtin_trait_path`], so an alias or a
+    /// module-qualified spelling of the same declaration lowers to the same Rust trait. Unknown names are passed
+    /// through as-is, allowing user-defined trait bounds.
     fn lower_trait_bound(&self, bound: &ast::TraitBound, type_param_names: &HashSet<&str>) -> IrTraitBound {
         let (module_path, source_name) = self.canonical_trait_identity(&bound.name);
         let callable = module_path
@@ -135,7 +197,8 @@ impl AstLowering {
                 return IrTraitBound::source_callable(trait_path, types);
             }
         }
-        let trait_path = trait_bounds::incan_to_rust(&bound.name)
+        let trait_path = self
+            .rust_mapped_builtin_trait_path(&bound.name)
             .map(str::to_string)
             .or_else(|| self.source_owned_builtin_trait_path(&bound.name))
             .unwrap_or_else(|| bound.name.clone());
@@ -147,15 +210,52 @@ impl AstLowering {
         IrTraitBound::with_type_args_classified(trait_path, type_args)
     }
 
+    /// Return the Rust trait path a builtin bound maps to, keyed on the trait's resolved identity.
+    ///
+    /// [`trait_bounds::incan_to_rust`] is a registry over declaration names (`Eq` to `PartialEq`), while a bound or
+    /// a checked dispatch carries a spelling. An alias (`from std.derives.comparison import Eq as Equality`) or a
+    /// module-qualified name (`comparison.Eq`) would miss a spelling-keyed lookup and lower to the generated
+    /// `__incan_std` source trait, which a `@derive(Eq)` type does not implement (#1374). The lookup therefore runs
+    /// on the declaration name [`Self::canonical_trait_identity`] resolves, and only when that identity is the
+    /// builtin's own: the declaring module is a stdlib module, or the spelling is the implicit builtin binding with
+    /// no import or local declaration behind it. A user trait that merely shares the declaration name
+    /// (`yaml.Serialize`, a local `trait Eq`) keeps its own path.
+    ///
+    /// The `std.serde.json` protocol traits are the one identity still looked up by spelling: their bounds and
+    /// dispatches are shaped by the protocol machinery (#1431, #1712), where an alias such as `JsonSerialize` lowers
+    /// as written and resolves through its re-export, and the registry's `serde::Serialize` mapping is reached only
+    /// by the bare `Serialize` and `Deserialize` spellings, exactly as before.
+    pub(in crate::lower) fn rust_mapped_builtin_trait_path(&self, visible_name: &str) -> Option<&'static str> {
+        let (module_path, source_name) = self.canonical_trait_identity(visible_name);
+        let source_name = source_name?;
+        let stdlib_identity = module_path.as_deref().is_some_and(stdlib::is_any_stdlib_path);
+        if !stdlib_identity && !self.is_implicit_builtin_trait_spelling(visible_name, &source_name) {
+            return None;
+        }
+        let json_protocol = module_path
+            .as_deref()
+            .is_some_and(|segments| stdlib::stdlib_json_trait_id_for_identity(segments, &source_name).is_some());
+        if json_protocol {
+            return trait_bounds::incan_to_rust(visible_name);
+        }
+        trait_bounds::incan_to_rust(&source_name)
+    }
+
+    /// Return whether `visible_name` reaches a builtin trait through the implicit prelude binding alone: no module
+    /// qualifier, no import, no local declaration claiming the spelling, and the spelling is the declaration name.
+    fn is_implicit_builtin_trait_spelling(&self, visible_name: &str, source_name: &str) -> bool {
+        !visible_name.contains('.')
+            && !self.import_aliases.contains_key(visible_name)
+            && !self.trait_decls.contains_key(visible_name)
+            && visible_name == source_name
+    }
+
     /// Return the generated path for a builtin trait that is owned by ordinary Incan stdlib source.
     ///
     /// Native Rust capability mappings such as Incan `Eq` to Rust `PartialEq` are handled first by
-    /// [`trait_bounds::incan_to_rust`] on the visible spelling. This helper covers source-owned protocols such as
-    /// `Iterator[T]` and only accepts either their exact imported owner or the implicit builtin binding. A local or
-    /// third-party same-named trait stays on its own path. A derivable trait reached under another spelling (`from
-    /// std.derives.comparison import Eq as Equality`) is still the Rust trait its derive implements, so it takes the
-    /// same mapping by its canonical name rather than the generated stub, which no derived type implements (#1374,
-    /// #1727).
+    /// [`Self::rust_mapped_builtin_trait_path`]. This helper covers source-owned protocols such as `Iterator[T]` and
+    /// only accepts either their exact imported owner or the implicit builtin binding. A local or third-party
+    /// same-named trait stays on its own path.
     fn source_owned_builtin_trait_path(&self, visible_name: &str) -> Option<String> {
         let (actual_module, source_name) = self.canonical_trait_identity(visible_name);
         let source_name = source_name?;
@@ -168,15 +268,8 @@ impl AstLowering {
                 .map(String::as_str)
                 .eq(expected_segments.iter().copied())
         });
-        let implicit_builtin = !visible_name.contains('.')
-            && !self.import_aliases.contains_key(visible_name)
-            && !self.trait_decls.contains_key(visible_name)
-            && visible_name == source_name;
-        if !exact_import && !implicit_builtin {
+        if !exact_import && !self.is_implicit_builtin_trait_spelling(visible_name, &source_name) {
             return None;
-        }
-        if let Some(rust_path) = trait_bounds::incan_to_rust(core_traits::as_str(trait_id)) {
-            return Some(rust_path.to_string());
         }
 
         let generated_module = core_traits::generated_module(trait_id)?;
@@ -209,14 +302,16 @@ impl AstLowering {
                 if !type_param_names.is_some_and(|params| params.contains(name.as_str()))
                     && self.is_known_trait_name(name) =>
             {
-                let trait_path = trait_bounds::incan_to_rust(name)
+                let trait_path = self
+                    .rust_mapped_builtin_trait_path(name)
                     .map(str::to_string)
                     .or_else(|| self.source_owned_builtin_trait_path(name))
                     .unwrap_or_else(|| name.clone());
                 Some(IrTraitBound::with_type_args_classified(trait_path, Vec::new()))
             }
             ast::Type::Generic(base, args) if self.is_known_trait_name(base) => {
-                let trait_path = trait_bounds::incan_to_rust(base)
+                let trait_path = self
+                    .rust_mapped_builtin_trait_path(base)
                     .map(str::to_string)
                     .or_else(|| self.source_owned_builtin_trait_path(base))
                     .unwrap_or_else(|| base.clone());

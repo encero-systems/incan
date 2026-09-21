@@ -1,5 +1,5 @@
 # behavior: a module that imports Clone from std.derives.copying (and Eq under an alias) still drives the stdlib FallibleIterator map, filter and collect adapters with derived callable models, and an aliased Eq bound admits a derived model
-# retires: loaves/compiler/incan_ir/src/lower/mod.rs::derive_vocabulary_imports_lower_to_no_ir_import_issue1727
+# retires: loaves/compiler/incan_ir/src/lower/tests/derive_vocabulary_imports.rs::derive_vocabulary_imports_lower_to_no_ir_import_issue1727
 # retires: loaves/compiler/incan_ir/src/lower/decl/helpers.rs::aliased_derivable_trait_bound_lowers_to_the_rust_trait_of_its_derive_issue1727
 # expect-stdout:
 #   2 4 6
