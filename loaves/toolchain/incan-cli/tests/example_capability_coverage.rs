@@ -125,7 +125,7 @@ impl Capability {
 }
 
 /// Return the catalog path that owns the documented capability surface.
-fn catalogue_path() -> PathBuf {
+fn catalog_path() -> PathBuf {
     support::repo_root()
         .join("loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn")
 }
@@ -164,13 +164,13 @@ fn example_corpus_text() -> Result<String, Box<dyn std::error::Error>> {
 
 /// Parse the catalog's stable capabilities and the canonical forms each publishes.
 fn stable_capabilities() -> Result<Vec<Capability>, Box<dyn std::error::Error>> {
-    let catalogue = std::fs::read_to_string(catalogue_path())?;
+    let catalog = std::fs::read_to_string(catalog_path())?;
 
     // `const <name>_forms: FrozenList[str] = ["...", "..."]`
     let forms_decl = Regex::new(r#"(?s)const\s+(\w+_forms):\s*FrozenList\[str\]\s*=\s*\[(.*?)\]\n"#)?;
     let quoted = Regex::new(r#""((?:[^"\\]|\\.)*)""#)?;
     let mut forms_by_name = std::collections::BTreeMap::new();
-    for capture in forms_decl.captures_iter(&catalogue) {
+    for capture in forms_decl.captures_iter(&catalog) {
         let (Some(name), Some(body)) = (capture.get(1), capture.get(2)) else {
             continue;
         };
@@ -187,7 +187,7 @@ fn stable_capabilities() -> Result<Vec<Capability>, Box<dyn std::error::Error>> 
     let forms_field = Regex::new(r#"canonical_forms=(\w+)"#)?;
 
     let mut capabilities = Vec::new();
-    for block in entry.captures_iter(&catalogue) {
+    for block in entry.captures_iter(&catalog) {
         let Some(body) = block.get(1).map(|matched| matched.as_str()) else {
             continue;
         };

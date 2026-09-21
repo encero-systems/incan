@@ -1394,7 +1394,7 @@ mod tests {
 
     /// Discovery refuses a stray file and an empty area, and recognizes the three layouts.
     #[test]
-    fn discovery_recognises_layouts_and_refuses_strays() -> TestResult {
+    fn discovery_recognizes_layouts_and_refuses_strays() -> TestResult {
         let tmp = tempfile::tempdir()?;
         let area = tmp.path().join("area");
         fs::create_dir_all(&area)?;
@@ -1577,7 +1577,7 @@ mod tests {
     /// Lexical normalization resolves `.` and `..` without the file system and keeps a `..` that climbs past the
     /// start, so an escaping path still fails to sit under the fixture.
     #[test]
-    fn lexical_normalisation_resolves_dots() {
+    fn lexical_normalization_resolves_dots() {
         assert_eq!(
             normalize_lexically(Path::new("/f/deps/ledger/../money/./src")),
             PathBuf::from("/f/deps/money/src")

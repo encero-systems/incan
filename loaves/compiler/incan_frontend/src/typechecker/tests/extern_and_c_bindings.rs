@@ -570,7 +570,7 @@ fn checked_c_facades_require_a_same_module_checked_bridge() {
 }
 
 #[test]
-fn checked_c_string_pointer_requires_unsafe_acknowledgement() {
+fn checked_c_string_pointer_requires_unsafe_acknowledgment() {
     let errors = check_str_err(
         r#"
 from std.interop import c

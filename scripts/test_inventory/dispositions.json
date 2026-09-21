@@ -3688,7 +3688,7 @@
         }
       }
     },
-    "loaves/toolchain/incan-cli/tests/cli_catalogue_forms_tests.rs": {
+    "loaves/toolchain/incan-cli/tests/cli_catalog_forms_tests.rs": {
       "disposition": "re-point",
       "owner": 1561,
       "twin": "",

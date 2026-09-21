@@ -2496,7 +2496,7 @@ edition = "2021"
 
 pub struct Thing;
 
-impl Labelled for Thing {}
+impl Labeled for Thing {}
 "#,
         )?;
 

@@ -5,7 +5,7 @@ use super::*;
 
 /// Issue #1004: an imported public registry retains its defining module as the only registry authority.
 #[test]
-fn imported_registry_description_uses_canonical_catalogue_definition_issue1004() -> Result<(), String> {
+fn imported_registry_description_uses_canonical_catalog_definition_issue1004() -> Result<(), String> {
     let mut catalog = parse_program(
         r#"
 from std.registry import Registry, SubjectKind

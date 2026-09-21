@@ -2762,7 +2762,7 @@ mod tests {
     }
 
     #[test]
-    fn loaf_manifest_wins_over_a_neighbouring_legacy_manifest() -> TestResult {
+    fn loaf_manifest_wins_over_a_neighboring_legacy_manifest() -> TestResult {
         let dir = tempfile::tempdir()?;
         fs::write(dir.path().join(LOAF_MANIFEST_FILENAME), "[project]\nname = \"demo\"\n")?;
         fs::write(

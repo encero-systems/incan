@@ -115,7 +115,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     fn refuse_unsafe_region(&self, span: HirSourceSpan, out: &mut Vec<bir::Statement>) {
         self.push_unsupported_stmt(
             "`unsafe:` acknowledgment region: refused by design, because Body IR v0 cannot carry the \
-             acknowledgement a consumer would need to admit it deliberately (#1162)"
+             acknowledgment a consumer would need to admit it deliberately (#1162)"
                 .to_string(),
             span,
             out,

@@ -3524,12 +3524,12 @@ pub model Order:
         let source = r#"
 pub const DEFAULT_LABEL = "none"
 
-pub trait Labelled:
+pub trait Labeled:
     def label(self) -> str: ...
 
 
 @derive(Clone)
-pub model Order with Labelled:
+pub model Order with Labeled:
     """
     Order contract.
     """

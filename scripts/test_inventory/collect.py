@@ -15,18 +15,18 @@ Modes:
 - `--propose`: write `proposals.json` beside the dispositions with a mechanical disposition per file and per test,
   for a reviewer to fold into `dispositions.json` by hand;
 - `--check`: exit non-zero when a test has no disposition, a disposition names a test that no longer exists, a twin
-  does not resolve, a behaviour fixture and the row it retires disagree, a `dies` row has no reason, a recorded
+  does not resolve, a behavior fixture and the row it retires disagree, a `dies` row has no reason, a recorded
   split flag disagrees with the measured test region, the `files` or `fixture_roots` record is not sorted by key,
   or the rendered page is stale;
 - `--sort`: rewrite the dispositions file with `fixture_roots`, `files` and every nested `tests` map sorted by key,
   in the file's own layout (idempotent), so a lane that appended rows sorts before committing;
 - `--dispositions <path>`: read another dispositions file, for scratch probes that must not edit the tracked record.
 
-A `retire` row leaves the corpus one of two ways. Its `twin` names what proves the behaviour after the cutover: a
-`keep`/`re-point` test as `path::fn`, a declared fixture root by its bare path, or a behaviour fixture (a file or
+A `retire` row leaves the corpus one of two ways. Its `twin` names what proves the behavior after the cutover: a
+`keep`/`re-point` test as `path::fn`, a declared fixture root by its bare path, or a behavior fixture (a file or
 directory under `loaves/compiler/incan_test_support/fixtures/behavior/<area>/`) by its path; the fixture's own
 `# retires:` lines must name the test back, so neither side can drift. Or its `twin` is the word `dies`, with the
-reason in a `dies` field beside it: the test has no user-observable behaviour to twin (generated projects, `inspect
+reason in a `dies` field beside it: the test has no user-observable behavior to twin (generated projects, `inspect
 rust` output and the build-report Cargo fields die with #654; a data-structure invariant of a dying crate dies).
 
 The scanner is deliberately shallow: it masks strings and comments, counts braces, and reads `fn` names. It never
@@ -347,7 +347,7 @@ def mask_rust(text: str) -> str:
 
     Brace counting and `fn` detection run over the masked text so a `contains("fn main() {")` assertion or a
     Rust program embedded in a raw string cannot unbalance the scanner. Lifetimes are distinguished from char
-    literals by looking for the closing quote; nested block comments are honoured.
+    literals by looking for the closing quote; nested block comments are honored.
     """
     out = list(text)
     n = len(text)

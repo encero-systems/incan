@@ -135,9 +135,9 @@ pub struct FileDescriptorSet;
 fn test_rusttype_bodyless_rust_trait_forwarding_uses_metadata_and_skips_impl() -> Result<(), Box<dyn std::error::Error>>
 {
     let source = r#"
-from rust::demo import RustThing, Labelled
+from rust::demo import RustThing, Labeled
 
-type Thing = rusttype RustThing with Labelled
+type Thing = rusttype RustThing with Labeled
 "#;
     let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;

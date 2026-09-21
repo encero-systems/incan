@@ -402,7 +402,7 @@ mod rust_tuple_arity_tests {
     /// Reading `(String)` as a one-element tuple would let a one-name destructure lower to `.0` on a `String`,
     /// recreating the raw-Rust failure through a narrower spelling than the `int` case the issue started from.
     #[test]
-    fn a_parenthesised_type_is_not_a_one_element_tuple() {
+    fn a_parenthesized_type_is_not_a_one_element_tuple() {
         assert_eq!(rust_tuple_arity("(String)"), None);
         assert_eq!(rust_tuple_arity("(std::vec::Vec<u8>)"), None);
         assert_eq!(rust_tuple_arity("( String )"), None);

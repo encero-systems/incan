@@ -26,12 +26,12 @@ use regex::Regex;
 const SELF_CONTAINED_ENTRIES: &[&str] = &["std_datetime_forms"];
 
 /// Read one `const <name>: FrozenList[str] = [...]` form list out of the live catalog.
-fn catalogue_forms(name: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    let catalogue = fs::read_to_string(incan_test_support::repo_root().join("loaves/stdlib/core/src/features.incn"))?;
+fn catalog_forms(name: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let catalog = fs::read_to_string(incan_test_support::repo_root().join("loaves/stdlib/core/src/features.incn"))?;
     let declaration = Regex::new(&format!(r#"(?s)const\s+{name}:\s*FrozenList\[str\]\s*=\s*\[(.*?)\]\n"#))?;
     let quoted = Regex::new(r#""((?:[^"\\]|\\.)*)""#)?;
     let body = declaration
-        .captures(&catalogue)
+        .captures(&catalog)
         .and_then(|found| found.get(1))
         .ok_or_else(|| format!("the catalog declares no `{name}` form list"))?;
     let forms = quoted
@@ -63,15 +63,15 @@ fn program_for(forms: &[String]) -> String {
         program.push_str(form);
         program.push('\n');
     }
-    program.push_str("    println(\"catalogue forms ok\")\n");
+    program.push_str("    println(\"catalog forms ok\")\n");
     program
 }
 
 /// Build and run every self-contained entry's forms as a program through Oven.
 #[test]
-fn self_contained_catalogue_forms_compile_as_written_issue1385() -> Result<(), Box<dyn std::error::Error>> {
+fn self_contained_catalog_forms_compile_as_written_issue1385() -> Result<(), Box<dyn std::error::Error>> {
     for entry in SELF_CONTAINED_ENTRIES {
-        let forms = catalogue_forms(entry)?;
+        let forms = catalog_forms(entry)?;
         let source = program_for(&forms);
 
         let tmp = tempfile::tempdir()?;

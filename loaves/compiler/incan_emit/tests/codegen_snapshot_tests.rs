@@ -1670,10 +1670,10 @@ def main() -> None:
     fn trait_method_keeps_abi_slot_and_exposes_one_recoverable_concrete_projection() -> TestResult {
         let rust_code = generate_registry_rust(
             r#"
-trait Labelled:
+trait Labeled:
   def label(self) -> str
 
-class Item with Labelled:
+class Item with Labeled:
   value: str
 
   def label(self) -> str:
@@ -1806,11 +1806,11 @@ def main() -> None:
     fn adopted_default_method_exposes_a_recoverable_projection_beside_the_trait_slot() -> TestResult {
         let rust_code = generate_registry_rust(
             r#"
-trait Labelled:
+trait Labeled:
   def label(self) -> str:
     return "default"
 
-class Item with Labelled:
+class Item with Labeled:
   value: str
 
 def main() -> None:
@@ -4007,7 +4007,7 @@ fn test_models_codegen() {
 
 /// Power lowers as a Rust method call, so its receiver must retain the source expression's grouping.
 #[test]
-fn test_power_receiver_parenthesisation_codegen() {
+fn test_power_receiver_parenthesization_codegen() {
     let source = r#"
 def compound(left: float, right: float) -> float:
     return (left + right) ** 0.5
@@ -4618,7 +4618,7 @@ fn test_enum_methods_traits_codegen() {
         "expected enum inherent methods to emit in an impl block; generated:\n{rust_code}"
     );
     assert!(
-        compact.contains("implLabelledforSignal{"),
+        compact.contains("implLabeledforSignal{"),
         "expected enum trait adoption to emit a trait impl block; generated:\n{rust_code}"
     );
     assert!(
