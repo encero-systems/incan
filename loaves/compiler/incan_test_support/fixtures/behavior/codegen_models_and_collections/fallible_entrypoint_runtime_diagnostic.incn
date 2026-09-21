@@ -1,0 +1,25 @@
+# behavior: a Result-returning main prints the Zen banner before its own output, and an Err returned from main ends the run with a non-zero exit after that output
+# retires: loaves/compiler/incan_emit/tests/fallible_entrypoint_codegen_tests.rs::fallible_main_preserves_entrypoint_setup_before_the_body
+# expect-stdout:
+#   ┌──────────────────────────────────────────────────────────────────────┐
+#   │  The Zen of Incan                                                    │
+#   │  by Danny Meijer (inspired by Tim Peters' "The Zen of Python")       │
+#   └──────────────────────────────────────────────────────────────────────┘
+#
+#     › Readability counts          ─  clarity over cleverness
+#     › Safety over silence         ─  errors surface as Result, not hide
+#     › Explicit over implicit      ─  magic is opt-in and marked
+#     › Fast is better than slow    ─  performance costs must be visible
+#     › Namespaces are great        ─  keep modules and traits explicit
+#     › One obvious way             ─  conventions beat novelty,
+#                                      with escape hatches documented
+#
+#   before failure
+# expect-exit: 1
+
+import this
+
+
+def main() -> Result[None, str]:
+    println("before failure")
+    return Err("runtime failure")

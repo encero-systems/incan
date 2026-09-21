@@ -1,0 +1,30 @@
+# behavior: std.telemetry exports TelemetryValue, Attributes, Resource, InstrumentationScope and SpanContext, and a string telemetry value displays its text
+# retires: loaves/compiler/incan_emit/tests/stdlib_generated_rust_snapshot_tests.rs::std_telemetry_prelude_import_snapshot
+# expect-stdout:
+#   hello
+
+from std.telemetry import TelemetryValue, Attributes, Resource, InstrumentationScope, SpanContext
+
+
+def touch_value(value: TelemetryValue) -> str:
+    return value.display_text()
+
+
+def touch_attributes(attributes: Attributes) -> None:
+    return
+
+
+def touch_resource(resource: Resource) -> None:
+    return
+
+
+def touch_scope(scope: InstrumentationScope) -> None:
+    return
+
+
+def touch_span_context(context: SpanContext) -> None:
+    return
+
+
+def main() -> None:
+    println(touch_value(TelemetryValue.string("hello")))

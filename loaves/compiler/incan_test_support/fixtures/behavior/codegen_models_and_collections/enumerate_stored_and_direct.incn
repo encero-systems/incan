@@ -1,0 +1,21 @@
+# behavior: a stored enumerate result is a list value traversable through an alias, and a direct enumerate loop yields the same index-value pairs
+# retires: loaves/compiler/incan_emit/tests/enumerate_value_codegen_tests.rs::stored_enumerate_materializes_the_checked_list_without_changing_direct_for_laziness
+# expect-stdout:
+#   20
+#   2
+
+pub def stored_then_direct() -> int:
+    values = [4, 5]
+    enumerated = enumerate(values)
+    enumerated_alias = enumerated
+    mut total = 0
+    for index, value in enumerated_alias:
+        total += index + value
+    for direct_index, direct_value in enumerate(values):
+        total += direct_index + direct_value
+    return total
+
+
+def main() -> None:
+    println(stored_then_direct())
+    println(len(enumerate([7, 8])))

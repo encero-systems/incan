@@ -1,0 +1,5 @@
+import db::schema::Database
+
+
+pub def touch_path(db: Database) -> str:
+    return f"path:{db.id}"

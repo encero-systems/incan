@@ -6098,6 +6098,7 @@ mod tests {
         for root in [
             "loaves/toolchain/incan-cli/tests/behavior_cli_dependencies_tests.rs",
             "loaves/toolchain/incan-cli/tests/behavior_cli_tests.rs",
+            "loaves/toolchain/incan-cli/tests/behavior_codegen_tests.rs",
             "loaves/toolchain/incan-cli/tests/behavior_driver_tests.rs",
             "loaves/toolchain/incan-cli/tests/behavior_harness_tests.rs",
             "loaves/toolchain/incan-cli/tests/behavior_smoke_tests.rs",

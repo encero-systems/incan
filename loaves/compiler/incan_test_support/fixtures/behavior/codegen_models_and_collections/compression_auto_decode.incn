@@ -1,0 +1,22 @@
+# behavior: gzip-compressed bytes are recognised and decoded by the auto decoder, which names the codec
+# retires: loaves/compiler/incan_emit/src/codegen.rs::compression_auto_moves_non_clone_decoder_match_bindings
+# expect-stdout:
+#   gzip
+#   true
+
+from std.compression import Codec, decompress_auto
+from std.compression.gzip import compress
+
+
+def main() -> None:
+    match compress(b"hello compression"):
+        Ok(packed) =>
+            match decompress_auto(packed, allowed=Codec.all()):
+                Ok(decoded) =>
+                    codec, data = decoded
+                    match codec:
+                        Codec.Gzip => println("gzip")
+                        _ => println("other")
+                    println(data == b"hello compression")
+                Err(error) => println(error.message())
+        Err(error) => println(error.message())

@@ -1,0 +1,21 @@
+# behavior: an empty list literal compares against a list of str on either side of == and != (#1476)
+# retires: loaves/compiler/incan_emit/tests/empty_list_comparison_operand_tests.rs::lowered_empty_list_operand_carries_the_element_type
+# expect-stdout:
+#   true
+#   false
+#   true
+#   false
+
+def is_empty(values: list[str]) -> bool:
+    return values == []
+
+
+def is_not_empty(values: list[str]) -> bool:
+    return [] != values
+
+
+def main() -> None:
+    println(is_empty([]))
+    println(is_empty(["value"]))
+    println(is_not_empty(["value"]))
+    println(is_not_empty([]))

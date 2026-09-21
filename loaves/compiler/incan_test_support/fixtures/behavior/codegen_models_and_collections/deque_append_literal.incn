@@ -1,0 +1,19 @@
+# behavior: a str literal appended to a Deque[str] built from a list lands in the deque (#1494)
+# retires: loaves/compiler/incan_emit/tests/closure_local_call_codegen_tests.rs::a_string_literal_converts_for_a_generic_stdlib_method_issue1494
+# expect-stdout:
+#   3
+#   default
+
+from std.collections import Deque
+
+
+pub def probe(requested: list[str]) -> Deque[str]:
+    mut pending = Deque[str].from_iter(requested)
+    pending.append("default")
+    return pending
+
+
+def main() -> None:
+    pending = probe(["a", "b"])
+    println(len(pending))
+    println(pending.to_list()[2])

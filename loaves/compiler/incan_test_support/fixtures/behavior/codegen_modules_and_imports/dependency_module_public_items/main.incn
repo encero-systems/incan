@@ -1,0 +1,13 @@
+# behavior: the two public functions a program imports from a nested module are callable while a third public function it never imports is simply unused
+# retires: loaves/compiler/incan_emit/src/codegen.rs::normal_codegen_prunes_unused_dependency_public_items_for_binary_mode
+# retires: loaves/compiler/incan_emit/src/codegen.rs::normal_codegen_can_preserve_dependency_public_items_for_library_mode
+# expect-stdout:
+#   v1
+#   100
+
+from shared.constants import api_version, max_page_size
+
+
+def main() -> None:
+    println(api_version())
+    println(max_page_size())
