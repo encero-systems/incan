@@ -609,7 +609,7 @@ pub fn derive_module_missing_derives(name: &str, span: Span) -> CompileError {
 /// Type error for using a **generic** function name in **value** position.
 ///
 /// RFC 035 only supports monomorphically usable function references; passing `def id[T](...)` by name requires
-/// inference/monomorphisation that is intentionally deferred. Users can wrap the call in a closure (e.g. `(x) =>
+/// inference/monomorphization that is intentionally deferred. Users can wrap the call in a closure (e.g. `(x) =>
 /// id(x)`) at the use site.
 pub fn generic_function_reference(name: &str, span: Span) -> CompileError {
     CompileError::type_error(

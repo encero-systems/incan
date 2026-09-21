@@ -5317,7 +5317,7 @@ impl TypeChecker {
         expr
     }
 
-    /// Validate compiler-recognised typed declaration descriptions before the callable body opens its local scope.
+    /// Validate compiler-recognized typed declaration descriptions before the callable body opens its local scope.
     fn check_registry_description_decorators(
         &mut self,
         decorators: &[Spanned<Decorator>],
@@ -5607,7 +5607,7 @@ impl TypeChecker {
 
     /// Reject `@describe` where RFC 113 has no stable source subject yet.
     ///
-    /// The decorator resolver deliberately recognises compiler-owned decorators on broad syntactic targets. Keeping
+    /// The decorator resolver deliberately recognizes compiler-owned decorators on broad syntactic targets. Keeping
     /// this target check beside the actual registry collector prevents an unsupported declaration from being silently
     /// accepted merely because it is a known decorator, while leaving future model/trait/module support open to a
     /// concrete subject-identity contract.
