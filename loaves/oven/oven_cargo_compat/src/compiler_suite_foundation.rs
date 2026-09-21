@@ -122,7 +122,7 @@ impl OvenCompilerSuiteFoundationKey {
     }
 }
 
-/// Fold one labelled section into the key hasher with unambiguous boundaries.
+/// Fold one labeled section into the key hasher with unambiguous boundaries.
 fn fold_section(hasher: &mut Sha256, label: &str, value: &[u8]) {
     hasher.update(label.as_bytes());
     hasher.update([0]);

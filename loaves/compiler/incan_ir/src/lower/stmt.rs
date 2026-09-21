@@ -135,7 +135,7 @@ impl AstLowering {
     /// Lower the operand of a `return` statement.
     ///
     /// The operand is lowered with its own read counters so that the final read of an owned local inside it is
-    /// recognised as that local's last use on the path (see
+    /// recognized as that local's last use on the path (see
     /// [`AstLowering::select_var_access_for_ident`](super::AstLowering::select_var_access_for_ident) and
     /// [`ReturnOperandContext`]); the enclosing block counters stay in step because nested reads were already
     /// counted there.

@@ -2088,7 +2088,7 @@ pub struct OvenHeldReleaseRuntimeFoundation {
     pub label: String,
     /// Materialized foundation and exact selected physical facts admitted from the held generation.
     pub asset: crate::rustc::OvenMaterializedRuntimeFoundationAsset,
-    /// Exact compiled Loaf manifest whose artifact catalogue the foundation matches.
+    /// Exact compiled Loaf manifest whose artifact catalog the foundation matches.
     pub compiled_loaf: PathBuf,
     /// Exact compiled Loaf identity bound by the runtime foundation descriptor.
     pub compiled_loaf_identity: String,
@@ -2175,7 +2175,7 @@ pub(crate) fn prove_release_store_member_payload(
     Ok((payload, canonical_executable))
 }
 
-/// Acquire and verify one labelled optional release store member under the committed generation lock.
+/// Acquire and verify one labeled optional release store member under the committed generation lock.
 ///
 /// The generic carrier verifies only the exact store identity, ProjectOutput kind, and singular executable file. It
 /// neither decodes the payload nor assigns project, compiler, or policy meaning to those bytes.
@@ -2211,7 +2211,7 @@ pub fn acquire_committed_release_store_member(
     }))
 }
 
-/// Acquire and prove one labelled runtime foundation under the committed release-generation lock.
+/// Acquire and prove one labeled runtime foundation under the committed release-generation lock.
 ///
 /// This resolves only descriptor-bound paths below the held generation and performs physical identity, file-set,
 /// owner and compiled-Loaf checks. It does not interpret package policy. A committed envelope of another family
@@ -2986,7 +2986,7 @@ fn source_authority_loaf_from_loaf_with_lock(
 ///
 /// The envelope manifest binds the Loaf identity to release-family SDK, toolchain, lock, and fixture evidence.
 /// This check then verifies the immutable payload itself, allowing a complete warm baker invocation to avoid
-/// rerunning compiler behaviour merely to rediscover an already-bound receipt.
+/// rerunning compiler behavior merely to rediscover an already-bound receipt.
 pub fn validate_stored_loaf(
     loaf_path: &Path,
     expected_build_unit_identity: &str,

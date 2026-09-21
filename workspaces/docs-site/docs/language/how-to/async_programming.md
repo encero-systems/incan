@@ -3,7 +3,7 @@
 Incan's language and API contracts include async/await through a Tokio-backed runtime path. This guide covers that `std.async` source surface.
 
 !!! info "0.5 runtime boundary"
-    The 0.5 toolchain ships the checked task and timeout closure in its full-standard-library Loaf. Complete programs using those supported surfaces can build and run through normal Incan commands without an implicit Cargo fallback. Sections labelled with a compiler limitation remain contract documentation rather than runnable examples.
+    The 0.5 toolchain ships the checked task and timeout closure in its full-standard-library Loaf. Complete programs using those supported surfaces can build and run through normal Incan commands without an implicit Cargo fallback. Sections labeled with a compiler limitation remain contract documentation rather than runnable examples.
 
 !!! important "Async is import-activated"
     `async` and `await` are **soft keywords**: they become reserved keywords only after importing `std.async` (for example `import std.async` or `from std.async.time import sleep`).

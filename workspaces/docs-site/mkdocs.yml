@@ -237,7 +237,7 @@ nav:
           - Why not just Rust?: language/explanation/why_not_just_rust.md
           - How Incan works: language/explanation/how_incan_works.md
           - Compile time and runtime: language/explanation/compile_time_and_runtime.md
-          - Checked catalogues and loaded registries: language/explanation/checked_and_loaded_registries.md
+          - Checked catalogs and loaded registries: language/explanation/checked_and_loaded_registries.md
           - Checked C interop: language/explanation/checked_c_interop.md
           - Rust-shaped confidence: language/explanation/rust_shaped_confidence.md
           - Control flow: language/explanation/control_flow.md

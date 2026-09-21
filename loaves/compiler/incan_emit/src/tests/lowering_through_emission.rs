@@ -1,4 +1,4 @@
-//! Lowering results that emission has to honour: the lowering tests that need an emission pass or plan.
+//! Lowering results that emission has to honor: the lowering tests that need an emission pass or plan.
 
 use incan_ir::decl::IrDeclKind;
 use incan_ir::expr::{BinOp, IrExprKind};

@@ -495,7 +495,7 @@ pub struct VocabSection {
 /// A Loaf whose Rust unit sits beside Incan sources names the Rust root explicitly; a conventional Rust-only Loaf
 /// needs no table and keeps `src/`. The root is relative to the project directory and must not overlap the Incan
 /// source root. Declaring it is honest today — a standard library component says where its `incan_std_<component>`
-/// crate lives — and Oven's Rust planner reads it once it plans facets without a neighbouring `Cargo.toml`.
+/// crate lives — and Oven's Rust planner reads it once it plans facets without a neighboring `Cargo.toml`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RustSourceSection {
@@ -1058,7 +1058,7 @@ pub enum DiscoveredManifest {
 /// Report which project manifest `dir` holds, without walking upward and without reading either file.
 ///
 /// `loaf.toml` wins when both are present: RFC 117 rule 13 makes a directory containing the Loaf manifest a Loaf
-/// project, and a neighbouring legacy file there is ignored rather than merged.
+/// project, and a neighboring legacy file there is ignored rather than merged.
 pub fn discovered_manifest_kind(dir: &Path) -> DiscoveredManifest {
     let loaf = dir.join(LOAF_MANIFEST_FILENAME);
     if loaf.is_file() {
@@ -2762,7 +2762,7 @@ mod tests {
     }
 
     #[test]
-    fn loaf_manifest_wins_over_a_neighbouring_legacy_manifest() -> TestResult {
+    fn loaf_manifest_wins_over_a_neighboring_legacy_manifest() -> TestResult {
         let dir = tempfile::tempdir()?;
         fs::write(dir.path().join(LOAF_MANIFEST_FILENAME), "[project]\nname = \"demo\"\n")?;
         fs::write(

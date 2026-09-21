@@ -24,7 +24,7 @@ This RFC introduces `@rust.allow(...)` as a narrowly scoped built-in decorator f
 1. `@rust.allow(...)` is an item-level declaration that requests suppression of one or more named Rust lints for the Rust item generated from that Incan declaration.
 2. The decorator is intentionally narrow: it may suppress specific lints, but it does not expose arbitrary Rust attributes, deny/forbid controls, or crate-wide warning policy.
 3. The compiler must emit the suppression at the smallest valid Rust scope for the generated item, preserving ordinary Rust diagnostics everywhere else.
-4. The decorator exists because some warnings in generated Rust are real but not avoidable from the Incan surface; the correct response in those cases is explicit, local acknowledgement, not global silence.
+4. The decorator exists because some warnings in generated Rust are real but not avoidable from the Incan surface; the correct response in those cases is explicit, local acknowledgment, not global silence.
 
 ## Motivation
 
@@ -189,7 +189,7 @@ Suppression is the immediate hole because generated Rust sometimes needs a narro
 
 ### Relationship to unavoidable deprecations
 
-Deprecation warnings are the motivating case for this RFC. Generated Rust may need to call deprecated upstream fields or functions because the newer path is not yet available, or because the host library has no non-deprecated equivalent for the required behavior. When that happens, the right contract is explicit acknowledgement on the affected declaration, not silence for the whole generated module.
+Deprecation warnings are the motivating case for this RFC. Generated Rust may need to call deprecated upstream fields or functions because the newer path is not yet available, or because the host library has no non-deprecated equivalent for the required behavior. When that happens, the right contract is explicit acknowledgment on the affected declaration, not silence for the whole generated module.
 
 ### Relationship to compiler-generated helpers
 

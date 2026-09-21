@@ -389,7 +389,7 @@ fn validate_selected_graph_environment_name(value: &str, field: &str) -> Result<
 /// `PRIVATE_MATERIAL` both carry secrets under names no denylist predicts. Everything absent from this registry
 /// therefore fails closed to `SensitiveDigest`, and adding a name here is a deliberate, reviewable act.
 ///
-/// Deliberate omissions: `CARGO_PKG_AUTHORS`, `CARGO_PKG_HOMEPAGE` and their neighbours describe people and
+/// Deliberate omissions: `CARGO_PKG_AUTHORS`, `CARGO_PKG_HOMEPAGE` and their neighbors describe people and
 /// services rather than compilation, and no build fact needs them. Kept alphabetical for review, though nothing
 /// depends on that order.
 const OVEN_SELECTED_RUST_FACET_PUBLIC_ENVIRONMENT_NAMES: &[&str] = &[

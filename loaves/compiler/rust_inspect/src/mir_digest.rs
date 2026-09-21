@@ -408,7 +408,7 @@ impl Holder {
         ];
 
         // The reconstructed id is only correct if each function's digest comes from *that* function's body. A
-        // bridge that resolved every name to one body, or that shifted names onto neighbouring bodies, would still
+        // bridge that resolved every name to one body, or that shifted names onto neighboring bodies, would still
         // produce four digests; it would not reproduce the oracle's grouping.
         assert_eq!(
             partition_by(&names, |name| digest_of(&workspace, name))?,

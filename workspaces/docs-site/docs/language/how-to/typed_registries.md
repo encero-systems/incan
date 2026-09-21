@@ -1,6 +1,6 @@
 # Work with typed registries
 
-Use this guide when you already understand the basic `std.registry` model and need to choose a subject, migrate an existing catalogue, publish it through a facade, inspect dependency metadata, or diagnose a rejected entry.
+Use this guide when you already understand the basic `std.registry` model and need to choose a subject, migrate an existing catalog, publish it through a facade, inspect dependency metadata, or diagnose a rejected entry.
 
 ## Choose the subject kind
 
@@ -12,7 +12,7 @@ pub static commands: Registry[CommandId, CommandSpec] = Registry.define(
 )
 ```
 
-Use the narrowest set that matches the domain. A function-only catalogue should not admit package entries merely because another registry might need them.
+Use the narrowest set that matches the domain. A function-only catalog should not admit package entries merely because another registry might need them.
 
 | Subject | Source form | Use it for |
 | --- | --- | --- |
@@ -74,9 +74,9 @@ pub static module_capability: RegistryEntry[CapabilityId, CapabilitySpec] = capa
 )
 
 pub static package_capability: RegistryEntry[CapabilityId, CapabilitySpec] = capabilities.entry(
-    key=CapabilityId("catalogue"),
+    key=CapabilityId("catalog"),
     subject=RegistrySubject.package(),
-    descriptor=CapabilitySpec(summary="Package-wide function catalogue"),
+    descriptor=CapabilitySpec(summary="Package-wide function catalog"),
 )
 ```
 
@@ -121,7 +121,7 @@ Use this sequence when a library currently registers functions through its own d
 7. Remove the old mutable or queued registry. Keeping it as a fallback would create two authorities that can disagree.
 8. Test direct imports, facade reexports, package consumers, compiled test batches, inspection JSON, and generated Rust.
 
-Dynamic-only registration may remain custom when entries genuinely depend on runtime values. Document that such a catalogue has no complete static projection rather than presenting it as equivalent to `std.registry`.
+Dynamic-only registration may remain custom when entries genuinely depend on runtime values. Document that such a catalog has no complete static projection rather than presenting it as equivalent to `std.registry`.
 
 ## Diagnose rejected entries
 
@@ -135,4 +135,4 @@ Dynamic-only registration may remain custom when entries genuinely depend on run
 | Dependency registry is missing | Rebuild the dependency with an SDK that publishes RFC 113 metadata; older `.incnlib` artifacts do not contain the projection. |
 | Selector is ambiguous | Use `package::module::registry` instead of the shorter module-local identity. |
 
-For the complete type and JSON contracts, see the [`std.registry` reference](../reference/stdlib/registry.md). For the design boundary between loaded and checked views, see [Checked catalogues and loaded registries](../explanation/checked_and_loaded_registries.md).
+For the complete type and JSON contracts, see the [`std.registry` reference](../reference/stdlib/registry.md). For the design boundary between loaded and checked views, see [Checked catalogs and loaded registries](../explanation/checked_and_loaded_registries.md).

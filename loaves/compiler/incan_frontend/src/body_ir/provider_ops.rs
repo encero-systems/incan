@@ -56,7 +56,7 @@ impl ProviderOperationCatalog {
         Self::default()
     }
 
-    /// Build the lowering catalogue from the compilation's checked provider plan.
+    /// Build the lowering catalog from the compilation's checked provider plan.
     ///
     /// Provider manifests are the only producer of these entries. This constructor deliberately takes no source
     /// spelling inputs: selected provider records already carry the integrity-checked manifest and activation facts
