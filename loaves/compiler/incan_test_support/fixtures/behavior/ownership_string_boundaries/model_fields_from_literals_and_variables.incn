@@ -1,0 +1,21 @@
+# behavior: a model built from a str literal, an int literal and a str variable reports each field as given, and the variable is usable after the construction
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_struct_field_string_literal
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_struct_field_int_no_conversion
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_struct_field_string_var_no_conversion
+# expect-stdout:
+#   Alice 30
+#   Bob 31
+#   Bob
+
+model User:
+    name: str
+    age: int
+
+
+def main() -> None:
+    first = User(name="Alice", age=30)
+    println(f"{first.name} {first.age}")
+    name = "Bob"
+    second = User(name=name, age=31)
+    println(f"{second.name} {second.age}")
+    println(name)

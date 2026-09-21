@@ -1,0 +1,157 @@
+# behavior: private helpers that only read a Rust tree value walk it from a field, from a parameter, through a helper chain and through a cursor without copying the tree (the crate's clone counter stays at 0), an explicit clone counts once, a child taken as an owned value counts once, a snapshot taken before the owner is replaced counts the copies the replacement needs, and a tree handed to functions declared over a reference, to a returned callable and to a walk over a reference parameter adds nothing
+# retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::inferred_traversal_compiles_and_runs_without_any_tree_clones
+# retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::private_enum_classifier_infers_shared_parameter
+# retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::private_classifier_borrow_flows_through_a_helper
+# retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::escaping_classifier_keeps_its_callable_abi
+# retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::crate_visible_helpers_keep_owned_entry_points_and_borrow_local_calls
+# retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::proven_receiver_child_infers_a_borrowed_helper_and_cursor
+# retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::inferred_method_helper_preserves_owned_public_abi
+# retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::inline_tree_cursor_borrows_a_field_without_annotations
+# retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::later_owner_mutation_preserves_the_cursor_snapshot
+# retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::unrelated_return_lifetime_does_not_authorize_cursor_assignment
+# retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::explicit_reference_local_borrows_a_field_without_cloning
+# retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::opaque_rust_child_reassignment_does_not_add_a_second_borrow
+# retires: loaves/compiler/incan_emit/src/conversions.rs::reference_assignment_targets_take_precedence_over_owned_field_materialization
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_call_borrows_noncopy_var_for_ref_target
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_return_call_context_borrows_noncopy_var_for_ref_target
+# expect-stdout:
+#   observe true clones 0
+#   is_table true clones 0
+#   inspect true clones 0
+#   ref local true clones 0
+#   walk true clones 0
+#   selected true clones 1
+#   owned child true clones 2
+#   snapshot false replaced true clones 5
+#   ref param true true clones 5
+#   ref traverse true clones 5
+#   callback true clones 5
+
+# UNVERIFIED CANDIDATE: a `rust::` path dependency needs a Rust inspection bake that launches Cargo, which is ruled out on
+# the machine that wrote it; the program and the counts through `snapshot` transcribe the retired test's own consumer assertions
+# (observe 0, Reader.select 1, Holder.snapshot +3), the others follow from the crate. Rows stay open until a
+# Cargo-free bake serves `rust::` under the suite.
+
+from rust::borrow_fixture import Item, clones, document
+
+
+def traverse(item: Item, keys: list[str]) -> bool:
+    mut current = item
+    for key in keys:
+        match current.get(key):
+            Some(child) => current = child
+            None => return false
+    return current.is_integer()
+
+
+pub def observe(item: Item) -> bool:
+    return traverse(item, ["project", "count"])
+
+
+def is_table(item: Item) -> bool:
+    return item.is_table()
+
+
+def classify(item: Item) -> bool:
+    return is_table(item)
+
+
+pub def inspect(item: Item) -> bool:
+    return classify(item)
+
+
+def is_table_ref(item: &Item) -> bool:
+    return item.is_table()
+
+
+pub def check_ref(item: Item) -> bool:
+    return is_table_ref(item)
+
+
+pub def callback() -> Callable[Item, bool]:
+    return is_table
+
+
+pub def traverse_ref(item: &Item, keys: list[str]) -> bool:
+    mut current = item
+    for key in keys:
+        match current.get(key):
+            Some(child) => current = child
+            None => return false
+    return current.is_integer()
+
+
+def take_child(item: Item, key: str) -> bool:
+    mut current = item
+    match current.child(key):
+        Some(child) => current = child
+        None => return false
+    return current.is_table()
+
+
+pub class Reader:
+    def select(self, item: Item, keys: list[str]) -> Item:
+        mut current = item
+        for key in keys:
+            if let Some(span) = current.span():
+                assert span >= 0
+            match current.get(key):
+                Some(child) => current = child
+                None => return Item.Integer(0)
+        return current.clone()
+
+    def read(self, item: Item) -> Item:
+        return self.select(item, ["project", "count"])
+
+
+pub class Holder:
+    item: Item
+
+    def observe(self) -> bool:
+        return is_table(self.item)
+
+    def view(self) -> bool:
+        current: &Item = self.item
+        return current.is_table()
+
+    def walk(self, keys: list[str]) -> bool:
+        mut current = self.item
+        for key in keys:
+            match current.get(key):
+                Some(child) => current = child
+                None => return false
+        return current.is_integer()
+
+    def snapshot(mut self) -> bool:
+        current = self.item
+        self.item = Item.Integer(0)
+        return current.is_integer()
+
+    def replaced(self) -> bool:
+        return self.item.is_integer()
+
+
+def main() -> None:
+    println(f"observe {observe(document())} clones {clones()}")
+    holder = Holder(item=document())
+    println(f"is_table {holder.observe()} clones {clones()}")
+    println(f"inspect {inspect(document())} clones {clones()}")
+    println(f"ref local {holder.view()} clones {clones()}")
+    walked = holder.walk(["project", "count"])
+    println(f"walk {walked} clones {clones()}")
+    reader = Reader()
+    selected = reader.read(document())
+    println(f"selected {selected.is_integer()} clones {clones()}")
+    owned_child = take_child(document(), "project")
+    println(f"owned child {owned_child} clones {clones()}")
+    mut owner = Holder(item=document())
+    taken = owner.snapshot()
+    println(f"snapshot {taken} replaced {owner.replaced()} clones {clones()}")
+    direct = is_table_ref(document())
+    through_return = check_ref(document())
+    println(f"ref param {direct} {through_return} clones {clones()}")
+    walked_ref = traverse_ref(document(), ["project", "count"])
+    println(f"ref traverse {walked_ref} clones {clones()}")
+    chosen = callback()
+    called = chosen(document())
+    println(f"callback {called} clones {clones()}")

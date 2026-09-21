@@ -1,0 +1,25 @@
+# behavior: a str variable handed to a Rust method generic over Into[String] is encoded twice while the caller keeps it, and once more at its last use
+# retires: loaves/compiler/incan_emit/src/ownership.rs::argument_plan_external_inferred_generic_read_string_clones
+# retires: loaves/compiler/incan_emit/src/ownership.rs::argument_plan_external_inferred_generic_moved_string_stays_direct
+# expect-stdout:
+#   hello world
+#   HELLO WORLD
+#   hello world
+#   HELLO WORLD
+
+# UNVERIFIED CANDIDATE for `ownership.rs::argument_plan_external_inferred_generic_read_string_clones` and
+# `argument_plan_external_inferred_generic_moved_string_stays_direct`: the crate and the literal call are the
+# `rust_method_into_bound_keeps_string_argument_inferable_issue804` CLI test's; a `rust::` path dependency needs a
+# Cargo-launching inspection bake. Rows stay open until a Cargo-free bake serves `rust::` under the suite.
+
+from rust::into_method_helper import Tokenizer
+
+
+def main() -> None:
+    tokenizer = Tokenizer.new()
+    text = "hello world"
+    println(tokenizer.encode(text, false))
+    println(tokenizer.encode(text, true))
+    println(text)
+    last = "hello world"
+    println(tokenizer.encode(last, true))

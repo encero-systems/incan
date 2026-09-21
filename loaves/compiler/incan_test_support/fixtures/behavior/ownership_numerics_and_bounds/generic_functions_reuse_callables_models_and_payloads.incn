@@ -1,0 +1,72 @@
+# behavior: generic functions that call a callable parameter twice, reuse a str beside a type parameter, copy a concrete model, return self from a generic method, and return a field or a loop item inside Ok all run with concrete int and str arguments
+# retires: loaves/compiler/incan_emit/src/trait_bound_inference.rs::clone_dependencies_exclude_callable_signatures_and_concrete_values
+# retires: loaves/compiler/incan_emit/src/trait_bound_inference.rs::repeated_clone_dependency_does_not_add_unrelated_parameters
+# retires: loaves/compiler/incan_emit/src/trait_bound_inference.rs::concrete_nominal_clone_does_not_bind_enclosing_generic_parameters
+# retires: loaves/compiler/incan_emit/src/trait_bound_inference.rs::self_clone_binds_no_callable_own_parameters
+# retires: loaves/compiler/incan_emit/src/trait_bound_inference.rs::result_payload_bounds_follow_the_struct_field_plan
+# expect-stdout:
+#   2 3
+#   ab-ab 5
+#   fast fast
+#   codec codec
+#   9
+#   b
+
+model Algorithm:
+    name: str
+
+
+model Codec:
+    label: str
+
+    def duplicate[T](self, marker: T) -> Codec:
+        return self
+
+
+model Decoded[T]:
+    value: T
+
+
+def call_both[T, U](transform: (T) -> U, first: T, second: T) -> str:
+    return f"{transform(first)} {transform(second)}"
+
+
+def label_twice[T](prefix: str, value: T) -> str:
+    joined = prefix + "-" + prefix
+    return f"{joined} {value}"
+
+
+def copy_algorithm[T, U](algorithm: Algorithm, first: T, second: U) -> str:
+    kept = algorithm
+    return f"{kept.name} {algorithm.name}"
+
+
+def unwrap[T](decoded: Decoded[T]) -> Result[T, str]:
+    return Ok(decoded.value)
+
+
+def find[T](items: list[T], index: int) -> Result[T, str]:
+    mut position = 0
+    for item in items:
+        if position == index:
+            return Ok(item)
+        position += 1
+    return Err("missing")
+
+
+def increment(value: int) -> int:
+    return value + 1
+
+
+def main() -> None:
+    println(call_both(increment, 1, 2))
+    println(label_twice("ab", 5))
+    println(copy_algorithm(Algorithm(name="fast"), 1, "x"))
+    codec = Codec(label="codec")
+    println(f"{codec.duplicate(1).label} {codec.label}")
+    match unwrap(Decoded(value=9)):
+        Ok(value) => println(value)
+        Err(message) => println(message)
+    match find(["a", "b"], 1):
+        Ok(value) => println(value)
+        Err(message) => println(message)

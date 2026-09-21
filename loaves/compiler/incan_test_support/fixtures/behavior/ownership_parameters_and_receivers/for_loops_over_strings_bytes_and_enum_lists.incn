@@ -1,0 +1,42 @@
+# behavior: for loops over a list of strings, a str, a bytes value and a list of enum values visit every item, and the lists are still complete after the loops
+# retires: loaves/compiler/incan_emit/src/ownership.rs::for_loop_on_borrowable_string_list_uses_iter
+# retires: loaves/compiler/incan_emit/src/ownership.rs::for_loop_on_string_iterates_owned_character_strings
+# retires: loaves/compiler/incan_emit/src/ownership.rs::for_loop_on_bytes_iterates_incan_ints
+# retires: loaves/compiler/incan_emit/src/ownership.rs::for_loop_on_user_enum_list_clones_items_when_not_mutating
+# expect-stdout:
+#   3 2
+#   ["h.", "e.", "y."]
+#   131
+#   leaf 1
+#   branch x
+#   2
+
+enum Node:
+    Leaf(int)
+    Branch(str)
+
+
+def describe(node: Node) -> str:
+    match node:
+        Node.Leaf(value) => return f"leaf {value}"
+        Node.Branch(name) => return f"branch {name}"
+
+
+def main() -> None:
+    names = ["ab", "c"]
+    mut total = 0
+    for name in names:
+        total += len(name)
+    println(f"{total} {len(names)}")
+    mut marked: list[str] = []
+    for ch in "hey":
+        marked.append(ch + ".")
+    println(f"{marked:?}")
+    mut sum = 0
+    for b in b"AB":
+        sum += b
+    println(sum)
+    nodes = [Node.Leaf(1), Node.Branch("x")]
+    for node in nodes:
+        println(describe(node))
+    println(len(nodes))

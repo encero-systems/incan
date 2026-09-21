@@ -1,0 +1,9 @@
+[project]
+name = "rust_string_parameters_by_value_and_in_a_field"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[rust-dependencies]
+tiny_option = { path = "rust/tiny_option" }
