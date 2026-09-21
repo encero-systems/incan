@@ -125,6 +125,12 @@ jobs:
           python3 scripts/check_emitter_freeze.py
       - name: Check the test corpus inventory
         run: make test-inventory-check
+      # US English is the repository's spelling (#1561); the guard reads only the checkout, so it sits beside the
+      # other checkout-only gates rather than behind a Rust build.
+      - name: Check US English spelling
+        run: |
+          python3 scripts/test_check_us_english.py
+          make us-english-check
 
   clippy:
     name: Clippy

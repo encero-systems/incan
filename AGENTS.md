@@ -120,6 +120,8 @@ When making changes under `workspaces/docs-site/`:
 
 Read and follow [`workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md`] for the project's Rust coding conventions.
 
+Spell everything in US English -- identifiers, comments, docstrings, diagnostics and docs (`color`, `behavior`, `initialize`, `catalog`; the owner keeps `cancelled`); `make us-english-check` (part of `make pre-commit-fast` and CI) rejects UK spellings, `make us-english-fix` rewrites them, and `scripts/check_us_english.allow` records the upstream names and quoted text that keep theirs.
+
 ### Inline section headers
 
 In longer functions (roughly 30+ lines or 3+ logical blocks), use `// ----` section headers to delineate logical blocks:
