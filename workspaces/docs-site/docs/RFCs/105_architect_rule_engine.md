@@ -410,7 +410,7 @@ Experimental peer-baseline analysis is a later consumer of the same fact and que
 - **IR Lowering**: No required impact.
 - **Emission**: No required impact.
 - **Stdlib / Runtime (`incan_stdlib`)**: No required runtime impact, though stdlib feature surfaces such as Result combinators and iterator adapters inform idiom rules.
-- **Formatter**: No required impact unless future auto-fix support is added.
+- **Formatter**: No formatter rule changes. RFC 127's `incan architect --fix` calls the formatter as a library on the tree its fixes leave, so the formatter crate must be callable from the engine (amended by RFC 127).
 - **LSP / Tooling**: The JSON findings format should be usable by editors, agents, CI, and future diagnostics-style surfaces.
 - **CLI / Project tooling**: `incan architect` needs requested-scope scanning, profiles, stable text/JSON output, suppression support, and baseline support. Future peer-baseline tooling needs opt-in invocation and schema- and compiler-versioned snapshots.
 - **Documentation**: The CLI reference must document command behavior, profiles, categories, priorities, confidence, suppressions, peer-context provenance, and examples.
