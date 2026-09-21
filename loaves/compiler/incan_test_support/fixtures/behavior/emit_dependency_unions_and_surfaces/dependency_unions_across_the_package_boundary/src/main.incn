@@ -1,4 +1,4 @@
-# behavior: unions published by dependencies work at every consumer call: every member of a four-model union dispatches to its own arm, a renamed model constructor still fits its union, a union-returning call and a str pass to an Option[union] parameter and a model to an Option[model | str] one, both defaulting to None, unions nested in a tuple and beside a consumer-local union each keep their provider, a method returning a union matches, function aliases and overload aliases keep their union results, and two providers' same-shaped unions stay apart
+# behavior: unions published by dependencies work at every consumer call: every member of a four-model union dispatches to its own arm in the provider and in a consumer match whose arm derives a mutable local from the bound payload, a renamed model constructor still fits its union, a union-returning call and a str pass to an Option[union] parameter and a model to an Option[model | str] one, both defaulting to None, unions nested in a tuple and beside a consumer-local union each keep their provider, a method returning a union matches, function aliases and overload aliases keep their union results, and two providers' same-shaped unions stay apart
 # retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_union_payload_canonicalizes_external_union_variant_index_issue1198
 # retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::contextual_union_payload_uses_checked_nominal_identity
 # retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_public_union_call_result_as_option_payload_issue745
@@ -16,6 +16,10 @@
 #   number column amount
 #   bool literal true
 #   str literal name
+#   consumer bool column active 7
+#   consumer number column amount
+#   consumer bool literal true
+#   consumer str literal name
 #   105
 #   7
 #   int 4
@@ -68,6 +72,17 @@ def local_text(text: str) -> Local:
     return text
 
 
+def show_expr(expr: ColumnExpr) -> str:
+    match expr:
+        BoolColumnExpr(column) =>
+            mut width = len(column.name)
+            width += 1
+            return f"consumer bool column {column.name} {width}"
+        NumberColumnExpr(column) => return f"consumer number column {column.name}"
+        BoolLiteralExpr(literal) => return f"consumer bool literal {literal.value}"
+        StringLiteralExpr(literal) => return f"consumer str literal {literal.value}"
+
+
 def show_first(value: int | str, label: str) -> str:
     match value:
         int(number) => return f"{label} {number}"
@@ -94,6 +109,10 @@ def main() -> None:
     println(describe(NumberColumnExpr(name="amount")))
     println(describe(BoolLiteralExpr(value=True)))
     println(describe(StringLiteralExpr(value="name")))
+    println(show_expr(BoolColumnExpr(name="active")))
+    println(show_expr(column("amount")))
+    println(show_expr(literal(True)))
+    println(show_expr(StringLiteralExpr(value="name")))
     println(charge_total(Charge(value=5)))
     println(charge_total(7))
     println(accept_optional(lit(4)))

@@ -7,3 +7,4 @@ main = "src/main.incn"
 
 [dependencies]
 pricing = { path = "deps/pricing" }
+catalog = { path = "deps/pricing/deps/catalog" }

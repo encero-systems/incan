@@ -1,16 +1,19 @@
-# behavior: a default argument that calls a function imported from a sibling module is evaluated when the parameter is omitted at a call from a third module, and an explicit argument replaces it
+# behavior: a default argument that calls a function imported from a sibling module is evaluated when the parameter is omitted, at a call from a module that does not import that function itself and at a call from main, and an explicit argument replaces it
 # retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_internal_canonical_call_preserves_local_binding_without_default_context
 # retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_default_arg_internal_canonical_call_uses_crate_qualified_path
 # expect-stdout:
+#   8
 #   8
 #   3
 #   7
 
 from ops import combine
 from defaults import fallback
+from caller import combined
 
 
 def main() -> None:
+    println(combined())
     println(combine(1))
     println(combine(1, 2))
     println(fallback())
