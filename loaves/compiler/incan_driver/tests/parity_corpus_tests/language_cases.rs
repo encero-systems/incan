@@ -235,7 +235,7 @@ pub(super) fn case_supported_named_call_arguments_reach_body_ir() -> ComparisonO
 }
 
 // `AsyncAwait` is a public capability in the release-pinned baseline. Before #1164 an `await` lowered to a
-// placeholder labelled only "prefix-keyword surface expression", so the suspension point — the one fact a task
+// placeholder labeled only "prefix-keyword surface expression", so the suspension point — the one fact a task
 // runtime needs — did not exist in Body IR at all. The cutover must keep both the source form and its
 // representation, including the body-level async fact for a body that awaits nothing.
 pub(super) const CASE_10_SRC: &str = r#"
@@ -597,7 +597,7 @@ pub(super) fn case_supported_statement_loop_reaches_body_ir() -> ComparisonOutco
 
 // The corpus's first `Disposition::Unsupported` row. This is a decided boundary, not pending lowering work: an
 // `unsafe:` region introduces no Incan scope, so inlining its statements would be trivial -- and would erase the
-// acknowledgement the region exists to record, letting a direct replacement execution profile run an explicitly
+// acknowledgment the region exists to record, letting a direct replacement execution profile run an explicitly
 // authorized region without ever being told. The row asserts the refusal is present *and named*, so inlining the
 // region later cannot leave it silently green.
 pub(super) const CASE_19_SRC: &str = r#"
@@ -614,7 +614,7 @@ def touch(value: int) -> int:
 pub(super) fn case_unsafe_region_is_a_stated_refusal() -> ComparisonOutcome {
     outcome_from_body_ir_refusal(
         CASE_19_SRC,
-        "unsupported(`unsafe:` acknowledgement region:",
+        "unsupported(`unsafe:` acknowledgment region:",
         "an `unsafe:` region to refuse under a named, reasoned boundary rather than lower silently",
     )
 }

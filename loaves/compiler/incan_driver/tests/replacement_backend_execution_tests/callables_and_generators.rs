@@ -229,7 +229,7 @@ def main() -> int:
         .primary_span()
         .ok_or("sibling refusal must retain a source span")?;
     assert_eq!(span.start, expected_start);
-    assert!(error.to_string().contains("`unsafe:` acknowledgement region"));
+    assert!(error.to_string().contains("`unsafe:` acknowledgment region"));
     Ok(())
 }
 

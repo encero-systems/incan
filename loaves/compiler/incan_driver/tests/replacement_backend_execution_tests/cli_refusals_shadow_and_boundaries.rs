@@ -210,7 +210,7 @@ def main() -> int:
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        combined.contains("`unsafe:` acknowledgement region") && combined.contains("original Incan source span"),
+        combined.contains("`unsafe:` acknowledgment region") && combined.contains("original Incan source span"),
         "the sibling refusal must preserve its direct profile boundary: {combined}"
     );
     assert!(

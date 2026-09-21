@@ -238,7 +238,7 @@ pub(super) fn seed_corpus() -> Vec<ParityCase> {
         },
         ParityCase {
             id: "parity-987-0019",
-            title: "An `unsafe:` acknowledgement region refuses in Body IR under a named, stated boundary",
+            title: "An `unsafe:` acknowledgment region refuses in Body IR under a named, stated boundary",
             category: BehaviorCategory::SupportedLanguageContract,
             lane: EvidenceLane::DirectParserTypechecker,
             evidence: "#1162; loaves/compiler/incan_frontend/src/body_ir/tests/input_contract_and_refusals.rs::an_unsafe_region_refuses_under_a_named_permanent_boundary",
@@ -246,23 +246,23 @@ pub(super) fn seed_corpus() -> Vec<ParityCase> {
             // for rather than a pointer to one.
             disposition: Disposition::IntentionalMigration {
                 owning_issue: 1162,
-                migration_note: "An `unsafe:` region records an explicit acknowledgement that the operations \
+                migration_note: "An `unsafe:` region records an explicit acknowledgment that the operations \
                                  inside it require authorization. It introduces no separate Incan scope, so \
                                  lowering its statements into the enclosing block would be a two-line change — \
                                  and would erase exactly the fact the region exists to carry, leaving a direct \
                                  replacement execution profile running an authorized region it was never told \
-                                 about. Body IR v0 has no acknowledgement fact a consumer could weigh, so the \
+                                 about. Body IR v0 has no acknowledgment fact a consumer could weigh, so the \
                                  region refuses under a named label stating that it is refused by design \
                                  (`BodyBuilder::refuse_unsafe_region` in src/frontend/body_ir/stmt.rs). \
                                  Cutover impact: a program whose `unsafe:` region must execute cannot use the \
                                  replacement backend; the legacy Rust-emission backend keeps compiling it \
                                  unchanged, so no accepted program regresses. Reversing this disposition means \
-                                 designing the acknowledgement representation first and deciding who may admit \
+                                 designing the acknowledgment representation first and deciding who may admit \
                                  it — adding a dispatch arm alone would be the silent execution this row \
                                  exists to prevent. \
                                  \
                                  This is a deliberate, settled boundary for 0.6, not deferred work: `unsafe:` stays \
-                                 restricted to the C ABI, so there is no acknowledgement representation to design \
+                                 restricted to the C ABI, so there is no acknowledgment representation to design \
                                  within this release and nothing for the replacement route to admit. #1162 named the \
                                  residual refusals and closed having done so, which is why this row is an intentional \
                                  migration rather than an unsupported one awaiting an owner. Widening `unsafe:` \

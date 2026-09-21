@@ -170,7 +170,7 @@ fn observe_provider_path(
         .map_err(|errors| format!("provider fixture typecheck failure: {errors:?}"))?;
 
     // Admission is projected from a published provider manifest through a selected `ProviderPlan`, never
-    // hand-filled into the lowering catalogue -- which #1213 made private precisely so a consumer cannot invent
+    // hand-filled into the lowering catalog -- which #1213 made private precisely so a consumer cannot invent
     // admission a real producer could not have published.
     let descriptors: Vec<ProviderOperationMetadata> = checker
         .type_info()
