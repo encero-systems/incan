@@ -11,6 +11,7 @@
     - RFC 096 (declaration metadata blocks)
     - RFC 117 (`loaf.toml` and Oven's language-neutral project model)
     - RFC 118 (Incan and Oven command-line surfaces)
+    - RFC 127 (the Incan lint catalog; the rule set, levels, `[incan.lints]` configuration, `@allow(...)` suppression, and `incan architect --fix` this engine evaluates and applies; it amends the clauses of this RFC marked "amended by RFC 127")
 - **Issue:** [#663](https://github.com/encero-systems/incan/issues/663)
 - **RFC PR:** —
 - **Written against:** ~~v0.3~~ v0.5
@@ -24,7 +25,7 @@ This RFC proposes `incan architect` as a deterministic code-advice command for I
 
 1. **Compiler-backed facts first:** `incan architect` consumes source facts produced by Incan's parser, module/import resolver, typechecker, metadata pipeline, and codegraph exporter rather than independently scraping text.
 2. **Rules interpret facts:** Each rule consumes typed fact views and emits findings with stable codes, priorities, categories, confidence, evidence, suggestions, and risks.
-3. **Findings are advisory:** Architect findings are not compiler errors. They describe design pressure or code-shape opportunities with enough evidence for a human or agent to decide whether to act.
+3. **Findings are advisory by default:** Architect findings are never compiler errors. They describe design pressure or code-shape opportunities with enough evidence for a human or agent to decide whether to act. A level of `deny` or `forbid` assigned to a rule by RFC 127's `[incan.lints]` makes a finding fail `incan architect`, and only that command: enforcement is a project's level setting, never the compiler's. (Amended by RFC 127.)
 4. **Categories are explicit:** Architecture findings, safety findings, idiom findings, maintainability findings, and risk findings remain separate in rule codes and profiles even when they share one command.
 5. **Broad collection, precise classification:** The command should scan the requested scope broadly and emit evidence-backed findings across categories. Confidence, category, profile, baseline, and priority decide presentation and action pressure; they should not erase valid findings up front merely because the finding is local, optional, or not architectural.
 6. **Rule authoring is a product surface:** The feature is only maintainable if adding a rule means using stable typed facts and reusable queries, not hand-parsing raw graph nodes or reimplementing AST walks.
@@ -66,8 +67,8 @@ This feature also matters for agent workflows. Agents can already make broad ref
 - This RFC does not make a similarity score, inferred peer membership, or outlier classification an architectural finding by itself.
 - This RFC does not allow an exploratory baseline to fail CI by default, silently update itself from a scan, or promote an observed pattern into a deterministic rule automatically.
 - This RFC does not require every possible maintainability rule or risk signal to ship in the first version.
-- This RFC does not define automatic rewrites or apply fixes.
-- This RFC does not decide whether a reported finding should be fixed in the current change. That is a separate user, CI, or fix-loop policy decision.
+- This RFC does not define automatic rewrites or apply fixes. Automatic rewrites are defined by RFC 127 as `incan architect --fix`, which applies the catalog's `fix`-mode entries and nothing else, under RFC 127's contract for that mode. (Amended by RFC 127.)
+- This RFC does not decide whether a reported finding should be fixed in the current change. Detecting a finding and deciding to fix it remain separate decisions; the second is RFC 127's fix policy, taken per invocation by `--fix` and per rule by `fix = false` in `[incan.lints]`. (Amended by RFC 127.)
 - This RFC does not define a public plugin ABI for third-party binary rule packages.
 - This RFC does not require every codegraph fact to be part of a permanently stable external schema in the first release; only the JSON findings format and documented command behavior need v0.5 stability.
 
@@ -197,7 +198,7 @@ The command should provide `--profile` with at least `architecture`, `safety`, `
 
 ### Finding model
 
-Every finding must have a stable rule code. Rule codes must be namespaced by category.
+Every finding must have a stable rule code and a category-qualified name. The qualified name is RFC 127's qualified name, derived from the entry's group and never authored by users; the stable code is a separate field, allocated in RFC 127's `INCAN-L` family for new entries and retained for an entry promoted from an existing diagnostic. The names below are qualified names. (Amended by RFC 127.)
 
 ```text
 arch.repeated_match_dispatch
@@ -314,7 +315,7 @@ Risk rules may consume optional process facts such as git churn, ownership, co-c
 
 ### Suppression and baselining
 
-The command should support local suppression of a specific rule at a specific source location. Suppression syntax is unresolved by this draft.
+The command should support local suppression of a specific rule at a specific source location. The suppression syntax is RFC 127's: `@allow("rule", reason="…")` on a declaration or in the module position, and `[incan.lints.per-file-allow]` for paths. (Amended by RFC 127.)
 
 The command should support project baselines so existing findings can be recorded and new findings can fail CI or be highlighted separately. Baseline storage is unresolved by this draft.
 
@@ -374,7 +375,7 @@ This is the fastest way to add a first rule and the worst way to maintain many r
 
 ### Make findings auto-fixable from the start
 
-Some findings will eventually support safe rewrites, such as compound assignment candidates. Making fixes part of the first version would expand the scope into formatter, semantic preservation, and edit application. The first version should focus on reliable findings and stable output.
+Some findings will eventually support safe rewrites, such as compound assignment candidates. Making fixes part of the first version would expand the scope into formatter, semantic preservation, and edit application. The first version should focus on reliable findings and stable output. RFC 127 takes that expansion on as a separate mode with its own contract: `incan architect --fix` applies `fix`-mode catalog entries, which are syntax-decidable, meaning-preserving in every configuration, idempotent, and structure-preserving, formats its output, and re-evaluates it; the rejection here stands for this RFC's own scope. (Amended by RFC 127.)
 
 ## Drawbacks
 
@@ -416,8 +417,9 @@ Experimental peer-baseline analysis is a later consumer of the same fact and que
 
 ## Unresolved questions
 
+**Answered by RFC 127.** The suppression question this draft carried ("What suppression syntax should Incan use for architect findings, and should it share vocabulary with compiler diagnostic suppressions?") is answered there: `@allow("rule", reason="…")` on declarations and in the module position, and `[incan.lints.per-file-allow]` for paths; the vocabulary is RFC 057's `@rust.allow(...)` in shape and not in names, and compiler errors and contract diagnostics are not suppressible, so there is no diagnostic-suppression vocabulary to share. The questions below remain open.
+
 - What is the default profile for `incan architect .`: architecture-only, architecture plus safety, or all stable rules?
-- What suppression syntax should Incan use for architect findings, and should it share vocabulary with compiler diagnostic suppressions?
 - Should baselines live in a typed `loaf.toml` table, a separate versioned baseline artifact, or generated project-tooling state? They must not be folded into `oven.lock` merely because a project uses Oven.
 - Where should peer-group metadata live, and which membership or boundary declarations belong in source, package metadata, or local tooling state?
 - Which peer-signature facts are stable and useful enough to expose without turning names, paths, or aggregate similarity into semantic authority?
