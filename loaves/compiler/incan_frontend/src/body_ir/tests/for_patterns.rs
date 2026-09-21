@@ -47,7 +47,7 @@ fn build_with_nested_for_pattern(
 /// Build a Body IR module from `source` after rewriting its first `for x in ...:` header into a two-name tuple
 /// pattern **after** typechecking, leaving the recorded item type as the original non-tuple element type.
 ///
-/// This reaches lowering's defence-in-depth path directly: the typechecker rejects such a program
+/// This reaches lowering's defense-in-depth path directly: the typechecker rejects such a program
 /// (`for_pattern_expects_tuple_item`), so no ordinary `build` could ever produce this state, yet lowering must
 /// still refuse rather than project `.0`/`.1` out of a value with no such fields.
 fn build_with_for_pattern_widened_after_typecheck(
@@ -398,7 +398,7 @@ fn a_tuple_for_pattern_over_a_mismatched_arity_item_type_is_a_type_error() -> Re
 
 #[test]
 fn lowering_fails_closed_on_a_tuple_pattern_whose_item_type_is_not_a_tuple() -> Result<(), Box<dyn std::error::Error>> {
-    // Defence in depth for the same P1: the typechecker rejects this program, so lowering should only ever see
+    // Defense in depth for the same P1: the typechecker rejects this program, so lowering should only ever see
     // it from a hand-built AST -- and must refuse rather than project `.0`/`.1` out of an `int`.
     let source = "def total(items: list[int]) -> int:\n  for value in items:\n    pass\n  return 0\n";
     let module = build_with_for_pattern_widened_after_typecheck(source, &["m", "fail_closed_for"])?;

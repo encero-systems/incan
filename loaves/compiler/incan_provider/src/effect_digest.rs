@@ -20,13 +20,13 @@
 //!
 //! Every component links against the standard library facets, thousands of lines of Rust runtime. A digest that folded
 //! only `.incn` meaning would report a hit for an edit to that runtime, which is a false reuse of a component whose
-//! behaviour changed. The Rust half is therefore mandatory rather than an enhancement, and it is folded here beside the
+//! behavior changed. The Rust half is therefore mandatory rather than an enhancement, and it is folded here beside the
 //! Incan half.
 //!
 //! # The transitional input, and when to remove it
 //!
 //! Today the compiler still lowers to Rust and emits it, so a change confined to lowering or emission alters
-//! generated output without moving any HIR. Two of this programme's own defects had exactly that shape. Until
+//! generated output without moving any HIR. Two of this program's own defects had exactly that shape. Until
 //! emission is gone, a digest over HIR alone would be a false hit for such a change, so the backend's own sources
 //! are folded in as a narrow, explicitly transitional input — narrow enough to exclude the rest of the compiler,
 //! and removed with the backend rather than maintained forever.
@@ -37,7 +37,7 @@
 //! # The caller names the Rust roots
 //!
 //! Which Rust trees reach a compiled component is a property of the compiler's layout, not of digesting, so the
-//! caller supplies them as labelled roots rather than this module hard-coding three. A root is labelled so the
+//! caller supplies them as labeled roots rather than this module hard-coding three. A root is labeled so the
 //! hash distinguishes the same bytes arriving under a different role, and the labels are folded in the order
 //! given, which the caller keeps stable.
 
@@ -218,7 +218,7 @@ pub const COMPILER_STDLIB_ROOT: &str = "loaves/stdlib";
 /// Lowering and emission are the transitional entries. They change generated Rust without moving any HIR, so until
 /// direct-HIR lands their source is folded: `loaves/compiler/incan_ir` and `loaves/compiler/incan_emit` since the
 /// layout rewrite moved them out of `src/backend`, and the rest of that backend (the generated-project shape and the
-/// shadow comparison, now `loaves/compiler/incan_driver/src/backend`) with them. They are labelled apart from the
+/// shadow comparison, now `loaves/compiler/incan_driver/src/backend`) with them. They are labeled apart from the
 /// runtime crates for that reason, and they are removed with the backend rather than maintained. A root that stops
 /// existing fails the digest rather than silently narrowing it, so a move has to update this list.
 pub const COMPILER_RUST_EFFECT_ROOTS: &[(&str, &str)] = &[
@@ -314,7 +314,7 @@ fn fold_incan_meaning(hasher: &mut Sha256, root: &Path) -> Result<(), EffectDige
     Ok(())
 }
 
-/// Fold the token-level content of each labelled Rust root.
+/// Fold the token-level content of each labeled Rust root.
 fn fold_rust_roots(hasher: &mut Sha256, rust_roots: &[(&str, &Path)]) -> Result<(), EffectDigestError> {
     for (label, root) in rust_roots {
         update_delimited(hasher, b"rust-root");
@@ -431,7 +431,7 @@ pub fn component_effect_digests(
         );
     }
 
-    // `closure_digests` already labels each digest `sha256:`; re-labelling here doubled the prefix.
+    // `closure_digests` already labels each digest `sha256:`; re-labeling here doubled the prefix.
     Ok(closure_digests(&nodes).into_iter().collect())
 }
 

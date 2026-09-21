@@ -55,7 +55,7 @@ pub fn freeze_const_type(ty: ResolvedType) -> ResolvedType {
 /// Whether a const annotation names a mutable builtin container (`list`, `dict`, `set`) that
 /// [`freeze_const_type`] would silently retype.
 ///
-/// This is the one family of const annotations that cannot be honoured: the frozen wrapper a const actually has does
+/// This is the one family of const annotations that cannot be honored: the frozen wrapper a const actually has does
 /// not read where the mutable container is expected, unlike `str`/`bytes`, whose frozen forms are accepted wherever
 /// the plain type is. Such an annotation is rejected at the declaration (#1488) rather than left to fail at its
 /// first use site. Reads the collection registry, as [`freeze_const_type`] does, so the two cannot drift.

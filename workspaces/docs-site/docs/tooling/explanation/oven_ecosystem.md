@@ -16,7 +16,7 @@ This page is a map, not a specification. Each box names the RFC that owns it, an
 <div class="inc-oven-map__scroll">
 <svg class="inc-oven-map__svg" viewBox="0 0 1320 1500" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="oven-map-title oven-map-desc">
       <title id="oven-map-title">The Oven Ecosystem</title>
-      <desc id="oven-map-desc">A five-tier architecture map. An authored project — two language facets, a lifecycle layer and one manifest — feeds Oven's resolver and unit graph, which draw on SDK components and an optional Cargo compatibility mode. A plan of units and identities reaches the compiler service, which exposes the Incan facet provider API back up to the unit graph and emits Rust to a direct rustc executor; that executor compiles units and seals each as a Loaf — payload, plan, identity and receipt in one immutable artifact — which a content-addressed store keeps and hands back to any later plan with the same identity. The store materialises linked outputs, and publishes the source Loaf with attested assets to the incan.pub registry, which admits assets back only on exact unit identity, projects an artifact graph, and is copied by mirrors, while crates.io is consumed as source only. Two command surfaces, incan and oven, sit beneath, with delegation running one way from incan down to oven.</desc>
+      <desc id="oven-map-desc">A five-tier architecture map. An authored project — two language facets, a lifecycle layer and one manifest — feeds Oven's resolver and unit graph, which draw on SDK components and an optional Cargo compatibility mode. A plan of units and identities reaches the compiler service, which exposes the Incan facet provider API back up to the unit graph and emits Rust to a direct rustc executor; that executor compiles units and seals each as a Loaf — payload, plan, identity and receipt in one immutable artifact — which a content-addressed store keeps and hands back to any later plan with the same identity. The store materializes linked outputs, and publishes the source Loaf with attested assets to the incan.pub registry, which admits assets back only on exact unit identity, projects an artifact graph, and is copied by mirrors, while crates.io is consumed as source only. Two command surfaces, incan and oven, sit beneath, with delegation running one way from incan down to oven.</desc>
       <defs>
         <marker id="oven-map-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#c1c8d0"/></marker>
         <marker id="oven-map-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#48f0ef"/></marker>
@@ -104,7 +104,7 @@ This page is a map, not a specification. Each box names the RFC that owns it, an
       <!-- N11 store -> N12 outputs -->
       <path class="e" d="M 920,776 V 828 Q 920,836 912,836 H 840"/>
       <rect class="mask" x="842" y="818" width="72" height="12" rx="2"/>
-      <text class="al" x="878" y="827" text-anchor="middle">MATERIALISES</text>
+      <text class="al" x="878" y="827" text-anchor="middle">MATERIALIZES</text>
       <!-- N10b Loaf -> N14 incan.pub: publication ships the source Loaf plus its attested
        baked assets - never the linked outputs. -->
       <path class="e" d="M 680,760 H 672 Q 664,760 664,768 V 780 a 8,8 0 0,0 0,16 V 936 Q 664,944 672,944 H 892 Q 900,944 900,952"/>

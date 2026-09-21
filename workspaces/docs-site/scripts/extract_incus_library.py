@@ -2,7 +2,7 @@
 """Extract the archived Incus contact sheets into normalized UI sprites.
 
 The source sheets are JPEG exports whose visible checkerboard is baked into the
-pixels.  This script therefore uses a conservative colour matte, fills enclosed
+pixels.  This script therefore uses a conservative color matte, fills enclosed
 light regions (mugs, paper, and similar props), trims the result, and writes
 small alpha WebP assets for the docs runtime.
 """
@@ -143,25 +143,25 @@ def matte_alpha(image: Image.Image) -> Image.Image:
         x = index % width
         y = index // width
         if x:
-            neighbour = index - 1
-            if transparent[neighbour] and not exterior[neighbour]:
-                exterior[neighbour] = 1
-                queue.append(neighbour)
+            neighbor = index - 1
+            if transparent[neighbor] and not exterior[neighbor]:
+                exterior[neighbor] = 1
+                queue.append(neighbor)
         if x + 1 < width:
-            neighbour = index + 1
-            if transparent[neighbour] and not exterior[neighbour]:
-                exterior[neighbour] = 1
-                queue.append(neighbour)
+            neighbor = index + 1
+            if transparent[neighbor] and not exterior[neighbor]:
+                exterior[neighbor] = 1
+                queue.append(neighbor)
         if y:
-            neighbour = index - width
-            if transparent[neighbour] and not exterior[neighbour]:
-                exterior[neighbour] = 1
-                queue.append(neighbour)
+            neighbor = index - width
+            if transparent[neighbor] and not exterior[neighbor]:
+                exterior[neighbor] = 1
+                queue.append(neighbor)
         if y + 1 < height:
-            neighbour = index + width
-            if transparent[neighbour] and not exterior[neighbour]:
-                exterior[neighbour] = 1
-                queue.append(neighbour)
+            neighbor = index + width
+            if transparent[neighbor] and not exterior[neighbor]:
+                exterior[neighbor] = 1
+                queue.append(neighbor)
 
     for index, is_transparent in enumerate(transparent):
         if is_transparent and not exterior[index]:

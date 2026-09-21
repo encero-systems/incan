@@ -369,7 +369,7 @@ pub fn publisher_registry_leaf_catalog(
                 .transpose()?;
             // A procedural macro is a host dynamic library rustc loads while compiling its consumer; every other
             // registry unit is a Rust library archive, compiled for the target or, when a macro depends on it, for
-            // the build host. Each is sealed as its own leaf, labelled by domain and kind, so the catalog keeps a
+            // the build host. Each is sealed as its own leaf, labeled by domain and kind, so the catalog keeps a
             // package's host and target compilations apart instead of dropping one.
             let proc_macro = artifact.target.kind.iter().any(|kind| kind == "proc-macro");
             let crate_kind = if proc_macro {

@@ -778,7 +778,7 @@ fn manifest_io_round_trip_preserves_enum_traits_and_methods() -> Result<(), Box<
     manifest.exports.enums.push(EnumExport {
         name: "Status".to_string(),
         type_params: Vec::new(),
-        traits: vec!["Labelled".to_string()],
+        traits: vec!["Labeled".to_string()],
         trait_adoptions: Vec::new(),
         value_type: None,
         ordinal_type_identity: None,

@@ -346,9 +346,9 @@ fn lower_fixture_source(
         .check_program(&program)
         .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
 
-    // Admission is projected from the checked provider manifest, never hand-filled here. #1213 made the catalogue
+    // Admission is projected from the checked provider manifest, never hand-filled here. #1213 made the catalog
     // private for exactly this reason: a test that registers its own entry would prove the executor works on a
-    // catalogue no producer could actually have published, which is the handwritten module exception #1156 exists
+    // catalog no producer could actually have published, which is the handwritten module exception #1156 exists
     // to rule out. This shares the builder with #1213's own tests so both layers exercise one admission path.
     let capability = checker
         .type_info()
@@ -551,7 +551,7 @@ fn an_allowed_provider_operation_executes_and_references_its_operation_receipt()
 // Runtime-requirement propagation is deliberately not asserted here, and the reason is upstream rather than a
 // gap in this executor. `@provider_operation` currently records `runtime_requirements: Vec::new()`, so a checked
 // provider manifest publishes none and every plan carries an empty list. A test could only pass by hand-injecting
-// a requirement into the catalogue -- the handwritten exception #1213's rework closed off -- or by asserting an
+// a requirement into the catalog -- the handwritten exception #1213's rework closed off -- or by asserting an
 // empty list flows through to an empty list, which asserts nothing. Neither is worth shipping. Once the
 // declaration side derives requirements, propagation belongs back here as a real assertion.
 
@@ -958,7 +958,7 @@ fn a_run_without_a_provider_runtime_refuses_visibly() -> TestResult {
 // mint a plan, so the executor can no longer be handed one — see
 // `loaves/compiler/incan_frontend/src/body_ir/tests/provider_plans.rs`'s "corrupt provider metadata whose authority is
 // not a capability is rejected before lowering can mint a plan". Reconstructing it here would mean hand-filling a
-// catalogue no producer could publish, which is exactly what that rework closed off.
+// catalog no producer could publish, which is exactly what that rework closed off.
 
 // ============================================================================
 // Evidence identity

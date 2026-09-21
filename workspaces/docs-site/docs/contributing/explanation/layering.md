@@ -103,9 +103,9 @@ We want one “source of truth” for language behavior so the compiler and runt
 - Must not become a backchannel for compiler logic.
 - Web macro/runtime glue is transitional until the web surface has a stable long-term ownership model.
 
-**The compiler ring (`incan_frontend`, `incan_ir`, `incan_emit`, `incan_driver` and their neighbours)**:
+**The compiler ring (`incan_frontend`, `incan_ir`, `incan_emit`, `incan_driver` and their neighbors)**:
 
-- Typing (`incan_frontend`), lowering (`incan_ir`), codegen (`incan_emit`), formatting (`incan_format`), provider and SDK contracts (`incan_provider`), and the build session that drives them (`incan_driver`); diagnostics are catalogued in `incan_syntax`.
+- Typing (`incan_frontend`), lowering (`incan_ir`), codegen (`incan_emit`), formatting (`incan_format`), provider and SDK contracts (`incan_provider`), and the build session that drives them (`incan_driver`); diagnostics are cataloged in `incan_syntax`.
 - May use stable contract crates to implement checks/const-eval and to keep error text aligned, and the oven ring to plan and run builds.
 - Must not use runtime-only crates in normal builds; only `incan_std_core` as a dev-dependency for parity tests.
 

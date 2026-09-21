@@ -95,7 +95,7 @@ pub fn digest_dependency_specs(
 /// The provider facts Oven asks the compiler for instead of reading them itself.
 ///
 /// The compat publisher stages the compiler's SDK provider tree and rewrites the staged providers' dependency
-/// digests; a dependency digest has to recognise a packaged Incan provider by its sealed artifact. Both are facts
+/// digests; a dependency digest has to recognize a packaged Incan provider by its sealed artifact. Both are facts
 /// about Incan packages, so the compiler implements this and hands it in with every request that needs it; the Oven
 /// ring names no compiler crate.
 pub trait OvenProviderHooks: Send + Sync {
@@ -1263,7 +1263,7 @@ fn digest_generated_source_file(path: &Path) -> Result<String, OvenError> {
         })
 }
 
-/// Hash the workspace source and fixture closure that determines the repository's native test-suite behaviour.
+/// Hash the workspace source and fixture closure that determines the repository's native test-suite behavior.
 ///
 /// Oven deliberately excludes caller outputs such as `.incan` and `target`: those are neither compiler source nor test
 /// fixtures, and allowing them into the receipt would make a successful test run invalidate its own stored suite. Every

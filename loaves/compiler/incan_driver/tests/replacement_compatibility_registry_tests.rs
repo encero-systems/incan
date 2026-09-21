@@ -301,7 +301,7 @@ fn joined_projection_is_deterministic_and_exposes_the_callable_boundary() -> Res
 
     let projection = render_developer_projection(&baseline, &registry)?;
     assert!(projection.contains("# Replacement compatibility inventory"));
-    assert!(projection.contains("not a permanent second language-feature catalogue"));
+    assert!(projection.contains("not a permanent second language-feature catalog"));
     assert!(projection.contains("## Collector assembly and bootstrap retirement"));
     assert!(projection.contains("`frontend.body-ir.callable-values` | LocalImplementation"));
     assert!(projection.contains("`replacement-compatibility.migration-bootstrap` | MigrationBootstrap"));

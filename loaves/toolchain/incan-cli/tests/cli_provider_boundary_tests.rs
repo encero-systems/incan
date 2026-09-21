@@ -1079,7 +1079,7 @@ def test_loaded_entries_keep_checked_description_shape() -> None:
 }
 
 #[test]
-fn imported_registry_descriptions_keep_the_catalogue_as_canonical_authority_issue1004()
+fn imported_registry_descriptions_keep_the_catalog_as_canonical_authority_issue1004()
 -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "imported_registry_description", "")?;
