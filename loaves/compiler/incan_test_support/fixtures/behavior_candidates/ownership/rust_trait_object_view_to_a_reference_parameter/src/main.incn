@@ -1,0 +1,18 @@
+# behavior: a Rust trait object behind a shared pointer is viewed through as_ref and handed to a Rust function taking the trait object by reference, twice
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_external_function_as_ref_arg_does_not_double_borrow
+# expect-stdout:
+#   3
+#   3
+
+# UNVERIFIED CANDIDATE: not executed; a `rust::` path dependency needs a Rust inspection bake, which launches Cargo.
+# The expected lines are reasoned from the program and the crate: `make()` holds three elements, `as_ref()` already
+# yields the `&dyn Array` that `count` takes, so a second `&` would refuse the program at the Rust build. Rows stay
+# open until a Cargo-free bake serves `rust::` under the suite.
+
+from rust::tiny_arrow import count, make
+
+
+def main() -> None:
+    array = make()
+    println(f"{count(array.as_ref())}")
+    println(f"{count(array.as_ref())}")

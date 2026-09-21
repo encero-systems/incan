@@ -1,0 +1,19 @@
+# behavior: the mutable Rust value a Rust callback lends to a closure is forwarded to an Incan function declaring its parameter mut, and the changes that function makes are seen by the host after each call
+# retires: loaves/compiler/incan_emit/src/ownership.rs::mutable_source_param_forwards_borrowed_rust_callback_value
+# expect-stdout:
+#   11
+
+# UNVERIFIED CANDIDATE: not executed; a `rust::` path dependency needs a Rust inspection bake, which launches Cargo.
+# The expected line is reasoned from the program and the crate: the host starts its counter at 1 and calls the
+# closure twice, `paint` adds 5 each time. A copy of the lent value, rather than the value itself, would leave the
+# host at 1. Rows stay open until a Cargo-free bake serves `rust::` under the suite.
+
+from rust::tiny_ui import Ui, with_ui
+
+
+def paint(mut ui: Ui) -> None:
+    ui.n = ui.n + 5
+
+
+def main() -> None:
+    println(with_ui((ui) => paint(ui)))

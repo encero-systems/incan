@@ -1,4 +1,4 @@
-# behavior: private helpers that only read a Rust tree value walk it from a field, from a parameter, through a helper chain and through a cursor without copying the tree (the crate's clone counter stays at 0), an explicit clone counts once, a child taken as an owned value counts once, a snapshot taken before the owner is replaced counts the copies the replacement needs, and a tree handed to functions declared over a reference, to a returned callable and to a walk over a reference parameter adds nothing
+# behavior: private helpers that only read a Rust tree value walk it from a field, from a parameter, through a helper chain and through a cursor without copying the tree (the crate's clone counter stays at 0); an explicit clone counts once; a child taken as an owned value counts its subtree; a snapshot taken before the owner is replaced counts the whole tree; a tree handed to functions declared over a reference, to a returned callable, to a trait default's callable, to a returned cursor, to a helper that clears it and to a walk over a reference parameter adds nothing; and a helper handed the same tree twice costs one copy of it
 # retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::inferred_traversal_compiles_and_runs_without_any_tree_clones
 # retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::private_enum_classifier_infers_shared_parameter
 # retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::private_classifier_borrow_flows_through_a_helper
@@ -11,6 +11,10 @@
 # retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::unrelated_return_lifetime_does_not_authorize_cursor_assignment
 # retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::explicit_reference_local_borrows_a_field_without_cloning
 # retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::opaque_rust_child_reassignment_does_not_add_a_second_borrow
+# retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::overlapping_call_arguments_keep_the_owned_helper_abi
+# retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::escaping_cursor_keeps_its_owned_value
+# retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::mutating_pattern_payload_keeps_the_owned_parameter
+# retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::callback_in_a_trait_default_keeps_the_owned_abi
 # retires: loaves/compiler/incan_emit/src/conversions.rs::reference_assignment_targets_take_precedence_over_owned_field_materialization
 # retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_call_borrows_noncopy_var_for_ref_target
 # retires: loaves/compiler/incan_emit/src/conversions.rs::test_return_call_context_borrows_noncopy_var_for_ref_target
@@ -21,16 +25,20 @@
 #   ref local true clones 0
 #   walk true clones 0
 #   selected true clones 1
-#   owned child true clones 2
-#   snapshot false replaced true clones 5
-#   ref param true true clones 5
-#   ref traverse true clones 5
-#   callback true clones 5
+#   owned child true clones 3
+#   snapshot false replaced true clones 6
+#   ref param true true clones 6
+#   ref traverse true clones 6
+#   callback true clones 6
+#   pair true clones 9
+#   select true clones 9
+#   clear 0 clones 9
+#   trait callback true clones 9
 
-# UNVERIFIED CANDIDATE: a `rust::` path dependency needs a Rust inspection bake that launches Cargo, which is ruled out on
-# the machine that wrote it; the program and the counts through `snapshot` transcribe the retired test's own consumer assertions
-# (observe 0, Reader.select 1, Holder.snapshot +3), the others follow from the crate. Rows stay open until a
-# Cargo-free bake serves `rust::` under the suite.
+# UNVERIFIED CANDIDATE: not executed; a `rust::` path dependency needs a Rust inspection bake, which launches Cargo.
+# The expected lines are reasoned from the program and the crate: `Clone for Item` counts one per node it copies
+# (`document()` is three nodes, its `project` child two, an integer leaf one); the derivation of every count is in
+# the README beside this project. Rows stay open until a Cargo-free bake serves `rust::` under the suite.
 
 from rust::borrow_fixture import Item, clones, document
 
@@ -68,8 +76,21 @@ pub def check_ref(item: Item) -> bool:
     return is_table_ref(item)
 
 
+def is_table_callback(item: Item) -> bool:
+    return item.is_table()
+
+
 pub def callback() -> Callable[Item, bool]:
-    return is_table
+    return is_table_callback
+
+
+pub trait Factory:
+    def callback(self) -> Callable[Item, bool]:
+        return is_table_callback
+
+
+pub class Maker with Factory:
+    name: str
 
 
 pub def traverse_ref(item: &Item, keys: list[str]) -> bool:
@@ -87,6 +108,28 @@ def take_child(item: Item, key: str) -> bool:
         Some(child) => current = child
         None => return false
     return current.is_table()
+
+
+def classify_pair(item: Item, other: Item) -> bool:
+    return item.is_table() and other.is_table()
+
+
+pub def observe_pair(item: Item) -> bool:
+    return classify_pair(item, item)
+
+
+def select_owned(item: Item) -> Item:
+    mut current = item
+    if current.is_table():
+        return current
+    current = Item.Integer(0)
+    return current
+
+
+def clear(item: Item) -> str:
+    mut current = item
+    current.clear()
+    return f"{current.child_count()}"
 
 
 pub class Reader:
@@ -155,3 +198,11 @@ def main() -> None:
     chosen = callback()
     called = chosen(document())
     println(f"callback {called} clones {clones()}")
+    paired = observe_pair(document())
+    println(f"pair {paired} clones {clones()}")
+    kept = select_owned(document())
+    println(f"select {kept.is_table()} clones {clones()}")
+    println(f"clear {clear(document())} clones {clones()}")
+    maker = Maker(name="maker")
+    from_default = maker.callback()
+    println(f"trait callback {from_default(document())} clones {clones()}")

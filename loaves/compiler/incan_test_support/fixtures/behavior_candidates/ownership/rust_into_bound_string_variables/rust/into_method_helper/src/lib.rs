@@ -11,10 +11,6 @@ impl Tokenizer {
     /// Convert `input` into a `String`, upper-cased when asked.
     pub fn encode<E: Into<String>>(&self, input: E, uppercase: bool) -> String {
         let text = input.into();
-        if uppercase {
-            text.to_uppercase()
-        } else {
-            text
-        }
+        if uppercase { text.to_uppercase() } else { text }
     }
 }

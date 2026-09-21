@@ -38,6 +38,21 @@ impl Item {
     pub fn span(&self) -> Option<usize> {
         Some(0)
     }
+
+    /// How many children a table holds; an integer leaf holds none.
+    pub fn child_count(&self) -> usize {
+        match self {
+            Self::Table(items) => items.len(),
+            Self::Integer(_) => 0,
+        }
+    }
+
+    /// Drop every child of a table in place; an integer leaf is left as it is.
+    pub fn clear(&mut self) {
+        if let Self::Table(items) = self {
+            items.clear();
+        }
+    }
 }
 
 impl Clone for Item {

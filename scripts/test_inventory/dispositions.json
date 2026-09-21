@@ -1183,7 +1183,7 @@
       "twin": "",
       "split_required": true,
       "split_target": "",
-      "notes": "Rust conversion policy (to_string/borrow/clone plans) for emission; every test drives `determine_conversion` on synthetic IR. Twinned by the ownership_* behaviour fixtures and re-point interop programs per test; the metadata-free (target-less) branches and the token renderers die; `rust::` programs are parked as candidates.",
+      "notes": "Rust conversion policy (to_string/borrow/clone plans) for emission; every test drives `determine_conversion` on synthetic IR. Twinned by the ownership_* behaviour fixtures and re-point interop programs per test; `rust::` programs are parked as candidates; the token renderers and the unspellable `Unknown` states die.",
       "tests": {
         "exact_float_arithmetic_plans_keep_width_and_validate_each_result": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_numerics_and_bounds/exact_float_arithmetic_keeps_its_width.incn",
@@ -1199,11 +1199,11 @@
         },
         "reference_assignment_targets_take_precedence_over_owned_field_materialization": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`Holder.view`: a field assigned to a local declared `&Item`, zero copies counted); a local declared with `&` is refused for Incan-native types, so only the Rust-typed form exists; the `&mut` and plain-typed target arms follow the same program; waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`Holder.view`: a field assigned to a local declared `&Item`, zero copies counted); a local declared with `&` is refused for Incan-native types, so only the Rust-typed form exists; the `&mut` and plain-typed target arms follow the same program; waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "string_addition_recognizes_canonical_rust_string_metadata_issue896": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_string_concatenation.incn` (the #896 library with a main: a str extended with a Rust `String` result and two results joined); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_string_concatenation.incn` (the #896 library with a main: a str extended with a Rust `String` result and two results joined); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "test_apply_borrow": {
           "twin": "dies",
@@ -1227,11 +1227,11 @@
         },
         "test_assignment_clones_interop_unwrapped_string_field": {
           "twin": "",
-          "notes": "needs a `rusttype` wrapper over a crate struct with a `String` field, read into a local while the wrapper stays intact; no candidate written (rusttype programs over crates belong with #1337's `rust::` spec in slice 7, where the reviewer of #1701 noted no runtime rusttype test exists)."
+          "notes": "needs a `rusttype` wrapper over a crate struct with a `String` field, read into a local while the wrapper stays intact; no candidate written: `rusttype` programs over crates belong with the `rust::` specification (#1337), and no runtime `rusttype` test exists in the tree to re-point at."
         },
         "test_assignment_does_not_assume_opaque_rust_value_is_clone": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_value_assigned_to_a_new_name.incn` (a Rust `Stdin`, which cannot be copied, assigned to a second name and used through it); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_value_assigned_to_a_new_name.incn` (a Rust `Stdin`, which cannot be copied, assigned to a second name and used through it); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "test_assignment_frozen_str_var_to_string": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_string_boundaries/frozen_strings_at_parameters_fields_and_collections.incn",
@@ -1258,8 +1258,8 @@
           "notes": "twinned by a program that returns a literal, a str const, a str static and an int from functions and assigns a literal, a const and a static to locals, printing each."
         },
         "test_external_function_as_ref_arg_does_not_double_borrow": {
-          "twin": "dies",
-          "dies": "the program needs an Arrow-shaped crate exposing `Arc<dyn Array>` receivers and `&dyn Array` parameters; none is available offline and no test in the tree runs one (the trait-object argument passing that does run, `rust_trait_object_method_arguments_borrow_by_metadata_issue832`, hands values over, not `.as_ref()` results)."
+          "twin": "",
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_trait_object_view_to_a_reference_parameter/` (an `Arc<dyn Array>` from an in-fixture crate viewed through `as_ref()` and handed to a Rust function over `&dyn Array`, twice; a second `&` would refuse the program at the Rust build); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "test_external_function_as_slice_arg_does_not_double_borrow": {
           "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
@@ -1267,47 +1267,47 @@
         },
         "test_external_function_field_with_by_value_target_does_not_borrow": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_duration_fields_to_rust_parameters.incn` (a Rust `Duration` field handed to `saturating_add`, still readable afterwards); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_duration_fields_to_rust_parameters.incn` (a Rust `Duration` field handed to `saturating_add`, still readable afterwards); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "test_external_function_field_with_ref_target_borrows": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_duration_fields_to_rust_parameters.incn` (a Rust `Duration` field handed to `eq`); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_duration_fields_to_rust_parameters.incn` (a Rust `Duration` field handed to `eq`); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "test_external_function_int_no_conversion": {
-          "twin": "dies",
-          "dies": "the target-less branch of the external-argument policy runs only when the Rust signature is absent; a runnable `rust::` program carries the signature (Rust inspection is part of its bake) and takes the typed branches, which are twinned (an int to a Rust constructor: `rust_trait_object_method_arguments_borrow_by_metadata_issue832`'s `InterleavedOwned.new(input_frames)`)."
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::rust_trait_object_method_arguments_borrow_by_metadata_issue832",
+          "notes": "twinned by the re-point program that hands a `usize` local to a Rust constructor (`InterleavedOwned.new(input_frames)`) and runs; a scalar passes as it is. The metadata-free branch the test drives is where the policy lands without a Rust signature; the value's passing is what the program shows."
         },
         "test_external_function_known_field_without_target_does_not_guess_borrow": {
-          "twin": "dies",
-          "dies": "the target-less branch of the external-argument policy runs only when the Rust signature is absent; a runnable `rust::` program carries the signature (Rust inspection is part of its bake) and takes the typed branches, which are twinned (a Rust `Duration` field to a Rust parameter: the parked candidate `rust_duration_fields_to_rust_parameters.incn`)."
+          "twin": "",
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_duration_fields_to_rust_parameters.incn` (a Rust `Duration` field handed to `saturating_add` by value, still readable afterwards; the same program as the two typed-target rows); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "test_external_function_self_field_without_target_borrows_noncopy_receiver_field": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/channel_ends_unpacked_and_sent_through_a_wrapper.incn",
-          "notes": "twinned by a program that unpacks a channel into its two ends, sends two values through the sender wrapper and receives them in order. The stdlib `Sender` wrapper sends through its inner Rust value from methods taking self, twice, and is asked whether it is closed afterwards; the metadata-free branch of the policy is what the stdlib's own compile relies on."
+          "notes": "twinned by a program that unpacks a channel into its two ends, sends two values through the sender wrapper and receives them in order. The stdlib `Sender` wrapper sends through its inner Rust value from methods taking self, twice, and is asked whether it is closed afterwards: the field is lent, never moved out of the receiver, which is what the test protects."
         },
         "test_external_function_string_expression_to_str_ref_borrows_issue716": {
           "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::build_inline_fstring_rust_interop_variants_issue716",
           "notes": "twinned by the re-point program that hands inline and local f-strings to a Rust function taking `&str` and to a Rust enum variant holding a `String` (#716); the target-less half of the retired test is the metadata-free branch, which a runnable program does not take."
         },
         "test_external_function_string_field_without_target_borrows_like_string_variable": {
-          "twin": "dies",
-          "dies": "the target-less branch of the external-argument policy runs only when the Rust signature is absent; a runnable `rust::` program carries the signature (Rust inspection is part of its bake) and takes the typed branches, which are twinned."
+          "twin": "",
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_string_parameters_by_value_and_in_a_field/` (`describe(label.0)`: a newtype's str field lent to a Rust function taking `&str`, the field readable afterwards); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "test_external_function_string_literal": {
-          "twin": "dies",
-          "dies": "the target-less branch of the external-argument policy runs only when the Rust signature is absent; a runnable `rust::` program carries the signature (Rust inspection is part of its bake) and takes the typed branches, which are twinned (a literal to an Into-bound method: `rust_method_into_bound_keeps_string_argument_inferable_issue804`)."
+          "twin": "",
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_string_parameters_by_value_and_in_a_field/` (`shout(\"literal\")`: a str literal to a Rust function taking a `String`); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "test_external_function_string_method_call_result_unknown_target_stays_owned_issue1066": {
-          "twin": "dies",
-          "dies": "the target-less branch of the external-argument policy runs only when the Rust signature is absent; a runnable `rust::` program carries the signature (Rust inspection is part of its bake) and takes the typed branches, which are twinned; the #1066 program (`word.to_string()` as a `HashMap::insert` key) carries the key type once inspected."
+          "twin": "",
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_string_parameters_by_value_and_in_a_field/` (`shout(name.upper())`: a str method result handed to a Rust function taking a `String` passes by value, the variable it was made from still readable); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "test_external_function_string_var_borrow": {
-          "twin": "dies",
-          "dies": "the target-less branch of the external-argument policy runs only when the Rust signature is absent; a runnable `rust::` program carries the signature (Rust inspection is part of its bake) and takes the typed branches, which are twinned (a str variable to a Rust `&str`: `build_inline_fstring_rust_interop_variants_issue716`)."
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::build_inline_fstring_rust_interop_variants_issue716",
+          "notes": "twinned by the re-point program whose `fail_local` hands a str local to `raise_value_error(&str)` and builds; the local is lent. The metadata-free branch the test drives is where the policy lands without a Rust signature; the lend is what the program shows."
         },
         "test_external_function_string_var_with_by_value_target_does_not_borrow": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_string_parameters_by_value_and_in_a_field/` (a str variable to a Rust function taking `String` by value, still usable afterwards); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_string_parameters_by_value_and_in_a_field/` (a str variable to a Rust function taking `String` by value, still usable afterwards); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "test_external_function_unknown_field_without_target_keeps_adapter_borrow_fallback": {
           "twin": "dies",
@@ -1319,23 +1319,23 @@
         },
         "test_incan_call_borrows_noncopy_var_for_ref_target": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`is_table_ref(document())`: a Rust value handed to a function whose parameter is declared `&Item`, zero copies counted); a `&Model` parameter is refused for Incan-native arguments, so only the Rust-typed form exists; waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`is_table_ref(document())`: a Rust value handed to a function whose parameter is declared `&Item`, zero copies counted); a `&Model` parameter is refused for Incan-native arguments, so only the Rust-typed form exists; waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "test_incan_call_clones_borrowed_as_ref_result_for_owned_nominal_target": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_box_as_ref_argument.incn` (a `Box.as_ref()` view handed to a function taking the value, twice, box still usable); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_box_as_ref_argument.incn` (a `Box.as_ref()` view handed to a function taking the value, twice, box still usable); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "test_incan_call_clones_borrowed_as_ref_result_when_target_is_unknown": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_box_as_ref_argument.incn`; the target-less variant is the same call before the callee's signature is known; waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_box_as_ref_argument.incn`; the target-less variant is the same call before the callee's signature is known; waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "test_incan_call_clones_erased_receiver_as_ref_result_for_owned_nominal_target": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_box_as_ref_argument.incn`; waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_box_as_ref_argument.incn`; waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "test_incan_call_clones_erased_receiver_as_ref_result_when_target_is_unknown": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_box_as_ref_argument.incn`; an erased receiver is the same box before its type is known; waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_box_as_ref_argument.incn`; an erased receiver is the same box before its type is known; waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "test_incan_call_clones_interop_unwrapped_as_ref_result_when_target_is_unknown": {
           "twin": "dies",
@@ -1347,7 +1347,7 @@
         },
         "test_incan_call_moves_owned_mutable_rust_handle": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_handle_moved_into_a_mut_parameter.incn` (a Rust `Stdout` handed to an Incan `mut` parameter); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_handle_moved_into_a_mut_parameter.incn` (a Rust `Stdout` handed to an Incan `mut` parameter); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "test_incan_call_skips_clone_for_mutable_list_param_issue244": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/mutable_list_parameter_changes_reach_the_caller.incn",
@@ -1395,7 +1395,7 @@
         },
         "test_incan_function_rust_path_value_to_string_param": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_error_value_to_a_str_parameter.incn` (a Rust `io::Error` handed to a str parameter prints its message); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_error_value_to_a_str_parameter.incn` (a Rust `io::Error` handed to a str parameter prints its message); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "test_incan_function_static_read_int_to_generic_stays_as_is": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_string_boundaries/const_and_static_strings_to_parameters.incn",
@@ -1443,7 +1443,7 @@
         },
         "test_return_call_context_borrows_noncopy_var_for_ref_target": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`check_ref`: the same call inside a return); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`check_ref`: the same call inside a return); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "test_return_call_context_frozen_str_target_preserves_frozen_literal": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_string_boundaries/frozen_strings_at_parameters_fields_and_collections.incn",
@@ -1487,7 +1487,7 @@
         },
         "test_struct_field_string_literal_to_rust_string_target": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_string_parameters_by_value_and_in_a_field/` (a str literal into a Rust struct's `String` field, beside the const the re-point `build_static_str_const_rust_string_struct_field` already builds); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_string_parameters_by_value_and_in_a_field/` (a str literal into a Rust struct's `String` field, beside the const the re-point `build_static_str_const_rust_string_struct_field` already builds); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "test_struct_field_string_var_no_conversion": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_string_boundaries/model_fields_from_literals_and_variables.incn",
@@ -1621,7 +1621,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter-side ownership and argument plans (borrow/clone/move for generated Rust) on synthetic IR. Twinned by the ownership_* behaviour fixtures and re-point interop programs per test; metadata-free fallbacks and the `egui` callback shape die; `rust::` programs are parked as candidates.",
+      "notes": "emitter-side ownership and argument plans (borrow/clone/move for generated Rust) on synthetic IR. Twinned by the ownership_* behaviour fixtures and re-point interop programs per test; `rust::` programs are parked as candidates; the unspellable item and receiver types die.",
       "tests": {
         "argument_plan_checked_c_borrow_skips_owned_value_materialization": {
           "twin": "loaves/toolchain/incan-cli/tests/rfc031_pub_import_integration_tests.rs::consumer_check_hides_owned_c_resources_behind_an_incan_facade",
@@ -1645,7 +1645,7 @@
         },
         "argument_plan_external_buf_param_lends_incan_bytes_as_slice": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_buf_parameter_from_bytes/` (an Incan bytes value to a Rust `impl Buf` parameter, still usable afterwards); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_buf_parameter_from_bytes/` (an Incan bytes value to a Rust `impl Buf` parameter, still usable afterwards); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "argument_plan_external_buf_param_lends_rust_vec_u8_as_slice": {
           "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
@@ -1653,11 +1653,11 @@
         },
         "argument_plan_external_inferred_generic_moved_string_stays_direct": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_into_bound_string_variables/` (the same variable at its last use); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_into_bound_string_variables/` (the same variable at its last use); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "argument_plan_external_inferred_generic_read_string_clones": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_into_bound_string_variables/` (the #804 crate; a str variable encoded twice and printed afterwards); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_into_bound_string_variables/` (the #804 crate; a str variable encoded twice and printed afterwards); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "argument_plan_external_inferred_generic_string_literal_stays_direct": {
           "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::rust_method_into_bound_keeps_string_argument_inferable_issue804",
@@ -1665,11 +1665,11 @@
         },
         "argument_plan_external_list_element_into_is_value_plan": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_list_elements_converted_into_a_vec/` (a `list[str]` to a Rust `Vec<Name>` with `Name: From<String>`); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_list_elements_converted_into_a_vec/` (a `list[str]` to a Rust `Vec<Name>` with `Name: From<String>`); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "argument_plan_external_list_element_into_skips_empty_list_literals": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_list_elements_converted_into_a_vec/` (`total_length([])`); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_list_elements_converted_into_a_vec/` (`total_length([])`); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "argument_plan_external_list_element_into_skips_unresolved_source_elements": {
           "twin": "dies",
@@ -1704,8 +1704,8 @@
           "notes": "twinned by a program that probes and updates str- and int-keyed dicts through mut parameters, reuses a str probe, and builds a dict comprehension keyed by strings."
         },
         "external_call_string_var_borrows": {
-          "twin": "dies",
-          "dies": "the target-less branch of the external-argument policy runs only when the Rust signature is absent; a runnable `rust::` program carries the signature (Rust inspection is part of its bake) and takes the typed branches, which are twinned."
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::build_inline_fstring_rust_interop_variants_issue716",
+          "notes": "twinned by the re-point program whose `fail_local` hands a str local to `raise_value_error(&str)` and builds; the local is lent. The `&s` spelling dies with #654."
         },
         "filtered_list_comprehension_uses_filter_map_clone_plan": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/comprehensions_and_list_constructor_sources.incn",
@@ -1748,16 +1748,16 @@
           "notes": "twinned by a program that appends through a mut list parameter directly and through a forwarding helper, then searches and measures the caller's list."
         },
         "mutable_ref_comprehension_item_does_not_use_copied_plan": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/comprehensions_and_list_constructor_sources.incn",
-          "notes": "twinned by a program with filtered and plain comprehensions over lists, a comprehension over a mut list parameter, and list() over a list, a mut parameter, a str, a frozen list, a frozen set and a dict. The comprehension runs over a mut list parameter after an append."
+          "twin": "dies",
+          "dies": "a `RefMut(int)` comprehension item type is a list whose elements are `&mut int`, which no source spells; the comprehension over a mut list parameter strips the reference from the iterable and iterates `int` items, the copied plan that `copy_list_comprehension_uses_copy_iteration_plans` twins."
         },
         "mutable_source_param_forwards_borrowed_rust_callback_value": {
-          "twin": "dies",
-          "dies": "the value is an `egui::Ui` callback parameter forwarded to an Incan `mut ui: Ui` parameter; `egui` is not available offline and no program in the tree forwards a Rust callback parameter this way (the `&mut` callback parameters of `rust_generic_interop_scenarios_share_one_project` are used in place)."
+          "twin": "",
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_callback_parameter_forwarded_to_a_mut_parameter/` (an in-fixture crate lends a mutable `Ui` to a closure twice; the closure forwards it to `def paint(mut ui: Ui)` and the host prints the count both calls changed); the `egui::Ui` of the retired test is the crate's `Ui` here; waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "opaque_comprehension_sources_are_consumed_by_value": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_values_and_fields/generator_sources_consumed_and_reused.incn",
-          "notes": "twinned by a program with generator expressions over a list read again afterwards, a list at its last use and a one-shot literal, plus a comprehension over a generator variable, printing what each yields. The Rust-iterator arms (a call returning `std::env::Args`, and a reused parameter holding one) are run by the re-point `cli_rust_interop_tests.rs::comprehension_over_rust_iterator_consumes_it_by_value_issue1490`; the fixture covers the generator variable, the list and the plain collections."
+          "notes": "twinned by a program with generator expressions over a list read again afterwards, a list at its last use and a one-shot literal, plus a comprehension over a generator variable at its last use, printing what each yields. The Rust-iterator arms (a call returning `std::env::Args`, and a reused parameter holding one) are run by the re-point `cli_rust_interop_tests.rs::comprehension_over_rust_iterator_consumes_it_by_value_issue1490`. The clone arm (a generator variable read again after the comprehension) is not written: the generator runtime type (`incan_std_core::iter::Generator`) has no `Clone`, so the clone that arm plans would be refused at the Rust build."
         },
         "owned_iterator_source_clones_reused_list_var": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_values_and_fields/generator_sources_consumed_and_reused.incn",
@@ -1801,7 +1801,7 @@
         },
         "rust_string_buffer_detection_is_owned_string_only": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_string_concatenation.incn`, whose concatenations select the string-aware lowering by the Rust `String` spelling; the spelling table itself dies with #654; waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_string_concatenation.incn`, whose concatenations select the string-aware lowering by the Rust `String` spelling; the spelling table itself dies with #654; waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         }
       }
     },
@@ -1883,23 +1883,23 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "infers Rust trait bounds for generated generics. Twinned by the ownership_numerics_and_bounds fixtures (a bound is proved by the program running for concrete types); the metadata-free, legacy-encoding and conservative-fallback tests die; the implementation-bound test is open on a route gap.",
+      "notes": "infers Rust trait bounds for generated generics. Twinned by the ownership_numerics_and_bounds fixtures (a bound is proved by the program running for concrete types); the absent-bound tests are open on a candidate that instantiates a non-`Clone` Rust type; the metadata-free, legacy-encoding and conservative-fallback tests die; the implementation-bound tests are open on the #1280 route gap.",
       "tests": {
         "backend_clone_bounds_do_not_use_incan_policy_for_external_nominal_methods": {
           "twin": "dies",
-          "dies": "the absence of a bound is observable only by handing a non-copyable generic argument to a Rust-crate method; every Incan nominal type is copyable and no program in the tree does this over a crate. The Incan-defined-method half is twinned by `ownership_numerics_and_bounds/generic_values_reused_across_calls.incn`."
+          "dies": "the absence of the bound is observable only by a generic function handing a non-`Clone` Rust value to a Rust-crate method that reads it, and such a method's own generic bound would have to reach the Incan caller first (the #1280 family), so no program is written for it. The Incan-defined-method half is twinned by `ownership_numerics_and_bounds/generic_values_reused_across_calls.incn`; the absent-bound shapes over Incan callees are open on `generic_functions_over_a_non_clone_rust_value.incn`."
         },
         "backend_clone_bounds_use_incan_policy_for_source_owned_methods": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_numerics_and_bounds/generic_values_reused_across_calls.incn",
           "notes": "twinned by a program that passes a generic value to a method twice from a generic function and passes a wrapper's generic field to a generic function while still reading the wrapper. The method returns what it was given so both results are printed; a method whose body formats the value would hit a route gap (an inferred method bound is not carried to a generic caller; bug pending)."
         },
         "clone_dependencies_exclude_callable_signatures_and_concrete_values": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_numerics_and_bounds/generic_functions_reuse_callables_models_and_payloads.incn",
-          "notes": "twinned by a program of generic functions that call a callable twice, reuse a str beside a type parameter, copy a concrete model, return self from a generic method and return a field or a loop item inside Ok, all run with concrete arguments. Every Incan nominal type is copyable, so an absent bound is not observable; the program proves the callable, the str and the list of callables are usable twice."
+          "twin": "",
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/generic_functions_over_a_non_clone_rust_value.incn` (`call_both` calls its callable twice and `label_twice` copies a str beside `T`, both instantiated with a Rust `Stdin`, which has no `Clone`; an over-inferred `T: Clone` would refuse the program at the Rust build). The same shapes run with copyable arguments in `loaves/compiler/incan_test_support/fixtures/behavior/ownership_numerics_and_bounds/generic_functions_reuse_callables_models_and_payloads.incn`, which proves nothing about an absent bound; waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "concrete_nominal_clone_does_not_bind_enclosing_generic_parameters": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_numerics_and_bounds/generic_functions_reuse_callables_models_and_payloads.incn",
-          "notes": "twinned by a program of generic functions that call a callable twice, reuse a str beside a type parameter, copy a concrete model, return self from a generic method and return a field or a loop item inside Ok, all run with concrete arguments. Observable only as the program running for two unrelated type parameters."
+          "twin": "",
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/generic_functions_over_a_non_clone_rust_value.incn` (`copy_algorithm[T, U]` copies a concrete model beside two type parameters both instantiated with a `Stdin`; a bound leaking onto either would refuse the program at the Rust build); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "erased_clone_dependencies_retain_conservative_bounds": {
           "twin": "dies",
@@ -1910,8 +1910,8 @@
           "notes": "twinned by a module program whose own non-generic `timeout` runs beside a helper module declaring a generic `timeout`. The helper module's generic `timeout` is compiled with the program; the local one keeps its plain signature."
         },
         "external_implementation_bounds_propagate_through_checked_trait_dispatch": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_numerics_and_bounds/fallible_iteration_over_a_reader_from_a_generic_function.incn",
-          "notes": "twinned by a program whose generic function iterates the fallible chunk stream of a BytesIO reader through the stdlib's FallibleIterator adoption. `ReaderChunks[R with BinaryReader]` adopts `FallibleIterator` in `std.io`, an implementation outside the program; the generic caller iterates it."
+          "twin": "",
+          "notes": "route gap, the #1280 family: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/fallible_iteration_over_reader_chunks_from_a_bare_generic.incn` (`count_chunks[R](chunks: ReaderChunks[R])`, no bound of its own, iterates the stdlib's `FallibleIterator` adoption of `ReaderChunks[R with BinaryReader]`); the retired test asserts the implementation's bound reaches the bare generic caller, and a caller that writes the bound itself runs whether or not it does. Not executed; lands when a generic caller inherits the implementation's bound, or as an `expect-diagnostic` fixture if the checker is made to refuse the bare parameter."
         },
         "generic_value_field_reflection_methods_infer_field_value_bound": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_numerics_and_bounds/reflection_over_a_generic_value.incn",
@@ -1923,7 +1923,7 @@
         },
         "implementation_bound_matching_is_canonical_and_instantiation_exact": {
           "twin": "",
-          "notes": "route gap: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/bounds_from_a_generic_model_implementation.incn` is accepted by `incan check` and refused by rustc (a declared model bound `R with Clone` and the impl-inferred Display bound are not carried to the generic caller `consume[T](stream: Stream[T])`, E0277/E0599; bug pending). The negative half (a different module or instantiation inherits nothing) has no observable."
+          "notes": "route gap: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/bounds_from_a_generic_model_implementation.incn` is accepted by `incan check` and refused by rustc (a declared model bound `R with Clone` and the impl-inferred Display bound are not carried to the generic caller `consume[T](stream: Stream[T])`, E0277/E0599; the #1280 family). The negative half (a different module or instantiation inherits nothing) has no observable."
         },
         "nominally_encoded_generic_clone_binds_only_the_matching_parameter": {
           "twin": "dies",
@@ -1931,19 +1931,19 @@
         },
         "opaque_nominal_clone_in_impl_context_preserves_owner_bounds": {
           "twin": "dies",
-          "dies": "a conservative bound on the impl's type parameter added when a nominal type used inside the impl does not carry its type arguments; every Incan program satisfies it, so no run can observe it."
+          "dies": "the conservative `T: Clone` this test asserts is observable only as the Rust build refusing an instantiation with a non-`Clone` Rust type, and a refusal at the Rust build is not a fixture observable (`expect-diagnostic` is a check-time refusal); the four rows that assert an absent bound are open on a program that builds with such a type, `generic_functions_over_a_non_clone_rust_value.incn`."
         },
         "repeated_clone_dependency_does_not_add_unrelated_parameters": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_numerics_and_bounds/generic_functions_reuse_callables_models_and_payloads.incn",
-          "notes": "twinned by a program of generic functions that call a callable twice, reuse a str beside a type parameter, copy a concrete model, return self from a generic method and return a field or a loop item inside Ok, all run with concrete arguments. Observable only as the program running for two type parameters."
+          "twin": "",
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/generic_functions_over_a_non_clone_rust_value.incn` (`repeat_first[T, U]` copies its `T` value twice, so `T: Clone` is already inferred, and is instantiated with a `Stdin` at `U`; a bound leaking onto `U` would refuse the program at the Rust build); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "result_payload_bounds_follow_the_struct_field_plan": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_numerics_and_bounds/generic_functions_reuse_callables_models_and_payloads.incn",
           "notes": "twinned by a program of generic functions that call a callable twice, reuse a str beside a type parameter, copy a concrete model, return self from a generic method and return a field or a loop item inside Ok, all run with concrete arguments. `unwrap` returns a field of a last-use local inside Ok; `find` returns a loop item inside Ok (#1489)."
         },
         "self_clone_binds_no_callable_own_parameters": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_numerics_and_bounds/generic_functions_reuse_callables_models_and_payloads.incn",
-          "notes": "twinned by a program of generic functions that call a callable twice, reuse a str beside a type parameter, copy a concrete model, return self from a generic method and return a field or a loop item inside Ok, all run with concrete arguments. `Codec.duplicate[T]` returns self and the receiver is read afterwards (#1489)."
+          "twin": "",
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/generic_functions_over_a_non_clone_rust_value.incn` (`Codec.duplicate[T]` returns self, the receiver is read afterwards, and `T` is instantiated with a `Stdin`; a bound on the method's own `T` would refuse the program at the Rust build, #1489); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         }
       }
     },
@@ -2077,15 +2077,15 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "implicit borrowing (#1455) asserted on generated Rust over `rust::toml_edit`/`rust::demo` programs. The `rust::demo` programs and the uncallable `&T` reassignment programs die; the `toml_edit` programs are open on the clone-counting candidate project; two pure-Incan shapes are twinned by fixtures.",
+      "notes": "implicit borrowing (#1455) asserted on generated Rust over `rust::toml_edit`/`rust::demo` programs. The uncallable `&T` reassignment programs and the unknown-contract program die; the `toml_edit` and `demo` programs are open on the clone-counting candidate project; two pure-Incan shapes are twinned by fixtures.",
       "tests": {
         "borrowed_reassignment_preserves_reference_shape_without_clone_bound": {
           "twin": "dies",
           "dies": "`replace[T](first: &T, second: &T)` cannot be called from Incan source (a value where `&T` is expected is refused), so the body is unreachable; its assertions (`current=second;`, no `T:Clone`) are Rust spellings."
         },
         "callback_in_a_trait_default_keeps_the_owned_abi": {
-          "twin": "dies",
-          "dies": "the program imports `rust::demo`, a crate that exists nowhere; the trait-default callback decline is a Rust signature spelling with no runnable program."
+          "twin": "",
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`Factory.callback`, a trait default, returns `is_table_callback`; a model adopting the trait hands the callable a fresh tree with no copy counted); the `rust::demo` crate of the retired test is the fixture's counting crate here; waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "comprehension_shadowing_does_not_rewrite_an_unrelated_binding": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_values_and_fields/comprehension_binding_shadowing_a_parameter.incn",
@@ -2093,47 +2093,47 @@
         },
         "crate_visible_helpers_keep_owned_entry_points_and_borrow_local_calls": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`Holder.observe` over a private helper, counter at 0); the `__incan_std` module context and the shared-function name it asserts are Rust spellings that die with #654; waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`Holder.observe` over a private helper, counter at 0); the `__incan_std` module context and the shared-function name it asserts are Rust spellings that die with #654; waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "escaping_classifier_keeps_its_callable_abi": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`callback()` returns `is_table` and the returned callable is called on a fresh tree); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`callback()` returns `is_table_callback`, a classifier that only escapes, and the returned callable is called on a fresh tree with no copy counted; the classifier the direct calls lend to is a separate function, since one function cannot keep both ABIs); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "escaping_cursor_keeps_its_owned_value": {
-          "twin": "dies",
-          "dies": "the program imports `rust::demo`, a crate that exists nowhere; the escaping-cursor decline is a Rust signature spelling with no runnable program."
+          "twin": "",
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`select_owned` returns its cursor; the returned cursor is an escape, so the parameter and the cursor stay owned and the tree moves through with no copy counted); the `rust::demo` crate of the retired test is the fixture's counting crate here; waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "explicit_reference_local_borrows_a_field_without_cloning": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`Holder.view`: `current: &Item = self.item`, counter at 0); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`Holder.view`: `current: &Item = self.item`, counter at 0); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "inferred_method_helper_preserves_owned_public_abi": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`Reader.select`/`read`: a method walking a parameter through a cursor, one counted copy for its explicit clone); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`Reader.select`/`read`: a method walking a parameter through a cursor, one counted copy for its explicit clone); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "inferred_traversal_compiles_and_runs_without_any_tree_clones": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (the retired test's program and clone-counting crate as a project fixture with a `[rust-dependencies]` path crate; the counts through `snapshot` are the test's own consumer assertions); waits for a Cargo-free bake of a `rust::` path dependency under the suite; not executed here."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (the retired test's program and clone-counting crate as a project fixture with a `[rust-dependencies]` path crate; its consumer's counts, `observe` 0, `Reader.read` 1, `Holder.snapshot` +3, are the first three counts of the fixture, and the README beside it derives the rest); waits for a Cargo-free bake of a `rust::` path dependency under the suite; not executed."
         },
         "inline_tree_cursor_borrows_a_field_without_annotations": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`Holder.walk` starts its cursor from `self.item`, counter at 0); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`Holder.walk` starts its cursor from `self.item`, counter at 0); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "later_owner_mutation_preserves_the_cursor_snapshot": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`Holder.snapshot` keeps the tree it read before replacing the field; the replacement's copies are counted); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`Holder.snapshot` keeps the tree it read before replacing the field; the three counted copies are the whole tree the read materializes); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "mutating_pattern_payload_keeps_the_owned_parameter": {
-          "twin": "dies",
-          "dies": "the program imports `rust::demo`, a crate that exists nowhere; the mutating-payload decline is a Rust signature spelling with no runnable program."
+          "twin": "",
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`clear` calls the crate's `clear(&mut self)` on its cursor, then reports zero children with no copy counted; a mutating receiver contract keeps the parameter owned). The retired test mutates through a match payload whose Rust map type has no Incan spelling, so the mutation is a `&mut self` method on the cursor instead; the `rust::demo` crate of the retired test is the fixture's counting crate here; waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "opaque_rust_child_reassignment_does_not_add_a_second_borrow": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`traverse_ref(item: &Item, ...)` reassigns its cursor to each `get` child, counter at 0); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`traverse_ref(item: &Item, ...)` reassigns its cursor to each `get` child, counter at 0); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "overlapping_call_arguments_keep_the_owned_helper_abi": {
-          "twin": "dies",
-          "dies": "the program imports `rust::demo`, a crate that exists nowhere; the overlapping-argument decline is a Rust signature spelling with no runnable program."
+          "twin": "",
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`observe_pair` calls `classify_pair(item, item)`; overlapping arguments keep the helper's owned parameters, so the first `item`, not at its last use, is copied whole: three counts, one tree); the `rust::demo` crate of the retired test is the fixture's counting crate here; waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "owned_reassignment_materializes_a_borrowed_generic_and_infers_clone_bound": {
           "twin": "dies",
@@ -2145,15 +2145,15 @@
         },
         "private_classifier_borrow_flows_through_a_helper": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`inspect` -> `classify` -> `is_table` with the counter at 0); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`inspect` -> `classify` -> `is_table` with the counter at 0); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "private_enum_classifier_infers_shared_parameter": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`Holder.observe` calls `is_table(self.item)`; the counter stays at 0, which is the only observable of `!self.item.clone()`); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`Holder.observe` calls `is_table(self.item)`; the counter stays at 0, which is the only observable of `!self.item.clone()`); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "proven_receiver_child_infers_a_borrowed_helper_and_cursor": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`observe`/`traverse` walk `get` children through a cursor with the counter at 0, the crate's real receiver contracts standing in for the test's synthetic ones); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`observe`/`traverse` walk `get` children through a cursor with the counter at 0, the crate's real receiver contracts standing in for the test's synthetic ones); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         },
         "unknown_rust_receiver_does_not_authorize_borrowing": {
           "twin": "dies",
@@ -2161,7 +2161,7 @@
         },
         "unrelated_return_lifetime_does_not_authorize_cursor_assignment": {
           "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`take_child` assigns the child value that `child()` returns, one counted copy); waits for a Cargo-free bake that serves `rust::` under the suite (harness-deps Q1); the candidate was not executed here (a `rust::` inspection bake launches Cargo, which is ruled out on this machine) and its expected lines are reasoned from the program."
+          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/` (`take_child` assigns the owned child that `child()` returns; the two counted copies are that child's subtree, the cursor stays owned); waits for a Cargo-free bake that serves `rust::` under the suite; not executed; expected lines reasoned from the program."
         }
       }
     },

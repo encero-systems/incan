@@ -1,0 +1,30 @@
+# behavior: a generic function that declares no bound iterates the fallible chunk stream of a binary reader it is handed and reports each chunk's length
+# retires: loaves/compiler/incan_emit/src/trait_bound_inference.rs::external_implementation_bounds_propagate_through_checked_trait_dispatch
+# expect-stdout:
+#   2
+#   2
+#   1
+#   3 chunks
+
+# ROUTE GAP CANDIDATE (the #1280 family): `ReaderChunks[R with BinaryReader]` adopts `FallibleIterator` in `std.io`, an
+# implementation outside this program, and `count_chunks` names `R` with no bound of its own; the retired test asserts
+# that the implementation's bound reaches the generic caller. With the bound written on `count_chunks` the program runs
+# whether or not that happens, so that spelling is not its twin. Not executed. Lands in `ownership_numerics_and_bounds/`
+# when a generic caller inherits the implementation's bound (#1280), or becomes an `expect-diagnostic` fixture if the
+# checker is made to refuse the bare parameter instead.
+
+from std.io import BytesIO, IoError, ReaderChunks
+
+
+def count_chunks[R](chunks: ReaderChunks[R]) -> Result[int, IoError]:
+    mut count = 0
+    for chunk in chunks?:
+        println(len(chunk))
+        count += 1
+    return Ok(count)
+
+
+def main() -> None:
+    match count_chunks(BytesIO(b"abcde").chunks(2)):
+        Ok(count) => println(f"{count} chunks")
+        Err(error) => println(f"error {error.kind}")

@@ -1,7 +1,6 @@
 # behavior: filtered and plain comprehensions over lists of strings and ints, a comprehension over a mut list parameter, and list() over a list, a mut parameter, a str, a frozen list, a frozen set and a dict each produce the expected items while their sources stay intact
 # retires: loaves/compiler/incan_emit/src/ownership.rs::filtered_list_comprehension_uses_filter_map_clone_plan
 # retires: loaves/compiler/incan_emit/src/ownership.rs::copy_list_comprehension_uses_copy_iteration_plans
-# retires: loaves/compiler/incan_emit/src/ownership.rs::mutable_ref_comprehension_item_does_not_use_copied_plan
 # retires: loaves/compiler/incan_emit/src/ownership.rs::list_constructor_source_plans_follow_loop_iteration
 # expect-stdout:
 #   ["ab", "def"] 3
