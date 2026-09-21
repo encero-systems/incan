@@ -1654,7 +1654,7 @@ def main() -> int:
         .primary_span()
         .ok_or("sibling refusal must retain a source span")?;
     assert_eq!(span.start, expected_start);
-    assert!(error.to_string().contains("`unsafe:` acknowledgement region"));
+    assert!(error.to_string().contains("`unsafe:` acknowledgment region"));
     Ok(())
 }
 
@@ -3827,7 +3827,7 @@ def main() -> int:
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        combined.contains("`unsafe:` acknowledgement region") && combined.contains("original Incan source span"),
+        combined.contains("`unsafe:` acknowledgment region") && combined.contains("original Incan source span"),
         "the sibling refusal must preserve its direct profile boundary: {combined}"
     );
     assert!(

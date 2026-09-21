@@ -556,7 +556,7 @@ impl<'a> Parser<'a> {
         )
     }
 
-    /// Return whether the current tokens form the contextual `unsafe:` acknowledgement block.
+    /// Return whether the current tokens form the contextual `unsafe:` acknowledgment block.
     ///
     /// `unsafe` remains available as an identifier; requiring a newline after the colon keeps typed assignments
     /// such as `unsafe: int = value` outside this grammar form.
@@ -867,7 +867,7 @@ impl<'a> Parser<'a> {
         Ok(Statement::For(ForStmt { pattern, iter, body }))
     }
 
-    /// Parse an `unsafe:` acknowledgement region without introducing a new local scope.
+    /// Parse an `unsafe:` acknowledgment region without introducing a new local scope.
     fn unsafe_stmt(&mut self) -> Result<Statement, CompileError> {
         self.advance();
         self.expect(

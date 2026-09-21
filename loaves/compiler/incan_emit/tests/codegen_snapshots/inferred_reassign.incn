@@ -27,7 +27,7 @@ def reassign_in_if() -> int:
     return status
 
 # An entrypoint, so codegen emits the functions above. Without one, `try_generate` produced only the module
-# header and the snapshot captured none of the reassignment behaviour it exists to pin.
+# header and the snapshot captured none of the reassignment behavior it exists to pin.
 
 def main() -> None:
     println(bump())

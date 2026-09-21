@@ -3524,12 +3524,12 @@ pub model Order:
         let source = r#"
 pub const DEFAULT_LABEL = "none"
 
-pub trait Labelled:
+pub trait Labeled:
     def label(self) -> str: ...
 
 
 @derive(Clone)
-pub model Order with Labelled:
+pub model Order with Labeled:
     """
     Order contract.
     """
@@ -3562,9 +3562,9 @@ pub model Order with Labelled:
             })
             .ok_or_else(|| "expected model metadata".to_string())?;
         assert_eq!(model.docstring.as_deref().map(str::trim), Some("Order contract."));
-        assert_eq!(model.traits, vec!["Labelled".to_string()]);
+        assert_eq!(model.traits, vec!["Labeled".to_string()]);
         assert_eq!(model.trait_adoptions.len(), 1);
-        assert_eq!(model.trait_adoptions[0].name, "Labelled");
+        assert_eq!(model.trait_adoptions[0].name, "Labeled");
         assert_eq!(
             model.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>(),
             vec!["id", "fallback_label"]

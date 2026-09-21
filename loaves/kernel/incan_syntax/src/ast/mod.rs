@@ -1,7 +1,7 @@
 //! Abstract Syntax Tree definitions for Incan
 //!
 //! This module defines all AST node types for the Incan language, following the grammar defined in our RFCs. The types
-//! are organised into submodules by language component; everything is re-exported here so callers can continue to use
+//! are organized into submodules by language component; everything is re-exported here so callers can continue to use
 //! `use incan_syntax::ast::*`.
 
 mod core;

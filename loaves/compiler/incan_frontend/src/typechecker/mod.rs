@@ -434,7 +434,7 @@ pub struct TypeChecker {
     pub await_operand_span: Option<(usize, usize)>,
     /// Nesting depth for expressions being checked as call arguments.
     pub call_argument_depth: usize,
-    /// Nesting depth of explicit `unsafe:` acknowledgement blocks.
+    /// Nesting depth of explicit `unsafe:` acknowledgment blocks.
     pub unsafe_depth: usize,
     /// Expression spans where type-like identifiers are valid namespace/type owners.
     pub type_receiver_spans: Vec<(usize, usize)>,
@@ -494,7 +494,7 @@ pub struct TypeChecker {
     /// Whether the active expression is the initializer of a `RegistryEntry[K, T]` module static.
     ///
     /// RFC 113 admits `Registry.entry(...)` only in this declaration context. Keeping the context explicit prevents a
-    /// runtime call from masquerading as a complete compiler-checked catalogue entry.
+    /// runtime call from masquerading as a complete compiler-checked catalog entry.
     pub checking_registry_entry_static_initializer: bool,
     /// Whether the active expression is a callable parameter default before an invocation frame exists.
     ///
@@ -1896,7 +1896,7 @@ impl TypeChecker {
     /// Lifetimes and formatting whitespace are removed, except the single space that follows a `dyn` or `impl`
     /// token: that space is what distinguishes a trait object (`dyn Trait`) from an ordinary path, and generic
     /// arguments are split from this string, so dropping it turns the `T` of `Arc<dyn Trait>` into `dynTrait`. Every
-    /// route that compacts a display must go through here; when parameters and arguments were normalised by
+    /// route that compacts a display must go through here; when parameters and arguments were normalized by
     /// different routes, `Arc<dyn TableProvider>` stopped matching itself (#1229).
     fn compact_rust_display(rust_ty: &str) -> String {
         let display = Self::rust_display_without_lifetimes(rust_ty);

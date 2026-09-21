@@ -1456,7 +1456,7 @@ mod tests {
     fn registry_selector_accepts_package_qualified_and_module_local_identities() {
         let candidate = RegistryInspectionCandidate {
             package: Some(CheckedRegistryPackageIdentity {
-                name: "catalogue".to_string(),
+                name: "catalog".to_string(),
                 version: Some("1.0.0".to_string()),
             }),
             registry: CheckedRegistryDefinition {
@@ -1473,10 +1473,10 @@ mod tests {
 
         assert!(registry_identity_matches(&candidate, "feature::functions"));
         assert!(registry_identity_matches(&candidate, "feature.functions"));
-        assert!(registry_identity_matches(&candidate, "catalogue::feature::functions"));
-        assert!(registry_identity_matches(&candidate, "catalogue.feature.functions"));
+        assert!(registry_identity_matches(&candidate, "catalog::feature::functions"));
+        assert!(registry_identity_matches(&candidate, "catalog.feature.functions"));
         assert!(!registry_identity_matches(&candidate, "other::feature::functions"));
-        assert_eq!(registry_candidate_selector(&candidate), "catalogue::feature::functions");
+        assert_eq!(registry_candidate_selector(&candidate), "catalog::feature::functions");
     }
 
     #[test]
@@ -1487,7 +1487,7 @@ mod tests {
         assert!(!entries.is_empty());
         assert!(entries.iter().any(|entry| {
             entry.id == "StdRegistry"
-                && entry.name == "`std.registry` typed declaration catalogues"
+                && entry.name == "`std.registry` typed declaration catalogs"
                 && entry.references.iter().any(|(label, _)| label == "RFC 113")
         }));
         assert!(entries.iter().any(|entry| {
@@ -1510,7 +1510,7 @@ mod tests {
         let output = output_dir.path().join("feature_inventory.md");
         write_feature_inventory_reference_from_source(&source, &output)?;
         let rendered = fs::read_to_string(output)?;
-        assert!(rendered.contains("`std.registry` typed declaration catalogues"));
+        assert!(rendered.contains("`std.registry` typed declaration catalogs"));
         assert!(rendered.contains("Workspace and multi-package projects"));
         assert!(rendered.contains("Compiled providers, SDK components, and package features"));
         assert!(rendered.contains("Fallible iteration and combinators"));

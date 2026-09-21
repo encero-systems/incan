@@ -5,7 +5,7 @@
 //! This crate is a dev-dependency of every ring whose integration tests launch the compiler or read the checkout, so a
 //! root can live in the package it exercises and still share one harness. It links ring crates only; the parity
 //! corpus's two helpers (`parity_corpus`, `shadow_capability`) live beside the driver's roots, which are the only ones
-//! that use them. The behaviour-fixture family (`fixtures/behavior/`, run by `behavior_fixtures`) is the route-agnostic
+//! that use them. The behavior-fixture family (`fixtures/behavior/`, run by `behavior_fixtures`) is the route-agnostic
 //! twin corpus of the #1561 cutover.
 
 pub mod behavior_fixtures;
@@ -166,10 +166,10 @@ pub fn incan_command() -> Command {
     command
 }
 
-/// Strip SGR escape sequences so an assertion can match diagnostic text rather than its colouring.
+/// Strip SGR escape sequences so an assertion can match diagnostic text rather than its coloring.
 ///
-/// Incan colours CLI diagnostics whenever the child inherits a terminal, and CI runners differ on whether they do.
-/// Tests assert on the text, so they decolour first instead of depending on the runner's terminal detection.
+/// Incan colors CLI diagnostics whenever the child inherits a terminal, and CI runners differ on whether they do.
+/// Tests assert on the text, so they decolor first instead of depending on the runner's terminal detection.
 pub fn strip_ansi_escapes(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();

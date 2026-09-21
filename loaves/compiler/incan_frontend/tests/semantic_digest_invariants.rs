@@ -1,4 +1,4 @@
-//! Behavioural invariants for the semantic digest.
+//! Behavioral invariants for the semantic digest.
 //!
 //! These are the acceptance contract from RFC 106, asserted at **declaration granularity**. That granularity is
 //! deliberate and was learned the hard way: an implementation leaking traversal order still moves the digest of the
@@ -243,7 +243,7 @@ fn changing_a_body_moves_only_that_declaration() -> TestResult {
 /// the old identity disappears and a new one appears.
 ///
 /// For invalidation that is exactly right; both are "changed". For a consumer tracing one declaration across
-/// versions it is a real limitation, and it is the price of separating overloads. This test pins the behaviour so
+/// versions it is a real limitation, and it is the price of separating overloads. This test pins the behavior so
 /// the trade-off is visible rather than discovered.
 #[test]
 fn changing_a_signature_replaces_the_identity_and_leaves_siblings_alone() -> TestResult {

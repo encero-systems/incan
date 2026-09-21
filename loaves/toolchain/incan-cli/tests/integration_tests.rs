@@ -5966,10 +5966,10 @@ def main() -> None:
                 "run",
                 "-c",
                 r#"
-trait Labelled:
+trait Labeled:
     def label(self) -> str: ...
 
-enum Signal with Labelled:
+enum Signal with Labeled:
     Start
     Stop
 
@@ -5981,11 +5981,11 @@ enum Signal with Labelled:
     def default() -> Self:
         return Signal.Start
 
-def keep_labelled[T with Labelled](value: T) -> T:
+def keep_labeled[T with Labeled](value: T) -> T:
     return value
 
 def main() -> None:
-    signal = keep_labelled(Signal.default())
+    signal = keep_labeled(Signal.default())
     println(signal.label())
     println(Signal.Stop.label())
 "#,

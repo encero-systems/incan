@@ -503,7 +503,7 @@ impl OvenRustcArtifactManifest {
         //
         // The question is answered by scanning the three declaring lists rather than through `expected_artifacts`,
         // which additionally refuses a duplicate path. The composition is still mid-flight here: `validate_shape`
-        // below is where a genuine duplicate must be reported, and taking that judgement early turned a transient
+        // below is where a genuine duplicate must be reported, and taking that judgment early turned a transient
         // arrangement into a bake failure.
         let declares_base_runtime = composed
             .externs

@@ -49,6 +49,7 @@ Readable Rust is code that a competent Rustacean can **scan and understand quick
 
 5. **Consistent naming & layout**
    - Follow conventions: `snake_case` (functions/vars), `CamelCase` (types/traits), `SCREAMING_SNAKE_CASE` (consts).
+   - Spell in US English everywhere -- identifiers, comments, rustdoc and docs (`color`, `behavior`, `initialize`, `catalog`); `make us-english-check` enforces it, and `scripts/check_us_english.allow` lists the upstream names and quoted text that keep their own spelling.
    - Module/file sizes are reasonable; split by responsibility, not arbitrary layers.
 
 6. **Local reasoning**
