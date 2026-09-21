@@ -495,6 +495,23 @@ fn selected_graph_environment_class(name: &str) -> OvenSelectedRustFacetEnvironm
     OvenSelectedRustFacetEnvironmentClass::Sensitive
 }
 
+/// Whether the graph retains a value under `name` verbatim as `text`: a registered public compiler fact or a Cargo
+/// feature-activation flag.
+///
+/// This is the same closed classification `validate_selected_graph_environment` applies, exposed so a producer
+/// that *observes* an environment rather than declares one -- the Cargo compatibility publisher reading what a
+/// build script emitted -- can ask before binding a value, instead of binding everything as text and learning at
+/// validation that most of it has no admissible representation. A `true` answer admits the name, not the value:
+/// the retained text must still pass the alphabet and budget checks, and a feature flag must still be `1`.
+/// Every other name has no `text` form in a graph, and a producer without a keyed digest or an owner to rebind a
+/// path through cannot carry it at all.
+pub fn selected_graph_environment_retains_text(name: &str) -> bool {
+    matches!(
+        selected_graph_environment_class(name),
+        OvenSelectedRustFacetEnvironmentClass::PublicText | OvenSelectedRustFacetEnvironmentClass::FeatureActivation
+    )
+}
+
 /// Admit one retained public value against the closed portable alphabet.
 ///
 /// Public compiler facts are short unquoted tokens, version fragments, or comma-separated lists, so the alphabet
