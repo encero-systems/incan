@@ -50,6 +50,24 @@
       "owner": 1561,
       "notes": "behaviour fixtures twinning incan_driver retire tests whose surviving observable is a program's output or a check-time diagnostic rather than the generated project they inspected; run by behavior_driver_tests.rs. Each names the retire tests it twins in `# retires:` lines."
     },
+    "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins": {
+      "pattern": "<name>.incn or <name>/",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "behaviour fixtures twinning retire-class emitter unit tests under loaves/compiler/incan_emit/src/emit whose surviving observable is a call, a builtin, a std.testing assertion, a dict or list method, an iterator adapter or a stdlib import resolving at run time; run by behavior_emit_tests.rs. Each names the retire tests it twins in `# retires:` lines."
+    },
+    "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules": {
+      "pattern": "<name>.incn or <name>/",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "behaviour fixtures twinning retire-class emitter unit tests under loaves/compiler/incan_emit/src/emit about declarations and module boundaries: value enums, callable and user traits, static and local bindings, constructor surfaces across source modules, module-qualified reads and calls, refused programs; run by behavior_emit_tests.rs. Each names the retire tests it twins in `# retires:` lines."
+    },
+    "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces": {
+      "pattern": "<name>.incn or <name>/",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "behaviour fixtures that are projects with in-fixture path dependencies (providers without dependencies of their own, baked by the runner with no Cargo authority), twinning retire-class emitter unit tests about unions, constructor surfaces and declaration kinds published across a package boundary; run by behavior_emit_tests.rs. Each names the retire tests it twins in `# retires:` lines."
+    },
     "loaves/compiler/incan_test_support/fixtures/behavior/harness": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
@@ -1167,7 +1185,21 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 2 twinned by behaviour fixtures under fixtures/behavior/emit_*, 0 dies, 1 open.",
+      "tests": {
+        "canonical_source_callable_emits_native_function_blanket_impl": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/callable_trait_accepts_functions_and_closures.incn",
+          "notes": "asserted the blanket `impl Callable1<A, R> for F: Fn(A) -> R` the stdlib callable trait gets; the twin passes a named function and two closures where `Callable[int, int]` is expected and prints what each call returns. the asserted Rust token shape dies with #654."
+        },
+        "same_named_user_callable_trait_does_not_emit_native_blanket_impl": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/user_trait_named_like_stdlib_callable.incn",
+          "notes": "asserted that a user trait spelled `Callable1` gets no stdlib blanket impl; the twin declares that trait with an `apply` method, adopts it in a class and dispatches through it directly and through a bound, which a stray blanket impl would break. the asserted Rust token shape dies with #654."
+        },
+        "trait_default_method_keeps_owned_mutable_rust_parameter_binding": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/trait_default_method_mutable_parameter.incn`: a trait default method with a `mut items: list[int]` parameter appends to its copy and returns `3`, the caller's list staying at `2`. route bug: `incan check` accepts the program and the generated Rust drops the parameter's `mut` (rustc E0596 `cannot borrow items as mutable`); the retired test pinned exactly this binding for a `rust::` handle type (`Mutability::OwnedMutable`), which a plain `mut list[int]` parameter does not reach. Program in the lane report; admitted once the route keeps `mut` on trait default method parameters."
+        }
+      }
     },
     "loaves/compiler/incan_emit/src/emit/decls/mod.rs": {
       "disposition": "retire",
@@ -1175,7 +1207,29 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 3 twinned by behaviour fixtures under fixtures/behavior/emit_*, 2 dies, 0 open.",
+      "tests": {
+        "rustdoc_lines_dedent_body_after_unindented_summary": {
+          "twin": "dies",
+          "dies": "the rendering of an Incan docstring as rustdoc lines in the generated Rust (dedent after an unindented summary); a docstring's text is not observable at run time, so the rendering dies with #654."
+        },
+        "rustdoc_lines_render_source_fences_as_ignored_blocks": {
+          "twin": "dies",
+          "dies": "the rendering of docstring code fences as `ignore` rustdoc blocks so `cargo test` does not compile them as Rust; a generated-Rust doctest concern with no run-time observable, dies with #654."
+        },
+        "stdlib_import_reexports_the_providers_identity_over_a_same_named_source_declaration": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/stdlib_facade_import_utc.incn",
+          "notes": "asserted that the provider's `utc` identity wins over a same-named source registration; the twin calls the facade import and prints its value, which links to the provider's function. The identity spelling and the source-registry seeding die with #654."
+        },
+        "stdlib_import_through_a_facade_finds_the_provider_by_the_declaring_module": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/stdlib_facade_import_utc.incn",
+          "notes": "asserted that `from std.datetime import utc` resolves to the provider's `datetime.civil.naive.utc` declaration; the twin imports through the facade and prints the returned zero offset. The emitted identity spelling dies with #654."
+        },
+        "zen_text_contains_one_obvious_way_once": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/import_this_prints_the_zen.incn",
+          "notes": "asserted the embedded Zen text names the one obvious way once; the twin runs `import this` and expects that line and the program's own output, so the text is printed once, before `main`."
+        }
+      }
     },
     "loaves/compiler/incan_emit/src/emit/decls/structures.rs": {
       "disposition": "retire",
@@ -1183,7 +1237,41 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 6 twinned by behaviour fixtures under fixtures/behavior/emit_*, 2 dies, 0 open.",
+      "tests": {
+        "crate_visible_enum_omits_unused_message_helper": {
+          "twin": "dies",
+          "dies": "the same unused-helper omission for a crate-visible enum, a visibility with no Incan source spelling; no observable."
+        },
+        "integer_value_enum_emits_value_lookup_and_from_str": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/value_enum_display_message_and_lookup.incn",
+          "notes": "asserted `value()`, `from_value()` and a `FromStr` impl parsing the int first for an int value enum; the twin prints the value, the display, `from_value` hits and misses. The `FromStr` impl has no source surface (no builtin parses into a value enum from a str), so that half dies with the route; the from_value lookup it delegates to is proved."
+        },
+        "private_enum_keeps_used_message_helper": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/value_enum_display_message_and_lookup.incn",
+          "notes": "asserted a private enum whose `message()` is called keeps the helper; the twin declares a private plain enum and prints `message()` for two variants. the asserted Rust token shape dies with #654."
+        },
+        "private_enum_omits_unused_message_helper": {
+          "twin": "dies",
+          "dies": "whether an unused `message()` helper is omitted from a private enum's generated Rust (a dead-code warning concern); the helper's presence has no observable when nothing calls it. The called case is twinned by `emit_declarations_and_modules/value_enum_display_message_and_lookup.incn`."
+        },
+        "serde_integer_value_enum_uses_raw_value_impls": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/value_enum_serde_raw_values.incn",
+          "notes": "asserted the int value enum serializes as `serialize_i64(raw)` and deserializes through an i64; the twin serializes `404`, parses `200` back and shows the variant name `\"Ok\"` is refused. the asserted Rust token shape dies with #654."
+        },
+        "serde_value_enum_uses_raw_value_impls_not_serde_derives": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/value_enum_serde_raw_values.incn",
+          "notes": "asserted hand-written serde impls serializing the raw str value instead of serde's variant-name derive; the twin serializes a json model holding the enum, parses the raw value back and shows the variant name is refused. the asserted Rust token shape dies with #654."
+        },
+        "string_value_enum_emits_value_lookup_and_display": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/value_enum_display_message_and_lookup.incn",
+          "notes": "asserted the generated `value()`, `from_value()`, `Display` and variant-name `message()` of a str value enum; the twin prints each through `str()`, an f-string, `.value()`, `.from_value()` and `.message()`. the asserted Rust token shape dies with #654."
+        },
+        "value_enum_payload_variant_is_rejected": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/refused_value_enum_payload_variant.incn",
+          "notes": "asserted the emitter refuses a value-enum variant carrying a payload; the program is refused earlier, by the parser (INCAN-P0001), so the emitter's own refusal is unreachable from source and the twin pins the diagnostic."
+        }
+      }
     },
     "loaves/compiler/incan_emit/src/emit/errors.rs": {
       "disposition": "retire",
@@ -1191,7 +1279,13 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 0 twinned by behaviour fixtures under fixtures/behavior/emit_*, 1 dies, 0 open.",
+      "tests": {
+        "internal_invariant_errors_are_not_reported_as_unsupported_constructs": {
+          "twin": "dies",
+          "dies": "the `Display` prefix of the emitter's own `EmitError::InternalInvariant` variant; an internal error classification of the dying backend."
+        }
+      }
     },
     "loaves/compiler/incan_emit/src/emit/expressions/builtins.rs": {
       "disposition": "retire",
@@ -1199,7 +1293,29 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 5 twinned by behaviour fixtures under fixtures/behavior/emit_*, 0 dies, 0 open.",
+      "tests": {
+        "canonical_and_legacy_abs_sum_emit_one_checked_contract": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/abs_and_sum_are_overflow_checked.incn",
+          "notes": "asserted `abs` and `sum` emit checked arithmetic (`checked_abs`, `try_fold`/`checked_add`, `raise_value_error`), never wrapping; the twin prints the ordinary results and proves `abs(MIN)` and `sum([MAX, 1])` raise ValueError. The two dispatch identities die with #654."
+        },
+        "canonical_and_legacy_enumerate_values_materialize_checked_lists": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/enumerate_as_a_list_value_and_over_generic_tuples.incn",
+          "notes": "asserted `enumerate(values)` as a value materializes a list; the twin binds `enumerate([...])` to a name, prints its length, indexes it and iterates it. The two dispatch identities die with #654."
+        },
+        "checked_isinstance_matches_string_storage_in_direct_union_and_option_shapes": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/isinstance_str_over_const_union_and_option.incn",
+          "notes": "asserted `isinstance(x, str)` matches every str storage (const, literal, union member, Option payload) without a constant `false`; the twin prints the six answers over a const, a literal, a `str | int` holding each member and an Option holding a const. The `matches!` shapes die with #654."
+        },
+        "enumerate_copy_policy_keeps_generic_tuple_items_owned": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/enumerate_as_a_list_value_and_over_generic_tuples.incn",
+          "notes": "asserted the copy policy for enumerate items (ints copied, generic tuples and Options owned); the twin enumerates a list of generic `(T, int)` tuples inside a generic function and a list of Options and prints each item with its index. The policy itself dies with #654."
+        },
+        "legacy_file_result_stringifies_rust_io_errors_issue874": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/file_builtins_report_errors_as_strings.incn",
+          "notes": "asserted `read_file`/`write_file` map the host I/O error to an owned string (#874); the twin writes and reads a file and shows a missing file's error is a str naming the missing entry. the asserted Rust token shape dies with #654."
+        }
+      }
     },
     "loaves/compiler/incan_emit/src/emit/expressions/calls.rs": {
       "disposition": "retire",
@@ -1207,7 +1323,125 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 23 twinned by behaviour fixtures under fixtures/behavior/emit_*, 0 dies, 6 open.",
+      "tests": {
+        "alternate_type_name_call_uses_exact_private_library_constructor_bridge_issue883": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_constructor_surfaces",
+          "notes": "asserted a compiled class with a private required field is constructed through its bridge under an import alias, not a decoy of the same name (#883); the twin (a project with two dependencies) builds `Vault as PublicVault` from `secret=` with the defaulted `label`, and the decoy's `Vault` from its own field. The bridge spelling dies with #654."
+        },
+        "canonical_self_package_call_uses_crate_path_without_losing_package_identity": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_fs_path_str_or_path_targets.incn",
+          "notes": "asserted a call inside the stdlib-system package to its own `fs.path` helper spells a crate-local path; the twin calls std.fs Path methods (`samefile`, `rename`) that resolve their `Path | str` target through the same-package `_as_path` helper and prints their results. The path spelling dies with #654."
+        },
+        "contextual_union_payload_uses_checked_nominal_identity": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_unions_across_the_package_boundary",
+          "notes": "asserted a renamed constructor (`Surcharge as Charge`) still fits the provider union by checked identity, and a different provider digest does not; the twin passes `Charge(value=5)` to the dependency's `Charges` parameter and prints the arm's result. The digest-mismatch half is a provider-plan invariant with no source program and dies with #654."
+        },
+        "emit_binop_parenthesizes_lower_precedence_right_operand": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/logical_operator_precedence.incn",
+          "notes": "asserted `a and (b or c)` keeps its parentheses; the twin prints the grouped and ungrouped results for the operand values where they differ. The token shape dies with #654."
+        },
+        "emit_call_expr_borrows_args_from_typed_rust_callee_without_registry": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_call_argument_borrowing.incn`: two models swap through `std::mem::swap`'s mutable borrows, a model and an int are measured by `size_of_val` through shared borrows, and `take` empties a list through a mutable borrow, printing the swapped values, the sizes and the lengths. a `rust::std` analogue of the retired shape (`demo::Thing` callees that exist nowhere): the same call planner borrows Incan values as the Rust signature declares. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "emit_call_expr_borrows_copy_arg_for_rust_ref_param": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_call_argument_borrowing.incn`: two models swap through `std::mem::swap`'s mutable borrows, a model and an int are measured by `size_of_val` through shared borrows, and `take` empties a list through a mutable borrow, printing the swapped values, the sizes and the lengths. a `rust::std` analogue of the retired shape (`demo::Thing` callees that exist nowhere): the same call planner borrows Incan values as the Rust signature declares. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "emit_call_expr_borrows_mutably_for_rust_refmut_param": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_call_argument_borrowing.incn`: two models swap through `std::mem::swap`'s mutable borrows, a model and an int are measured by `size_of_val` through shared borrows, and `take` empties a list through a mutable borrow, printing the swapped values, the sizes and the lengths. a `rust::std` analogue of the retired shape (`demo::Thing` callees that exist nowhere): the same call planner borrows Incan values as the Rust signature declares. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "emit_call_expr_borrows_struct_arg_for_rust_ref_param": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_call_argument_borrowing.incn`: two models swap through `std::mem::swap`'s mutable borrows, a model and an int are measured by `size_of_val` through shared borrows, and `take` empties a list through a mutable borrow, printing the swapped values, the sizes and the lengths. a `rust::std` analogue of the retired shape (`demo::Thing` callees that exist nowhere): the same call planner borrows Incan values as the Rust signature declares. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "emit_call_expr_keeps_return_context_union_string_seed_as_union_value": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/union_parameter_call_returned_from_str_function.incn",
+          "notes": "asserted a str literal in `return lit(\"open\")` is wrapped as the union's str member, not re-coerced after the call; the twin returns that call from a str function and matches every member. The wrapper spelling dies with #654."
+        },
+        "emit_call_expr_uses_external_planning_for_rust_rooted_field_callee": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "emit_canonical_assert_eq_message_preserves_empty_message_semantics": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_testing_assert_helpers.incn",
+          "notes": "asserted an empty message falls back to the default assertion text; the twin passes `assert_eq(3, 3, \"\")` and proves `assert_eq(1, 2, \"\")` raises an `AssertionError`. The token shape dies with #654."
+        },
+        "emit_canonical_assert_eq_parenthesizes_comparison_operands": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_testing_assert_helpers.incn",
+          "notes": "asserted a comparison operand is parenthesized before `!=`; the twin asserts `encoded > 0` equals `True`. The token shape dies with #654."
+        },
+        "emit_canonical_assert_eq_uses_plain_comparison": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_testing_assert_helpers.incn",
+          "notes": "asserted `assert_eq` lowers to a plain `!=` check that panics with `AssertionError`; the twin passes equal ints and proves a failing `assert_eq` is caught as an `AssertionError`. The token shape dies with #654."
+        },
+        "emit_canonical_assert_is_err_accepts_bare_err_literal": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_testing_assert_helpers.incn",
+          "notes": "asserted `assert_is_err(Err(\"boom\"))` returns the error payload; the twin prints `err boom`. The token shape dies with #654."
+        },
+        "emit_canonical_assert_is_none_accepts_bare_none_literal": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_testing_assert_helpers.incn",
+          "notes": "asserted `assert_is_none(None)` is accepted; the twin calls it with a bare `None`. The token shape dies with #654."
+        },
+        "emit_canonical_assert_is_ok_accepts_bare_ok_literal": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_testing_assert_helpers.incn",
+          "notes": "asserted `assert_is_ok(Ok(42))` returns `42`; the twin prints `ok 42` from the returned value. The token shape dies with #654."
+        },
+        "emit_canonical_assert_is_some_returns_unwrapped_value": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_testing_assert_helpers.incn",
+          "notes": "asserted `assert_is_some` returns the unwrapped payload; the twin prints `some 5` from the returned value. The token shape dies with #654."
+        },
+        "emit_canonical_assert_model_constructor_comparison_parses": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_testing_assert_helpers.incn",
+          "notes": "asserted inline model constructors on either side of `assert_eq`/`assert_ne` parse as operands; the twin asserts `Pair(x=1)` against a local and against another inline constructor on both sides, and `assert_ne` with two inline constructors. The parse check dies with #654."
+        },
+        "emit_canonical_assert_ne_reuses_string_binop_plan": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_testing_assert_helpers.incn",
+          "notes": "asserted `assert_ne` over strings uses the string equality helper; the twin asserts two different str locals are not equal. The helper spelling dies with #654."
+        },
+        "emit_canonical_assert_raises_catches_panic_payloads": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_testing_assert_helpers.incn",
+          "notes": "asserted `assert ... raises ValueError` catches the panic payload and matches its `ValueError:` prefix; the twin runs `assert explode() raises ValueError` over a call that raises and proves an `AssertionError` payload is matched by name too. The `catch_unwind` shape dies with #654."
+        },
+        "emit_canonical_assert_raises_invokes_zero_arg_function_argument": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_testing_assert_helpers.incn",
+          "notes": "asserted `assert_raises[E](f)` invokes a zero-argument function reference; the twin passes `bad_parse` and two failing assertion functions by reference. The token shape dies with #654."
+        },
+        "emit_canonical_call_accepts_compiled_provider_module_without_legacy_registry_entry": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/compiled_stdlib_module_function_call.incn",
+          "notes": "asserted a call into a compiled stdlib module needs no legacy registry entry; the twin calls `std.math` functions and prints their results. The `crate::__incan_std::...` spelling dies with #654."
+        },
+        "emit_canonical_call_prefers_callable_signature_over_local_registry": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/ordinal_map_bytes_round_trip.incn",
+          "notes": "asserted a stdlib helper with a `mut out: list[u8]` parameter is called with a mutable borrow from its callable signature, not the local registry's copy; the twin round-trips an OrdinalMap through `to_bytes`, whose encoder appends into such a list through `_append_bytes`, and `from_bytes`. The `&mut out` spelling dies with #654."
+        },
+        "emit_default_arg_internal_canonical_call_uses_crate_qualified_path": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/default_argument_calls_sibling_module",
+          "notes": "asserted a default argument calling another module's function is emitted crate-qualified at the caller; the twin calls `combine(1)` from a third module, where the default `fallback()` lives in a sibling of `ops`, and prints `8`, then `combine(1, 2)`. The spelling dies with #654."
+        },
+        "emit_internal_canonical_call_preserves_local_binding_without_default_context": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/default_argument_calls_sibling_module",
+          "notes": "asserted a direct call to an internal module's function keeps its local binding; the twin calls the sibling module's `fallback()` from `main` and prints `7`. The spelling dies with #654."
+        },
+        "emit_public_union_call_result_as_option_payload_issue745": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_unions_across_the_package_boundary",
+          "notes": "asserted a provider union returned by `lit()` is passed as `Some(...)` to a provider parameter typed `Option[union]` (#745); the twin (a project with dependencies) calls `accept_optional(lit(4))` and prints the matched member. The `Some(querykit::lit())` spelling dies with #654."
+        },
+        "emit_union_payload_canonicalizes_external_union_variant_index_issue1198": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_unions_across_the_package_boundary",
+          "notes": "asserted the consumer picks the provider union's canonical variant index for a member declared in a different order (#1198); the twin passes each of four models declared out of alphabetical order to the dependency's `describe` and prints the arm each reaches. The `V1` index spelling dies with #654."
+        },
+        "qualified_public_module_model_call_emits_struct_and_constant_paths_issue948": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_constructor_surfaces",
+          "notes": "asserted `h.HyperquantIndex{size: h.DEFAULT_SIZE}` and `h.IndexBuilder{size: 3}` for a published module namespace (#948); the twin imports `hyperquant` from a dependency, constructs the model with the namespace's const and the class by its default, and prints the sizes. The path spellings die with #654."
+        },
+        "rest_aware_call_arg_uses_argument_plan_without_double_borrow": {
+          "twin": "",
+          "notes": "open: the retired test borrows a `demo::Thing` for a `&Thing` parameter that sits beside a `*rest` parameter; no source spelling for a reference-typed parameter beside a rest parameter was found in the language reference (an Incan `def` cannot annotate `&Thing`, a `rust::` function has no rest parameter). Question: which surface produced this shape, or dies with the argument planner."
+        }
+      }
     },
     "loaves/compiler/incan_emit/src/emit/expressions/indexing.rs": {
       "disposition": "retire",
@@ -1215,7 +1449,17 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 1 twinned by behaviour fixtures under fixtures/behavior/emit_*, 0 dies, 1 open.",
+      "tests": {
+        "associated_value_field_chain_keeps_value_field_access": {
+          "twin": "",
+          "notes": "open: the retired test reads `Widget.DEFAULT.name`, a field of a type-associated value; the language reference has no associated const or static on a model or class, so no program was found that spells it. Question: which surface produced this shape (#729/#731), or dies with the field-chain emitter."
+        },
+        "module_field_chain_emits_as_path": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/module_qualified_field_chains_and_calls",
+          "notes": "asserted `querykit.helpers.DEFAULT_LABEL` emits as a module path; the twin reads a const and calls a function through the binding `import querykit.helpers` creates (the import binds the nested module, so the chain has one segment) and through a sibling module binding. The path spelling dies with #654."
+        }
+      }
     },
     "loaves/compiler/incan_emit/src/emit/expressions/mod.rs": {
       "disposition": "retire",
@@ -1223,7 +1467,217 @@
       "twin": "",
       "split_required": true,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 14 twinned by behaviour fixtures under fixtures/behavior/emit_*, 1 dies, 37 open.",
+      "tests": {
+        "boxed_variant_payload_coercion_wraps_the_argument_in_box_new": {
+          "twin": "",
+          "notes": "open: the retired shape wraps a payload in `Box::new` for a boxed variant of a `substrait` Rust enum, a crate unavailable offline and unbakeable under the suite; no `rust::std` enum with a boxed payload variant is constructible from Incan source. Question: twin under #1337's `rust::` corpus, or dies."
+        },
+        "call_return_value_materializes_ref_typed_result": {
+          "twin": "",
+          "notes": "open: the retired shape returns a Rust function's `&Node` result as an owned model; no `rust::std` free function returning a bare reference to an Incan-visible model was found (`std::str::from_utf8` returns `Result<&str, _>`, covered as a match binding by the byte-shapes candidate). Question: twin under #1337's `rust::` corpus, or dies with the ownership plan."
+        },
+        "dict_get_with_borrowed_key_does_not_double_borrow": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/dict_lookups_with_str_keys.incn",
+          "notes": "asserted `counts.get(word)` with an already-borrowed key is not borrowed twice; the twin looks up a dict with a parameter and with a loop binding over a `list[str]` and prints hits and a miss. The borrow shape dies with #654."
+        },
+        "dict_index_with_string_literal_uses_str_lookup_shape": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/dict_lookups_with_str_keys.incn",
+          "notes": "asserted `counts[\"the\"]` goes through the checked `dict_get` helper; the twin indexes with a str literal and prints the value. The helper spelling dies with #654."
+        },
+        "encoding_decode_compatibility_policy_overrides_incomplete_by_value_signature": {
+          "twin": "",
+          "notes": "open: the retired shape is an `encoding_rs`-specific compatibility policy (`decode(&data)` despite an incomplete by-value signature), a crate unavailable offline; no `rust::std` method carries that policy. Question: twin under #1337's `rust::` corpus, or dies as a crate-specific metadata override."
+        },
+        "exact_float_rust_call_results_are_guarded_without_changing_ordinary_float": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_duration_field_method_by_value.incn`: a Rust Duration in a model field is added to another field's Duration through `saturating_add`, taking its argument by value, and reads back as `5`, `7`, then `5.5` as an f32 through the finite-value check and as an ordinary f64. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane. The non-finite half of the f32 guard is unreachable through Duration (it never yields NaN); the finite pass and the untouched f64 are what the candidate proves."
+        },
+        "external_decode_fallback_still_borrows_owned_bytes_argument": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "external_decode_metadata_keeps_explicit_rust_vec_slice_argument_shape": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "external_decode_metadata_keeps_explicit_slice_argument_shape": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "external_decode_metadata_lends_owned_incan_bytes_to_buf_as_slice": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "external_decode_metadata_lends_owned_rust_vec_to_buf_as_slice": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "external_decode_with_generic_by_value_signature_does_not_borrow_argument": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "external_method_call_uses_by_value_signature_for_field_argument": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_duration_field_method_by_value.incn`: a Rust Duration in a model field is added to another field's Duration through `saturating_add`, taking its argument by value, and reads back as `5`, `7`, then `5.5` as an f32 through the finite-value check and as an ordinary f64. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane. The non-finite half of the f32 guard is unreachable through Duration (it never yields NaN); the finite pass and the untouched f64 are what the candidate proves."
+        },
+        "external_name_namespace_call_uses_incan_function_arg_conversion": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/module_qualified_field_chains_and_calls",
+          "notes": "asserted `widgets.make_widget(DEFAULT_NAME)` on a module binding converts arguments as an ordinary function call, without a borrow or `.into()`; the twin calls a module's function through its binding with that module's const and another module's const. The conversion spelling dies with #654."
+        },
+        "external_nominal_method_call_keeps_external_string_conversion": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_into_string_argument.incn`: a str literal and a str local passed to `std::io::Error::new`, whose message parameter is generic over `Into`, convert into the message the error displays. a `rust::std` analogue of the retired shape (`builder.rename(\"logs\")` on an external builder): the external `.into()` conversion. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "external_rust_associated_decode_lends_generic_vec_u8_to_buf_as_slice": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "external_rust_associated_method_coerces_list_elements_to_target_vec_element": {
+          "twin": "",
+          "notes": "open: `DataFrame::new(columns)` element mapping over polars, a crate unavailable offline; same blocker as `external_rust_call_coerces_list_elements_to_target_vec_element`. Question: twin under #1337's `rust::` corpus, or dies."
+        },
+        "external_rust_call_coerces_list_elements_to_target_vec_element": {
+          "twin": "",
+          "notes": "open: the retired shape maps `list[Series]` elements through `Into` to polars `Column`s, a crate unavailable offline; no `rust::std` function with an element-wise `Into` mapping was found. Question: twin under #1337's `rust::` corpus, or dies."
+        },
+        "external_rust_call_leaves_matching_list_elements_unmapped": {
+          "twin": "",
+          "notes": "open: the negative half of the polars element mapping (matching elements are not mapped); same blocker as `external_rust_call_coerces_list_elements_to_target_vec_element`. Question: twin under #1337's `rust::` corpus, or dies."
+        },
+        "external_rust_method_explicit_generic_string_arg_keeps_turbofish": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_rusttype_surface_calls.incn`: a rusttype alias over Rust String is built from a str literal, its `push_str` takes an owned str where the signature wants `&str`, `starts_with` answers, and `parse` works with an explicit `[i64]` type argument and with the type inferred from the binding, printing `5`, `8`, `true`, `42`, `7`. a `rust::std` analogue of the retired shapes (`Name.parse(...)` on a rusttype, the regex `_RawRegex` field receiver, tokenizers' `encode::<String>`). waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "external_rust_method_generic_string_arg_keeps_inferable_shape": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_rusttype_surface_calls.incn`: a rusttype alias over Rust String is built from a str literal, its `push_str` takes an owned str where the signature wants `&str`, `starts_with` answers, and `parse` works with an explicit `[i64]` type argument and with the type inferred from the binding, printing `5`, `8`, `true`, `42`, `7`. a `rust::std` analogue of the retired shapes (`Name.parse(...)` on a rusttype, the regex `_RawRegex` field receiver, tokenizers' `encode::<String>`). waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "generic_collection_literal_target_uses_inferred_tuple_item_types": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/generic_list_of_tuples_literal_argument.incn",
+          "notes": "asserted a `[(\"host\", 1)]` literal passed to a `list[tuple[K, V]]` parameter keeps its concrete str conversion; the twin passes such a literal to a generic function and prints the items back. The conversion spelling dies with #654."
+        },
+        "internal_dependency_nominal_method_call_does_not_borrow_string_arguments": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/dependency_model_generic_method_string_args",
+          "notes": "asserted `session.read_csv::<OrderLine>(\"...\", input_uri)` on a type from another source module passes its str arguments by value; the twin calls that method with an explicit type argument, a literal and a local, and reuses the local afterwards. The turbofish spelling dies with #654."
+        },
+        "interop_borrowed_bytes_slice_coercion_borrows_owned_bytes": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "interop_borrowed_string_coercion_borrows_owned_string_without_materializing": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "interop_borrowed_string_coercion_materializes_owned_string_before_borrow": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "interop_borrowed_vec_bytes_coercion_materializes_owned_bytes_before_borrow": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "interop_structural_list_borrow_coercion_projects_str_items": {
+          "twin": "",
+          "notes": "open: the retired shape projects a `list[str]` into `Vec<&str>` for a borrowing Rust parameter; no `rust::std` function taking `Vec<&str>` was found to write a candidate against. Question: twin under #1337's `rust::` corpus, or dies with the RFC 041 builtin coercion table."
+        },
+        "interop_try_adapter_emits_question_mark": {
+          "twin": "dies",
+          "dies": "the `?` on an RFC 041 `interop: from str try X.parse` adapter, reachable only from a rusttype interop clause whose adapter is a `...`-bodied rusttype method; the legacy route projects that method onto the Rust type where no such symbol exists (E0599), so no program with the clause has ever run (the snapshot programs with the clause were recorded the same way by #1701). The interop-clause checker facts are keep-class in the `rust_*` typechecker modules (#1337)."
+        },
+        "interop_wrapped_dict_literal_keeps_call_site_value_target": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/dict_literal_into_optional_union_values.incn",
+          "notes": "asserted a dict literal reaching a `dict[str, Option[bool | int]]` target keeps its `Some(union)` wrapping through an interop aggregate wrapper; the twin passes such a literal to a function with that parameter type and prints each stored member. The interop wrapper it was inside (a rusttype unwrap) is not in the twin; the union wrapping is."
+        },
+        "known_dict_get_with_string_literal_uses_str_lookup_shape": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/dict_lookups_with_str_keys.incn",
+          "notes": "asserted `counts.get(\"the\")` normalizes the literal through `AsRef<str>`; the twin looks up a str literal with `get` and prints the count. The lookup spelling dies with #654."
+        },
+        "known_iterator_adapter_methods_emit_incan_stdlib_models": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/iterator_adapters.incn",
+          "notes": "asserted each iterator adapter lowers to its stdlib adapter model with the right field seeds; the twin runs map, filter, enumerate, zip, take, skip, take_while, skip_while, chain, flat_map and batch and prints their items. The adapter model spellings die with #654."
+        },
+        "known_iterator_terminal_methods_emit_incan_next_loops_except_source_owned_sum": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/iterator_terminals.incn",
+          "notes": "asserted collect, count, reduce, fold, any, all, find, for_each lower to `__next__` loops and sum to the trait's own `sum`; the twin runs every terminal and prints its result. The loop shapes die with #654."
+        },
+        "known_list_methods_emit_checked_runtime_helpers": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/list_index_remove_and_swap.incn",
+          "notes": "asserted `index`, `count`, `remove` and `swap` on a list go through checked runtime helpers; the twin prints `index`, `remove` and `swap` results. `list.count(value)` is not in the twin: the checker resolves `count` on a list to the zero-argument iterator terminal and refuses the value argument (bug noted in the lane report), so the `list_count` helper is unreachable from source. The helper spellings die with #654."
+        },
+        "metadata_free_read_to_string_fallback_requires_string_buffer": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_read_by_ref_over_cursor.incn`: `Read.by_ref` over an owned Cursor and over a RefCell guard reads the remaining bytes into a mutable str buffer, and `read_to_string` on a Cursor fills the buffer. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "method_call_collection_element_materializes_borrowed_as_ref_result": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_box_as_ref_borrowed_results.incn`: a Rust Box's `as_ref()` result is used as an owned model in a let binding, a reassignment, a dict-index assignment, a return value, a struct field and a collection element, and matched directly, printing `1`..`6` and `leaf 7`. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "method_call_match_scrutinee_reaches_the_ownership_plan_without_over_cloning": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_box_as_ref_borrowed_results.incn`: a Rust Box's `as_ref()` result is used as an owned model in a let binding, a reassignment, a dict-index assignment, a return value, a struct field and a collection element, and matched directly, printing `1`..`6` and `leaf 7`. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "method_call_return_value_materializes_borrowed_as_ref_result": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_box_as_ref_borrowed_results.incn`: a Rust Box's `as_ref()` result is used as an owned model in a let binding, a reassignment, a dict-index assignment, a return value, a struct field and a collection element, and matched directly, printing `1`..`6` and `leaf 7`. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "method_call_struct_field_materializes_borrowed_as_ref_result": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_box_as_ref_borrowed_results.incn`: a Rust Box's `as_ref()` result is used as an owned model in a let binding, a reassignment, a dict-index assignment, a return value, a struct field and a collection element, and matched directly, printing `1`..`6` and `leaf 7`. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "nested_external_union_target_overrides_parent_qualifier": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/transitive_dependency_nominal_routes`: a dependency's `Basket.product` field typed with `Product` from the dependency's own dependency is constructed from the consumer, and a list literal of ints passed to the dependency's function is accepted as `list[Column]` of the transitive package, printing `pen 300` and `#7 #8`. waits for a Cargo-free provider bake: the `pricing` provider declares its own `[dependencies]`, and under the suite such a bake goes through the compatibility publisher's test-dependency envelope, which runs Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "non_string_method_call_join_stays_regular_method_call": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/user_method_named_join.incn",
+          "notes": "asserted a user model's `join` is not reclassified as `str.join`; the twin calls a model's two-argument `join` and prints its result. The helper spelling dies with #654."
+        },
+        "qualified_rusttype_receiver_method_uses_rust_signature_borrowing": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_rusttype_surface_calls.incn`: a rusttype alias over Rust String is built from a str literal, its `push_str` takes an owned str where the signature wants `&str`, `starts_with` answers, and `parse` works with an explicit `[i64]` type argument and with the type inferred from the binding, printing `5`, `8`, `true`, `42`, `7`. a `rust::std` analogue of the retired shapes (`Name.parse(...)` on a rusttype, the regex `_RawRegex` field receiver, tokenizers' `encode::<String>`). waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "read_by_ref_receiver_borrows_owned_reader_without_dereference": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_read_by_ref_over_cursor.incn`: `Read.by_ref` over an owned Cursor and over a RefCell guard reads the remaining bytes into a mutable str buffer, and `read_to_string` on a Cursor fills the buffer. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "read_by_ref_receiver_reborrows_through_refmut_guard": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_read_by_ref_over_cursor.incn`: `Read.by_ref` over an owned Cursor and over a RefCell guard reads the remaining bytes into a mutable str buffer, and `read_to_string` on a Cursor fills the buffer. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "read_by_ref_receiver_with_recorded_borrow_is_not_reborrowed_again": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_read_by_ref_over_cursor.incn`: `Read.by_ref` over an owned Cursor and over a RefCell guard reads the remaining bytes into a mutable str buffer, and `read_to_string` on a Cursor fills the buffer. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "regular_hash_map_get_preserves_borrowed_probe_shape": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_hashmap_get_and_same_named_methods.incn`: a Rust HashMap answers `get` with a str literal and a str local, and a local model's `insert` with a defaulted parameter dispatches by its own signature beside the map's two-argument `insert`. a `rust::std` analogue of the retired shape (bevy's `App::run` beside a local `App`): a Rust receiver and a same-named local method keep their own signatures. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "regular_method_call_policy_preserves_lookup_arg_shape": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_hashmap_get_and_same_named_methods.incn`: a Rust HashMap answers `get` with a str literal and a str local, and a local model's `insert` with a defaulted parameter dispatches by its own signature beside the map's two-argument `insert`. a `rust::std` analogue of the retired shape (bevy's `App::run` beside a local `App`): a Rust receiver and a same-named local method keep their own signatures. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "rusttype_surface_associated_function_uses_incan_string_conversion": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_rusttype_surface_calls.incn`: a rusttype alias over Rust String is built from a str literal, its `push_str` takes an owned str where the signature wants `&str`, `starts_with` answers, and `parse` works with an explicit `[i64]` type argument and with the type inferred from the binding, printing `5`, `8`, `true`, `42`, `7`. a `rust::std` analogue of the retired shapes (`Name.parse(...)` on a rusttype, the regex `_RawRegex` field receiver, tokenizers' `encode::<String>`). waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "source_trait_take_dispatch_preserves_incan_int_argument": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/fallible_iterator_take.incn",
+          "notes": "asserted `take(3)` dispatched through the stdlib FallibleIterator keeps its int argument (no `u64::try_from`); the twin takes 3 items and 0 items from a fallible stream and prints the collected counts. The dispatch spelling dies with #654."
+        },
+        "target_aware_emission_materializes_spanless_frozen_str_literals": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/frozen_str_return_from_literal.incn",
+          "notes": "asserted a str literal returned to a `FrozenStr` target is wrapped as a frozen value; the twin returns a literal from a `FrozenStr` function and prints it, its length and an interpolation. The wrapper spelling dies with #654."
+        },
+        "type_name_associated_call_does_not_borrow_string_arguments": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/static_method_with_str_argument.incn",
+          "notes": "asserted `Response.html(html)` passes the str by value; the twin calls a model's static method through the type name with a str local and a str literal and prints what it built. The borrow shape dies with #654."
+        },
+        "unregistered_decode_method_with_by_value_metadata_preserves_argument_shape": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        }
+      }
     },
     "loaves/compiler/incan_emit/src/emit/expressions/structs_enums.rs": {
       "disposition": "retire",
@@ -1231,7 +1685,13 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 1 twinned by behaviour fixtures under fixtures/behavior/emit_*, 0 dies, 0 open.",
+      "tests": {
+        "imported_named_struct_can_emit_metadata_proven_default_fill": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/imported_model_constructor_default_fill",
+          "notes": "asserted a constructor of an imported model with omitted defaulted fields fills them with `..Default::default()`; the twin constructs a sibling module's model with one field, then with two, and prints the omitted fields' defaults. The `..Default::default()` spelling dies with #654."
+        }
+      }
     },
     "loaves/compiler/incan_emit/src/emit/mod.rs": {
       "disposition": "retire",
@@ -1239,7 +1699,89 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 13 twinned by behaviour fixtures under fixtures/behavior/emit_*, 4 dies, 3 open.",
+      "tests": {
+        "an_sdk_provider_binds_the_native_unions_it_owns": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_fs_path_str_or_path_targets.incn",
+          "notes": "asserted a native union an SDK provider owns (stdlib-system's `Path | str`) binds to that provider; the twin calls std.fs Path methods taking `Path | str` with both members and prints the results. The crate route spelling dies with #654."
+        },
+        "callback_reference_matches_imported_source_parameter_surface": {
+          "twin": "",
+          "notes": "open: the retired predicate matches a callback's `&mut egui::Ui` parameter against the imported `Ui`, a crate unavailable offline; no `rust::std` callee taking a closure over a mutable reference to an importable type is known. Question: twin under #1337's `rust::` corpus, or dies."
+        },
+        "colliding_static_import_aliases_fail_closed": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/refused_colliding_static_import_aliases",
+          "notes": "asserted the emitter fails closed on two static identities under one alias; the program is refused earlier, by the import resolver (INCAN-I0001 ambiguous binding), so the emitter's refusal is unreachable from source and the twin pins the diagnostic."
+        },
+        "compiled_sdk_manifest_seeds_exact_stdlib_function_identity": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_result_combinator_functions.incn",
+          "notes": "asserted the SDK manifest seeds the exact identity of `std.result.map`; the twin calls `map`, `map_err` and `and_then` from `std.result` and prints their results. The seeding and identity spelling die with #654."
+        },
+        "constructor_metadata_hides_required_private_nominal_field_types": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/refused_required_private_field_from_another_module",
+          "notes": "asserted a required private field of a private nominal type has no constructor surface; the twin proves `Sealed(label=...)`, whose private `token: Token` is required, is refused from another module (INCAN-T0001). The surface enum dies with #654."
+        },
+        "constructor_metadata_keeps_all_public_models_on_struct_literal_surface": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/private_default_fields_across_modules",
+          "notes": "asserted an all-public model keeps the direct struct-literal surface; the twin constructs such a model from another module and prints its fields. The surface enum dies with #654."
+        },
+        "constructor_metadata_keeps_complete_private_class_input_surface_issue886": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/private_default_fields_across_modules",
+          "notes": "asserted a class keeps every field, private ones included, as constructor input (#886); the twin constructs another module's class with `secret=` and `label=` and prints a method over both. The surface enum dies with #654."
+        },
+        "constructor_metadata_omits_required_private_fields_from_native_surfaces": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/refused_required_private_field_from_another_module",
+          "notes": "asserted a model with a required private field has no consumer constructor surface; the twin proves a sibling module cannot construct it from its public fields (INCAN-T0001). The surface enum dies with #654."
+        },
+        "manifest_constructor_metadata_exports_only_public_fields_for_private_defaults": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_constructor_surfaces",
+          "notes": "asserted a compiled dependency's model with a private defaulted field takes only its public fields, and a class takes all; the twin (a project with dependencies) builds `Envelope(label=...)` and `Vault(secret=..., label=...)` from a dependency and prints their methods. The bridge argument order dies with #654."
+        },
+        "manifest_constructor_metadata_recognises_phantom_type_parameters_issue1370": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_constructor_surfaces",
+          "notes": "asserted a compiled dependency's model with a phantom type parameter is constructed with its marker (#1370); the twin constructs `Columns[int, str](...)` from a dependency and prints its fields. The `PhantomData` initializer dies with #654."
+        },
+        "ordinary_source_imports_bind_private_constructor_bridges_by_exact_module_identity_issue886": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/private_default_fields_across_modules",
+          "notes": "asserted a bare import, an aliased import and a two-hop facade import each bind the exact provider module's constructor metadata (#886); the twin imports `Vault` from `text_vaults`, `Vault as NumberVault` from `number_vaults` and the facade's `ExportedVault`, constructs each with its own field types and prints their methods. The metadata binding dies with #654."
+        },
+        "private_default_source_models_expose_public_field_provider_bridges_issue884": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/private_default_fields_across_modules",
+          "notes": "asserted a source model with private defaulted fields exposes a public-field constructor bridge (#884); the twin constructs such a model from another module with its public field only and prints the private defaults through a method. The bridge spelling dies with #654."
+        },
+        "public_constructor_metadata_preserves_checked_foreign_routes": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/transitive_dependency_nominal_routes`: a dependency's `Basket.product` field typed with `Product` from the dependency's own dependency is constructed from the consumer, and a list literal of ints passed to the dependency's function is accepted as `list[Column]` of the transitive package, printing `pen 300` and `#7 #8`. waits for a Cargo-free provider bake: the `pricing` provider declares its own `[dependencies]`, and under the suite such a bake goes through the compatibility publisher's test-dependency envelope, which runs Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "qualified_rust_receiver_does_not_inherit_same_named_incan_method_signature": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_hashmap_get_and_same_named_methods.incn`: a Rust HashMap answers `get` with a str literal and a str local, and a local model's `insert` with a defaulted parameter dispatches by its own signature beside the map's two-argument `insert`. a `rust::std` analogue of the retired shape (bevy's `App::run` beside a local `App`): a Rust receiver and a same-named local method keep their own signatures. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "runtime_reflection_omits_type_private_fields_issue884": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/reflection_omits_private_fields.incn",
+          "notes": "asserted runtime reflection lists public fields only (#884); the twin prints `__fields__()` of a public model with a private defaulted field: one name, `label`."
+        },
+        "rust_generated_static_ident_uses_uppercase_global_style": {
+          "twin": "dies",
+          "dies": "the upper-case spelling of a compiler-generated static identifier in the generated Rust; a naming style with no observable."
+        },
+        "rust_ident_uses_raw_idents_for_keywords": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/identifiers_named_like_host_keywords.incn",
+          "notes": "asserted a host keyword becomes a raw identifier; the twin names a function, parameters and locals after host keywords and prints their values. A model *field* named after a host keyword (`impl`, `dyn`) is accepted by `incan check` and refused at emission with a syn parse error (bug noted in the lane report), so fields are not in the twin. The raw-ident spelling dies with #654."
+        },
+        "sdk_provider_seeding_refuses_a_union_owned_by_an_unadmitted_artifact": {
+          "twin": "dies",
+          "dies": "the emitter's refusal of a hand-built SDK manifest whose native union names an owner outside the admitted artifact graph; no source program produces such a manifest, and the seeding dies with #654. The admitted case is twinned by `emit_calls_and_builtins/std_fs_path_str_or_path_targets.incn`."
+        },
+        "source_static_reference_without_projection_fails_closed": {
+          "twin": "dies",
+          "dies": "the emitter's refusal of an IR static read with no canonical projection; the lowering always records one, so the branch is a data-structure invariant of the dying backend."
+        },
+        "source_static_with_non_static_identity_fails_closed": {
+          "twin": "dies",
+          "dies": "the emitter's refusal of an IR static carrying a function identity; the lowering never builds that IR from source, so the fail-closed branch is a data-structure invariant of the dying backend."
+        }
+      }
     },
     "loaves/compiler/incan_emit/src/emit/native_unions.rs": {
       "disposition": "retire",
@@ -1247,7 +1789,41 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 7 twinned by behaviour fixtures under fixtures/behavior/emit_*, 1 dies, 0 open.",
+      "tests": {
+        "an_optional_union_parameter_keeps_its_option_wrapper_issue745": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_unions_across_the_package_boundary",
+          "notes": "asserted `accept(value: Option[IntExpr | str] = None)` publishes `Option[union]` (#745); the twin calls the dependency's `accept_optional` with a union result, a str and no argument and prints each arm. The API metadata dies with #654."
+        },
+        "emitted_union_publication_is_scoped_to_module_and_span": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_same_named_declarations_in_two_modules",
+          "notes": "asserted two modules declaring `pub type Answer` at the same span publish distinct native unions; the twin (a project with a dependency whose `first` and `second` modules are byte-aligned) imports both under aliases and passes each module's `Product` to its own `label`. The `rust_name` spellings and the manifest capture die with #654."
+        },
+        "function_alias_overloads_keep_exact_native_union_projection": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_unions_across_the_package_boundary",
+          "notes": "asserted an alias of an overload set keeps the union return of the int overload and the bool of the str overload, at the root and in a namespace; the twin calls `pick(2)`, `pick(\"yes\")`, `pick(\"no\")` and `select(8)` from a dependency and prints the results. The projection metadata dies with #654."
+        },
+        "local_callable_alias_retains_native_union_after_manifest_application": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_unions_across_the_package_boundary",
+          "notes": "asserted `pub second = alias first` keeps the target's union return in the manifest; the twin calls `second` and `first` from a dependency and matches both members. The manifest export dies with #654."
+        },
+        "native_union_local_nominals_keep_module_identity_through_forwarding": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_same_named_declarations_in_two_modules",
+          "notes": "asserted a union's local nominal (`Product`) keeps its module identity when two modules declare it identically; the twin (a project with a dependency) imports both modules' `Product` and `label` under aliases and prints each. The forwarding plan dies with #654."
+        },
+        "positional_attachment_rejects_incomplete_evidence": {
+          "twin": "dies",
+          "dies": "the `require_arity` helper refusing incomplete positional attachment evidence; an internal check of the emitter's publication metadata with no source program."
+        },
+        "publication_captures_nominal_method_return_unions": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_unions_across_the_package_boundary",
+          "notes": "asserted a public model method returning `int | str` publishes its emitted union; the twin calls `Box.answer()` from a dependency for both members and prints them. The captured wrapper name dies with #654."
+        },
+        "source_publication_anchors_survive_every_direct_lowering_path": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_declaration_kinds",
+          "notes": "asserted every declaration kind keeps exactly one publication anchor through lowering; the twin (a project with a dependency declaring a model, class, enum, newtype, trait, union alias, const, static, function, partial, alias, decorated function, decorated generic function and an overload set) uses each from the consumer and prints a value from every kind. The anchor bookkeeping dies with #654."
+        }
+      }
     },
     "loaves/compiler/incan_emit/src/emit/program.rs": {
       "disposition": "retire",
@@ -1255,7 +1831,49 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 5 twinned by behaviour fixtures under fixtures/behavior/emit_*, 0 dies, 5 open.",
+      "tests": {
+        "absolute_trait_impl_does_not_retain_same_named_local_module": {
+          "twin": "",
+          "notes": "open: the retired shape adopts a `rust::` trait by absolute path (`::foreign::Encode`) beside a local module named `foreign`; no `rust::std` trait adoptable from Incan source with a local module of the crate's name (`std`) exists. Question: twin under #1337's `rust::` corpus, or dies with the import pruning."
+        },
+        "checked_c_function_emits_exact_ffi_signature_and_private_wrapper": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/checked_c_bindings_over_libc.incn`: checked C bindings over the host libc call `abs` through an exact c.i32 carrier, receive `frexp`'s exponent through a `c.Out[c.i32]` slot, pass text through `c.cstr` to `strlen`, refuse an interior NUL, and copy `strerror`'s view with `copy_utf8`. route bug: `incan check` accepts a `binding` program and `incan run`/`incan build`/`incan oven bake` refuse it with `syntax error: Expected declaration, found Ident(\"binding\")` (observed 2026-09-20 with and without an `[interop.c]` manifest section); the CLI's own C test goes through `incan lock` and `incan oven interop bake`, which the behaviour runner does not perform. Program in the lane report. Only the scalar carriers libc exposes are exercised; the thirteen-carrier output slot check narrows to `c.i32`."
+        },
+        "checked_c_output_slots_preserve_every_exact_scalar_carrier": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/checked_c_bindings_over_libc.incn`: checked C bindings over the host libc call `abs` through an exact c.i32 carrier, receive `frexp`'s exponent through a `c.Out[c.i32]` slot, pass text through `c.cstr` to `strlen`, refuse an interior NUL, and copy `strerror`'s view with `copy_utf8`. route bug: `incan check` accepts a `binding` program and `incan run`/`incan build`/`incan oven bake` refuse it with `syntax error: Expected declaration, found Ident(\"binding\")` (observed 2026-09-20 with and without an `[interop.c]` manifest section); the CLI's own C test goes through `incan lock` and `incan oven interop bake`, which the behaviour runner does not perform. Program in the lane report. Only the scalar carriers libc exposes are exercised; the thirteen-carrier output slot check narrows to `c.i32`."
+        },
+        "checked_c_string_input_emits_private_cstring_and_const_character_pointer_bridge": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/checked_c_bindings_over_libc.incn`: checked C bindings over the host libc call `abs` through an exact c.i32 carrier, receive `frexp`'s exponent through a `c.Out[c.i32]` slot, pass text through `c.cstr` to `strlen`, refuse an interior NUL, and copy `strerror`'s view with `copy_utf8`. route bug: `incan check` accepts a `binding` program and `incan run`/`incan build`/`incan oven bake` refuse it with `syntax error: Expected declaration, found Ident(\"binding\")` (observed 2026-09-20 with and without an `[interop.c]` manifest section); the CLI's own C test goes through `incan lock` and `incan oven interop bake`, which the behaviour runner does not perform. Program in the lane report. Only the scalar carriers libc exposes are exercised; the thirteen-carrier output slot check narrows to `c.i32`."
+        },
+        "checked_c_string_view_emits_bounded_utf8_copy_helper": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/checked_c_bindings_over_libc.incn`: checked C bindings over the host libc call `abs` through an exact c.i32 carrier, receive `frexp`'s exponent through a `c.Out[c.i32]` slot, pass text through `c.cstr` to `strlen`, refuse an interior NUL, and copy `strerror`'s view with `copy_utf8`. route bug: `incan check` accepts a `binding` program and `incan run`/`incan build`/`incan oven bake` refuse it with `syntax error: Expected declaration, found Ident(\"binding\")` (observed 2026-09-20 with and without an `[interop.c]` manifest section); the CLI's own C test goes through `incan lock` and `incan oven interop bake`, which the behaviour runner does not perform. Program in the lane report. Only the scalar carriers libc exposes are exercised; the thirteen-carrier output slot check narrows to `c.i32`."
+        },
+        "external_union_coverage_localizes_only_the_target_provider_issue892": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_unions_across_the_package_boundary",
+          "notes": "asserted a union from another provider does not count as the target provider's (#892); the twin uses two dependencies with same-shaped `Union[<Column>, int]` unions and passes each provider's model and an int to its own function. The predicate dies with #654."
+        },
+        "external_union_coverage_requires_all_compound_slots_to_match": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_unions_across_the_package_boundary",
+          "notes": "asserted a tuple of provider unions is covered only when every slot matches, and a tuple with a local union sibling is not; the twin passes `(BoolLiteralExpr, NumberColumnExpr)` to the dependency's tuple parameter and `(StringLiteralExpr, LocalValue)` / `(StringLiteralExpr, \"text\")` to a consumer function whose tuple mixes a provider union and a local one, printing each. The coverage predicate dies with #654."
+        },
+        "generated_union_qualifies_public_provider_payloads_issue1203": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_unions_across_the_package_boundary",
+          "notes": "asserted a consumer-local union over a public provider payload keeps the payload qualified (#1203); the twin declares `type Envelope = IntExpr | int` over a dependency's model and matches both members. The path spelling dies with #654."
+        },
+        "qualified_trait_impl_retains_projected_sdk_module_import": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/trait_adopted_through_module_binding.incn",
+          "notes": "asserted an `impl codec::Encode for Payload` keeps the module binding it names and prunes unused aliases; the twin adopts `json.Serialize` through a module binding and through an aliased module import, and encodes both through a bound spelled the same way. The `use ... as` retention dies with #654."
+        },
+        "targeted_union_collection_keeps_uncovered_local_compound_slots": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_unions_across_the_package_boundary",
+          "notes": "asserted the consumer still generates the local union sibling of a provider union inside a tuple; the twin's `describe_mixed((provider member, local member))` matches the local union's model and str members. The collection map dies with #654."
+        }
+      }
     },
     "loaves/compiler/incan_emit/src/emit/statements.rs": {
       "disposition": "retire",
@@ -1263,7 +1881,41 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 4 twinned by behaviour fixtures under fixtures/behavior/emit_*, 1 dies, 3 open.",
+      "tests": {
+        "dict_index_assignment_from_method_call_result_clones_borrowed_value_exactly_once": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_box_as_ref_borrowed_results.incn`: a Rust Box's `as_ref()` result is used as an owned model in a let binding, a reassignment, a dict-index assignment, a return value, a struct field and a collection element, and matched directly, printing `1`..`6` and `leaf 7`. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "immutable_static_binding_let_does_not_emit_mut": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/static_list_storage_mutation.incn",
+          "notes": "asserted a read-only static binding is bound without `mut`; the twin reads a static list that is never mutated and prints its length and first item. The `mut` token dies with #654."
+        },
+        "later_assignment_to_plain_local_emits_mut": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/local_bindings_mutation.incn",
+          "notes": "asserted a later assignment makes the binding mutable; the twin reassigns a `mut` int local and prints the last value (Incan requires `mut` at the declaration, so the plain-let IR shape arises from the lowering of that binding). The `mut` token dies with #654."
+        },
+        "let_binding_from_method_call_result_clones_borrowed_value_exactly_once": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_box_as_ref_borrowed_results.incn`: a Rust Box's `as_ref()` result is used as an owned model in a let binding, a reassignment, a dict-index assignment, a return value, a struct field and a collection element, and matched directly, printing `1`..`6` and `leaf 7`. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "local_reassignment_materializes_borrowed_method_result_exactly_once": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_box_as_ref_borrowed_results.incn`: a Rust Box's `as_ref()` result is used as an owned model in a let binding, a reassignment, a dict-index assignment, a return value, a struct field and a collection element, and matched directly, printing `1`..`6` and `leaf 7`. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed in this lane."
+        },
+        "source_mutable_let_still_emits_mut": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/local_bindings_mutation.incn",
+          "notes": "asserted a source `mut` binding is emitted mutable; the twin binds a list with `mut`, appends to it and prints the result. The `mut` token dies with #654."
+        },
+        "storage_binding_analysis_matches_method_mutability_policy": {
+          "twin": "dies",
+          "dies": "agreement between two internal tables (which collection methods mutate their receiver and which static bindings the statement analysis marks mutable); the observable half, a static list mutated through `append`, is twinned by `emit_declarations_and_modules/static_list_storage_mutation.incn`."
+        },
+        "storage_mutated_static_binding_let_emits_mut_inside_statement_slice": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/static_list_storage_mutation.incn",
+          "notes": "asserted a static list mutated later in the same statement slice is bound mutable; the twin appends to a module static through a function and prints its length and total from another function. The `mut` token dies with #654."
+        }
+      }
     },
     "loaves/compiler/incan_emit/src/emit/types.rs": {
       "disposition": "retire",
@@ -1271,7 +1923,21 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 2 twinned by behaviour fixtures under fixtures/behavior/emit_*, 0 dies, 1 open.",
+      "tests": {
+        "absolute_enum_pattern_paths_remain_absolute": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_unions_across_the_package_boundary",
+          "notes": "asserted an imported provider union's variant pattern keeps its absolute path and `mut` bindings; the twin matches a dependency union's members (`bump` derives a mutable total from the bound payload) and prints the arms. A pattern binding that is itself reassigned inside its arm has no confirmed source spelling in this lane; the `mut item` half is noted, the absolute path half is proved. The path spelling dies with #654."
+        },
+        "absolute_rust_type_paths_remain_absolute": {
+          "twin": "",
+          "notes": "open: the retired shape keeps the leading `::` of a `rust::` type path so a local module cannot shadow the crate; the only crate available offline is `std`, and a local module cannot take that name. Question: twin under #1337's `rust::` corpus, or dies with the path emitter."
+        },
+        "relative_enum_patterns_keep_local_union_qualification": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/nested_module_union_enum_and_none_patterns",
+          "notes": "asserted local union variants are crate-qualified while ordinary enum and prelude patterns stay bare; the twin matches a local `int | str` union, a local enum and an Option inside a nested module and prints each arm. The qualification spelling dies with #654."
+        }
+      }
     },
     "loaves/compiler/incan_emit/src/ownership.rs": {
       "disposition": "retire",
@@ -3656,6 +4322,14 @@
       "split_required": false,
       "split_target": "",
       "notes": "runs every behaviour fixture of the driver area as a program and compares its observables; the route changes under it, the fixtures do not."
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_emit_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs every behaviour fixture of the emit_calls_and_builtins, emit_declarations_and_modules and emit_dependency_unions_and_surfaces areas as a program (one libtest case per area) and compares its observables; the route changes under it, the fixtures do not."
     },
     "loaves/toolchain/incan-cli/tests/behavior_harness_tests.rs": {
       "disposition": "re-point",

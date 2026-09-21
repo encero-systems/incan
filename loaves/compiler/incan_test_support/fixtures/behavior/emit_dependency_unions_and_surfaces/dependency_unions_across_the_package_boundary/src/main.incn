@@ -1,0 +1,123 @@
+# behavior: unions published by dependencies work at every consumer call: every member of a four-model union dispatches to its own arm, a renamed model constructor still fits its union, a union-returning call and a str pass to an Option[union] parameter and a model to an Option[model | str] one, both defaulting to None, unions nested in a tuple and beside a consumer-local union each keep their provider, a method returning a union matches, function aliases and overload aliases keep their union results, and two providers' same-shaped unions stay apart
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_union_payload_canonicalizes_external_union_variant_index_issue1198
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::contextual_union_payload_uses_checked_nominal_identity
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_public_union_call_result_as_option_payload_issue745
+# retires: loaves/compiler/incan_emit/src/emit/native_unions.rs::an_optional_union_parameter_keeps_its_option_wrapper_issue745
+# retires: loaves/compiler/incan_emit/src/emit/native_unions.rs::local_callable_alias_retains_native_union_after_manifest_application
+# retires: loaves/compiler/incan_emit/src/emit/native_unions.rs::function_alias_overloads_keep_exact_native_union_projection
+# retires: loaves/compiler/incan_emit/src/emit/native_unions.rs::publication_captures_nominal_method_return_unions
+# retires: loaves/compiler/incan_emit/src/emit/program.rs::external_union_coverage_requires_all_compound_slots_to_match
+# retires: loaves/compiler/incan_emit/src/emit/program.rs::external_union_coverage_localizes_only_the_target_provider_issue892
+# retires: loaves/compiler/incan_emit/src/emit/program.rs::targeted_union_collection_keeps_uncovered_local_compound_slots
+# retires: loaves/compiler/incan_emit/src/emit/program.rs::generated_union_qualifies_public_provider_payloads_issue1203
+# retires: loaves/compiler/incan_emit/src/emit/types.rs::absolute_enum_pattern_paths_remain_absolute
+# expect-stdout:
+#   bool column active
+#   number column amount
+#   bool literal true
+#   str literal name
+#   105
+#   7
+#   int 4
+#   text hello
+#   nothing
+#   int expr 4
+#   nothing
+#   bool literal false / number column total
+#   number column x + local 3
+#   number column x + local text
+#   answer 3
+#   answer empty
+#   first 5
+#   first zero
+#   second 6
+#   second zero
+#   pick 2
+#   pick yes true
+#   pick no false
+#   select 8
+#   other column region
+#   other position 2
+#   envelope 4
+#   plain 5
+#   8
+
+from pub::querykit import BoolColumnExpr, NumberColumnExpr, BoolLiteralExpr, StringLiteralExpr, ColumnExpr, IntExpr, Surcharge as Charge, Box, describe, describe_pair, column, literal, accept_optional, accept_expr, lit, first, second, select, pick, charge_total
+from pub::other import ProviderColumn, render
+
+
+model LocalValue:
+    pub value: int
+
+
+type Local = LocalValue | str
+type Envelope = IntExpr | int
+
+
+def describe_mixed(exprs: tuple[ColumnExpr, Local]) -> str:
+    match exprs[1]:
+        LocalValue(local) => return f"{describe(exprs[0])} + local {local.value}"
+        str(text) => return f"{describe(exprs[0])} + local {text}"
+
+
+def local(value: int) -> Local:
+    return LocalValue(value=value)
+
+
+def local_text(text: str) -> Local:
+    return text
+
+
+def show_first(value: int | str, label: str) -> str:
+    match value:
+        int(number) => return f"{label} {number}"
+        str(text) => return f"{label} {text}"
+
+
+def show_envelope(value: Envelope) -> str:
+    match value:
+        IntExpr(expr) => return f"envelope {expr.value}"
+        int(plain) => return f"plain {plain}"
+
+
+def bump(value: Envelope) -> int:
+    match value:
+        IntExpr(expr) =>
+            mut total = expr.value
+            total += 4
+            return total
+        int(plain) => return plain
+
+
+def main() -> None:
+    println(describe(BoolColumnExpr(name="active")))
+    println(describe(NumberColumnExpr(name="amount")))
+    println(describe(BoolLiteralExpr(value=True)))
+    println(describe(StringLiteralExpr(value="name")))
+    println(charge_total(Charge(value=5)))
+    println(charge_total(7))
+    println(accept_optional(lit(4)))
+    println(accept_optional("hello"))
+    println(accept_optional())
+    println(accept_expr(IntExpr(value=4)))
+    println(accept_expr())
+    println(describe_pair((literal(False), column("total"))))
+    println(describe_mixed((column("x"), local(3))))
+    println(describe_mixed((column("x"), local_text("text"))))
+    println(show_first(Box(value=3).answer(), "answer"))
+    println(show_first(Box(value=0).answer(), "answer"))
+    println(show_first(first(5), "first"))
+    println(show_first(first(0), "first"))
+    println(show_first(second(6), "second"))
+    println(show_first(second(0), "second"))
+    println(show_first(pick(2), "pick"))
+    yes = pick("yes")
+    no = pick("no")
+    println(f"pick yes {yes}")
+    println(f"pick no {no}")
+    println(show_first(select(8), "select"))
+    println(render(ProviderColumn(name="region")))
+    println(render(2))
+    println(show_envelope(IntExpr(value=4)))
+    println(show_envelope(5))
+    println(bump(IntExpr(value=4)))

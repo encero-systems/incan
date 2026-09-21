@@ -1,0 +1,16 @@
+pub model Product:
+    pub name: str
+    pub cents: int
+
+
+pub model ProviderColumn:
+    pub name: str
+
+
+pub type Column = Union[ProviderColumn, int]
+
+
+pub def column_name(column: Column) -> str:
+    match column:
+        ProviderColumn(named) => return named.name
+        int(position) => return f"#{position}"

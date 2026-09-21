@@ -1,0 +1,18 @@
+# behavior: a const and a function reached through module bindings (`import querykit.helpers` binds the nested module, `import widgets` the sibling) read and call the declarations of those modules, passing an owned str const as an argument
+# retires: loaves/compiler/incan_emit/src/emit/expressions/indexing.rs::module_field_chain_emits_as_path
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_name_namespace_call_uses_incan_function_arg_conversion
+# expect-stdout:
+#   orders
+#   6
+#   widget:gadget
+#   widget:orders
+
+import querykit.helpers
+import widgets
+
+
+def main() -> None:
+    println(helpers.DEFAULT_LABEL)
+    println(helpers.label_width())
+    println(widgets.make_widget(widgets.DEFAULT_NAME))
+    println(widgets.make_widget(helpers.DEFAULT_LABEL))

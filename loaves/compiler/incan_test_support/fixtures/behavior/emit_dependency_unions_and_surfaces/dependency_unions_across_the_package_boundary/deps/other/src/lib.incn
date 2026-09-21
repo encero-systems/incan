@@ -1,0 +1,11 @@
+pub model ProviderColumn:
+    pub name: str
+
+
+pub type Column = Union[ProviderColumn, int]
+
+
+pub def render(column: Column) -> str:
+    match column:
+        ProviderColumn(named) => return f"other column {named.name}"
+        int(position) => return f"other position {position}"

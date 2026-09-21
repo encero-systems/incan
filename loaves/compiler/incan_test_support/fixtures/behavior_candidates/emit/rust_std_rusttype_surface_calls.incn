@@ -1,0 +1,46 @@
+# behavior: an associated function of a rusttype alias over a Rust String takes a str literal, a method of a Rust String held in a model field takes an owned str where the Rust signature wants a borrowed one, and the String's generic parse method works with an explicit type argument and with the type inferred from the binding
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::rusttype_surface_associated_function_uses_incan_string_conversion
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::qualified_rusttype_receiver_method_uses_rust_signature_borrowing
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_rust_method_explicit_generic_string_arg_keeps_turbofish
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_rust_method_generic_string_arg_keeps_inferable_shape
+# expect-stdout:
+#   5
+#   8
+#   true
+#   42
+#   7
+
+from rust::std::num import ParseIntError
+from rust::std::string import String as RustString
+
+
+type Name = rusttype RustString
+
+
+model Buffer:
+    raw: Name
+
+    def append(mut self, text: str) -> None:
+        self.raw.push_str(text)
+
+    def size(self) -> int:
+        return self.raw.len()
+
+    def starts_with_text(self, text: str) -> bool:
+        return self.raw.starts_with(text)
+
+
+def main() -> None:
+    mut buffer = Buffer(raw=Name.from("alice"))
+    println(buffer.size())
+    buffer.append("@ex")
+    println(buffer.size())
+    println(buffer.starts_with_text("ali"))
+    digits = Name.from("42")
+    match digits.parse[i64]():
+        Ok(number) => println(number)
+        Err(_) => println("not a number")
+    inferred: Result[i64, ParseIntError] = Name.from("7").parse()
+    match inferred:
+        Ok(number) => println(number)
+        Err(_) => println("not a number")

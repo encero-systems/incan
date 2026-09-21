@@ -1,0 +1,31 @@
+# behavior: a model adopts a stdlib trait through a module binding (`json.Serialize`, and the same trait through an aliased module import), and a generic bound spelled the same way accepts both models
+# retires: loaves/compiler/incan_emit/src/emit/program.rs::qualified_trait_impl_retains_projected_sdk_module_import
+# expect-stdout:
+#   {"value":1}
+#   [2]
+
+from std.serde import json
+import std.serde.json as formats
+
+
+model Payload with json.Serialize:
+    value: int
+
+    def to_json(self) -> str:
+        return f"{{\"value\":{self.value}}}"
+
+
+model Wrapped with formats.Serialize:
+    value: int
+
+    def to_json(self) -> str:
+        return f"[{self.value}]"
+
+
+def encode[T with json.Serialize](value: T) -> str:
+    return value.to_json()
+
+
+def main() -> None:
+    println(encode(Payload(value=1)))
+    println(encode(Wrapped(value=2)))

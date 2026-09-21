@@ -1,0 +1,32 @@
+# behavior: isinstance(value, str) is true for a const str, a str literal, a `str | int` holding str and an Option holding a const str, and false for the int member and for None
+# retires: loaves/compiler/incan_emit/src/emit/expressions/builtins.rs::checked_isinstance_matches_string_storage_in_direct_union_and_option_shapes
+# expect-stdout:
+#   true
+#   true
+#   true
+#   false
+#   true
+#   false
+
+const NAME: str = "policy"
+
+
+def pick(flag: bool) -> str | int:
+    if flag:
+        return "text"
+    return 7
+
+
+def maybe(flag: bool) -> Option[str]:
+    if flag:
+        return Some(NAME)
+    return None
+
+
+def main() -> None:
+    println(isinstance(NAME, str))
+    println(isinstance("literal", str))
+    println(isinstance(pick(True), str))
+    println(isinstance(pick(False), str))
+    println(isinstance(maybe(True), str))
+    println(isinstance(maybe(False), str))

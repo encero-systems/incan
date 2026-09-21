@@ -1,0 +1,20 @@
+# behavior: a trait default method taking a `mut` list parameter appends to its own copy and returns the new length, leaving the caller's list unchanged
+# retires: loaves/compiler/incan_emit/src/emit/decls/functions.rs::trait_default_method_keeps_owned_mutable_rust_parameter_binding
+# expect-stdout:
+#   3
+#   2
+
+trait Replacer:
+    def replace(self, mut items: list[int]) -> int:
+        items.append(9)
+        return len(items)
+
+
+model Widget with Replacer:
+    id: int
+
+
+def main() -> None:
+    items: list[int] = [1, 2]
+    println(Widget(id=1).replace(items))
+    println(len(items))
