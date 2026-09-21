@@ -129,11 +129,11 @@ def main() -> int:
             f"{relative_path} has no reader-facing next step",
         )
         if relative_path in STABLE_EXECUTABLE_TUTORIALS:
-            require("Stable-release executable" in page, f"{relative_path} is not labelled stable-release executable")
+            require("Stable-release executable" in page, f"{relative_path} is not labeled stable-release executable")
         elif relative_path in RELEASE_EXECUTABLE_TUTORIALS:
-            require("Release-envelope executable" in page, f"{relative_path} is not labelled release-envelope executable")
+            require("Release-envelope executable" in page, f"{relative_path} is not labeled release-envelope executable")
         elif relative_path in SOURCE_VERIFIED_PREVIEWS:
-            require("Source-verified" in page, f"{relative_path} is not labelled source-verified")
+            require("Source-verified" in page, f"{relative_path} is not labeled source-verified")
             require(
                 "0.5 release envelope" in page or "0.5 release Loaf envelope" in page,
                 f"{relative_path} does not explain its 0.5 release-envelope boundary",

@@ -1256,7 +1256,7 @@ pub def normalize(value: str) -> str:
     -> Result<(), Box<dyn std::error::Error>> {
         // The replacement path owes Body IR a desugared program. This is what "owes" means concretely: a vocab
         // declaration whose library is unavailable stops here, with the resolution failure the desugar pass already
-        // reports, rather than travelling on to become a lowering refusal at the same span.
+        // reports, rather than traveling on to become a lowering refusal at the same span.
         let program = incan_frontend::ast::Program {
             declarations: vec![undesugared_vocab_declaration()],
             ..Default::default()

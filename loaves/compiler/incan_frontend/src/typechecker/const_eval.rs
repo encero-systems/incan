@@ -89,7 +89,7 @@ pub enum ConstEvalState {
 
 impl TypeChecker {
     /// Resolve a `const` declaration's written annotation to the frozen type the const will carry, rejecting the one
-    /// family of annotations that cannot be honoured.
+    /// family of annotations that cannot be honored.
     ///
     /// `str`/`bytes` and the frozen wrappers freeze silently: `const X: str = ...` carries `FrozenStr`, which reads
     /// wherever `str` is expected, so the written annotation holds at every use site. A mutable container (`list`,
@@ -212,7 +212,7 @@ impl TypeChecker {
         Some(fits)
     }
 
-    /// Evaluate the named module-level const, memoising the result and detecting dependency cycles.
+    /// Evaluate the named module-level const, memoizing the result and detecting dependency cycles.
     ///
     /// `stack` is the chain of consts currently being evaluated: a const whose initializer references another const
     /// recurses through here, and a name found `InProgress` is a cycle reported at that const's declaration span. A
@@ -253,7 +253,7 @@ impl TypeChecker {
         stack.push(name.to_string());
 
         // The evaluator only needs the frozen expectation; the declaration check (`check_and_resolve_const`) is
-        // the one place an unhonourable annotation is reported.
+        // the one place an unhonorable annotation is reported.
         let expected = decl.ty.as_ref().map(|t| self.resolve_type_checked(t));
         let expected = expected.map(freeze_const_type);
         let result = self.eval_const_expr(&decl.value, expected.as_ref(), stack, decl_span);

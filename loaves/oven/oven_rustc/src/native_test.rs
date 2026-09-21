@@ -45,7 +45,7 @@ pub struct OvenNativeTestRequest {
     pub environment: BTreeMap<String, String>,
     /// Maximum wall-clock duration for one generated native execution group.
     ///
-    /// The generated group remains one libtest process so session-scoped fixture behaviour is preserved. When this
+    /// The generated group remains one libtest process so session-scoped fixture behavior is preserved. When this
     /// deadline expires Oven terminates that child and returns its captured partial transcript plus a timeout record.
     pub timeout: Option<Duration>,
 }
@@ -284,7 +284,7 @@ pub fn run_native_tests(request: &OvenNativeTestRequest) -> Result<OvenNativeTes
 
 /// Run one generated batch in a single native libtest process after verifying its exact expected inventory.
 ///
-/// This preserves session-scoped fixture behaviour. Generated Incan file batches can share registration and fixture
+/// This preserves session-scoped fixture behavior. Generated Incan file batches can share registration and fixture
 /// initialization between their native Rust `#[test]` functions, so the batch itself runs one test at a time while
 /// the outer scheduler remains free to run independent files in parallel. The caller may parse the returned libtest
 /// transcript into its own richer test-reporting format; a test assertion failure is represented as `success: false`,
@@ -351,7 +351,7 @@ pub fn run_native_test_batch(
 /// timings are aggregated without manufacturing one root per selected case.
 ///
 /// `root_label` names the root in progress output. The suite reaches this path with several roots in flight, so an
-/// unlabelled line here would be correct and unattributable in exactly the way the complete-root runner's label
+/// unlabeled line here would be correct and unattributable in exactly the way the complete-root runner's label
 /// exists to prevent.
 pub fn run_native_tests_exact_in_directory_with_timeout(
     executable: &Path,
@@ -1636,7 +1636,7 @@ mod tests {
         );
         assert!(
             NativeTestProgressReporter::new(None).render(CASE_OK)[0].contains("layering::guards_the_boundary"),
-            "an unlabelled root still renders its cases"
+            "an unlabeled root still renders its cases"
         );
     }
 

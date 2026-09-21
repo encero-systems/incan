@@ -30,7 +30,7 @@ pub fn parse_float_string(input: &str) -> Option<f64> {
 ///
 /// Rust's `Display for f64` drops the fractional part of an integral value (`100.0` prints as `100`), so a program
 /// writing SQL, JSON, or CSV emits an integer where it meant a float and a downstream reader infers the wrong
-/// type (#1372). Python's `repr` keeps the value recognisably a float in every case, and this follows it exactly:
+/// type (#1372). Python's `repr` keeps the value recognizably a float in every case, and this follows it exactly:
 ///
 /// - the shortest digit string that round-trips, with at least one fractional digit (`100.0`, `1.5`, `0.0`, `-2.0`);
 /// - positional notation while `1e-4 <= |value| < 1e16` and exponential outside it (`10000000000.0` for `1e10`, but
@@ -40,8 +40,8 @@ pub fn parse_float_string(input: &str) -> Option<f64> {
 ///
 /// The digits and the positional/exponential switch come from Rust's `Debug for f64`, which already selects the
 /// shortest round-trip representation at those thresholds; only the exponent spelling and `nan` differ, and both
-/// are normalised here. This is deliberately `float` only: the exact `f32`/`f64` carriers keep their native Rust
-/// spelling, which the replacement profile pins as their checked-carrier behaviour.
+/// are normalized here. This is deliberately `float` only: the exact `f32`/`f64` carriers keep their native Rust
+/// spelling, which the replacement profile pins as their checked-carrier behavior.
 pub fn float_to_string(value: f64) -> String {
     if value.is_nan() {
         return "nan".to_string();

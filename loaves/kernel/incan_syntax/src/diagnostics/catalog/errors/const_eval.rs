@@ -35,7 +35,7 @@ pub fn const_mutable_collection_annotation(name: &str, written: &str, frozen: &s
         format!("const '{name}' is annotated '{written}', but a const is deeply immutable and is represented as '{frozen}'"),
         span,
     )
-    .with_note("A frozen collection does not read where the mutable container is expected, so the written annotation could not be honoured at any use site")
+    .with_note("A frozen collection does not read where the mutable container is expected, so the written annotation could not be honored at any use site")
     .with_hint(format!("Annotate the const as '{frozen}', or omit the annotation to infer it"))
 }
 

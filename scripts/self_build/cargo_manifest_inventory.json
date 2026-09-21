@@ -5348,7 +5348,7 @@
     "rust_version": "1.98",
     "license": "Apache-2.0",
     "publish": true,
-    "description": "Task, timer, channel and synchronisation runtime: the Rust facet of the `async` standard library component",
+    "description": "Task, timer, channel and synchronization runtime: the Rust facet of the `async` standard library component",
     "resolver": null,
     "auto_discovery_off": []
    },

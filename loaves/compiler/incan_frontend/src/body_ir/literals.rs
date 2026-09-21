@@ -285,7 +285,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// Lower an `ast::Expr::Constructor` node by delegating to [`Self::lower_nominal_construction`].
     ///
     /// No stage of the current pipeline produces this AST variant: `P(x=1, y=2)` parses as an `ast::Expr::Call` whose
-    /// callee is a bare identifier, and `lower_call` recognises the construction from the typechecker's recorded field
+    /// callee is a bare identifier, and `lower_call` recognizes the construction from the typechecker's recorded field
     /// binding. The arm is kept because the variant is still part of the AST contract, and it delegates rather than
     /// duplicating the lowering so a future producer cannot reach a second, divergent construction path.
     pub(super) fn lower_constructor(

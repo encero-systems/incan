@@ -29,7 +29,7 @@ pub const INCAN_STDLIB_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Byte-level string equality usable in `const` contexts.
 ///
-/// Rust nightly currently does not stabilise `PartialEq` as a const trait, so `a == b` on `&str` inside a `const`
+/// Rust nightly currently does not stabilize `PartialEq` as a const trait, so `a == b` on `&str` inside a `const`
 /// block is a compiler error. This function works around that by comparing raw `&[u8]` slices element by element, and
 /// primitive `u8` equality is const-stable.
 #[doc(hidden)]

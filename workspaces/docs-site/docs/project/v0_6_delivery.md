@@ -22,7 +22,7 @@ This page is the public delivery map for that work. It complements the [developm
 
 ## Keeping the map current
 
-The rendered map is a checked-in GitHub snapshot, not a browser-side query. That keeps site builds reproducible and preserves the exact programme state readers are seeing. To refresh it after a material milestone, hierarchy, status, or dependency change, run:
+The rendered map is a checked-in GitHub snapshot, not a browser-side query. That keeps site builds reproducible and preserves the exact program state readers are seeing. To refresh it after a material milestone, hierarchy, status, or dependency change, run:
 
 ```console
 make -C workspaces/docs-site docs-refresh

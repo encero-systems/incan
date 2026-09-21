@@ -916,7 +916,7 @@ fn same_registry_leaf_semantics(left: &OvenRustcRegistryLeaf, right: &OvenRustcR
 /// and the identities of the unit's own dependencies, so the same declared coordinates can legitimately compile to
 /// a different crate identity inside a different closure (Bevy's `rand_core` vs the release closure's, #1227).
 ///
-/// Two substitution regimes follow from who consumes the leaf, and the caller passes that judgement as
+/// Two substitution regimes follow from who consumes the leaf, and the caller passes that judgment as
 /// `allow_cross_identity`. A leaf consumed only by recompiled surfaces — the generated root's direct dependencies,
 /// or any leaf in a plan with no prebuilt project crates — may swap onto the release copy even when identities
 /// differ: that swap is exactly what unifies the root's trait identities (`serde::Serialize`) with the sealed
@@ -10466,7 +10466,7 @@ fi
         //
         // This substrate carries the shapes, not the decision. Gate 6 of RFC 119 turns the same case into a hard
         // refusal naming "no checked Oven source-unit identity" and replaces this assertion with that negative
-        // case; asserting the refusal here would be asserting behaviour this tree does not yet have.
+        // case; asserting the refusal here would be asserting behavior this tree does not yet have.
         assert!(
             !project_inspection_test_dependency_envelope_supports_dependencies(
                 &payload,

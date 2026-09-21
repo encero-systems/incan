@@ -109,7 +109,7 @@ pub fn cargo_command() -> Command {
 /// dependency graph and fails late with "found crate `x` compiled by an incompatible version of rustc", naming a
 /// dependency rather than the toolchain split that caused it.
 ///
-/// An explicit `RUSTC` still wins, matching how `CARGO` is honoured above.
+/// An explicit `RUSTC` still wins, matching how `CARGO` is honored above.
 fn pin_incan_owned_rustc(command: &mut Command) {
     if let Some(rustc) = rustc_pin_for_incan_owned_cargo(env::var_os("RUSTC"), oven_rustc::rustc::incan_owned_rustc()) {
         command.env("RUSTC", rustc);

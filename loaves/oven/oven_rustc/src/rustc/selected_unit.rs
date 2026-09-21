@@ -31,7 +31,7 @@ use super::{
 /// One physical root for an owner named by a validated selected facet graph.
 ///
 /// The caller obtains these roots only from retained Store/Loaf/provider owners. This shape carries no authority to
-/// search a checkout, registry cache, Cargo home, or neighbouring artifact directory.
+/// search a checkout, registry cache, Cargo home, or neighboring artifact directory.
 #[derive(Debug, Clone)]
 pub struct OvenSelectedRustFacetOwnerRoot {
     pub identity: String,
@@ -42,7 +42,7 @@ pub struct OvenSelectedRustFacetOwnerRoot {
 ///
 /// The selected unit's source root is the compiler-visible root. A provider/package root may be the same root or an
 /// ancestor below the same retained owner, for example a package root `.` above a compiler root `src`. These members
-/// never enter the selected unit's compiler-visible source catalogue or compiled identity. The higher-level record
+/// never enter the selected unit's compiler-visible source catalog or compiled identity. The higher-level record
 /// must already bind their owner, root and bytes; this adapter only verifies that exact physical tree and refuses any
 /// hidden file.
 #[derive(Debug, Clone)]
@@ -198,7 +198,7 @@ pub fn materialize_selected_rust_facet_graph(
 /// Bind a selected graph while retaining a higher-level, already admitted source closure in the exact physical tree.
 ///
 /// Provider-only supplemental members do not enter [`compiled_rust_unit_identities`]; an overlapping member already
-/// enters through the selected unit's ordinary source catalogue. Every supplemental member is checked solely to make
+/// enters through the selected unit's ordinary source catalog. Every supplemental member is checked solely to make
 /// sure a physical source root contains neither hidden files nor undeclared provider inputs. Callers must provide
 /// them from an authority record that has already selected their owner, source root and byte identities.
 pub fn materialize_selected_rust_facet_graph_with_supplemental_source_members(

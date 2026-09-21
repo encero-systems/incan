@@ -1803,7 +1803,7 @@ impl OvenStore {
                 continue;
             }
             // A malformed or half-written entry is not this probe's problem to report: the reclamation and admission
-            // paths below own that judgement, and failing here would turn an optimization into a new failure mode.
+            // paths below own that judgment, and failing here would turn an optimization into a new failure mode.
             let Ok(manifest) = verify_entry_manifest(&path) else {
                 continue;
             };

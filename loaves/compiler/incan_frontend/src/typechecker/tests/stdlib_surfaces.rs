@@ -1,4 +1,4 @@
-//! Stdlib module surfaces: SDK provider catalogues (#1435), the web wrapper, `std.testing` markers and fixtures, the
+//! Stdlib module surfaces: SDK provider catalogs (#1435), the web wrapper, `std.testing` markers and fixtures, the
 //! RFC 018 assert forms, `std.environ` (`args`, `get_as`), and `std.json` value indexing.
 
 use super::*;

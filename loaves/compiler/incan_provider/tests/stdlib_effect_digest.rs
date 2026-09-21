@@ -82,7 +82,7 @@ fn a_changed_body_moves_a_module_effect_digest() -> TestResult {
 #[test]
 fn the_digest_covers_the_rust_runtime_every_component_links_against() -> TestResult {
     // An Incan-only digest would report a hit for an edit to the Rust runtime, which is a false reuse of a
-    // component whose behaviour changed. This is the guard against that being quietly dropped.
+    // component whose behavior changed. This is the guard against that being quietly dropped.
     let tmp = tempfile::tempdir()?;
     let stdlib = tmp.path().join("stdlib");
     let runtime = tmp.path().join("runtime");
@@ -164,7 +164,7 @@ fn the_real_standard_library_digests_deterministically_and_cheaply() -> TestResu
     assert_eq!(first, second, "the digest must not depend on iteration order or run");
     assert!(
         first.starts_with("sha256:"),
-        "the digest must be a labelled sha256, got {first}"
+        "the digest must be a labeled sha256, got {first}"
     );
     // The rebuild this replaces costs roughly seventeen minutes. A bound two orders of magnitude below that is
     // loose enough to survive a loaded machine and tight enough to fail if the cheap path is ever lost.

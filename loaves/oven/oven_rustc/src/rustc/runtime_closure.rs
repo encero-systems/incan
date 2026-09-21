@@ -340,7 +340,7 @@ pub fn admit_declared_runtime_closure(
 /// Derive the content identity of one sealed runtime foundation.
 ///
 /// The foundation exposes no identity of its own, so this digests exactly the three facts that define it: the
-/// compiler closure it is bound to, its sealed artifact catalogue, and its selected source graph.
+/// compiler closure it is bound to, its sealed artifact catalog, and its selected source graph.
 pub fn runtime_foundation_identity(foundation: &ValidatedOvenRuntimeFoundation) -> Result<String, OvenRustcError> {
     let binding = (
         foundation.compiler_closure_digest(),

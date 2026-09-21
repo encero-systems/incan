@@ -468,13 +468,13 @@ fn nested_or_deferred_range_uses_do_not_authorize_an_outer_range_projection() ->
 /// (#1240), and collection membership (#1246, twice over). Each was a *gap*, and #1101 exists to close gaps, so
 /// every such choice decays the moment its owning sibling lands.
 ///
-/// `unsafe:` is categorically different. It is refused because Body IR v0 cannot carry the acknowledgement a
+/// `unsafe:` is categorically different. It is refused because Body IR v0 cannot carry the acknowledgment a
 /// consumer would need to admit the region deliberately -- a stated disposition, not pending work. Reversing it
-/// means designing the acknowledgement fact first, so it will not quietly become representable underneath a test.
+/// means designing the acknowledgment fact first, so it will not quietly become representable underneath a test.
 ///
 /// If [`the_shared_stand_in_refusal_is_still_refused_by_design`] ever fails, every test below that uses this has
 /// gone vacuous: pick another *by-design* refusal, update these two items, and do not substitute a gap.
-const STAND_IN_REFUSAL_LABEL: &str = "`unsafe:` acknowledgement region";
+const STAND_IN_REFUSAL_LABEL: &str = "`unsafe:` acknowledgment region";
 
 #[test]
 fn the_shared_stand_in_refusal_is_still_refused_by_design() -> Result<(), Box<dyn std::error::Error>> {

@@ -312,7 +312,7 @@ The implementation must include a deterministic compact lookup representation in
 
 Feature parity with the motivating libraries is a requirement at the capability level, not at the exact type-signature level. `OrdinalMap` must cover construction, lookup, batch lookup, checked lookup, unchecked lookup, serialization, deserialization, and benchmarkable large-map behavior. It deliberately extends the key model beyond strings and bytes through `OrdinalKey`, and it deliberately keeps safe lookup exact rather than making unchecked behavior the ergonomic default.
 
-### Prior art and acknowledgement
+### Prior art and acknowledgment
 
 Daniel Lemire's [`constmap`](https://github.com/lemire/constmap) project is the immediate practical inspiration for this RFC. The project describes a compact immutable string-to-`uint64` map using the binary fuse filter construction, with lookup shaped around one hash computation, three array accesses, and XOR reconstruction. Its README also calls out the trade-off between unchecked lookup and verified missing-key detection, plus serialization for reuse. `OrdinalMap` should acknowledge that prior art while deliberately choosing a different public contract: deterministic generic ordinal keys, exact safe lookup, and persistent metadata suitability.
 

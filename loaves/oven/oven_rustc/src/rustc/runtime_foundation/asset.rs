@@ -287,16 +287,16 @@ fn runtime_foundation_asset_owner_roots(
     Ok(owner_roots)
 }
 
-/// One exact descriptor-derived regular-file and directory catalogue for a release foundation root.
+/// One exact descriptor-derived regular-file and directory catalog for a release foundation root.
 #[derive(Debug, Default)]
 struct RuntimeFoundationAssetMemberCatalog {
     files: BTreeSet<String>,
     directories: BTreeSet<String>,
 }
 
-/// Audit every member below the immutable foundation root against the descriptor-derived catalogue.
+/// Audit every member below the immutable foundation root against the descriptor-derived catalog.
 ///
-/// Source trees and artifacts carry their own digest catalogues and are rehashed by later materialization. This walk
+/// Source trees and artifacts carry their own digest catalogs and are rehashed by later materialization. This walk
 /// establishes the complementary invariant: no undeclared file or directory, symlink or special filesystem member
 /// may hide alongside them in the release payload.
 fn audit_runtime_foundation_asset_members(
@@ -484,7 +484,7 @@ fn runtime_foundation_asset_member_path(
     normalized_relative_path(&path, kind)
 }
 
-/// Add one declared regular file and every required parent directory to the exact asset catalogue.
+/// Add one declared regular file and every required parent directory to the exact asset catalog.
 fn record_runtime_foundation_asset_file(
     members: &mut RuntimeFoundationAssetMemberCatalog,
     path: &str,
@@ -496,7 +496,7 @@ fn record_runtime_foundation_asset_file(
     Ok(())
 }
 
-/// Add one declared directory and every parent directory to the exact asset catalogue.
+/// Add one declared directory and every parent directory to the exact asset catalog.
 fn record_runtime_foundation_asset_directory(
     members: &mut RuntimeFoundationAssetMemberCatalog,
     path: &str,
@@ -511,7 +511,7 @@ fn record_runtime_foundation_asset_directory(
     Ok(())
 }
 
-/// Add every non-root parent of a portable path to the exact asset directory catalogue.
+/// Add every non-root parent of a portable path to the exact asset directory catalog.
 fn record_runtime_foundation_asset_parent_directories(
     members: &mut RuntimeFoundationAssetMemberCatalog,
     path: &str,
