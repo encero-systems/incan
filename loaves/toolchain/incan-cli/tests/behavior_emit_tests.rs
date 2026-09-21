@@ -1,4 +1,4 @@
-//! The `emit_*` areas of the behaviour-fixture family: twins of the retire-class unit tests inside the frozen
+//! The `emit_*` areas of the behavior-fixture family: twins of the retire-class unit tests inside the frozen
 //! emitter tree `loaves/compiler/incan_emit/src/emit/**`.
 //!
 //! Every fixture under `loaves/compiler/incan_test_support/fixtures/behavior/emit_<topic>/` is an Incan program

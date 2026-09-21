@@ -30,55 +30,55 @@
       "pattern": "*.incn",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "top-level regression programs run by CLI integration tests (rfc023/rfc030/rfc064/rfc088 behaviour, reflection, model traits)."
+      "notes": "top-level regression programs run by CLI integration tests (rfc023/rfc030/rfc064/rfc088 behavior, reflection, model traits)."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/cli": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures twinning the retire-class tests under loaves/toolchain/incan-cli (generated-text assertions after a build, IrCodegen smoke tests, an `--emit-rust`-only test), run by behavior_cli_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire test it twins in `# retires:` lines."
+      "notes": "behavior fixtures twinning the retire-class tests under loaves/toolchain/incan-cli (generated-text assertions after a build, IrCodegen smoke tests, an `--emit-rust`-only test), run by behavior_cli_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire test it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures that are projects with in-fixture path dependencies (`[dependencies] <name> = { path = \"deps/<name>\" }`, reached through `pub::<name>`): the runner bakes every provider in dependency order before the run, with no Cargo authority, so a twin can prove what a consumer prints (or which diagnostic refuses it) across a package boundary. Run by behavior_cli_dependencies_tests.rs; a provider that would need Cargo (one that itself declares `[dependencies]`) fails its fixture at the suite's Cargo guard, so such fixtures stay parked. Each names the retire tests it twins in `# retires:` lines."
+      "notes": "behavior fixtures that are projects with in-fixture path dependencies (`[dependencies] <name> = { path = \"deps/<name>\" }`, reached through `pub::<name>`): the runner bakes every provider in dependency order before the run, with no Cargo authority, so a twin can prove what a consumer prints (or which diagnostic refuses it) across a package boundary. Run by behavior_cli_dependencies_tests.rs; a provider that would need Cargo (one that itself declares `[dependencies]`) fails its fixture at the suite's Cargo guard, so such fixtures stay parked. Each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/driver": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures twinning incan_driver retire tests whose surviving observable is a program's output or a check-time diagnostic rather than the generated project they inspected; run by behavior_driver_tests.rs. Each names the retire tests it twins in `# retires:` lines."
+      "notes": "behavior fixtures twinning incan_driver retire tests whose surviving observable is a program's output or a check-time diagnostic rather than the generated project they inspected; run by behavior_driver_tests.rs. Each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures twinning retire-class emitter unit tests under loaves/compiler/incan_emit/src/emit whose surviving observable is a call, a builtin, a std.testing assertion, a dict or list method, an iterator adapter or a stdlib import resolving at run time; run by behavior_emit_tests.rs. Each names the retire tests it twins in `# retires:` lines."
+      "notes": "behavior fixtures twinning retire-class emitter unit tests under loaves/compiler/incan_emit/src/emit whose surviving observable is a call, a builtin, a std.testing assertion, a dict or list method, an iterator adapter or a stdlib import resolving at run time; run by behavior_emit_tests.rs. Each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures twinning retire-class emitter unit tests under loaves/compiler/incan_emit/src/emit about declarations and module boundaries: value enums, callable and user traits, static and local bindings, constructor surfaces across source modules, module-qualified reads and calls, refused programs; run by behavior_emit_tests.rs. Each names the retire tests it twins in `# retires:` lines."
+      "notes": "behavior fixtures twinning retire-class emitter unit tests under loaves/compiler/incan_emit/src/emit about declarations and module boundaries: value enums, callable and user traits, static and local bindings, constructor surfaces across source modules, module-qualified reads and calls, refused programs; run by behavior_emit_tests.rs. Each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures that are projects with in-fixture path dependencies (providers without dependencies of their own, baked by the runner with no Cargo authority), twinning retire-class emitter unit tests about unions, constructor surfaces and declaration kinds published across a package boundary; run by behavior_emit_tests.rs. Each names the retire tests it twins in `# retires:` lines."
+      "notes": "behavior fixtures that are projects with in-fixture path dependencies (providers without dependencies of their own, baked by the runner with no Cargo authority), twinning retire-class emitter unit tests about unions, constructor surfaces and declaration kinds published across a package boundary; run by behavior_emit_tests.rs. Each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/harness": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "the behaviour-fixture harness proving itself: one fixture per shape of the format (refused program with one code and with two, non-zero exit, exit code as the only observable, empty stdout, contained lines, module directory, project directory), run by behavior_harness_tests.rs. They twin nothing; they exist so a runner or route change is caught here before it is caught in a twin. Header refusals are unit tests of parse_header, not fixtures."
+      "notes": "the behavior-fixture harness proving itself: one fixture per shape of the format (refused program with one code and with two, non-zero exit, exit code as the only observable, empty stdout, contained lines, module directory, project directory), run by behavior_harness_tests.rs. They twin nothing; they exist so a runner or route change is caught here before it is caught in a twin. Header refusals are unit tests of parse_header, not fixtures."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/smoke": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures: programs with their expected observables in the header, run by behavior_smoke_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+      "notes": "behavior fixtures: programs with their expected observables in the header, run by behavior_smoke_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/invalid": {
       "pattern": "**/*.incn",
@@ -175,7 +175,7 @@
       "disposition": "retire",
       "owner": 1561,
       "twin": "dies",
-      "dies": "the generated Cargo project's layout and text: `mod` declarations and `#[path]`/`r#` escapes in the generated `main.rs`/`lib.rs`, the `std` -> `__incan_std` module transform and its helpers, compiled-provider `pub use ...::__incan_std::*` facades and `#![allow]` lints, the public-namespace `pub use child::*` plan (#948), unchanged-write detection, stale-file cleanup, the Cargo.lock manifest witness, and SDK path-dependency rebinding checked against the artifact's Cargo.toml (#911). Generated projects die with #654; the #948 namespace behaviour is covered by the typechecker's pub_imports_namespaces_and_fields.rs (keep) and rfc031_pub_import_integration_tests.rs (re-point).",
+      "dies": "the generated Cargo project's layout and text: `mod` declarations and `#[path]`/`r#` escapes in the generated `main.rs`/`lib.rs`, the `std` -> `__incan_std` module transform and its helpers, compiled-provider `pub use ...::__incan_std::*` facades and `#![allow]` lints, the public-namespace `pub use child::*` plan (#948), unchanged-write detection, stale-file cleanup, the Cargo.lock manifest witness, and SDK path-dependency rebinding checked against the artifact's Cargo.toml (#911). Generated projects die with #654; the #948 namespace behavior is covered by the typechecker's pub_imports_namespaces_and_fields.rs (keep) and rfc031_pub_import_integration_tests.rs (re-point).",
       "split_required": false,
       "split_target": "",
       "notes": "generated Cargo project shape; dies with the generated-project route",
@@ -190,7 +190,7 @@
         },
         "checked_namespace_facades_skip_children_fully_bound_by_the_parent_issue948": {
           "twin": "dies",
-          "dies": "asserts the generator's `public_namespace_facades` map, the plan for which `pub use child::*` lines a generated `mod.rs` carries so rustc sees no ambiguous glob re-export (#948); a generated-Rust facade plan. The user-facing namespace behaviour is covered by the typechecker's pub_imports_namespaces_and_fields.rs (keep) and rfc031_pub_import_integration_tests.rs (re-point)."
+          "dies": "asserts the generator's `public_namespace_facades` map, the plan for which `pub use child::*` lines a generated `mod.rs` carries so rustc sees no ambiguous glob re-export (#948); a generated-Rust facade plan. The user-facing namespace behavior is covered by the typechecker's pub_imports_namespaces_and_fields.rs (keep) and rfc031_pub_import_integration_tests.rs (re-point)."
         },
         "test_generate_multi_escapes_keyword_module_names": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/driver/module_named_like_host_keyword",
@@ -218,7 +218,7 @@
         },
         "sdk_projection_rejects_cargo_source_mismatch_before_cargo_issue911": {
           "twin": "dies",
-          "dies": "asserts that a compiled artifact whose Cargo.toml path or `default-features` disagrees with its checked `.incnlib` descriptor is refused before Cargo runs, and that the projected Cargo.toml normalises `default-features = false` (#911); a Cargo-manifest consistency check of the compiled artifact, which dies with #654."
+          "dies": "asserts that a compiled artifact whose Cargo.toml path or `default-features` disagrees with its checked `.incnlib` descriptor is refused before Cargo runs, and that the projected Cargo.toml normalizes `default-features = false` (#911); a Cargo-manifest consistency check of the compiled artifact, which dies with #654."
         }
       }
     },
@@ -682,7 +682,7 @@
       "disposition": "retire",
       "owner": 1561,
       "twin": "dies",
-      "dies": "RFC 120 `incan-v1` emitted-symbol recovery from a native artifact built with the pinned Rust release (DD-0002): functions, generic specialisations, methods and statics recovered from mangled symbols. The emitted-name projection is the generated-Rust identifier scheme (`inspect rust` reports declarations under it) and dies with #654.",
+      "dies": "RFC 120 `incan-v1` emitted-symbol recovery from a native artifact built with the pinned Rust release (DD-0002): functions, generic specializations, methods and statics recovered from mangled symbols. The emitted-name projection is the generated-Rust identifier scheme (`inspect rust` reports declarations under it) and dies with #654.",
       "split_required": false,
       "split_target": "",
       "notes": "RFC 120 emitted symbol projection and demangling; generated Rust shape."
@@ -700,7 +700,7 @@
       "disposition": "retire",
       "owner": 1561,
       "twin": "dies",
-      "dies": "end-to-end probes of the generated-Cargo boundary: a normal build refusing `--generated-cargo-target-dir`, sealed-input reuse across projects and after source drift proven by a guarded `cargo` executable that must never launch, `--locked` refusing an `oven.lock` whose Cargo payload drifted after a `[rust-dependencies]` edit, and concurrent normal builds ignoring Cargo's `RUSTC_WRAPPER` while leaving no generated-Cargo state behind. Every assertion is whether Cargo (or a Cargo control) was consulted or refused; without a generated project none of it exists. The sealed project-output replay these probes ride on is Oven's own behaviour (unaffected class); one test carries surviving observables and is recorded as an open override.",
+      "dies": "end-to-end probes of the generated-Cargo boundary: a normal build refusing `--generated-cargo-target-dir`, sealed-input reuse across projects and after source drift proven by a guarded `cargo` executable that must never launch, `--locked` refusing an `oven.lock` whose Cargo payload drifted after a `[rust-dependencies]` edit, and concurrent normal builds ignoring Cargo's `RUSTC_WRAPPER` while leaving no generated-Cargo state behind. Every assertion is whether Cargo (or a Cargo control) was consulted or refused; without a generated project none of it exists. The sealed project-output replay these probes ride on is Oven's own behavior (unaffected class); one test carries surviving observables and is recorded as an open override.",
       "split_required": false,
       "split_target": "",
       "notes": "generated-project cache across builds; dies with the generated-project route.",
@@ -739,7 +739,7 @@
         },
         "a_package_projects_a_call_into_its_own_sibling_module": {
           "twin": "dies",
-          "dies": "asserts the RFC 120 `__incan_v1_` projected wrapper name, not the source spelling `c.bumped()`, in a package's generated `lib.rs` (#1174 emitted-name recoverability); the emitted-name projection and the legacy `incan_ir` lowering that required it die with generated Rust. The package-calls-its-own-sibling behaviour is reachable only through a `--lib`/SDK component build, which is not a run the fixture format can express. The surviving observable — a package whose library calls a sibling module's method builds — is carried by the SDK provider prewarm every suite root performs."
+          "dies": "asserts the RFC 120 `__incan_v1_` projected wrapper name, not the source spelling `c.bumped()`, in a package's generated `lib.rs` (#1174 emitted-name recoverability); the emitted-name projection and the legacy `incan_ir` lowering that required it die with generated Rust. The package-calls-its-own-sibling behavior is reachable only through a `--lib`/SDK component build, which is not a run the fixture format can express. The surviving observable — a package whose library calls a sibling module's method builds — is carried by the SDK provider prewarm every suite root performs."
         }
       }
     },
@@ -1185,7 +1185,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 2 twinned by behaviour fixtures under fixtures/behavior/emit_*, 0 dies, 1 open.",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 2 twinned by behavior fixtures under fixtures/behavior/emit_*, 0 dies, 1 open.",
       "tests": {
         "canonical_source_callable_emits_native_function_blanket_impl": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/callable_trait_accepts_functions_and_closures.incn",
@@ -1207,7 +1207,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 3 twinned by behaviour fixtures under fixtures/behavior/emit_*, 2 dies, 0 open.",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 3 twinned by behavior fixtures under fixtures/behavior/emit_*, 2 dies, 0 open.",
       "tests": {
         "rustdoc_lines_dedent_body_after_unindented_summary": {
           "twin": "dies",
@@ -1237,7 +1237,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 6 twinned by behaviour fixtures under fixtures/behavior/emit_*, 2 dies, 0 open.",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 6 twinned by behavior fixtures under fixtures/behavior/emit_*, 2 dies, 0 open.",
       "tests": {
         "crate_visible_enum_omits_unused_message_helper": {
           "twin": "dies",
@@ -1279,7 +1279,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 0 twinned by behaviour fixtures under fixtures/behavior/emit_*, 1 dies, 0 open.",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 0 twinned by behavior fixtures under fixtures/behavior/emit_*, 1 dies, 0 open.",
       "tests": {
         "internal_invariant_errors_are_not_reported_as_unsupported_constructs": {
           "twin": "dies",
@@ -1293,7 +1293,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 5 twinned by behaviour fixtures under fixtures/behavior/emit_*, 0 dies, 0 open.",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 5 twinned by behavior fixtures under fixtures/behavior/emit_*, 0 dies, 0 open.",
       "tests": {
         "canonical_and_legacy_abs_sum_emit_one_checked_contract": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/abs_and_sum_are_overflow_checked.incn",
@@ -1323,7 +1323,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 24 twinned by behaviour fixtures under fixtures/behavior/emit_*, 0 dies, 5 open.",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 24 twinned by behavior fixtures under fixtures/behavior/emit_*, 0 dies, 5 open.",
       "tests": {
         "alternate_type_name_call_uses_exact_private_library_constructor_bridge_issue883": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_constructor_surfaces",
@@ -1343,19 +1343,19 @@
         },
         "emit_call_expr_borrows_args_from_typed_rust_callee_without_registry": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_call_argument_borrowing.incn`: two models swap through `std::mem::swap`'s mutable borrows, a model and an int are measured by `size_of_val` through shared borrows, and `take` empties a list through a mutable borrow, printing the swapped values, the sizes and the lengths. a `rust::std` analogue of the retired shape (`demo::Thing` callees that exist nowhere): the same call planner borrows Incan values as the Rust signature declares. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_call_argument_borrowing.incn`: two models swap through `std::mem::swap`'s mutable borrows, a model and an int are measured by `size_of_val` through shared borrows, and `take` empties a list through a mutable borrow, printing the swapped values, the sizes and the lengths. a `rust::std` analog of the retired shape (`demo::Thing` callees that exist nowhere): the same call planner borrows Incan values as the Rust signature declares. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "emit_call_expr_borrows_copy_arg_for_rust_ref_param": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_call_argument_borrowing.incn`: two models swap through `std::mem::swap`'s mutable borrows, a model and an int are measured by `size_of_val` through shared borrows, and `take` empties a list through a mutable borrow, printing the swapped values, the sizes and the lengths. a `rust::std` analogue of the retired shape (`demo::Thing` callees that exist nowhere): the same call planner borrows Incan values as the Rust signature declares. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_call_argument_borrowing.incn`: two models swap through `std::mem::swap`'s mutable borrows, a model and an int are measured by `size_of_val` through shared borrows, and `take` empties a list through a mutable borrow, printing the swapped values, the sizes and the lengths. a `rust::std` analog of the retired shape (`demo::Thing` callees that exist nowhere): the same call planner borrows Incan values as the Rust signature declares. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "emit_call_expr_borrows_mutably_for_rust_refmut_param": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_call_argument_borrowing.incn`: two models swap through `std::mem::swap`'s mutable borrows, a model and an int are measured by `size_of_val` through shared borrows, and `take` empties a list through a mutable borrow, printing the swapped values, the sizes and the lengths. a `rust::std` analogue of the retired shape (`demo::Thing` callees that exist nowhere): the same call planner borrows Incan values as the Rust signature declares. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_call_argument_borrowing.incn`: two models swap through `std::mem::swap`'s mutable borrows, a model and an int are measured by `size_of_val` through shared borrows, and `take` empties a list through a mutable borrow, printing the swapped values, the sizes and the lengths. a `rust::std` analog of the retired shape (`demo::Thing` callees that exist nowhere): the same call planner borrows Incan values as the Rust signature declares. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "emit_call_expr_borrows_struct_arg_for_rust_ref_param": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_call_argument_borrowing.incn`: two models swap through `std::mem::swap`'s mutable borrows, a model and an int are measured by `size_of_val` through shared borrows, and `take` empties a list through a mutable borrow, printing the swapped values, the sizes and the lengths. a `rust::std` analogue of the retired shape (`demo::Thing` callees that exist nowhere): the same call planner borrows Incan values as the Rust signature declares. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_call_argument_borrowing.incn`: two models swap through `std::mem::swap`'s mutable borrows, a model and an int are measured by `size_of_val` through shared borrows, and `take` empties a list through a mutable borrow, printing the swapped values, the sizes and the lengths. a `rust::std` analog of the retired shape (`demo::Thing` callees that exist nowhere): the same call planner borrows Incan values as the Rust signature declares. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "emit_call_expr_keeps_return_context_union_string_seed_as_union_value": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/union_parameter_call_returned_from_str_function.incn",
@@ -1363,7 +1363,7 @@
         },
         "emit_call_expr_uses_external_planning_for_rust_rooted_field_callee": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analog of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "emit_canonical_assert_eq_message_preserves_empty_message_semantics": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_testing_assert_helpers.incn",
@@ -1449,7 +1449,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 1 twinned by behaviour fixtures under fixtures/behavior/emit_*, 0 dies, 1 open.",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 1 twinned by behavior fixtures under fixtures/behavior/emit_*, 0 dies, 1 open.",
       "tests": {
         "associated_value_field_chain_keeps_value_field_access": {
           "twin": "",
@@ -1467,7 +1467,7 @@
       "twin": "",
       "split_required": true,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 14 twinned by behaviour fixtures under fixtures/behavior/emit_*, 1 dies, 37 open.",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 14 twinned by behavior fixtures under fixtures/behavior/emit_*, 1 dies, 37 open.",
       "tests": {
         "boxed_variant_payload_coercion_wraps_the_argument_in_box_new": {
           "twin": "",
@@ -1495,27 +1495,27 @@
         },
         "external_decode_fallback_still_borrows_owned_bytes_argument": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analog of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "external_decode_metadata_keeps_explicit_rust_vec_slice_argument_shape": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analog of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "external_decode_metadata_keeps_explicit_slice_argument_shape": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analog of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "external_decode_metadata_lends_owned_incan_bytes_to_buf_as_slice": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analog of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "external_decode_metadata_lends_owned_rust_vec_to_buf_as_slice": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analog of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "external_decode_with_generic_by_value_signature_does_not_borrow_argument": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analog of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "external_method_call_uses_by_value_signature_for_field_argument": {
           "twin": "",
@@ -1527,11 +1527,11 @@
         },
         "external_nominal_method_call_keeps_external_string_conversion": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_into_string_argument.incn`: a str literal and a str local passed to `std::io::Error::new`, whose message parameter is generic over `Into`, convert into the message the error displays. a `rust::std` analogue of the retired shape (`builder.rename(\"logs\")` on an external builder): the external `.into()` conversion. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_into_string_argument.incn`: a str literal and a str local passed to `std::io::Error::new`, whose message parameter is generic over `Into`, convert into the message the error displays. a `rust::std` analog of the retired shape (`builder.rename(\"logs\")` on an external builder): the external `.into()` conversion. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "external_rust_associated_decode_lends_generic_vec_u8_to_buf_as_slice": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analog of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "external_rust_associated_method_coerces_list_elements_to_target_vec_element": {
           "twin": "",
@@ -1547,11 +1547,11 @@
         },
         "external_rust_method_explicit_generic_string_arg_keeps_turbofish": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_rusttype_surface_calls.incn`: a rusttype alias over Rust String is built from a str literal, its `push_str` takes an owned str where the signature wants `&str`, `starts_with` answers, and `parse` works with an explicit `[i64]` type argument and with the type inferred from the binding, printing `5`, `8`, `true`, `42`, `7`. a `rust::std` analogue of the retired shapes (`Name.parse(...)` on a rusttype, the regex `_RawRegex` field receiver, tokenizers' `encode::<String>`). waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_rusttype_surface_calls.incn`: a rusttype alias over Rust String is built from a str literal, its `push_str` takes an owned str where the signature wants `&str`, `starts_with` answers, and `parse` works with an explicit `[i64]` type argument and with the type inferred from the binding, printing `5`, `8`, `true`, `42`, `7`. a `rust::std` analog of the retired shapes (`Name.parse(...)` on a rusttype, the regex `_RawRegex` field receiver, tokenizers' `encode::<String>`). waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "external_rust_method_generic_string_arg_keeps_inferable_shape": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_rusttype_surface_calls.incn`: a rusttype alias over Rust String is built from a str literal, its `push_str` takes an owned str where the signature wants `&str`, `starts_with` answers, and `parse` works with an explicit `[i64]` type argument and with the type inferred from the binding, printing `5`, `8`, `true`, `42`, `7`. a `rust::std` analogue of the retired shapes (`Name.parse(...)` on a rusttype, the regex `_RawRegex` field receiver, tokenizers' `encode::<String>`). waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_rusttype_surface_calls.incn`: a rusttype alias over Rust String is built from a str literal, its `push_str` takes an owned str where the signature wants `&str`, `starts_with` answers, and `parse` works with an explicit `[i64]` type argument and with the type inferred from the binding, printing `5`, `8`, `true`, `42`, `7`. a `rust::std` analog of the retired shapes (`Name.parse(...)` on a rusttype, the regex `_RawRegex` field receiver, tokenizers' `encode::<String>`). waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "generic_collection_literal_target_uses_inferred_tuple_item_types": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/generic_list_of_tuples_literal_argument.incn",
@@ -1563,19 +1563,19 @@
         },
         "interop_borrowed_bytes_slice_coercion_borrows_owned_bytes": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analog of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "interop_borrowed_string_coercion_borrows_owned_string_without_materializing": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analog of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "interop_borrowed_string_coercion_materializes_owned_string_before_borrow": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analog of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "interop_borrowed_vec_bytes_coercion_materializes_owned_bytes_before_borrow": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analog of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "interop_structural_list_borrow_coercion_projects_str_items": {
           "twin": "",
@@ -1635,7 +1635,7 @@
         },
         "qualified_rusttype_receiver_method_uses_rust_signature_borrowing": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_rusttype_surface_calls.incn`: a rusttype alias over Rust String is built from a str literal, its `push_str` takes an owned str where the signature wants `&str`, `starts_with` answers, and `parse` works with an explicit `[i64]` type argument and with the type inferred from the binding, printing `5`, `8`, `true`, `42`, `7`. a `rust::std` analogue of the retired shapes (`Name.parse(...)` on a rusttype, the regex `_RawRegex` field receiver, tokenizers' `encode::<String>`). waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_rusttype_surface_calls.incn`: a rusttype alias over Rust String is built from a str literal, its `push_str` takes an owned str where the signature wants `&str`, `starts_with` answers, and `parse` works with an explicit `[i64]` type argument and with the type inferred from the binding, printing `5`, `8`, `true`, `42`, `7`. a `rust::std` analog of the retired shapes (`Name.parse(...)` on a rusttype, the regex `_RawRegex` field receiver, tokenizers' `encode::<String>`). waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "read_by_ref_receiver_borrows_owned_reader_without_dereference": {
           "twin": "",
@@ -1651,15 +1651,15 @@
         },
         "regular_hash_map_get_preserves_borrowed_probe_shape": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_hashmap_get_and_same_named_methods.incn`: a Rust HashMap answers `get` with a str literal and a str local, and a local model's `insert` with a defaulted parameter dispatches by its own signature beside the map's two-argument `insert`. a `rust::std` analogue of the retired shape (bevy's `App::run` beside a local `App`): a Rust receiver and a same-named local method keep their own signatures. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_hashmap_get_and_same_named_methods.incn`: a Rust HashMap answers `get` with a str literal and a str local, and a local model's `insert` with a defaulted parameter dispatches by its own signature beside the map's two-argument `insert`. a `rust::std` analog of the retired shape (bevy's `App::run` beside a local `App`): a Rust receiver and a same-named local method keep their own signatures. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "regular_method_call_policy_preserves_lookup_arg_shape": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_hashmap_get_and_same_named_methods.incn`: a Rust HashMap answers `get` with a str literal and a str local, and a local model's `insert` with a defaulted parameter dispatches by its own signature beside the map's two-argument `insert`. a `rust::std` analogue of the retired shape (bevy's `App::run` beside a local `App`): a Rust receiver and a same-named local method keep their own signatures. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_hashmap_get_and_same_named_methods.incn`: a Rust HashMap answers `get` with a str literal and a str local, and a local model's `insert` with a defaulted parameter dispatches by its own signature beside the map's two-argument `insert`. a `rust::std` analog of the retired shape (bevy's `App::run` beside a local `App`): a Rust receiver and a same-named local method keep their own signatures. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "rusttype_surface_associated_function_uses_incan_string_conversion": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_rusttype_surface_calls.incn`: a rusttype alias over Rust String is built from a str literal, its `push_str` takes an owned str where the signature wants `&str`, `starts_with` answers, and `parse` works with an explicit `[i64]` type argument and with the type inferred from the binding, printing `5`, `8`, `true`, `42`, `7`. a `rust::std` analogue of the retired shapes (`Name.parse(...)` on a rusttype, the regex `_RawRegex` field receiver, tokenizers' `encode::<String>`). waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_rusttype_surface_calls.incn`: a rusttype alias over Rust String is built from a str literal, its `push_str` takes an owned str where the signature wants `&str`, `starts_with` answers, and `parse` works with an explicit `[i64]` type argument and with the type inferred from the binding, printing `5`, `8`, `true`, `42`, `7`. a `rust::std` analog of the retired shapes (`Name.parse(...)` on a rusttype, the regex `_RawRegex` field receiver, tokenizers' `encode::<String>`). waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "source_trait_take_dispatch_preserves_incan_int_argument": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/fallible_iterator_take.incn",
@@ -1675,7 +1675,7 @@
         },
         "unregistered_decode_method_with_by_value_metadata_preserves_argument_shape": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analogue of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_byte_and_string_argument_shapes.incn`: owned bytes, a Rust Vec of bytes, an explicit `as_slice()`, a bytes literal and a bytes local lend as slices to `std::str::from_utf8`, a Vec passes by value to `String::from_utf8`, and a str literal and an owned str local borrow into `Path::new`, printing each decoded text and path answer. a `rust::std` analog of the retired shape (prost's generic `Buf` decode, substrait's `ConsumerPlan::decode`): the same argument planner lends bytes as a slice to a slice-taking callee and passes an owned Vec to a by-value one. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         }
       }
     },
@@ -1685,7 +1685,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 1 twinned by behaviour fixtures under fixtures/behavior/emit_*, 0 dies, 0 open.",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 1 twinned by behavior fixtures under fixtures/behavior/emit_*, 0 dies, 0 open.",
       "tests": {
         "imported_named_struct_can_emit_metadata_proven_default_fill": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/imported_model_constructor_default_fill",
@@ -1699,7 +1699,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 13 twinned by behaviour fixtures under fixtures/behavior/emit_*, 4 dies, 3 open.",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 13 twinned by behavior fixtures under fixtures/behavior/emit_*, 4 dies, 3 open.",
       "tests": {
         "an_sdk_provider_binds_the_native_unions_it_owns": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/std_fs_path_str_or_path_targets.incn",
@@ -1737,7 +1737,7 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_constructor_surfaces",
           "notes": "asserted a compiled dependency's model with a private defaulted field takes only its public fields, and a class takes all; the twin (a project with dependencies) builds `Envelope(label=...)` and `Vault(secret=..., label=...)` from a dependency and prints their methods. The bridge argument order dies with #654."
         },
-        "manifest_constructor_metadata_recognises_phantom_type_parameters_issue1370": {
+        "manifest_constructor_metadata_recognizes_phantom_type_parameters_issue1370": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_constructor_surfaces",
           "notes": "asserted a compiled dependency's model with a phantom type parameter is constructed with its marker (#1370); the twin constructs `Columns[int, str](...)` from a dependency and prints its fields. The `PhantomData` initializer dies with #654."
         },
@@ -1755,7 +1755,7 @@
         },
         "qualified_rust_receiver_does_not_inherit_same_named_incan_method_signature": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_hashmap_get_and_same_named_methods.incn`: a Rust HashMap answers `get` with a str literal and a str local, and a local model's `insert` with a defaulted parameter dispatches by its own signature beside the map's two-argument `insert`. a `rust::std` analogue of the retired shape (bevy's `App::run` beside a local `App`): a Rust receiver and a same-named local method keep their own signatures. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/rust_std_hashmap_get_and_same_named_methods.incn`: a Rust HashMap answers `get` with a str literal and a str local, and a local model's `insert` with a defaulted parameter dispatches by its own signature beside the map's two-argument `insert`. a `rust::std` analog of the retired shape (bevy's `App::run` beside a local `App`): a Rust receiver and a same-named local method keep their own signatures. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (README, *Provider bakes and Cargo*). Written from the language reference and not executed."
         },
         "runtime_reflection_omits_type_private_fields_issue884": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/reflection_omits_private_fields.incn",
@@ -1789,7 +1789,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 7 twinned by behaviour fixtures under fixtures/behavior/emit_*, 1 dies, 0 open.",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 7 twinned by behavior fixtures under fixtures/behavior/emit_*, 1 dies, 0 open.",
       "tests": {
         "an_optional_union_parameter_keeps_its_option_wrapper_issue745": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_unions_across_the_package_boundary",
@@ -1831,7 +1831,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 5 twinned by behaviour fixtures under fixtures/behavior/emit_*, 0 dies, 5 open.",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 5 twinned by behavior fixtures under fixtures/behavior/emit_*, 0 dies, 5 open.",
       "tests": {
         "absolute_trait_impl_does_not_retain_same_named_local_module": {
           "twin": "",
@@ -1839,19 +1839,19 @@
         },
         "checked_c_function_emits_exact_ffi_signature_and_private_wrapper": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/checked_c_bindings_over_libc.incn`: checked C bindings over the host libc call `abs` through an exact c.i32 carrier, receive `frexp`'s exponent through a `c.Out[c.i32]` slot, pass text through `c.cstr` to `strlen`, refuse an interior NUL, and copy `strerror`'s view with `copy_utf8`. route bug: `incan check` accepts a `binding` program and `incan run`/`incan build`/`incan oven bake` refuse it with `syntax error: Expected declaration, found Ident(\"binding\")` (observed 2026-09-20 with and without an `[interop.c]` manifest section); the CLI's own C test goes through `incan lock` and `incan oven interop bake`, which the behaviour runner does not perform (noted for filing). Only the scalar carriers libc exposes are exercised; the thirteen-carrier output slot check narrows to `c.i32`."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/checked_c_bindings_over_libc.incn`: checked C bindings over the host libc call `abs` through an exact c.i32 carrier, receive `frexp`'s exponent through a `c.Out[c.i32]` slot, pass text through `c.cstr` to `strlen`, refuse an interior NUL, and copy `strerror`'s view with `copy_utf8`. route bug: `incan check` accepts a `binding` program and `incan run`/`incan build`/`incan oven bake` refuse it with `syntax error: Expected declaration, found Ident(\"binding\")` (observed 2026-09-20 with and without an `[interop.c]` manifest section); the CLI's own C test goes through `incan lock` and `incan oven interop bake`, which the behavior runner does not perform (noted for filing). Only the scalar carriers libc exposes are exercised; the thirteen-carrier output slot check narrows to `c.i32`."
         },
         "checked_c_output_slots_preserve_every_exact_scalar_carrier": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/checked_c_bindings_over_libc.incn`: checked C bindings over the host libc call `abs` through an exact c.i32 carrier, receive `frexp`'s exponent through a `c.Out[c.i32]` slot, pass text through `c.cstr` to `strlen`, refuse an interior NUL, and copy `strerror`'s view with `copy_utf8`. route bug: `incan check` accepts a `binding` program and `incan run`/`incan build`/`incan oven bake` refuse it with `syntax error: Expected declaration, found Ident(\"binding\")` (observed 2026-09-20 with and without an `[interop.c]` manifest section); the CLI's own C test goes through `incan lock` and `incan oven interop bake`, which the behaviour runner does not perform (noted for filing). Only the scalar carriers libc exposes are exercised; the thirteen-carrier output slot check narrows to `c.i32`."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/checked_c_bindings_over_libc.incn`: checked C bindings over the host libc call `abs` through an exact c.i32 carrier, receive `frexp`'s exponent through a `c.Out[c.i32]` slot, pass text through `c.cstr` to `strlen`, refuse an interior NUL, and copy `strerror`'s view with `copy_utf8`. route bug: `incan check` accepts a `binding` program and `incan run`/`incan build`/`incan oven bake` refuse it with `syntax error: Expected declaration, found Ident(\"binding\")` (observed 2026-09-20 with and without an `[interop.c]` manifest section); the CLI's own C test goes through `incan lock` and `incan oven interop bake`, which the behavior runner does not perform (noted for filing). Only the scalar carriers libc exposes are exercised; the thirteen-carrier output slot check narrows to `c.i32`."
         },
         "checked_c_string_input_emits_private_cstring_and_const_character_pointer_bridge": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/checked_c_bindings_over_libc.incn`: checked C bindings over the host libc call `abs` through an exact c.i32 carrier, receive `frexp`'s exponent through a `c.Out[c.i32]` slot, pass text through `c.cstr` to `strlen`, refuse an interior NUL, and copy `strerror`'s view with `copy_utf8`. route bug: `incan check` accepts a `binding` program and `incan run`/`incan build`/`incan oven bake` refuse it with `syntax error: Expected declaration, found Ident(\"binding\")` (observed 2026-09-20 with and without an `[interop.c]` manifest section); the CLI's own C test goes through `incan lock` and `incan oven interop bake`, which the behaviour runner does not perform (noted for filing). Only the scalar carriers libc exposes are exercised; the thirteen-carrier output slot check narrows to `c.i32`."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/checked_c_bindings_over_libc.incn`: checked C bindings over the host libc call `abs` through an exact c.i32 carrier, receive `frexp`'s exponent through a `c.Out[c.i32]` slot, pass text through `c.cstr` to `strlen`, refuse an interior NUL, and copy `strerror`'s view with `copy_utf8`. route bug: `incan check` accepts a `binding` program and `incan run`/`incan build`/`incan oven bake` refuse it with `syntax error: Expected declaration, found Ident(\"binding\")` (observed 2026-09-20 with and without an `[interop.c]` manifest section); the CLI's own C test goes through `incan lock` and `incan oven interop bake`, which the behavior runner does not perform (noted for filing). Only the scalar carriers libc exposes are exercised; the thirteen-carrier output slot check narrows to `c.i32`."
         },
         "checked_c_string_view_emits_bounded_utf8_copy_helper": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/checked_c_bindings_over_libc.incn`: checked C bindings over the host libc call `abs` through an exact c.i32 carrier, receive `frexp`'s exponent through a `c.Out[c.i32]` slot, pass text through `c.cstr` to `strlen`, refuse an interior NUL, and copy `strerror`'s view with `copy_utf8`. route bug: `incan check` accepts a `binding` program and `incan run`/`incan build`/`incan oven bake` refuse it with `syntax error: Expected declaration, found Ident(\"binding\")` (observed 2026-09-20 with and without an `[interop.c]` manifest section); the CLI's own C test goes through `incan lock` and `incan oven interop bake`, which the behaviour runner does not perform (noted for filing). Only the scalar carriers libc exposes are exercised; the thirteen-carrier output slot check narrows to `c.i32`."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/checked_c_bindings_over_libc.incn`: checked C bindings over the host libc call `abs` through an exact c.i32 carrier, receive `frexp`'s exponent through a `c.Out[c.i32]` slot, pass text through `c.cstr` to `strlen`, refuse an interior NUL, and copy `strerror`'s view with `copy_utf8`. route bug: `incan check` accepts a `binding` program and `incan run`/`incan build`/`incan oven bake` refuse it with `syntax error: Expected declaration, found Ident(\"binding\")` (observed 2026-09-20 with and without an `[interop.c]` manifest section); the CLI's own C test goes through `incan lock` and `incan oven interop bake`, which the behavior runner does not perform (noted for filing). Only the scalar carriers libc exposes are exercised; the thirteen-carrier output slot check narrows to `c.i32`."
         },
         "external_union_coverage_localizes_only_the_target_provider_issue892": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_unions_across_the_package_boundary",
@@ -1881,7 +1881,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 5 twinned by behaviour fixtures under fixtures/behavior/emit_*, 0 dies, 3 open.",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 5 twinned by behavior fixtures under fixtures/behavior/emit_*, 0 dies, 3 open.",
       "tests": {
         "dict_index_assignment_from_method_call_result_clones_borrowed_value_exactly_once": {
           "twin": "",
@@ -1923,7 +1923,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 2 twinned by behaviour fixtures under fixtures/behavior/emit_*, 0 dies, 1 open.",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 2 twinned by behavior fixtures under fixtures/behavior/emit_*, 0 dies, 1 open.",
       "tests": {
         "absolute_enum_pattern_paths_remain_absolute": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_unions_across_the_package_boundary",
@@ -3129,7 +3129,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "test-support helper for the behaviour-fixture family: header grammar, discovery, materialization and observable comparison. The module drives `incan check` / `incan run` through `run_incan`; its unit tests exercise the grammar, discovery and the comparison rules with no compiler call."
+      "notes": "test-support helper for the behavior-fixture family: header grammar, discovery, materialization and observable comparison. The module drives `incan check` / `incan run` through `run_incan`; its unit tests exercise the grammar, discovery and the comparison rules with no compiler call."
     },
     "loaves/compiler/incan_test_support/src/builtin_stdlib.rs": {
       "disposition": "unaffected",
@@ -3481,7 +3481,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/diagnostics/base.rs": {
       "disposition": "keep",
@@ -3489,7 +3489,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/diagnostics/stable.rs": {
       "disposition": "keep",
@@ -3497,7 +3497,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/lexer/mod.rs": {
       "disposition": "keep",
@@ -3505,7 +3505,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/embedded/tests.rs": {
       "disposition": "keep",
@@ -3513,7 +3513,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/tests/expressions.rs": {
       "disposition": "keep",
@@ -3521,7 +3521,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/tests/fstrings.rs": {
       "disposition": "keep",
@@ -3529,7 +3529,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/tests/functions_decorators_and_bindings.rs": {
       "disposition": "keep",
@@ -3537,7 +3537,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/tests/modules_and_imports.rs": {
       "disposition": "keep",
@@ -3545,7 +3545,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/tests/patterns_and_matching.rs": {
       "disposition": "keep",
@@ -3553,7 +3553,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/tests/soft_keywords_and_vocab_blocks.rs": {
       "disposition": "keep",
@@ -3561,7 +3561,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/tests/statements_and_blocks.rs": {
       "disposition": "keep",
@@ -3569,7 +3569,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/tests/type_declarations.rs": {
       "disposition": "keep",
@@ -3577,7 +3577,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/tests/types_and_bounds.rs": {
       "disposition": "keep",
@@ -3585,7 +3585,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/tests/vocab_scoped_symbols.rs": {
       "disposition": "keep",
@@ -3593,7 +3593,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_vocab/src/lib.rs": {
       "disposition": "unaffected",
@@ -4305,7 +4305,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "runs every behaviour fixture of the cli_dependencies area as a program, baking its in-fixture providers first with no Cargo authority (the root is deliberately not registered in OvenCompilerSuiteTargetCapabilities), and compares its observables; the route changes under it, the fixtures do not."
+      "notes": "runs every behavior fixture of the cli_dependencies area as a program, baking its in-fixture providers first with no Cargo authority (the root is deliberately not registered in OvenCompilerSuiteTargetCapabilities), and compares its observables; the route changes under it, the fixtures do not."
     },
     "loaves/toolchain/incan-cli/tests/behavior_cli_tests.rs": {
       "disposition": "re-point",
@@ -4313,7 +4313,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "runs every behaviour fixture of the cli area as a program and compares its observables; the route changes under it, the fixtures do not."
+      "notes": "runs every behavior fixture of the cli area as a program and compares its observables; the route changes under it, the fixtures do not."
     },
     "loaves/toolchain/incan-cli/tests/behavior_driver_tests.rs": {
       "disposition": "re-point",
@@ -4321,7 +4321,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "runs every behaviour fixture of the driver area as a program and compares its observables; the route changes under it, the fixtures do not."
+      "notes": "runs every behavior fixture of the driver area as a program and compares its observables; the route changes under it, the fixtures do not."
     },
     "loaves/toolchain/incan-cli/tests/behavior_emit_tests.rs": {
       "disposition": "re-point",
@@ -4329,7 +4329,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "runs every behaviour fixture of the emit_calls_and_builtins, emit_declarations_and_modules and emit_dependency_unions_and_surfaces areas as a program (one libtest case per area) and compares its observables; the route changes under it, the fixtures do not."
+      "notes": "runs every behavior fixture of the emit_calls_and_builtins, emit_declarations_and_modules and emit_dependency_unions_and_surfaces areas as a program (one libtest case per area) and compares its observables; the route changes under it, the fixtures do not."
     },
     "loaves/toolchain/incan-cli/tests/behavior_harness_tests.rs": {
       "disposition": "re-point",
@@ -4345,7 +4345,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "runs every behaviour fixture of the smoke area as a program and compares its observables; the route changes under it, the fixtures do not."
+      "notes": "runs every behavior fixture of the smoke area as a program and compares its observables; the route changes under it, the fixtures do not."
     },
     "loaves/toolchain/incan-cli/tests/canonical_item_imports.rs": {
       "disposition": "re-point",
@@ -4362,7 +4362,7 @@
         }
       }
     },
-    "loaves/toolchain/incan-cli/tests/cli_catalogue_forms_tests.rs": {
+    "loaves/toolchain/incan-cli/tests/cli_catalog_forms_tests.rs": {
       "disposition": "re-point",
       "owner": 1561,
       "twin": "",
@@ -4542,7 +4542,7 @@
         "cold_library_build_preserves_rust_string_compound_assignment_issue896": {
           "disposition": "retire",
           "twin": "",
-          "notes": "open (twin-h-cli): the library build is the only non-text assertion and the `str_concat` selection under cold Rust metadata is generated text. The surviving behaviour, `+=` and `+` with a `rust::`-returned `String` operand, needs a `[rust-dependencies]` path into the checkout (`development_support_crate_dir(\"incan_std_core\")`) that a fixture cannot carry. A `rust::std::string::String.from(...)` stand-in does not type as `str` (`from` is generic), so no in-fixture substitute exists. Question (with Q1): does Rust-crate interop behaviour get a twin in this corpus (a fixture would need a Rust crate with a `String`-returning function and the inspection bake of Q1), or does it move with #1337's spec? If the latter, this row is `dies` with the cold-metadata half named."
+          "notes": "open (twin-h-cli): the library build is the only non-text assertion and the `str_concat` selection under cold Rust metadata is generated text. The surviving behavior, `+=` and `+` with a `rust::`-returned `String` operand, needs a `[rust-dependencies]` path into the checkout (`development_support_crate_dir(\"incan_std_core\")`) that a fixture cannot carry. A `rust::std::string::String.from(...)` stand-in does not type as `str` (`from` is generic), so no in-fixture substitute exists. Question (with Q1): does Rust-crate interop behavior get a twin in this corpus (a fixture would need a Rust crate with a `String`-returning function and the inspection bake of Q1), or does it move with #1337's spec? If the latter, this row is `dies` with the cold-metadata half named."
         },
         "rust_std_io_trait_interop_borrows_receivers_and_propagates_results_issues878_888": {
           "disposition": "re-point",
@@ -4738,7 +4738,7 @@
         "build_explicit_mutable_rust_generic_reaches_codegen_through_normal_cli_path": {
           "disposition": "retire",
           "twin": "",
-          "notes": "open (harness-deps): the build succeeds and the assertions are the projected ABI in `main.rs` (`ProviderHandle<(&mut i64, &mut i64)>`), generated text. A behaviour twin exists and passes standalone and under a root admitted to the explicit bake: the same program run to completion, printing its marker line (this program's `rust::std::vec::Vec` import launched no Cargo itself, but the bake that records its authority is the same explicit bake). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; measured 2026-09-20, ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. The candidate fixture is in the harness-deps slice folder."
+          "notes": "open (harness-deps): the build succeeds and the assertions are the projected ABI in `main.rs` (`ProviderHandle<(&mut i64, &mut i64)>`), generated text. A behavior twin exists and passes standalone and under a root admitted to the explicit bake: the same program run to completion, printing its marker line (this program's `rust::std::vec::Vec` import launched no Cargo itself, but the bake that records its authority is the same explicit bake). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; measured 2026-09-20, ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. The candidate fixture is in the harness-deps slice folder."
         },
         "build_lib_imported_static_decorator_receiver_materializes_string_arg_issue671": {
           "disposition": "retire",
@@ -4748,7 +4748,7 @@
         "decorated_method_explicit_mutable_rust_generic_keeps_static_and_wrapper_abi": {
           "disposition": "retire",
           "twin": "",
-          "notes": "open (harness-deps): the build succeeds and the assertions are the shared ABI spelling in `main.rs`, generated text. A behaviour twin exists and passes standalone and under a root admitted to the explicit bake: the same program run to completion (`7`, then its marker line). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; measured 2026-09-20, ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. The candidate fixture is in the harness-deps slice folder."
+          "notes": "open (harness-deps): the build succeeds and the assertions are the shared ABI spelling in `main.rs`, generated text. A behavior twin exists and passes standalone and under a root admitted to the explicit bake: the same program run to completion (`7`, then its marker line). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; measured 2026-09-20, ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. The candidate fixture is in the harness-deps slice folder."
         },
         "test_class_with_traits": {
           "disposition": "keep",
@@ -4829,7 +4829,7 @@
         "test_rfc041_rust_coercion_codegen_smoke": {
           "disposition": "retire",
           "twin": "",
-          "notes": "open (harness-deps): IrCodegen text only (`Duration::from_secs_f32`). A behaviour twin exists and passes standalone and under a root admitted to the explicit bake: a program passing a float literal to `rust::std::time::Duration.from_secs_f32` and printing `as_millis()` (`1500`). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; measured 2026-09-20, ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. The candidate fixture is in the harness-deps slice folder."
+          "notes": "open (harness-deps): IrCodegen text only (`Duration::from_secs_f32`). A behavior twin exists and passes standalone and under a root admitted to the explicit bake: a program passing a float literal to `rust::std::time::Duration.from_secs_f32` and printing `as_millis()` (`1500`). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; measured 2026-09-20, ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. The candidate fixture is in the harness-deps slice folder."
         },
         "test_rfc041_rusttype_interop_typechecks_end_to_end": {
           "disposition": "keep",
@@ -4996,7 +4996,7 @@
         "compiled_provider_preserves_shared_rust_interop_contracts_issues834_835_961": {
           "disposition": "retire",
           "twin": "",
-          "notes": "open (twin-h-cli): the provider bake and the consumer build succeed over a local Rust crate (`receiver_factory`, `[rust-dependencies]`); the assertions are the manifest `rust_abi` type-parameter record and generated provider text (method turbofish, `&mut [f32]` callback, receiver specialization). A twin would be a project fixture carrying a Rust crate plus the provider bake of Q2 and the `rust::` inspection bake of Q1. Question: does Rust-crate interop behaviour get a twin in this corpus (fixture carries Rust source), or does it move with #1337's spec?"
+          "notes": "open (twin-h-cli): the provider bake and the consumer build succeed over a local Rust crate (`receiver_factory`, `[rust-dependencies]`); the assertions are the manifest `rust_abi` type-parameter record and generated provider text (method turbofish, `&mut [f32]` callback, receiver specialization). A twin would be a project fixture carrying a Rust crate plus the provider bake of Q2 and the `rust::` inspection bake of Q1. Question: does Rust-crate interop behavior get a twin in this corpus (fixture carries Rust source), or does it move with #1337's spec?"
         },
         "consumer_build_plans_source_backed_pub_helper_calls_with_defaults_and_unions_issue729": {
           "disposition": "retire",
@@ -5006,13 +5006,13 @@
         "consumer_build_plans_source_backed_vocab_helper_calls_with_defaults_and_unions_issue729": {
           "disposition": "retire",
           "twin": "",
-          "notes": "open (twin-h-cli): the consumer build succeeds and the assertions are generated text (`querykit::count(` filled from the helper default, `COUNT_SENTINEL` through the provider path, no re-owned `__IncanUnion`). The desugared `where true:` calls come from a vocab companion crate (`write_vocab_companion_crate_with_source`, a wasm desugarer) a fixture cannot carry, on top of the provider bake of Q2. The same helpers' default, union and string behaviour through ordinary calls is the pub sibling's candidate twin; the re-point sibling `consumer_build_plans_vocab_helper_calls_like_ordinary_calls_issue729` proves desugared helper calls build. Question: is that enough for `dies`, or does the vocab lane want a fixture with a companion?"
+          "notes": "open (twin-h-cli): the consumer build succeeds and the assertions are generated text (`querykit::count(` filled from the helper default, `COUNT_SENTINEL` through the provider path, no re-owned `__IncanUnion`). The desugared `where true:` calls come from a vocab companion crate (`write_vocab_companion_crate_with_source`, a wasm desugarer) a fixture cannot carry, on top of the provider bake of Q2. The same helpers' default, union and string behavior through ordinary calls is the pub sibling's candidate twin; the re-point sibling `consumer_build_plans_vocab_helper_calls_like_ordinary_calls_issue729` proves desugared helper calls build. Question: is that enough for `dies`, or does the vocab lane want a fixture with a companion?"
         },
         "consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim": {
           "disposition": "retire",
           "twin": "dies",
           "notes": "`incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter.",
-          "dies": "`--emit-rust` text half (`*const f32`, the `f32` output carrier, the `#[link(... kind = \"framework\")]` attribute); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbol `incan_accelerate_sum_f32` has no implementation, so the program cannot run and no behaviour fixture is possible."
+          "dies": "`--emit-rust` text half (`*const f32`, the `f32` output carrier, the `#[link(... kind = \"framework\")]` attribute); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbol `incan_accelerate_sum_f32` has no implementation, so the program cannot run and no behavior fixture is possible."
         },
         "oven_build_projects_structural_mutable_reference_generics_for_an_unrelated_provider": {
           "disposition": "re-point",
@@ -5034,25 +5034,25 @@
           "disposition": "retire",
           "twin": "dies",
           "notes": "`incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter, as its sibling `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` does.",
-          "dies": "`--emit-rust` text half (`__incan_checked_c_finish_span`, `*mut u8`, `-> usize`); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbol `incan_sqlite_random_bytes` has no implementation and the header is a host-specific path, so the program cannot run and no behaviour fixture is possible."
+          "dies": "`--emit-rust` text half (`__incan_checked_c_finish_span`, `*mut u8`, `-> usize`); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbol `incan_sqlite_random_bytes` has no implementation and the header is a host-specific path, so the program cannot run and no behavior fixture is possible."
         },
         "consumer_check_preserves_checked_c_f32_scalar_identity": {
           "disposition": "retire",
           "twin": "dies",
           "notes": "`incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter, as its sibling `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` does.",
-          "dies": "`--emit-rust` text half (an `f32` carrier in the emitted binding); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbol `fixture_absolute_f32` has no implementation, so the program cannot run and no behaviour fixture is possible."
+          "dies": "`--emit-rust` text half (an `f32` carrier in the emitted binding); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbol `fixture_absolute_f32` has no implementation, so the program cannot run and no behavior fixture is possible."
         },
         "consumer_check_preserves_exact_checked_c_scalar_carriers": {
           "disposition": "retire",
           "twin": "dies",
           "notes": "`incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter, as its sibling `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` does.",
-          "dies": "`--emit-rust` text half (one exact Rust carrier per `c.*` scalar); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbols (`fixture_i8` ... `fixture_size`) have no implementation, so the program cannot run and no behaviour fixture is possible."
+          "dies": "`--emit-rust` text half (one exact Rust carrier per `c.*` scalar); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbols (`fixture_i8` ... `fixture_size`) have no implementation, so the program cannot run and no behavior fixture is possible."
         },
         "consumer_check_supports_checked_byte_spans_and_caller_owned_buffers": {
           "disposition": "retire",
           "twin": "dies",
           "notes": "`incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter, as its sibling `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` does.",
-          "dies": "`--emit-rust` text half (`__incan_checked_c_finish_span`, `.as_ptr()`/`.as_mut_ptr()`); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbol `fixture_copy_prefix` has no implementation, so the program's `main` cannot run and no behaviour fixture is possible."
+          "dies": "`--emit-rust` text half (`__incan_checked_c_finish_span`, `.as_ptr()`/`.as_mut_ptr()`); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbol `fixture_copy_prefix` has no implementation, so the program's `main` cannot run and no behavior fixture is possible."
         },
         "check_passes_for_pub_imported_manifest_type": {
           "disposition": "keep",

@@ -1,6 +1,6 @@
-# Behaviour-fixture candidates: twins of the emitter unit tests
+# Behavior-fixture candidates: twins of the emitter unit tests
 
-A candidate is a behaviour fixture, written in the format of `../../behavior/README.md`, that cannot be admitted to a
+A candidate is a behavior fixture, written in the format of `../../behavior/README.md`, that cannot be admitted to a
 `fixtures/behavior/emit_<topic>/` area yet. Nothing runs it: the runner and the inventory collector read only the
 areas declared in `scripts/test_inventory/dispositions.json` (`fixture_roots`), so a file here is neither discovered,
 checked, nor counted. The `open` rows of the retire-class tests under `loaves/compiler/incan_emit/src/emit/**` that
@@ -12,7 +12,7 @@ before admitting it; expect the expected lines to need a correction or two.
 
 ## Why each waits
 
-- `rust_*.incn`: programs importing through `rust::std`. Several are `rust::std` analogues of a shape the retired
+- `rust_*.incn`: programs importing through `rust::std`. Several are `rust::std` analogs of a shape the retired
   test pinned over a third-party crate (prost, tokenizers, polars, bevy, an external builder); the row says which.
   They wait for a Cargo-free bake under the compiler suite: a `rust::` program needs source-current project
   inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection
@@ -28,4 +28,4 @@ before admitting it; expect the expected lines to need a correction or two.
 - `checked_c_bindings_over_libc.incn`: a route bug and a runner gap. `incan check` accepts a `binding` program;
   `incan run`, `incan build` and `incan oven bake` refuse it with `syntax error: Expected declaration, found
   Ident("binding")`, with and without an `[interop.c]` manifest section. The CLI's own C test reaches a run through
-  `incan lock` and `incan oven interop bake`, which the behaviour runner does not perform.
+  `incan lock` and `incan oven interop bake`, which the behavior runner does not perform.
