@@ -37,7 +37,7 @@ pub fn flock(handle: &impl Handle) -> i64 {
     handle.number()
 }
 
-/// A generic factory whose `new` is owner-specialised.
+/// A generic factory whose `new` is owner-specialized.
 pub struct PairFactory<T, U> {
     pub first: T,
     pub second: U,
@@ -56,7 +56,7 @@ pub struct Pair {
     pub alpha: i64,
 }
 
-/// A colour with three channels.
+/// A color with three channels.
 pub struct Color {
     pub red: f32,
     pub green: f32,
@@ -64,13 +64,13 @@ pub struct Color {
 }
 
 impl Color {
-    /// Build a colour from sRGB channels.
+    /// Build a color from sRGB channels.
     pub fn srgb(red: f32, green: f32, blue: f32) -> Color {
         Color { red, green, blue }
     }
 }
 
-/// A tuple struct wrapping a colour.
+/// A tuple struct wrapping a color.
 pub struct ClearColor(pub Color);
 
 /// A command buffer that is passed by value and mutated.

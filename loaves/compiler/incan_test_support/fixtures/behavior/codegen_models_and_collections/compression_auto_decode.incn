@@ -1,4 +1,4 @@
-# behavior: gzip-compressed bytes are recognised and decoded by the auto decoder, which names the codec
+# behavior: gzip-compressed bytes are recognized and decoded by the auto decoder, which names the codec
 # retires: loaves/compiler/incan_emit/src/codegen.rs::compression_auto_moves_non_clone_decoder_match_bindings
 # expect-stdout:
 #   gzip

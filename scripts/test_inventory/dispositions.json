@@ -30,61 +30,61 @@
       "pattern": "*.incn",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "top-level regression programs run by CLI integration tests (rfc023/rfc030/rfc064/rfc088 behaviour, reflection, model traits)."
+      "notes": "top-level regression programs run by CLI integration tests (rfc023/rfc030/rfc064/rfc088 behavior, reflection, model traits)."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/cli": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures twinning the retire-class tests under loaves/toolchain/incan-cli (generated-text assertions after a build, IrCodegen smoke tests, an `--emit-rust`-only test), run by behavior_cli_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire test it twins in `# retires:` lines."
+      "notes": "behavior fixtures twinning the retire-class tests under loaves/toolchain/incan-cli (generated-text assertions after a build, IrCodegen smoke tests, an `--emit-rust`-only test), run by behavior_cli_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire test it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures that are projects with in-fixture path dependencies (`[dependencies] <name> = { path = \"deps/<name>\" }`, reached through `pub::<name>`): the runner bakes every provider in dependency order before the run, with no Cargo authority, so a twin can prove what a consumer prints (or which diagnostic refuses it) across a package boundary. Run by behavior_cli_dependencies_tests.rs; a provider that would need Cargo (one that itself declares `[dependencies]`) fails its fixture at the suite's Cargo guard, so such fixtures stay parked. Each names the retire tests it twins in `# retires:` lines."
+      "notes": "behavior fixtures that are projects with in-fixture path dependencies (`[dependencies] <name> = { path = \"deps/<name>\" }`, reached through `pub::<name>`): the runner bakes every provider in dependency order before the run, with no Cargo authority, so a twin can prove what a consumer prints (or which diagnostic refuses it) across a package boundary. Run by behavior_cli_dependencies_tests.rs; a provider that would need Cargo (one that itself declares `[dependencies]`) fails its fixture at the suite's Cargo guard, so such fixtures stay parked. Each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/codegen_dependencies": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures that are projects with an in-fixture `pub::` provider, twinning the incan_emit codegen tests that drove IrCodegen with a synthetic library manifest index; the runner bakes the provider before the run with no Cargo authority. Run by behavior_codegen_tests.rs; each names the retire tests it twins in `# retires:` lines."
+      "notes": "behavior fixtures that are projects with an in-fixture `pub::` provider, twinning the incan_emit codegen tests that drove IrCodegen with a synthetic library manifest index; the runner bakes the provider before the run with no Cargo authority. Run by behavior_codegen_tests.rs; each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/codegen_functions_and_aliases": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures twinning incan_emit's codegen.rs and small emit-test-file retire tests about functions, partials, aliases, statics, decorators, explicit type arguments, closures and magic methods; each program prints what the retired test's generated-text assertion was indirectly about. Run by behavior_codegen_tests.rs; each names the retire tests it twins in `# retires:` lines."
+      "notes": "behavior fixtures twinning incan_emit's codegen.rs and small emit-test-file retire tests about functions, partials, aliases, statics, decorators, explicit type arguments, closures and magic methods; each program prints what the retired test's generated-text assertion was indirectly about. Run by behavior_codegen_tests.rs; each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures twinning incan_emit retire tests about reflection, membership, serialization, empty collections in generics, value aliases, match-arm ownership, string helpers, entrypoints and the stdlib surfaces the stdlib snapshots imported. Run by behavior_codegen_tests.rs; each names the retire tests it twins in `# retires:` lines."
+      "notes": "behavior fixtures twinning incan_emit retire tests about reflection, membership, serialization, empty collections in generics, value aliases, match-arm ownership, string helpers, entrypoints and the stdlib surfaces the stdlib snapshots imported. Run by behavior_codegen_tests.rs; each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/codegen_modules_and_imports": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures (module directories) twinning incan_emit retire tests about nested modules, import spellings, field aliases across modules, facade re-exports, std module imports and derive bundles, and module-qualified type annotations. Run by behavior_codegen_tests.rs; each names the retire tests it twins in `# retires:` lines."
+      "notes": "behavior fixtures (module directories) twinning incan_emit retire tests about nested modules, import spellings, field aliases across modules, facade re-exports, std module imports and derive bundles, and module-qualified type annotations. Run by behavior_codegen_tests.rs; each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/driver": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures twinning incan_driver retire tests whose surviving observable is a program's output or a check-time diagnostic rather than the generated project they inspected; run by behavior_driver_tests.rs. Each names the retire tests it twins in `# retires:` lines."
+      "notes": "behavior fixtures twinning incan_driver retire tests whose surviving observable is a program's output or a check-time diagnostic rather than the generated project they inspected; run by behavior_driver_tests.rs. Each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/harness": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "the behaviour-fixture harness proving itself: one fixture per shape of the format (refused program with one code and with two, non-zero exit, exit code as the only observable, empty stdout, contained lines, module directory, project directory), run by behavior_harness_tests.rs. They twin nothing; they exist so a runner or route change is caught here before it is caught in a twin. Header refusals are unit tests of parse_header, not fixtures."
+      "notes": "the behavior-fixture harness proving itself: one fixture per shape of the format (refused program with one code and with two, non-zero exit, exit code as the only observable, empty stdout, contained lines, module directory, project directory), run by behavior_harness_tests.rs. They twin nothing; they exist so a runner or route change is caught here before it is caught in a twin. Header refusals are unit tests of parse_header, not fixtures."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/smoke": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures: programs with their expected observables in the header, run by behavior_smoke_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+      "notes": "behavior fixtures: programs with their expected observables in the header, run by behavior_smoke_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/invalid": {
       "pattern": "**/*.incn",
@@ -181,14 +181,14 @@
       "disposition": "retire",
       "owner": 1561,
       "twin": "dies",
-      "dies": "the generated Cargo project's layout and text: `mod` declarations and `#[path]`/`r#` escapes in the generated `main.rs`/`lib.rs`, the `std` -> `__incan_std` module transform and its helpers, compiled-provider `pub use ...::__incan_std::*` facades and `#![allow]` lints, the public-namespace `pub use child::*` plan (#948), unchanged-write detection, stale-file cleanup, the Cargo.lock manifest witness, and SDK path-dependency rebinding checked against the artifact's Cargo.toml (#911). Generated projects die with #654; the #948 namespace behaviour is covered by the typechecker's pub_imports_namespaces_and_fields.rs (keep) and rfc031_pub_import_integration_tests.rs (re-point).",
+      "dies": "the generated Cargo project's layout and text: `mod` declarations and `#[path]`/`r#` escapes in the generated `main.rs`/`lib.rs`, the `std` -> `__incan_std` module transform and its helpers, compiled-provider `pub use ...::__incan_std::*` facades and `#![allow]` lints, the public-namespace `pub use child::*` plan (#948), unchanged-write detection, stale-file cleanup, the Cargo.lock manifest witness, and SDK path-dependency rebinding checked against the artifact's Cargo.toml (#911). Generated projects die with #654; the #948 namespace behavior is covered by the typechecker's pub_imports_namespaces_and_fields.rs (keep) and rfc031_pub_import_integration_tests.rs (re-point).",
       "split_required": false,
       "split_target": "",
       "notes": "generated Cargo project shape; dies with the generated-project route",
       "tests": {
         "checked_namespace_facades_skip_children_fully_bound_by_the_parent_issue948": {
           "twin": "dies",
-          "dies": "asserts the generator's `public_namespace_facades` map, the plan for which `pub use child::*` lines a generated `mod.rs` carries so rustc sees no ambiguous glob re-export (#948); a generated-Rust facade plan. The user-facing namespace behaviour is covered by the typechecker's pub_imports_namespaces_and_fields.rs (keep) and rfc031_pub_import_integration_tests.rs (re-point)."
+          "dies": "asserts the generator's `public_namespace_facades` map, the plan for which `pub use child::*` lines a generated `mod.rs` carries so rustc sees no ambiguous glob re-export (#948); a generated-Rust facade plan. The user-facing namespace behavior is covered by the typechecker's pub_imports_namespaces_and_fields.rs (keep) and rfc031_pub_import_integration_tests.rs (re-point)."
         },
         "generated_consumer_rebinds_absent_private_sdk_cache_root_issue911": {
           "twin": "dies",
@@ -204,7 +204,7 @@
         },
         "sdk_projection_rejects_cargo_source_mismatch_before_cargo_issue911": {
           "twin": "dies",
-          "dies": "asserts that a compiled artifact whose Cargo.toml path or `default-features` disagrees with its checked `.incnlib` descriptor is refused before Cargo runs, and that the projected Cargo.toml normalises `default-features = false` (#911); a Cargo-manifest consistency check of the compiled artifact, which dies with #654."
+          "dies": "asserts that a compiled artifact whose Cargo.toml path or `default-features` disagrees with its checked `.incnlib` descriptor is refused before Cargo runs, and that the projected Cargo.toml normalizes `default-features = false` (#911); a Cargo-manifest consistency check of the compiled artifact, which dies with #654."
         },
         "test_generate_multi_escapes_keyword_module_names": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/driver/module_named_like_host_keyword",
@@ -688,7 +688,7 @@
       "disposition": "retire",
       "owner": 1561,
       "twin": "dies",
-      "dies": "RFC 120 `incan-v1` emitted-symbol recovery from a native artifact built with the pinned Rust release (DD-0002): functions, generic specialisations, methods and statics recovered from mangled symbols. The emitted-name projection is the generated-Rust identifier scheme (`inspect rust` reports declarations under it) and dies with #654.",
+      "dies": "RFC 120 `incan-v1` emitted-symbol recovery from a native artifact built with the pinned Rust release (DD-0002): functions, generic specializations, methods and statics recovered from mangled symbols. The emitted-name projection is the generated-Rust identifier scheme (`inspect rust` reports declarations under it) and dies with #654.",
       "split_required": false,
       "split_target": "",
       "notes": "RFC 120 emitted symbol projection and demangling; generated Rust shape."
@@ -706,7 +706,7 @@
       "disposition": "retire",
       "owner": 1561,
       "twin": "dies",
-      "dies": "end-to-end probes of the generated-Cargo boundary: a normal build refusing `--generated-cargo-target-dir`, sealed-input reuse across projects and after source drift proven by a guarded `cargo` executable that must never launch, `--locked` refusing an `oven.lock` whose Cargo payload drifted after a `[rust-dependencies]` edit, and concurrent normal builds ignoring Cargo's `RUSTC_WRAPPER` while leaving no generated-Cargo state behind. Every assertion is whether Cargo (or a Cargo control) was consulted or refused; without a generated project none of it exists. The sealed project-output replay these probes ride on is Oven's own behaviour (unaffected class); one test carries surviving observables and is recorded as an open override.",
+      "dies": "end-to-end probes of the generated-Cargo boundary: a normal build refusing `--generated-cargo-target-dir`, sealed-input reuse across projects and after source drift proven by a guarded `cargo` executable that must never launch, `--locked` refusing an `oven.lock` whose Cargo payload drifted after a `[rust-dependencies]` edit, and concurrent normal builds ignoring Cargo's `RUSTC_WRAPPER` while leaving no generated-Cargo state behind. Every assertion is whether Cargo (or a Cargo control) was consulted or refused; without a generated project none of it exists. The sealed project-output replay these probes ride on is Oven's own behavior (unaffected class); one test carries surviving observables and is recorded as an open override.",
       "split_required": false,
       "split_target": "",
       "notes": "generated-project cache across builds; dies with the generated-project route.",
@@ -727,7 +727,7 @@
       "tests": {
         "a_package_projects_a_call_into_its_own_sibling_module": {
           "twin": "dies",
-          "dies": "asserts the RFC 120 `__incan_v1_` projected wrapper name, not the source spelling `c.bumped()`, in a package's generated `lib.rs` (#1174 emitted-name recoverability); the emitted-name projection and the legacy `incan_ir` lowering that required it die with generated Rust. The package-calls-its-own-sibling behaviour is reachable only through a `--lib`/SDK component build, which is not a run the fixture format can express. The surviving observable — a package whose library calls a sibling module's method builds — is carried by the SDK provider prewarm every suite root performs."
+          "dies": "asserts the RFC 120 `__incan_v1_` projected wrapper name, not the source spelling `c.bumped()`, in a package's generated `lib.rs` (#1174 emitted-name recoverability); the emitted-name projection and the legacy `incan_ir` lowering that required it die with generated Rust. The package-calls-its-own-sibling behavior is reachable only through a `--lib`/SDK component build, which is not a run the fixture format can express. The surviving observable — a package whose library calls a sibling module's method builds — is carried by the SDK provider prewarm every suite root performs."
         },
         "generated_application_artifact_matches_baseline": {
           "twin": "dies",
@@ -1070,15 +1070,15 @@
       "tests": {
         "borrowed_rust_enum_codegen_preserves_shared_and_mutable_subjects": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is that `&RawValue` and `&mut RawValue` scrutinees match `RawValue.String(text)` twice without `.clone()` (#1448). Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/toml_value_borrowed_matching.incn` matches a borrowed `rust::toml::Value` twice and prints the text. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is that `&RawValue` and `&mut RawValue` scrutinees match `RawValue.String(text)` twice without `.clone()` (#1448). Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/toml_value_borrowed_matching.incn` matches a borrowed `rust::toml::Value` twice and prints the text. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "borrowed_rust_enum_keeps_mismatched_rusttype_qualifier_rejected": {
           "twin": "",
-          "notes": "open (harness-deps): a check-time refusal (`Other.String(_)` against a `&Value` rusttype scrutinee, `does not resolve for this match`) that `incan check` cannot reproduce for a `rust::` program without inspection authority (`no source-current project inspection authority`), so it cannot be an `expect-diagnostic` fixture today. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/toml_value_rusttype_qualifier_refused.incn` is the program; the diagnostic code is recorded when the check can run. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. "
+          "notes": "open (harness-deps): a check-time refusal (`Other.String(_)` against a `&Value` rusttype scrutinee, `does not resolve for this match`) that `incan check` cannot reproduce for a `rust::` program without inspection authority (`no source-current project inspection authority`), so it cannot be an `expect-diagnostic` fixture today. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/toml_value_rusttype_qualifier_refused.incn` is the program; the diagnostic code is recorded when the check can run. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. "
         },
         "borrowed_rust_enum_payload_types_preserve_reference_modes": {
           "twin": "",
-          "notes": "open (harness-deps): asserts the checker's payload types (`Ref`/`RefMut` of `Str` or of the variant path) over a synthetic `fixture::Envelope` symbol with and without metadata; checker facts about a `rust::` import that move with #1337's spec. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/toml_value_borrowed_matching.incn` reads the payload of a borrowed real enum. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): asserts the checker's payload types (`Ref`/`RefMut` of `Str` or of the variant path) over a synthetic `fixture::Envelope` symbol with and without metadata; checker facts about a `rust::` import that move with #1337's spec. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/toml_value_borrowed_matching.incn` reads the payload of a borrowed real enum. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         }
       }
     },
@@ -1106,11 +1106,11 @@
       "tests": {
         "rust_supertrait_codegen_does_not_implement_foreign_parent": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is that a marker trait over `rust::serde::de::DeserializeOwned` is adopted by a `@derive(json)` model without a synthesized blanket impl. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_supertraits.incn` adopts `DecodeReady` on a json model and decodes a document through it. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is that a marker trait over `rust::serde::de::DeserializeOwned` is adopted by a `@derive(json)` model without a synthesized blanket impl. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_supertraits.incn` adopts `DecodeReady` on a json model and decodes a document through it. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "rust_supertrait_codegen_preserves_imported_alias_and_arguments": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is `pub trait Label: ::std::fmt::Display` and `Number: ::std::convert::From<i64>` spellings (#1427). Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_supertraits.incn` declares the two marker traits over `rust::std::fmt::Display` and `rust::std::convert::From as Convert`, adopts them on a model with `__str__` and `from`, and prints through both. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is `pub trait Label: ::std::fmt::Display` and `Number: ::std::convert::From<i64>` spellings (#1427). Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_supertraits.incn` declares the two marker traits over `rust::std::fmt::Display` and `rust::std::convert::From as Convert`, adopts them on a model with `__str__` and `from`, and prints through both. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         }
       }
     },
@@ -1124,11 +1124,11 @@
       "tests": {
         "owned_local_receivers_are_borrowed_once_by_the_recorded_mode": {
           "twin": "",
-          "notes": "open (harness-deps): the same contract over owned locals, including the `by_ref` receiver that must not gain a second reborrow. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` covers `update_local`, `reborrow_local`, `ready_local` and `finish_local`. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the same contract over owned locals, including the `by_ref` receiver that must not gain a second reborrow. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` covers `update_local`, `reborrow_local`, `ready_local` and `finish_local`. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "trait_qualified_calls_pass_the_declared_receiver_mode": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is the receiver borrow of trait-qualified calls (`Mac::update(&mut self.handle, ...)`, `Mac::is_ready(&self.handle)`, `Mac::finalize(self.handle)`) over a synthetic `demo` trait (#1375). Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` carries the `Mac`/`Engine` pair and drives a `Signer` class through the three receiver modes, printing the digest length. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is the receiver borrow of trait-qualified calls (`Mac::update(&mut self.handle, ...)`, `Mac::is_ready(&self.handle)`, `Mac::finalize(self.handle)`) over a synthetic `demo` trait (#1375). Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` carries the `Mac`/`Engine` pair and drives a `Signer` class through the three receiver modes, printing the digest length. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         }
       }
     },
@@ -1185,7 +1185,7 @@
       "twin": "",
       "split_required": true,
       "split_target": "",
-      "notes": "IrCodegen entry point and emitter-side metadata; every test drives IrCodegen or emitter-owned merges (manifest type refs, native-union capture). Split with the retirement, not before. Rows disposed by the smoke area (#1691) and by the codegen fixture areas: behaviour fixtures under fixtures/behavior/codegen_*, re-point CLI tests for the rust:: contracts a real crate runs, dies for generated-text mechanics, open rows for rust:: candidates and route bugs.",
+      "notes": "IrCodegen entry point and emitter-side metadata; every test drives IrCodegen or emitter-owned merges (manifest type refs, native-union capture). Split with the retirement, not before. Rows disposed by the smoke area (#1691) and by the codegen fixture areas: behavior fixtures under fixtures/behavior/codegen_*, re-point CLI tests for the rust:: contracts a real crate runs, dies for generated-text mechanics, open rows for rust:: candidates and route bugs.",
       "tests": {
         "a_leaf_bound_to_two_canonical_identities_is_refused": {
           "twin": "dies",
@@ -1309,7 +1309,7 @@
         },
         "normal_codegen_keeps_used_rust_import_aliases": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is the `use std::f64::consts as consts;` spelling. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_std_imports_unused_and_aliased.incn` reads `consts.PI` through the alias and prints its integer part. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is the `use std::f64::consts as consts;` spelling. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_std_imports_unused_and_aliased.incn` reads `consts.PI` through the alias and prints its integer part. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "normal_codegen_omits_dead_code_expect_for_generated_field_reflection_reads": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections/field_value_reflection.incn",
@@ -1329,7 +1329,7 @@
         },
         "normal_codegen_prunes_unused_rust_imports": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is that an unused `use std::collections::HashMap;` is pruned. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_std_imports_unused_and_aliased.incn` imports `rust::std::collections::HashMap` without using it and prints `done`; the pruning itself dies. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is that an unused `use std::collections::HashMap;` is pruned. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_std_imports_unused_and_aliased.incn` imports `rust::std::collections::HashMap` without using it and prints `done`; the pruning itself dies. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "normal_codegen_skips_value_reflection_for_non_scalar_fields": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections/field_value_reflection.incn",
@@ -1377,7 +1377,7 @@
         },
         "rust_std_root_module_import_keeps_rust_namespace": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is the `use ::std::cmp;` spelling. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_std_root_module.incn` calls `cmp.max(2, 3)` through `from rust::std import cmp` and prints 3. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is the `use ::std::cmp;` spelling. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_std_root_module.incn` calls `cmp.max(2, 3)` through `from rust::std import cmp` and prints 3. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "same_module_public_function_and_static_aliases_bind_exact_projections": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_functions_and_aliases/static_counter_projection.incn",
@@ -1433,27 +1433,27 @@
         },
         "test_codegen_awaits_async_rust_backed_method_from_metadata": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is `ctx.register_csv(...).await` for an async Rust method. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_async/` awaits `ctx.register_csv(\\\"orders\\\", \\\"orders.csv\\\", opts)` and prints the Ok/Err arm taken. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is `ctx.register_csv(...).await` for an async Rust method. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_async/` awaits `ctx.register_csv(\\\"orders\\\", \\\"orders.csv\\\", opts)` and prints the Ok/Err arm taken. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_borrows_as_fd_generic_args_from_metadata": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is the `flock(&file)` borrow over a synthetic `&impl AsFd` parameter. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` calls `flock(file)` against a `demo` function taking `&impl AsFd`-shaped `&impl Handle` and returns the file afterwards. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is the `flock(&file)` borrow over a synthetic `&impl AsFd` parameter. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` calls `flock(file)` against a `demo` function taking `&impl AsFd`-shaped `&impl Handle` and returns the file afterwards. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_borrows_async_rust_args_after_rust_method_return": {
           "twin": "",
-          "notes": "open (harness-deps): the same contract where one argument is a Rust method's return value (`ctx.state()`). Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_async/` awaits `consume(ctx.state(), plan)`. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the same contract where one argument is a Rust method's return value (`ctx.state()`). Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_async/` awaits `consume(ctx.state(), plan)`. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_borrows_async_rust_backed_free_function_args_from_metadata": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is `consume(&state, &plan).await` for an async Rust free function taking references. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_async/` awaits `consume(state, plan)` after a `sleep` and prints the returned sum. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is `consume(&state, &plan).await` for an async Rust free function taking references. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_async/` awaits `consume(state, plan)` after a `sleep` and prints the returned sum. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_borrows_async_rust_backed_free_function_args_from_real_rust_inspect": {
           "twin": "",
-          "notes": "open (harness-deps): the same `consume(&state, &plan).await` contract over a real inspection workspace (`ra_async_result_probe`). Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_async/` covers it: its bake inspects the in-fixture crate for real. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the same `consume(&state, &plan).await` contract over a real inspection workspace (`ra_async_result_probe`). Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_async/` covers it: its bake inspects the in-fixture crate for real. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_borrows_reqwest_json_payload_returned_from_registry_client": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is `builder.json(&payload)` and a `&str` literal reaching `post<U: IntoUrl>` unconverted, over a reqwest-shaped stub. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` carries a `client_probe` crate with the same `Client`/`RequestBuilder` shape and prints the builder's recorded URL and payload length. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is `builder.json(&payload)` and a `&str` literal reaching `post<U: IntoUrl>` unconverted, over a reqwest-shaped stub. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` carries a `client_probe` crate with the same `Client`/`RequestBuilder` shape and prints the builder's recorded URL and payload length. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_borrows_rust_backed_free_function_args_from_metadata": {
           "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
@@ -1465,11 +1465,11 @@
         },
         "test_codegen_boxes_variant_payloads_whatever_argument_shape": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion counts `Box::new(` over a synthetic `demo` crate. Candidate project `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` carries a `demo` crate whose `Kind::Tuple(Box<i64>)` variant is built from a literal, a call result, an index and `len`, and prints the four payloads. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion counts `Box::new(` over a synthetic `demo` crate. Candidate project `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` carries a `demo` crate whose `Kind::Tuple(Box<i64>)` variant is built from a literal, a call result, an index and `len`, and prints the four payloads. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_does_not_project_tuple_without_inspected_composition_contract": {
           "twin": "",
-          "notes": "open (harness-deps): the negative case, no projection without a composition contract in the metadata. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` passes a `PlainBar[tuple[Widget, Gadget]]` (a generic with no mutable-reference contract) through a function and prints its leaves. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the negative case, no projection without a composition contract in the metadata. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` passes a `PlainBar[tuple[Widget, Gadget]]` (a generic with no mutable-reference contract) through a function and prints its leaves. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_emits_explicit_function_call_type_args": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_functions_and_aliases/explicit_type_arguments.incn",
@@ -1485,31 +1485,31 @@
         },
         "test_codegen_emits_named_field_struct_literal_for_imported_rust_type_constructor": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is the `Pair { zeta: 1, alpha: 2 }` literal for a positional `Pair(1, 2)`. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` builds `Pair(1, 2)` and prints `zeta` and `alpha`. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is the `Pair { zeta: 1, alpha: 2 }` literal for a positional `Pair(1, 2)`. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` builds `Pair(1, 2)` and prints `zeta` and `alpha`. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_emits_raw_rust_field_names_for_keyword_fields_issue725": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is the `r#type`/`r#match`/`type_` field spellings (#725). Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` reads and rebuilds a `JoinRel` whose fields are spelled `type`, `match` and `type_` and prints their sum. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is the `r#type`/`r#match`/`type_` field spellings (#725). Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` reads and rebuilds a `JoinRel` whose fields are spelled `type`, `match` and `type_` and prints their sum. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_emits_tuple_struct_constructor_for_imported_rust_type": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is the `ClearColor(Color::srgb(...))` tuple-struct spelling. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` builds `ClearColor(Color.srgb(0.15, 0.55, 0.95))` and prints the wrapped colour's channels. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is the `ClearColor(Color::srgb(...))` tuple-struct spelling. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` builds `ClearColor(Color.srgb(0.15, 0.55, 0.95))` and prints the wrapped color's channels. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_fails_closed_after_solver_rejects_associated_type_candidate": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is `FooBar<&mut Dynamic>` beside `FooBar<Static>` after the solver rejects the static candidate, over a temporary `solver_provider` crate. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` carries the same `Dynamic`/`Static` associated-type pair and prints one value through each. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is `FooBar<&mut Dynamic>` beside `FooBar<Static>` after the solver rejects the static candidate, over a temporary `solver_provider` crate. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` carries the same `Dynamic`/`Static` associated-type pair and prints one value through each. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_keeps_nested_rust_associated_calls_type_like_when_outer_receiver_is_unknown": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is `DataFrameWriteOptions::new()` staying a type path inside a metadata-free method call, over the unavailable `datafusion` crate. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` passes `WriteOptions.new()` to a `SessionContext.write_csv` of the `demo` crate and prints the returned count. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is `DataFrameWriteOptions::new()` staying a type path inside a metadata-free method call, over the unavailable `datafusion` crate. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` passes `WriteOptions.new()` to a `SessionContext.write_csv` of the `demo` crate and prints the returned count. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_leaves_unconfigured_rust_generics_literal": {
           "twin": "",
-          "notes": "open (harness-deps): the negative case, `FooBar<(Widget, Gadget)>` left literal without metadata. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` covers it with `PlainBar`, whose metadata declares no mutable-reference parameters. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the negative case, `FooBar<(Widget, Gadget)>` left literal without metadata. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` covers it with `PlainBar`, whose metadata declares no mutable-reference parameters. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_materializes_owner_specialized_rust_associated_function_arguments": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is the `PairFactory::new(7, \\\"marker\\\".to_string())` spelling. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` builds `PairFactory.new(7, \\\"marker\\\")` and prints both fields. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is the `PairFactory::new(7, \\\"marker\\\".to_string())` spelling. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` builds `PairFactory.new(7, \\\"marker\\\")` and prints both fields. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_preserves_direct_foreign_argument_when_only_a_sibling_needs_mutable_reference": {
           "twin": "loaves/toolchain/incan-cli/tests/rfc031_pub_import_integration_tests.rs::oven_build_projects_structural_mutable_reference_generics_for_an_unrelated_provider",
@@ -1517,27 +1517,27 @@
         },
         "test_codegen_preserves_explicit_mutable_rust_generic_arguments_in_mutating_for_loop": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is the explicit `FooBar<(&mut Widget, &mut Gadget)>` spelling with `for (mut widget, mut gadget) in items.iter_mut()`. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` iterates a `FooBar[tuple[&mut Widget, &mut Gadget]]` mutating both leaves and prints the mutated values. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is the explicit `FooBar<(&mut Widget, &mut Gadget)>` spelling with `for (mut widget, mut gadget) in items.iter_mut()`. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` iterates a `FooBar[tuple[&mut Widget, &mut Gadget]]` mutating both leaves and prints the mutated values. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_preserves_f32_arithmetic_at_rust_boundary_issue1219": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is that `-time + time * velocity` reaches an `f32` parameter without an `f64` cast (#1219). Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` passes the expression to `accept_f32` and prints the result. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is that `-time + time * velocity` reaches an `f32` parameter without an `f64` cast (#1219). Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` passes the expression to `accept_f32` and prints the result. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_preserves_owned_mutable_direct_rust_parameter": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is the `mut commands: Commands` parameter spelling beside `&mut Vec<Commands>`. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` passes an owned `Commands` to `setup(mut commands)` and counts its spawns. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is the `mut commands: Commands` parameter spelling beside `&mut Vec<Commands>`. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` passes an owned `Commands` to `setup(mut commands)` and counts its spawns. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_projects_each_metadata_directed_mutable_rust_generic_argument": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is `ProviderHandle<&mut Widget, &mut Gadget>` for two separate type arguments. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` passes a `FooBar2[Widget, Gadget]` and prints its leaves. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is `ProviderHandle<&mut Widget, &mut Gadget>` for two separate type arguments. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` passes a `FooBar2[Widget, Gadget]` and prints its leaves. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_projects_local_type_from_actual_rust_derive_output": {
           "twin": "",
-          "notes": "open (harness-deps): the positive derive-output case, `ProviderHandle<&mut Velocity>` for a local model with `@rust.derive(Component)`. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` derives `Component` from the in-fixture `demo_derive` crate on a local model and passes it through `FooBar`. The fail-closed half is twinned by `oven_bake_fails_closed_when_a_derive_probe_differs_from_the_real_type`. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the positive derive-output case, `ProviderHandle<&mut Velocity>` for a local model with `@rust.derive(Component)`. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` derives `Component` from the in-fixture `demo_derive` crate on a local model and passes it through `FooBar`. The fail-closed half is twinned by `oven_bake_fails_closed_when_a_derive_probe_differs_from_the_real_type`. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_projects_metadata_directed_mutable_rust_generic_arguments_in_trait_method": {
           "twin": "",
-          "notes": "open (harness-deps): the projection inside a trait method's parameter. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` declares a trait whose method takes `FooBar[tuple[Widget, Gadget]]` and adopts it on a model. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the projection inside a trait method's parameter. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` declares a trait whose method takes `FooBar[tuple[Widget, Gadget]]` and adopts it on a model. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_codegen_projects_metadata_directed_mutable_rust_generic_arguments_without_nominal_matching": {
           "twin": "loaves/toolchain/incan-cli/tests/rfc031_pub_import_integration_tests.rs::oven_build_projects_structural_mutable_reference_generics_for_an_unrelated_provider",
@@ -1549,7 +1549,7 @@
         },
         "test_codegen_uses_source_field_names_for_metadata_free_rust_type_constructor": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is the named-field literal for `Pair(zeta=1, alpha=2)` without metadata. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` builds `Pair(zeta=3, alpha=4)` and prints both fields. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is the named-field literal for `Pair(zeta=1, alpha=2)` without metadata. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` builds `Pair(zeta=3, alpha=4)` and prints both fields. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_enum_generation": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/smoke/enum_variants.incn",
@@ -1561,7 +1561,7 @@
         },
         "test_ir_codegen_uses_configured_rust_inspect_workspace_for_async_borrows": {
           "twin": "",
-          "notes": "open (harness-deps): the same contract reached through IrCodegen's configured inspection workspace (`foo_bar::consumer`), an IrCodegen knob whose surviving observable is the borrow. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_async/` covers it. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the same contract reached through IrCodegen's configured inspection workspace (`foo_bar::consumer`), an IrCodegen knob whose surviving observable is the borrow. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_async/` covers it. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "test_model_generation": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/smoke/model_fields.incn",
@@ -1665,11 +1665,11 @@
         },
         "test_try_generate_module_keeps_root_rust_trait_import_issue827": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is the root `use ::message_probe::{Message, Packet};` surviving direct module generation (#827). Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` calls `packet.encode_to_vec()` through the imported `Message` trait of the `demo` crate and prints the length. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is the root `use ::message_probe::{Message, Packet};` surviving direct module generation (#827). Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` calls `packet.encode_to_vec()` through the imported `Message` trait of the `demo` crate and prints the length. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "toml_traversal_uses_extracted_receiver_contracts": {
           "twin": "",
-          "notes": "open (harness-deps): the assertion is `item: &Item` and no `child.clone()` for a traversal over `rust::toml_edit::Item`, checked under the checkout's registry authority. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/toml_edit_traversal.incn` parses a document with `DocumentMut.parse`, traverses `project.count` with the retired test's `traverse` and prints the leaf. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the assertion is `item: &Item` and no `child.clone()` for a traversal over `rust::toml_edit::Item`, checked under the checkout's registry authority. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/toml_edit_traversal.incn` parses a document with `DocumentMut.parse`, traverses `project.count` with the retired test's `traverse` and prints the leaf. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "top_level_alias_to_keyword_named_callable_uses_raw_identifier_target_path": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_functions_and_aliases/callable_aliases.incn",
@@ -1973,7 +1973,7 @@
         },
         "rust_string_slice_import_add_assign_preserves_owned_rhs_issue896": {
           "twin": "",
-          "notes": "open (harness-deps): asserts the legacy binop plan (`str_concat`, borrowed args) for `out += str_slice_byte_range(text, 0, 1)` (#896). Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_core_string_slice_add_assign.incn` runs `concat_slice(\\\"abc\\\")` and prints `a`. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): asserts the legacy binop plan (`str_concat`, borrowed args) for `out += str_slice_byte_range(text, 0, 1)` (#896). Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_core_string_slice_add_assign.incn` runs `concat_slice(\\\"abc\\\")` and prints `a`. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         }
       }
     },
@@ -2067,11 +2067,11 @@
       "tests": {
         "a_closure_argument_to_a_metadata_free_crate_method_keeps_its_callee_identity_issue1492": {
           "twin": "",
-          "notes": "open (harness-deps): the same contract over a metadata-free crate method (`cfg_expr::Expression.eval`) with a captured local. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` carries an `Expression.eval` in the `demo` crate and passes a capturing closure that calls a local function. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the same contract over a metadata-free crate method (`cfg_expr::Expression.eval`) with a captured local. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` carries an `Expression.eval` in the `demo` crate and passes a capturing closure that calls a local function. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "a_closure_argument_to_a_rust_method_keeps_its_callee_identity_issue1492": {
           "twin": "",
-          "notes": "open (harness-deps): the #1492 contract over `rust::std::option::Option.map`, asserted as the direct and closure call sites naming one projection. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_option_map_closure.incn` maps a `RustOption[int]` through a closure calling a local function and prints the result. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behaviour root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
+          "notes": "open (harness-deps): the #1492 contract over `rust::std::option::Option.map`, asserted as the direct and closure call sites naming one projection. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_option_map_closure.incn` maps a `RustOption[int]` through a closure calling a local function and prints the result. Waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo, ruled out for every behavior root. The candidate was not executed (the bake needs Cargo): its Rust side compiles with a direct `rustc --crate-type lib` and its Incan side was read against the language reference; the expected lines were reasoned from the program."
         },
         "a_string_literal_converts_for_a_generic_stdlib_method_issue1494": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections/deque_append_literal.incn",
@@ -2285,7 +2285,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "stdlib generated-Rust snapshots: of the seven import programs, five are twinned by fixtures that run them and two are open route bugs; the six stdlib-source snapshots and the #1592 invariance test pin no behaviour and die.",
+      "notes": "stdlib generated-Rust snapshots: of the seven import programs, five are twinned by fixtures that run them and two are open route bugs; the six stdlib-source snapshots and the #1592 invariance test pin no behavior and die.",
       "tests": {
         "issue_1592_std_io_is_invariant_to_collection_comment": {
           "twin": "dies",
@@ -2297,11 +2297,11 @@
         },
         "std_compression_core_source_snapshot": {
           "twin": "dies",
-          "dies": "a generated-Rust snapshot of the stdlib source `compression/src/compression/_core.incn`; it pins no behaviour."
+          "dies": "a generated-Rust snapshot of the stdlib source `compression/src/compression/_core.incn`; it pins no behavior."
         },
         "std_compression_prelude_source_snapshot": {
           "twin": "dies",
-          "dies": "a generated-Rust snapshot of the stdlib source `compression/src/compression/prelude.incn`; it pins no behaviour."
+          "dies": "a generated-Rust snapshot of the stdlib source `compression/src/compression/prelude.incn`; it pins no behavior."
         },
         "std_datetime_prelude_import_snapshot": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections/std_datetime_prelude_surface.incn",
@@ -2313,15 +2313,15 @@
         },
         "std_environ_source_snapshot": {
           "twin": "dies",
-          "dies": "a generated-Rust snapshot of the stdlib source `system/src/environ.incn`; it pins no behaviour (the `std::env::args` host call it names is run by cli_std_environ_tests)."
+          "dies": "a generated-Rust snapshot of the stdlib source `system/src/environ.incn`; it pins no behavior (the `std::env::args` host call it names is run by cli_std_environ_tests)."
         },
         "std_io_source_snapshot": {
           "twin": "dies",
-          "dies": "a generated-Rust snapshot of the stdlib source `system/src/io.incn`; it pins no behaviour."
+          "dies": "a generated-Rust snapshot of the stdlib source `system/src/io.incn`; it pins no behavior."
         },
         "std_result_source_snapshot": {
           "twin": "dies",
-          "dies": "a generated-Rust snapshot of the stdlib source `core/src/result.incn`; it pins no behaviour, and std.result's behaviour is run by its own re-point tests."
+          "dies": "a generated-Rust snapshot of the stdlib source `core/src/result.incn`; it pins no behavior, and std.result's behavior is run by its own re-point tests."
         },
         "std_root_prelude_import_snapshot": {
           "twin": "",
@@ -2333,7 +2333,7 @@
         },
         "std_telemetry_core_source_snapshot": {
           "twin": "dies",
-          "dies": "a generated-Rust snapshot of the stdlib source `observability/src/telemetry/core.incn`; it pins no behaviour."
+          "dies": "a generated-Rust snapshot of the stdlib source `observability/src/telemetry/core.incn`; it pins no behavior."
         },
         "std_telemetry_prelude_import_snapshot": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections/std_telemetry_prelude_surface.incn",
@@ -2387,7 +2387,7 @@
       "tests": {
         "assignment_plans_non_copy_read_as_clone_and_clone_bound": {
           "twin": "dies",
-          "dies": "asserts `determine_conversion` and `value_use_requires_clone_bound` over a hand-built IR variable; a conversion-policy invariant of the dying emitter (the runtime behaviour it serves is twinned by `zip_value_aliases` and `generic_value_aliases_keep_both_bindings`)."
+          "dies": "asserts `determine_conversion` and `value_use_requires_clone_bound` over a hand-built IR variable; a conversion-policy invariant of the dying emitter (the runtime behavior it serves is twinned by `zip_value_aliases` and `generic_value_aliases_keep_both_bindings`)."
         },
         "assignment_preserves_move_and_copy_without_clone": {
           "twin": "dies",
@@ -3313,7 +3313,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "test-support helper for the behaviour-fixture family: header grammar, discovery, materialization and observable comparison. The module drives `incan check` / `incan run` through `run_incan`; its unit tests exercise the grammar, discovery and the comparison rules with no compiler call."
+      "notes": "test-support helper for the behavior-fixture family: header grammar, discovery, materialization and observable comparison. The module drives `incan check` / `incan run` through `run_incan`; its unit tests exercise the grammar, discovery and the comparison rules with no compiler call."
     },
     "loaves/compiler/incan_test_support/src/builtin_stdlib.rs": {
       "disposition": "unaffected",
@@ -3665,7 +3665,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/diagnostics/base.rs": {
       "disposition": "keep",
@@ -3673,7 +3673,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/diagnostics/stable.rs": {
       "disposition": "keep",
@@ -3681,7 +3681,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/lexer/mod.rs": {
       "disposition": "keep",
@@ -3689,7 +3689,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/embedded/tests.rs": {
       "disposition": "keep",
@@ -3697,7 +3697,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/tests/expressions.rs": {
       "disposition": "keep",
@@ -3705,7 +3705,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/tests/fstrings.rs": {
       "disposition": "keep",
@@ -3713,7 +3713,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/tests/functions_decorators_and_bindings.rs": {
       "disposition": "keep",
@@ -3721,7 +3721,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/tests/modules_and_imports.rs": {
       "disposition": "keep",
@@ -3729,7 +3729,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/tests/patterns_and_matching.rs": {
       "disposition": "keep",
@@ -3737,7 +3737,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/tests/soft_keywords_and_vocab_blocks.rs": {
       "disposition": "keep",
@@ -3745,7 +3745,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/tests/statements_and_blocks.rs": {
       "disposition": "keep",
@@ -3753,7 +3753,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/tests/type_declarations.rs": {
       "disposition": "keep",
@@ -3761,7 +3761,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/tests/types_and_bounds.rs": {
       "disposition": "keep",
@@ -3769,7 +3769,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_syntax/src/parser/tests/vocab_scoped_symbols.rs": {
       "disposition": "keep",
@@ -3777,7 +3777,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalogue; below the emitter, cannot reach codegen. Reviewed at crate level."
+      "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level."
     },
     "loaves/kernel/incan_vocab/src/lib.rs": {
       "disposition": "unaffected",
@@ -4489,7 +4489,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "runs every behaviour fixture of the cli_dependencies area as a program, baking its in-fixture providers first with no Cargo authority (the root is deliberately not registered in OvenCompilerSuiteTargetCapabilities), and compares its observables; the route changes under it, the fixtures do not."
+      "notes": "runs every behavior fixture of the cli_dependencies area as a program, baking its in-fixture providers first with no Cargo authority (the root is deliberately not registered in OvenCompilerSuiteTargetCapabilities), and compares its observables; the route changes under it, the fixtures do not."
     },
     "loaves/toolchain/incan-cli/tests/behavior_cli_tests.rs": {
       "disposition": "re-point",
@@ -4497,7 +4497,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "runs every behaviour fixture of the cli area as a program and compares its observables; the route changes under it, the fixtures do not."
+      "notes": "runs every behavior fixture of the cli area as a program and compares its observables; the route changes under it, the fixtures do not."
     },
     "loaves/toolchain/incan-cli/tests/behavior_codegen_tests.rs": {
       "disposition": "re-point",
@@ -4505,7 +4505,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "runs every behaviour fixture of the codegen_functions_and_aliases, codegen_modules_and_imports, codegen_models_and_collections and codegen_dependencies areas as a program and compares its observables, one libtest case per area; the route changes under it, the fixtures do not."
+      "notes": "runs every behavior fixture of the codegen_functions_and_aliases, codegen_modules_and_imports, codegen_models_and_collections and codegen_dependencies areas as a program and compares its observables, one libtest case per area; the route changes under it, the fixtures do not."
     },
     "loaves/toolchain/incan-cli/tests/behavior_driver_tests.rs": {
       "disposition": "re-point",
@@ -4513,7 +4513,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "runs every behaviour fixture of the driver area as a program and compares its observables; the route changes under it, the fixtures do not."
+      "notes": "runs every behavior fixture of the driver area as a program and compares its observables; the route changes under it, the fixtures do not."
     },
     "loaves/toolchain/incan-cli/tests/behavior_harness_tests.rs": {
       "disposition": "re-point",
@@ -4529,7 +4529,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "runs every behaviour fixture of the smoke area as a program and compares its observables; the route changes under it, the fixtures do not."
+      "notes": "runs every behavior fixture of the smoke area as a program and compares its observables; the route changes under it, the fixtures do not."
     },
     "loaves/toolchain/incan-cli/tests/canonical_item_imports.rs": {
       "disposition": "re-point",
@@ -4546,7 +4546,7 @@
         }
       }
     },
-    "loaves/toolchain/incan-cli/tests/cli_catalogue_forms_tests.rs": {
+    "loaves/toolchain/incan-cli/tests/cli_catalog_forms_tests.rs": {
       "disposition": "re-point",
       "owner": 1561,
       "twin": "",
@@ -4731,7 +4731,7 @@
         "cold_library_build_preserves_rust_string_compound_assignment_issue896": {
           "disposition": "retire",
           "twin": "",
-          "notes": "open (twin-h-cli): the library build is the only non-text assertion and the `str_concat` selection under cold Rust metadata is generated text. The surviving behaviour, `+=` and `+` with a `rust::`-returned `String` operand, needs a `[rust-dependencies]` path into the checkout (`development_support_crate_dir(\"incan_std_core\")`) that a fixture cannot carry. A `rust::std::string::String.from(...)` stand-in does not type as `str` (`from` is generic), so no in-fixture substitute exists. Question (with Q1): does Rust-crate interop behaviour get a twin in this corpus (a fixture would need a Rust crate with a `String`-returning function and the inspection bake of Q1), or does it move with #1337's spec? If the latter, this row is `dies` with the cold-metadata half named."
+          "notes": "open (twin-h-cli): the library build is the only non-text assertion and the `str_concat` selection under cold Rust metadata is generated text. The surviving behavior, `+=` and `+` with a `rust::`-returned `String` operand, needs a `[rust-dependencies]` path into the checkout (`development_support_crate_dir(\"incan_std_core\")`) that a fixture cannot carry. A `rust::std::string::String.from(...)` stand-in does not type as `str` (`from` is generic), so no in-fixture substitute exists. Question (with Q1): does Rust-crate interop behavior get a twin in this corpus (a fixture would need a Rust crate with a `String`-returning function and the inspection bake of Q1), or does it move with #1337's spec? If the latter, this row is `dies` with the cold-metadata half named."
         },
         "comprehension_over_rust_iterator_consumes_it_by_value_issue1490": {
           "disposition": "re-point",
@@ -4922,7 +4922,7 @@
         "build_explicit_mutable_rust_generic_reaches_codegen_through_normal_cli_path": {
           "disposition": "retire",
           "twin": "",
-          "notes": "open (harness-deps): the build succeeds and the assertions are the projected ABI in `main.rs` (`ProviderHandle<(&mut i64, &mut i64)>`), generated text. A behaviour twin exists and passes standalone and under a root admitted to the explicit bake: the same program run to completion, printing its marker line (this program's `rust::std::vec::Vec` import launched no Cargo itself, but the bake that records its authority is the same explicit bake). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; measured 2026-09-20, ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. The candidate fixture is in the harness-deps slice folder."
+          "notes": "open (harness-deps): the build succeeds and the assertions are the projected ABI in `main.rs` (`ProviderHandle<(&mut i64, &mut i64)>`), generated text. A behavior twin exists and passes standalone and under a root admitted to the explicit bake: the same program run to completion, printing its marker line (this program's `rust::std::vec::Vec` import launched no Cargo itself, but the bake that records its authority is the same explicit bake). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; measured 2026-09-20, ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. The candidate fixture is in the harness-deps slice folder."
         },
         "build_lib_imported_static_decorator_receiver_materializes_string_arg_issue671": {
           "disposition": "retire",
@@ -4932,7 +4932,7 @@
         "decorated_method_explicit_mutable_rust_generic_keeps_static_and_wrapper_abi": {
           "disposition": "retire",
           "twin": "",
-          "notes": "open (harness-deps): the build succeeds and the assertions are the shared ABI spelling in `main.rs`, generated text. A behaviour twin exists and passes standalone and under a root admitted to the explicit bake: the same program run to completion (`7`, then its marker line). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; measured 2026-09-20, ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. The candidate fixture is in the harness-deps slice folder."
+          "notes": "open (harness-deps): the build succeeds and the assertions are the shared ABI spelling in `main.rs`, generated text. A behavior twin exists and passes standalone and under a root admitted to the explicit bake: the same program run to completion (`7`, then its marker line). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; measured 2026-09-20, ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. The candidate fixture is in the harness-deps slice folder."
         },
         "explicit_legacy_sdk_inventory_blocks_lock_preheat": {
           "disposition": "unaffected",
@@ -5083,7 +5083,7 @@
         "test_rfc041_rust_coercion_codegen_smoke": {
           "disposition": "retire",
           "twin": "",
-          "notes": "open (harness-deps): IrCodegen text only (`Duration::from_secs_f32`). A behaviour twin exists and passes standalone and under a root admitted to the explicit bake: a program passing a float literal to `rust::std::time::Duration.from_secs_f32` and printing `as_millis()` (`1500`). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; measured 2026-09-20, ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. The candidate fixture is in the harness-deps slice folder."
+          "notes": "open (harness-deps): IrCodegen text only (`Duration::from_secs_f32`). A behavior twin exists and passes standalone and under a root admitted to the explicit bake: a program passing a float literal to `rust::std::time::Duration.from_secs_f32` and printing `as_millis()` (`1500`). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; measured 2026-09-20, ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. The candidate fixture is in the harness-deps slice folder."
         },
         "test_rfc041_rusttype_interop_typechecks_end_to_end": {
           "disposition": "keep",
@@ -5210,7 +5210,7 @@
         "compiled_provider_preserves_shared_rust_interop_contracts_issues834_835_961": {
           "disposition": "retire",
           "twin": "",
-          "notes": "open (twin-h-cli): the provider bake and the consumer build succeed over a local Rust crate (`receiver_factory`, `[rust-dependencies]`); the assertions are the manifest `rust_abi` type-parameter record and generated provider text (method turbofish, `&mut [f32]` callback, receiver specialization). A twin would be a project fixture carrying a Rust crate plus the provider bake of Q2 and the `rust::` inspection bake of Q1. Question: does Rust-crate interop behaviour get a twin in this corpus (fixture carries Rust source), or does it move with #1337's spec?"
+          "notes": "open (twin-h-cli): the provider bake and the consumer build succeed over a local Rust crate (`receiver_factory`, `[rust-dependencies]`); the assertions are the manifest `rust_abi` type-parameter record and generated provider text (method turbofish, `&mut [f32]` callback, receiver specialization). A twin would be a project fixture carrying a Rust crate plus the provider bake of Q2 and the `rust::` inspection bake of Q1. Question: does Rust-crate interop behavior get a twin in this corpus (fixture carries Rust source), or does it move with #1337's spec?"
         },
         "consumer_build_plans_source_backed_pub_helper_calls_with_defaults_and_unions_issue729": {
           "disposition": "retire",
@@ -5220,7 +5220,7 @@
         "consumer_build_plans_source_backed_vocab_helper_calls_with_defaults_and_unions_issue729": {
           "disposition": "retire",
           "twin": "",
-          "notes": "open (twin-h-cli): the consumer build succeeds and the assertions are generated text (`querykit::count(` filled from the helper default, `COUNT_SENTINEL` through the provider path, no re-owned `__IncanUnion`). The desugared `where true:` calls come from a vocab companion crate (`write_vocab_companion_crate_with_source`, a wasm desugarer) a fixture cannot carry, on top of the provider bake of Q2. The same helpers' default, union and string behaviour through ordinary calls is the pub sibling's candidate twin; the re-point sibling `consumer_build_plans_vocab_helper_calls_like_ordinary_calls_issue729` proves desugared helper calls build. Question: is that enough for `dies`, or does the vocab lane want a fixture with a companion?"
+          "notes": "open (twin-h-cli): the consumer build succeeds and the assertions are generated text (`querykit::count(` filled from the helper default, `COUNT_SENTINEL` through the provider path, no re-owned `__IncanUnion`). The desugared `where true:` calls come from a vocab companion crate (`write_vocab_companion_crate_with_source`, a wasm desugarer) a fixture cannot carry, on top of the provider bake of Q2. The same helpers' default, union and string behavior through ordinary calls is the pub sibling's candidate twin; the re-point sibling `consumer_build_plans_vocab_helper_calls_like_ordinary_calls_issue729` proves desugared helper calls build. Question: is that enough for `dies`, or does the vocab lane want a fixture with a companion?"
         },
         "consumer_check_accepts_expression_desugar_output_in_statement_position": {
           "disposition": "keep",
@@ -5272,13 +5272,13 @@
           "disposition": "retire",
           "twin": "dies",
           "notes": "`incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter, as its sibling `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` does.",
-          "dies": "`--emit-rust` text half (`__incan_checked_c_finish_span`, `*mut u8`, `-> usize`); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbol `incan_sqlite_random_bytes` has no implementation and the header is a host-specific path, so the program cannot run and no behaviour fixture is possible."
+          "dies": "`--emit-rust` text half (`__incan_checked_c_finish_span`, `*mut u8`, `-> usize`); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbol `incan_sqlite_random_bytes` has no implementation and the header is a host-specific path, so the program cannot run and no behavior fixture is possible."
         },
         "consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim": {
           "disposition": "retire",
           "twin": "dies",
           "notes": "`incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter.",
-          "dies": "`--emit-rust` text half (`*const f32`, the `f32` output carrier, the `#[link(... kind = \"framework\")]` attribute); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbol `incan_accelerate_sum_f32` has no implementation, so the program cannot run and no behaviour fixture is possible."
+          "dies": "`--emit-rust` text half (`*const f32`, the `f32` output carrier, the `#[link(... kind = \"framework\")]` attribute); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbol `incan_accelerate_sum_f32` has no implementation, so the program cannot run and no behavior fixture is possible."
         },
         "consumer_check_passes_expr_list_item_metadata_to_desugarer_issue724": {
           "disposition": "keep",
@@ -5299,13 +5299,13 @@
           "disposition": "retire",
           "twin": "dies",
           "notes": "`incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter, as its sibling `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` does.",
-          "dies": "`--emit-rust` text half (an `f32` carrier in the emitted binding); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbol `fixture_absolute_f32` has no implementation, so the program cannot run and no behaviour fixture is possible."
+          "dies": "`--emit-rust` text half (an `f32` carrier in the emitted binding); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbol `fixture_absolute_f32` has no implementation, so the program cannot run and no behavior fixture is possible."
         },
         "consumer_check_preserves_exact_checked_c_scalar_carriers": {
           "disposition": "retire",
           "twin": "dies",
           "notes": "`incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter, as its sibling `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` does.",
-          "dies": "`--emit-rust` text half (one exact Rust carrier per `c.*` scalar); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbols (`fixture_i8` ... `fixture_size`) have no implementation, so the program cannot run and no behaviour fixture is possible."
+          "dies": "`--emit-rust` text half (one exact Rust carrier per `c.*` scalar); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbols (`fixture_i8` ... `fixture_size`) have no implementation, so the program cannot run and no behavior fixture is possible."
         },
         "consumer_check_rejects_checked_byte_span_escape_and_reuse": {
           "disposition": "keep",
@@ -5341,7 +5341,7 @@
           "disposition": "retire",
           "twin": "dies",
           "notes": "`incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter, as its sibling `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` does.",
-          "dies": "`--emit-rust` text half (`__incan_checked_c_finish_span`, `.as_ptr()`/`.as_mut_ptr()`); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbol `fixture_copy_prefix` has no implementation, so the program's `main` cannot run and no behaviour fixture is possible."
+          "dies": "`--emit-rust` text half (`__incan_checked_c_finish_span`, `.as_ptr()`/`.as_mut_ptr()`); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbol `fixture_copy_prefix` has no implementation, so the program's `main` cannot run and no behavior fixture is possible."
         },
         "consumer_check_supports_checked_f32_spans_for_paired_numeric_pointers": {
           "disposition": "keep",
