@@ -1060,7 +1060,7 @@ mod tests {
     }
 
     #[test]
-    fn target_catalogue_names_linux_and_macos_abi_triples() {
+    fn target_catalog_names_linux_and_macos_abi_triples() {
         assert_eq!(CAbiTarget::LinuxX86_64.triple(), "x86_64-unknown-linux-gnu");
         assert_eq!(CAbiTarget::MacosArm64.triple(), "arm64-apple-macos11");
     }

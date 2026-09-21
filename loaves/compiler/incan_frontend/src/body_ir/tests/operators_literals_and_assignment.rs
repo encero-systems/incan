@@ -348,7 +348,7 @@ fn lowers_list_concatenation_as_a_helper_call_rather_than_a_primitive_addition()
 #[test]
 fn compound_list_assignment_routes_through_the_same_concatenation_helper() -> Result<(), Box<dyn std::error::Error>> {
     // `lower_compound_assignment` shares both the admission gate and the emission path with `lower_binary`, so
-    // giving list `+` a helper silently changed `xs += ys` too. That is the behaviour the Rust-emission backend
+    // giving list `+` a helper silently changed `xs += ys` too. That is the behavior the Rust-emission backend
     // already has -- `determine_binop_plan` sees `Add` over two lists whichever spelling produced it -- but a
     // shared path that changed without coverage is exactly where a later divergence would hide.
     let rendered = rendered_f(

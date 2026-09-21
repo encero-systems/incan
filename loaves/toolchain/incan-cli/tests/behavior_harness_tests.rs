@@ -1,4 +1,4 @@
-//! The `harness` area of the behaviour-fixture family: the harness proving itself through the compiler suite.
+//! The `harness` area of the behavior-fixture family: the harness proving itself through the compiler suite.
 //!
 //! These fixtures retire nothing. Each exercises one shape of the format a twin lane will rely on -- a refused
 //! program (one code, and two codes from one check), a non-zero exit code, an exit code as the only observable, an

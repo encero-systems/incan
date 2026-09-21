@@ -30,8 +30,8 @@ impl AstLowering {
     pub(in crate::lower) fn is_user_defined_decorator_candidate(&self, dec: &ast::Decorator) -> bool {
         let resolved = decorator_resolution::resolve_decorator_path(dec, &self.import_aliases);
         if decorators::from_segments(&resolved) == Some(DecoratorId::Describe) {
-            // RFC 113 owns `@describe` as a compiler-recognised declaration form. Its runtime registration is emitted
-            // through the defining registry static during module initialisation, not through RFC 036 callable wrapping.
+            // RFC 113 owns `@describe` as a compiler-recognized declaration form. Its runtime registration is emitted
+            // through the defining registry static during module initialization, not through RFC 036 callable wrapping.
             return false;
         }
         if decorators::from_segments(&resolved).is_some() {

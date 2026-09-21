@@ -198,7 +198,7 @@ The `.incnlib` manifest is intentionally a semantic surface artifact, not a tran
 
 ### `pub` namespace import syntax
 
-The language recognises `pub` as a library namespace root, parallel to the `std` and `rust` roots:
+The language recognizes `pub` as a library namespace root, parallel to the `std` and `rust` roots:
 
 ```text
 import_stmt ::= "from" import_path "import" import_items

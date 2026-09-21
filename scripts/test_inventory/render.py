@@ -41,22 +41,22 @@ HOW_TO_LINK = "https://github.com/encero-systems/incan/issues/1561#issuecomment-
 
 DISPOSITION_MEANING = {
     "keep": "Asserts source meaning through the parser, typechecker, Body IR, formatter, LSP or semantics core, and never touches generated Rust. Survives the slice-7 cutover untouched.",
-    "re-point": "Asserts program behaviour (output, exit code, diagnostics of a run) but proves it by building or running generated Rust. The assertion stays; slice 7 changes the route.",
+    "re-point": "Asserts program behavior (output, exit code, diagnostics of a run) but proves it by building or running generated Rust. The assertion stays; slice 7 changes the route.",
     "retire": "Asserts the shape of the generated Rust itself: snapshot text, `contains(\"fn ...\")` on emitted source, emitter unit tests. Dies with #654, and only after its row names a twin or records `dies` with the reason.",
     "unaffected": "Oven, store, rustc, installer, stdlib runtime, layering guards and other tests the cutover does not touch. Listed so the total reconciles.",
     "unreviewed": "Nobody has read the file yet. The mechanical proposal is recorded in the notes when there is one; the maintainer works these rows through.",
 }
 
 TWIN_MEANING = (
-    ("`path::fn`", "a `keep` or `re-point` test that proves the same behaviour."),
-    ("a fixture root", "a declared `.incn` fixture root, by its bare path, when running that root's programs proves the behaviour."),
+    ("`path::fn`", "a `keep` or `re-point` test that proves the same behavior."),
+    ("a fixture root", "a declared `.incn` fixture root, by its bare path, when running that root's programs proves the behavior."),
     (
-        "a behaviour fixture",
+        "a behavior fixture",
         f"a file or directory under `{BEHAVIOR_FIXTURES_ROOT}/<area>/`: an Incan program whose header declares its expected observables and names the tests it retires in `# retires:` lines. The gate refuses a fixture and a row that do not name each other.",
     ),
     (
         "`dies`",
-        "the test has no user-observable behaviour to twin; the reason is recorded in a `dies` field beside it and the page shows it. Generated projects, `inspect rust` output and the build-report Cargo fields die with #654 (no Rust is generated at all any more); a data-structure invariant of a dying crate dies with the crate.",
+        "the test has no user-observable behavior to twin; the reason is recorded in a `dies` field beside it and the page shows it. Generated projects, `inspect rust` output and the build-report Cargo fields die with #654 (no Rust is generated at all any more); a data-structure invariant of a dying crate dies with the crate.",
     ),
 )
 
@@ -267,7 +267,7 @@ def render(corpus: Corpus, dispositions: dict) -> str:
     out.append("## Twins and `dies`")
     out.append("")
     out.append(
-        "A `retire` row leaves the corpus by naming what proves the behaviour after the cutover in its `twin` field, "
+        "A `retire` row leaves the corpus by naming what proves the behavior after the cutover in its `twin` field, "
         "or by recording that nothing user-observable is lost. `Twins` counts the first kind against the file's "
         "retire-class tests; `Dies` counts the second."
     )

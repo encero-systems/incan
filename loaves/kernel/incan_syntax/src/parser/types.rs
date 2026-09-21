@@ -60,7 +60,7 @@ impl<'a> Parser<'a> {
             return Ok(Vec::new());
         }
 
-        // ---- Single bound (bare word) vs multiple bounds (parenthesised) ----
+        // ---- Single bound (bare word) vs multiple bounds (parenthesized) ----
         if self.match_token(&TokenKind::Punctuation(PunctuationId::LParen)) {
             // Multiple bounds: `with (Eq, Debug, From[U])`
             let mut bounds = Vec::new();
@@ -159,10 +159,7 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
-        let end = members
-            .last()
-            .map(|member| member.span.end)
-            .unwrap_or(start);
+        let end = members.last().map(|member| member.span.end).unwrap_or(start);
         let mut flattened = Vec::new();
         for member in members {
             match member.node {
@@ -285,7 +282,8 @@ impl<'a> Parser<'a> {
             if self.match_punct(PunctuationId::ColonColon) {
                 if dotted {
                     return Err(CompileError::syntax(
-                        "Type paths cannot mix `.` namespace qualification with `::` Rust-path qualification".to_string(),
+                        "Type paths cannot mix `.` namespace qualification with `::` Rust-path qualification"
+                            .to_string(),
                         Span::new(start, self.current_span().start),
                     ));
                 }
@@ -338,17 +336,11 @@ impl<'a> Parser<'a> {
             if dotted {
                 Ok(Spanned::new(Type::DottedGeneric(path, args), Span::new(start, end)))
             } else {
-                Ok(Spanned::new(
-                    Type::Generic(type_name, args),
-                    Span::new(start, end),
-                ))
+                Ok(Spanned::new(Type::Generic(type_name, args), Span::new(start, end)))
             }
         } else if path.len() == 1 {
             let end = self.tokens[self.pos - 1].span.end;
-            Ok(Spanned::new(
-                Type::Simple(path[0].clone()),
-                Span::new(start, end),
-            ))
+            Ok(Spanned::new(Type::Simple(path[0].clone()), Span::new(start, end)))
         } else if dotted {
             let end = self.tokens[self.pos - 1].span.end;
             Ok(Spanned::new(Type::Dotted(path), Span::new(start, end)))
@@ -384,10 +376,7 @@ impl<'a> Parser<'a> {
             other => vec![Spanned::new(other, params_arg.span)],
         };
 
-        Ok(Spanned::new(
-            Type::Function(params, ret),
-            Span::new(start, end),
-        ))
+        Ok(Spanned::new(Type::Function(params, ret), Span::new(start, end)))
     }
 
     /// Parse the comma-separated contents of an RFC 017 constrained primitive bracket block.
@@ -433,16 +422,10 @@ impl<'a> Parser<'a> {
                 Span::new(start, self.tokens[self.pos - 1].span.end),
             ));
         };
-        self.expect_op(
-            OperatorId::Eq,
-            "Expected '=' after constrained primitive key",
-        )?;
+        self.expect_op(OperatorId::Eq, "Expected '=' after constrained primitive key")?;
         let value = self.constrained_primitive_integer_literal()?;
         let end = self.tokens[self.pos - 1].span.end;
-        Ok(Spanned::new(
-            TypeConstraint { key, value },
-            Span::new(start, end),
-        ))
+        Ok(Spanned::new(TypeConstraint { key, value }, Span::new(start, end)))
     }
 
     /// Parse a signed integer literal for this slice's constrained primitive syntax.
@@ -483,7 +466,6 @@ impl<'a> Parser<'a> {
         }
         Ok(types)
     }
-
 }
 
 /// Return whether a primitive type name owns RFC 017 constraint bracket syntax in this parser slice.

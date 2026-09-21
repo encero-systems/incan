@@ -1,6 +1,6 @@
-# Behaviour fixtures
+# Behavior fixtures
 
-A behaviour fixture is an Incan program that carries its own expected observables. It is the route-agnostic twin of a retire-class test in the test corpus inventory (#1561): where the retired test asserted the shape of generated Rust, the fixture asserts what the program does when it runs, so it stays valid when slice 7 changes how programs run. Nothing in a fixture names a route, a backend, a build step or Rust.
+A behavior fixture is an Incan program that carries its own expected observables. It is the route-agnostic twin of a retire-class test in the test corpus inventory (#1561): where the retired test asserted the shape of generated Rust, the fixture asserts what the program does when it runs, so it stays valid when slice 7 changes how programs run. Nothing in a fixture names a route, a backend, a build step or Rust.
 
 This directory is transitional infrastructure for the v0.6 cutover; the procedure for twinning a test lives on #1561, not on the docs site.
 
@@ -19,7 +19,7 @@ Every entry in an area is one of those three shapes. A stray file is refused, an
 
 Two areas ship with the harness: `smoke/`, the first twins (each retires `codegen.rs` unit tests), and `harness/`, the harness proving itself with one fixture per shape of the format (a refused program with one code and with two, a non-zero exit code, an exit code as the only observable, an empty stdout, contained lines, a module directory, a project directory). The `harness/` fixtures twin nothing; a change to the runner or to the route underneath it fails there before it fails in a twin. The header *refusals* are unit tests of `parse_header` in `incan_test_support`, not fixtures: an area fixture must pass, so a fixture cannot prove that a malformed header is refused.
 
-One area is set apart by what its programs need from the runner: `cli_dependencies/`, project fixtures with in-fixture path dependencies, whose providers the runner bakes before the run (see *Project fixtures with dependencies* and *Provider bakes and Cargo*). No behaviour root, that one included, is registered for a compiler-suite Cargo capability: every bake the runner performs under the suite is Cargo-guarded.
+One area is set apart by what its programs need from the runner: `cli_dependencies/`, project fixtures with in-fixture path dependencies, whose providers the runner bakes before the run (see *Project fixtures with dependencies* and *Provider bakes and Cargo*). No behavior root, that one included, is registered for a compiler-suite Cargo capability: every bake the runner performs under the suite is Cargo-guarded.
 
 ### Area size
 
@@ -83,7 +83,7 @@ Lines of a block directive follow it, each `#` plus at least two spaces; the fir
 
 **The header is contiguous.** A blank line ends it, and so does any other line that is not a `#` comment. A directive after that point (`# expect-stdout:` below a blank line, say) is refused with its line number rather than ignored, because a fixture whose expectations were silently dropped would pass on less than it declares.
 
-**Stdout is compared as lines.** Both sides are split with Rust's `str::lines()`: the final newline is not required, CRLF is accepted, and nothing else is normalised. An expected line that ends with whitespace is refused (a report could not show the difference), so trailing whitespace in a program's output cannot be asserted and does not match. `expect-stdout-contains` refuses an empty block (anything would satisfy it) and a line listed twice (one occurrence satisfies both).
+**Stdout is compared as lines.** Both sides are split with Rust's `str::lines()`: the final newline is not required, CRLF is accepted, and nothing else is normalized. An expected line that ends with whitespace is refused (a report could not show the difference), so trailing whitespace in a program's output cannot be asserted and does not match. `expect-stdout-contains` refuses an empty block (anything would satisfy it) and a line listed twice (one occurrence satisfies both).
 
 A header must declare at least one observable (`expect-stdout`, `expect-stdout-contains`, an explicit `expect-exit`, or `expect-diagnostic`). A program with nothing to show is not a twin. Two refusals name both lines involved: the second stdout block beside the first, and an `expect-diagnostic` beside a run expectation (or the other way round, whichever comes second).
 
@@ -98,7 +98,7 @@ A header must declare at least one observable (`expect-stdout`, `expect-stdout-c
 
 ### Provider bakes and Cargo
 
-Under the compiler suite an ordinary program runs on the sealed standard-library Loaf and no bake happens; `make test-one` puts a Cargo guard on `PATH` and fails the run if anything reaches it. A provider bake is the one bake the runner performs under the suite, and it is run **Cargo-guarded**: through the same command environment as any other `incan` call, with no `CARGO` and none of the explicit-bake authority the suite grants registered roots (`explicit_bake_cargo` in `OvenCompilerSuiteTargetCapabilities`, `loaves/oven/oven_model/src/compiler_suite_env.rs`). No behaviour root is registered there, and a test in `oven-cli` asserts it.
+Under the compiler suite an ordinary program runs on the sealed standard-library Loaf and no bake happens; `make test-one` puts a Cargo guard on `PATH` and fails the run if anything reaches it. A provider bake is the one bake the runner performs under the suite, and it is run **Cargo-guarded**: through the same command environment as any other `incan` call, with no `CARGO` and none of the explicit-bake authority the suite grants registered roots (`explicit_bake_cargo` in `OvenCompilerSuiteTargetCapabilities`, `loaves/oven/oven_model/src/compiler_suite_env.rs`). No behavior root is registered there, and a test in `oven-cli` asserts it.
 
 What that admits, measured on 2026-09-20 under `make test-one` with the guard: an Incan library provider with no dependencies of its own, which the Oven serves from the active standard-library Loaf without invoking Cargo (the three `cli_dependencies/` fixtures: a helper library, a library exporting a `Callable`-taking function, and a feature-gated library behind a refused program). What it refuses, loudly: a provider that itself declares `[dependencies]`, whose bake goes through the compatibility publisher's test-dependency envelope and runs `cargo metadata` and `cargo build`; under the suite that bake meets the guard, the fixture fails with the bake's stderr, and the suite wrapper fails on the guard log. The same holds for a program that imports through `rust::`: it needs source-current project inspection authority, which only an explicit bake of its own project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; ten launches for one fixture). Such fixtures are not in the tree; they wait for a Cargo-free bake under the suite, and their candidates are parked with the #1561 test-corpus slice records.
 

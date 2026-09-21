@@ -59,7 +59,7 @@ def wrap(args):
         return 127
     record.update(child_pid=child.pid, start_after_ns=time.monotonic_ns(), status='running')
     save(path, record)
-    # Reap the child and preserve evidence when the wrapper is signalled. A
+    # Reap the child and preserve evidence when the wrapper is signaled. A
     # group signal may already have reached it; a repeated TERM/INT is harmless
     # for ordinary compiler processes but custom signal handlers are outside
     # this research wrapper's transparency contract.

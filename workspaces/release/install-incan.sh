@@ -310,7 +310,7 @@ install_rustup() {
 # Rust 1.98.0 for aarch64-apple-darwin links `rust-lld` against `libLLVM.dylib` with an `@rpath` that resolves to
 # `lib/rustlib/<target>/lib/`, but ships the dylib only in the toolchain's own `lib/`. Nothing then links for a target
 # that uses `rust-lld` -- on Incan that is the `wasm32-wasip1` vocab companion, which fails with
-# "Library not loaded: @rpath/libLLVM.dylib". Neighbouring releases are unaffected: earlier ones link LLVM statically
+# "Library not loaded: @rpath/libLLVM.dylib". Neighboring releases are unaffected: earlier ones link LLVM statically
 # and nightly ships the dylib in both locations.
 #
 # Linking the shipped dylib into the location its own rpath names is the smallest repair, and it is confined to the

@@ -2952,7 +2952,7 @@ mod tests {
 
         assert!(can_use_source_method_projection(
             &receiver,
-            Some(&trait_dispatch("Labelled"))
+            Some(&trait_dispatch("Labeled"))
         ));
     }
 

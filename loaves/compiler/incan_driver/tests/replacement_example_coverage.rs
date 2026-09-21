@@ -75,7 +75,7 @@ const EXAMPLE_SOURCE_BASELINE: usize = 91;
 /// repair does not replace Body IR's interim flat name-to-local map.
 ///
 /// #1252 owns the other half of the problem, and it is the one that decides what this number is worth: the corpus
-/// covers roughly a third of the capability surface the v0.5 catalogue documents, so reaching 68 here would still
+/// covers roughly a third of the capability surface the v0.5 catalog documents, so reaching 68 here would still
 /// leave `if let`, generators, iterator adapters, value enums and most of the standard library unexecuted. Both
 /// sit under Slice 1 (#1137), because execution evidence has to be trustworthy before anything is cut over to it.
 const EXECUTED_BASELINE: usize = 7;
