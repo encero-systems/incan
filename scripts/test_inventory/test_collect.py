@@ -395,7 +395,7 @@ class GateTests(unittest.TestCase):
 
 
 class BehaviorFixtureTwinTests(unittest.TestCase):
-    """A behaviour fixture and the row it retires must name each other, and a fixture twin must exist."""
+    """A behavior fixture and the row it retires must name each other, and a fixture twin must exist."""
 
     SOURCE = (
         "#[test]\nfn generated_shape() {\n    let code = generate_rust(\"x\");\n    assert!(code.contains(\"fn \"));\n}\n\n"

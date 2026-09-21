@@ -1,8 +1,8 @@
-//! The `lowering_*` areas of the behaviour-fixture family: twins of the retire-class unit tests of the legacy
+//! The `lowering_*` areas of the behavior-fixture family: twins of the retire-class unit tests of the legacy
 //! backend's lowering under `loaves/compiler/incan_ir/**`.
 //!
 //! Every fixture under `loaves/compiler/incan_test_support/fixtures/behavior/lowering_<topic>/` is a program whose
-//! behaviour the retired test's lowering decision was about: the shape of a call, which declaration an alias or a
+//! behavior the retired test's lowering decision was about: the shape of a call, which declaration an alias or a
 //! dispatched method resolves to, what a pattern or an assertion binds, which constructor form a partial or a
 //! decorated surface reaches. The retired tests asserted the intermediate representation those decisions produced;
 //! the IR dies with its crate, the program's meaning does not, so the fixtures hold on whatever route slice 7 puts

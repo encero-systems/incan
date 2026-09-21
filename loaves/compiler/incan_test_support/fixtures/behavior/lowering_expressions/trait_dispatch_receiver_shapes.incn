@@ -9,18 +9,18 @@
 #   clone: 3 3
 #   concrete: item-c
 
-trait Labelled:
+trait Labeled:
     def label(self) -> str: ...
 
 
-model Item with Labelled:
+model Item with Labeled:
     name: str
 
     def label(self) -> str:
         return f"item-{self.name}"
 
 
-model Chunks[R with Labelled]:
+model Chunks[R with Labeled]:
     reader: R
 
     def describe(self) -> str:
@@ -32,7 +32,7 @@ model Counter:
     value: int
 
 
-def label_of[T with Labelled](item: T) -> str:
+def label_of[T with Labeled](item: T) -> str:
     return item.label()
 
 

@@ -20,7 +20,7 @@ Each of these passes `incan check` and fails in the generated Rust (reproduced s
 - `set_of_underived_enum.incn`: a model field `set[Tag]` over an enum with no derives (E0277, `Tag: Eq` and
   `Tag: Hash`). The live twin `../../behavior/lowering_declarations/serde_derive_propagation.incn` derives them.
 - `trait_default_names_its_own_module_types/`: an imported trait's default method returns a type of its own module
-  that the adopter never imports (E0425 in the adopter's expansion). The stdlib flavour of the same fact is live as
+  that the adopter never imports (E0425 in the adopter's expansion). The stdlib flavor of the same fact is live as
   `../../behavior/lowering_declarations/stdlib_trait_default_names_its_own_module_type.incn`.
 - `trait_default_constructs_module_type_across_modules/`: an imported trait's default method constructs a model of its
   own module by named fields, expanded into an adopter in another module that imports that model (E0423, the
