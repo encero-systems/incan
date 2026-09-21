@@ -16,7 +16,7 @@
     - #1698 (`[rust.lints]` in `loaf.toml`)
 - **Issue:** [#1703](https://github.com/encero-systems/incan/issues/1703)
 - **RFC PR:** [#1702](https://github.com/encero-systems/incan/pull/1702)
-- **Written against:** 0.6
+- **Written against:** v0.7
 - **Shipped in:** —
 
 ## Summary
@@ -60,13 +60,13 @@ Clippy is not a template to copy blindly. A large share of its catalog exists be
 - Define what the documentation test of an entry proves, per declared evaluator, so that a lint example, a `format`-class example, and a `fix` example are each held to the contract their evaluator makes.
 - Give #159's trivia-aware formatter its rule surface: every formatter normalization has a name, a code, and a reason.
 - Define the quality gate every entry passes: fixtures, the tested example pair, preview on entry, and a calibration run before promotion.
-- Say which RFC 105 clauses this RFC supersedes or answers, and amend RFC 105 in the same change so the two do not contradict.
+- Define the narrow extension points this RFC adds to RFC 105 and amend that RFC in the same change so the two do not contradict.
 
 ## Non-Goals
 
 - Changing language syntax or semantics. Every rule reports on programs the compiler already accepts.
 - Replacing `incan check`. Type errors, resolution errors, and exhaustiveness are the checker's and stay errors, not lints.
-- Redefining RFC 105's engine, finding record, evidence model, profiles, priorities, or confidence. RFC 105 defines the engine and the finding contract; this RFC defines the rule set and the configuration that engine evaluates. The clauses of RFC 105 this RFC does touch are listed under "Amendments to RFC 105" and nothing else in it changes: its default profile and its baselines stay open there.
+- Redefining RFC 105's engine, Oven-selected project scope, provenance, evidence model, typed-fact contract, profiles, priorities, or confidence. RFC 105 defines the engine and base finding envelope; this RFC defines the catalog and policy that extend it. The ownership boundary is recorded under "Relationship to RFC 105"; RFC 105's default profile and baselines stay open there.
 - Rewriting anything that cannot be decided from the syntax tree. `incan architect --fix` applies `fix`-mode entries and nothing else, and every `fix`-mode entry is safe by construction. There is no unsafe fix tier and no `--unsafe-fixes` flag: a later RFC may define type-dependent or judgment-dependent fixes, and it must do so by adding a fix mode, not by loosening `fix`.
 - Making the formatter a linter. `incan fmt` applies the `format` class, reads no level table, and never restructures code.
 - Linting generated Rust. `[rust.lints]` (#1698, to be recorded in RFC 119) and `@rust.allow(...)` (RFC 057) own the Rust side.
@@ -280,6 +280,7 @@ Every entry declares:
 - **Fact tier**: `syntax` when the rule is decidable on the trivia-aware syntax tree of one file, or `semantic` when it needs resolved names, types, or other codegraph facts. A `syntax` rule must run on any file that parses; a `semantic` rule must be skipped, with a note in the output, for a file the checker rejects. The two tiers are availability classes, saying when a rule can run; they are not the engine's fact model. RFC 105's registry declares the facts each rule needs (resolved names, types, flow, codegraph, project graph, other rules' results), and this RFC does not restate that model: a `semantic` entry's registry declaration says which of those facts it consumes.
     - **The builtin-name guard.** A `syntax`-tier entry that recognizes a builtin function by its name (`str`, `int`, `float`, `bool`, `len`, `min`, `max`, `range`, `enumerate`, `sum`, `any`, `all`, `sorted`, `reversed`, `zip`, `abs`, `repr`) applies only where no enclosing lexical scope in the tree binds that name: a parameter, an assignment target, a `for`, `with`, `match`, or comprehension binding, an import, or a declaration. Where one does, the entry is silent at that site. The guard is a tree walk, not name resolution: every Incan binding is lexical and the parser refuses wildcard imports, so the tree shows every rebinding, and the walk needs neither the checker nor the codegraph. `print` needs no guard, because it is the only builtin protected from rebinding. The same walk covers a `std` module an entry recognizes through the import that binds its name (`invalid_regex`, `regex_creation_in_loops`): the import is on the tree, and so is any narrower rebinding. A row in the tables below marked `syntax, builtin-guarded` is an entry under this guard; a builtin that appears only in an entry's suggestion needs no guard, because a suggestion is display-only and the risk text names the rebinding.
     - **A method name on an unknown receiver is a `semantic` fact.** An entry that recognizes a method by its name (`.replace`, `.skip`, `.iter`, `.count`, `.for_each`, `.append`, `.lower`) on a receiver whose type the tree does not fix is a `semantic` entry, because a user-defined method may carry the same name, unless the entry's row says the shape is unambiguous by construction: the receiver is a literal (`xs = []` binds a `list`; `Some(1)` is an `Option`), or the entry is a `restriction` on the spelling itself and says so. A row that once assumed a receiver's type is re-tiered `semantic` below, and each such row says which method made it so.
+    - **Operator equivalence requires resolved primitive operands.** RFC 028 permits user-defined operator methods, including equality, ordering, arithmetic, in-place arithmetic, and bitwise operations. An entry that claims an operator expression is constant, impossible, redundant, or equivalent to another spelling is therefore `semantic` unless the operands are literals whose primitive meaning the tree fixes. Its fact declaration must require resolved primitive operand types and, where relevant, exclude floating-point cases such as NaN. Layout-only rules may inspect operator spelling at the `syntax` tier because they make no semantic claim.
 - **Evaluator**: `architect` (RFC 105's engine), `check` (the checker emits it as a by-product of resolution or flow analysis), or `fmt` (the formatter applies it as part of formatting; every `format`-class entry and only those).
 - **Fix mode**: `format` (a `format`-class entry; `incan fmt` applies it unconditionally), `fix` (a safe structural rewrite; `incan architect --fix` applies it under the lint levels), `suggest` (the finding carries a suggestion and nothing rewrites source), or `none`.
 
@@ -542,17 +543,20 @@ The last row follows clippy, and the design decisions record why: the checker en
 
 The checker's four other warnings are contract diagnostics and stay outside the catalog: an async call that is not awaited, a `rust.module()` directive with no `@rust.extern` item, a public function that directly calls a checked C symbol (RFC 116), and dot-notation in a `rust` import (RFC 005). Each reports a contract its own RFC owns, at a severity that RFC fixed, and none is a style choice a project would set a level for; in the taxonomy of the core model they are the compiler's, not the catalog's. A later revision of this catalog may take one in once a project has a reason to configure it.
 
-### Amendments to RFC 105
+### Relationship to RFC 105
 
-RFC 105 is Draft, and this RFC is evaluated by its engine, so the two must not contradict. The clauses below are amended in RFC 105 itself in the same change that lands this section; every other clause of RFC 105 is untouched, and in particular its default profile and its baselines stay open there. For each: the clause, what it said, what it says now, and why.
+RFC 105 owns the Architect engine and its analysis contract. This RFC extends that engine with a catalog and policy surface; it does not replace RFC 105's bilingual project model.
 
-- **Core model 3, "Findings are advisory."** Said: architect findings are not compiler errors; they describe design pressure or code-shape opportunities with enough evidence for a human or agent to decide whether to act. Now: findings are advisory by default, and a level of `deny` or `forbid` assigned by this RFC's `[incan.lints]` makes a finding fail `incan architect`, never the compiler. Why: this RFC's levels are clippy's, and `deny` means the command exits non-zero; without the amendment a `correctness` finding could not fail anything, and the level table would be advice about advice.
-- **Non-goal, "does not define automatic rewrites or apply fixes."** Said: RFC 105 does not define automatic rewrites or apply fixes. Now: automatic rewrites are defined by this RFC as `incan architect --fix`, which applies `fix`-mode entries and nothing else, under the lifecycle in "`incan architect --fix` applies the safe fixes". Why: the fixer is a mode of the same command over the same findings, and a second command would be a second evaluator.
-- **Non-goal, "does not decide whether a reported finding should be fixed."** Said: whether a reported finding should be fixed in the current change is a separate user, CI, or fix-loop policy decision. Now: the decision is this RFC's fix policy, taken per invocation by `--fix` and per rule by `fix = false` in `[incan.lints]` or `[workspace.incan.lints]`. Why: the separation stands, detecting a finding and deciding to rewrite it are still two decisions, and this RFC gives the second one a spelling instead of leaving it to a loop outside the tool.
-- **Alternative, "Make findings auto-fixable from the start."** Said: making fixes part of the first version would expand the scope into formatter, semantic preservation, and edit application, so the first version focuses on reliable findings. Now: the rejection stands for RFC 105's own scope, and this RFC adds fixes as a separate mode with its own contract (`fix`: syntax-decidable, meaning-preserving in every configuration, idempotent, structure-preserving; `format`: representation only), which is the scope expansion the alternative anticipated, taken on here rather than there.
-- **Unresolved question, "What suppression syntax should Incan use for architect findings, and should it share vocabulary with compiler diagnostic suppressions?"** Now: answered by `@allow("rule", reason="…")` on declarations and in the module position, and by `[incan.lints.per-file-allow]` for paths; the vocabulary is shared with RFC 057's `@rust.allow(...)` in shape and not in names, and compiler errors and contract diagnostics are not suppressible at all, so there is no diagnostic-suppression vocabulary to share. The question moves out of RFC 105's open list into a note that says so; RFC 105 stays Draft on its remaining questions. The sentence "suppression syntax is unresolved by this draft" under "Suppression and baselining" is amended to point here; baseline storage stays unresolved there.
-- **Finding model, "Rule codes must be namespaced by category."** Said: every finding must have a stable rule code, namespaced by category (`arch.repeated_match_dispatch`). Now: the category-qualified name is this RFC's qualified name, derived from the entry's group and never authored by users, and the stable code is a separate field (`INCAN-L` for new entries, a retained code for a promoted diagnostic). Why: a name that carries its group cannot survive a regrouping, and Ruff's move away from per-tool prefixes is the cautionary case; the code is what never moves, and the name is what people type.
-- **Related.** RFC 127 is added to RFC 105's related list, so a reader of either finds the other.
+| RFC 105 owns | RFC 127 owns |
+| --- | --- |
+| Oven-selected Incan, Rust, and mixed-Loaf scope | catalog entries and Clippy correspondence |
+| frontend and codegraph semantic authority | groups, levels, preview, and manifest precedence |
+| language, source-role, facet, generation, and project provenance | `@allow(...)` and per-path suppression |
+| typed fact views, capabilities, rule execution, and de-duplication | fix applicability, fix policy, and the `--fix` lifecycle |
+| categories, profiles, priority, confidence, evidence, risks, and the base finding envelope | `INCAN-L` codes, qualified catalog names, and `--list-rules` |
+| rule authoring, fixtures, calibration expectations, and baselines | the `format` class and the formatter/fixer boundary |
+
+RFC 127 extends RFC 105's finding envelope with `rule`, stable diagnostic `code`, `group`, `level`, `level_source`, `fix`, and `applied`. It also makes findings advisory by default but enforceable at `deny` or `forbid`, resolves local suppression syntax, and defines safe rewrites as the separately requested `incan architect --fix` mode with independent `fix = false` policy. Those are extension points over the same selected graph, provenance, evidence, and typed facts; they do not authorize a second project resolver or language-private rule engine. RFC 105's default profile and baseline storage remain open there.
 
 ## Design details
 
@@ -567,15 +571,15 @@ The tables below are the seed catalog. Each row is one clippy lint and fills exa
 | `absurd_extreme_comparisons` | a comparison against a bound the operand's numeric type cannot cross, such as `n < 0` for a `u8` (semantic) | | |
 | `almost_swapped` | `a = b` immediately followed by `b = a` (syntax) | | |
 | `approx_constant` | a float literal that approximates a `std.math` constant, such as `3.14159` for `math.PI` (syntax) | | |
-| `bad_bit_mask` | `x & mask == value` that can never hold for the literal mask and value (syntax) | | |
+| `bad_bit_mask` | `x & mask == value` that can never hold for the literal mask and value, with resolved primitive integer operands (semantic) | | |
 | `char_indices_as_byte_indices` | | | `len` and indexing on `str` count Unicode scalars; there is no byte-index API to confuse them with |
 | `derive_ord_xor_partial_ord` | | | `@derive(Ord)` implies `PartialOrd`, and `@derive(Ord)` beside a hand-written `__lt__` is a checker error, not a lint |
 | `derived_hash_with_manual_eq` | `@derive(Hash)` beside a hand-written `__eq__` (semantic) | | |
-| `eq_op` | identical operands on both sides of `==`, `!=`, `<`, `-`, `//`, `and`, or `or` (syntax) | | |
-| `erasing_op` | `x * 0`, `0 * x`, `0 // x`, `x & 0` (syntax) | | |
+| `eq_op` | the same side-effect-free place or literal on both sides of `==`, `!=`, `<`, `-`, `//`, `and`, or `or`, with resolved primitive operands and floating-point exclusions where NaN changes the result (semantic) | | |
+| `erasing_op` | `x * 0`, `0 * x`, `0 // x`, `x & 0` with resolved primitive numeric operands (semantic) | | |
 | `ifs_same_cond` | an `if`/`elif` chain that repeats a condition (syntax) | | |
-| `impossible_comparisons` | `x < 5 and x > 10` and other constant double comparisons that cannot hold (syntax) | | |
-| `ineffective_bit_mask` | a constant mask applied with `^` or bitwise or, followed by a comparison the mask cannot change, such as `x ^ 1 < 4` (syntax) | | |
+| `impossible_comparisons` | `x < 5 and x > 10` and other constant double comparisons that cannot hold for the resolved primitive operand type (semantic) | | |
+| `ineffective_bit_mask` | a constant mask applied with `^` or bitwise or, followed by a comparison the mask cannot change for resolved primitive integer operands, such as `x ^ 1 < 4` (semantic) | | |
 | `inherent_to_string_shadow_display` | a `def to_string(self) -> str` method; every `model`, `class`, `enum`, and `newtype` carries Display, so the method shadows `__str__` (syntax) | | |
 | `invalid_regex` | a `std.regex` pattern literal that does not compile; the module is recognized through the import that binds its name (syntax, builtin-guarded) | | |
 | `invisible_characters` | zero-width and other invisible Unicode in source text (syntax) | | |
@@ -583,15 +587,15 @@ The tables below are the seed catalog. Each row is one clippy lint and fills exa
 | `iterator_step_by_zero` | | `range_step_zero`: `range(a, b, 0)` raises `ValueError` at run time; the construct is the `range` builtin, not an adapter (syntax, builtin-guarded) | |
 | `lint_groups_priority` | | | not a lint: a group and one of its rules at the same priority is a manifest refusal |
 | `match_str_case_mismatch` | `match s.lower():` or `match s.upper():` with a string arm the case-folded value can never equal; the reasoning holds only for the string methods, and `lower` and `upper` are method names on a receiver the tree does not fix (semantic) | | |
-| `min_max` | `min(max(x, hi), lo)` with the bounds reversed so the result is constant (syntax, builtin-guarded) | | |
-| `modulo_one` | `x % 1` (syntax) | | |
+| `min_max` | `min(max(x, hi), lo)` with the bounds reversed so the result is constant for resolved primitive comparable operands (semantic) | | |
+| `modulo_one` | `x % 1` with a resolved primitive integer operand (semantic) | | |
 | `never_loop` | a `for`, `while`, or `loop` whose body always leaves on the first iteration (syntax) | | |
 | `not_unsafe_ptr_arg_deref` | | | no raw pointers and no `unsafe` in Incan source |
 | `out_of_bounds_indexing` | a constant index into a list literal of known length (syntax) | | |
 | `panicking_unwrap` | `.unwrap()` on a value the enclosing branch has already narrowed to `None` or `Err` (semantic) | | |
 | `possible_missing_comma` | a bracketed literal in which a line starts with a binary operator, so two elements silently merge (syntax) | | |
 | `recursive_format_impl` | `f"{self}"` or `str(self)` inside `__str__`, which calls `__str__` again; the `str(self)` half is under the guard, the `f"{self}"` half needs none (syntax, builtin-guarded) | | |
-| `redundant_comparisons` | `x > 5 and x > 3` (syntax) | | |
+| `redundant_comparisons` | `x > 5 and x > 3` where resolved primitive operand types make the second comparison redundant (semantic) | | |
 | `reversed_empty_ranges` | `range(10, 0)`, `range(10..0)`, or a slice with constant reversed bounds (syntax, builtin-guarded) | | |
 | `self_assignment` | `x = x`, `self.a = self.a` (syntax) | | |
 | `serde_api_misuse` | | | derives are compiler-owned; there is no serde surface to misuse |
@@ -628,9 +632,9 @@ The tables below are the seed catalog. Each row is one clippy lint and fills exa
 | clippy lint | translates | translates renamed | does not translate |
 | --- | --- | --- | --- |
 | `assertions_on_constants` | `assert true` and `assert false` (syntax) | | |
-| `assign_op_pattern` | `x = x + 1` where `x += 1` is meant; RFC 105's compound-assignment candidate is this entry (syntax) | | |
+| `assign_op_pattern` | `x = x + 1` where `x += 1` is equivalent; RFC 105's compound-assignment candidate is this entry, and resolved operator facts must establish that the in-place and ordinary operations agree (semantic) | | |
 | `blocks_in_conditions` | | | conditions are expressions; there is no block expression to put in one |
-| `bool_assert_comparison` | `assert x == true` where `assert x` is meant (syntax) | | |
+| `bool_assert_comparison` | `assert x == true` where `assert x` is meant and `x` resolves to primitive `bool` (semantic) | | |
 | `collapsible_if` | a nested `if` with no `else` whose conditions can join with `and` (syntax) | | |
 | `comparison_to_empty` | `s == ""` where `s.is_empty()` is meant; `str` and the frozen collections only, since `list` and `dict` have no `is_empty`, `not xs` on a list is a type error, and `xs == []` has no shorter spelling (semantic) | | |
 | `disallowed_names` | binding names from a configured list, `foo`, `bar`, and `baz` by default (syntax; parameter `names`) | | |
@@ -645,7 +649,7 @@ The tables below are the seed catalog. Each row is one clippy lint and fills exa
 | `let_and_return` | a binding returned by the very next statement (syntax) | | |
 | `let_unit_value` | | `bind_none_value`: binding the `None` result of a `-> None` call, `x = print(...)` (semantic) | |
 | `main_recursion` | `main` calling `main` (syntax) | | |
-| `manual_map` | | `manual_result_map`: `match r:` with `Ok(v) => Ok(f(v))` and `Err(e) => Err(e)` where `r.map(f)` is meant; clippy's lint is `Option`-shaped and Incan's `Option` has `copied`, `unwrap_or`, and `unwrap` but no `map`, so the name says `Result`. RFC 105's `idiom.result_combinator_candidate` yields the `map` shape to this entry and keeps the `map_err`, `and_then`, `or_else`, and `inspect` shapes (syntax) | |
+| `manual_map` | | `manual_result_map`: `match r:` with `Ok(v) => Ok(f(v))` and `Err(e) => Err(e)` where `r.map(f)` is meant; clippy's lint is `Option`-shaped and Incan's `Option` has `copied`, `unwrap_or`, and `unwrap` but no `map`, so the name says `Result`. RFC 105's `idiom.result_combinator_candidate` yields the `map` shape to this entry and keeps the `map_err`, `and_then`, `or_else`, and `inspect` shapes; resolved variant and receiver facts establish `Result` (semantic) | |
 | `manual_ok_or` | | | `Option` has no `ok_or` on the Incan surface |
 | `match_like_matches_macro` | | | no `matches!`; a unit variant compares with `==`, and a payload variant has no boolean pattern form |
 | `match_ref_pats` | | | patterns never mention references; the compiler decides how generated Rust binds them |
@@ -653,21 +657,21 @@ The tables below are the seed catalog. Each row is one clippy lint and fills exa
 | `needless_else` | `else: pass` (syntax; fix) | | |
 | `needless_range_loop` | `for i in range(len(xs)):` whose body only reads `xs[i]`, where `for x in xs:` or `enumerate(xs)` is meant; `range` and `len` are under the guard (syntax, builtin-guarded) | | |
 | `needless_return` | | | `return` is the only way to yield a value; there are no tail expressions. A trailing bare `return` in a `-> None` body is the Incan-only `needless_bare_return` |
-| `neg_multiply` | `x * -1` where `-x` is meant (syntax) | | |
-| `partialeq_to_none` | | `comparison_to_none`: `x == None` and `x != None` where `x is None` and `x is not None` are meant (syntax) | |
+| `neg_multiply` | `x * -1` where `-x` is equivalent for the resolved primitive numeric type (semantic) | | |
+| `partialeq_to_none` | | `comparison_to_none`: `x == None` and `x != None` where `x is None` and `x is not None` are meant; resolved equality facts exclude a user-defined `__eq__` contract (semantic) | |
 | `print_literal` | | | `print` takes values, not a format string; `useless_fstring` covers the f-string side |
 | `print_with_newline` | `print("...\n")`: `print` already ends the line, so the output gains a blank line (syntax) | | |
 | `println_empty_string` | | | `print("")` is the documented spelling of an empty line; `print` has no documented zero-argument form to prefer |
 | `ptr_arg` | | | parameter types are value types; there is no `&String` or `&Vec` to take |
-| `question_mark` | a `match` on a `Result` that returns the `Err` arm unchanged, where `?` is meant (syntax) | | |
+| `question_mark` | a `match` on a resolved `Result` that returns the `Err` arm unchanged, where `?` is meant (semantic) | | |
 | `redundant_closure` | an arrow closure `(x) => f(x)` where `f` itself is meant (syntax) | | |
 | `redundant_field_names` | | | keyword construction `User(name=name)` has no shorthand to prefer |
-| `redundant_pattern_matching` | `match x:` with `None => true` and `_ => false` where `x is None` is meant; `Option` only, since `Result` has no `is_ok` on the surface (syntax) | | |
+| `redundant_pattern_matching` | `match x:` with resolved `Option` variants `None => true` and `_ => false`, where `x is None` is meant; `Option` only, since `Result` has no `is_ok` on the surface (semantic) | | |
 | `redundant_static_lifetimes` | | | no lifetimes |
 | `result_unit_err` | `-> Result[T, None]` (syntax) | | |
 | `same_item_push` | `for _ in range(n): xs.append(v)` with a loop-invariant `v`, where `list.repeat(v, n)` is meant; `range` would be under the guard, but `append` is a method name on a receiver the tree does not fix and the suggestion is a `list` method (semantic) | | |
 | `single_component_path_imports` | | | `import foo` is the ordinary module import; there is nothing to simplify |
-| `single_match` | a one-arm `match` over an `Option` with `_ => pass`, where `if x is not None:` narrowing is meant; a payload enum arm has no `if let` form and is not reported (syntax) | | |
+| `single_match` | a one-arm `match` over a resolved `Option` with `_ => pass`, where `if x is not None:` narrowing is meant; a payload enum arm has no `if let` form and is not reported (semantic) | | |
 | `tabs_in_doc_comments` | | `tabs_in_docstrings`: a tab inside a docstring (syntax) | |
 | `trim_split_whitespace` | `s.strip().split_whitespace()` where `s.split_whitespace()` is meant (semantic) | | |
 | `unused_unit` | | | `-> None` is the required spelling of a value-less return type; there is no `()` to drop |
@@ -680,27 +684,27 @@ The tables below are the seed catalog. Each row is one clippy lint and fills exa
 
 | clippy lint | translates | translates renamed | does not translate |
 | --- | --- | --- | --- |
-| `bool_comparison` | `x == true` and `x != false` where `x` and `not x` are meant (syntax) | | |
+| `bool_comparison` | `x == true` and `x != false` where `x` resolves to primitive `bool` and `x` and `not x` are equivalent (semantic) | | |
 | `borrowed_box` | | | no `Box` and no borrow syntax |
 | `bytes_count_to_len` | | | `len(s)` counts scalars and `len(s.encode())` counts bytes; they are different values, so neither replaces the other |
-| `double_comparisons` | `x == y or x > y` where `x >= y` is meant (syntax) | | |
+| `double_comparisons` | side-effect-free primitive operands in `x == y or x > y` where `x >= y` is equivalent, excluding floating-point cases where NaN changes the result (semantic) | | |
 | `double_parens` | | `fmt_parentheses`: `((x))` and `f((x))` lose the redundant pair; shared with `precedence`, since parenthesization is representation and one normalization owns it (syntax; format) | |
 | `excessive_nesting` | blocks nested past a threshold; clippy's default is off until a threshold is configured, and so is this entry's: `threshold` defaults to `0`, meaning never (syntax; parameter `threshold`) | | |
 | `explicit_auto_deref` | | | no dereference operator |
 | `explicit_counter_loop` | a counter initialized before a `for` and incremented once per iteration, where `enumerate` is meant; `enumerate` appears only in the suggestion, so no guard (syntax) | | |
-| `identity_op` | `x + 0`, `x * 1`, `x // 1`, and a bitwise or with `0` (syntax) | | |
-| `int_plus_one` | `x >= y + 1` where `x > y` is meant (syntax) | | |
+| `identity_op` | `x + 0`, `x * 1`, `x // 1`, and a bitwise or with `0` for resolved primitive operands (semantic) | | |
+| `int_plus_one` | `x >= y + 1` where `x > y` is meant for resolved primitive integers; the suggestion retains the overflow risk described by the catalog (semantic) | | |
 | `iter_count` | `xs.iter().count()` where `len(xs)` is meant; `iter` and `count` are method names on a receiver the tree does not fix (semantic) | | |
 | `manual_filter_map` | | | no `filter_map` on the iterator surface |
 | `manual_strip` | | | no `strip_prefix` or `strip_suffix` on the string surface |
-| `manual_swap` | `tmp = xs[i]` then `xs[i] = xs[j]` then `xs[j] = tmp`, where `xs.swap(i, j)` is meant (syntax) | | |
+| `manual_swap` | `tmp = xs[i]` then `xs[i] = xs[j]` then `xs[j] = tmp`, where resolved receiver facts establish a collection with `swap(i, j)` (semantic) | | |
 | `match_single_binding` | a `match` with one irrefutable arm (syntax) | | |
 | `needless_bool` | `if c: return true` with `else: return false`, where `return c` is meant; the condition position guarantees `c` is a `bool` (syntax; fix) | | |
 | `needless_bool_assign` | `if c: x = true` with `else: x = false`, where `x = c` is meant (syntax; fix) | | |
 | `needless_ifs` | `if c: pass` with no `else` (syntax) | | |
 | `needless_lifetimes` | | | no lifetimes |
 | `needless_question_mark` | `return Ok(f()?)` where `return f()` is meant, when the error types agree (semantic) | | |
-| `no_effect` | an expression statement with no effect, such as a bare `x + 1` (syntax) | | |
+| `no_effect` | an expression statement proven to have no effect, such as primitive arithmetic with an unused result (semantic) | | |
 | `precedence` | | `fmt_parentheses`: `1 << 2 + 3` and `a & b == c`, bit and arithmetic or comparison operators mixed without parentheses, gain them; shared with `double_parens` (syntax; format) | |
 | `single_element_loop` | `for x in [item]:` (syntax) | | |
 | `too_many_arguments` | more parameters than the threshold, 7 by default (syntax; parameter `threshold`) | | |
@@ -883,7 +887,7 @@ Every row above is representation by the definition under "Declared facts": triv
 
 ### Boundary with RFC 105
 
-RFC 105 defines the engine and the finding contract; this RFC defines the rule set and the configuration that engine evaluates. Where the two would contradict, RFC 105 is amended, and "Amendments to RFC 105" in the reference-level explanation lists each clause, its old text, its new stance, and why. Concretely:
+RFC 105 defines the engine and base finding contract; this RFC defines the catalog and policy that engine evaluates. The ownership table under "Relationship to RFC 105" is normative. Concretely:
 
 - RFC 105's categories `arch`, `safety`, `idiom`, `maintainability`, and `risk` are groups of this catalog. Their default levels are RFC 105's to set, and this RFC does not decide them. RFC 105's `experimental` is a profile, not a category: a rule in that profile keeps its category's group here, is a preview entry of this catalog, is never part of `all`, is eligible only under `--profile experimental`, and RFC 105's rule that experimental findings may not fail CI by default holds because a preview entry defaults to `allow` and eligibility never raises a level.
 - An RFC 105 candidate that coincides with a clippy lint takes the clippy name and the clippy group: `idiom.compound_assignment_candidate` is `assign_op_pattern` and `idiom.comprehension_candidate` is `comprehension_over_loop`. `idiom.result_combinator_candidate` is the `map`, `map_err`, `and_then`, `or_else`, and `inspect` rewrite of an RFC 070 match; it yields the `map` shape to `manual_result_map` and keeps the others, which no single clippy lint expresses. `question_mark` has no RFC 105 counterpart: `?` propagation is not a combinator. RFC 105's own names remain for evidence-backed, project-scope rules that a clippy lint does not express: `safety.fail_fast_boundary_call` is not `unwrap_used` (it reasons about reachability from a public boundary), and `maintainability.single_use_trivial_helper` is not `single_call_fn` (it reasons about triviality and domain meaning). Both members of each pair are catalog entries.
@@ -1060,7 +1064,7 @@ This RFC is done when:
 
 - the catalog registry holds every entry in the tables above with name, code, group and default level or `format`-class membership, origin, fact tier, evaluator, fix mode, the preview flag of each lint entry and no preview flag on a `format`-class entry, parameters, and documentation in the template, a conformance test checks every `clippy` and `clippy-renamed` entry against the pinned clippy lint list, and a documentation test holds every entry's example pair to its evaluator's contract: a lint entry's "before" fires and its "after" does not, through the engine; formatting a `format`-class entry's "before" yields its "after" and formatting the "after" leaves it unchanged; `incan architect --fix` on a `fix` entry's "before" equals the formatted "after";
 - every entry ships positive fixtures in which its finding fires and negative fixtures in which the counterexamples its risks name do not fire, and the fixture test fails an entry that lacks either set; every seed lint entry other than `unreachable_code` lands with `preview = true`; a calibration harness runs the engine over the stdlib, `examples/`, and the test fixtures and records a triage per entry, promotion is refused without one, and for a `correctness` entry with any untriaged finding; and `incan architect` over that corpus, with no configuration, reports no finding at `deny` or `forbid` on the day the catalog lands;
-- RFC 105 is amended in the same change for exactly the clauses listed under "Amendments to RFC 105", and nothing else in it changes;
+- RFC 105 is amended in the same change at the extension points listed under "Relationship to RFC 105", while its Oven-selected bilingual scope, provenance, evidence, typed-fact, de-duplication, rule-authoring, default-profile, and baseline contracts remain its own;
 - `[incan.lints]`, `[workspace.incan.lints]`, and their `per-file-allow` subtables parse with every refusal listed above, and the lattice is covered by tests for the join over a workspace-named rule, for a member lowering a catalog default the workspace does not name and being unable to lower one it does, for the member-below-workspace refusal, for the per-path and `@allow(...)` exemptions, for `forbid` being outside their reach, for the same-priority conflict inside one table and its absence across tables, for a preview entry being enabled by name and eligible only under `--profile experimental`, for `fix = false` on a rule and on a group declining the rewrite while the finding is still reported, for a workspace `fix = false` that a member cannot lift, for a member's explicit `fix = true` against it being refused, for `fix` on a `suggest` or `none` entry being refused, and for a per-path table and an `@allow(...)` leaving a declined rewrite declined;
 - `@allow(...)` is accepted on the listed declarations and in the module-decorator position, rejected elsewhere, and diagnosed under `forbid`, for `all`, for a Rust lint name, and for a `format`-class name;
 - `incan architect --format json` findings carry rule, code, group, effective level, level source, and severity derived from level, the catalog entry itself carries no severity, and the checker's entries appear once;
@@ -1079,6 +1083,7 @@ This RFC is done when:
 - **`range_plus_one` and `range_minus_one` are suggestions.** `range(a..(b + 1))` and `range(a..=b)` differ where `b + 1` overflows; the original fails there at run time, but integer overflow is not a documented language contract, so the difference is an observable change, and the `fix` contract (meaning preserved for every well-typed program in every configuration) is read strictly rather than loosened for the case. The `fix` set is the twelve entries above.
 - **The builtin-name guard is a tree walk.** A `syntax`-tier entry that recognizes a builtin function by name applies only where no enclosing lexical scope in the file binds that name (parameter, assignment target, `for`/`with`/`match`/comprehension binding, import, declaration), and is silent where one does. It is not name resolution: every Incan binding is lexical and the parser refuses wildcard imports, so the tree shows every rebinding. `print` needs no guard, being the only protected builtin. Rebinding a builtin stays allowed by design; the guard is what makes a rewrite that hinges on a builtin's identity decidable on the tree without reserving the name.
 - **A method name on an unknown receiver is a `semantic` fact.** An entry that recognizes a method by name on a receiver whose type the tree does not fix is `semantic`, unless its row says the shape is unambiguous by construction (a literal receiver such as `xs = []` or `Some(1)`, or a restriction on the spelling itself). The audit re-tiered `iter_skip_zero`, `no_effect_replace`, `match_str_case_mismatch`, `iter_count`, `needless_for_each`, `explicit_iter_loop`, `same_item_push`, and `as_conversions` to `semantic` on that ground; `list_init_then_append` keeps `syntax` and its fix because `xs = []` fixes the receiver's type.
+- **Operator equivalence is semantic.** RFC 028 permits user-defined equality, ordering, arithmetic, in-place arithmetic, and bitwise methods, so syntax alone cannot establish that an operator expression is constant, impossible, redundant, or equivalent to another spelling. The affected entries require resolved primitive operands, side-effect-free shapes where evaluation count matters, and floating-point exclusions where NaN changes the claim. Layout-only entries such as `fmt_parentheses` remain syntax-tier because they do not interpret the operator.
 - **`str_in_fstring` is a builtin-guarded fix.** Whether `str(x)` in a placeholder is the builtin is answered by the builtin-name guard on the tree, so the entry is `syntax`-tier with fix mode `fix`, in `style` at `warn`, with the clippy correspondence (`to_string_in_format_args`) recorded; it is silent where an enclosing scope binds `str`, and a placeholder with a format spec is reported without a fix. An earlier round made it a `semantic` suggestion on the reasoning that only `print` is protected; that reasoning conflated rebinding, which is allowed, with resolution, which the guard does not need.
 - **`nested_fstring` proves each splice as its fix's guard.** The splice removes the inner f-string node and re-nests its parts, so it is a `fix`, not a `format` entry. It is admissible only where re-lexing the spliced text yields exactly the same sequence of literal and placeholder parts as the two-level form (expression text and format spec of each placeholder unchanged, `{{` and `}}` preserved, escapes decoding to the same text); the fix lexes both and compares the part sequences, applies where they agree, and reports without a fix otherwise. An inner literal with no placeholder is `fmt_fstring_prefix`'s, so the two never want one construct.
 - **Fix policy is a project setting.** A rule or group entry in `[incan.lints]` or `[workspace.incan.lints]` may carry `fix = false`: the finding is reported at its level and `incan architect --fix` never applies its rewrite. `fix = true` is the default for a `fix`-mode entry and is refused on any other, because a suggestion cannot be promoted. Policy joins with `false` on top across layers, so a workspace `fix = false` is a floor, and neither a per-path table nor `@allow(...)` re-enables a declined rewrite. This keeps RFC 105's principle that detecting a finding and deciding to fix it are separate decisions, and it is what Ruff's `unfixable` becomes.
@@ -1086,7 +1091,7 @@ This RFC is done when:
 - **The documentation test proves the evaluator's contract, and fixtures prove the rule.** A lint entry's "before" produces the finding and its "after" does not, through the engine; formatting a `format`-class entry's "before" produces its "after" and formatting the "after" leaves it unchanged; `incan architect --fix` on a `fix` entry's "before" equals the formatted "after". One template, three proofs, chosen by the declared evaluator. Beside the pair, every entry ships positive fixtures and negative fixtures for the counterexamples its risks name, which is RFC 105's authoring contract kept as a gate.
 - **Preview is a property of lint entries, and promotion is calibrated.** A `format`-class entry has no preview flag in the entry shape, in `--list-rules`, or in the rule documentation header: it has no level to hold at `allow`, so a new normalization ships as a formatter change, listed in the release notes, and a project sees a one-time reformat. Every seed lint entry lands in preview, except `unreachable_code`, which already ships. Promotion requires a calibration run over the toolchain's own corpus (the stdlib, `examples/`, the test fixtures) with every finding triaged, and for a `correctness` entry zero untriaged findings, so "a default project can fail `incan architect` with no configuration" is true of promoted entries only and the seed catalog fails nothing on the day it lands.
 - **A duplicate import binding is the checker's, and nothing de-duplicates.** No lint entry reports it: the checker already refuses an ambiguous binding (`ambiguous_import_binding`, `INCAN-I0001`). `fmt_import_order` leaves such a run as written, `merge_imports` does not report it, and `incan fmt --check` reports it under `fmt_import_order` with "import run left as written: `X` is bound more than once", without failing on it. A rewrite that removed the duplicate would hide a checker error, so there is none.
-- **RFC 105 is amended, not contradicted.** The six clauses listed under "Amendments to RFC 105" (advisory by default with enforcement as a level, rewrites defined here, the fix decision as fix policy, the auto-fix alternative superseded by a separate mode, the suppression question answered, the qualified name and the code as two fields) are changed in RFC 105 in the same change as this RFC, and RFC 127 is added to its related list; RFC 105 stays Draft on its remaining questions, and its default profile and baselines stay open there.
+- **RFC 127 extends RFC 105; it does not replace it.** RFC 105 keeps the engine, Oven-selected bilingual scope, provenance, typed facts, evidence, and base finding contract. This RFC owns catalog identity and policy: levels, suppression, fix applicability, fix policy, the `--fix` lifecycle, and formatter boundaries. RFC 105 stays Draft on its remaining questions, and its default profile and baselines stay open there.
 - **Entry metadata and instance fields are distinct.** The catalog entry carries name, code, group or class, default level, fact tier, evaluator, fix mode, and, for a lint entry, the preview flag. A diagnostic instance carries the effective `level` and the presentation `severity` derived from it; a `format`-class finding under `--check` is a `warning`. Severity is never an entry field, and the diagnostic catalog's projection leaves it to the instance.
 - **`format` is a class, not a group.** A `format`-class entry has no level, is not covered by `all`, and cannot be named in a level table, a per-path table, or `@allow(...)`; it is representation, and there is nothing to set. `all` is a selector for the five default-on groups, not a group.
 - **Precedence is a lattice.** `member_level` is the member's assignment or else the catalog default; `project_level = max(workspace, member_level)` over `allow < warn < deny < forbid` when the workspace assigns the rule, and `member_level` when it does not; priority is resolved inside each manifest layer independently; `location_level = allow` under a per-path or `@allow(...)` exemption unless `project_level` is `forbid`. The floor is the workspace's explicit assignments only: a workspace that wants a floor on a rule must name it (workspace `unwrap_used = "deny"`, and a member cannot lower it; workspace silent on `fstring_over_concat`, and a member's `allow` holds). A rule the workspace does not name is the member's to decide, exactly as in a standalone project. The workspace is the package-policy floor, subject to explicit scoped exemptions; a member composes monotonically; a path or a declaration exempts. This diverges from Cargo's all-or-nothing `[lints] workspace = true`, which cannot merge a member table with the workspace's, and it is what RFC 117's "narrow but not replace" means for lint policy.
