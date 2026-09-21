@@ -1,4 +1,4 @@
-# behavior: std.graph directed graphs, DAGs and multigraphs add nodes and edges, answer neighbourhood and traversal queries, and refuse an edge that would close a cycle in a DAG (RFC 047)
+# behavior: std.graph directed graphs, DAGs and multigraphs add nodes and edges, answer neighborhood and traversal queries, and refuse an edge that would close a cycle in a DAG (RFC 047)
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_graph_compiled_codegen
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_graph_import_codegen
 # expect-stdout:

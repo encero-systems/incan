@@ -7,10 +7,10 @@
 #   ready
 #   bound
 
-trait Labelled:
+trait Labeled:
   def label(self) -> str
 
-class Item with Labelled:
+class Item with Labeled:
   value: str
 
   def label(self) -> str:
@@ -23,7 +23,7 @@ trait Named:
 class Plain with Named:
   value: str
 
-def describe[T with Labelled](x: T) -> str:
+def describe[T with Labeled](x: T) -> str:
   return x.label()
 
 def main() -> None:

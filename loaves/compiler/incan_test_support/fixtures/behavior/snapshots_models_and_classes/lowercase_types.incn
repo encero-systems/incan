@@ -1,4 +1,4 @@
-# behavior: lowercase collection, tuple and option type spellings annotate values that are usable as their capitalised forms
+# behavior: lowercase collection, tuple and option type spellings annotate values that are usable as their capitalized forms
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_lowercase_types_codegen
 # expect-stdout:
 #   3 2 3

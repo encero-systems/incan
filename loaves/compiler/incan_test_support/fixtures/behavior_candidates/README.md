@@ -1,6 +1,6 @@
-# Behaviour-fixture candidates
+# Behavior-fixture candidates
 
-A candidate is a behaviour fixture, written in the format of `../behavior/README.md`, that cannot be admitted to a
+A candidate is a behavior fixture, written in the format of `../behavior/README.md`, that cannot be admitted to a
 `fixtures/behavior/<area>/` yet. Nothing runs it: the runner (`incan_test_support::behavior_fixtures::discover`)
 reads only `fixtures/behavior/<area>/` for the areas declared in `scripts/test_inventory/dispositions.json`
 (`fixture_roots`), and the inventory collector reads the same areas, so a file here is neither discovered, checked,

@@ -1,5 +1,5 @@
-# behavior: the power operator applies to a parenthesised float sum and to int operands coerced to float
-# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_power_receiver_parenthesisation_codegen
+# behavior: the power operator applies to a parenthesized float sum and to int operands coerced to float
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_power_receiver_parenthesization_codegen
 # expect-stdout:
 #   2.6457513110645907
 #   256.0
