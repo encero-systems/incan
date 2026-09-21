@@ -1,6 +1,6 @@
 # RFC 127: The Incan lint catalog: clippy-conformant rules, `loaf.toml` configuration, `incan architect` as engine and fixer, `incan fmt` as canonicalizer
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-09-20
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -16,7 +16,7 @@
     - #1698 (`[rust.lints]` in `loaf.toml`)
 - **Issue:** [#1703](https://github.com/encero-systems/incan/issues/1703)
 - **RFC PR:** [#1702](https://github.com/encero-systems/incan/pull/1702)
-- **Written against:** v0.6.0-dev.6
+- **Written against:** 0.6
 - **Shipped in:** —
 
 ## Summary
