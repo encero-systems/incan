@@ -237,7 +237,7 @@ impl std::fmt::Display for ErrorKind {
 
 /// Format an error with source context and return as a `String`.
 ///
-/// Produces a rustc-style diagnostic with coloured header, source line, underline caret, notes and hints. Useful for
+/// Produces a rustc-style diagnostic with colored header, source line, underline caret, notes and hints. Useful for
 /// CLI error handling where errors are collected into a `Result` instead of printed immediately.
 pub fn format_error(file_name: &str, source: &str, error: &CompileError) -> String {
     let (line_num, col_num, line_text) = get_line_info(source, error.span.start);

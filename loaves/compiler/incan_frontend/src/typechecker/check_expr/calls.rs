@@ -785,7 +785,7 @@ impl TypeChecker {
         let callable = format!("{binding}.{member}");
         if self.unsafe_depth == 0 {
             self.errors.push(CompileError::type_error(
-                format!("C binding symbol `{callable}` requires an enclosing `unsafe:` acknowledgement"),
+                format!("C binding symbol `{callable}` requires an enclosing `unsafe:` acknowledgment"),
                 span,
             ));
             self.check_call_args(args);
@@ -1327,7 +1327,7 @@ impl TypeChecker {
             || method == finish_method;
         if requires_unsafe && self.unsafe_depth == 0 {
             self.errors.push(CompileError::type_error(
-                "checked C span bridge operations require an enclosing `unsafe:` acknowledgement".to_string(),
+                "checked C span bridge operations require an enclosing `unsafe:` acknowledgment".to_string(),
                 span,
             ));
             self.check_call_args(args);
@@ -1472,7 +1472,7 @@ impl TypeChecker {
         }
         if self.unsafe_depth == 0 {
             self.errors.push(CompileError::type_error(
-                "extracting a checked C string pointer requires an enclosing `unsafe:` acknowledgement".to_string(),
+                "extracting a checked C string pointer requires an enclosing `unsafe:` acknowledgment".to_string(),
                 span,
             ));
             return Some(ResolvedType::Unknown);
@@ -1515,7 +1515,7 @@ impl TypeChecker {
         }
         if self.unsafe_depth == 0 {
             self.errors.push(CompileError::type_error(
-                "copying a scoped C string view requires an enclosing `unsafe:` acknowledgement".to_string(),
+                "copying a scoped C string view requires an enclosing `unsafe:` acknowledgment".to_string(),
                 span,
             ));
             self.check_call_args(args);

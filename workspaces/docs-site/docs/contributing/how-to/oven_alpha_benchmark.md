@@ -2,7 +2,7 @@
 
 Use this protocol to measure the DX-recovery lane: explicit release-envelope preparation into an empty developer environment, then repeated normal Oven `build`, `run`, or `test` commands. It is separate from generated-program runtime benchmarks. The measured normal commands and prepared compiler-suite replay run with Cargo guarded out; only an explicit `incan oven bake` miss or the separately named compiler-suite publisher may use Cargo.
 
-The harness is deliberately strict. It starts with an empty `INCAN_HOME`, records an explicit `incan oven bake` where the workload needs preparation, records the first normal command, then records unchanged normal-command repeats. The first command is not labelled warm. A required failing `cargo` executable is probed to confirm that it exits with status 97, then prepended to `PATH`; a successful normal stage therefore proves that it did not launch Cargo.
+The harness is deliberately strict. It starts with an empty `INCAN_HOME`, records an explicit `incan oven bake` where the workload needs preparation, records the first normal command, then records unchanged normal-command repeats. The first command is not labeled warm. A required failing `cargo` executable is probed to confirm that it exits with status 97, then prepended to `PATH`; a successful normal stage therefore proves that it did not launch Cargo.
 
 ## Reference-machine requirements
 

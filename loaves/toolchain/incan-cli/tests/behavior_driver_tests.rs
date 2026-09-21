@@ -1,4 +1,4 @@
-//! The `driver` area of the behaviour-fixture family, run through the compiler suite.
+//! The `driver` area of the behavior-fixture family, run through the compiler suite.
 //!
 //! Every fixture under `loaves/compiler/incan_test_support/fixtures/behavior/driver/` is an Incan program whose
 //! header declares what a run must show; each is the route-agnostic twin of a retire-class test in

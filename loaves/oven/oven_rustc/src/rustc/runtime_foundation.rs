@@ -50,9 +50,9 @@ pub struct OvenRuntimeFoundation {
     pub schema_version: u32,
     /// Exact direct-Rustc compiler closure identity that owns every compiled-unit identity below this foundation.
     pub compiler_closure_digest: String,
-    /// Immutable selected-graph owner whose root contains this foundation's sealed source and artifact catalogue.
+    /// Immutable selected-graph owner whose root contains this foundation's sealed source and artifact catalog.
     pub artifact_owner: String,
-    /// Complete sealed artifact/source catalogue retained by the SDK foundation.
+    /// Complete sealed artifact/source catalog retained by the SDK foundation.
     pub artifacts: OvenRustcArtifactManifest,
     /// One selected Rust source graph produced by the foundation publisher.
     pub selected_graph: OvenSelectedRustFacetGraph,
@@ -161,7 +161,7 @@ pub struct OvenMaterializedRuntimeFoundationPrebuiltDependency {
 /// Publisher-only physical projection of a sealed runtime foundation.
 ///
 /// The caller supplies roots held by existing Store or Loaf leases. This adapter verifies the complete selected source
-/// trees and sealed artifact catalogue once, then hands later direct-Rustc code only admitted physical files and
+/// trees and sealed artifact catalog once, then hands later direct-Rustc code only admitted physical files and
 /// topological rebuild order. It neither locates a cache nor reads Cargo metadata.
 #[derive(Debug, Clone)]
 pub struct OvenMaterializedRuntimeFoundation {
@@ -216,7 +216,7 @@ pub struct OvenAdmittedRuntimeFoundationAsset {
 
 impl OvenRuntimeFoundation {
     /// Canonicalize and validate an SDK runtime foundation without consulting Cargo, the ambient filesystem, or a
-    /// neighbouring build cache.
+    /// neighboring build cache.
     ///
     /// The result proves that every selected unit has exactly one declared execution policy, all prebuilt units are
     /// registry-backed immutable artifacts present in the sealed manifest, and every rebuildable unit is an admitted
@@ -407,7 +407,7 @@ impl ValidatedOvenRuntimeFoundation {
         &self.artifact_owner
     }
 
-    /// Borrow the sealed artifact catalogue while its validated foundation remains owned by the caller.
+    /// Borrow the sealed artifact catalog while its validated foundation remains owned by the caller.
     pub fn artifacts(&self) -> &OvenRustcArtifactManifest {
         &self.artifacts
     }
@@ -433,7 +433,7 @@ impl ValidatedOvenRuntimeFoundation {
     ///
     /// Rebuildable children are deliberately absent: the direct-Rustc publisher supplies their caller-owned outputs
     /// after it compiles their own selected units. This derives aliases and edges from the shared selected graph,
-    /// preventing an artifact catalogue from becoming a second dependency graph.
+    /// preventing an artifact catalog from becoming a second dependency graph.
     pub fn prebuilt_dependencies(
         &self,
         selected_identity: &str,
@@ -470,7 +470,7 @@ impl ValidatedOvenRuntimeFoundation {
         Ok(dependencies)
     }
 
-    /// Verify and bind this foundation's selected source trees and artifact catalogue for one publisher invocation.
+    /// Verify and bind this foundation's selected source trees and artifact catalog for one publisher invocation.
     ///
     /// This is deliberately publisher-only work. A normal command receives an already selected and leased plan; it
     /// must not invoke this method as a way to probe an SDK root or construct a new direct-Rustc closure.
@@ -751,7 +751,7 @@ mod tests {
         )]
     }
 
-    /// Build complete package-root evidence without adding it to the compiler-visible source catalogue.
+    /// Build complete package-root evidence without adding it to the compiler-visible source catalog.
     fn fixture_package_source(
         unit: &OvenSelectedRustFacetUnit,
         additional_members: Vec<OvenSelectedRustFacetSourceMember>,
@@ -871,7 +871,7 @@ mod tests {
         Ok(unit)
     }
 
-    /// Rebind one fixture unit to its exact owner-relative source root and generated-output catalogue.
+    /// Rebind one fixture unit to its exact owner-relative source root and generated-output catalog.
     fn bind_source_root(
         selection: &OvenSelectedRustFacetSelection,
         unit: &mut OvenSelectedRustFacetUnit,

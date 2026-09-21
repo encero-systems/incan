@@ -140,7 +140,7 @@ pub fn run_incan_with_env(
 }
 
 /// Run the compiler under test with `envs` added and `removed` variables cleared, for tests that must prove the
-/// compiler's behaviour without one ambient setting.
+/// compiler's behavior without one ambient setting.
 pub fn run_incan_with_env_and_removed(
     current_dir: &Path,
     args: &[&str],

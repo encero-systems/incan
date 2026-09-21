@@ -5,7 +5,7 @@
 //! `entries/` layout, that this machine may read but never writes. A fresh checkout or CI runner that syncs such a
 //! directory first can then admit a whole sealed closure — the standard library, the compiler-suite foundation — by
 //! copying it, instead of running the compatibility baker to reproduce it. The same `INCAN_OVEN_MIRRORS` list also
-//! names Loaf envelope roots (see `loaf_mirror`); each reader recognises its own layout and ignores the rest.
+//! names Loaf envelope roots (see `loaf_mirror`); each reader recognizes its own layout and ignores the rest.
 //!
 //! Nothing is trusted from the mirror. A candidate is selected under the mirror's own manager lock and active lease,
 //! its admitted record is revalidated, and it enters the local store only through the same verifying publication

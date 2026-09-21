@@ -1,10 +1,10 @@
 """
-Typed standard-library capability catalogue.
+Typed standard-library capability catalog.
 
 This module is the source authority for the generated feature inventory. Its runtime registry contains the entries
 from this module when loaded; tools use the compiler-checked projection for complete package discovery.
 
-The catalogue is deliberately module-private: it documents Incan's public surface without creating a second runtime API
+The catalog is deliberately module-private: it documents Incan's public surface without creating a second runtime API
 that applications would need to support or keep in sync.
 """
 
@@ -1694,7 +1694,7 @@ static std_registry: RegistryEntry[FeatureId, FeatureDescriptor] = features.entr
     subject=RegistrySubject.current_unit(),
     descriptor=FeatureDescriptor(
         id=FeatureId("StdRegistry"),
-        name="`std.registry` typed declaration catalogues",
+        name="`std.registry` typed declaration catalogs",
         category=FeatureCategory.Stdlib,
         since="0.5",
         rfc="RFC 113",

@@ -249,7 +249,7 @@ fn source_free_native_diamond_preserves_published_store_inventory_issue1458() ->
     write_fixture_file(
         &helper,
         "src/lib.rs",
-        "/// Return a stable catalogue shelfmark, so the generated crate reaches this dependency.\npub fn shelfmark() -> String {\n    \"aisle-7\".to_string()\n}\n",
+        "/// Return a stable catalog shelfmark, so the generated crate reaches this dependency.\npub fn shelfmark() -> String {\n    \"aisle-7\".to_string()\n}\n",
     )?;
     write_fixture_file(
         &catalog,

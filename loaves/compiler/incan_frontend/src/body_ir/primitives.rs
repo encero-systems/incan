@@ -102,7 +102,7 @@ fn builtin_collection_id(ty: &IncanType) -> Option<CollectionTypeId> {
 /// swallowing comparisons too. The test is not that a heap container cannot sit under a primitive -- `==` on two
 /// lists does exactly that, faithfully -- but that `determine_binop_plan` routes list `+` to
 /// `incan_std_core::collections::list_concat` while emitting comparisons as an infix operator. A helper here is
-/// therefore agreement with the Rust-emission backend, not a judgement about the operand's representation.
+/// therefore agreement with the Rust-emission backend, not a judgment about the operand's representation.
 pub(super) fn collection_helper_for_binop(
     op: ast::BinaryOp,
     lhs_ty: &IncanType,
@@ -336,7 +336,7 @@ pub(super) const RANGE_TYPE_BASE: &str = incan_lang::lang::surface::types::RANGE
 pub(super) const RANGE_UNIT_STEP: i64 = 1;
 /// The element type a checked range value yields per iteration, or `None` when `ty` is not a range value.
 ///
-/// Used to recognise a range-shaped type and recover a checked loop item type. A caller must not use this
+/// Used to recognize a range-shaped type and recover a checked loop item type. A caller must not use this
 /// type-level fact alone as permission to project a range aggregate's fields; see [`RANGE_TYPE_BASE`].
 pub(super) fn range_value_element_type(ty: &IncanType) -> Option<&IncanType> {
     match ty {

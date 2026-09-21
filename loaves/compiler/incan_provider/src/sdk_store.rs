@@ -1125,7 +1125,7 @@ mod tests {
 
     /// The store lock serializes, and a waiter is a waiter rather than a failure.
     ///
-    /// This pins the behaviour the diagnostic sits on top of: a second acquirer blocks and then succeeds, instead
+    /// This pins the behavior the diagnostic sits on top of: a second acquirer blocks and then succeeds, instead
     /// of failing or taking the lock. Timing distinguishes blocking from erroring; it does not assert a duration,
     /// since the wait ends when the holder releases.
     ///
