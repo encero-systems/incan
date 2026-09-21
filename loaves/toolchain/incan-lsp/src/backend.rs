@@ -6105,7 +6105,7 @@ impl LanguageServer for IncanLanguageServer {
     ///
     /// The reply covers every token in the file, as the protocol requires: there is no way to classify one region
     /// and leave the rest to the editor's grammar. A document with no stored state yields `None` so the client keeps
-    /// its previous result rather than briefly losing all colour; a document that failed to parse still answers,
+    /// its previous result rather than briefly losing all color; a document that failed to parse still answers,
     /// from the token stream alone, because losing highlighting on every keystroke is worse than never having it.
     async fn semantic_tokens_full(&self, params: SemanticTokensParams) -> Result<Option<SemanticTokensResult>> {
         let docs = self.documents.read().await;

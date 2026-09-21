@@ -320,10 +320,10 @@ fn package_definition_uses_real_source_and_absence_never_fabricates_a_target() -
         public_namespaces: Vec::new(),
     });
     let index = LibraryManifestIndex::from_entries(HashMap::from([(
-        "maths".to_string(),
+        "math".to_string(),
         LibraryManifestIndexEntry::Loaded {
             manifest: Box::new(manifest),
-            metadata: LibraryArtifactMetadata::from_crate_root("maths", "arithmetic", &crate_root),
+            metadata: LibraryArtifactMetadata::from_crate_root("math", "arithmetic", &crate_root),
         },
     )]));
     let mut sources = RelatedDeclarationSources::new();
