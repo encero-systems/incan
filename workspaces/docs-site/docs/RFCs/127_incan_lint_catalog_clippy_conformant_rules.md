@@ -15,7 +15,7 @@
     - #159 (trivia-aware formatter)
     - #1698 (`[rust.lints]` in `loaf.toml`)
 - **Issue:** [#1703](https://github.com/encero-systems/incan/issues/1703)
-- **RFC PR:** —
+- **RFC PR:** [#1702](https://github.com/encero-systems/incan/pull/1702)
 - **Written against:** v0.6.0-dev.6
 - **Shipped in:** —
 
@@ -366,7 +366,9 @@ The floor is the workspace's explicit assignments only. A rule the workspace nam
 [workspace.incan.lints]
 unwrap_used = "deny"          # named: a member's `unwrap_used = "warn"` is refused; the floor holds
 # fstring_over_concat is not named: a member's `fstring_over_concat = "allow"` holds
-``` The exemption is what makes suppression targeted: a per-path table or an `@allow(...)` takes a location to `allow` and nothing else, and `forbid` is outside its reach, which is `forbid`'s meaning in rustc. Ruff resolves the same question by directory walk: the nearest `ruff.toml` wins, and `extend` inherits from a parent. That is not adopted, because RFC 117 already says who is the authority over whom, and a second, path-shaped precedence would let a nested file override the workspace's floor. This layering diverges from Cargo's `[lints] workspace = true`, which is all-or-nothing: a Cargo member either inherits the whole workspace table or writes its own, and cannot merge the two. The divergence is deliberate and is recorded in the design decisions. There are no command-line level flags: the manifest is the single source of truth, and a flag would be a second one.
+```
+
+The exemption is what makes suppression targeted: a per-path table or an `@allow(...)` takes a location to `allow` and nothing else, and `forbid` is outside its reach, which is `forbid`'s meaning in rustc. Ruff resolves the same question by directory walk: the nearest `ruff.toml` wins, and `extend` inherits from a parent. That is not adopted, because RFC 117 already says who is the authority over whom, and a second, path-shaped precedence would let a nested file override the workspace's floor. This layering diverges from Cargo's `[lints] workspace = true`, which is all-or-nothing: a Cargo member either inherits the whole workspace table or writes its own, and cannot merge the two. The divergence is deliberate and is recorded in the design decisions. There are no command-line level flags: the manifest is the single source of truth, and a flag would be a second one.
 
 ### Manifest refusals
 
@@ -465,6 +467,8 @@ Rules that hold across the lifecycle:
   ]
 }
 ```
+
+Schema 2's `origin` is the producing tool (`fmt`, `check`, `architect`), as it is today; the catalog entry's origin (`clippy`, `clippy-renamed`, `rustc`, `incan`) is documentation, rendered by `incan explain`, and is not a report field.
 
 `incan architect --format json` keeps RFC 105's finding record and adds the same fields: `rule`, `group`, `fix`, `level`, and `level_source`, with `severity` derived from `level` by the same table, and `ok` reporting whether any finding is at `deny` or `forbid`. Under `--fix` the envelope is the same one, with no separate array of applied fixes, and `applied` is a field of each record: an original finding whose fix was applied carries `applied: true` at its original span, and every finding of the final evaluation carries `applied: false` at its final span, including a finding the rewrite created, a finding whose span moved, and a finding whose rule still fires at the construct its fix was attempted on, which is one record, not two, because a final record is identified by (rule, final span). A record whose entry is `suggest` or `none` carries `applied: false`, and so does a pending fix under `--fix --diff`. `ok` under `--fix` is computed over the final findings. `fix` is what Ruff's `applicability` field carries: `format` and `fix` where Ruff says `safe`, `suggest` where Ruff says `display-only`. A `suggest` record carries the replacement text in `hints`, so a consumer that wants to show a fix it will not apply has it, as Ruff's JSON output always carries a fix whether or not `--fix` would apply it.
 
