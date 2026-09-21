@@ -29,9 +29,9 @@ This RFC proposes `incan architect` as a deterministic code-advice command for d
 1. **Oven selects project scope:** Inside a Loaf, `incan architect` obtains the selected workspace members, source facets, dependencies, targets, generated inputs, and source roles from Oven. It must not recreate project discovery or infer a project graph from nearby files.
 2. **Language frontends own semantic facts:** Incan's compiler owns checked Incan facts. Rust inspection and compiler infrastructure own checked or resolved Rust facts. Both enter the shared RFC 106 graph as ordinary declarations, references, calls, modules, and relationships carrying a `language` attribute.
 3. **Provenance is preserved:** Every source-backed fact and finding retains whether the source is authored, generated, external, or projected, plus its source facet and selected project authority. Generated Rust is not an independently authored implementation merely because it is visible to the graph.
-4. **Rules interpret facts:** Each rule consumes typed fact views and emits findings with stable codes, priorities, categories, confidence, evidence, suggestions, and risks. A rule declares the fact capabilities and languages it supports rather than assuming every source owner is Incan.
-5. **Findings are advisory by default:** Architect findings are not compiler errors. They describe design pressure or code-shape opportunities with enough evidence for a human or agent to decide whether to act. An extension RFC may assign policy levels that make selected findings fail `incan architect`; that enforcement remains tooling policy and never turns the finding into a compiler error.
-6. **Categories are explicit:** Architecture findings, safety findings, idiom findings, maintainability findings, and risk findings remain separate in rule codes and profiles even when they share one command.
+4. **Rules interpret facts:** Each rule consumes typed fact views and emits findings with qualified rule names, priorities, categories, confidence, evidence, suggestions, and risks. A rule declares the fact capabilities and languages it supports rather than assuming every source owner is Incan.
+5. **Findings are advisory by default:** Architect findings are not compiler errors. They describe design pressure or code-shape opportunities with enough evidence for a human or agent to decide whether to act. RFC 127 assigns catalog levels (`allow`, `warn`, `deny`, and `forbid`) that may make selected findings fail `incan architect`; that enforcement remains tooling policy and never turns the finding into a compiler error.
+6. **Categories are explicit:** Architecture findings, safety findings, idiom findings, maintainability findings, and risk findings remain separate in qualified rule names and profiles even when they share one command.
 7. **Broad collection, precise classification:** The command should scan the requested scope broadly and emit evidence-backed findings across categories. Confidence, category, profile, baseline, and priority decide presentation and action pressure; they should not erase valid findings up front merely because the finding is local, optional, or not architectural.
 8. **Rule authoring is a product surface:** The feature is only maintainable if adding a rule means using stable typed facts and reusable queries, not hand-parsing raw graph nodes or reimplementing per-language syntax walks.
 9. **Peer context is explicit:** Projects may declare locally meaningful peer groups such as command handlers, lowering passes, adapters, registries, or generators. A broad category may contain several valid peer groups; names and filesystem position are useful signals, not sufficient proof of membership or intent.
@@ -50,7 +50,7 @@ This feature also matters for agent workflows. Agents can already make broad ref
 ## Goals
 
 - Define `incan architect` as the umbrella command for deterministic design, safety, idiom, maintainability, and risk-signal advice.
-- Provide a stable finding model with rule code, category, priority, confidence, evidence, pressure, suggestions, risks, and machine-readable output.
+- Provide a stable finding model with qualified rule name, category, priority, confidence, evidence, pressure, suggestions, risks, and machine-readable output.
 - Provide direct Incan file and directory scanning outside a Loaf, and Oven-selected package or workspace scanning inside a Loaf, with deterministic source, module, and finding de-duplication across Incan and Rust facets. The same finding model should later support PR-diff and graph-snapshot scopes.
 - Treat Rust-only, Incan-only, and mixed Loaves as first-class project analysis scopes.
 - Preserve language, source role, source facet, generation provenance, and selected Oven project authority in graph facts and finding evidence.
@@ -222,7 +222,7 @@ The command should provide `--profile` with at least `architecture`, `safety`, `
 
 ### Finding model
 
-Every finding must have a qualified rule name, namespaced by category. A catalog may additionally assign a stable diagnostic code that does not change when a rule moves between categories or groups; RFC 127 defines that code for catalog entries.
+Every finding must have a qualified rule name, namespaced by category. A catalog entry additionally has RFC 127's stable diagnostic code, which does not change when a rule moves between categories or groups.
 
 ```text
 arch.repeated_match_dispatch
@@ -317,7 +317,7 @@ The candidate is not a deterministic `arch.*` violation unless a declared bounda
 
 ### Rule authoring contract
 
-Rules must declare metadata: code, category, default priority, default confidence, profile membership, applicability (`language-neutral`, `language-specific`, or `cross-language`), supported languages or frontend capabilities, required fact kinds, and a short explanation.
+Rules must declare metadata: qualified rule name, category, default priority, default confidence, profile membership, applicability (`language-neutral`, `language-specific`, or `cross-language`), supported languages or frontend capabilities, required fact kinds, and a short explanation. Catalog entries additionally receive RFC 127's stable diagnostic code and catalog metadata.
 
 Rules must consume typed fact views rather than raw serialized facts. A rule that needs match dispatch sites, call sites, assignment shapes, helper usage counts, or loop-builder shapes should ask for those views directly.
 
@@ -357,11 +357,11 @@ Risk rules may consume optional process facts such as git churn, ownership, co-c
 
 ### Suppression and baselining
 
-The command should support local suppression of a specific rule at a specific source location. RFC 127 defines `@allow("rule", reason="...")` on declarations and in module position, plus `[incan.lints.per-file-allow]` for paths.
+Local suppression of catalog findings is defined by RFC 127: `@allow("rule", reason="...")` on declarations and in module position, plus `[incan.lints.per-file-allow]` for paths.
 
 The command should support project baselines so existing findings can be recorded and new findings can fail CI or be highlighted separately. Baseline storage is unresolved by this draft.
 
-Suppressions and baselines must preserve rule code and evidence identity. A future change that moves or changes the evidence should not silently suppress an unrelated finding.
+Suppressions and baselines must preserve qualified rule name and evidence identity; catalog-backed records also preserve their stable diagnostic code. A future change that moves or changes the evidence should not silently suppress an unrelated finding.
 
 ## Design details
 
@@ -373,9 +373,9 @@ Rules may belong to more than one profile only when that does not blur the categ
 
 Exploratory rules may exist behind an explicit experimental profile, but they must not be enabled by default.
 
-### Severity calibration
+### Priority and confidence calibration
 
-Severity should be calibrated against evidence strength, public surface impact, and likely cost of ignoring the finding. Public API failures are generally higher priority than private helper maintainability findings. Repeated design pressure across files is generally higher priority than a local expression-level cleanup. Idiom suggestions are generally P3 or Info unless the shape creates repeated complexity or risk.
+Priority should be calibrated against likely impact and the cost of ignoring the finding; confidence should be calibrated against the mechanical strength of the evidence. Public API failures are generally higher priority than private helper maintainability findings. Repeated design pressure across files is generally higher priority than a local expression-level cleanup. Idiom suggestions are generally P3 or Info unless the shape creates repeated complexity or risk.
 
 Rules should downrank, lower confidence, or route known low-action cases to explicit profiles instead of mislabeling them as urgent. Rules should suppress a match only when counterexample evidence makes it invalid, or when user-selected profiles, suppressions, or baselines hide it. For example, fail-fast calls around trusted constants may be lower priority than fail-fast calls around caller-provided input. Exhaustive matches over a closed domain may be preferable to abstraction when the matched operation is local and the domain changes rarely.
 
@@ -385,11 +385,11 @@ Rules should downrank, lower confidence, or route known low-action cases to expl
 
 `safety.fail_fast_boundary_call` reports `unwrap`, `expect`, `panic`, `todo`, and `unreachable` inside public or internal boundaries. Public API boundaries should generally be P1. Internal boundaries should generally be P2 unless evidence shows trusted constants or invariant setup.
 
-`idiom.result_combinator_candidate` reports obvious RFC 070 match shapes that can be expressed with `map`, `map_err`, `and_then`, `or_else`, `inspect`, or `inspect_err`.
+`idiom.result_combinator_candidate` reports mechanically recognizable `map_err`, `and_then`, `or_else`, `inspect`, and `inspect_err` shapes. RFC 127's `manual_result_map` catalog entry owns the `map` shape, which must not be emitted under both identities.
 
-`idiom.compound_assignment_candidate` reports assignments such as `i = i + 1` when the target and left operand are the same simple storage place and `i += 1` is equivalent.
+RFC 127's `assign_op_pattern` catalog entry reports assignments such as `i = i + 1` when resolved operator facts establish equivalence with `i += 1`.
 
-`idiom.comprehension_candidate` reports append-only list builders that can be represented as eager list comprehensions.
+RFC 127's `comprehension_over_loop` catalog entry reports append-only list builders that can be represented as eager list comprehensions.
 
 `maintainability.single_use_trivial_helper` reports private, undocumented, undecorated helpers that are used once and only return a simple pure expression. The rule must mention that domain vocabulary can justify keeping the helper.
 
@@ -467,7 +467,7 @@ Experimental peer-baseline analysis is a later consumer of the same fact and que
 
 ## Unresolved questions
 
-RFC 127 resolves the suppression syntax: `@allow("rule", reason="...")` on declarations and in module position, and `[incan.lints.per-file-allow]` for paths. Baseline storage and the questions below remain open.
+Baseline storage and the questions below remain open.
 
 - What is the default profile for `incan architect .`: architecture-only, architecture plus safety, or all stable rules?
 - Should baselines live in a typed `loaf.toml` table, a separate versioned baseline artifact, or generated project-tooling state? They must not be folded into `oven.lock` merely because a project uses Oven.
