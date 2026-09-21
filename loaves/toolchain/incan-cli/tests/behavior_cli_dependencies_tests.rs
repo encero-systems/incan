@@ -1,4 +1,4 @@
-//! The `cli_dependencies` area of the behaviour-fixture family: project fixtures with in-fixture path dependencies,
+//! The `cli_dependencies` area of the behavior-fixture family: project fixtures with in-fixture path dependencies,
 //! run through the compiler suite.
 //!
 //! Every fixture under `loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/` is a project whose

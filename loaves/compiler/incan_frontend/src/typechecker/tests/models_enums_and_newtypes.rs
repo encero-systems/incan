@@ -241,10 +241,10 @@ def choose() -> Status:
 #[test]
 fn test_enum_explicit_trait_adoption_typechecks() {
     let source = r#"
-trait Labelled:
+trait Labeled:
   def label(self) -> str: ...
 
-enum Color with Labelled:
+enum Color with Labeled:
   Red
   Blue
 
@@ -260,10 +260,10 @@ def render(color: Color) -> str:
 #[test]
 fn test_enum_missing_trait_method_is_rejected() {
     let source = r#"
-trait Labelled:
+trait Labeled:
   def label(self) -> str: ...
 
-enum Color with Labelled:
+enum Color with Labeled:
   Red
   Blue
 "#;
@@ -278,10 +278,10 @@ enum Color with Labelled:
 #[test]
 fn test_newtype_explicit_trait_adoption_typechecks() {
     let source = r#"
-trait Labelled:
+trait Labeled:
   def label(self) -> str: ...
 
-type UserId = newtype int with Labelled:
+type UserId = newtype int with Labeled:
   def label(self) -> str:
     return "user"
 
@@ -294,10 +294,10 @@ def render(user_id: UserId) -> str:
 #[test]
 fn test_newtype_missing_trait_method_is_rejected() {
     let source = r#"
-trait Labelled:
+trait Labeled:
   def label(self) -> str: ...
 
-type UserId = newtype int with Labelled
+type UserId = newtype int with Labeled
 "#;
     let errs = check_str_err(source, "newtype should satisfy abstract trait methods");
     assert!(
@@ -376,21 +376,21 @@ enum Token with Boxed[int, str]:
 #[test]
 fn test_enum_satisfies_explicit_trait_bound() {
     let source = r#"
-trait Labelled:
+trait Labeled:
   def label(self) -> str: ...
 
-enum Color with Labelled:
+enum Color with Labeled:
   Red
   Blue
 
   def label(self) -> str:
     return "color"
 
-def keep_labelled[T with Labelled](value: T) -> T:
+def keep_labeled[T with Labeled](value: T) -> T:
   return value
 
 def keep_red() -> Color:
-  return keep_labelled(Red)
+  return keep_labeled(Red)
 "#;
     assert_check_ok(source);
 }

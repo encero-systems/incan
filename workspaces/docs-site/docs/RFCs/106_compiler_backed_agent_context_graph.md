@@ -460,7 +460,7 @@ Graph export reads source code and may expose private structure to agents. Local
 
 Oven already treats the two languages as one substrate. RFC 117 defines a project model whose package, target, lock, cache, and receipt model is language-neutral, and names Incan and Rust as its two built-in authored source facets; RFC 119 gives Rust an Oven-owned crate graph and direct-`rustc` plan on those same terms. A unit that Oven bakes has an identity, a content digest, dependencies, and a compilation that produces it, and which surface syntax it was authored in is a property of that unit rather than a different kind of unit.
 
-The graph should describe the same world. To Oven a declaration is a declaration; Incan is Rust and Rust is Incan at this layer, and a graph that partitions by language would be modelling a boundary the build system does not have.
+The graph should describe the same world. To Oven a declaration is a declaration; Incan is Rust and Rust is Incan at this layer, and a graph that partitions by language would be modeling a boundary the build system does not have.
 
 This is not an aspiration; it is what the schema already asserts. `CodegraphDeclarationRecord` and `CodegraphFileRecord` each carry a `language` field. Language is an attribute of a fact, and every relationship — containment, import, export, reference, call — is defined over facts rather than over languages.
 
@@ -524,7 +524,7 @@ The rule has a consequence the current compiler does not satisfy: a logical modu
 
 A declaration's semantic digest must be a digest over its **checked meaning**: the declaration as the compiler resolved it, after type checking, before code generation.
 
-It must be computed from checked values, not by normalising rendered text. Rendered forms embed positional data inside composite strings — an identity spelling that carries its own declaration span, for example — and scrubbing those after the fact reliably misses cases that omitting the field cannot. A digest built by text substitution over a debug rendering is not conformant even where it happens to produce the same answer.
+It must be computed from checked values, not by normalizing rendered text. Rendered forms embed positional data inside composite strings — an identity spelling that carries its own declaration span, for example — and scrubbing those after the fact reliably misses cases that omitting the field cannot. A digest built by text substitution over a debug rendering is not conformant even where it happens to produce the same answer.
 
 The digest must exclude everything the compiler cannot observe in its output: comments, documentation, formatting, declaration order, and physical location. It must include everything it can: signatures, types, visibility, control flow, ownership and borrowing facts, and resolved call and reference targets.
 
@@ -560,7 +560,7 @@ Dependencies are the graph's outgoing `references`, `calls`, `imports`, `contain
 
 A change confined to a declaration's internals must not force its dependents to rebuild. Expressing that requires a second closure, and the boundary is not the `pub` keyword.
 
-A consumer does not merely link against public signatures; it instantiates parts of what it depends on. Generic bodies are monomorphised in the consumer, inlinable bodies are code-generated there, and compile-time-evaluated bodies are evaluated there. A private declaration reachable from any of those is externally observable although no signature names it.
+A consumer does not merely link against public signatures; it instantiates parts of what it depends on. Generic bodies are monomorphized in the consumer, inlinable bodies are code-generated there, and compile-time-evaluated bodies are evaluated there. A private declaration reachable from any of those is externally observable although no signature names it.
 
 The external closure must therefore be rooted at public declarations and extended by reachability: public signatures, plus the bodies of declarations a consumer can instantiate or inline, plus everything reachable from those bodies whatever its visibility. Visibility marks the roots; reachability decides membership. A private declaration a public generic calls is an instance of the rule, not an exception to it.
 
@@ -590,7 +590,7 @@ Separately, a distinct declaration identity must exist for every declaration a c
 
 The digest projection is a compatibility surface. Every exported digest must carry a `digest_schema` identifying the projection that produced it.
 
-A change to the projection must not invalidate every stored digest. An implementation must retain the previous projection and, on a mismatch under the current one, compare under the previous; a match there is a hit, reported with a notice that the digest is stale and should be refreshed. Without this, a normalisation improvement is indistinguishable from a change to every declaration in existence.
+A change to the projection must not invalidate every stored digest. An implementation must retain the previous projection and, on a mismatch under the current one, compare under the previous; a match there is a hit, reported with a notice that the digest is stale and should be refreshed. Without this, a normalization improvement is indistinguishable from a change to every declaration in existence.
 
 ### Prior art
 
@@ -598,11 +598,11 @@ A change to the projection must not invalidate every stored digest. An implement
 
 Its `MetaData::trim_for_persistence` strips the assertion line before writing a snapshot, retaining it only for display — volatile positional data is kept for humans and never persisted. That is the layering rule: keep spans in what a maintainer reads, keep them out of what is compared.
 
-Its redactions apply to a structured value tree and only then serialise, rather than rewriting rendered output. That is the checked-values rule, and the reason for it: normalising text after rendering misses positional data embedded inside composite strings.
+Its redactions apply to a structured value tree and only then serialize, rather than rewriting rendered output. That is the checked-values rule, and the reason for it: normalizing text after rendering misses positional data embedded inside composite strings.
 
-Its snapshot comparison keeps the previous normalisation alongside the current one and accepts a match under either, warning rather than failing when only the older rule matches. That is the schema-versioning rule.
+Its snapshot comparison keeps the previous normalization alongside the current one and accepts a match under either, warning rather than failing when only the older rule matches. That is the schema-versioning rule.
 
-What does not transfer is the library itself. Digests are computed and compared in memory as cache keys, not written as reviewable files. The one artifact worth keeping is a committed golden of normalised digests, which turns a change to the projection into a visible diff in review rather than a silently cold cache.
+What does not transfer is the library itself. Digests are computed and compared in memory as cache keys, not written as reviewable files. The one artifact worth keeping is a committed golden of normalized digests, which turns a change to the projection into a visible diff in review rather than a silently cold cache.
 
 ## Alternatives considered
 
@@ -689,7 +689,7 @@ The task-context ranker should start simple: exact identifiers, module/name/doc 
 ### Phase 2: One graph across Incan and Rust
 
 - Add namespace nodes over the module graph so a package's modules and the Rust items a module reaches are one subgraph.
-- Retire `rust_item` and `uses_rust_item` in favour of reference and call records whose `canonical_owner` names the Rust declaration, with reachability reported as a lower bound.
+- Retire `rust_item` and `uses_rust_item` in favor of reference and call records whose `canonical_owner` names the Rust declaration, with reachability reported as a lower bound.
 
 ### Phase 3: Semantic digests
 

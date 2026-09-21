@@ -30,7 +30,7 @@ Oven consumes crates.io and registered Cargo-compatible sources through the type
 
 ## Core model
 
-1. **A Rust facet is a built-in Loaf facet:** a conventional Rust-only Loaf uses the ordinary `src/` layout. A mixed or nonstandard Rust root declares `[rust.source]`; compact Rust-specific exceptions live beneath `rust.*`. In every case Oven, not a neighbouring `Cargo.toml`, supplies the crate facts needed to plan and invoke `rustc`.
+1. **A Rust facet is a built-in Loaf facet:** a conventional Rust-only Loaf uses the ordinary `src/` layout. A mixed or nonstandard Rust root declares `[rust.source]`; compact Rust-specific exceptions live beneath `rust.*`. In every case Oven, not a neighboring `Cargo.toml`, supplies the crate facts needed to plan and invoke `rustc`.
 2. **Oven owns the graph:** dependency selection, feature resolution, target/host partitioning, toolchain choice, lock identity, execution plan, cache reuse, artifacts, and receipts belong to Oven.
 3. **Crates.io is consumption-only:** typed `crate` dependencies default to crates.io and may use registered compatible sources. Publishing remains in Incan's registry ecosystem.
 4. **Cargo manifests are provider metadata only when explicitly selected:** a registry crate's `Cargo.toml` can be parsed by the selected crate provider as constrained source metadata. It cannot define a Loaf workspace, lock, registry trust, lifecycle action, project target policy, or publication identity.
@@ -68,7 +68,7 @@ The right objective is therefore neither “emulate every Cargo behavior” nor 
 - Publishing Oven-native Loaves, `*.loaf` assets, or normal Oven packages to crates.io.
 - Making `Cargo.toml`, `Cargo.lock`, Cargo workspace discovery, Cargo build profiles, or arbitrary Cargo command behavior part of ordinary Loaf semantics.
 - Supporting every Cargo crate on day one, or claiming compatibility from source discovery alone.
-- Implicitly importing, merging, or executing a neighbouring Cargo project after `loaf.toml` exists.
+- Implicitly importing, merging, or executing a neighboring Cargo project after `loaf.toml` exists.
 - Compiling, executing, interpreting, or sandboxing `build.rs` in Oven-native mode, including through an opt-in or fallback provider route.
 - Defining the `*.loaf` archive/wire format or Incan registry transport protocol.
 - Redefining RFC 097's Rust-host caller ABI, RFC 116's C ABI safety contract, RFC 117's project authority, or RFC 118's command ownership.
@@ -231,7 +231,7 @@ Oven can consume a crate from crates.io because Rust libraries are part of the w
 ### Cargo compatibility and explicit adoption
 
 1. `oven cargo ...` is an explicit compatibility operation for a directory with `Cargo.toml` and no `loaf.toml`. Cargo remains authoritative for its manifest, lock, build scripts, procedural macros, profiles, workspace discovery, and side effects. Oven records that it ran Cargo mode and may retain a wrapper receipt; it does not reinterpret Cargo results as an Oven-native lock.
-2. A directory that contains `loaf.toml` is always a Loaf project for normal Oven operations. A neighbouring Cargo manifest is diagnosed and ignored.
+2. A directory that contains `loaf.toml` is always a Loaf project for normal Oven operations. A neighboring Cargo manifest is diagnosed and ignored.
 3. Adoption is an explicit user-requested transformation. It may parse Cargo metadata as input, propose a `loaf.toml`, enumerate unsupported or policy-sensitive behavior, and write project state only after the mutation/policy rules of RFC 076 approve it.
 4. Adoption must never leave an implicit mixed state. Once a user accepts the Loaf contract, future Oven-native operations use `loaf.toml` and `oven.lock`; continuing to run Cargo requires an explicit Cargo operation.
 5. Cargo-compatible caller packages remain RFC 097 interoperability projections. They may consume selected outputs, but must not cause Cargo to resolve, compile, or select the Incan implementation graph.
@@ -248,7 +248,7 @@ The native Rust claim is valid only for the published conformance envelope. The 
 | Proc macro, link, and tool stages    | Cargo-equivalent direct-`rustc` macro expansion, host artifact/compile-unit receipt, observe/governed policy behavior, inert-`build.rs` warning, `cfg`/`out`/`link`/`tool` field coverage, generated-input invalidation, cross-target target consumer |
 | Rust IDE selection            | selected-plan projection and provenance sidecar, cfg/target/generated-input analysis, Oven-only diagnostics actions, explicit editor macro policy, and pre-warmed closure reuse across equivalent slices |
 | Linked-library crate                 | capability/toolchain/linker facts and target-bound carrier asset                                   |
-| Cross target                  | separated host/target plan, sysroot/linker identity, no host result mislabelled as target proof    |
+| Cross target                  | separated host/target plan, sysroot/linker identity, no host result mislabeled as target proof    |
 | Cargo project                 | explicit `oven cargo` execution and a no-implicit-adoption diagnostic                              |
 | Cargo adoption                | proposed Loaf contract, policy-gated write, unsupported-feature diagnostic, then Loaf-only bake    |
 

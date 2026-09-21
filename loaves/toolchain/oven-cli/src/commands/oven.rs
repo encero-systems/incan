@@ -1652,7 +1652,7 @@ pub(crate) struct PreparedCompilerSuiteChild<'a> {
 /// quick to run costs the shard just as much as the reverse.
 ///
 /// Both libtest and Rustdoc roots are read, since both occupy a shard. A malformed or absent report yields an empty
-/// map rather than an error: a missing measurement must degrade to the previous `source_bytes` behaviour, never fail
+/// map rather than an error: a missing measurement must degrade to the previous `source_bytes` behavior, never fail
 /// a run that would otherwise have worked.
 fn measured_root_millis_from_report(report_path: &Path) -> BTreeMap<String, u64> {
     // A directory merges every report inside it. One partition only measures the roots it ran, so weighting a
@@ -5163,7 +5163,7 @@ mod tests {
                 .collect::<BTreeSet<_>>()
         };
 
-        // Unmeasured: the existing `source_bytes` behaviour, unchanged.
+        // Unmeasured: the existing `source_bytes` behavior, unchanged.
         let byte_shard_zero =
             compiler_suite_selected_shard_references(&references, &[], Some(0), Some(2), &BTreeMap::new())?;
         assert_eq!(
@@ -5242,7 +5242,7 @@ mod tests {
         );
 
         // A missing or malformed record degrades to no measurements rather than failing a run that would otherwise
-        // have worked -- the weight then falls back to `source_bytes`, which is the previous behaviour.
+        // have worked -- the weight then falls back to `source_bytes`, which is the previous behavior.
         assert!(super::measured_root_millis_from_report(&directory.path().join("absent.json")).is_empty());
         let malformed = directory.path().join("malformed.json");
         fs::write(&malformed, b"{ not json")?;
@@ -6093,7 +6093,7 @@ mod tests {
             )
             .cargo_fixture
         );
-        // No behaviour-fixture root receives a Cargo authority: its programs run on the sealed stdlib Loaf, and the
+        // No behavior-fixture root receives a Cargo authority: its programs run on the sealed stdlib Loaf, and the
         // `cli_dependencies` area's provider bakes are Cargo-guarded, so a bake that needs Cargo fails there.
         for root in [
             "loaves/toolchain/incan-cli/tests/behavior_cli_dependencies_tests.rs",

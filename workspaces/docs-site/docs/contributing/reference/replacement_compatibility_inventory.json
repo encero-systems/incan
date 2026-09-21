@@ -6300,13 +6300,13 @@
       },
       {
         "id": "interop.rust-and-c",
-        "contract": "Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgements, and source-map diagnostics.",
+        "contract": "Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgments, and source-map diagnostics.",
         "probes": [
           {
             "id": "probe:interop.rust-and-c:binding-and-refusal",
             "positive": {
               "outcome": "AcceptedBehavior",
-              "contract": "Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgements, and source-map diagnostics.",
+              "contract": "Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgments, and source-map diagnostics.",
               "anchor": {
                 "surface": "SourceAst",
                 "status": "Observed",

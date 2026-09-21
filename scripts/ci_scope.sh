@@ -47,7 +47,7 @@ case "$EVENT_NAME" in
     ;;
   pull_request)
     # A pull request into `main` or a release branch is a release candidate. One into a development line
-    # is not, until it is labelled `full-ci`.
+    # is not, until it is labeled `full-ci`.
     case "$BASE_REF" in
       main|release/*) heavy=true ;;
     esac

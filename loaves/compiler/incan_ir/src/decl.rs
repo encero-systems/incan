@@ -255,7 +255,7 @@ pub fn is_projected_source_symbol(identity: &CanonicalSymbolId) -> bool {
 #[derive(Debug, Clone)]
 pub struct IrTrait {
     pub name: String,
-    /// Compiler-recognised callable role established from the canonical source declaration identity during lowering.
+    /// Compiler-recognized callable role established from the canonical source declaration identity during lowering.
     ///
     /// Keeping this semantic fact in IR prevents emission from rediscovering `std.traits.callable` through a generated
     /// provider's crate-local module path, where the public `std` mount is intentionally absent.

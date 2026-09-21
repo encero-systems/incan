@@ -1,6 +1,6 @@
 # `std.registry`
 
-`std.registry` defines typed declaration catalogues. A registry associates a typed key and descriptor with a function, concrete method, compilation unit, or package. The compiler validates one source-owned catalogue and exposes it as both process-local runtime state and complete checked metadata.
+`std.registry` defines typed declaration catalogs. A registry associates a typed key and descriptor with a function, concrete method, compilation unit, or package. The compiler validates one source-owned catalog and exposes it as both process-local runtime state and complete checked metadata.
 
 Use `loaded_entries()` when application code needs entries from modules loaded in the current process. Use `incan inspect registry` when tooling needs the complete checked package projection without executing user code.
 
@@ -17,7 +17,7 @@ from std.registry import Registry, RegistryEntry, RegistrySubject, SubjectKind, 
 | `SubjectKind` | Enum | Declares which source subject categories a registry accepts. |
 | `RegistrySubject` | Model | Carries the resolved kind and qualified identity of a loaded entry. |
 | `RegistryEntry[K, T]` | Model | Holds one typed key, descriptor, and subject. |
-| `Registry[K, T]` | Class | Defines a typed catalogue and its loaded runtime projection. |
+| `Registry[K, T]` | Class | Defines a typed catalog and its loaded runtime projection. |
 | `describe[K, T, F]` | Decorator factory | Marks a function or concrete method as an entry without wrapping the callable. |
 
 ## `SubjectKind`
@@ -73,7 +73,7 @@ An entry is the runtime representation of one checked association. Function and 
 
 ## `Registry[K, T]`
 
-`K` is the domain-owned structural key type and `T` is the descriptor type. The registry binding supplies the catalogue identity.
+`K` is the domain-owned structural key type and `T` is the descriptor type. The registry binding supplies the catalog identity.
 
 ### `Registry.define`
 
@@ -113,9 +113,9 @@ Constructs an explicit compilation-unit or package entry. The call must initiali
 
 ```incan
 pub static package_entry: RegistryEntry[CapabilityId, CapabilitySpec] = capabilities.entry(
-    key=CapabilityId("catalogue"),
+    key=CapabilityId("catalog"),
     subject=RegistrySubject.package(),
-    descriptor=CapabilitySpec(summary="Package catalogue"),
+    descriptor=CapabilitySpec(summary="Package catalog"),
 )
 ```
 
@@ -227,7 +227,7 @@ Entry provenance is one of `checked_declaration`, `checked_compilation_unit_entr
 
 ## Visibility, packages, and reexports
 
-Source-package inspection may select private registries owned by that package. A built library publishes only public registry definitions and public entries. Consumers therefore cannot inspect a producer's private catalogue through its dependency artifact.
+Source-package inspection may select private registries owned by that package. A built library publishes only public registry definitions and public entries. Consumers therefore cannot inspect a producer's private catalog through its dependency artifact.
 
 Public reexports add paths to `reexport_paths` with facade source anchors. They never change the canonical registry or subject identity and never create duplicate entries.
 
@@ -265,8 +265,8 @@ Use a custom runtime registry when entries genuinely depend on runtime data and 
 
 ## See also
 
-- [Build a typed function catalogue](../../tutorials/typed_registries.md)
+- [Build a typed function catalog](../../tutorials/typed_registries.md)
 - [Work with typed registries](../../how-to/typed_registries.md)
-- [Checked catalogues and loaded registries](../../explanation/checked_and_loaded_registries.md)
+- [Checked catalogs and loaded registries](../../explanation/checked_and_loaded_registries.md)
 - [RFC 113: `std.registry` and declaration descriptors](../../../RFCs/closed/implemented/113_std_registry_and_declaration_descriptors.md)
 - [Codegraph inspection](../../../tooling/reference/codegraph_inspection.md)

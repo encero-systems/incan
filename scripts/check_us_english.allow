@@ -1,0 +1,15 @@
+# path<TAB>token<TAB>reason. The path is exact, a `/**` subtree or *; the token is one UK spelling (any case), a longer
+# identifier or phrase that must enclose the hit on its line (exact case), or * for every word in that path.
+
+# Frozen, vendored and release-pinned sources: their bytes are the contract, so their spelling stays as it is.
+loaves/compiler/incan_emit/src/emit/**	*	The frozen Rust-emission tree (#1561): scripts/check_emitter_freeze.py fingerprints whole files, so even comment prose cannot change without a recorded migration note.
+loaves/third_party/**	*	Vendored upstream source (rust-analyzer's proc-macro API); its spelling belongs to upstream.
+loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn	*	The release-pinned v0.5.0 source blob; manifest.json records its Git blob id and the collector refuses any other bytes.
+workspaces/docs-site/docs/contributing/reference/replacement_compatibility_inventory.json	typed declaration catalogues	Generated projection; this baseline row's name is decoded from the pinned v0.5.0 blob above.
+
+# Generated pages are regenerated from their sources, never edited.
+workspaces/docs-site/docs/contributing/reference/test_corpus_inventory.md	*	Rendered by `make test-inventory` from scripts/test_inventory/dispositions.json and the tree; fix the sources and regenerate.
+
+# Third-party names and quoted text.
+workspaces/docs-site/docs/_snippets/project/v0_6_roadmap.md	colour	GitHub issue #1351's title as fetched; scripts/v0_6_roadmap/refresh_github.sh rewrites the snapshot from GitHub.
+*	manifest_constructor_metadata_recognises_phantom_type_parameters_issue1370	names a test inside the frozen emitter tree (loaves/compiler/incan_emit/src/emit/mod.rs); the reference must match the frozen spelling until #654 retires it

@@ -240,9 +240,9 @@ pub struct ForStmt {
     pub body: Vec<Spanned<Statement>>,
 }
 
-/// A scoped acknowledgement region for operations that require explicit authorization.
+/// A scoped acknowledgment region for operations that require explicit authorization.
 ///
-/// The block does not introduce a separate Incan scope; it records only the acknowledgement boundary.
+/// The block does not introduce a separate Incan scope; it records only the acknowledgment boundary.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnsafeStmt {
     pub body: Vec<Spanned<Statement>>,

@@ -398,12 +398,12 @@ get = partial method(value="GET")
         ),
         (
             r#"
-trait Labelled:
+trait Labeled:
   def label(self) -> str: ...
 
-get = partial Labelled(value="GET")
+get = partial Labeled(value="GET")
 "#,
-            "targets unsupported symbol 'Labelled'",
+            "targets unsupported symbol 'Labeled'",
             "unsupported trait partial target should be rejected",
         ),
         (
@@ -730,8 +730,8 @@ fn test_method_partial_can_target_same_type_method_alias() {
 trait Named:
   def label(self, prefix: str) -> str:
     return prefix
-  labelled = label
-  short = partial labelled(prefix="name")
+  labeled = label
+  short = partial labeled(prefix="name")
 
 model User with Named:
   def label(self, prefix: str) -> str:
@@ -806,9 +806,9 @@ trait Base:
   short = partial label(prefix="base")
 
 trait Child with Base:
-  def labelled(self, prefix: str, count: int) -> str:
+  def labeled(self, prefix: str, count: int) -> str:
     return prefix
-  short = partial labelled(prefix="child")
+  short = partial labeled(prefix="child")
 "#;
     let errors = check_str_err(source, "incompatible subtrait partial override should fail");
     assert!(

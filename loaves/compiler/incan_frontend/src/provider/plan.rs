@@ -294,7 +294,7 @@ pub struct PublicProviderArtifact {
 ///
 /// These three answer "where have we been", not "what did we produce". Keeping them apart from
 /// [`ResolvedArtifactGraph`] is the distinction worth preserving: the graph is the result a caller keeps, while
-/// this is scaffolding discarded when the walk ends. They travelled as six separate `&mut` parameters before,
+/// this is scaffolding discarded when the walk ends. They traveled as six separate `&mut` parameters before,
 /// which made the recursive signature ten arguments wide and gave no clue which of them a caller was meant to
 /// read afterwards.
 #[derive(Default)]

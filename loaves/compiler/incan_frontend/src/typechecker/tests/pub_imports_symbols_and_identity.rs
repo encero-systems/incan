@@ -441,16 +441,16 @@ def build() -> str:
 #[test]
 fn test_pub_imported_enum_methods_and_trait_adoption_typecheck() {
     let source = r#"
-from pub::mylib import Status, Labelled
+from pub::mylib import Status, Labeled
 
 def label_status(status: Status) -> str:
   return status.label()
 
-def keep_labelled[T with Labelled](value: T) -> T:
+def keep_labeled[T with Labeled](value: T) -> T:
   return value
 
 def keep_status(status: Status) -> Status:
-  return keep_labelled(status)
+  return keep_labeled(status)
 "#;
     let result = check_str_with_library_index(source, library_index_with_mylib_exports());
     assert!(

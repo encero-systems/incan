@@ -1967,7 +1967,7 @@ impl CodegraphBuilder {
             }
             Expr::MethodCall(receiver, method, type_args, args) => {
                 // `helpers.make_widget(..)` parses as a method call, but it is a call into an imported module, not a
-                // method on a value. Labelling it by the bare method name loses which module answers the call and
+                // method on a value. Labeling it by the bare method name loses which module answers the call and
                 // makes it indistinguishable from a local `make_widget(..)` in the same file.
                 let qualified;
                 let callee_label = if Self::receiver_names_an_imported_module(module, receiver)
@@ -2295,7 +2295,7 @@ impl CodegraphBuilder {
     /// Return whether a method-call receiver names a type this module declares.
     ///
     /// `Signal.Ready()` and `Widget.build()` parse as method calls on a bare identifier, but the identifier is a type,
-    /// not a value. Labelling those by the bare member name loses which type answers the call and makes a variant
+    /// not a value. Labeling those by the bare member name loses which type answers the call and makes a variant
     /// indistinguishable from any other `Ready` in the file, so record the receiver the source wrote. A receiver that
     /// is an ordinary value keeps the bare member name: `user.save()` is a method on a value, not a qualified path.
     fn receiver_names_a_declared_type(module: &ParsedModule, receiver: &Spanned<Expr>) -> bool {
@@ -2981,7 +2981,7 @@ fn record_degraded(record: &CodegraphRecord) -> bool {
 /// Construct a deterministic id for one capability declaration.
 ///
 /// Module path, declaration name, and span start together stay unique within an export without depending on the
-/// order modules were analysed in, which is what keeps a JSONL export byte-stable between runs.
+/// order modules were analyzed in, which is what keeps a JSONL export byte-stable between runs.
 fn capability_record_id(identity: &CanonicalSymbolId, anchor_start: usize) -> String {
     let module = identity.module_path().map(|path| path.join(".")).unwrap_or_default();
     format!(
@@ -4374,7 +4374,7 @@ pub def pick(value: int, fallback: int) -> int:
         assert_eq!(
             incan.1,
             CodegraphLanguage::Incan,
-            "an ordinary Incan import must not be relabelled by this change"
+            "an ordinary Incan import must not be relabeled by this change"
         );
         Ok(())
     }
