@@ -845,6 +845,160 @@ def main() -> None:
     );
 }
 
+/// #1716: an `Fn`-family marker lowers to a callable bound by its parameter count, and the callable vocabulary stops
+/// at two parameters. A marker naming more is refused at its declaration with `INCAN-T0106` and the limit in the
+/// message, whether or not anything is ever passed to it; a marker at the limit is still accepted.
+#[test]
+fn test_std_rust_fn_capability_marker_refuses_more_than_two_parameters() {
+    let at_the_limit = r#"
+from std.rust import Fn, FnMut
+
+def run_pair[F with Fn[int, str]](_f: F) -> None:
+  pass
+
+def run_pair_mut[F with FnMut[int, str]](_f: F) -> None:
+  pass
+"#;
+    assert_check_ok(at_the_limit);
+
+    let over_the_limit = r#"
+from std.rust import Fn
+
+def run_triple[F with Fn[int, int, int]](_f: F) -> None:
+  pass
+"#;
+    let errs = check_str_err(
+        over_the_limit,
+        "a three-parameter Fn marker must be refused at its declaration",
+    );
+    let refusal = errs
+        .iter()
+        .find(|error| error.stable_code() == Some("INCAN-T0106"))
+        .unwrap_or_else(|| panic!("expected an INCAN-T0106 refusal; got: {errs:?}"));
+    assert!(
+        refusal
+            .message
+            .contains("Callable marker 'Fn[int, int, int]' on 'F' names 3 parameters; a marker takes at most 2"),
+        "the message names the marker, the parameter and the limit; got: {}",
+        refusal.message
+    );
+    assert!(
+        refusal
+            .hints
+            .iter()
+            .any(|hint| hint.contains("gather the parameters into one model and write 'Fn[ThatModel]'")),
+        "the hint says what to write instead; got: {:?}",
+        refusal.hints
+    );
+
+    let method_over_the_limit = r#"
+from std.rust import FnOnce
+
+class Runner:
+  count: int
+
+  def run[F with FnOnce[int, int, int]](self, _f: F) -> None:
+    pass
+"#;
+    let errs = check_str_err(
+        method_over_the_limit,
+        "a three-parameter marker on a method must be refused",
+    );
+    assert!(
+        errs.iter().any(|error| error.stable_code() == Some("INCAN-T0106")),
+        "expected an INCAN-T0106 refusal on the method's type parameter; got: {errs:?}"
+    );
+}
+
+/// #1716: a marker leaves its return type to the call that passes the value, and only a function or method has such
+/// a call. On a nominal declaration's type parameter the marker is refused with `INCAN-T0106`, naming the callable
+/// trait that spells the return type; the same marker on a method of that declaration stays accepted.
+#[test]
+fn test_std_rust_fn_capability_marker_refused_on_nominal_type_parameters() {
+    let nominal_owners = [
+        (
+            "model",
+            r#"
+from std.rust import Fn
+
+model Holder[F with Fn[int]]:
+  callback: F
+"#,
+        ),
+        (
+            "class",
+            r#"
+from std.rust import FnMut
+
+class Runner[F with FnMut[int, str]]:
+  callback: F
+"#,
+        ),
+        (
+            "enum",
+            r#"
+from std.rust import FnOnce
+
+enum Step[F with FnOnce[int]]:
+  Run(F)
+  Skip
+"#,
+        ),
+        (
+            "trait",
+            r#"
+from std.rust import Fn
+
+trait Applies[F with Fn[int]]:
+  def apply(self, f: F) -> None: ...
+"#,
+        ),
+    ];
+    for (owner_kind, source) in nominal_owners {
+        let errs = check_str_err(source, "a callable marker on a nominal type parameter must be refused");
+        let refusal = errs
+            .iter()
+            .find(|error| error.stable_code() == Some("INCAN-T0106"))
+            .unwrap_or_else(|| panic!("expected an INCAN-T0106 refusal on the {owner_kind}; got: {errs:?}"));
+        assert!(
+            refusal.message.contains("cannot bound type parameter 'F' of ") && refusal.message.contains(owner_kind),
+            "the message names the declaration kind; got: {}",
+            refusal.message
+        );
+        assert!(
+            refusal
+                .hints
+                .iter()
+                .any(|hint| hint.contains("from std.traits.callable")),
+            "the hint names the callable trait to write instead; got: {:?}",
+            refusal.hints
+        );
+    }
+
+    let model_hint = check_str_err(nominal_owners[0].1, "the model program must be refused")
+        .into_iter()
+        .find(|error| error.stable_code() == Some("INCAN-T0106"))
+        .map(|error| error.hints)
+        .unwrap_or_default();
+    assert!(
+        model_hint
+            .iter()
+            .any(|hint| hint.contains("'Callable1[int, R]'") && hint.contains("'(int) -> R'")),
+        "the hint spells the one-parameter callable trait and the function type; got: {model_hint:?}"
+    );
+
+    let method_on_nominal = r#"
+from std.rust import Fn
+
+model Holder:
+  value: int
+
+  def apply[F with Fn[int]](self, _f: F) -> None:
+    pass
+"#;
+    assert_check_ok(method_on_nominal);
+}
+
 #[test]
 fn test_structural_coercion_option_int_to_option_i64() {
     let checker = TypeChecker::new();

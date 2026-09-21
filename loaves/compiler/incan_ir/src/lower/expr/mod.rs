@@ -684,7 +684,7 @@ impl AstLowering {
                     }
                 } else if stdlib::stdlib_json_trait_id(&trait_name).is_some() {
                     trait_name
-                } else if let Some(rust_path) = trait_bounds::incan_to_rust(&trait_name) {
+                } else if let Some(rust_path) = self.rust_mapped_builtin_trait_path(&trait_name) {
                     rust_path.to_string()
                 } else if let Some(segments) = stdlib_module {
                     self.lower_stdlib_trait_dispatch_path(segments, &declaration_name, receiver)
@@ -744,7 +744,8 @@ impl AstLowering {
     /// `json.Serialize` for a module-qualified one. A stdlib dispatch path is built from the declaring module plus the
     /// declaration name, so the spelling is resolved exactly as adopted-trait lowering resolves it -- through the
     /// import identity the frontend proved (#1431), else the written import alias -- and an alias never reaches the
-    /// generated path (#1712). A spelling with no import behind it is its own declaration name.
+    /// generated path (#1712). A spelling with no import behind it is its own declaration name. The Rust-mapped
+    /// builtins (`Eq` to `PartialEq`) are resolved the same way by [`Self::rust_mapped_builtin_trait_path`].
     fn dispatch_trait_declaration_name(&self, visible_name: &str) -> String {
         let (_, declaration_name) = self.canonical_trait_identity(visible_name);
         declaration_name.unwrap_or_else(|| visible_name.to_string())

@@ -3,7 +3,8 @@
 use std::collections::{HashMap, HashSet};
 
 use super::TypeChecker;
-use crate::diagnostics::errors::GenericBoundTarget;
+use crate::ast::TypeParam;
+use crate::diagnostics::errors::{self, CallableMarkerRefusal, GenericBoundTarget};
 use crate::resolved_type_subst::substitute_resolved_type;
 use crate::symbols::{ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo};
 use crate::typechecker::helpers::collection_type_id;
@@ -16,6 +17,20 @@ use incan_lang::lang::trait_capabilities::{
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::types::numerics;
+
+/// Which declaration's type parameters [`TypeChecker::refuse_unsupported_callable_markers`] is reading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::typechecker) enum CallableMarkerOwner<'a> {
+    /// A function or method: a call site exists to determine a marker's return type.
+    Callable,
+    /// A model, class, enum, trait, newtype or type alias, named by its declaration keyword and name.
+    Nominal {
+        /// The declaration keyword as the source spells it.
+        kind: &'a str,
+        /// The declaration's name.
+        name: &'a str,
+    },
+}
 
 impl TypeChecker {
     /// Render a type-parameter bound with call-site substitutions applied.
@@ -172,6 +187,60 @@ impl TypeChecker {
             .zip(&bound.type_args)
             .all(|(actual, expected)| self.types_compatible(&actual.ty, &substitute_resolved_type(expected, bindings)));
         Some(params_match)
+    }
+
+    /// Refuse the RFC 041 `Fn`-family markers a declaration's type parameters carry where no bound can stand for
+    /// them (#1716).
+    ///
+    /// A marker lowers to the canonical `CallableN` bound by its parameter count, with the return type left to the
+    /// call that passes the value. Two shapes have no such bound: a marker naming more parameters than the callable
+    /// vocabulary spells ([`callables::max_arity`]), on any declaration, and a marker on a nominal declaration's
+    /// type parameter (`model Holder[F with Fn[int]]`), whose return type no call can determine. Both are refused
+    /// at the declaration, before a call is checked against them, with the alternative to write in the message.
+    /// The count is checked first, so a nominal owner hears about the count when both apply.
+    pub(in crate::typechecker) fn refuse_unsupported_callable_markers(
+        &mut self,
+        type_params: &[TypeParam],
+        owner: CallableMarkerOwner<'_>,
+    ) {
+        let limit = callables::max_arity();
+        for type_param in type_params {
+            for bound in &type_param.bounds {
+                if !is_rust_callable_capability_bound(&bound.name) {
+                    continue;
+                }
+                let parameter_types = bound
+                    .type_args
+                    .iter()
+                    .map(|arg| arg.node.to_string())
+                    .collect::<Vec<_>>();
+                let marker = if parameter_types.is_empty() {
+                    bound.name.clone()
+                } else {
+                    format!("{}[{}]", bound.name, parameter_types.join(", "))
+                };
+                let refusal = if parameter_types.len() > limit {
+                    CallableMarkerRefusal::ParameterCount {
+                        count: parameter_types.len(),
+                        limit,
+                    }
+                } else if let CallableMarkerOwner::Nominal { kind, name } = owner {
+                    CallableMarkerRefusal::NominalOwner {
+                        owner_kind: kind,
+                        owner_name: name,
+                    }
+                } else {
+                    continue;
+                };
+                self.errors.push(errors::callable_marker_not_supported(
+                    &marker,
+                    &type_param.name,
+                    &parameter_types,
+                    refusal,
+                    type_param.span,
+                ));
+            }
+        }
     }
 
     /// Resolve a checked bound to the canonical source callable trait registry.

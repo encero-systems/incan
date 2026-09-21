@@ -537,6 +537,8 @@ These are Incan-syntax bounds that lower to Rust-native predicates in generated 
 
 The callable markers take the callable's parameter list as their type arguments: `Fn[int]` accepts a callable taking one `int`, `FnMut[int, str]` one taking an `int` and a `str`, and a bare marker one taking nothing. The return type is not part of the marker; it is whatever the value passed at the call site returns. A function whose arity or parameter types differ from the marker is refused by `incan check`.
 
+A marker names at most two parameters, and it bounds a type parameter of a function or method only. `incan check` refuses `Fn[int, int, int]`, and a marker on a model, class, enum, trait, newtype or type alias parameter, with `INCAN-T0106`: for more than two parameters, gather them into one model and write `Fn[ThatModel]`; on a nominal declaration, bound the parameter with `Callable1[int, R]` from `std.traits.callable`, which names the return type, or give the field a function type such as `(int) -> R`.
+
 ```incan
 from std.rust import Fn, FnOnce
 

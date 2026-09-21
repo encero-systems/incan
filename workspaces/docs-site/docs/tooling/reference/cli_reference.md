@@ -138,6 +138,7 @@ Seeded catalog codes:
 - `INCAN-P0001`: Syntax error.
 - `INCAN-T0001`: Type checking error.
 - `INCAN-T0101`: Unreachable code — statements that follow a `return` in the same block. Reported as a warning, so the program still compiles.
+- `INCAN-T0106`: An `Fn`, `FnMut` or `FnOnce` marker from `std.rust` names more than two parameters, or bounds a type parameter of a model, class, enum, trait, newtype or type alias; write at most two, or bound with `Callable1[int, R]` from `std.traits.callable`.
 - `INCAN-I0001`: Import or module resolution error.
 - `INCAN-I0101`: A known SDK provider module belongs to a component disabled by the project.
 - `INCAN-I0102`: The project enabled an SDK component that is unavailable in the active installation.
