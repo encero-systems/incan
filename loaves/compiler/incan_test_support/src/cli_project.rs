@@ -140,7 +140,7 @@ pub fn run_incan_with_env(
 }
 
 /// Run the compiler under test with `envs` added and `removed` variables cleared, for tests that must prove the
-/// compiler's behaviour without one ambient setting.
+/// compiler's behavior without one ambient setting.
 pub fn run_incan_with_env_and_removed(
     current_dir: &Path,
     args: &[&str],
@@ -175,9 +175,44 @@ pub fn configured_incan_command(current_dir: &Path, args: &[&str]) -> Command {
             .env("INCAN_INTERNAL_SDK_PROVIDER_STORE", crate::sdk_provider_store())
             // Explicit provider bakes must not contend with a developer's ambient store when this test binary runs
             // outside the suite.
-            .env("INCAN_HOME", current_dir.join(".incan-test"));
+            .env("INCAN_HOME", standalone_oven_home(current_dir));
     }
     command
+}
+
+/// The project-local Oven home a command run outside the compiler suite gets: `.incan-test` under the directory
+/// it runs in. A provider baked for a consumer must be baked into the consumer's home, not its own, or the
+/// consumer's later commands do not find the provider's Loaf and fall back to compiling the whole closure; a caller
+/// that bakes a provider on a consumer's behalf passes this home for the consumer's root to
+/// [`run_guarded_oven_bake_with_home`].
+pub fn standalone_oven_home(project_root: &Path) -> PathBuf {
+    project_root.join(".incan-test")
+}
+
+/// Bake one project with **no** Cargo authority: `incan oven bake --project .` in `current_dir`, sharing the
+/// caller-selected standalone Oven home outside the compiler suite, and under the suite exactly the environment an
+/// ordinary command gets, so any Cargo the bake reaches for is the scheduler's exit-97 guard.
+///
+/// This is the bake for a provider whose Loaf the Oven serves from the active standard-library Loaf without Cargo:
+/// an Incan library with no dependencies of its own. A provider that needs the compatibility publisher (one that
+/// itself declares `[dependencies]`, or a program whose `rust::` imports need Rust inspection) fails here under the
+/// suite, loudly and attributed to the caller, rather than being admitted to Cargo. [`run_explicit_oven_bake`] is
+/// the other bake: it opts one command into the suite's explicit-bake Cargo, which only a root registered in
+/// `OvenCompilerSuiteTargetCapabilities` receives.
+pub fn run_guarded_oven_bake_with_home(
+    current_dir: &Path,
+    standalone_incan_home: Option<&Path>,
+) -> Result<Output, Box<dyn std::error::Error>> {
+    let mut command = configured_incan_command(current_dir, &["oven", "bake", "--project", "."]);
+    if !crate::oven_compiler_suite_is_active()
+        && let Some(incan_home) = standalone_incan_home
+    {
+        command.env("INCAN_HOME", incan_home);
+    }
+    let timing = crate::command_timing_started();
+    let output = command.output()?;
+    crate::report_command_timing("incan oven bake --project . (Cargo-guarded)", timing);
+    Ok(output)
 }
 
 /// Return a Clang executable suitable for a header-only C ABI verifier fixture, when this host has one.

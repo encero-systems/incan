@@ -348,9 +348,36 @@ class GateTests(unittest.TestCase):
         failures = collect.check(self.corpus(), unsorted_roots, None)
         self.assertTrue(any(f.startswith("`fixture_roots` is not sorted by key: `loaves/a/fixtures`") for f in failures), failures)
 
+    def test_sort_orders_every_section_and_nested_tests_and_is_idempotent(self) -> None:
+        import json
+        import tempfile
+
+        unsorted = {
+            "schema": 1,
+            "fixture_roots": {"loaves/b/fixtures": {"disposition": "keep"}, "loaves/a/fixtures": {"disposition": "keep"}},
+            "files": {
+                "loaves/x/src/lib.rs": {"disposition": "keep", "tests": {"zeta": {"twin": ""}, "alpha": {"twin": ""}}},
+                "loaves/a.rs": {"disposition": "keep"},
+            },
+        }
+        ordered = collect.sorted_dispositions(unsorted)
+        self.assertEqual(list(ordered["fixture_roots"]), ["loaves/a/fixtures", "loaves/b/fixtures"])
+        self.assertEqual(list(ordered["files"]), ["loaves/a.rs", "loaves/x/src/lib.rs"])
+        self.assertEqual(list(ordered["files"]["loaves/x/src/lib.rs"]["tests"]), ["alpha", "zeta"])
+        self.assertEqual(ordered["schema"], 1)
+        self.assertIsNone(collect.unsorted_section_failure(ordered, "files"))
+        self.assertIsNone(collect.unsorted_section_failure(ordered, "fixture_roots"))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "dispositions.json"
+            collect.write_dispositions(ordered, path)
+            written = path.read_text(encoding="utf-8")
+            self.assertEqual(written, json.dumps(ordered, indent=2, ensure_ascii=False) + "\n")
+            self.assertEqual(collect.main(["--sort", "--dispositions", str(path)]), 0)
+            self.assertEqual(path.read_text(encoding="utf-8"), written)
+
 
 class BehaviorFixtureTwinTests(unittest.TestCase):
-    """A behaviour fixture and the row it retires must name each other, and a fixture twin must exist."""
+    """A behavior fixture and the row it retires must name each other, and a fixture twin must exist."""
 
     SOURCE = (
         "#[test]\nfn generated_shape() {\n    let code = generate_rust(\"x\");\n    assert!(code.contains(\"fn \"));\n}\n\n"

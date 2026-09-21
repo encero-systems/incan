@@ -1,6 +1,6 @@
-//! Behaviour fixtures: Incan programs that carry their own expected observables, and the runner that proves them.
+//! Behavior fixtures: Incan programs that carry their own expected observables, and the runner that proves them.
 //!
-//! A behaviour fixture is the route-agnostic twin of a retire-class test (#1561, test corpus). It is an Incan program
+//! A behavior fixture is the route-agnostic twin of a retire-class test (#1561, test corpus). It is an Incan program
 //! under `loaves/compiler/incan_test_support/fixtures/behavior/<area>/` whose leading comment block says what the
 //! program proves, which retire tests it stands in for, and what a run of it must show: its stdout, its exit code, or
 //! the diagnostic that must refuse it. Nothing in the format names a route: today the runner drives the program
@@ -8,11 +8,14 @@
 //! the fixtures do not change. The contributor-facing description of the format is the family's `README.md`.
 //!
 //! The runner discovers every fixture in an area, materializes each one as a scratch project under
-//! `INCAN_TEST_TMP_ROOT`, runs it, compares the observables and reports **every** failing fixture with its path and
-//! its expected-versus-actual, so one libtest case per area still attributes a failure to the fixture that caused it.
-//! Roots are thin: `loaves/toolchain/incan-cli/tests/behavior_<area>_tests.rs` calls [`assert_area_green`] and nothing
-//! else. The inventory (`scripts/test_inventory/collect.py`) reads the same header for its `# retires:` lines, so the
-//! header grammar here and the collector's reader must agree.
+//! `INCAN_TEST_TMP_ROOT`, bakes the in-fixture providers a project fixture declares (its `loaf.toml` path
+//! dependencies, in dependency order, with no Cargo authority: a provider whose bake needs Cargo fails under the
+//! suite's guard, attributed to the fixture), runs it, compares the observables and reports **every** failing
+//! fixture with its path and its expected-versus-actual, so one libtest case per area still attributes a failure to
+//! the fixture that caused it. Roots are thin: `loaves/toolchain/incan-cli/tests/behavior_<area>_tests.rs` calls
+//! [`assert_area_green`] and nothing else, and no behavior root is registered for a suite capability. The inventory
+//! (`scripts/test_inventory/collect.py`) reads the same header for its `# retires:` lines, so the header grammar here
+//! and the collector's reader must agree.
 
 use std::error::Error;
 use std::fmt;
@@ -20,9 +23,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
-use crate::cli_project::{run_explicit_oven_bake, run_incan, write_minimal_project};
+use crate::cli_project::{
+    run_explicit_oven_bake, run_guarded_oven_bake_with_home, run_incan, standalone_oven_home, write_minimal_project,
+};
 
-/// Directory under [`crate::fixtures_dir`] that holds every behaviour-fixture area.
+/// Directory under [`crate::fixtures_dir`] that holds every behavior-fixture area.
 pub const BEHAVIOR_FIXTURES_ROOT: &str = "behavior";
 
 /// The entrypoint every materialized fixture project runs and checks.
@@ -89,7 +94,7 @@ pub enum Expectation {
 pub struct Header {
     /// One line saying what the program proves (`# behavior:`).
     pub behavior: String,
-    /// The retire-class tests this fixture is the twin of, as `path::fn` keys the inventory recognises (`# retires:`).
+    /// The retire-class tests this fixture is the twin of, as `path::fn` keys the inventory recognizes (`# retires:`).
     pub retires: Vec<String>,
     /// What a run must show.
     pub expectation: Expectation,
@@ -107,7 +112,21 @@ pub enum FixtureLayout {
     Project,
 }
 
-/// One discovered and parsed behaviour fixture.
+/// One in-fixture provider of a project fixture: a path dependency its `loaf.toml` declares (directly or through
+/// another provider) whose project lives under the fixture directory. The runner bakes every provider before the
+/// program runs, because a consumer refuses to run until its `pub::` providers have published a package Loaf. The
+/// bake carries no Cargo authority: an Incan library with no dependencies of its own is served from the active
+/// standard-library Loaf without Cargo, and a provider that needs more (one that itself declares `[dependencies]`)
+/// fails its fixture under the compiler suite's Cargo guard rather than being admitted to Cargo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Provider {
+    /// The dependency's name in the manifest that first declared it (`pub::<name>` on the consumer's side).
+    pub name: String,
+    /// The provider's directory relative to the fixture directory, lexically normalized (`deps/querykit`).
+    pub path: PathBuf,
+}
+
+/// One discovered and parsed behavior fixture.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BehaviorFixture {
     /// The fixture file or directory, absolute.
@@ -118,6 +137,9 @@ pub struct BehaviorFixture {
     pub layout: FixtureLayout,
     /// The parsed header.
     pub header: Header,
+    /// The in-fixture providers a project fixture declares, in bake order: a provider comes after the providers it
+    /// depends on. Empty for the other layouts and for a project without path dependencies.
+    pub providers: Vec<Provider>,
 }
 
 impl BehaviorFixture {
@@ -210,6 +232,13 @@ pub fn parse_header(text: &str) -> Result<Header, String> {
         // ---- Bare `#`: an empty expected line inside a block, a separator outside one ----
         if rest.trim().is_empty() {
             if let Some((key, _)) = open_block {
+                // Only a bare `#` is the empty expected line; `#` and whitespace would be an expected line made of
+                // whitespace, which the block-item rule refuses, so it is refused here too rather than coerced.
+                if !rest.is_empty() {
+                    return Err(format!(
+                        "line {number}: inside the `{key}:` block, `#` followed only by whitespace is an expected line that ends with whitespace, which a report cannot show; a bare `#` is the empty expected line"
+                    ));
+                }
                 push_block_item(key, number, String::new(), &mut stdout_exact, &mut stdout_contains)?;
             }
             continue;
@@ -479,7 +508,7 @@ fn push_block_item(
 // Discovery
 // ============================================================
 
-/// The directory of one behaviour-fixture area, such as `behavior/smoke`.
+/// The directory of one behavior-fixture area, such as `behavior/smoke`.
 pub fn area_dir(area: &str) -> PathBuf {
     crate::fixture(BEHAVIOR_FIXTURES_ROOT).join(area)
 }
@@ -569,12 +598,123 @@ pub fn parse_fixture(path: &Path) -> Result<BehaviorFixture, FixtureFormatError>
         path: checkout_relative(&header_file),
         reason,
     })?;
+    let providers = match layout {
+        FixtureLayout::Project => provider_plan(path).map_err(refuse)?,
+        FixtureLayout::SingleFile | FixtureLayout::Modules => Vec::new(),
+    };
     Ok(BehaviorFixture {
         path: path.to_path_buf(),
         name,
         layout,
         header,
+        providers,
     })
+}
+
+// ============================================================
+// Providers
+// ============================================================
+
+/// The in-fixture providers of a project fixture, in bake order.
+///
+/// The fixture's `loaf.toml` is read the way the compiler reads it (`oven_model::manifest::ProjectManifest`), and
+/// every `[dependencies]` path entry is followed: the provider's own manifest is read in turn, so a provider that
+/// depends on another provider is planned after it. A dependency whose resolved path leaves the fixture directory
+/// is refused (the fixture would depend on something the runner does not copy), and so is a cycle, named as the
+/// chain that closes it; a fixture manifest the compiler cannot read is refused with the compiler's own words. A
+/// *provider's* manifest that cannot be read is not refused here: the provider is planned with no dependencies of
+/// its own and its bake reports what is wrong, attributed to the fixture like every other bake failure, so one
+/// broken provider fails one fixture rather than the whole area.
+fn provider_plan(fixture_dir: &Path) -> Result<Vec<Provider>, String> {
+    let mut plan = Vec::new();
+    let mut visiting = Vec::new();
+    plan_providers_of(fixture_dir, Path::new(""), &mut visiting, &mut plan)?;
+    Ok(plan)
+}
+
+/// Plan the providers declared by the manifest at `fixture_dir/relative` (the fixture itself when `relative` is
+/// empty), depth first, so each provider lands in `plan` after the providers it depends on. `visiting` is the chain
+/// of provider directories currently being followed, which is how a cycle is detected and named.
+fn plan_providers_of(
+    fixture_dir: &Path,
+    relative: &Path,
+    visiting: &mut Vec<PathBuf>,
+    plan: &mut Vec<Provider>,
+) -> Result<(), String> {
+    let manifest_path = fixture_dir.join(relative).join("loaf.toml");
+    let manifest = match oven_model::manifest::ProjectManifest::load(&manifest_path) {
+        Ok(manifest) => manifest,
+        Err(error) if relative.as_os_str().is_empty() => {
+            return Err(format!("cannot read the fixture's `loaf.toml`: {error}"));
+        }
+        // A provider the compiler refuses: its bake says why, attributed to the fixture.
+        Err(_) => return Ok(()),
+    };
+    let mut dependencies: Vec<_> = manifest.library_dependencies().values().collect();
+    dependencies.sort_by(|left, right| left.library_name.cmp(&right.library_name));
+    for dependency in dependencies {
+        let resolved = normalize_lexically(&dependency.path);
+        let Ok(provider_relative) = resolved.strip_prefix(fixture_dir) else {
+            return Err(format!(
+                "`{}` in `{}` resolves to `{}`, outside the fixture directory; an in-fixture provider lives under the fixture (`deps/{}`), because only the fixture directory is copied into the scratch project",
+                dependency.library_name,
+                display_relative(manifest_path.strip_prefix(fixture_dir).unwrap_or(&manifest_path)),
+                resolved.display(),
+                dependency.library_name
+            ));
+        };
+        let provider_relative = provider_relative.to_path_buf();
+        if provider_relative.as_os_str().is_empty() || visiting.contains(&provider_relative) {
+            let mut chain: Vec<String> = std::iter::once(String::from("<fixture>"))
+                .chain(visiting.iter().map(|directory| display_relative(directory)))
+                .collect();
+            chain.push(if provider_relative.as_os_str().is_empty() {
+                String::from("<fixture>")
+            } else {
+                display_relative(&provider_relative)
+            });
+            return Err(format!(
+                "the path dependencies form a cycle: {}; a provider cannot depend on a project that depends on it, because neither could be baked first",
+                chain.join(" -> ")
+            ));
+        }
+        if plan.iter().any(|provider| provider.path == provider_relative) {
+            continue;
+        }
+        visiting.push(provider_relative.clone());
+        plan_providers_of(fixture_dir, &provider_relative, visiting, plan)?;
+        visiting.pop();
+        plan.push(Provider {
+            name: dependency.library_name.clone(),
+            path: provider_relative,
+        });
+    }
+    Ok(())
+}
+
+/// Resolve `.` and `..` components without touching the file system, so a provider path such as `../money`
+/// declared by another provider is compared with the fixture directory as the path it names.
+fn normalize_lexically(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push(component);
+                }
+            }
+            other => normalized.push(other),
+        }
+    }
+    normalized
+}
+
+/// A fixture-relative path with `/` separators, for messages.
+fn display_relative(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 // ============================================================
@@ -624,7 +764,7 @@ impl AreaReport {
     /// The report as one message: a headline, then each failure with its expected-versus-actual.
     pub fn message(&self) -> String {
         let mut out = format!(
-            "{} of {} behaviour fixture(s) failed in {}\n",
+            "{} of {} behavior fixture(s) failed in {}\n",
             self.failures.len(),
             self.passed.len() + self.failures.len(),
             self.area
@@ -700,11 +840,17 @@ pub fn materialize(fixture: &BehaviorFixture, project_root: &Path) -> Result<(),
 
 /// Run one fixture in its own scratch project and compare what it showed with what its header declares.
 ///
-/// A refused-program fixture goes through `incan check --format json` only. A run fixture is baked first outside the
-/// compiler suite (a fresh project has no Loaf authority until then; under the suite the sealed stdlib Loaf serves)
-/// and then run through `incan run`, which is the legacy route today and whatever slice 7 makes it tomorrow. The
-/// scratch project is deleted when this returns, pass or fail, so the stderr the report carries is all a failure
-/// leaves behind.
+/// A refused-program fixture goes through `incan check --format json` only; its providers are not baked, because
+/// `incan check` prepares an unbaked provider's metadata itself. A run fixture first has every in-fixture provider
+/// baked, in the order the plan lists them (a consumer refuses to run until its `pub::` providers have published a
+/// package Loaf), with no Cargo authority: outside the compiler suite the bake publishes into the fixture project's
+/// own standalone Oven home (a provider baked into its own home would be invisible to the consumer's run), and under
+/// the suite any Cargo the bake reaches for is the scheduler's guard, so a provider that needs Cargo fails its
+/// fixture loudly. The project itself is then baked outside the suite only (a fresh project has no Loaf authority
+/// until then; under the suite the sealed standard-library Loaf serves), and run through `incan run`, which is the
+/// legacy route today and whatever slice 7 makes it tomorrow. A bake that fails is a failure of the fixture, with
+/// the bake's output, like any other mismatch. The scratch project is deleted when this returns, pass or fail, so
+/// the stderr the report carries is all a failure leaves behind.
 pub fn run_fixture(fixture: &BehaviorFixture, scratch_root: &Path) -> Result<Outcome, Box<dyn Error>> {
     let project = tempfile::Builder::new()
         .prefix(&format!("behavior-{}-", fixture.name))
@@ -727,21 +873,43 @@ pub fn run_fixture(fixture: &BehaviorFixture, scratch_root: &Path) -> Result<Out
             Ok(outcome(compare_refusal(diagnostics, &check)))
         }
         Expectation::Run { stdout, exit_code } => {
+            // ---- Providers first, in dependency order, Cargo-guarded, into the project's own Oven home ----
+            let home = standalone_oven_home(project.path());
+            for provider in &fixture.providers {
+                let what = format!(
+                    "the provider `{}` (`{}`)",
+                    provider.name,
+                    display_relative(&provider.path)
+                );
+                let bake = run_guarded_oven_bake_with_home(&project.path().join(&provider.path), Some(&home))?;
+                if let Err(detail) = bake_result(&what, &bake) {
+                    return Ok(outcome(Err(detail)));
+                }
+            }
+            // ---- The project itself, outside the suite only ----
             if !crate::oven_compiler_suite_is_active() {
                 let bake = run_explicit_oven_bake(project.path())?;
-                if !bake.status.success() {
-                    return Ok(outcome(Err(format!(
-                        "the standalone bake that prepares the project failed (exit {})\nstdout:\n{}stderr:\n{}",
-                        describe_status(&bake),
-                        indent_block(&String::from_utf8_lossy(&bake.stdout)),
-                        indent_block(&String::from_utf8_lossy(&bake.stderr))
-                    ))));
+                if let Err(detail) = bake_result("the project", &bake) {
+                    return Ok(outcome(Err(detail)));
                 }
             }
             let run = run_incan(project.path(), &["run", ENTRYPOINT])?;
             Ok(outcome(compare_run(stdout, *exit_code, &run)))
         }
     }
+}
+
+/// Lay out a failed bake for the fixture's failure report; a successful one is `Ok`.
+fn bake_result(what: &str, bake: &Output) -> Result<(), String> {
+    if bake.status.success() {
+        return Ok(());
+    }
+    Err(format!(
+        "baking {what} failed (exit {})\nstdout:\n{}stderr:\n{}",
+        describe_status(bake),
+        indent_block(&String::from_utf8_lossy(&bake.stdout)),
+        indent_block(&String::from_utf8_lossy(&bake.stderr))
+    ))
 }
 
 /// Compare a check report with the diagnostics a refused fixture declares.
@@ -888,7 +1056,7 @@ pub fn run_area(area: &str) -> Result<AreaReport, Box<dyn Error>> {
     Ok(report)
 }
 
-/// The one call a behaviour root makes: run the area and fail with every failing fixture's expected-versus-actual.
+/// The one call a behavior root makes: run the area and fail with every failing fixture's expected-versus-actual.
 ///
 /// A harness error (an unreadable fixture, a missing scratch root, an area over [`MAX_FIXTURES_PER_AREA`]) comes
 /// back as `Err`; a fixture that ran and did not show what it declared is an assertion failure, so libtest prints
@@ -955,12 +1123,13 @@ mod tests {
         Ok(())
     }
 
-    /// A bare `#` between directives separates; the header ends at the first non-comment line, after which ordinary
-    /// comments (indented ones included) and a `key: value` that is not a directive are the program's business.
+    /// A bare `#` between directives separates, and so does `#` with only whitespace outside a block; the header
+    /// ends at the first non-comment line, after which ordinary comments (indented ones included) and a
+    /// `key: value` that is not a directive are the program's business.
     #[test]
     fn separators_and_end_of_header() -> TestResult {
         let header = parse_header(
-            "# behavior: b\n#\n# expect-exit: 0\n\n# note: a comment, not a directive\ndef main() -> None:\n    # expect-exit: 9 would be a directive at column 0\n    pass\n",
+            "# behavior: b\n#\n#   \n# expect-exit: 0\n\n# note: a comment, not a directive\ndef main() -> None:\n    # expect-exit: 9 would be a directive at column 0\n    pass\n",
         )?;
         assert_eq!(
             header.expectation,
@@ -1126,6 +1295,19 @@ mod tests {
                 "# behavior: b\n# expect-stdout-contains:\n#   a\n#   b\t\n",
                 &["line 4", "ends with whitespace"],
             ),
+            // ---- `#` and only whitespace inside a block is not the empty expected line ----
+            (
+                "# behavior: b\n# expect-stdout:\n#   a\n#   \n",
+                &[
+                    "line 4",
+                    "ends with whitespace",
+                    "a bare `#` is the empty expected line",
+                ],
+            ),
+            (
+                "# behavior: b\n# expect-stdout-contains:\n#      \n#   a\n",
+                &["line 3", "ends with whitespace"],
+            ),
         ];
         for (text, expected) in cases {
             let reason = parse_header(text)
@@ -1210,9 +1392,9 @@ mod tests {
         Ok(())
     }
 
-    /// Discovery refuses a stray file and an empty area, and recognises the three layouts.
+    /// Discovery refuses a stray file and an empty area, and recognizes the three layouts.
     #[test]
-    fn discovery_recognises_layouts_and_refuses_strays() -> TestResult {
+    fn discovery_recognizes_layouts_and_refuses_strays() -> TestResult {
         let tmp = tempfile::tempdir()?;
         let area = tmp.path().join("area");
         fs::create_dir_all(&area)?;
@@ -1267,7 +1449,143 @@ mod tests {
         Ok(())
     }
 
-    /// A report names every failing fixture, its behaviour and the mismatch, and lists what passed.
+    /// Write a project (a `loaf.toml` naming `name` with the given `[dependencies]` entries, and an empty
+    /// `src/lib.incn`) at `root`, for the provider-plan tests.
+    fn write_project(root: &Path, name: &str, dependencies: &[(&str, &str)]) -> TestResult {
+        fs::create_dir_all(root.join("src"))?;
+        let mut manifest = format!("[project]\nname = \"{name}\"\nversion = \"0.1.0\"\n");
+        if !dependencies.is_empty() {
+            manifest.push_str("\n[dependencies]\n");
+            for (dependency, path) in dependencies {
+                manifest.push_str(&format!("{dependency} = {{ path = \"{path}\" }}\n"));
+            }
+        }
+        fs::write(root.join("loaf.toml"), manifest)?;
+        fs::write(root.join("src/lib.incn"), "")?;
+        Ok(())
+    }
+
+    /// A project fixture's providers are planned in bake order: a provider's own provider (declared relative to the
+    /// provider, `../money`) comes first, a provider two consumers share is planned once, and the fixture's direct
+    /// dependencies are visited in name order. Single-file and module fixtures plan nothing.
+    #[test]
+    fn provider_plan_orders_providers_before_their_dependents() -> TestResult {
+        let tmp = tempfile::tempdir()?;
+        let area = tmp.path().join("area");
+        let app = area.join("app");
+        write_project(&app, "app", &[("ledger", "deps/ledger"), ("audit", "deps/audit")])?;
+        fs::write(app.join("src/main.incn"), "# behavior: b\n# expect-exit: 0\n")?;
+        write_project(&app.join("deps/ledger"), "ledger", &[("money", "../money")])?;
+        write_project(&app.join("deps/audit"), "audit", &[("money", "./../money/")])?;
+        write_project(&app.join("deps/money"), "money", &[])?;
+        fs::write(area.join("single.incn"), "# behavior: b\n# expect-exit: 0\n")?;
+
+        let fixtures = discover(&area)?;
+        let app = fixtures.iter().find(|f| f.name == "app").ok_or("app not discovered")?;
+        assert_eq!(
+            app.providers,
+            vec![
+                Provider {
+                    name: "money".to_string(),
+                    path: PathBuf::from("deps/money"),
+                },
+                Provider {
+                    name: "audit".to_string(),
+                    path: PathBuf::from("deps/audit"),
+                },
+                Provider {
+                    name: "ledger".to_string(),
+                    path: PathBuf::from("deps/ledger"),
+                },
+            ]
+        );
+        let single = fixtures
+            .iter()
+            .find(|f| f.name == "single")
+            .ok_or("single not discovered")?;
+        assert!(single.providers.is_empty());
+        Ok(())
+    }
+
+    /// A dependency cycle is refused naming the chain; a provider path outside the fixture is refused naming where it
+    /// resolved to; a fixture manifest the compiler cannot read is refused with the compiler's words. A provider
+    /// whose own manifest is unreadable is planned anyway: its bake reports the problem, attributed to the fixture.
+    #[test]
+    fn provider_plan_refuses_cycles_and_escapes_but_not_a_broken_provider() -> TestResult {
+        let tmp = tempfile::tempdir()?;
+
+        let cyclic = tmp.path().join("cyclic");
+        write_project(&cyclic, "cyclic", &[("a", "deps/a")])?;
+        fs::write(cyclic.join("src/main.incn"), "# behavior: b\n# expect-exit: 0\n")?;
+        write_project(&cyclic.join("deps/a"), "a", &[("b", "../b")])?;
+        write_project(&cyclic.join("deps/b"), "b", &[("a", "../a")])?;
+        let error = parse_fixture(&cyclic).err().ok_or("a cycle must be refused")?;
+        assert!(error.reason.contains("form a cycle"), "{error}");
+        assert!(
+            error.reason.contains("<fixture> -> deps/a -> deps/b -> deps/a"),
+            "{error}"
+        );
+
+        let selfish = tmp.path().join("selfish");
+        write_project(&selfish, "selfish", &[("me", ".")])?;
+        fs::write(selfish.join("src/main.incn"), "# behavior: b\n# expect-exit: 0\n")?;
+        let error = parse_fixture(&selfish)
+            .err()
+            .ok_or("a self-dependency must be refused")?;
+        assert!(error.reason.contains("<fixture> -> <fixture>"), "{error}");
+
+        let escaping = tmp.path().join("escaping");
+        write_project(&escaping, "escaping", &[("outside", "../elsewhere")])?;
+        fs::write(escaping.join("src/main.incn"), "# behavior: b\n# expect-exit: 0\n")?;
+        let error = parse_fixture(&escaping)
+            .err()
+            .ok_or("an escaping path must be refused")?;
+        assert!(error.reason.contains("outside the fixture directory"), "{error}");
+        assert!(error.reason.contains("`outside` in `loaf.toml`"), "{error}");
+
+        let unreadable = tmp.path().join("unreadable");
+        fs::create_dir_all(unreadable.join("src"))?;
+        fs::write(unreadable.join("loaf.toml"), "[project\nname = ")?;
+        fs::write(unreadable.join("src/main.incn"), "# behavior: b\n# expect-exit: 0\n")?;
+        let error = parse_fixture(&unreadable)
+            .err()
+            .ok_or("an unreadable manifest must be refused")?;
+        assert!(
+            error.reason.contains("cannot read the fixture's `loaf.toml`"),
+            "{error}"
+        );
+
+        let broken_provider = tmp.path().join("broken_provider");
+        write_project(&broken_provider, "broken_provider", &[("helper", "deps/helper")])?;
+        fs::write(
+            broken_provider.join("src/main.incn"),
+            "# behavior: b\n# expect-exit: 0\n",
+        )?;
+        fs::create_dir_all(broken_provider.join("deps/helper"))?;
+        fs::write(broken_provider.join("deps/helper/loaf.toml"), "[project\nname = ")?;
+        let fixture = parse_fixture(&broken_provider)?;
+        assert_eq!(
+            fixture.providers,
+            vec![Provider {
+                name: "helper".to_string(),
+                path: PathBuf::from("deps/helper"),
+            }]
+        );
+        Ok(())
+    }
+
+    /// Lexical normalization resolves `.` and `..` without the file system and keeps a `..` that climbs past the
+    /// start, so an escaping path still fails to sit under the fixture.
+    #[test]
+    fn lexical_normalization_resolves_dots() {
+        assert_eq!(
+            normalize_lexically(Path::new("/f/deps/ledger/../money/./src")),
+            PathBuf::from("/f/deps/money/src")
+        );
+        assert_eq!(normalize_lexically(Path::new("a/../../b")), PathBuf::from("../b"));
+    }
+
+    /// A report names every failing fixture, its behavior and the mismatch, and lists what passed.
     #[test]
     fn report_message_lists_every_failure() {
         let report = AreaReport {
@@ -1287,7 +1605,7 @@ mod tests {
             ],
         };
         let message = report.message();
-        assert!(message.starts_with("2 of 3 behaviour fixture(s) failed in loaves/x/behavior/smoke"));
+        assert!(message.starts_with("2 of 3 behavior fixture(s) failed in loaves/x/behavior/smoke"));
         assert!(message.contains("--- loaves/x/behavior/smoke/a.incn\nbehavior: a\nstdout differs"));
         assert!(message.contains("--- loaves/x/behavior/smoke/b.incn\nbehavior: b\nexit code: expected 0, got 1"));
         assert!(message.contains("passed:\n  loaves/x/behavior/smoke/ok.incn"));

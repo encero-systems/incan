@@ -176,12 +176,12 @@ impl TypeChecker {
 
     /// Resolve the type of one field on a value typed by a Rust path, as the field is written in Incan source.
     ///
-    /// The path is the value's own `RustPath` spelling; the metadata lookup normalises the `rust::` prefix and any
+    /// The path is the value's own `RustPath` spelling; the metadata lookup normalizes the `rust::` prefix and any
     /// type arguments, exactly as a field read does. Field access and field assignment resolve through this one
     /// lookup, so a field that can be read can also be assigned.
     pub(in crate::typechecker) fn rust_path_field_type(&self, path: &str, field: &str) -> Option<ResolvedType> {
         // Field reads pass the value's path straight to the metadata lookup, which owns the `rust::` and generic
-        // normalisation; a bare `demo::Holder` has no `<...>` to strip and must resolve exactly like a read does.
+        // normalization; a bare `demo::Holder` has no `<...>` to strip and must resolve exactly like a read does.
         let metadata = self.rust_item_metadata_for_path(path)?;
         let RustItemKind::Type(info) = &metadata.kind else {
             return None;
@@ -4095,7 +4095,7 @@ impl TypeChecker {
     /// A type application and a subscript are the same syntax, so the arguments arrive as an expression rather
     /// than as types: `Deque[str]` is an index whose index is an identifier, and `Dict[str, int]` one whose index
     /// is a tuple. Only identifiers and nested applications are read; anything else is a genuine subscript and
-    /// returns `None` so the caller keeps its existing behaviour rather than inventing a type from a value.
+    /// returns `None` so the caller keeps its existing behavior rather than inventing a type from a value.
     fn type_arguments_from_index_expression(&self, index: &Spanned<Expr>) -> Option<Vec<ResolvedType>> {
         let elements: Vec<&Spanned<Expr>> = match &index.node {
             Expr::Tuple(items) => items.iter().collect(),

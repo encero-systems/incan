@@ -579,9 +579,9 @@ impl IrCheckedCFunction {
 pub struct IrProgram {
     /// Top-level declarations
     pub declarations: Vec<IrDecl>,
-    /// Compiler-owned initialisation statements that run after this module's statics have been constructed.
+    /// Compiler-owned initialization statements that run after this module's statics have been constructed.
     ///
-    /// This is intentionally distinct from declaration initialisers: a statement here may mutate an already-created
+    /// This is intentionally distinct from declaration initializers: a statement here may mutate an already-created
     /// static through the same storage semantics that source method calls use.
     pub module_init: Vec<IrStmt>,
     /// Source module path for this program when known.

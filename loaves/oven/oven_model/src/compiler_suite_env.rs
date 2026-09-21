@@ -72,6 +72,9 @@ impl OvenCompilerSuiteTargetCapabilities {
                     "loaves/compiler/incan_driver/tests/generated_cache_integration.rs"
                 )
         );
+        // No behavior-fixture root (`loaves/toolchain/incan-cli/tests/behavior_*_tests.rs`) is registered here, by
+        // design: their programs run on the sealed stdlib Loaf, and the provider bakes of the `cli_dependencies`
+        // area run with no Cargo authority, so a bake that reaches for Cargo meets the scheduler's guard instead.
         let explicit_bake_cargo = matches!(
             (package_name, target_kind, source_relative_path),
             (

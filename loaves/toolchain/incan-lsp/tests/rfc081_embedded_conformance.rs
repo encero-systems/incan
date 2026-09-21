@@ -1,6 +1,6 @@
 //! End-to-end conformance for RFC 081's six accepted embedded-fragment submodes (#1022).
 //!
-//! RFC 081 fixes a catalogue of exactly six submodes — `Markup`, `Style`, `RawText`, `RegexTemplate`,
+//! RFC 081 fixes a catalog of exactly six submodes — `Markup`, `Style`, `RawText`, `RegexTemplate`,
 //! `SelectorDeclarationValue`, `TypePosition` — and issue #1022 asks for each accepted surface to be proven end to
 //! end rather than only at the parser. The parser fixtures in `loaves/kernel/incan_syntax/src/parser/embedded/tests.rs`
 //! already pin each grammar's accept and reject boundaries; this suite picks the artifact up where they leave off
@@ -14,7 +14,7 @@
 //! 6. lowering plus emission, which must reach the emission boundary and refuse there explicitly;
 //! 7. both formatter modes, structural and layout-preserving, each idempotent across two passes.
 //!
-//! Every leg runs for every submode from one table, so a submode cannot be added to the catalogue while quietly
+//! Every leg runs for every submode from one table, so a submode cannot be added to the catalog while quietly
 //! working at only some stages.
 
 use std::collections::HashMap;

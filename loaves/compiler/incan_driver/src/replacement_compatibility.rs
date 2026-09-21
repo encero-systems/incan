@@ -4,7 +4,7 @@
 //! collects feature and implementation-requirement registrations from the compiler boundaries that own them. During
 //! the 0.5-to-replacement migration, it also carries a deliberately temporary bootstrap crosswalk for work that has
 //! not yet reached an owning implementation boundary. The collector makes that debt and its retirement conditions
-//! visible; it is not a permanent second catalogue of language features.
+//! visible; it is not a permanent second catalog of language features.
 //!
 //! The control plane moves a frozen release baseline through Body IR, direct replacement execution, and independent
 //! comparison without collapsing those facts into one traffic-light status. It intentionally contains no executor
@@ -27,7 +27,7 @@ const FROZEN_V0_5_CAPABILITIES_PATH: &str =
     "loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn";
 const LIVE_FEATURES_SOURCE: &str = "loaves/stdlib/core/src/features.incn";
 
-/// The same catalogue's path *at the v0.5.0 tag*, before the #1228 rename.
+/// The same catalog's path *at the v0.5.0 tag*, before the #1228 rename.
 ///
 /// The release pin is verified by reading the blob out of that tag, so it has to name the file as that tag spells it.
 /// Using the live path here would silently find nothing and pin against an empty result.
@@ -854,7 +854,7 @@ pub fn replacement_compatibility_registry() -> ReplacementCompatibilityRegistry 
 /// Join module-owned compatibility contributions into one validated projection input.
 ///
 /// Keeping this collector small and explicit is intentional: adding a compiler boundary requires registering that
-/// boundary here, but never adding a feature row to a second central catalogue.
+/// boundary here, but never adding a feature row to a second central catalog.
 pub fn collect_replacement_compatibility_contributions(
     contributions: Vec<ReplacementCompatibilityContribution>,
 ) -> ReplacementCompatibilityRegistry {
@@ -1226,7 +1226,7 @@ pub fn validate_replacement_compatibility_registry(
 /// Validate that the collected projection still knows where every feature and requirement is owned.
 ///
 /// The central collector deliberately validates provenance instead of accepting an anonymous feature vector. That
-/// prevents a future edit from reintroducing a permanent hand-maintained catalogue under a different field name.
+/// prevents a future edit from reintroducing a permanent hand-maintained catalog under a different field name.
 fn validate_registration_sources(
     sources: &[CompatibilityRegistrationSource],
     feature_ids: &BTreeSet<&str>,
@@ -1827,7 +1827,7 @@ pub fn render_developer_projection(
     output.push_str("# Replacement compatibility inventory\n\n");
     output.push_str("!!! warning \"Generated control-plane reference\"\n\n");
     output.push_str("    Do not edit this page by hand. Regenerate it from the checked public-capability baseline and compiler-boundary registrations.\n\n");
-    output.push_str("This is a validated migration control plane, not a permanent second language-feature catalogue and not a parity claim. Durable feature and private-mechanism records are registered beside the compiler boundary that owns them; the collector joins and validates them here. The explicitly marked migration bootstrap exists only while unlanded work lacks such a boundary. A feature row turns green only after direct execution and an independent, receipt-bound source-observable comparison for its full contract. A matched corpus case remains scoped evidence and cannot promote an incomplete feature. Generated Rust, Body IR representation, and legacy compilation are separate facts.\n\n");
+    output.push_str("This is a validated migration control plane, not a permanent second language-feature catalog and not a parity claim. Durable feature and private-mechanism records are registered beside the compiler boundary that owns them; the collector joins and validates them here. The explicitly marked migration bootstrap exists only while unlanded work lacks such a boundary. A feature row turns green only after direct execution and an independent, receipt-bound source-observable comparison for its full contract. A matched corpus case remains scoped evidence and cannot promote an incomplete feature. Generated Rust, Body IR representation, and legacy compilation are separate facts.\n\n");
     output.push_str("## Release-pinned public baseline\n\n");
     output.push_str(&format!(
         "- Release: `{}` at `{}`\n- Baseline role: `{}`\n- Checked source blob: `{}`\n- Capability descriptors: `{}`\n- Retirement: {}\n\n",
@@ -2481,7 +2481,7 @@ fn migration_bootstrap_compatibility_features() -> Vec<CompatibilityFeature> {
         ),
         planned_feature(
             "interop.rust-and-c",
-            "Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgements, and source-map diagnostics.",
+            "Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgments, and source-map diagnostics.",
             989,
             "Public ABI and interop parity is an explicit replacement-boundary slice, not a direct scalar-executor extension.",
         ),

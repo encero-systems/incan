@@ -2492,11 +2492,11 @@ edition = "2021"
         )?;
         fs::write(
             tmp.path().join("src/lib.rs"),
-            r#"pub trait Labelled {}
+            r#"pub trait Labeled {}
 
 pub struct Thing;
 
-impl Labelled for Thing {}
+impl Labeled for Thing {}
 "#,
         )?;
 
@@ -2508,8 +2508,8 @@ impl Labelled for Thing {}
         assert!(
             info.implemented_traits
                 .iter()
-                .any(|implemented| implemented.path == "demo_trait_probe::Labelled"),
-            "expected direct Labelled impl in metadata, got {:?}",
+                .any(|implemented| implemented.path == "demo_trait_probe::Labeled"),
+            "expected direct Labeled impl in metadata, got {:?}",
             info.implemented_traits
         );
         Ok(())

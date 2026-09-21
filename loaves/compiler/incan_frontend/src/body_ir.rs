@@ -48,9 +48,9 @@
 //!
 //! One entry in that residue is a decided boundary rather than pending work, and is stated here so it is not read
 //! as a gap. An `unsafe:` region refuses permanently: it introduces no Incan scope, so inlining its statements
-//! would be trivial, and that is precisely the problem — it would erase the acknowledgement the region exists to
+//! would be trivial, and that is precisely the problem — it would erase the acknowledgment the region exists to
 //! record and let a direct replacement execution profile run an explicitly authorized region without ever being
-//! told. Body IR v0 carries no acknowledgement fact a consumer could weigh, so the honest answer is a named
+//! told. Body IR v0 carries no acknowledgment fact a consumer could weigh, so the honest answer is a named
 //! refusal owned by #1162 rather than a silent inline. See [`BodyBuilder::refuse_unsafe_region`].
 //!
 //! One coverage limit is silent rather than marked, and it is deliberate. Expression-position `yield` (the two-way
@@ -192,7 +192,7 @@ pub fn apply_body_ir_input_contract(
 ///
 /// The ordinary source-only replacement profile has no provider plan and continues to use
 /// [`build_body_ir_module_v0`]. Any provider-aware consumer must use this entry point so provider-operation admission
-/// is projected from an integrity-checked manifest rather than supplied as a handwritten lowering catalogue.
+/// is projected from an integrity-checked manifest rather than supplied as a handwritten lowering catalog.
 pub fn build_body_ir_module_v0_with_provider_plan(
     program: &ast::Program,
     module_path: &[String],
@@ -211,11 +211,11 @@ pub fn build_body_ir_module_v0_with_provider_plan(
 
 /// Build Body IR v0 for a typechecked module, admitting the internally projected provider operations.
 ///
-/// The catalogue is deliberately private to this frontend bridge. Its entries must come from a selected checked
+/// The catalog is deliberately private to this frontend bridge. Its entries must come from a selected checked
 /// [`ProviderPlan`], never from a backend-specific caller or a source-name convention.
 ///
 /// The input contract on `program` and `type_info` is [`build_body_ir_module_v0`]'s, unchanged: a desugared,
-/// feature-projected, typechecked module. The catalogue widens which *calls* lower, never which source surface is
+/// feature-projected, typechecked module. The catalog widens which *calls* lower, never which source surface is
 /// admitted, so a caller that skips the desugar pass violates the contract here exactly as it would there.
 fn build_body_ir_module_v0_with_provider_operations(
     program: &ast::Program,
@@ -1061,11 +1061,11 @@ mod tuple_destructure_interop_tests {
             unsupported_tuple_destructure(&IncanType::RustInteropPath("std::vec::Vec<u8>".to_string()), 2).is_some(),
             "a Rust generic that is not a tuple must not lower to a tuple field projection"
         );
-        // `(String)` is a parenthesised `String`, not a one-element tuple, so a single-name destructure must not
+        // `(String)` is a parenthesized `String`, not a one-element tuple, so a single-name destructure must not
         // lower to `.0` against it.
         assert!(
             unsupported_tuple_destructure(&IncanType::RustInteropPath("(String)".to_string()), 1).is_some(),
-            "a parenthesised Rust type has no `.0` field and must refuse to lower"
+            "a parenthesized Rust type has no `.0` field and must refuse to lower"
         );
         // The genuine one-element spelling still lowers.
         assert!(

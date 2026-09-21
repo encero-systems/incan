@@ -114,7 +114,7 @@ impl CheckedImportBindings {
 pub struct CAbiInteropArtifacts {
     /// Binding descriptor keyed by the ordinary lowered class name.
     pub bindings: HashMap<String, CBindingDescriptor>,
-    /// Direct binding calls admitted through an explicit `unsafe:` acknowledgement.
+    /// Direct binding calls admitted through an explicit `unsafe:` acknowledgment.
     pub raw_calls: Vec<CBindingRawCall>,
     /// Compiler-proven ordinary function calls made by a named callable while typechecking.
     ///
@@ -579,7 +579,7 @@ fn hash_c_binding_list<T>(hasher: &mut Sha256, label: &str, values: &[T], hash_v
     }
 }
 
-/// Hash one labelled text field with explicit byte lengths for stable descriptor identities.
+/// Hash one labeled text field with explicit byte lengths for stable descriptor identities.
 fn hash_c_binding_text(hasher: &mut Sha256, label: &str, value: &str) {
     hasher.update(label.len().to_be_bytes());
     hasher.update(label.as_bytes());

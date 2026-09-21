@@ -511,7 +511,7 @@ impl AstLowering {
     /// Return the compiler-owned C function selected for one checked source call.
     ///
     /// Raw-call entries are recorded only after the typechecker has validated the binding member, its signature,
-    /// and its enclosing `unsafe:` acknowledgement. This converts that checked fact into the deliberately bounded
+    /// and its enclosing `unsafe:` acknowledgment. This converts that checked fact into the deliberately bounded
     /// scalar, resource, and output callable form understood by the contained Rust backend.
     pub fn checked_c_function_for_call(&self, span: ast::Span) -> Option<IrCheckedCFunction> {
         let info = self.type_info.as_ref()?;
@@ -3303,7 +3303,7 @@ impl AstLowering {
         ])
     }
 
-    /// Lower the runtime half of one compiler-recognised RFC 113 function description.
+    /// Lower the runtime half of one compiler-recognized RFC 113 function description.
     ///
     /// Registry declarations are facts first: the frontend validates their arguments and records the static projection.
     /// When a module loads, the same descriptor must be reflected in the source-authored `Registry` value.  Ordinary

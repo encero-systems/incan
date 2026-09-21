@@ -1670,10 +1670,10 @@ def main() -> None:
     fn trait_method_keeps_abi_slot_and_exposes_one_recoverable_concrete_projection() -> TestResult {
         let rust_code = generate_registry_rust(
             r#"
-trait Labelled:
+trait Labeled:
   def label(self) -> str
 
-class Item with Labelled:
+class Item with Labeled:
   value: str
 
   def label(self) -> str:
@@ -1806,11 +1806,11 @@ def main() -> None:
     fn adopted_default_method_exposes_a_recoverable_projection_beside_the_trait_slot() -> TestResult {
         let rust_code = generate_registry_rust(
             r#"
-trait Labelled:
+trait Labeled:
   def label(self) -> str:
     return "default"
 
-class Item with Labelled:
+class Item with Labeled:
   value: str
 
 def main() -> None:
@@ -3359,7 +3359,7 @@ fn test_generic_model_field_access_codegen() {
 }
 
 /// Issue #1370: a model type parameter that no field mentions is a phantom parameter. Lowering records it on the
-/// struct; emission carries it as one `PhantomData` marker field, initialises the marker at every struct literal,
+/// struct; emission carries it as one `PhantomData` marker field, initializes the marker at every struct literal,
 /// and threads the explicit constructor type argument so a binding without an annotation still names `T`. The
 /// marker is invisible to `Debug` and `HasFieldInfo`, which are written by hand over the source fields instead of
 /// derived.
@@ -3393,7 +3393,7 @@ fn test_issue1370_phantom_type_param_codegen() {
     assert_eq!(
         rust_code.matches("__incan_phantom: std::marker::PhantomData,").count(),
         3,
-        "every struct literal must initialise the marker; generated:\n{rust_code}"
+        "every struct literal must initialize the marker; generated:\n{rust_code}"
     );
     assert_codegen_snapshot!("issue1370_phantom_type_param", rust_code);
 }
@@ -4007,7 +4007,7 @@ fn test_models_codegen() {
 
 /// Power lowers as a Rust method call, so its receiver must retain the source expression's grouping.
 #[test]
-fn test_power_receiver_parenthesisation_codegen() {
+fn test_power_receiver_parenthesization_codegen() {
     let source = r#"
 def compound(left: float, right: float) -> float:
     return (left + right) ** 0.5
@@ -4618,7 +4618,7 @@ fn test_enum_methods_traits_codegen() {
         "expected enum inherent methods to emit in an impl block; generated:\n{rust_code}"
     );
     assert!(
-        compact.contains("implLabelledforSignal{"),
+        compact.contains("implLabeledforSignal{"),
         "expected enum trait adoption to emit a trait impl block; generated:\n{rust_code}"
     );
     assert!(

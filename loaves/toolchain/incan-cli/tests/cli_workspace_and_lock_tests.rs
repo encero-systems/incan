@@ -1246,6 +1246,68 @@ fn workspace_run_and_version_require_one_explicit_member() -> Result<(), Box<dyn
 }
 
 #[test]
+fn a_plain_build_of_a_toolchain_loaf_selects_its_rust_binaries_and_names_the_interim_receipt_inputs_issue1698()
+-> Result<(), Box<dyn std::error::Error>> {
+    // A Loaf that declares `[[rust.bin]]` roles and no Incan `main` script builds those binaries from the stored
+    // compiler-suite plans. Those plans are still receipted by the workspace's Cargo manifest and lock, so a Loaf
+    // without them is refused by name rather than with a missing-Cargo-input error; the refusal proves the
+    // dispatch took the toolchain route, both alone and as the selected member of a rooted workspace.
+    let root = tempfile::tempdir()?;
+    let member_root = root.path().join("loaves/toolchain/incan-cli");
+    fs::create_dir_all(member_root.join("src"))?;
+    fs::write(
+        root.path().join("loaf.toml"),
+        "[project]\nname = \"incan\"\n\n[workspace]\nmembers = [\"loaves/toolchain/incan-cli\"]\ndefault-members = [\"loaves/toolchain/incan-cli\"]\n",
+    )?;
+    fs::write(
+        member_root.join("loaf.toml"),
+        "[project]\nname = \"incan-cli\"\n\n[[rust.bin]]\nname = \"incan\"\npath = \"src/main.rs\"\n",
+    )?;
+    fs::write(member_root.join("src/main.rs"), "fn main() {}\n")?;
+
+    let member_build = run_incan(&member_root, &["build"])?;
+    assert_failure(&member_build, "toolchain member build without workspace Cargo inputs");
+    let member_stderr = String::from_utf8(member_build.stderr)?;
+    assert!(
+        member_stderr.contains("baked from the stored compiler-suite plans")
+            && member_stderr.contains("keyed by the workspace Cargo.toml"),
+        "member build did not name the interim receipt input: {member_stderr}"
+    );
+    assert!(
+        !member_stderr.contains("[project.scripts].main"),
+        "member build fell through to the Incan entrypoint path: {member_stderr}"
+    );
+
+    let root_build = run_incan(root.path(), &["build"])?;
+    assert_failure(&root_build, "toolchain root build without workspace Cargo inputs");
+    let root_stderr = String::from_utf8(root_build.stderr)?;
+    assert!(
+        root_stderr.contains("baked from the stored compiler-suite plans"),
+        "root build did not select the default member's binaries: {root_stderr}"
+    );
+
+    let report_build = run_incan(&member_root, &["build", "--report", "json"])?;
+    assert_failure(&report_build, "toolchain build with --report");
+    assert!(
+        String::from_utf8(report_build.stderr)?.contains("--report is not available for a toolchain binary build"),
+        "the report surface was not refused by name"
+    );
+
+    // Declaring an Incan entrypoint beside the Rust role keeps the Incan meaning of a plain build.
+    fs::write(
+        member_root.join("loaf.toml"),
+        "[project]\nname = \"incan-cli\"\n\n[project.scripts]\nmain = \"src/main.incn\"\n\n[[rust.bin]]\nname = \"incan\"\npath = \"src/main.rs\"\n",
+    )?;
+    let incan_build = run_incan(&member_root, &["build"])?;
+    let incan_stderr = String::from_utf8(incan_build.stderr)?;
+    assert!(
+        !incan_stderr.contains("stored compiler-suite plans"),
+        "a Loaf with a main script took the toolchain route: {incan_stderr}"
+    );
+    Ok(())
+}
+
+#[test]
 fn workspace_env_fragments_are_inherited_only_through_explicit_member_extends() -> Result<(), Box<dyn std::error::Error>>
 {
     let root = tempfile::tempdir()?;

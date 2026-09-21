@@ -1,0 +1,13 @@
+[project]
+name = "refused_feature_gated_export_of_dependency"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[project.features]
+alpha = ["feature_library/alpha"]
+beta = ["feature_library/beta"]
+
+[dependencies]
+feature_library = { path = "deps/feature_library", default-features = false }

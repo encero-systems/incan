@@ -913,7 +913,7 @@ fn test_tuple_shape_classifier_covers_both_spellings_and_recovery_types() {
         TupleShape::RustTuple(1) => {}
         other => panic!("`(String,)` is a one-element tuple, got {other:?}"),
     }
-    // But `(String)` is a parenthesised type with no `.0` field, not a one-element tuple. Reading it as one would
+    // But `(String)` is a parenthesized type with no `.0` field, not a one-element tuple. Reading it as one would
     // let a single-name destructure lower to `.0` on a `String` — the same raw-Rust failure through a narrower
     // spelling than `int`.
     assert!(
@@ -921,7 +921,7 @@ fn test_tuple_shape_classifier_covers_both_spellings_and_recovery_types() {
             classify_tuple_shape(&ResolvedType::RustPath("(String)".to_string())),
             TupleShape::OpaqueRust
         ),
-        "a parenthesised Rust type must not be classified as a one-element tuple"
+        "a parenthesized Rust type must not be classified as a one-element tuple"
     );
 
     let literal = ResolvedType::Tuple(vec![ResolvedType::Int, ResolvedType::Str]);
@@ -949,7 +949,7 @@ fn test_statement_tuple_unpack_of_an_opaque_rust_value_is_refused() {
         classify_tuple_shape(&ResolvedType::RustPath("String".to_string())),
         TupleShape::OpaqueRust
     ));
-    // `(String)` is the same type as `String`, only parenthesised, and must be refused identically.
+    // `(String)` is the same type as `String`, only parenthesized, and must be refused identically.
     assert!(matches!(
         classify_tuple_shape(&ResolvedType::RustPath("(String)".to_string())),
         TupleShape::OpaqueRust

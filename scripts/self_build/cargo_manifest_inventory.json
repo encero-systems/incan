@@ -1,0 +1,7609 @@
+{
+ "schema_version": 1,
+ "generated_by": "scripts/self_build/cargo_manifest_inventory.py",
+ "summary": {
+  "manifest_count": 43,
+  "by_category": {
+   "example-companion": 6,
+   "fixture": 3,
+   "standalone": 1,
+   "third-party-patch": 1,
+   "workspace-member": 31,
+   "workspace-root": 1
+  },
+  "workspace_member_count": 31,
+  "workspace_packages": [
+   "incan-cli",
+   "incan-lsp",
+   "incan_codegraph",
+   "incan_derive",
+   "incan_driver",
+   "incan_emit",
+   "incan_format",
+   "incan_frontend",
+   "incan_ir",
+   "incan_lang",
+   "incan_oven_facet",
+   "incan_provider",
+   "incan_semantics_core",
+   "incan_semantics_stdlib",
+   "incan_std_async",
+   "incan_std_core",
+   "incan_std_data",
+   "incan_std_testing",
+   "incan_std_web",
+   "incan_syntax",
+   "incan_test_support",
+   "incan_vocab",
+   "incan_web_macros",
+   "oven-cli",
+   "oven_cargo_compat",
+   "oven_interop",
+   "oven_model",
+   "oven_registry",
+   "oven_rustc",
+   "oven_store",
+   "rust_inspect"
+  ],
+  "proc_macro_members": [
+   "incan_derive",
+   "incan_web_macros"
+  ],
+  "members_with_bins": {
+   "incan-cli": [
+    "incan"
+   ],
+   "incan-lsp": [
+    "incan-lsp"
+   ],
+   "oven-cli": [
+    "oven"
+   ]
+  },
+  "members_with_features": [
+   "incan-cli",
+   "incan-lsp",
+   "incan_driver",
+   "incan_emit",
+   "incan_frontend",
+   "incan_ir",
+   "incan_provider",
+   "incan_semantics_stdlib",
+   "incan_vocab",
+   "oven-cli",
+   "oven_rustc",
+   "oven_store",
+   "rust_inspect"
+  ],
+  "members_with_dev_dependencies": [
+   "incan-cli",
+   "incan-lsp",
+   "incan_driver",
+   "incan_emit",
+   "incan_format",
+   "incan_frontend",
+   "incan_ir",
+   "incan_oven_facet",
+   "incan_provider",
+   "incan_semantics_core",
+   "incan_vocab",
+   "incan_web_macros",
+   "oven-cli",
+   "oven_cargo_compat",
+   "oven_interop",
+   "oven_model",
+   "oven_rustc",
+   "oven_store",
+   "rust_inspect"
+  ],
+  "members_with_build_scripts": [],
+  "manifests_with_lints_table": [
+   "loaves/third_party/ra_ap_proc_macro_api/Cargo.toml"
+  ],
+  "manifests_with_build_scripts": [],
+  "editions": [
+   "2021",
+   "2024"
+  ],
+  "third_party_packages_used_by_members": {
+   "axum": [
+    "dev",
+    "normal"
+   ],
+   "blake2": [
+    "dev"
+   ],
+   "blake3": [
+    "dev"
+   ],
+   "byteorder": [
+    "dev"
+   ],
+   "bzip2": [
+    "dev"
+   ],
+   "clap": [
+    "normal"
+   ],
+   "crc32fast": [
+    "dev"
+   ],
+   "flate2": [
+    "dev"
+   ],
+   "globset": [
+    "normal"
+   ],
+   "hex": [
+    "normal"
+   ],
+   "hmac": [
+    "dev"
+   ],
+   "insta": [
+    "dev"
+   ],
+   "inventory": [
+    "dev",
+    "normal"
+   ],
+   "libc": [
+    "dev",
+    "normal"
+   ],
+   "md-5": [
+    "dev"
+   ],
+   "miette": [
+    "normal"
+   ],
+   "postcard": [
+    "normal"
+   ],
+   "prettyplease": [
+    "normal"
+   ],
+   "proc-macro2": [
+    "dev",
+    "normal"
+   ],
+   "proptest": [
+    "dev"
+   ],
+   "quote": [
+    "normal"
+   ],
+   "ra_ap_hir": [
+    "normal"
+   ],
+   "ra_ap_hir_def": [
+    "normal"
+   ],
+   "ra_ap_hir_expand": [
+    "normal"
+   ],
+   "ra_ap_hir_ty": [
+    "normal"
+   ],
+   "ra_ap_ide_db": [
+    "normal"
+   ],
+   "ra_ap_load-cargo": [
+    "normal"
+   ],
+   "ra_ap_paths": [
+    "normal"
+   ],
+   "ra_ap_project_model": [
+    "normal"
+   ],
+   "ra_ap_syntax": [
+    "normal"
+   ],
+   "ra_ap_vfs": [
+    "normal"
+   ],
+   "rand": [
+    "dev"
+   ],
+   "regex": [
+    "dev"
+   ],
+   "rustc-demangle": [
+    "normal"
+   ],
+   "rustix": [
+    "normal"
+   ],
+   "semver": [
+    "normal"
+   ],
+   "serde": [
+    "dev",
+    "normal"
+   ],
+   "serde_json": [
+    "dev",
+    "normal"
+   ],
+   "sha1": [
+    "dev",
+    "normal"
+   ],
+   "sha2": [
+    "normal"
+   ],
+   "sha3": [
+    "dev"
+   ],
+   "snap": [
+    "dev"
+   ],
+   "syn": [
+    "dev",
+    "normal"
+   ],
+   "tempfile": [
+    "dev",
+    "normal"
+   ],
+   "thiserror": [
+    "normal"
+   ],
+   "tokio": [
+    "dev",
+    "normal"
+   ],
+   "toml": [
+    "normal"
+   ],
+   "toml_edit": [
+    "normal"
+   ],
+   "tower": [
+    "dev"
+   ],
+   "tower-lsp": [
+    "normal"
+   ],
+   "tracing": [
+    "normal"
+   ],
+   "tracing-subscriber": [
+    "normal"
+   ],
+   "uuid": [
+    "dev"
+   ],
+   "wasmtime": [
+    "normal"
+   ],
+   "wasmtime-wasi": [
+    "normal"
+   ],
+   "wat": [
+    "dev"
+   ],
+   "xxhash-rust": [
+    "dev",
+    "normal"
+   ],
+   "xz2": [
+    "dev"
+   ],
+   "zstd": [
+    "dev"
+   ]
+  },
+  "third_party_package_count_members": 59,
+  "crate_level_lint_attributes": {
+   "loaves/compiler/incan_driver/Cargo.toml": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]",
+     "#![deny(clippy::expect_used)]"
+    ]
+   },
+   "loaves/compiler/incan_emit/Cargo.toml": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]",
+     "#![deny(clippy::expect_used)]"
+    ]
+   },
+   "loaves/compiler/incan_format/Cargo.toml": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]",
+     "#![deny(clippy::expect_used)]"
+    ]
+   },
+   "loaves/compiler/incan_ir/Cargo.toml": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]",
+     "#![deny(clippy::expect_used)]"
+    ]
+   },
+   "loaves/compiler/incan_oven_facet/Cargo.toml": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]",
+     "#![deny(clippy::expect_used)]"
+    ]
+   },
+   "loaves/compiler/incan_provider/Cargo.toml": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]",
+     "#![deny(clippy::expect_used)]"
+    ]
+   },
+   "loaves/oven/oven_registry/Cargo.toml": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]",
+     "#![deny(clippy::expect_used)]"
+    ]
+   },
+   "loaves/stdlib/async/rust/Cargo.toml": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]"
+    ]
+   },
+   "loaves/stdlib/core/rust/Cargo.toml": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]"
+    ]
+   },
+   "loaves/stdlib/data/rust/Cargo.toml": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]"
+    ]
+   },
+   "loaves/stdlib/testing/rust/Cargo.toml": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]"
+    ]
+   },
+   "loaves/stdlib/web/rust/Cargo.toml": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]"
+    ]
+   },
+   "loaves/third_party/ra_ap_proc_macro_api/Cargo.toml": {
+    "lib": [
+     "#![allow(internal_features, unused_features)]"
+    ]
+   },
+   "loaves/toolchain/incan-cli/Cargo.toml": {
+    "bin:incan": [],
+    "lib": [
+     "#![deny(clippy::unwrap_used)]",
+     "#![deny(clippy::expect_used)]"
+    ]
+   }
+  }
+ },
+ "manifests": [
+  {
+   "path": "Cargo.toml",
+   "category": "workspace-root",
+   "cargo_lock_beside": true,
+   "is_virtual_workspace": true,
+   "declares_own_workspace": false,
+   "workspace": {
+    "members": [
+     "loaves/stdlib/core/rust",
+     "loaves/stdlib/data/rust",
+     "loaves/stdlib/async/rust",
+     "loaves/stdlib/web/rust",
+     "loaves/stdlib/testing/rust",
+     "loaves/compiler/incan_driver",
+     "loaves/compiler/incan_emit",
+     "loaves/compiler/incan_format",
+     "loaves/compiler/incan_frontend",
+     "loaves/compiler/incan_ir",
+     "loaves/compiler/incan_oven_facet",
+     "loaves/compiler/incan_provider",
+     "loaves/compiler/incan_semantics_stdlib",
+     "loaves/compiler/incan_test_support",
+     "loaves/toolchain/incan-cli",
+     "loaves/toolchain/incan-lsp",
+     "loaves/toolchain/oven-cli",
+     "loaves/compiler/rust_inspect",
+     "loaves/kernel/incan_codegraph",
+     "loaves/kernel/incan_lang",
+     "loaves/kernel/incan_semantics_core",
+     "loaves/kernel/incan_syntax",
+     "loaves/kernel/incan_vocab",
+     "loaves/oven/oven_model",
+     "loaves/oven/oven_rustc",
+     "loaves/oven/oven_interop",
+     "loaves/oven/oven_registry",
+     "loaves/oven/oven_cargo_compat",
+     "loaves/oven/oven_store",
+     "loaves/stdlib/derive/incan_derive",
+     "loaves/stdlib/derive/incan_web_macros"
+    ],
+    "exclude": [
+     "target/incan"
+    ],
+    "resolver": "2",
+    "package": {
+     "version": "0.6.0-dev.6",
+     "description": "The Incan programming language compiler",
+     "edition": "2024",
+     "rust-version": "1.98",
+     "license": "Apache-2.0",
+     "authors": [
+      "Danny Meijer <dannys.code.corner@gmail.com>"
+     ],
+     "repository": "https://github.com/encero-systems/incan",
+     "homepage": "https://github.com/encero-systems/incan",
+     "readme": "README.md",
+     "keywords": [
+      "programming-language",
+      "compiler",
+      "rust",
+      "python"
+     ],
+     "categories": [
+      "compilers",
+      "development-tools"
+     ]
+    },
+    "dependencies": {
+     "incan-cli": {
+      "path": "loaves/toolchain/incan-cli"
+     },
+     "incan-lsp": {
+      "path": "loaves/toolchain/incan-lsp"
+     },
+     "incan_codegraph": {
+      "path": "loaves/kernel/incan_codegraph"
+     },
+     "incan_derive": {
+      "path": "loaves/stdlib/derive/incan_derive",
+      "version": "0.6.0-dev.5"
+     },
+     "incan_driver": {
+      "path": "loaves/compiler/incan_driver",
+      "default-features": false
+     },
+     "incan_emit": {
+      "path": "loaves/compiler/incan_emit",
+      "default-features": false
+     },
+     "incan_format": {
+      "path": "loaves/compiler/incan_format"
+     },
+     "incan_frontend": {
+      "path": "loaves/compiler/incan_frontend",
+      "default-features": false
+     },
+     "incan_ir": {
+      "path": "loaves/compiler/incan_ir",
+      "default-features": false
+     },
+     "incan_lang": {
+      "path": "loaves/kernel/incan_lang"
+     },
+     "incan_oven_facet": {
+      "path": "loaves/compiler/incan_oven_facet"
+     },
+     "incan_provider": {
+      "path": "loaves/compiler/incan_provider",
+      "default-features": false
+     },
+     "incan_semantics_core": {
+      "path": "loaves/kernel/incan_semantics_core"
+     },
+     "incan_semantics_stdlib": {
+      "path": "loaves/compiler/incan_semantics_stdlib"
+     },
+     "incan_std_async": {
+      "path": "loaves/stdlib/async/rust",
+      "version": "0.6.0-dev.5"
+     },
+     "incan_std_core": {
+      "path": "loaves/stdlib/core/rust",
+      "version": "0.6.0-dev.5"
+     },
+     "incan_std_data": {
+      "path": "loaves/stdlib/data/rust",
+      "version": "0.6.0-dev.5"
+     },
+     "incan_std_testing": {
+      "path": "loaves/stdlib/testing/rust",
+      "version": "0.6.0-dev.5"
+     },
+     "incan_std_web": {
+      "path": "loaves/stdlib/web/rust",
+      "version": "0.6.0-dev.5"
+     },
+     "incan_syntax": {
+      "path": "loaves/kernel/incan_syntax"
+     },
+     "incan_test_support": {
+      "path": "loaves/compiler/incan_test_support"
+     },
+     "incan_vocab": {
+      "path": "loaves/kernel/incan_vocab",
+      "version": "0.3.0"
+     },
+     "incan_web_macros": {
+      "path": "loaves/stdlib/derive/incan_web_macros",
+      "version": "0.6.0-dev.5"
+     },
+     "oven-cli": {
+      "path": "loaves/toolchain/oven-cli"
+     },
+     "oven_cargo_compat": {
+      "path": "loaves/oven/oven_cargo_compat",
+      "version": "0.6.0-dev.5"
+     },
+     "oven_interop": {
+      "path": "loaves/oven/oven_interop",
+      "version": "0.6.0-dev.5"
+     },
+     "oven_model": {
+      "path": "loaves/oven/oven_model",
+      "version": "0.6.0-dev.5"
+     },
+     "oven_registry": {
+      "path": "loaves/oven/oven_registry",
+      "version": "0.6.0-dev.5"
+     },
+     "oven_rustc": {
+      "path": "loaves/oven/oven_rustc",
+      "version": "0.6.0-dev.5"
+     },
+     "oven_store": {
+      "path": "loaves/oven/oven_store",
+      "version": "0.6.0-dev.5"
+     },
+     "proc-macro2": {
+      "version": "1.0"
+     },
+     "quote": {
+      "version": "1.0"
+     },
+     "rust_inspect": {
+      "path": "loaves/compiler/rust_inspect",
+      "default-features": false
+     },
+     "serde": {
+      "version": "1.0",
+      "features": [
+       "derive"
+      ]
+     },
+     "serde_json": {
+      "version": "1.0"
+     },
+     "syn": {
+      "version": "2.0",
+      "features": [
+       "full",
+       "parsing"
+      ]
+     },
+     "thiserror": {
+      "version": "2.0"
+     },
+     "tokio": {
+      "version": "1"
+     },
+     "tower-lsp": {
+      "version": "0.20"
+     },
+     "tracing": {
+      "version": "0.1"
+     }
+    }
+   },
+   "patch": {
+    "crates-io": {
+     "ra_ap_proc_macro_api": {
+      "path": "loaves/third_party/ra_ap_proc_macro_api"
+     }
+    }
+   },
+   "profile": {
+    "oven-test": {
+     "inherits": "dev",
+     "debug": 0,
+     "incremental": false
+    },
+    "dev": {
+     "package": {
+      "sha2": {
+       "opt-level": 3
+      }
+     }
+    }
+   }
+  },
+  {
+   "path": "examples/pro/vocab_markform/producer/vocab_companion/Cargo.toml",
+   "category": "example-companion",
+   "cargo_lock_beside": true,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": true,
+   "package": {
+    "name": "markform_vocab_companion",
+    "version": "0.1.0",
+    "edition": "2021",
+    "rust_version": null,
+    "license": null,
+    "publish": true,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": {
+    "name": null,
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": [
+     "rlib",
+     "cdylib"
+    ],
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "incan_vocab": {
+      "package": "incan_vocab",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": false,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "../../../../../loaves/kernel/incan_vocab"
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "examples/pro/vocab_markform/producer/vocab_companion/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   },
+   "workspace": {
+    "members": [],
+    "exclude": [],
+    "resolver": null,
+    "package": null,
+    "dependencies": {}
+   }
+  },
+  {
+   "path": "examples/pro/vocab_querykit/producer/vocab_companion/Cargo.toml",
+   "category": "example-companion",
+   "cargo_lock_beside": true,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": true,
+   "package": {
+    "name": "querykit_vocab_companion",
+    "version": "0.1.0",
+    "edition": "2021",
+    "rust_version": null,
+    "license": null,
+    "publish": true,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": {
+    "name": null,
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": [
+     "rlib",
+     "cdylib"
+    ],
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "incan_vocab": {
+      "package": "incan_vocab",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": false,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "../../../../../loaves/kernel/incan_vocab"
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "examples/pro/vocab_querykit/producer/vocab_companion/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   },
+   "workspace": {
+    "members": [],
+    "exclude": [],
+    "resolver": null,
+    "package": null,
+    "dependencies": {}
+   }
+  },
+  {
+   "path": "examples/pro/vocab_routekit/producer/vocab_companion/Cargo.toml",
+   "category": "example-companion",
+   "cargo_lock_beside": true,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": true,
+   "package": {
+    "name": "routekit_vocab_companion",
+    "version": "0.1.0",
+    "edition": "2021",
+    "rust_version": null,
+    "license": null,
+    "publish": true,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": {
+    "name": null,
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": [
+     "rlib",
+     "cdylib"
+    ],
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "incan_vocab": {
+      "package": "incan_vocab",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": false,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "../../../../../loaves/kernel/incan_vocab"
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "examples/pro/vocab_routekit/producer/vocab_companion/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   },
+   "workspace": {
+    "members": [],
+    "exclude": [],
+    "resolver": null,
+    "package": null,
+    "dependencies": {}
+   }
+  },
+  {
+   "path": "examples/pro/vocab_scriptkit/producer/vocab_companion/Cargo.toml",
+   "category": "example-companion",
+   "cargo_lock_beside": true,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": true,
+   "package": {
+    "name": "scriptkit_vocab_companion",
+    "version": "0.1.0",
+    "edition": "2021",
+    "rust_version": null,
+    "license": null,
+    "publish": true,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": {
+    "name": null,
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": [
+     "rlib",
+     "cdylib"
+    ],
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "incan_vocab": {
+      "package": "incan_vocab",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": false,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "../../../../../loaves/kernel/incan_vocab"
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "examples/pro/vocab_scriptkit/producer/vocab_companion/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   },
+   "workspace": {
+    "members": [],
+    "exclude": [],
+    "resolver": null,
+    "package": null,
+    "dependencies": {}
+   }
+  },
+  {
+   "path": "examples/pro/vocab_studiokit/producer/vocab_companion/Cargo.toml",
+   "category": "example-companion",
+   "cargo_lock_beside": true,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": true,
+   "package": {
+    "name": "studiokit_vocab_companion",
+    "version": "0.1.0",
+    "edition": "2021",
+    "rust_version": null,
+    "license": null,
+    "publish": true,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": {
+    "name": null,
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": [
+     "rlib",
+     "cdylib"
+    ],
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "incan_vocab": {
+      "package": "incan_vocab",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": false,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "../../../../../loaves/kernel/incan_vocab"
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "examples/pro/vocab_studiokit/producer/vocab_companion/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   },
+   "workspace": {
+    "members": [],
+    "exclude": [],
+    "resolver": null,
+    "package": null,
+    "dependencies": {}
+   }
+  },
+  {
+   "path": "examples/pro/vocab_styleforge/producer/vocab_companion/Cargo.toml",
+   "category": "example-companion",
+   "cargo_lock_beside": true,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": true,
+   "package": {
+    "name": "styleforge_vocab_companion",
+    "version": "0.1.0",
+    "edition": "2021",
+    "rust_version": null,
+    "license": null,
+    "publish": true,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": {
+    "name": null,
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": [
+     "rlib",
+     "cdylib"
+    ],
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "incan_vocab": {
+      "package": "incan_vocab",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": false,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "../../../../../loaves/kernel/incan_vocab"
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "examples/pro/vocab_styleforge/producer/vocab_companion/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   },
+   "workspace": {
+    "members": [],
+    "exclude": [],
+    "resolver": null,
+    "package": null,
+    "dependencies": {}
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_driver/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_driver",
+    "version": "0.6.0-dev.6",
+    "edition": "2024",
+    "rust_version": null,
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "The Incan compiler driver: sessions, builds, the generated project, inspection and the compatibility corpus",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "license",
+    "version"
+   ],
+   "lib": {
+    "name": "incan_driver",
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {
+    "cli": [
+     "dep:clap"
+    ],
+    "default": [
+     "cli",
+     "rust_inspect",
+     "std_testing",
+     "std_async",
+     "std_decorators"
+    ],
+    "rust_inspect": [
+     "incan_frontend/rust_inspect",
+     "incan_ir/rust_inspect",
+     "incan_emit/rust_inspect",
+     "incan_provider/rust_inspect",
+     "rust_inspect/inspector"
+    ],
+    "std_async": [
+     "incan_frontend/std_async",
+     "incan_ir/std_async",
+     "incan_emit/std_async",
+     "incan_provider/std_async"
+    ],
+    "std_decorators": [
+     "incan_frontend/std_decorators",
+     "incan_ir/std_decorators",
+     "incan_emit/std_decorators",
+     "incan_provider/std_decorators"
+    ],
+    "std_testing": [
+     "incan_frontend/std_testing",
+     "incan_ir/std_testing",
+     "incan_emit/std_testing",
+     "incan_provider/std_testing"
+    ],
+    "test_support": [
+     "incan_provider/test_support",
+     "incan_emit/test_support",
+     "incan_frontend/test_support",
+     "rust_inspect/test_fixtures",
+     "oven_store/test_support",
+     "oven_rustc/test_support"
+    ]
+   },
+   "default_features": [
+    "cli",
+    "rust_inspect",
+    "std_testing",
+    "std_async",
+    "std_decorators"
+   ],
+   "dependencies": {
+    "normal": {
+     "clap": {
+      "package": "clap",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "4.4",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": true
+     },
+     "hex": {
+      "package": "hex",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.4.3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "incan_codegraph": {
+      "package": "incan_codegraph",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_codegraph"
+     },
+     "incan_emit": {
+      "package": "incan_emit",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_emit"
+     },
+     "incan_frontend": {
+      "package": "incan_frontend",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_frontend"
+     },
+     "incan_ir": {
+      "package": "incan_ir",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_ir"
+     },
+     "incan_lang": {
+      "package": "incan_lang",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_lang"
+     },
+     "incan_oven_facet": {
+      "package": "incan_oven_facet",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/compiler/incan_oven_facet"
+     },
+     "incan_provider": {
+      "package": "incan_provider",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_provider"
+     },
+     "incan_semantics_core": {
+      "package": "incan_semantics_core",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_semantics_core"
+     },
+     "incan_vocab": {
+      "package": "incan_vocab",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.3.0",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_vocab"
+     },
+     "oven_cargo_compat": {
+      "package": "oven_cargo_compat",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_cargo_compat"
+     },
+     "oven_interop": {
+      "package": "oven_interop",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_interop"
+     },
+     "oven_model": {
+      "package": "oven_model",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_model"
+     },
+     "oven_rustc": {
+      "package": "oven_rustc",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_rustc"
+     },
+     "oven_store": {
+      "package": "oven_store",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_store"
+     },
+     "rust_inspect": {
+      "package": "rust_inspect",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/rust_inspect"
+     },
+     "rustix": {
+      "package": "rustix",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.1.4",
+      "features": [
+       "fs"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "semver": {
+      "package": "semver",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.0.27",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "sha1": {
+      "package": "sha1",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.10",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "sha2": {
+      "package": "sha2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.10.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "tempfile": {
+      "package": "tempfile",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "thiserror": {
+      "package": "thiserror",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "2.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "toml": {
+      "package": "toml",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "toml_edit": {
+      "package": "toml_edit",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.25",
+      "features": [
+       "parse",
+       "serde"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "tracing": {
+      "package": "tracing",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "0.1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {
+     "incan_emit": {
+      "package": "incan_emit",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [
+       "test_support"
+      ],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_emit"
+     },
+     "incan_frontend": {
+      "package": "incan_frontend",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [
+       "test_support"
+      ],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_frontend"
+     },
+     "incan_provider": {
+      "package": "incan_provider",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [
+       "test_support"
+      ],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_provider"
+     },
+     "incan_test_support": {
+      "package": "incan_test_support",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/compiler/incan_test_support"
+     },
+     "oven_rustc": {
+      "package": "oven_rustc",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [
+       "test_support"
+      ],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_rustc"
+     },
+     "oven_store": {
+      "package": "oven_store",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [
+       "test_support"
+      ],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_store"
+     },
+     "proc-macro2": {
+      "package": "proc-macro2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "rust_inspect": {
+      "package": "rust_inspect",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [
+       "test_fixtures"
+      ],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/rust_inspect"
+     },
+     "syn": {
+      "package": "syn",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "2.0",
+      "features": [
+       "full",
+       "parsing",
+       "printing"
+      ],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_driver/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]",
+     "#![deny(clippy::expect_used)]"
+    ]
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_driver/tests/fixtures/generated_rust_native_consumer/consumer/Cargo.toml",
+   "category": "fixture",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "native_consumer_host",
+    "version": "0.1.0",
+    "edition": "2021",
+    "rust_version": null,
+    "license": null,
+    "publish": true,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "native_consumer_core": {
+      "package": "native_consumer_core",
+      "kind": "generated",
+      "origin": "path",
+      "workspace_inherited": false,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "../native_items/target/lib"
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_driver/tests/fixtures/generated_rust_native_consumer/consumer/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_driver/tests/fixtures/generated_rust_native_consumer/forge/Cargo.toml",
+   "category": "fixture",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "native_constructor_forge",
+    "version": "0.1.0",
+    "edition": "2021",
+    "rust_version": null,
+    "license": null,
+    "publish": true,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {
+    "admission": [],
+    "defaulted": [],
+    "mixed": []
+   },
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "native_consumer_core": {
+      "package": "native_consumer_core",
+      "kind": "generated",
+      "origin": "path",
+      "workspace_inherited": false,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "../native_items/target/lib"
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_driver/tests/fixtures/generated_rust_native_consumer/forge/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_emit/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_emit",
+    "version": "0.6.0-dev.6",
+    "edition": "2024",
+    "rust_version": null,
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "Rust emission from the Incan IR, the replacement backend and backend selection",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "license",
+    "version"
+   ],
+   "lib": {
+    "name": "incan_emit",
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {
+    "default": [
+     "rust_inspect",
+     "std_testing",
+     "std_async",
+     "std_decorators"
+    ],
+    "rust_inspect": [
+     "incan_ir/rust_inspect",
+     "incan_frontend/rust_inspect",
+     "rust_inspect/inspector"
+    ],
+    "std_async": [
+     "incan_ir/std_async",
+     "incan_frontend/std_async"
+    ],
+    "std_decorators": [
+     "incan_ir/std_decorators",
+     "incan_frontend/std_decorators"
+    ],
+    "std_testing": [
+     "incan_ir/std_testing",
+     "incan_frontend/std_testing"
+    ],
+    "test_support": [
+     "dep:tempfile",
+     "incan_frontend/test_support",
+     "rust_inspect/test_fixtures"
+    ]
+   },
+   "default_features": [
+    "rust_inspect",
+    "std_testing",
+    "std_async",
+    "std_decorators"
+   ],
+   "dependencies": {
+    "normal": {
+     "hex": {
+      "package": "hex",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.4.3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "incan_frontend": {
+      "package": "incan_frontend",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_frontend"
+     },
+     "incan_ir": {
+      "package": "incan_ir",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_ir"
+     },
+     "incan_lang": {
+      "package": "incan_lang",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_lang"
+     },
+     "incan_semantics_core": {
+      "package": "incan_semantics_core",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_semantics_core"
+     },
+     "incan_syntax": {
+      "package": "incan_syntax",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_syntax"
+     },
+     "incan_vocab": {
+      "package": "incan_vocab",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.3.0",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_vocab"
+     },
+     "oven_model": {
+      "package": "oven_model",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_model"
+     },
+     "prettyplease": {
+      "package": "prettyplease",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.2",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "proc-macro2": {
+      "package": "proc-macro2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "quote": {
+      "package": "quote",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "rust_inspect": {
+      "package": "rust_inspect",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/rust_inspect"
+     },
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "sha2": {
+      "package": "sha2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.10.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "syn": {
+      "package": "syn",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "2.0",
+      "features": [
+       "full",
+       "parsing",
+       "printing"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "tempfile": {
+      "package": "tempfile",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "3",
+      "features": [],
+      "default_features": true,
+      "optional": true
+     },
+     "thiserror": {
+      "package": "thiserror",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "2.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "tracing": {
+      "package": "tracing",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "0.1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {
+     "incan_frontend": {
+      "package": "incan_frontend",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [
+       "test_support"
+      ],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_frontend"
+     },
+     "incan_std_core": {
+      "package": "incan_std_core",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/stdlib/core/rust"
+     },
+     "incan_test_support": {
+      "package": "incan_test_support",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/compiler/incan_test_support"
+     },
+     "insta": {
+      "package": "insta",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.45",
+      "features": [
+       "glob"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "rust_inspect": {
+      "package": "rust_inspect",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [
+       "test_fixtures"
+      ],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/rust_inspect"
+     },
+     "tempfile": {
+      "package": "tempfile",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "wat": {
+      "package": "wat",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_emit/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]",
+     "#![deny(clippy::expect_used)]"
+    ]
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_format/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_format",
+    "version": "0.6.0-dev.6",
+    "edition": "2024",
+    "rust_version": null,
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "The Incan source formatter",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "license",
+    "version"
+   ],
+   "lib": {
+    "name": "incan_format",
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "incan_lang": {
+      "package": "incan_lang",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_lang"
+     },
+     "incan_semantics_core": {
+      "package": "incan_semantics_core",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_semantics_core"
+     },
+     "incan_syntax": {
+      "package": "incan_syntax",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_syntax"
+     },
+     "incan_vocab": {
+      "package": "incan_vocab",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.3.0",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_vocab"
+     },
+     "thiserror": {
+      "package": "thiserror",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "2.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {
+     "incan_test_support": {
+      "package": "incan_test_support",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/compiler/incan_test_support"
+     },
+     "proptest": {
+      "package": "proptest",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_format/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]",
+     "#![deny(clippy::expect_used)]"
+    ]
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_frontend/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_frontend",
+    "version": "0.6.0-dev.6",
+    "edition": "2024",
+    "rust_version": null,
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "The Incan compiler frontend: parsed modules, symbols, the typechecker, Body IR and the provider contract",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "license",
+    "version"
+   ],
+   "lib": {
+    "name": "incan_frontend",
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {
+    "default": [
+     "rust_inspect",
+     "std_testing",
+     "std_async",
+     "std_decorators"
+    ],
+    "rust_inspect": [
+     "rust_inspect/inspector"
+    ],
+    "std_async": [
+     "dep:incan_semantics_stdlib",
+     "incan_semantics_stdlib/std_async"
+    ],
+    "std_decorators": [
+     "dep:incan_semantics_stdlib",
+     "incan_semantics_stdlib/std_decorators"
+    ],
+    "std_testing": [
+     "dep:incan_semantics_stdlib",
+     "incan_semantics_stdlib/std_testing"
+    ],
+    "test_support": [
+     "dep:tempfile",
+     "rust_inspect/test_fixtures"
+    ]
+   },
+   "default_features": [
+    "rust_inspect",
+    "std_testing",
+    "std_async",
+    "std_decorators"
+   ],
+   "dependencies": {
+    "normal": {
+     "hex": {
+      "package": "hex",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.4.3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "incan_format": {
+      "package": "incan_format",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/compiler/incan_format"
+     },
+     "incan_lang": {
+      "package": "incan_lang",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_lang"
+     },
+     "incan_semantics_core": {
+      "package": "incan_semantics_core",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_semantics_core"
+     },
+     "incan_semantics_stdlib": {
+      "package": "incan_semantics_stdlib",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": true,
+      "path": "loaves/compiler/incan_semantics_stdlib"
+     },
+     "incan_syntax": {
+      "package": "incan_syntax",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_syntax"
+     },
+     "incan_vocab": {
+      "package": "incan_vocab",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.3.0",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_vocab"
+     },
+     "oven_model": {
+      "package": "oven_model",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_model"
+     },
+     "quote": {
+      "package": "quote",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "rust_inspect": {
+      "package": "rust_inspect",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/rust_inspect"
+     },
+     "semver": {
+      "package": "semver",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.0.27",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "sha2": {
+      "package": "sha2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.10.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "syn": {
+      "package": "syn",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "2.0",
+      "features": [
+       "full",
+       "parsing",
+       "printing"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "tempfile": {
+      "package": "tempfile",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "3",
+      "features": [],
+      "default_features": true,
+      "optional": true
+     },
+     "thiserror": {
+      "package": "thiserror",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "2.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "toml": {
+      "package": "toml",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "tracing": {
+      "package": "tracing",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "0.1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "wasmtime": {
+      "package": "wasmtime",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "36.0.14",
+      "features": [
+       "cranelift",
+       "runtime",
+       "std"
+      ],
+      "default_features": false,
+      "optional": false
+     },
+     "wasmtime-wasi": {
+      "package": "wasmtime-wasi",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "36.0.14",
+      "features": [
+       "preview1"
+      ],
+      "default_features": false,
+      "optional": false
+     }
+    },
+    "dev": {
+     "incan_std_core": {
+      "package": "incan_std_core",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/stdlib/core/rust"
+     },
+     "incan_test_support": {
+      "package": "incan_test_support",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/compiler/incan_test_support"
+     },
+     "rust_inspect": {
+      "package": "rust_inspect",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [
+       "test_fixtures"
+      ],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/rust_inspect"
+     },
+     "tempfile": {
+      "package": "tempfile",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_frontend/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_ir/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_ir",
+    "version": "0.6.0-dev.6",
+    "edition": "2024",
+    "rust_version": null,
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "The Incan compiler's IR and the lowering from the checked program to it",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "license",
+    "version"
+   ],
+   "lib": {
+    "name": "incan_ir",
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {
+    "default": [
+     "rust_inspect",
+     "std_testing",
+     "std_async",
+     "std_decorators"
+    ],
+    "rust_inspect": [
+     "incan_frontend/rust_inspect"
+    ],
+    "std_async": [
+     "incan_frontend/std_async"
+    ],
+    "std_decorators": [
+     "incan_frontend/std_decorators"
+    ],
+    "std_testing": [
+     "incan_frontend/std_testing"
+    ]
+   },
+   "default_features": [
+    "rust_inspect",
+    "std_testing",
+    "std_async",
+    "std_decorators"
+   ],
+   "dependencies": {
+    "normal": {
+     "incan_frontend": {
+      "package": "incan_frontend",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_frontend"
+     },
+     "incan_lang": {
+      "package": "incan_lang",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_lang"
+     },
+     "incan_semantics_core": {
+      "package": "incan_semantics_core",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_semantics_core"
+     },
+     "incan_vocab": {
+      "package": "incan_vocab",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.3.0",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_vocab"
+     },
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "tracing": {
+      "package": "tracing",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "0.1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {
+     "incan_frontend": {
+      "package": "incan_frontend",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [
+       "test_support"
+      ],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_frontend"
+     },
+     "tempfile": {
+      "package": "tempfile",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_ir/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]",
+     "#![deny(clippy::expect_used)]"
+    ]
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_oven_facet/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_oven_facet",
+    "version": "0.6.0-dev.6",
+    "edition": "2024",
+    "rust_version": null,
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "What Oven learns about Incan: the compiler's identity and its provider facts, as Oven's hooks",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "license",
+    "version"
+   ],
+   "lib": {
+    "name": "incan_oven_facet",
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "incan_frontend": {
+      "package": "incan_frontend",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_frontend"
+     },
+     "incan_lang": {
+      "package": "incan_lang",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_lang"
+     },
+     "incan_provider": {
+      "package": "incan_provider",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_provider"
+     },
+     "oven_cargo_compat": {
+      "package": "oven_cargo_compat",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_cargo_compat"
+     },
+     "oven_model": {
+      "package": "oven_model",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_model"
+     },
+     "oven_rustc": {
+      "package": "oven_rustc",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_rustc"
+     },
+     "oven_store": {
+      "package": "oven_store",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_store"
+     }
+    },
+    "dev": {
+     "tempfile": {
+      "package": "tempfile",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_oven_facet/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]",
+     "#![deny(clippy::expect_used)]"
+    ]
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_provider/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_provider",
+    "version": "0.6.0-dev.6",
+    "edition": "2024",
+    "rust_version": null,
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "Incan's SDK providers as the compiler loads them: inventory, requirements, the SDK store and builder, vocab extraction",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "license",
+    "version"
+   ],
+   "lib": {
+    "name": "incan_provider",
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {
+    "default": [
+     "rust_inspect",
+     "std_testing",
+     "std_async",
+     "std_decorators"
+    ],
+    "rust_inspect": [
+     "incan_frontend/rust_inspect",
+     "rust_inspect/inspector"
+    ],
+    "std_async": [
+     "incan_frontend/std_async"
+    ],
+    "std_decorators": [
+     "incan_frontend/std_decorators"
+    ],
+    "std_testing": [
+     "incan_frontend/std_testing"
+    ],
+    "test_support": []
+   },
+   "default_features": [
+    "rust_inspect",
+    "std_testing",
+    "std_async",
+    "std_decorators"
+   ],
+   "dependencies": {
+    "normal": {
+     "hex": {
+      "package": "hex",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.4.3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "incan_frontend": {
+      "package": "incan_frontend",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_frontend"
+     },
+     "incan_lang": {
+      "package": "incan_lang",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_lang"
+     },
+     "incan_semantics_core": {
+      "package": "incan_semantics_core",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_semantics_core"
+     },
+     "incan_vocab": {
+      "package": "incan_vocab",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.3.0",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_vocab"
+     },
+     "oven_cargo_compat": {
+      "package": "oven_cargo_compat",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_cargo_compat"
+     },
+     "oven_model": {
+      "package": "oven_model",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_model"
+     },
+     "oven_rustc": {
+      "package": "oven_rustc",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_rustc"
+     },
+     "oven_store": {
+      "package": "oven_store",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_store"
+     },
+     "rust_inspect": {
+      "package": "rust_inspect",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/rust_inspect"
+     },
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "sha2": {
+      "package": "sha2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.10.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "thiserror": {
+      "package": "thiserror",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "2.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "toml": {
+      "package": "toml",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "wasmtime": {
+      "package": "wasmtime",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "36.0.14",
+      "features": [
+       "cranelift",
+       "runtime",
+       "std"
+      ],
+      "default_features": false,
+      "optional": false
+     }
+    },
+    "dev": {
+     "incan_frontend": {
+      "package": "incan_frontend",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [
+       "test_support"
+      ],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_frontend"
+     },
+     "incan_test_support": {
+      "package": "incan_test_support",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/compiler/incan_test_support"
+     },
+     "tempfile": {
+      "package": "tempfile",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_provider/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]",
+     "#![deny(clippy::expect_used)]"
+    ]
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_semantics_stdlib/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_semantics_stdlib",
+    "version": "0.6.0-dev.6",
+    "edition": "2024",
+    "rust_version": "1.98",
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "Stdlib surface-semantics pack for the Incan compiler",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "homepage",
+    "license",
+    "repository",
+    "rust-version",
+    "version"
+   ],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {
+    "default": [],
+    "std_async": [],
+    "std_decorators": [],
+    "std_testing": []
+   },
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "incan_lang": {
+      "package": "incan_lang",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_lang"
+     },
+     "incan_semantics_core": {
+      "package": "incan_semantics_core",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_semantics_core"
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_semantics_stdlib/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_test_support/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_test_support",
+    "version": "0.6.0-dev.6",
+    "edition": "2024",
+    "rust_version": null,
+    "license": "Apache-2.0",
+    "publish": false,
+    "description": "The integration-test harness the compiler's roots share: checkout anchors, the compiler subprocess, fixture builders and artifact readers",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "license",
+    "version"
+   ],
+   "lib": {
+    "name": "incan_test_support",
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "incan_frontend": {
+      "package": "incan_frontend",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_frontend"
+     },
+     "incan_lang": {
+      "package": "incan_lang",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_lang"
+     },
+     "incan_semantics_core": {
+      "package": "incan_semantics_core",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_semantics_core"
+     },
+     "libc": {
+      "package": "libc",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.2",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "oven_model": {
+      "package": "oven_model",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_model"
+     },
+     "prettyplease": {
+      "package": "prettyplease",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.2",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "proc-macro2": {
+      "package": "proc-macro2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "rustc-demangle": {
+      "package": "rustc-demangle",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.1.27",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "sha2": {
+      "package": "sha2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.10",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "syn": {
+      "package": "syn",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "2.0",
+      "features": [
+       "full",
+       "parsing",
+       "printing"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "tempfile": {
+      "package": "tempfile",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "toml": {
+      "package": "toml",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_test_support/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_test_support/fixtures/oven_loaf_dependencies/Cargo.toml",
+   "category": "fixture",
+   "cargo_lock_beside": true,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": true,
+   "package": {
+    "name": "oven_loaf_dependencies",
+    "version": "0.1.0",
+    "edition": "2021",
+    "rust_version": null,
+    "license": null,
+    "publish": false,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": {
+    "name": null,
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "bitflags": {
+      "package": "bitflags",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "=1.3.2",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "uuid": {
+      "package": "uuid",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.0",
+      "features": [
+       "serde",
+       "v4"
+      ],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_test_support/fixtures/oven_loaf_dependencies/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   },
+   "workspace": {
+    "members": [],
+    "exclude": [],
+    "resolver": null,
+    "package": null,
+    "dependencies": {}
+   }
+  },
+  {
+   "path": "loaves/compiler/rust_inspect/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "rust_inspect",
+    "version": "0.6.0-dev.6",
+    "edition": "2024",
+    "rust_version": "1.98",
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "Rust inspect metadata extraction substrate for Incan",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "homepage",
+    "license",
+    "repository",
+    "rust-version",
+    "version"
+   ],
+   "lib": {
+    "name": "rust_inspect",
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {
+    "default": [
+     "inspector"
+    ],
+    "inspector": [
+     "dep:incan_lang",
+     "dep:toml",
+     "dep:semver",
+     "dep:ra_ap_hir",
+     "dep:ra_ap_hir_def",
+     "dep:ra_ap_hir_expand",
+     "dep:ra_ap_hir_ty",
+     "dep:ra_ap_ide_db",
+     "dep:ra_ap_load-cargo",
+     "dep:ra_ap_paths",
+     "dep:ra_ap_project_model",
+     "dep:ra_ap_syntax",
+     "dep:ra_ap_vfs"
+    ],
+    "test_fixtures": []
+   },
+   "default_features": [
+    "inspector"
+   ],
+   "dependencies": {
+    "normal": {
+     "hex": {
+      "package": "hex",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.4.3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "incan_lang": {
+      "package": "incan_lang",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": true,
+      "path": "loaves/kernel/incan_lang"
+     },
+     "proc-macro2": {
+      "package": "proc-macro2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "quote": {
+      "package": "quote",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "ra_ap_hir": {
+      "package": "ra_ap_hir",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.0.325",
+      "features": [],
+      "default_features": true,
+      "optional": true
+     },
+     "ra_ap_hir_def": {
+      "package": "ra_ap_hir_def",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.0.325",
+      "features": [],
+      "default_features": true,
+      "optional": true
+     },
+     "ra_ap_hir_expand": {
+      "package": "ra_ap_hir_expand",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.0.325",
+      "features": [],
+      "default_features": true,
+      "optional": true
+     },
+     "ra_ap_hir_ty": {
+      "package": "ra_ap_hir_ty",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.0.325",
+      "features": [],
+      "default_features": true,
+      "optional": true
+     },
+     "ra_ap_ide_db": {
+      "package": "ra_ap_ide_db",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.0.325",
+      "features": [],
+      "default_features": true,
+      "optional": true
+     },
+     "ra_ap_load-cargo": {
+      "package": "ra_ap_load-cargo",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.0.325",
+      "features": [],
+      "default_features": true,
+      "optional": true
+     },
+     "ra_ap_paths": {
+      "package": "ra_ap_paths",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.0.325",
+      "features": [],
+      "default_features": true,
+      "optional": true
+     },
+     "ra_ap_project_model": {
+      "package": "ra_ap_project_model",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.0.325",
+      "features": [],
+      "default_features": true,
+      "optional": true
+     },
+     "ra_ap_syntax": {
+      "package": "ra_ap_syntax",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.0.325",
+      "features": [],
+      "default_features": true,
+      "optional": true
+     },
+     "ra_ap_vfs": {
+      "package": "ra_ap_vfs",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.0.325",
+      "features": [],
+      "default_features": true,
+      "optional": true
+     },
+     "semver": {
+      "package": "semver",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": true
+     },
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "sha2": {
+      "package": "sha2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.10.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "syn": {
+      "package": "syn",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "2.0",
+      "features": [
+       "full",
+       "parsing",
+       "printing"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "thiserror": {
+      "package": "thiserror",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "2.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "toml": {
+      "package": "toml",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.9",
+      "features": [],
+      "default_features": true,
+      "optional": true
+     },
+     "tracing": {
+      "package": "tracing",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "0.1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {
+     "tempfile": {
+      "package": "tempfile",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/rust_inspect/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/kernel/incan_codegraph/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_codegraph",
+    "version": "0.6.0-dev.6",
+    "edition": "2024",
+    "rust_version": "1.98",
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "Stable codegraph facts for Incan tooling and agent context",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "homepage",
+    "license",
+    "repository",
+    "rust-version",
+    "version"
+   ],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/kernel/incan_codegraph/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/kernel/incan_lang/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_lang",
+    "version": "0.6.0-dev.6",
+    "edition": "2024",
+    "rust_version": null,
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "Shared language vocabulary and semantic helpers for the Incan compiler and runtime",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "license",
+    "version"
+   ],
+   "lib": {
+    "name": "incan_lang",
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/kernel/incan_lang/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/kernel/incan_semantics_core/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_semantics_core",
+    "version": "0.6.0-dev.6",
+    "edition": "2024",
+    "rust_version": "1.98",
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "Shared surface-semantics contracts and registry interfaces for the Incan compiler",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "homepage",
+    "license",
+    "repository",
+    "rust-version",
+    "version"
+   ],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "hex": {
+      "package": "hex",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.4.3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "incan_lang": {
+      "package": "incan_lang",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_lang"
+     },
+     "postcard": {
+      "package": "postcard",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.1",
+      "features": [
+       "use-std"
+      ],
+      "default_features": false,
+      "optional": false
+     },
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "sha2": {
+      "package": "sha2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.10.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "thiserror": {
+      "package": "thiserror",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "2.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/kernel/incan_semantics_core/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/kernel/incan_syntax/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_syntax",
+    "version": "0.6.0-dev.6",
+    "edition": "2024",
+    "rust_version": "1.98",
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "Shared syntax frontend (lexer, AST, parser) for the Incan compiler and tooling",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "homepage",
+    "license",
+    "repository",
+    "rust-version",
+    "version"
+   ],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "incan_lang": {
+      "package": "incan_lang",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_lang"
+     },
+     "incan_semantics_core": {
+      "package": "incan_semantics_core",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_semantics_core"
+     },
+     "incan_vocab": {
+      "package": "incan_vocab",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.3.0",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_vocab"
+     },
+     "miette": {
+      "package": "miette",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "7.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "tracing": {
+      "package": "tracing",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "0.1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/kernel/incan_syntax/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/kernel/incan_vocab/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_vocab",
+    "version": "0.3.0",
+    "edition": "2024",
+    "rust_version": "1.98",
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "Stable vocabulary registration contract for Incan library companion crates",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "categories",
+    "edition",
+    "homepage",
+    "keywords",
+    "license",
+    "repository",
+    "rust-version"
+   ],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {
+    "default": [
+     "serde"
+    ],
+    "serde": [
+     "dep:serde",
+     "dep:serde_json"
+    ]
+   },
+   "default_features": [
+    "serde"
+   ],
+   "dependencies": {
+    "normal": {
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": true
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": true
+     }
+    },
+    "dev": {
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/kernel/incan_vocab/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/oven/oven_cargo_compat/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "oven_cargo_compat",
+    "version": "0.6.0-dev.5",
+    "edition": "2024",
+    "rust_version": null,
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "Oven's explicit Cargo-compatibility mode: the hidden legacy_cargo baker, compiler-suite publication and the Loaf bake that run Cargo, over oven_rustc",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "license"
+   ],
+   "lib": {
+    "name": "oven_cargo_compat",
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "hex": {
+      "package": "hex",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.4.3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "oven_model": {
+      "package": "oven_model",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_model"
+     },
+     "oven_rustc": {
+      "package": "oven_rustc",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_rustc"
+     },
+     "oven_store": {
+      "package": "oven_store",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_store"
+     },
+     "rustix": {
+      "package": "rustix",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.1.4",
+      "features": [
+       "fs"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "semver": {
+      "package": "semver",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.0.27",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "sha2": {
+      "package": "sha2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.10.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "tempfile": {
+      "package": "tempfile",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "thiserror": {
+      "package": "thiserror",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "2.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "toml": {
+      "package": "toml",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "tracing": {
+      "package": "tracing",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "0.1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {
+     "oven_store": {
+      "package": "oven_store",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [
+       "test_support"
+      ],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_store"
+     }
+    },
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/oven/oven_cargo_compat/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/oven/oven_interop/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "oven_interop",
+    "version": "0.6.0-dev.5",
+    "edition": "2024",
+    "rust_version": null,
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "Oven's native interop: receipt-bound shim compilation, carriers and interop bundles over direct rustc",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "license"
+   ],
+   "lib": {
+    "name": "oven_interop",
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "hex": {
+      "package": "hex",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.4.3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "oven_model": {
+      "package": "oven_model",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_model"
+     },
+     "oven_rustc": {
+      "package": "oven_rustc",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_rustc"
+     },
+     "oven_store": {
+      "package": "oven_store",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_store"
+     },
+     "rustix": {
+      "package": "rustix",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.1.4",
+      "features": [
+       "fs"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "semver": {
+      "package": "semver",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.0.27",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "sha2": {
+      "package": "sha2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.10.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "tempfile": {
+      "package": "tempfile",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {
+     "oven_store": {
+      "package": "oven_store",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [
+       "test_support"
+      ],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_store"
+     }
+    },
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/oven/oven_interop/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/oven/oven_model/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "oven_model",
+    "version": "0.6.0-dev.5",
+    "edition": "2024",
+    "rust_version": null,
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "Oven's project model: manifest, workspace, lifecycle policy, toolchain layout and interop declarations",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "license"
+   ],
+   "lib": {
+    "name": "oven_model",
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "globset": {
+      "package": "globset",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.4.18",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "hex": {
+      "package": "hex",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.4.3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "semver": {
+      "package": "semver",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.0.27",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "sha2": {
+      "package": "sha2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.10.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "thiserror": {
+      "package": "thiserror",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "2.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "toml": {
+      "package": "toml",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "toml_edit": {
+      "package": "toml_edit",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.25",
+      "features": [
+       "parse",
+       "serde"
+      ],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {
+     "tempfile": {
+      "package": "tempfile",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/oven/oven_model/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/oven/oven_registry/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "oven_registry",
+    "version": "0.6.0-dev.5",
+    "edition": "2024",
+    "rust_version": null,
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "Oven's registry client contract: index access, Loaf and asset acquisition, verification and trust policy (RFC 125)",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "license"
+   ],
+   "lib": {
+    "name": "oven_registry",
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {},
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/oven/oven_registry/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]",
+     "#![deny(clippy::expect_used)]"
+    ]
+   }
+  },
+  {
+   "path": "loaves/oven/oven_rustc/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "oven_rustc",
+    "version": "0.6.0-dev.5",
+    "edition": "2024",
+    "rust_version": null,
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "Oven's direct-Rustc planning and execution, Loaf envelopes, native tests and the legacy Cargo baker",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "license"
+   ],
+   "lib": {
+    "name": "oven_rustc",
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {
+    "test_support": [
+     "oven_store/test_support"
+    ]
+   },
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "hex": {
+      "package": "hex",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.4.3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "oven_model": {
+      "package": "oven_model",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_model"
+     },
+     "oven_store": {
+      "package": "oven_store",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_store"
+     },
+     "rustix": {
+      "package": "rustix",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.1.4",
+      "features": [
+       "fs"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "semver": {
+      "package": "semver",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.0.27",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "sha2": {
+      "package": "sha2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.10.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "tempfile": {
+      "package": "tempfile",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "thiserror": {
+      "package": "thiserror",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "2.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "toml": {
+      "package": "toml",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "tracing": {
+      "package": "tracing",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "0.1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {
+     "oven_store": {
+      "package": "oven_store",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [
+       "test_support"
+      ],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_store"
+     }
+    },
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/oven/oven_rustc/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/oven/oven_store/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "oven_store",
+    "version": "0.6.0-dev.5",
+    "edition": "2024",
+    "rust_version": null,
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "Oven's receipts, build-unit identities and the bounded content-addressed store that keys on them",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "license"
+   ],
+   "lib": {
+    "name": "oven_store",
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {
+    "test_support": []
+   },
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "hex": {
+      "package": "hex",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.4.3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "oven_model": {
+      "package": "oven_model",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_model"
+     },
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "sha2": {
+      "package": "sha2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.10.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "thiserror": {
+      "package": "thiserror",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "2.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "toml": {
+      "package": "toml",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {
+     "tempfile": {
+      "package": "tempfile",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/oven/oven_store/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/stdlib/async/rust/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_std_async",
+    "version": "0.6.0-dev.5",
+    "edition": "2024",
+    "rust_version": "1.98",
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "Task, timer, channel and synchronization runtime: the Rust facet of the `async` standard library component",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "homepage",
+    "license",
+    "repository",
+    "rust-version"
+   ],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "tokio": {
+      "package": "tokio",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1",
+      "features": [
+       "macros",
+       "net",
+       "rt-multi-thread",
+       "sync",
+       "time"
+      ],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/stdlib/async/rust/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]"
+    ]
+   }
+  },
+  {
+   "path": "loaves/stdlib/core/rust/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_std_core",
+    "version": "0.6.0-dev.5",
+    "edition": "2024",
+    "rust_version": "1.98",
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "The mandatory Incan standard library runtime: the Rust facet of the `core` component",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "homepage",
+    "license",
+    "repository",
+    "rust-version"
+   ],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "incan_derive": {
+      "package": "incan_derive",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/stdlib/derive/incan_derive"
+     },
+     "incan_lang": {
+      "package": "incan_lang",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_lang"
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/stdlib/core/rust/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]"
+    ]
+   }
+  },
+  {
+   "path": "loaves/stdlib/data/rust/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_std_data",
+    "version": "0.6.0-dev.5",
+    "edition": "2024",
+    "rust_version": "1.98",
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "JSON, serde and ordinal-map runtime: the Rust facet of the `data` standard library component",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "homepage",
+    "license",
+    "repository",
+    "rust-version"
+   ],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "incan_std_core": {
+      "package": "incan_std_core",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/stdlib/core/rust"
+     },
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "xxhash_rust": {
+      "package": "xxhash-rust",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.8",
+      "features": [
+       "xxh3"
+      ],
+      "default_features": true,
+      "optional": false,
+      "renamed_from": "xxhash_rust"
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/stdlib/data/rust/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]"
+    ]
+   }
+  },
+  {
+   "path": "loaves/stdlib/derive/incan_derive/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_derive",
+    "version": "0.6.0-dev.5",
+    "edition": "2024",
+    "rust_version": "1.98",
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "Derive macros for the Incan programming language standard library",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "homepage",
+    "license",
+    "repository",
+    "rust-version"
+   ],
+   "lib": {
+    "name": null,
+    "path": null,
+    "proc_macro": true,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "quote": {
+      "package": "quote",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "syn": {
+      "package": "syn",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "2.0",
+      "features": [
+       "full",
+       "parsing"
+      ],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/stdlib/derive/incan_derive/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/stdlib/derive/incan_web_macros/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_web_macros",
+    "version": "0.6.0-dev.5",
+    "edition": "2024",
+    "rust_version": "1.98",
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "Web proc macros for Incan stdlib",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "homepage",
+    "license",
+    "repository",
+    "rust-version"
+   ],
+   "lib": {
+    "name": null,
+    "path": null,
+    "proc_macro": true,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "proc-macro2": {
+      "package": "proc-macro2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "quote": {
+      "package": "quote",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "syn": {
+      "package": "syn",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "2.0",
+      "features": [
+       "full",
+       "parsing"
+      ],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {
+     "axum": {
+      "package": "axum",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.8",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "incan_std_web": {
+      "package": "incan_std_web",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/stdlib/web/rust"
+     },
+     "inventory": {
+      "package": "inventory",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "tokio": {
+      "package": "tokio",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1",
+      "features": [
+       "macros",
+       "rt-multi-thread"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "tower": {
+      "package": "tower",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.5",
+      "features": [
+       "util"
+      ],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/stdlib/derive/incan_web_macros/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/stdlib/interop/vocab_companion/Cargo.toml",
+   "category": "standalone",
+   "cargo_lock_beside": true,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": true,
+   "package": {
+    "name": "incan_stdlib_interop_vocab",
+    "version": "0.5.0",
+    "edition": "2021",
+    "rust_version": null,
+    "license": null,
+    "publish": true,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": {
+    "name": null,
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": [
+     "rlib",
+     "cdylib"
+    ],
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "incan_vocab": {
+      "package": "incan_vocab",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": false,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "../../../kernel/incan_vocab"
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/stdlib/interop/vocab_companion/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   },
+   "workspace": {
+    "members": [],
+    "exclude": [],
+    "resolver": null,
+    "package": null,
+    "dependencies": {}
+   }
+  },
+  {
+   "path": "loaves/stdlib/testing/rust/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_std_testing",
+    "version": "0.6.0-dev.5",
+    "edition": "2024",
+    "rust_version": "1.98",
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "Test-marker and assertion runtime: the Rust facet of the `testing` standard library component",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "homepage",
+    "license",
+    "repository",
+    "rust-version"
+   ],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "incan_lang": {
+      "package": "incan_lang",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_lang"
+     },
+     "incan_std_core": {
+      "package": "incan_std_core",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/stdlib/core/rust"
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/stdlib/testing/rust/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]"
+    ]
+   }
+  },
+  {
+   "path": "loaves/stdlib/web/rust/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan_std_web",
+    "version": "0.6.0-dev.5",
+    "edition": "2024",
+    "rust_version": "1.98",
+    "license": "Apache-2.0",
+    "publish": true,
+    "description": "Route registration and HTTP serving runtime: the Rust facet of the `web` standard library component",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "homepage",
+    "license",
+    "repository",
+    "rust-version"
+   ],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "axum": {
+      "package": "axum",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.8",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "inventory": {
+      "package": "inventory",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "tokio": {
+      "package": "tokio",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1",
+      "features": [
+       "net",
+       "rt-multi-thread"
+      ],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/stdlib/web/rust/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": [
+     "#![deny(clippy::unwrap_used)]"
+    ]
+   }
+  },
+  {
+   "path": "loaves/third_party/ra_ap_proc_macro_api/Cargo.toml",
+   "category": "third-party-patch",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "ra_ap_proc_macro_api",
+    "version": "0.0.325",
+    "edition": "2024",
+    "rust_version": "1.92",
+    "license": "MIT OR Apache-2.0",
+    "publish": true,
+    "description": "RPC Api for the `proc-macro-srv` crate of rust-analyzer.",
+    "resolver": "2",
+    "auto_discovery_off": [
+     "autobenches",
+     "autobins",
+     "autoexamples",
+     "autolib",
+     "autotests"
+    ]
+   },
+   "inherited_package_keys": [],
+   "lib": {
+    "name": "ra_ap_proc_macro_api",
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": false
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {
+    "default": [],
+    "in-rust-tree": [],
+    "sysroot-abi": [
+     "proc-macro-srv",
+     "proc-macro-srv/sysroot-abi"
+    ]
+   },
+   "default_features": [],
+   "dependencies": {
+    "normal": {
+     "indexmap": {
+      "package": "indexmap",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "2.9.0",
+      "features": [
+       "serde"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "intern": {
+      "package": "ra_ap_intern",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "=0.0.325",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "renamed_from": "intern"
+     },
+     "paths": {
+      "package": "ra_ap_paths",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "=0.0.325",
+      "features": [
+       "serde1"
+      ],
+      "default_features": true,
+      "optional": false,
+      "renamed_from": "paths"
+     },
+     "postcard": {
+      "package": "postcard",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.1.3",
+      "features": [
+       "alloc"
+      ],
+      "default_features": false,
+      "optional": false
+     },
+     "proc-macro-srv": {
+      "package": "ra_ap_proc_macro_srv",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "=0.0.325",
+      "features": [],
+      "default_features": true,
+      "optional": true,
+      "renamed_from": "proc-macro-srv"
+     },
+     "rayon": {
+      "package": "rayon",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.10.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "rustc-hash": {
+      "package": "rustc-hash",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "2.1.1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "semver": {
+      "package": "semver",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.0.26",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.0.219",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_derive": {
+      "package": "serde_derive",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.0.219",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.0.140",
+      "features": [
+       "unbounded_depth"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "span": {
+      "package": "ra_ap_span",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "=0.0.325",
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "renamed_from": "span"
+     },
+     "stdx": {
+      "package": "ra_ap_stdx",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "=0.0.325",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "renamed_from": "stdx"
+     },
+     "tracing": {
+      "package": "tracing",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.1.41",
+      "features": [
+       "std"
+      ],
+      "default_features": false,
+      "optional": false
+     },
+     "tt": {
+      "package": "ra_ap_tt",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "=0.0.325",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "renamed_from": "tt"
+     }
+    },
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": false,
+    "path": null
+   },
+   "lints": {
+    "clippy": {
+     "assigning_clones": "allow",
+     "dbg_macro": "warn",
+     "enum_variant_names": "allow",
+     "len_without_is_empty": "allow",
+     "literal_string_with_formatting_args": "allow",
+     "new_ret_no_self": "allow",
+     "print_stderr": "warn",
+     "print_stdout": "warn",
+     "rc_buffer": "warn",
+     "result_unit_err": "allow",
+     "single_match": "allow",
+     "str_to_string": "warn",
+     "todo": "warn",
+     "too_long_first_doc_paragraph": "allow",
+     "too_many_arguments": "allow",
+     "type_complexity": "allow",
+     "unnecessary_map_or": "allow",
+     "useless_asref": "allow",
+     "vec_init_then_push": "allow",
+     "wrong_self_convention": "allow",
+     "complexity": {
+      "level": "warn",
+      "priority": -1
+     },
+     "correctness": {
+      "level": "deny",
+      "priority": -1
+     },
+     "perf": {
+      "level": "deny",
+      "priority": -1
+     },
+     "restriction": {
+      "level": "allow",
+      "priority": -1
+     },
+     "style": {
+      "level": "warn",
+      "priority": -1
+     },
+     "suspicious": {
+      "level": "warn",
+      "priority": -1
+     }
+    },
+    "rust": {
+     "elided_lifetimes_in_paths": "warn",
+     "explicit_outlives_requirements": "warn",
+     "unreachable_pub": "warn",
+     "unsafe_op_in_unsafe_fn": "warn",
+     "unused_extern_crates": "warn",
+     "unused_lifetimes": "warn",
+     "unexpected_cfgs": {
+      "level": "warn",
+      "priority": 0,
+      "check-cfg": [
+       "cfg(bootstrap)",
+       "cfg(no_salsa_async_drops)"
+      ]
+     }
+    }
+   },
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/third_party/ra_ap_proc_macro_api/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": [
+     "#![cfg_attr(not(feature = \"sysroot-abi\"), allow(unused_crate_dependencies))]",
+     "#![cfg_attr( feature = \"sysroot-abi\", feature(proc_macro_internals, proc_macro_diagnostic, proc_macro_span) )]",
+     "#![allow(internal_features, unused_features)]",
+     "#![cfg_attr(feature = \"in-rust-tree\", feature(rustc_private))]"
+    ]
+   }
+  },
+  {
+   "path": "loaves/toolchain/incan-cli/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan-cli",
+    "version": "0.6.0-dev.6",
+    "edition": "2024",
+    "rust_version": null,
+    "license": "Apache-2.0",
+    "publish": false,
+    "description": "The incan command: clap surface, terminal rendering, exit codes, the test runner",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "license",
+    "version"
+   ],
+   "lib": {
+    "name": "incan_cli",
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [
+    {
+     "name": "incan",
+     "path": "src/main.rs"
+    }
+   ],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {
+    "default": [
+     "rust_inspect",
+     "std_testing",
+     "std_async",
+     "std_decorators"
+    ],
+    "rust_inspect": [
+     "dep:rust_inspect",
+     "rust_inspect/inspector",
+     "incan_frontend/rust_inspect",
+     "incan_provider/rust_inspect",
+     "incan_driver/rust_inspect",
+     "oven-cli/rust_inspect"
+    ],
+    "std_async": [
+     "incan_frontend/std_async",
+     "incan_provider/std_async",
+     "incan_driver/std_async",
+     "oven-cli/std_async"
+    ],
+    "std_decorators": [
+     "incan_frontend/std_decorators",
+     "incan_provider/std_decorators",
+     "incan_driver/std_decorators",
+     "oven-cli/std_decorators"
+    ],
+    "std_testing": [
+     "incan_frontend/std_testing",
+     "incan_provider/std_testing",
+     "incan_driver/std_testing",
+     "oven-cli/std_testing"
+    ]
+   },
+   "default_features": [
+    "rust_inspect",
+    "std_testing",
+    "std_async",
+    "std_decorators"
+   ],
+   "dependencies": {
+    "normal": {
+     "clap": {
+      "package": "clap",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "4.4",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "hex": {
+      "package": "hex",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.4.3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "incan_codegraph": {
+      "package": "incan_codegraph",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_codegraph"
+     },
+     "incan_driver": {
+      "package": "incan_driver",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [
+       "cli"
+      ],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_driver"
+     },
+     "incan_format": {
+      "package": "incan_format",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/compiler/incan_format"
+     },
+     "incan_frontend": {
+      "package": "incan_frontend",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_frontend"
+     },
+     "incan_lang": {
+      "package": "incan_lang",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_lang"
+     },
+     "incan_oven_facet": {
+      "package": "incan_oven_facet",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/compiler/incan_oven_facet"
+     },
+     "incan_provider": {
+      "package": "incan_provider",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_provider"
+     },
+     "incan_semantics_core": {
+      "package": "incan_semantics_core",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_semantics_core"
+     },
+     "incan_syntax": {
+      "package": "incan_syntax",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_syntax"
+     },
+     "incan_vocab": {
+      "package": "incan_vocab",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.3.0",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_vocab"
+     },
+     "oven-cli": {
+      "package": "oven-cli",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/toolchain/oven-cli"
+     },
+     "oven_cargo_compat": {
+      "package": "oven_cargo_compat",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_cargo_compat"
+     },
+     "oven_interop": {
+      "package": "oven_interop",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_interop"
+     },
+     "oven_model": {
+      "package": "oven_model",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_model"
+     },
+     "oven_rustc": {
+      "package": "oven_rustc",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_rustc"
+     },
+     "oven_store": {
+      "package": "oven_store",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_store"
+     },
+     "rust_inspect": {
+      "package": "rust_inspect",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": true,
+      "path": "loaves/compiler/rust_inspect"
+     },
+     "semver": {
+      "package": "semver",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.0.27",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "sha2": {
+      "package": "sha2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.10.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "tempfile": {
+      "package": "tempfile",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "toml": {
+      "package": "toml",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "toml_edit": {
+      "package": "toml_edit",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.25",
+      "features": [
+       "parse",
+       "serde"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "tracing-subscriber": {
+      "package": "tracing-subscriber",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.3",
+      "features": [
+       "env-filter"
+      ],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {
+     "blake2": {
+      "package": "blake2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.10",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "blake3": {
+      "package": "blake3",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "byteorder": {
+      "package": "byteorder",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "bzip2": {
+      "package": "bzip2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.6",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "crc32fast": {
+      "package": "crc32fast",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "flate2": {
+      "package": "flate2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "hmac": {
+      "package": "hmac",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.12",
+      "features": [
+       "reset"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "incan_driver": {
+      "package": "incan_driver",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [
+       "cli",
+       "test_support"
+      ],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_driver"
+     },
+     "incan_test_support": {
+      "package": "incan_test_support",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/compiler/incan_test_support"
+     },
+     "libc": {
+      "package": "libc",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.2",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "md5_010": {
+      "package": "md-5",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.10",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "renamed_from": "md5_010"
+     },
+     "rand": {
+      "package": "rand",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.8",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "regex": {
+      "package": "regex",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "sha1": {
+      "package": "sha1",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.10",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "sha3": {
+      "package": "sha3",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.10",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "snap": {
+      "package": "snap",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "uuid": {
+      "package": "uuid",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1",
+      "features": [
+       "serde",
+       "v4"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "wat": {
+      "package": "wat",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "xxhash_rust": {
+      "package": "xxhash-rust",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.8",
+      "features": [
+       "xxh3",
+       "xxh32",
+       "xxh64"
+      ],
+      "default_features": true,
+      "optional": false,
+      "renamed_from": "xxhash_rust"
+     },
+     "xz2": {
+      "package": "xz2",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.1",
+      "features": [
+       "static"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "zstd": {
+      "package": "zstd",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.13",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": {
+    "cargo-udeps": {
+     "ignore": {
+      "development": [
+       "uuid"
+      ]
+     }
+    }
+   },
+   "target_roots": {
+    "lib": "loaves/toolchain/incan-cli/src/lib.rs",
+    "bin:incan": "loaves/toolchain/incan-cli/src/main.rs"
+   },
+   "crate_level_attributes": {
+    "bin:incan": [],
+    "lib": [
+     "#![deny(clippy::unwrap_used)]",
+     "#![deny(clippy::expect_used)]"
+    ]
+   }
+  },
+  {
+   "path": "loaves/toolchain/incan-lsp/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "incan-lsp",
+    "version": "0.6.0-dev.6",
+    "edition": "2024",
+    "rust_version": null,
+    "license": "Apache-2.0",
+    "publish": false,
+    "description": "The Incan language server: diagnostics, hover, definitions and semantic tokens over stdio",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "license",
+    "version"
+   ],
+   "lib": {
+    "name": "incan_lsp",
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [
+    {
+     "name": "incan-lsp",
+     "path": "src/main.rs"
+    }
+   ],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {
+    "default": [
+     "rust_inspect",
+     "std_testing",
+     "std_async",
+     "std_decorators"
+    ],
+    "rust_inspect": [
+     "incan_frontend/rust_inspect",
+     "incan_provider/rust_inspect",
+     "incan_driver/rust_inspect"
+    ],
+    "std_async": [
+     "incan_frontend/std_async",
+     "incan_provider/std_async",
+     "incan_driver/std_async"
+    ],
+    "std_decorators": [
+     "incan_frontend/std_decorators",
+     "incan_provider/std_decorators",
+     "incan_driver/std_decorators"
+    ],
+    "std_testing": [
+     "incan_frontend/std_testing",
+     "incan_provider/std_testing",
+     "incan_driver/std_testing"
+    ]
+   },
+   "default_features": [
+    "rust_inspect",
+    "std_testing",
+    "std_async",
+    "std_decorators"
+   ],
+   "dependencies": {
+    "normal": {
+     "incan_driver": {
+      "package": "incan_driver",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_driver"
+     },
+     "incan_frontend": {
+      "package": "incan_frontend",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_frontend"
+     },
+     "incan_lang": {
+      "package": "incan_lang",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_lang"
+     },
+     "incan_provider": {
+      "package": "incan_provider",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_provider"
+     },
+     "incan_semantics_core": {
+      "package": "incan_semantics_core",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_semantics_core"
+     },
+     "incan_syntax": {
+      "package": "incan_syntax",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_syntax"
+     },
+     "incan_vocab": {
+      "package": "incan_vocab",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.3.0",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_vocab"
+     },
+     "oven_model": {
+      "package": "oven_model",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_model"
+     },
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "tokio": {
+      "package": "tokio",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1",
+      "features": [
+       "io-std",
+       "io-util",
+       "macros",
+       "rt-multi-thread",
+       "sync"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "tower-lsp": {
+      "package": "tower-lsp",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "0.20",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "tracing": {
+      "package": "tracing",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "0.1",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {
+     "incan_driver": {
+      "package": "incan_driver",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [
+       "test_support"
+      ],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_driver"
+     },
+     "incan_format": {
+      "package": "incan_format",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/compiler/incan_format"
+     },
+     "tempfile": {
+      "package": "tempfile",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/toolchain/incan-lsp/src/lib.rs",
+    "bin:incan-lsp": "loaves/toolchain/incan-lsp/src/main.rs"
+   },
+   "crate_level_attributes": {
+    "bin:incan-lsp": [],
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/toolchain/oven-cli/Cargo.toml",
+   "category": "workspace-member",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "oven-cli",
+    "version": "0.6.0-dev.6",
+    "edition": "2024",
+    "rust_version": null,
+    "license": "Apache-2.0",
+    "publish": false,
+    "description": "The oven command: the explicit Oven receipt, bounded-store and native direct-rustc workflow, the lock command and the toolchain inspection helpers",
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [
+    "authors",
+    "edition",
+    "license",
+    "version"
+   ],
+   "lib": {
+    "name": "oven_cli",
+    "path": "src/lib.rs",
+    "proc_macro": false,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [
+    {
+     "name": "oven",
+     "path": "src/main.rs"
+    }
+   ],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {
+    "default": [
+     "rust_inspect",
+     "std_testing",
+     "std_async",
+     "std_decorators"
+    ],
+    "rust_inspect": [
+     "dep:rust_inspect",
+     "rust_inspect/inspector",
+     "incan_frontend/rust_inspect",
+     "incan_provider/rust_inspect",
+     "incan_driver/rust_inspect"
+    ],
+    "std_async": [
+     "incan_frontend/std_async",
+     "incan_provider/std_async",
+     "incan_driver/std_async"
+    ],
+    "std_decorators": [
+     "incan_frontend/std_decorators",
+     "incan_provider/std_decorators",
+     "incan_driver/std_decorators"
+    ],
+    "std_testing": [
+     "incan_frontend/std_testing",
+     "incan_provider/std_testing",
+     "incan_driver/std_testing"
+    ]
+   },
+   "default_features": [
+    "rust_inspect",
+    "std_testing",
+    "std_async",
+    "std_decorators"
+   ],
+   "dependencies": {
+    "normal": {
+     "clap": {
+      "package": "clap",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "4.4",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "incan_driver": {
+      "package": "incan_driver",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [
+       "cli"
+      ],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_driver"
+     },
+     "incan_frontend": {
+      "package": "incan_frontend",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_frontend"
+     },
+     "incan_lang": {
+      "package": "incan_lang",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/kernel/incan_lang"
+     },
+     "incan_oven_facet": {
+      "package": "incan_oven_facet",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/compiler/incan_oven_facet"
+     },
+     "incan_provider": {
+      "package": "incan_provider",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_provider"
+     },
+     "oven_cargo_compat": {
+      "package": "oven_cargo_compat",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_cargo_compat"
+     },
+     "oven_interop": {
+      "package": "oven_interop",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_interop"
+     },
+     "oven_model": {
+      "package": "oven_model",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_model"
+     },
+     "oven_rustc": {
+      "package": "oven_rustc",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_rustc"
+     },
+     "oven_store": {
+      "package": "oven_store",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": "0.6.0-dev.5",
+      "features": [],
+      "default_features": true,
+      "optional": false,
+      "path": "loaves/oven/oven_store"
+     },
+     "rust_inspect": {
+      "package": "rust_inspect",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [],
+      "default_features": false,
+      "optional": true,
+      "path": "loaves/compiler/rust_inspect"
+     },
+     "rustix": {
+      "package": "rustix",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "1.1.4",
+      "features": [
+       "fs"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "serde": {
+      "package": "serde",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [
+       "derive"
+      ],
+      "default_features": true,
+      "optional": false
+     },
+     "serde_json": {
+      "package": "serde_json",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": true,
+      "version_req": "1.0",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "tempfile": {
+      "package": "tempfile",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "3",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "toml": {
+      "package": "toml",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.9",
+      "features": [],
+      "default_features": true,
+      "optional": false
+     },
+     "tracing-subscriber": {
+      "package": "tracing-subscriber",
+      "kind": "third-party",
+      "origin": "registry",
+      "workspace_inherited": false,
+      "version_req": "0.3",
+      "features": [
+       "env-filter"
+      ],
+      "default_features": true,
+      "optional": false
+     }
+    },
+    "dev": {
+     "incan_driver": {
+      "package": "incan_driver",
+      "kind": "workspace-internal",
+      "origin": "path",
+      "workspace_inherited": true,
+      "version_req": null,
+      "features": [
+       "cli",
+       "test_support"
+      ],
+      "default_features": false,
+      "optional": false,
+      "path": "loaves/compiler/incan_driver"
+     }
+    },
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/toolchain/oven-cli/src/lib.rs",
+    "bin:oven": "loaves/toolchain/oven-cli/src/main.rs"
+   },
+   "crate_level_attributes": {
+    "bin:oven": [],
+    "lib": []
+   }
+  }
+ ]
+}

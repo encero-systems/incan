@@ -4,7 +4,7 @@
 
     Do not edit this page by hand. Regenerate it from the checked public-capability baseline and compiler-boundary registrations.
 
-This is a validated migration control plane, not a permanent second language-feature catalogue and not a parity claim. Durable feature and private-mechanism records are registered beside the compiler boundary that owns them; the collector joins and validates them here. The explicitly marked migration bootstrap exists only while unlanded work lacks such a boundary. A feature row turns green only after direct execution and an independent, receipt-bound source-observable comparison for its full contract. A matched corpus case remains scoped evidence and cannot promote an incomplete feature. Generated Rust, Body IR representation, and legacy compilation are separate facts.
+This is a validated migration control plane, not a permanent second language-feature catalog and not a parity claim. Durable feature and private-mechanism records are registered beside the compiler boundary that owns them; the collector joins and validates them here. The explicitly marked migration bootstrap exists only while unlanded work lacks such a boundary. A feature row turns green only after direct execution and an independent, receipt-bound source-observable comparison for its full contract. A matched corpus case remains scoped evidence and cannot promote an incomplete feature. Generated Rust, Body IR representation, and legacy compilation are separate facts.
 
 ## Release-pinned public baseline
 
@@ -296,10 +296,10 @@ Generator functions suspend and resume without replaying prior effects or losing
 
 ### `interop.rust-and-c`
 
-Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgements, and source-map diagnostics.
+Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgments, and source-map diagnostics.
 
 - `probe:interop.rust-and-c:binding-and-refusal` — positive AcceptedBehavior at Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedCBindingFoundation`; negative IntentionalRefusal at Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs::fn validate_rust_boundary_value`
-  - Positive contract: Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgements, and source-map diagnostics.
+  - Positive contract: Rust and C boundaries preserve checked signatures, coercions, explicit unsafe acknowledgments, and source-map diagnostics.
   - Negative contract: Reject unsupported variants with an intentional source-owned diagnostic and no silent legacy fallback.
 - Source/AST: Observed `loaves/compiler/incan_driver/src/replacement_compatibility/migration_baselines/v0.5.0/capabilities.incn::CheckedCBindingFoundation`
 - Typechecker: Observed `loaves/compiler/incan_frontend/src/typechecker/check_expr/calls/rust_boundary.rs::fn validate_rust_boundary_value`
