@@ -2367,7 +2367,7 @@ mod selected_rust_facet_graph_tests {
             "PRIVATE_MATERIAL",
             "OUT_DIR",
             "FIXTURE_DIR",
-            // Registry neighbours deliberately left out.
+            // Registry neighbors deliberately left out.
             "CARGO_PKG_AUTHORS",
         ] {
             assert!(

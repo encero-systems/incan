@@ -905,7 +905,7 @@ pub fn legacy_cargo_builtin_target_spec(
     })
 }
 
-/// Construct exact portable registry-unit bindings from the publisher's retained inspection source catalogue.
+/// Construct exact portable registry-unit bindings from the publisher's retained inspection source catalog.
 ///
 /// The returned paths name the layout written by the Loaf source publisher. Package names alone never select a
 /// source: version, registry, checksum, complete tree digest, root module and member inventory must all agree with
@@ -1007,7 +1007,7 @@ pub type OvenLegacyCargoGeneratedOutputBindings = (
 /// Construct generated-output owners and bindings from exact edge-scoped stable capture facts.
 ///
 /// Empty member inventories are preserved: their canonical digest and declared directory remain distinct from an
-/// absent output, allowing the foundation asset catalogue to reproduce the empty `OUT_DIR` after mirroring.
+/// absent output, allowing the foundation asset catalog to reproduce the empty `OUT_DIR` after mirroring.
 pub fn legacy_cargo_generated_output_bindings(
     capture: &OvenLegacyCargoSelectedUnitCapture,
 ) -> Result<OvenLegacyCargoGeneratedOutputBindings, OvenLegacyCargoError> {
@@ -2283,7 +2283,7 @@ fn captured_domain(
     }
 }
 
-/// Derive an inspection role from Cargo's traced target kind and mode without accepting caller relabelling.
+/// Derive an inspection role from Cargo's traced target kind and mode without accepting caller relabeling.
 fn captured_role(
     unit: &OvenLegacyCargoSelectedUnit,
     crate_kind: OvenSelectedRustFacetCrateKind,
