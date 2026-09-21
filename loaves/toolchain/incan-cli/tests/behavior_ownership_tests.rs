@@ -1,4 +1,4 @@
-//! The `ownership_*` areas of the behaviour-fixture family: twins of the retire-class tests of the emitter's ownership
+//! The `ownership_*` areas of the behavior-fixture family: twins of the retire-class tests of the emitter's ownership
 //! planner and conversion policy (`incan_emit/src/ownership.rs`, `src/conversions.rs`, `src/trait_bound_inference.rs`
 //! and `tests/implicit_borrowing_codegen_tests.rs`).
 //!
