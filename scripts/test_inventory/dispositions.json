@@ -2361,7 +2361,7 @@
         },
         "merged_source_signature_keeps_mutable_parameter_abi": {
           "twin": "dies",
-          "dies": "data-structure invariant of the retiring crate: `FunctionSignature::merge_default_source` keeps the source signature's `Mutable` parameter over the checked one's, on hand-built signatures with no program."
+          "dies": "data-structure invariant of the retiring crate: `FunctionSignature::merge_default_source` keeps the source declaration's `Mutable` parameter over the checked callable metadata's `Immutable` one, on hand-built signatures with no program. The source-call half of what it protects, a parameter declared `mut` in source staying mutable at a source-owned call, is carried by loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/receiver_aware_method_kinds_issue1668.incn (`grow(mut table)`, which inserts into its `mut` dict parameter and reads the insertion back). The other half, from #1062, is the `&mut Ui` callback parameter of an imported Rust trait implementation (`eframe::App`), where the inspected callable metadata spells the callback immutably and the source `mut` must win so the borrowed callback value is forwarded rather than cloned: untwinned, a `rust::` program over a Rust trait with a `&mut` callback that no fixture can carry (a Rust crate under `[rust-dependencies]`), recorded as a `rust::` gap that goes with #1337's interop spec (slice 7), the way the `merge_test_runner_dependencies_*` rows record theirs."
         }
       }
     },
@@ -2383,7 +2383,7 @@
         },
         "source_callable_lowering_requires_canonical_std_trait_owner": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/callable_trait_local_versus_std",
-          "notes": "`IrTraitBoundOrigin` and the `crate::__incan_std::traits::callable::Callable1` path die with the crate; the fixture's module-local `Callable1` is an ordinary trait dispatching its own method, and the std `Callable1` admits a closure and a plain function."
+          "notes": "`IrTraitBoundOrigin` and the `crate::__incan_std::traits::callable::Callable1` path die with the crate; the fixture's `Callable1`, declared in a user module named `traits.callable` so that only the `std` root separates it from the canonical owner, is an ordinary trait dispatching its own method, and the std `Callable1` admits a closure and a plain function."
         }
       }
     },
@@ -2419,7 +2419,7 @@
         },
         "sdk_provider_callable_module_retains_public_std_identity": {
           "twin": "dies",
-          "dies": "SDK-provider build-mode switch of the retiring crate (`set_sdk_provider_build` with the current module named `traits.callable`): the compiler's own build of the standard library, not a user program. What the bridge gives a program, the std `Callable1` admitting a closure and a plain function, is shown by loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/callable_trait_local_versus_std/."
+          "dies": "SDK-provider build-mode switch of the retiring crate (`set_sdk_provider_build` with the current module named `traits.callable`): the compiler's own build of the standard library, not a user program. Its ordinary-package half, that a user module named `traits.callable` acquires no callable behaviour, is what loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/callable_trait_local_versus_std/ shows: its `traits/callable.incn` declares a `Callable1` that stays an ordinary trait. What the bridge gives a program, the std `Callable1` admitting a closure and a plain function, is shown by the same fixture."
         }
       }
     },
@@ -2473,7 +2473,7 @@
         },
         "lower_rust_boundary_target_preserves_nested_borrowed_str_refs": {
           "twin": "dies",
-          "dies": "data-structure invariant of the retiring crate: the Rust spelling a `List[Ref[str]]` boundary target lowers to (`Vec<&str>`), computed on a hand-built resolved type with no program."
+          "dies": "data-structure invariant of the retiring crate: the Rust spelling a `List[Ref[str]]` boundary target lowers to (`Vec<&str>`), computed on a hand-built resolved type with no program. It dies where its ten `rust::` siblings in this file stay open because no program reaches it: the nested borrow needs a Rust parameter typed `Vec<&str>` (or `&[&str]`), and `rust::std` has none (std takes string sequences generically, as `IntoIterator<Item: AsRef<OsStr>>` on `Command::args`, or as a slice receiver in `<[&str]>::join`), so the only carrier is a local Rust crate under `[rust-dependencies]`, which a fixture cannot carry (the limit the `cli_rust_interop_tests.rs` #896 row records). The siblings' programs import `rust::std` only and wait for the Cargo-free bake; this one goes with #1337's interop spec (slice 7)."
         },
         "lower_rust_constant_method_receiver_as_value_not_type_like": {
           "twin": "",
@@ -2629,7 +2629,7 @@
         },
         "retain_declared_decorator_surface_restores_native_carriers_issue1453": {
           "twin": "loaves/toolchain/incan-cli/tests/package_boundary_facade_tests.rs::explicitly_typed_decorator_keeps_the_provider_union_representation_issue1453",
-          "notes": "Asserts the positional IrType merge that restores a provider-owned union onto a decorated surface (`retain_declared_decorator_surface`) on hand-built types; retires with `incan_ir`. The behaviour, an explicitly typed decorator over a provider's `pub type` union running across the boundary and printing the narrowed value, is carried by the named CLI test (the same #1453 program). The local-alias, declared-after-use and factory halves of #1453 are twinned by loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/decorator_declared_surface_issue1453.incn."
+          "notes": "Asserts the positional IrType merge that restores a provider-owned union onto a decorated surface (`retain_declared_decorator_surface`) on hand-built types; retires with `incan_ir`. The behaviour, an explicitly typed decorator over a provider's `pub type` union running across the boundary and printing the narrowed value, is carried by the named CLI test (the same #1453 program). That test also reads the baked library's generated text (line 615), which retires with the file's other generated-text reads; its bakes, consumer run and `42` assertion must survive that retirement. The local-alias, declared-after-use and factory halves of #1453 are twinned by loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/decorator_declared_surface_issue1453.incn."
         },
         "source_function_without_canonical_identity_fails_closed": {
           "twin": "dies",
@@ -2755,7 +2755,7 @@
         },
         "lower_trait_default_constructor_respects_active_local_binding": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/trait_default_local_shadows_module_type",
-          "notes": "`active_trait_default_value_type_path` dies with the crate; the fixture's imported default body binds a local named like a model of the trait's module and returns the local. The sibling fact, the default constructing that model by named fields across modules, is a route bug (E0423; candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/trait_default_constructs_module_type_across_modules/)."
+          "notes": "`active_trait_default_value_type_path` dies with the crate; the fixture's imported default body binds a local named like a model of the trait's module and returns the local. The map the test consults, `active_trait_default_type_paths`, is filled only when a stdlib trait is imported (`trait_default_type_paths` is written by the stdlib-cache import path alone), so for a user module's trait it is never populated and the local binding shadows nothing: the shadowing this test asserts is vacuous for a user module until the bug behind loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/trait_default_names_its_own_module_types/ (E0425) lands and the map is populated there too. The fixture asserts the observable, the local value coming back, and stays the twin. The sibling fact, the default constructing that model by named fields across modules, is a route bug (E0423; candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/trait_default_constructs_module_type_across_modules/)."
         },
         "merge_inferred_ir_type_does_not_erase_a_concrete_closure_return": {
           "twin": "dies",
@@ -2779,22 +2779,22 @@
       "disposition": "retire",
       "owner": 1561,
       "twin": "dies",
-      "dies": "`IrType` display and predicate helpers (`rust_name`, `incan_name`, `is_copy`, `is_ref`, `iterator_item_type`) and the equality of `IrType::ExternalUnion` across artifact digests, asserted on hand-built values with no program: data-structure invariant of the retiring crate. The three tests whose helper decides something a program shows (isinstance over string storages, provider-owned union member matching and localization) are twinned per test.",
+      "dies": "`IrType` display and predicate helpers (`rust_name`, `incan_name`, `is_copy`, `is_ref`, `iterator_item_type`) and the equality of `IrType::ExternalUnion` across artifact digests, asserted on hand-built values with no program: data-structure invariant of the retiring crate. Two of them have a run-time carrier for the half a program can show: the negative half of `iterator_item_type_uses_canonical_trait_identity_issue950_953` (a similarly named `RecordIterator` is not the std `Iterator`) is what loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/user_methods_named_like_builtins.incn shows, a model's own `map`, `count` and `index` dispatching to the model and not to the iterator surface; the union identity of `an_external_union_keeps_its_identity_across_artifact_digests` is carried as far as a program shows it by loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/provider_nominal_types_and_unions_issue892/, a baked provider's union crossing the boundary as one type and narrowed in the consumer (the rebuild under a new digest has no program). The three tests whose helper decides something a program shows (isinstance over string storages, provider-owned union member matching, provider localization) have their own rows: two twinned, the localization one open.",
       "split_required": false,
       "split_target": "",
       "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "tests": {
         "external_union_member_matching_is_provider_aware_issue892": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/provider_nominal_types_and_unions_issue892",
-          "notes": "The `widgets::Widget` versus `other::Widget` spelling test dies with the carrier; the fixture narrows a provider-owned union by the provider's own members in a consumer, beside a second provider's union."
+          "notes": "The `widgets::Widget` versus `other::Widget` spelling test dies with the carrier. The fixture's two providers each export a `Widget` (`name: str` in `widgets`, `value: int` in `other`); the consumer imports the second as `OtherWidget`, narrows `widgets`' union by `Widget` and `other`'s by `OtherWidget`, and hands each locally constructed Widget to its own union: the two same-spelled models are distinct members of distinct unions, which is the negative half of the test (`other::Widget` is no member of `widgets`' union)."
         },
         "isinstance_string_storage_identity_is_symmetric_without_widening_union_carriers": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/isinstance_over_string_storages.incn",
           "notes": "The helper's decision is what `isinstance(value, str)` answers over a union carrying `FrozenStr` and `str` members; the fixture matches both string storages against `str` and an int against `int`. The `union_member_type_matches` asymmetry (String accepts FrozenStr, not the reverse) is a widening rule of the retiring carrier and dies."
         },
         "provider_localization_preserves_foreign_external_union_issue892": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/provider_nominal_types_and_unions_issue892",
-          "notes": "`provider_localized` on a hand-built union dies with the carrier; the fixture keeps two providers' unions apart in one consumer, each matched by its own members."
+          "twin": "",
+          "notes": "open: asserts, on a hand-built union owned by `other` whose member is `widgets::Widget`, that localizing `widgets` leaves the foreign union untouched. The program is a provider `other` that imports `widgets`' `Widget` and exports a union carrying it, narrowed in a consumer of both: `other` is then a provider that itself declares `[dependencies]`, whose bake under the suite goes through the compatibility publisher and reaches Cargo (see *Provider bakes and Cargo* in the family README), so the harness cannot bake it Cargo-free; the program shape is #1699's candidate `transitive_provider_chain/` under the `dependencies/` behaviour-candidates group (#1701). Waits for the Cargo-free provider-with-dependencies bake. loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/provider_nominal_types_and_unions_issue892/ keeps two dependency-free providers' unions apart in one consumer, the same-spelled-member half of #892, not this test's foreign-member half."
         }
       }
     },
@@ -4730,7 +4730,12 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire."
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire.",
+      "tests": {
+        "explicitly_typed_decorator_keeps_the_provider_union_representation_issue1453": {
+          "notes": "Twin of `loaves/compiler/incan_ir/src/lower/mod.rs::retain_declared_decorator_surface_restores_native_carriers_issue1453`. The test reads the baked library's generated text at line 615 (`!generated.contains(\"pub enum __IncanUnion\")`), which retires with this file's other generated-text reads; the provider and library bakes, the consumer run and its `42` assertion must survive that retirement, because that run is what the incan_ir row depends on."
+        }
+      }
     },
     "loaves/toolchain/incan-cli/tests/package_executable_representation.rs": {
       "disposition": "re-point",

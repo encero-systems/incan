@@ -1,4 +1,4 @@
-# behavior: a module's own trait named Callable1 is an ordinary trait whose adopter dispatches the trait's method, while the std.traits.callable Callable1 admits a closure and a plain function as callables
+# behavior: a user module named traits.callable declaring its own Callable1 is an ordinary trait whose adopter dispatches the trait's method, while the std.traits.callable Callable1 admits a closure and a plain function as callables
 # retires: loaves/compiler/incan_ir/src/lower/decl/helpers.rs::source_callable_lowering_requires_canonical_std_trait_owner
 # expect-stdout:
 #   local 8
@@ -6,7 +6,7 @@
 #   std function 10
 
 from std.traits.callable import Callable1
-from local_callable import Doubler, run_local
+from traits.callable import Doubler, run_local
 
 
 def add_seven(value: int) -> int:

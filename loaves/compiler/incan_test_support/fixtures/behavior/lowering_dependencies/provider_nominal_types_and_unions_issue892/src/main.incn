@@ -1,19 +1,20 @@
-# behavior: a consumer constructs a provider's nominal and generic types, narrows a provider-owned union by the provider's own members, and a second provider's union keeps its own members beside it (#892)
+# behavior: a consumer constructs a provider's nominal and generic types, narrows each of two providers' unions by that provider's own members, and the providers' same-spelled Widget models are distinct members of distinct unions (#892)
 # retires: loaves/compiler/incan_ir/src/lower/types.rs::lower_resolved_type_qualifies_canonical_public_library_identity_issue892
 # retires: loaves/compiler/incan_ir/src/lower/types.rs::lower_resolved_type_qualifies_generic_public_library_identity_issue892
 # retires: loaves/compiler/incan_ir/src/lower/types.rs::pub_external_type_normalizes_canonical_union_members_issue892
 # retires: loaves/compiler/incan_ir/src/types.rs::external_union_member_matching_is_provider_aware_issue892
-# retires: loaves/compiler/incan_ir/src/types.rs::provider_localization_preserves_foreign_external_union_issue892
 # expect-stdout:
 #   widget gear
 #   fallback empty name
 #   wrapped gear
 #   envelope gear/local
-#   left 1
+#   other widget 1
 #   right r
+#   widget local
+#   other widget 7
 
 from pub::widgets import Envelope, Fallback, Shape, Widget, make, wrap
-from pub::other import Choice, Left, Right, choose
+from pub::other import Choice, Right, Widget as OtherWidget, choose
 
 
 def describe(shape: Shape) -> str:
@@ -26,8 +27,8 @@ def describe(shape: Shape) -> str:
 
 def pick(choice: Choice) -> str:
     match choice:
-        case Left(left):
-            return f"left {left.value}"
+        case OtherWidget(widget):
+            return f"other widget {widget.value}"
         case Right(right):
             return f"right {right.label}"
 
@@ -41,3 +42,5 @@ def main() -> None:
     println(f"envelope {local.inner.name}/{local.tag}")
     println(pick(choose(true)))
     println(pick(choose(false)))
+    println(describe(Widget(name="local")))
+    println(pick(OtherWidget(value=7)))

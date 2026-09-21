@@ -811,14 +811,16 @@ def effective_disposition(entry: dict, key: str) -> str:
 
 
 def twin_level(entry: dict, key: str) -> dict:
-    """The record a test's twin is read from: its override when that names a twin, the file row otherwise.
+    """The record a test's twin is read from: its override when that records a twin, the file row otherwise.
 
-    An override that changes the disposition without naming a twin inherits nothing: the file-level twin (or
-    `dies`) describes the tests that share the file's default, not a test the override has moved elsewhere.
+    An override records a twin by carrying the `twin` key, an empty one included: `"twin": ""` on an override is the
+    test's own statement that it has no twin yet, so an open test can sit under a file whose default is a fixture or
+    `dies`. An override that changes the disposition without recording a twin inherits nothing: the file-level twin
+    (or `dies`) describes the tests that share the file's default, not a test the override has moved elsewhere.
     """
     override = entry.get("tests", {}).get(key)
     if override:
-        if override.get("twin"):
+        if "twin" in override:
             return override
         if override.get("disposition") and override["disposition"] != entry.get("disposition"):
             return {}

@@ -1,4 +1,4 @@
-pub model Left:
+pub model Widget:
     pub value: int
 
 
@@ -6,10 +6,10 @@ pub model Right:
     pub label: str
 
 
-pub type Choice = Left | Right
+pub type Choice = Widget | Right
 
 
 pub def choose(flag: bool) -> Choice:
     if flag:
-        return Left(value=1)
+        return Widget(value=1)
     return Right(label="r")
