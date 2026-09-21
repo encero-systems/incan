@@ -1008,7 +1008,7 @@ pub struct ReplacementExecution {
 /// spelling, a source path, a generated Rust name, or declaration order, which is the property that lets the same
 /// graph serve a local module edge and a package edge without the executor knowing which it crossed.
 ///
-/// The single-module case remains a one-node graph, so the existing #988 behaviour is unchanged and its tests keep
+/// The single-module case remains a one-node graph, so the existing #988 behavior is unchanged and its tests keep
 /// proving the same thing.
 #[derive(Debug, Clone)]
 pub struct ReplacementExecutionGraph<'module> {
@@ -1397,7 +1397,7 @@ pub fn prepare_free_function_execution_with_providers<'module, 'args>(
 /// ability for a frame to execute against the module its callee was resolved to rather than the module the call was
 /// written in.
 ///
-/// A one-node graph is exactly the previous behaviour, which is why
+/// A one-node graph is exactly the previous behavior, which is why
 /// [`prepare_free_function_execution_with_providers`] delegates here rather than duplicating the validation order.
 pub fn prepare_free_function_execution_in_graph<'module, 'args>(
     graph: ReplacementExecutionGraph<'module>,
@@ -4279,7 +4279,7 @@ impl<'run, 'writer> BodyExecutor<'run, 'writer> {
     /// The source-local profile constructs all race arms before it polls the first source-order arm. A winner error
     /// must therefore close those unpolled losers before it escapes. This helper is intentionally total and only
     /// changes `Constructed` frames: a malformed repeated/running/terminal handle cannot replace the selected
-    /// frame's original diagnostic or be relabelled as cancellation.
+    /// frame's original diagnostic or be relabeled as cancellation.
     fn cancel_constructed_race_losers_after_failure(
         &mut self,
         tasks: &[Rc<RefCell<ReplacementTask>>],

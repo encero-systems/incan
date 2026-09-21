@@ -51,7 +51,7 @@ def capture[F](func: F) -> F:
 
 def instrumented[F]() -> ((F) -> F):
     """
-    Build the decorator that catalogues whichever operation it is applied to.
+    Build the decorator that catalogs whichever operation it is applied to.
 
     A decorator is applied as a callable *value*, and a generic function cannot be passed by name, so `capture`
     is reached through this factory: calling it fixes `F` and hands back an ordinary callable to apply.

@@ -421,7 +421,7 @@ pub struct CodegraphModuleRecord {
     ///
     /// A module path names where a declaration is; a namespace names where a consumer can reach it. They differ for
     /// a module that is a detail of its parent, and the difference is what lets a consumer tell an internal
-    /// reorganisation from a change to the surface. Grouping modules by this field yields the namespace-led view:
+    /// reorganization from a change to the surface. Grouping modules by this field yields the namespace-led view:
     /// one node per reachable namespace, with its internal modules as the subgraph beneath it.
     #[serde(default)]
     pub namespace_path: Vec<String>,
@@ -944,7 +944,7 @@ pub struct CodegraphCBindingStructField {
     pub ty: CodegraphCBindingType,
 }
 
-/// One direct raw C call admitted by an explicit `unsafe:` acknowledgement.
+/// One direct raw C call admitted by an explicit `unsafe:` acknowledgment.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodegraphCBindingCallRecord {
     /// Stable id unique within the export.
@@ -973,7 +973,7 @@ pub struct CodegraphCBindingCallRecord {
     pub binding: String,
     /// Binding-local native symbol name.
     pub symbol: String,
-    /// Raw calls are admitted only through an explicit `unsafe:` acknowledgement.
+    /// Raw calls are admitted only through an explicit `unsafe:` acknowledgment.
     pub unsafe_acknowledged: bool,
     /// Source span for the full call expression.
     pub span: CodegraphSourceSpan,

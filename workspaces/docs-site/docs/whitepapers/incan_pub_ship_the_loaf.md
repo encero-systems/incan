@@ -29,7 +29,7 @@ research_context:
   - "Rust internals threads on precompiled dependencies (2021) and precompiled artifact support (2025)"
   - "The serde_derive precompiled-binary episode (July to August 2023) and the watt project"
   - "Conan's package_id binary model, crate2nix, sccache, cargo-binstall, and the warg registry"
-  - "crABI, the rlib-stabilisation pre-RFC, and the rustc reproducible-builds tracking issue"
+  - "crABI, the rlib-stabilization pre-RFC, and the rustc reproducible-builds tracking issue"
 related_whitepapers:
   - "A Cargo-free toolchain for Incan and Rust"
   - "Incan ecosystem north star"
@@ -110,7 +110,7 @@ Unit-seconds is the sum of the durations cargo attributes to each compilation un
 
 **Consumer hardware pays most.** Wall time grew 2.7 times between the two hosts; unit-seconds grew 3.8 times. The extra growth is contention. Cargo runs one `rustc` per logical core by default, each DataFusion crate wants over a gigabyte while it compiles, and a 16 GB machine has nowhere to put twelve of them. The cost of source-only distribution lands hardest on exactly the machines that can least absorb it, and many hosted CI runners are comparably constrained.
 
-**The trade is favourable.** The compiled closure of the DataFusion probe compresses to 172 to 195 MB with gzip, the figure in the tables, and to about 120 MB with zstd at a high level, roughly three to six times the 35 MB of source. Two thirds of the compressed bytes are compiler metadata rather than machine code, which compresses only 3.5 times against 8 times for the object files; that ratio is a property of the compiler, not of the registry. A CDN serves that in seconds on an ordinary connection, in exchange for seven minutes of a saturated machine and 1.6 GB of scratch space, on every machine that ever wants this dependency at this toolchain and target.
+**The trade is favorable.** The compiled closure of the DataFusion probe compresses to 172 to 195 MB with gzip, the figure in the tables, and to about 120 MB with zstd at a high level, roughly three to six times the 35 MB of source. Two thirds of the compressed bytes are compiler metadata rather than machine code, which compresses only 3.5 times against 8 times for the object files; that ratio is a property of the compiler, not of the registry. A CDN serves that in seconds on an ordinary connection, in exchange for seven minutes of a saturated machine and 1.6 GB of scratch space, on every machine that ever wants this dependency at this toolchain and target.
 
 **Repetition is the multiplier.** None of the numbers above is paid once. They are paid per checkout, per clean CI run, per container layer, per developer on the team, and per toolchain bump.
 
@@ -120,13 +120,13 @@ Incan is, at its core, a very large Rust project, and it feels every one of thes
 
 ### Disk is the second symptom
 
-On the laptop, in its resting state after a cleanup, one development root held twenty `target/` directories totalling 52 GB, two of them the Incan compiler itself at 10.8 GB and 10.4 GB a few commits apart. The registry cache held 6.5 GB of `.crate` files. The maintainer's periodic cleanups run to 500 GB or more. This is not an argument for a registry, but it is the same design fact from another angle: a compiled artifact with no identity anyone else can trust cannot be shared and cannot be safely deleted, so every worktree keeps its own copy of the same wasmtime, and nothing can tell that two 10 GB directories are the same thing.
+On the laptop, in its resting state after a cleanup, one development root held twenty `target/` directories totaling 52 GB, two of them the Incan compiler itself at 10.8 GB and 10.4 GB a few commits apart. The registry cache held 6.5 GB of `.crate` files. The maintainer's periodic cleanups run to 500 GB or more. This is not an argument for a registry, but it is the same design fact from another angle: a compiled artifact with no identity anyone else can trust cannot be shared and cannot be safely deleted, so every worktree keeps its own copy of the same wasmtime, and nothing can tell that two 10 GB directories are the same thing.
 
 ## Compilation is infrastructure, not developer experience
 
 Compile time is the tangible symptom, and it is the one every developer feels, which makes it the easiest thing to argue about and the easiest to dismiss as impatience. The more durable argument is that repeated derivation is an infrastructure cost the whole ecosystem pays, continuously, for work that has already been done somewhere else.
 
-The same seven minutes reappears in places that have nothing to do with anyone's patience. It is billed as CI compute on every push, on every branch, for every project in an organisation, and CI runners are rented by the minute. It is drawn as energy in a datacentre and as battery on a laptop, for a computation whose result was deterministic before it started. It is onboarding latency, where a new contributor's first impression of a project is a progress bar. It is the reason ephemeral development environments — devcontainers, cloud workspaces, throwaway CI images — are quietly expensive, because ephemerality means every environment starts from nothing and re-derives everything. It is the reason a classroom of thirty students compiles the same dependency graph thirty times on hardware chosen for price. And it is a trust problem in deployment, because a build that takes seven minutes on one machine and is rebuilt on another is accepted on the assumption that it produced the same thing, rather than on evidence.
+The same seven minutes reappears in places that have nothing to do with anyone's patience. It is billed as CI compute on every push, on every branch, for every project in an organization, and CI runners are rented by the minute. It is drawn as energy in a datacenter and as battery on a laptop, for a computation whose result was deterministic before it started. It is onboarding latency, where a new contributor's first impression of a project is a progress bar. It is the reason ephemeral development environments — devcontainers, cloud workspaces, throwaway CI images — are quietly expensive, because ephemerality means every environment starts from nothing and re-derives everything. It is the reason a classroom of thirty students compiles the same dependency graph thirty times on hardware chosen for price. And it is a trust problem in deployment, because a build that takes seven minutes on one machine and is rebuilt on another is accepted on the assumption that it produced the same thing, rather than on evidence.
 
 None of these is a complaint about Rust being slow. They are all the same structural fact: the ecosystem treats a deterministic, expensive computation as something each consumer must perform privately, and has no way to share the result safely. Every mature ecosystem eventually stops paying that cost — not because compilation got faster, but because artifacts became exchangeable.
 
@@ -154,9 +154,9 @@ The triangle is only binding while artifacts cannot be told apart. Given an iden
 
 This is not a gap nobody noticed. The request is older than most of Rust's stable features, and the Rust project is now building the local half of the answer.
 
-- [Cargo issue #1139](https://github.com/rust-lang/cargo/issues/1139), "Support for pre-built dependencies", was opened in January 2015. It is still open, labelled as needing design, and was still receiving comments in April 2026 from people asking how to ship a Rust library without shipping its source.
+- [Cargo issue #1139](https://github.com/rust-lang/cargo/issues/1139), "Support for pre-built dependencies", was opened in January 2015. It is still open, labeled as needing design, and was still receiving comments in April 2026 from people asking how to ship a Rust library without shipping its source.
 - [Cargo issue #5931](https://github.com/rust-lang/cargo/issues/5931), "Per-user compiled artifact cache", was opened in 2018 and is still open with sixty-seven comments. The newest, from September 2026, reports an experiment backing the cache with a content-addressed store that saved half a gigabyte of thirty, because the cache is deliberately conservative about what it dares to share. [Issue #4436](https://github.com/rust-lang/cargo/issues/4436) from 2017 was closed into it; [issue #1997](https://github.com/rust-lang/cargo/issues/1997) from 2015 was closed when sccache gained distributed compilation.
-- Brian Anderson's [The Rust Compilation Model Calamity](https://www.pingcap.com/blog/rust-compilation-model-calamity/) (2020) documented fifteen-minute debug and thirty-minute release rebuilds of TiKV and traced them to design choices that favour run-time over compile-time. The series diagnosed the cost; it did not propose distribution.
+- Brian Anderson's [The Rust Compilation Model Calamity](https://www.pingcap.com/blog/rust-compilation-model-calamity/) (2020) documented fifteen-minute debug and thirty-minute release rebuilds of TiKV and traced them to design choices that favor run-time over compile-time. The series diagnosed the cost; it did not propose distribution.
 - In 2026 the Cargo team made a **cross-workspace build cache** an official [project goal](https://goals.rust-lang.org/2026/cargo-cross-workspace-cache.html), following the 2025 split of the target directory into artifact and build directories. The ecosystem is now building the local half of this; what it does with the remote half is examined below.
 
 ### The objections, and what answers them
@@ -183,9 +183,9 @@ What none of the partial answers has is an identity for a compiled unit precise 
 
 Rust is not short of attempts. Each one works, and each one stops at the same place, which is the most useful thing about them: the boundary they share is the shape of what is missing.
 
-**[sccache](https://github.com/mozilla/sccache)** shares compilation results across a team's machines and is genuinely effective there. It reconstructs a cache key from compiler invocation inputs rather than receiving one from the build system, so it is conservative by necessity, and it is deployed within an organisation that already trusts itself. It distributes nothing publicly, because a key you reconstruct locally is not a claim a stranger can verify.
+**[sccache](https://github.com/mozilla/sccache)** shares compilation results across a team's machines and is genuinely effective there. It reconstructs a cache key from compiler invocation inputs rather than receiving one from the build system, so it is conservative by necessity, and it is deployed within an organization that already trusts itself. It distributes nothing publicly, because a key you reconstruct locally is not a claim a stranger can verify.
 
-**[cargo-chef](https://github.com/LukeMathWalker/cargo-chef)** makes Docker layer caching work for Rust by separating dependency builds from application builds. It is a workaround for a container-layer model, and its unit is the layer: change one dependency and the layer rebuilds entirely. Nothing crosses between images, projects, or organisations.
+**[cargo-chef](https://github.com/LukeMathWalker/cargo-chef)** makes Docker layer caching work for Rust by separating dependency builds from application builds. It is a workaround for a container-layer model, and its unit is the layer: change one dependency and the layer rebuilds entirely. Nothing crosses between images, projects, or organizations.
 
 **Cargo's [cross-workspace cache](https://goals.rust-lang.org/2026/cargo-cross-workspace-cache.html)**, an official 2026 project goal, is the most direct answer and the one this paper agrees with most. The target directory was split into artifact and build directories in 2025, and a cache lands on nightly in 2026 — conservative at first, excluding build scripts and proc-macros. The goal text notes it "could be extended in the future to be pre-populated from a remote cache for CI usecases". That is the local half of the problem, funded and staffed. The remote half needs something the local half does not: an identity a stranger's machine can check.
 
@@ -193,7 +193,7 @@ Rust is not short of attempts. Each one works, and each one stops at the same pl
 
 **[cargo-binstall](https://github.com/cargo-bins/cargo-binstall)** and cargo-quickinstall distribute finished binaries and are widely used. They serve end-user tools, not dependencies. A binary has no consumer-chosen configuration to match — nobody links against `ripgrep` with different features — so the identity problem never arises, which is precisely why they could ship and a dependency tier could not.
 
-**[crABI](https://github.com/rust-lang/rust/pull/105586)** and the [rlib-stabilisation pre-RFC](https://internals.rust-lang.org/t/pre-rfc-stabilize-a-version-of-the-rlib-format/17558) attack the problem from the other end, by making artifacts compatible across more compilations. That reduces how often identities differ; it does not remove the need to know when they do.
+**[crABI](https://github.com/rust-lang/rust/pull/105586)** and the [rlib-stabilization pre-RFC](https://internals.rust-lang.org/t/pre-rfc-stabilize-a-version-of-the-rlib-format/17558) attack the problem from the other end, by making artifacts compatible across more compilations. That reduces how often identities differ; it does not remove the need to know when they do.
 
 Reading them against the requirements below makes the pattern exact:
 
@@ -204,7 +204,7 @@ Reading them against the requirements below makes the pattern exact:
 | Cargo cross-workspace cache | local | yes | not yet | the remote half needs an identity a stranger's machine can verify |
 | Nix, crate2nix | complete | yes | yes | requires the whole ecosystem to adopt Nix |
 | cargo-binstall | not required | not required | yes | end-user binaries have no consumer-chosen configuration to match |
-| crABI, rlib stabilisation | — | — | — | widens compatibility; does not decide when artifacts differ |
+| crABI, rlib stabilization | — | — | — | widens compatibility; does not decide when artifacts differ |
 
 Every approach either restricts the configuration space until matching becomes trivial, or restricts the trust boundary until verification becomes unnecessary. Nix is the exception that proves it: it satisfies every requirement by controlling every input, which is precisely the price most Rust projects decline to pay. None of them makes a compiled artifact something a stranger can offer and an ordinary Cargo-shaped consumer can check.
 
@@ -242,7 +242,7 @@ A receipt identifies a compiled unit by a digest over its *effective compilation
 - the manifest facts the compilation actually observes, such as a version string reaching code through an environment macro;
 - the toolchain identity;
 - the target triple, and whether the unit was built for the host or the target;
-- the profile facts that change codegen — optimisation level, debug-info level, codegen units, panic strategy, LTO mode, target features;
+- the profile facts that change codegen — optimization level, debug-info level, codegen units, panic strategy, LTO mode, target features;
 - the resolved feature set;
 - the artifact kind and edition;
 - the identities of every unit it links against;
@@ -261,7 +261,7 @@ Three different questions are hiding in the word "same", and an exchange between
 
 **Payload digest answers "are these the exact bytes that were attested?"** A consumer verifies what it downloaded against the digest in the attestation covering it. This is integrity, and it is independent of the first question.
 
-**Publication provenance answers "whose claim that these bytes follow from that source am I accepting?"** A matching unit identity proves the inputs were right, not that the producer was honest: a malicious builder can take correct inputs and attest malicious output. Trust is a separate judgement, and it belongs to the consuming project.
+**Publication provenance answers "whose claim that these bytes follow from that source am I accepting?"** A matching unit identity proves the inputs were right, not that the producer was honest: a malicious builder can take correct inputs and attest malicious output. Trust is a separate judgment, and it belongs to the consuming project.
 
 Keeping them apart matters because collapsing the first two would make reproducible builds a precondition for exchange, and `rustc` output is not bit-for-bit reproducible in every configuration. A consumer does not need a stranger's artifact to equal the bytes it would have produced. It needs the artifact's unit identity to match its own plan, and the bytes it received to match the payload digest the builder attested. Where reproducible rebuilds *are* available they supply a stronger check on top, by letting a third party confirm the transformation rather than trust it.
 
@@ -289,7 +289,7 @@ The shape, in the terms a user sees:
 
 **The store is the local end of the same exchange.** Verified reuse of sealed work is already demonstrable: a second build of the same project reuses a completed Loaf whose source, dependency, semantic, and interop facts were verified and sealed at bake time. That is the identity chain working, and it is precisely what every attempt to add compiled artifacts to Cargo since 2015 lacked.
 
-What that does not yet do is share *below* the plan. Two projects with identical dependency closures each sealed their own 51 MB Loaf holding the same fourteen rlibs, and twenty build directories under one development root totalled 52 GB. Both are the same defect: the plan, not the compiled unit, is the unit of reuse. Making the compiled unit the store's addressable object — keyed by an identity over its effective compilation inputs, kept distinct from where its source was published — shares units across projects and worktrees, lets a version-only republication of unchanged code still hit, and makes the store collectable by reachability. A registry then exchanges those same identities across machines rather than inventing a second notion of sameness.
+What that does not yet do is share *below* the plan. Two projects with identical dependency closures each sealed their own 51 MB Loaf holding the same fourteen rlibs, and twenty build directories under one development root totaled 52 GB. Both are the same defect: the plan, not the compiled unit, is the unit of reuse. Making the compiled unit the store's addressable object — keyed by an identity over its effective compilation inputs, kept distinct from where its source was published — shares units across projects and worktrees, lets a version-only republication of unchanged code still hit, and makes the store collectable by reachability. A registry then exchanges those same identities across machines rather than inventing a second notion of sameness.
 
 **crates.io is consumed, not replaced.** `crate` dependencies resolve against the crates.io sparse index through the same client, verification, and store as `incan.pub` Loaves. The registry never mirrors crates.io source and never publishes to it. Where it can help Rust users directly is by publishing attested, registry-built assets for popular crates at the closures a toolchain pins, so that consuming DataFusion through Oven is a download even though DataFusion itself lives on crates.io.
 

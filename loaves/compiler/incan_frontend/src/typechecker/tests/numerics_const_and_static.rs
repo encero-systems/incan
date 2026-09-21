@@ -616,7 +616,7 @@ const ALLOWED: set[int] = {1, 2}
 #[test]
 fn const_frozen_and_scalar_annotations_stay_accepted_issue1488() {
     // `str`/`bytes` are also frozen in const context, but a `FrozenStr`/`FrozenBytes` reads wherever `str`/`bytes`
-    // is expected, so the written annotation is honoured at every use site and there is nothing to reject.
+    // is expected, so the written annotation is honored at every use site and there is nothing to reject.
     let source = r#"
 const NAMES: FrozenList[str] = ["x"]
 const INFERRED = ["y"]
