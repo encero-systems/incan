@@ -918,10 +918,10 @@ fn test_rusttype_explicit_trait_adoption_typechecks() {
     let source = r#"
 from rust::ids import UserId as RustUserId
 
-trait Labelled:
+trait Labeled:
   def label(self) -> str: ...
 
-type UserId = rusttype RustUserId with Labelled:
+type UserId = rusttype RustUserId with Labeled:
   def label(self) -> str:
     return "user"
 "#;
@@ -931,15 +931,15 @@ type UserId = rusttype RustUserId with Labelled:
 #[test]
 fn test_rusttype_bodyless_rust_trait_forwarding_requires_metadata() {
     let source = r#"
-from rust::ids import UserId as RustUserId, Labelled
+from rust::ids import UserId as RustUserId, Labeled
 
-type UserId = rusttype RustUserId with Labelled
+type UserId = rusttype RustUserId with Labeled
 "#;
     let errs = check_str_err(source, "rusttype Rust trait forwarding should require metadata proof");
     assert!(
         errs.iter().any(|err| err
             .message
-            .contains("Cannot forward Rust trait `ids::Labelled` for rusttype `UserId` without metadata proof")),
+            .contains("Cannot forward Rust trait `ids::Labeled` for rusttype `UserId` without metadata proof")),
         "expected rusttype forwarding metadata diagnostic, got {errs:?}"
     );
 }

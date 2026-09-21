@@ -263,7 +263,7 @@ impl SemanticFactValue {
     }
 }
 
-/// Compiler-recognised registry subject category.
+/// Compiler-recognized registry subject category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SemanticRegistrySubjectKind {
     Function,

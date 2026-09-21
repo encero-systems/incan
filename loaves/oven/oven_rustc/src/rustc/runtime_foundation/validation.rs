@@ -225,7 +225,7 @@ pub(crate) fn runtime_foundation_rebuild_order(
     Ok(order)
 }
 
-/// Validate one declared policy against its selected graph unit and the sealed artifact/source catalogue.
+/// Validate one declared policy against its selected graph unit and the sealed artifact/source catalog.
 pub(crate) fn validate_runtime_unit_policy(
     unit: &OvenSelectedRustFacetUnit,
     policy: &OvenRuntimeFoundationUnit,

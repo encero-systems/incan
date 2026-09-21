@@ -1,6 +1,6 @@
-# Checked catalogues and loaded registries
+# Checked catalogs and loaded registries
 
-`std.registry` deliberately exposes one declaration catalogue through two views. The distinction prevents a running process from pretending it has loaded an entire package and prevents static tools from executing user code merely to discover declarations.
+`std.registry` deliberately exposes one declaration catalog through two views. The distinction prevents a running process from pretending it has loaded an entire package and prevents static tools from executing user code merely to discover declarations.
 
 ## One source of truth, two projections
 
@@ -56,4 +56,4 @@ The metadata has an explicit schema version and provenance. A future runtime obs
 
 Registry inspection, codegraph export, package publication, lowering, and test batches must consume artifacts from the same compilation analysis. If each command reran typechecking or reparsed decorators independently, they could disagree about imports, aliases, package identity, or feature selection. `CompilationSession` keeps those inputs and checked products together; registry consumers project from that shared result.
 
-See the [typed-registry tutorial](../tutorials/typed_registries.md) to build a catalogue, the [how-to guide](../how-to/typed_registries.md) for migration and package workflows, and the [`std.registry` reference](../reference/stdlib/registry.md) for exact contracts.
+See the [typed-registry tutorial](../tutorials/typed_registries.md) to build a catalog, the [how-to guide](../how-to/typed_registries.md) for migration and package workflows, and the [`std.registry` reference](../reference/stdlib/registry.md) for exact contracts.

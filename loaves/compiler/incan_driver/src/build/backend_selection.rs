@@ -1,5 +1,5 @@
 //! Choosing and recording the code-generation backend for one build, and refusing replacement profiles the
-//! selected backend cannot honour.
+//! selected backend cannot honor.
 
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -11,7 +11,7 @@
 //! requirements, features, sources, optional flags, and dev-only deps. It does not perform resolution itself; it only
 //! renders `Cargo.toml` faithfully.
 //!
-//! ## Module Organisation
+//! ## Module Organization
 //!
 //! - [`plan`] — [`CompilationPlan`], [`Executor`], [`ExecutionResult`] (separating "what" from "doing")
 //! - [`generator`] — [`ProjectGenerator`] struct, setters, and `generate*()` methods

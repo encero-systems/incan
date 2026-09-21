@@ -51,7 +51,7 @@ struct BranchRefinement {
 /// What a value's type says about whether it can be destructured into a fixed number of names.
 ///
 /// Reading this once, in one place, is what keeps the three destructuring sites honest. Each used to answer the
-/// question inline and fall back to `vec![Unknown; n]` for anything it did not recognise, which sized the element
+/// question inline and fall back to `vec![Unknown; n]` for anything it did not recognize, which sized the element
 /// list to the name list and so made the arity guard below it unreachable for a non-tuple (#1125, #1132).
 #[derive(Debug)]
 pub(in crate::typechecker) enum TupleShape {
@@ -60,7 +60,7 @@ pub(in crate::typechecker) enum TupleShape {
     /// A Rust-interop tuple whose arity the compiler can actually read, such as the `(String, JsonValue)` a
     /// `rust::HashMap::items()` yields.
     ///
-    /// Element types are not modelled, so it carries only the count and binds `Unknown` per name. Arity is still
+    /// Element types are not modeled, so it carries only the count and binds `Unknown` per name. Arity is still
     /// checked, so interop is not simply exempted from the guard.
     RustTuple(usize),
     /// A Rust-interop value whose shape the compiler cannot establish.
@@ -86,7 +86,7 @@ pub(in crate::typechecker) enum TupleShape {
 ///
 /// A tuple arrives in two spellings: a tuple *literal* infers [`ResolvedType::Tuple`], while a written `tuple[A, B]`
 /// annotation resolves through the collection-type registry as a [`ResolvedType::Generic`] named `Tuple`. Both are
-/// destructurable and both must be recognised here.
+/// destructurable and both must be recognized here.
 ///
 /// A bare type variable is deliberately [`TupleShape::NotTuple`]. It is not "not yet known" — it is known to be
 /// underdetermined, and `T` can be instantiated as `int`. Incan's bounds are trait-based, so no caller can promise
@@ -101,7 +101,7 @@ pub(in crate::typechecker) fn classify_tuple_shape(ty: &ResolvedType) -> TupleSh
             TupleShape::Tuple(args.clone())
         }
         ResolvedType::Unknown | ResolvedType::Never => TupleShape::Recovery,
-        // A Rust type is destructurable only when its shape can actually be read. The parenthesised tuple
+        // A Rust type is destructurable only when its shape can actually be read. The parenthesized tuple
         // spelling gives a reliable arity — `std.json`'s `key, value = item` over a `rust::HashMap` item is
         // exactly that shape — and everything else is refused rather than assumed.
         ResolvedType::RustPath(path) => match rust_tuple_arity(path) {
@@ -1354,7 +1354,7 @@ impl TypeChecker {
         false_refinement
     }
 
-    /// Check an acknowledgement body in its surrounding ordinary statement scope.
+    /// Check an acknowledgment body in its surrounding ordinary statement scope.
     fn check_unsafe_stmt(&mut self, unsafe_stmt: &UnsafeStmt) {
         self.unsafe_depth += 1;
         self.check_statement_block(&unsafe_stmt.body);

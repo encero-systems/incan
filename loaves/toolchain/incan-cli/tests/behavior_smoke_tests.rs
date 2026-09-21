@@ -1,4 +1,4 @@
-//! The `smoke` area of the behaviour-fixture family, run through the compiler suite.
+//! The `smoke` area of the behavior-fixture family, run through the compiler suite.
 //!
 //! Every fixture under `loaves/compiler/incan_test_support/fixtures/behavior/smoke/` is an Incan program whose header
 //! declares what a run must show; `incan_test_support::behavior_fixtures` discovers, runs and compares them and this

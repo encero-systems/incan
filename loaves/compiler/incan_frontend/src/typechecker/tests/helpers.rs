@@ -177,7 +177,7 @@ pub(super) fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                 },
             ],
             traits: vec![TraitExport {
-                name: "Labelled".to_string(),
+                name: "Labeled".to_string(),
                 source_name: None,
                 type_params: Vec::new(),
                 supertraits: Vec::new(),
@@ -200,7 +200,7 @@ pub(super) fn library_index_with_mylib_exports() -> LibraryManifestIndex {
             enums: vec![EnumExport {
                 name: "Status".to_string(),
                 type_params: Vec::new(),
-                traits: vec!["Labelled".to_string()],
+                traits: vec!["Labeled".to_string()],
                 trait_adoptions: Vec::new(),
                 value_type: Some(EnumValueTypeExport::Str),
                 ordinal_type_identity: Some("mylib.Status".to_string()),

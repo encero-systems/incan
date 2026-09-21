@@ -26,7 +26,7 @@ If you’re new, start with:
 
 ## Reference (look up)
 
-- [Contributors](contributors.md) — community acknowledgements for external contributions
+- [Contributors](contributors.md) — community acknowledgments for external contributions
 - [Backend behavior inventory](reference/backend_behavior_inventory.md) — phase-0 inventory for preserving supported behavior during backend replacement
 - [Layering rules](explanation/layering.md) — dependency boundaries and guardrails
 - [Generated Rust stdlib coverage](reference/generated_rust_stdlib_coverage.md) — generated-Rust coverage inventory for stdlib modules

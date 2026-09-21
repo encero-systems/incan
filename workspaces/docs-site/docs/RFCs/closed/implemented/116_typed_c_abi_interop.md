@@ -51,7 +51,7 @@ RFC 117 owns the project-model cutover; RFC 118 owns the later CLI presentation.
 8. **Clang verification is target-specific:** the selected target toolchain verifies signatures, layouts, definitions, and supported calling conventions against the resolved headers before the binding is accepted.
 9. **Native artifacts are package inputs:** static archives, bundled shared libraries or frameworks, system capabilities, headers, and authored shims are resolved through the package graph, locked by identity, staged by the toolchain, and exposed through inspection.
 10. **Shims are first-class:** a checked C or C++ shim is the principled adapter for variadics, function tables, macros, unions, bitfields, callbacks, and lifetime relationships that this RFC intentionally cannot represent directly.
-11. **`unsafe:` is explicit and extensible:** this RFC introduces a general scoped acknowledgement surface but authorizes only checked foreign calls and conversions defined here; future low-level RFCs may add operations without changing the block model.
+11. **`unsafe:` is explicit and extensible:** this RFC introduces a general scoped acknowledgment surface but authorizes only checked foreign calls and conversions defined here; future low-level RFCs may add operations without changing the block model.
 12. **The package envelope is interop-generic:** binding kind, runtime or toolchain requirements, artifacts, locking, provenance, capabilities, bridge ownership, documentation, and inspection are shared concepts, while C-specific types and safety rules remain owned by the C binding kind.
 
 ## Motivation
@@ -648,7 +648,7 @@ The raw binding instead mirrors the C function. A private bridge derives exact p
 
 A checked C signature proves representation and declared boundary facts; it cannot prove that the native implementation respects undocumented preconditions or avoids undefined behavior. Deferring `unsafe:` would either mislabel raw calls as safe or require a C-specific temporary syntax that later low-level work would replace.
 
-This RFC therefore introduces one general scoped acknowledgement construct while authorizing only the checked foreign operations it defines. The coupling is deliberate and bounded: the C feature receives the minimum truthful application surface it needs, while pointer arithmetic, dereference, MMIO, arbitrary casts, and representation control remain unavailable.
+This RFC therefore introduces one general scoped acknowledgment construct while authorizing only the checked foreign operations it defines. The coupling is deliberate and bounded: the C feature receives the minimum truthful application surface it needs, while pointer arithmetic, dereference, MMIO, arbitrary casts, and representation control remain unavailable.
 
 ### Why call-scoped borrowing is inferred
 

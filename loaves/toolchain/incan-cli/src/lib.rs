@@ -1394,7 +1394,7 @@ fn builds_toolchain_binaries(manifest: &ProjectManifest) -> bool {
 /// `main` script, in which case it is an Incan project with a Rust facet and its Incan entrypoint is what a plain
 /// `incan build` means. `workspace_root` is the compiler root the stored direct-rustc plans are relative to — the
 /// active workspace's root for a member, the Loaf itself otherwise. The compiler-suite store is named by
-/// `INCAN_OVEN_COMPILER_SUITE_STORE`, as the suite runner is told it; an explicit output directory is honoured and
+/// `INCAN_OVEN_COMPILER_SUITE_STORE`, as the suite runner is told it; an explicit output directory is honored and
 /// the report surface is refused rather than silently narrowed, since a toolchain binary has no generated project to
 /// report on.
 fn build_toolchain_binaries_if_declared(
