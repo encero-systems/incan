@@ -102,19 +102,19 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
     /// that reads like an unmodeled construct.
     ///
     /// This is a stated disposition, not a gap waiting on lowering work. `ast::UnsafeStmt` is documented as a
-    /// scoped acknowledgement region for operations requiring explicit authorization, and it introduces no separate
+    /// scoped acknowledgment region for operations requiring explicit authorization, and it introduces no separate
     /// Incan scope — its statements are ordinary statements of the enclosing block, so lowering them inline would
-    /// be *easy*. That is exactly why the refusal has to be explicit: inlining them would erase the acknowledgement
+    /// be *easy*. That is exactly why the refusal has to be explicit: inlining them would erase the acknowledgment
     /// and leave a direct replacement execution profile silently running an authorized region it was never told
     /// about. A consumer that wants to admit such a region must do so deliberately, against a representation that
-    /// carries the acknowledgement, and Body IR v0 has no such representation.
+    /// carries the acknowledgment, and Body IR v0 has no such representation.
     ///
     /// The refusal therefore says why rather than only what, and is the corpus's one `Disposition::Unsupported`
     /// row (`parity-987-0018` in `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs`), owned by #1162.
-    /// Reversing it means designing the acknowledgement fact first, not adding a dispatch arm.
+    /// Reversing it means designing the acknowledgment fact first, not adding a dispatch arm.
     fn refuse_unsafe_region(&self, span: HirSourceSpan, out: &mut Vec<bir::Statement>) {
         self.push_unsupported_stmt(
-            "`unsafe:` acknowledgement region: refused by design, because Body IR v0 cannot carry the \
+            "`unsafe:` acknowledgment region: refused by design, because Body IR v0 cannot carry the \
              acknowledgement a consumer would need to admit it deliberately (#1162)"
                 .to_string(),
             span,

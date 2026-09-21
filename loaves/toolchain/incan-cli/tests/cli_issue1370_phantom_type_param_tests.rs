@@ -2,7 +2,7 @@
 //!
 //! `incan check` accepted the issue's `Column[T]` while the generated Rust failed under rustc with E0392 (`T` never
 //! used) and E0282 at every construction site, so the defect is only visible on a real build. Lowering now records
-//! the phantom parameter on the struct and emission carries it as a `PhantomData` marker, initialises the marker at
+//! the phantom parameter on the struct and emission carries it as a `PhantomData` marker, initializes the marker at
 //! every struct literal, and threads the explicit constructor type argument. The built executable is run so the
 //! operator method's output is asserted, not only compilation, and the `Debug` rendering is printed to prove the
 //! marker stays out of it.

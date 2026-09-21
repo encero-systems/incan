@@ -39,9 +39,9 @@ pub struct PublicFeatureDescriptor {
     pub references: Vec<(String, String)>,
 }
 
-/// Return whether a registry identity names the standard-library feature catalogue, under either spelling.
+/// Return whether a registry identity names the standard-library feature catalog, under either spelling.
 ///
-/// The catalogue was renamed from `capabilities` to `features` so that "capability" means one thing (see #1228). A
+/// The catalog was renamed from `capabilities` to `features` so that "capability" means one thing (see #1228). A
 /// registry identity is `module::static`, so that rename is *observable in checked metadata* -- and the frozen v0.5.0
 /// migration baseline legitimately still carries the old spelling, because a baseline records what that release
 /// actually was. Both are accepted here rather than rewriting the baseline, which would falsify it.

@@ -2,7 +2,7 @@
 # =====================================
 
 # Where cargo places build output, and therefore where every prepared store, prewarmed Loaf, and built binary this
-# Makefile looks for actually lives. `CARGO_TARGET_DIR` is honoured rather than assumed away: a caller that redirects
+# Makefile looks for actually lives. `CARGO_TARGET_DIR` is honored rather than assumed away: a caller that redirects
 # build output — a worktree working under a storage budget, a cache shared between worktrees — otherwise has cargo
 # writing to one directory while make reads from another. The symptom is not a missing file but a misleading one:
 # every target needing the compiler binary fails claiming the project's dependencies were never baked.

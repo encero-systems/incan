@@ -939,7 +939,7 @@ type UserId = rusttype RustUserId with Labelled
     assert!(
         errs.iter().any(|err| err
             .message
-            .contains("Cannot forward Rust trait `ids::Labelled` for rusttype `UserId` without metadata proof")),
+            .contains("Cannot forward Rust trait `ids::Labeled` for rusttype `UserId` without metadata proof")),
         "expected rusttype forwarding metadata diagnostic, got {errs:?}"
     );
 }

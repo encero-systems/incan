@@ -3359,7 +3359,7 @@ fn test_generic_model_field_access_codegen() {
 }
 
 /// Issue #1370: a model type parameter that no field mentions is a phantom parameter. Lowering records it on the
-/// struct; emission carries it as one `PhantomData` marker field, initialises the marker at every struct literal,
+/// struct; emission carries it as one `PhantomData` marker field, initializes the marker at every struct literal,
 /// and threads the explicit constructor type argument so a binding without an annotation still names `T`. The
 /// marker is invisible to `Debug` and `HasFieldInfo`, which are written by hand over the source fields instead of
 /// derived.
@@ -3393,7 +3393,7 @@ fn test_issue1370_phantom_type_param_codegen() {
     assert_eq!(
         rust_code.matches("__incan_phantom: std::marker::PhantomData,").count(),
         3,
-        "every struct literal must initialise the marker; generated:\n{rust_code}"
+        "every struct literal must initialize the marker; generated:\n{rust_code}"
     );
     assert_codegen_snapshot!("issue1370_phantom_type_param", rust_code);
 }

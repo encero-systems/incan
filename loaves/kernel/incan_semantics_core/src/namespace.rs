@@ -2,7 +2,7 @@
 //!
 //! A module path names where a declaration *is*. A namespace names where a consumer can *reach* it. Those are the
 //! same thing only because every source file is currently its own module, and that coincidence is the reason a
-//! purely internal reorganisation looks like a change to everyone downstream: move a private helper from
+//! purely internal reorganization looks like a change to everyone downstream: move a private helper from
 //! `hash/_core.incn` to `hash/_streaming.incn` and its module path changes, so its identity changes, so the unit
 //! rebakes and every dependent recompiles — for an edit no consumer could observe.
 //!
@@ -23,7 +23,7 @@
 //! Two declarations colliding *within* one namespace would be a duplicate definition, which the author sees where
 //! they wrote it.
 //!
-//! So a declaration keeps its module path. What this adds is a coarser, reorganisation-stable scope beside it.
+//! So a declaration keeps its module path. What this adds is a coarser, reorganization-stable scope beside it.
 //!
 //! # The rule, and its limits
 //!
@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn moving_a_declaration_between_internal_modules_does_not_change_its_namespace() {
-        // The property the whole module exists for: this is a reorganisation no consumer can observe, and it must
+        // The property the whole module exists for: this is a reorganization no consumer can observe, and it must
         // not move anything a consumer keys on.
         assert_eq!(
             enclosing_namespace(&path(&["std", "hash", "_core"])),

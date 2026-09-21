@@ -1,6 +1,6 @@
-//! Behaviour fixtures: Incan programs that carry their own expected observables, and the runner that proves them.
+//! Behavior fixtures: Incan programs that carry their own expected observables, and the runner that proves them.
 //!
-//! A behaviour fixture is the route-agnostic twin of a retire-class test (#1561, test corpus). It is an Incan program
+//! A behavior fixture is the route-agnostic twin of a retire-class test (#1561, test corpus). It is an Incan program
 //! under `loaves/compiler/incan_test_support/fixtures/behavior/<area>/` whose leading comment block says what the
 //! program proves, which retire tests it stands in for, and what a run of it must show: its stdout, its exit code, or
 //! the diagnostic that must refuse it. Nothing in the format names a route: today the runner drives the program
@@ -13,7 +13,7 @@
 //! suite's guard, attributed to the fixture), runs it, compares the observables and reports **every** failing
 //! fixture with its path and its expected-versus-actual, so one libtest case per area still attributes a failure to
 //! the fixture that caused it. Roots are thin: `loaves/toolchain/incan-cli/tests/behavior_<area>_tests.rs` calls
-//! [`assert_area_green`] and nothing else, and no behaviour root is registered for a suite capability. The inventory
+//! [`assert_area_green`] and nothing else, and no behavior root is registered for a suite capability. The inventory
 //! (`scripts/test_inventory/collect.py`) reads the same header for its `# retires:` lines, so the header grammar here
 //! and the collector's reader must agree.
 
@@ -27,7 +27,7 @@ use crate::cli_project::{
     run_explicit_oven_bake, run_guarded_oven_bake_with_home, run_incan, standalone_oven_home, write_minimal_project,
 };
 
-/// Directory under [`crate::fixtures_dir`] that holds every behaviour-fixture area.
+/// Directory under [`crate::fixtures_dir`] that holds every behavior-fixture area.
 pub const BEHAVIOR_FIXTURES_ROOT: &str = "behavior";
 
 /// The entrypoint every materialized fixture project runs and checks.
@@ -94,7 +94,7 @@ pub enum Expectation {
 pub struct Header {
     /// One line saying what the program proves (`# behavior:`).
     pub behavior: String,
-    /// The retire-class tests this fixture is the twin of, as `path::fn` keys the inventory recognises (`# retires:`).
+    /// The retire-class tests this fixture is the twin of, as `path::fn` keys the inventory recognizes (`# retires:`).
     pub retires: Vec<String>,
     /// What a run must show.
     pub expectation: Expectation,
@@ -122,11 +122,11 @@ pub enum FixtureLayout {
 pub struct Provider {
     /// The dependency's name in the manifest that first declared it (`pub::<name>` on the consumer's side).
     pub name: String,
-    /// The provider's directory relative to the fixture directory, lexically normalised (`deps/querykit`).
+    /// The provider's directory relative to the fixture directory, lexically normalized (`deps/querykit`).
     pub path: PathBuf,
 }
 
-/// One discovered and parsed behaviour fixture.
+/// One discovered and parsed behavior fixture.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BehaviorFixture {
     /// The fixture file or directory, absolute.
@@ -508,7 +508,7 @@ fn push_block_item(
 // Discovery
 // ============================================================
 
-/// The directory of one behaviour-fixture area, such as `behavior/smoke`.
+/// The directory of one behavior-fixture area, such as `behavior/smoke`.
 pub fn area_dir(area: &str) -> PathBuf {
     crate::fixture(BEHAVIOR_FIXTURES_ROOT).join(area)
 }
@@ -764,7 +764,7 @@ impl AreaReport {
     /// The report as one message: a headline, then each failure with its expected-versus-actual.
     pub fn message(&self) -> String {
         let mut out = format!(
-            "{} of {} behaviour fixture(s) failed in {}\n",
+            "{} of {} behavior fixture(s) failed in {}\n",
             self.failures.len(),
             self.passed.len() + self.failures.len(),
             self.area
@@ -1056,7 +1056,7 @@ pub fn run_area(area: &str) -> Result<AreaReport, Box<dyn Error>> {
     Ok(report)
 }
 
-/// The one call a behaviour root makes: run the area and fail with every failing fixture's expected-versus-actual.
+/// The one call a behavior root makes: run the area and fail with every failing fixture's expected-versus-actual.
 ///
 /// A harness error (an unreadable fixture, a missing scratch root, an area over [`MAX_FIXTURES_PER_AREA`]) comes
 /// back as `Err`; a fixture that ran and did not show what it declared is an assertion failure, so libtest prints
@@ -1392,7 +1392,7 @@ mod tests {
         Ok(())
     }
 
-    /// Discovery refuses a stray file and an empty area, and recognises the three layouts.
+    /// Discovery refuses a stray file and an empty area, and recognizes the three layouts.
     #[test]
     fn discovery_recognises_layouts_and_refuses_strays() -> TestResult {
         let tmp = tempfile::tempdir()?;
@@ -1574,7 +1574,7 @@ mod tests {
         Ok(())
     }
 
-    /// Lexical normalisation resolves `.` and `..` without the file system and keeps a `..` that climbs past the
+    /// Lexical normalization resolves `.` and `..` without the file system and keeps a `..` that climbs past the
     /// start, so an escaping path still fails to sit under the fixture.
     #[test]
     fn lexical_normalisation_resolves_dots() {
@@ -1585,7 +1585,7 @@ mod tests {
         assert_eq!(normalize_lexically(Path::new("a/../../b")), PathBuf::from("../b"));
     }
 
-    /// A report names every failing fixture, its behaviour and the mismatch, and lists what passed.
+    /// A report names every failing fixture, its behavior and the mismatch, and lists what passed.
     #[test]
     fn report_message_lists_every_failure() {
         let report = AreaReport {
@@ -1605,7 +1605,7 @@ mod tests {
             ],
         };
         let message = report.message();
-        assert!(message.starts_with("2 of 3 behaviour fixture(s) failed in loaves/x/behavior/smoke"));
+        assert!(message.starts_with("2 of 3 behavior fixture(s) failed in loaves/x/behavior/smoke"));
         assert!(message.contains("--- loaves/x/behavior/smoke/a.incn\nbehavior: a\nstdout differs"));
         assert!(message.contains("--- loaves/x/behavior/smoke/b.incn\nbehavior: b\nexit code: expected 0, got 1"));
         assert!(message.contains("passed:\n  loaves/x/behavior/smoke/ok.incn"));

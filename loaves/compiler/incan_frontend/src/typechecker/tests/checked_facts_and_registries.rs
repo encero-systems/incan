@@ -44,11 +44,11 @@ pub def normalize(value: str) -> str:
     checker.set_current_module_path(Some(vec!["normalize".to_string()]));
     checker
         .check_with_imports(&consumer, &[("function_catalog", &catalog)])
-        .map_err(|errors| format!("imported catalogue @describe should typecheck: {errors:?}"))?;
+        .map_err(|errors| format!("imported catalog @describe should typecheck: {errors:?}"))?;
 
     assert!(
         checker.type_info().registry.definitions.is_empty(),
-        "the consumer must not recreate the catalogue registry definition"
+        "the consumer must not recreate the catalog registry definition"
     );
     let description = checker
         .type_info()
@@ -62,7 +62,7 @@ pub def normalize(value: str) -> str:
             RegistryDescriptionRegistry::Imported { module_path, binding, public }
                 if module_path == &["function_catalog".to_string()] && binding == "functions" && *public
         ),
-        "description must retain the catalogue registry owner, got {:?}",
+        "description must retain the catalog registry owner, got {:?}",
         description.registry
     );
 

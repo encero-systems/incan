@@ -148,7 +148,7 @@ The gate should consume the source/context, action, and receipt foundations assi
 
 Humans and agents should be able to investigate unexpected behavior, test competing explanations, and verify repairs across Oven-managed Rust and Incan projects, with inspectable evidence throughout. RFC 126 defines the proposed investigation contract; it remains Draft until the v0.7 design-closure gate is satisfied. Existing freestanding, ownership-planning, GPU, and deferred syntax work remains in scope according to its own issues and acceptance boundaries.
 
-The investigation programme is governed by [#1638](https://github.com/encero-systems/incan/issues/1638), with five outcome tracks:
+The investigation program is governed by [#1638](https://github.com/encero-systems/incan/issues/1638), with five outcome tracks:
 
 - [#1640](https://github.com/encero-systems/incan/issues/1640): native debugging across Rust, Incan, and mixed calls.
 - [#1641](https://github.com/encero-systems/incan/issues/1641): durable sessions, exact artifacts, captures, and human/agent control.
@@ -158,7 +158,7 @@ The investigation programme is governed by [#1638](https://github.com/encero-sys
 
 Acceptance must demonstrate wrong-result investigation, hung or cancelled work, and reopening a captured failure on the agreed support matrix. The investigation must preserve the distinction between checked facts, advisory findings, proof assumptions, observations, and hypotheses. Full deterministic replay and arbitrary foreign-runtime support are separately qualified capabilities, not universal release promises.
 
-Proof-aware contracts ([#787](https://github.com/encero-systems/incan/issues/787)) and ownership-planner work ([#1611](https://github.com/encero-systems/incan/issues/1611)) retain their owners. GPU work ([#1041](https://github.com/encero-systems/incan/issues/1041)) retains its independent capability scope. The Rust-syntax proposal ([#1612](https://github.com/encero-systems/incan/issues/1612)) remains proposal/RFC refinement in 0.8 with planning for 0.9 or later; this programme does not accelerate its implementation.
+Proof-aware contracts ([#787](https://github.com/encero-systems/incan/issues/787)) and ownership-planner work ([#1611](https://github.com/encero-systems/incan/issues/1611)) retain their owners. GPU work ([#1041](https://github.com/encero-systems/incan/issues/1041)) retains its independent capability scope. The Rust-syntax proposal ([#1612](https://github.com/encero-systems/incan/issues/1612)) remains proposal/RFC refinement in 0.8 with planning for 0.9 or later; this program does not accelerate its implementation.
 
 ##### Freestanding foundations
 
@@ -188,7 +188,7 @@ Core tracking issues:
 - [#688](https://github.com/encero-systems/incan/issues/688): layout, repr, and calling-convention metadata v0.
 - [#689](https://github.com/encero-systems/incan/issues/689): panic strategy and allocator hooks for freestanding targets.
 
-The freestanding lane is successful when Incan can compile a restricted freestanding artifact and report which runtime, allocator, panic, target, and ABI capabilities it requires. The overall release must also satisfy the investigation acceptance programme and the independently tracked commitments above.
+The freestanding lane is successful when Incan can compile a restricted freestanding artifact and report which runtime, allocator, panic, target, and ABI capabilities it requires. The overall release must also satisfy the investigation acceptance program and the independently tracked commitments above.
 
 #### 0.9 Release: kernel capability proof
 

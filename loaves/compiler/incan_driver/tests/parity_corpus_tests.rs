@@ -493,7 +493,7 @@ fn case_supported_named_call_arguments_reach_body_ir() -> ComparisonOutcome {
 // ============================================================================
 
 // `AsyncAwait` is a public capability in the release-pinned baseline. Before #1164 an `await` lowered to a
-// placeholder labelled only "prefix-keyword surface expression", so the suspension point — the one fact a task
+// placeholder labeled only "prefix-keyword surface expression", so the suspension point — the one fact a task
 // runtime needs — did not exist in Body IR at all. The cutover must keep both the source form and its
 // representation, including the body-level async fact for a body that awaits nothing.
 const CASE_10_SRC: &str = r#"
@@ -875,7 +875,7 @@ fn case_supported_statement_loop_reaches_body_ir() -> ComparisonOutcome {
 
 // The corpus's first `Disposition::Unsupported` row. This is a decided boundary, not pending lowering work: an
 // `unsafe:` region introduces no Incan scope, so inlining its statements would be trivial -- and would erase the
-// acknowledgement the region exists to record, letting a direct replacement execution profile run an explicitly
+// acknowledgment the region exists to record, letting a direct replacement execution profile run an explicitly
 // authorized region without ever being told. The row asserts the refusal is present *and named*, so inlining the
 // region later cannot leave it silently green.
 const CASE_19_SRC: &str = r#"
@@ -892,7 +892,7 @@ def touch(value: int) -> int:
 fn case_unsafe_region_is_a_stated_refusal() -> ComparisonOutcome {
     outcome_from_body_ir_refusal(
         CASE_19_SRC,
-        "unsupported(`unsafe:` acknowledgement region:",
+        "unsupported(`unsafe:` acknowledgment region:",
         "an `unsafe:` region to refuse under a named, reasoned boundary rather than lower silently",
     )
 }
@@ -1549,7 +1549,7 @@ fn observe_provider_path(
         .map_err(|errors| format!("provider fixture typecheck failure: {errors:?}"))?;
 
     // Admission is projected from a published provider manifest through a selected `ProviderPlan`, never
-    // hand-filled into the lowering catalogue -- which #1213 made private precisely so a consumer cannot invent
+    // hand-filled into the lowering catalog -- which #1213 made private precisely so a consumer cannot invent
     // admission a real producer could not have published.
     let descriptors: Vec<ProviderOperationMetadata> = checker
         .type_info()
@@ -3283,7 +3283,7 @@ fn seed_corpus() -> Vec<ParityCase> {
         },
         ParityCase {
             id: "parity-987-0019",
-            title: "An `unsafe:` acknowledgement region refuses in Body IR under a named, stated boundary",
+            title: "An `unsafe:` acknowledgment region refuses in Body IR under a named, stated boundary",
             category: BehaviorCategory::SupportedLanguageContract,
             lane: EvidenceLane::DirectParserTypechecker,
             evidence: "#1162; src/frontend/body_ir/tests.rs::an_unsafe_region_refuses_under_a_named_permanent_boundary",
@@ -3291,7 +3291,7 @@ fn seed_corpus() -> Vec<ParityCase> {
             // for rather than a pointer to one.
             disposition: Disposition::IntentionalMigration {
                 owning_issue: 1162,
-                migration_note: "An `unsafe:` region records an explicit acknowledgement that the operations \
+                migration_note: "An `unsafe:` region records an explicit acknowledgment that the operations \
                                  inside it require authorization. It introduces no separate Incan scope, so \
                                  lowering its statements into the enclosing block would be a two-line change — \
                                  and would erase exactly the fact the region exists to carry, leaving a direct \

@@ -1194,7 +1194,7 @@ incan_vocab::export_wasm_desugarer!(QuerykitHelperDesugarer);
 
     /// Run a normal Oven route with a failing Cargo binary first on PATH.
     ///
-    /// This is a behavioural boundary: a successful command proves that its completed-Loaf materialization used only
+    /// This is a behavioral boundary: a successful command proves that its completed-Loaf materialization used only
     /// the selected direct-rustc closure rather than merely avoiding Cargo in an outer command.
     #[cfg(unix)]
     fn run_incan_with_failing_cargo_guard(

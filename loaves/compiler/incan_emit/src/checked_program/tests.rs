@@ -150,8 +150,8 @@ type Thing = rusttype RustThing with Labelled
         .insert_test_item(
             &manifest_dir,
             RustItemMetadata {
-                canonical_path: "demo::Labelled".to_string(),
-                definition_path: Some("demo::Labelled".to_string()),
+                canonical_path: "demo::Labeled".to_string(),
+                definition_path: Some("demo::Labeled".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Trait(RustTraitInfo {
                     items: vec![],
@@ -178,7 +178,7 @@ type Thing = rusttype RustThing with Labelled
                     metadata_completeness: Default::default(),
                     methods: vec![],
                     implemented_traits: vec![RustImplementedTrait {
-                        path: "demo::Labelled".to_string(),
+                        path: "demo::Labeled".to_string(),
                         mutable_reference: false,
                     }],
                     fields: vec![],
@@ -196,7 +196,7 @@ type Thing = rusttype RustThing with Labelled
             .type_info()
             .rust
             .rusttype_forwarded_trait_adoptions
-            .contains(&("Thing".to_string(), "Labelled".to_string())),
+            .contains(&("Thing".to_string(), "Labeled".to_string())),
         "expected metadata-proven rusttype forwarding to be recorded"
     );
 
@@ -208,7 +208,7 @@ type Thing = rusttype RustThing with Labelled
         !ir.declarations.iter().any(|decl| matches!(
             &decl.kind,
             incan_ir::IrDeclKind::Impl(impl_block)
-                if impl_block.target_type == "Thing" && impl_block.trait_name.as_deref() == Some("Labelled")
+                if impl_block.target_type == "Thing" && impl_block.trait_name.as_deref() == Some("Labeled")
         )),
         "rusttype forwarding through a type alias must not emit an orphan impl"
     );

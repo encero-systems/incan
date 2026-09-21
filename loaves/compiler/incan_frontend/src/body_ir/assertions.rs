@@ -75,7 +75,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                 // The same rule `lower_match` applies to every arm pattern, for the same reason: a byte-string
                 // literal is the one shape `bir::Constant` cannot represent. RFC 018's parser only ever produces
                 // `Some`/`Ok`/`Err` with a single binding or `_`, plus bare `None`, so this is unreachable from
-                // real source and stands as defence in depth for a hand-built AST -- the same standing
+                // real source and stands as defense in depth for a hand-built AST -- the same standing
                 // `unsupported_for_pattern`'s own type-agreement check has.
                 if !match_pattern_is_supported(&pattern.node) {
                     self.push_unsupported_stmt(

@@ -259,7 +259,7 @@ After locking, inspect the same target requirements as a deterministic platform 
 incan inspect interop-plan --target aarch64-linux-android --format json
 ```
 
-The plan gives an Oven, Gradle, or Xcode adapter consistent target, artifact, shim, and placement facts without freezing either adapter's task protocol. It is not an Oven resolution receipt or a deployable application: it contains no local SDK path, selected compiler executable, generated artifact, signing identity, licence admission, or credential.
+The plan gives an Oven, Gradle, or Xcode adapter consistent target, artifact, shim, and placement facts without freezing either adapter's task protocol. It is not an Oven resolution receipt or a deployable application: it contains no local SDK path, selected compiler executable, generated artifact, signing identity, license admission, or credential.
 
 Use the explicit v0.5 baker after the package lock is current. First materialize the package's sealed base runtime Loafs; this writes the release receipt without selecting an interop execution receipt, so it is the required first half of an interop bake:
 

@@ -46,7 +46,7 @@ Skills (`.agents/skills/`) and learnings (`.agents/learnings.md`) live under **t
 
 ## v0.6 execution ledger
 
-For every implementation issue in the `0.6 Release` milestone, [#1074](https://github.com/encero-systems/incan/issues/1074) is the central execution ledger. The RFC and owning issue remain the semantic authority; the ledger records delivery state, dependencies, and evidence across the programme.
+For every implementation issue in the `0.6 Release` milestone, [#1074](https://github.com/encero-systems/incan/issues/1074) is the central execution ledger. The RFC and owning issue remain the semantic authority; the ledger records delivery state, dependencies, and evidence across the program.
 
 - Post a structured `Active` update on #1074 once the work has a branch or PR, identifying the issue, intended scope, dependencies, and verification plan. Posting it is not a gate on starting: begin the work, then record it.
 - Post another update when the work is blocked, ready for integration, materially rescaled, or completed. Do not call v0.6 work ready to merge or complete without its ledger evidence.
@@ -143,7 +143,7 @@ Guidelines:
 - Keep a blank line **before** each header for visual breathing room.
 - The label after `----` should describe *what* or *when*, not *how*.
 - Don't overuse: if a function has only one or two simple blocks, a plain `//` comment is enough.
-- These are for **intra-function** organisation. For module-level sections, use `// ============` banners.
+- These are for **intra-function** organization. For module-level sections, use `// ============` banners.
 
 ### Formatting
 

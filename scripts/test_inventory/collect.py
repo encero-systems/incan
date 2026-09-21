@@ -58,7 +58,7 @@ DURABLE_DISPOSITIONS = ("keep", "re-point")
 TWIN_DISPOSITIONS = ("keep", "re-point")
 # The `twin` value that records a retire test with nothing to twin; the reason lives in the `dies` field beside it.
 DIES = "dies"
-# Every declared fixture root under this directory is a behaviour-fixture area: its cases carry a header whose
+# Every declared fixture root under this directory is a behavior-fixture area: its cases carry a header whose
 # `# retires:` lines name the tests they twin (see the family's README.md).
 BEHAVIOR_FIXTURES_ROOT = "loaves/compiler/incan_test_support/fixtures/behavior"
 # A `retires:` directive as the Rust runner (`incan_test_support::behavior_fixtures::parse_header`) reads it: `#`,
@@ -769,7 +769,7 @@ def load_dispositions(path: Path = DISPOSITIONS_PATH) -> dict:
 
 
 def count_fixture_roots(dispositions: dict) -> list[FixtureRoot]:
-    """Count the `.incn` cases under each declared fixture root; a behaviour area counts one case per fixture."""
+    """Count the `.incn` cases under each declared fixture root; a behavior area counts one case per fixture."""
     roots = []
     for root, entry in sorted(dispositions.get("fixture_roots", {}).items()):
         pattern = entry.get("pattern", "**/*.incn")
@@ -920,12 +920,12 @@ def propose(corpus: Corpus, dispositions: dict) -> dict:
 
 
 # ============================================================
-# Behaviour fixtures
+# Behavior fixtures
 # ============================================================
 
 
 def behavior_areas(dispositions: dict) -> list[str]:
-    """The declared fixture roots that are behaviour-fixture areas, in path order."""
+    """The declared fixture roots that are behavior-fixture areas, in path order."""
     return sorted(
         root for root in dispositions.get("fixture_roots", {}) if root.startswith(BEHAVIOR_FIXTURES_ROOT + "/")
     )
@@ -983,7 +983,7 @@ def retires_key_problem(value: str) -> str | None:
 
 
 def behavior_retires(dispositions: dict) -> tuple[dict[str, str], list[str]]:
-    """Map every test a behaviour fixture retires to the fixture that retires it, plus the conflicts found.
+    """Map every test a behavior fixture retires to the fixture that retires it, plus the conflicts found.
 
     A value that is not a test key is a failure line naming the fixture, never a key in the map."""
     retired_by: dict[str, str] = {}
@@ -1004,7 +1004,7 @@ def behavior_retires(dispositions: dict) -> tuple[dict[str, str], list[str]]:
 
 
 def is_behavior_fixture_twin(twin: str, dispositions: dict) -> bool:
-    """True when `twin` is spelled as a path inside a declared behaviour-fixture area."""
+    """True when `twin` is spelled as a path inside a declared behavior-fixture area."""
     return any(twin.startswith(area + "/") for area in behavior_areas(dispositions))
 
 
@@ -1014,7 +1014,7 @@ def is_behavior_fixture_twin(twin: str, dispositions: dict) -> bool:
 
 
 def resolve_twin(twin: str, corpus: Corpus, dispositions: dict) -> str | None:
-    """Return None when `twin` names an existing keep/re-point test, a declared fixture root or a behaviour fixture
+    """Return None when `twin` names an existing keep/re-point test, a declared fixture root or a behavior fixture
     file or directory under one, else the reason."""
     if not twin:
         return "twin is empty"
@@ -1156,7 +1156,7 @@ def check(corpus: Corpus, dispositions: dict, rendered_page_stale: str | None) -
             reason = resolve_twin(twin, corpus, dispositions)
             if reason is not None:
                 failures.append(f"`{file.path}::{key}`: {reason}")
-        # ---- A row that points at a behaviour fixture must be named back by that fixture ----
+        # ---- A row that points at a behavior fixture must be named back by that fixture ----
         for key in file.keys:
             twin = effective_twin(entry, key)
             if twin and twin != DIES and is_behavior_fixture_twin(twin, dispositions):
@@ -1170,7 +1170,7 @@ def check(corpus: Corpus, dispositions: dict, rendered_page_stale: str | None) -
         if path not in scanned:
             failures.append(f"stale row: `{path}` has a disposition but carries no tests in the tree")
 
-    # ---- Every behaviour fixture's `# retires:` line names a retire test whose row points back at it ----
+    # ---- Every behavior fixture's `# retires:` line names a retire test whose row points back at it ----
     for test, fixture in sorted(retired_by.items()):
         path, _, key = test.partition("::")
         file = scanned.get(path)

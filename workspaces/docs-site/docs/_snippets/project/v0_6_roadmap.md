@@ -716,7 +716,7 @@ flowchart LR
 <details id="slice-10-native-windows" class="inc-v06-slice" markdown="1">
 <summary>10. Native Windows support</summary>
 
-**Exit evidence:** the release bake produces a Windows archive; that archive, extracted and installed, scaffolds a project and builds it; platform-gated behaviour is implemented or its divergence is stated in code and docs.
+**Exit evidence:** the release bake produces a Windows archive; that archive, extracted and installed, scaffolds a project and builds it; platform-gated behavior is implemented or its divergence is stated in code and docs.
 
 ```mermaid
 flowchart LR

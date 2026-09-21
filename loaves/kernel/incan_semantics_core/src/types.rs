@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 /// field projection into a fieldless value that #1132 exists to prevent.
 ///
 /// Parentheses alone do not make a tuple. Rust spells a one-element tuple `(String,)`; plain `(String)` is just a
-/// parenthesised `String` and has no `.0` field at all. The distinguishing fact is a comma at depth zero, so a
+/// parenthesized `String` and has no `.0` field at all. The distinguishing fact is a comma at depth zero, so a
 /// spelling with none is reported as unverifiable rather than as a one-element tuple. Commas nested inside a
 /// generic (`(String, HashMap<K, V>)`) are not counted, and a trailing comma does not add an element.
 ///
@@ -53,7 +53,7 @@ pub fn rust_tuple_arity(path: &str) -> Option<usize> {
     }
 
     if separators == 0 {
-        // `(String)` — a parenthesised type, not a one-element tuple.
+        // `(String)` — a parenthesized type, not a one-element tuple.
         return None;
     }
     // A trailing comma closes the final element rather than opening another: `(String,)` is one element.

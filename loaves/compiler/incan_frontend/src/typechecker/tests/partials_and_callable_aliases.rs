@@ -403,7 +403,7 @@ trait Labelled:
 
 get = partial Labelled(value="GET")
 "#,
-            "targets unsupported symbol 'Labelled'",
+            "targets unsupported symbol 'Labeled'",
             "unsupported trait partial target should be rejected",
         ),
         (

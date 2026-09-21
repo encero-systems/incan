@@ -1,5 +1,5 @@
 //! Foreign function boundaries: RFC 023 `rust.module()` and `@rust.extern`, `@rust.allow` lint attributes, and checked
-//! C bindings (scalar and resource descriptors, `unsafe` acknowledgement, raw-call bridges, ownership transfers).
+//! C bindings (scalar and resource descriptors, `unsafe` acknowledgment, raw-call bridges, ownership transfers).
 
 use super::*;
 
@@ -421,11 +421,12 @@ fn checked_c_scalar_call_requires_unsafe_and_records_the_descriptor_call() {
 
     let result = checker.check_expr(&scalar_c_binding_call(span));
     assert_eq!(result, ResolvedType::Unknown);
-    assert!(checker.errors.iter().any(|error| {
-        error
-            .message
-            .contains("requires an enclosing `unsafe:` acknowledgement")
-    }));
+    assert!(
+        checker
+            .errors
+            .iter()
+            .any(|error| { error.message.contains("requires an enclosing `unsafe:` acknowledgment") })
+    );
     assert!(checker.type_info.c_abi.raw_calls.is_empty());
 
     checker.errors.clear();
@@ -579,15 +580,15 @@ def pointer_without_unsafe(value: str) -> Result[None, str]:
   text.as_const_ptr()
   return Ok(None)
 "#,
-        "checked C string pointer without unsafe acknowledgement",
+        "checked C string pointer without unsafe acknowledgment",
     );
     assert!(
         errors.iter().any(|error| {
             error
                 .message
-                .contains("extracting a checked C string pointer requires an enclosing `unsafe:` acknowledgement")
+                .contains("extracting a checked C string pointer requires an enclosing `unsafe:` acknowledgment")
         }),
-        "expected checked C string pointer acknowledgement diagnostic, got {errors:?}"
+        "expected checked C string pointer acknowledgment diagnostic, got {errors:?}"
     );
 }
 

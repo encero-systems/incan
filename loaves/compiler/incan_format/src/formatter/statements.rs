@@ -289,7 +289,7 @@ impl Formatter {
         self.writer.dedent();
     }
 
-    /// Format an acknowledgement block without changing the surrounding statement scope.
+    /// Format an acknowledgment block without changing the surrounding statement scope.
     fn format_unsafe(&mut self, unsafe_stmt: &UnsafeStmt) {
         self.writer.writeln("unsafe:");
         self.writer.indent();

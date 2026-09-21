@@ -737,7 +737,7 @@ fn method_parameter_type_falls_back_to_unknown_only_when_the_typechecker_binding
     // A successful typecheck always populates `method_bindings_by_span` for every method Body IR actually
     // lowers a body for (see `TypeChecker::check_method_with_self_ty`), so the only way to observe the
     // fallback honestly is to simulate the checked fact genuinely being absent -- exercising the same
-    // defence-in-depth path `lower_method_body` falls back to, rather than asserting on a state ordinary
+    // defense-in-depth path `lower_method_body` falls back to, rather than asserting on a state ordinary
     // typechecking can never produce.
     let source =
         "model Counter:\n  value: int\n\n  def add(self, amount: int) -> int:\n    return self.value + amount\n";

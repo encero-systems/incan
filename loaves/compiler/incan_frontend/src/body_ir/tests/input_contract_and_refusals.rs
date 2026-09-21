@@ -9,7 +9,7 @@ use super::*;
 fn unsupported_constructs_lower_to_an_explicit_placeholder_instead_of_panicking()
 -> Result<(), Box<dyn std::error::Error>> {
     // This case was the refusal's own pin until #1161: a destructuring generator clause used to refuse the whole
-    // expression rather than bind its pattern. It now lowers, so the test asserts the positive behaviour instead of
+    // expression rather than bind its pattern. It now lowers, so the test asserts the positive behavior instead of
     // freezing a hole -- the clause's names become real bindings projected out of the polled item, exactly as the
     // equivalent statement `for` produces them.
     let source = "def pick(x: int) -> int:\n  gen = (left + right for left, right in [(1, 2)])\n  return x\n";
@@ -188,7 +188,7 @@ fn an_undesugared_scoped_dsl_symbol_call_is_refused_as_a_caller_contract_violati
 fn an_unsafe_region_refuses_under_a_named_permanent_boundary() -> Result<(), Box<dyn std::error::Error>> {
     // #1162's second half. The refusal is a decided disposition, not a missing dispatch arm: an `unsafe:` region
     // introduces no Incan scope, so inlining its statements would be trivial -- and would erase the
-    // acknowledgement the region exists to record.
+    // acknowledgment the region exists to record.
     let source = concat!(
         "def probe(x: int) -> int:\n",
         "  return x\n",
@@ -203,7 +203,7 @@ fn an_unsafe_region_refuses_under_a_named_permanent_boundary() -> Result<(), Box
     let snapshot = body_named(&module, "touch")?.render_snapshot();
 
     assert!(
-        snapshot.contains("unsupported(`unsafe:` acknowledgement region:"),
+        snapshot.contains("unsupported(`unsafe:` acknowledgment region:"),
         "the refusal must name the construct rather than reading as a generic placeholder: {snapshot}"
     );
     assert!(
