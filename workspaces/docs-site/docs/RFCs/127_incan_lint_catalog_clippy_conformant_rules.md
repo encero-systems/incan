@@ -19,7 +19,7 @@
 
 ## Summary
 
-This RFC defines one catalog of Incan lint rules and the contract that configures it. The catalog follows clippy's: where an Incan construct translates a Rust construct, the rule keeps clippy's name, group, and default level; where the construct exists but clippy's name would mislead, the rule is renamed and the correspondence is recorded; where the Rust construct has no Incan counterpart (ownership, borrowing, lifetimes, raw pointers, `unsafe`, `as` casts), the catalog says so instead of inventing an approximation. Levels (`allow`, `warn`, `deny`, `forbid`), groups (`correctness`, `suspicious`, `style`, `complexity`, `perf`, `pedantic`, `restriction`), priorities, and defaults are clippy's, and the configuration is a `[lints.incan]` table in `loaf.toml` beside the `[rust.lints]` table that governs a project's Rust facets, so one manifest carries both sides of a mixed project and they cannot drift apart. RFC 105's `incan architect` engine evaluates the catalog over compiler-backed facts, with `allow` and `warn` as advice and `deny` and `forbid` as enforcement, and `incan fmt` applies the auto-fixable style subset while it formats and fails `--check` on it, so style is enforced by the tool people already run without the formatter growing a semantic analyser. RFC 053's spacing rules become catalog entries the formatter fixes, and RFC 057's `@rust.allow(...)` gains an Incan-side twin, `@allow(...)`, for targeted suppression.
+This RFC defines one catalog of Incan lint rules and the contract that configures it. The catalog follows clippy's: where an Incan construct translates a Rust construct, the rule keeps clippy's name, group, and default level; where the construct exists but clippy's name would mislead, the rule is renamed and the correspondence is recorded; where the Rust construct has no Incan counterpart (ownership, borrowing, lifetimes, raw pointers, `unsafe`, `as` casts), the catalog says so instead of inventing an approximation. Levels (`allow`, `warn`, `deny`, `forbid`), groups (`correctness`, `suspicious`, `style`, `complexity`, `perf`, `pedantic`, `restriction`), priorities, and defaults are clippy's, and the configuration is a `[lints.incan]` table in `loaf.toml` beside the `[rust.lints]` table that governs a project's Rust facets, so one manifest carries both sides of a mixed project and they cannot drift apart. RFC 105's `incan architect` engine evaluates the catalog over compiler-backed facts, with `allow` and `warn` as advice and `deny` and `forbid` as enforcement, and `incan fmt` applies the auto-fixable style subset while it formats and fails `--check` on it, so style is enforced by the tool people already run without the formatter growing a semantic analyzer. RFC 053's spacing rules become catalog entries the formatter fixes, and RFC 057's `@rust.allow(...)` gains an Incan-side twin, `@allow(...)`, for targeted suppression. Ruff is the second reference, for the Python-shaped half of the surface: its fix-applicability vocabulary names the fix modes (a formatter fix is a safe fix, a suggestion is display-only, and there is no unsafe tier), its per-rule documentation template is what `incan explain` renders, its `per-file-ignores` becomes a per-path allow table, its `preview` gate becomes a catalog flag, and its isort rule family is adapted to Incan's namespace roots, where the section a module belongs to is decided by its root rather than by configuration.
 
 ## Core model
 
@@ -29,24 +29,28 @@ This RFC defines one catalog of Incan lint rules and the contract that configure
 4. **Levels are clippy's.** `allow`, `warn`, `deny`, and `forbid` mean what they mean in rustc and clippy; groups carry a priority so a single rule can override its group; `all` is the default-on set. Advice is `allow` and `warn`; enforcement is `deny` and `forbid`.
 5. **One manifest.** Levels and rule parameters live in `loaf.toml` under `[lints.incan]`, and workspace policy under `[workspace.lints.incan]`. There is no `clippy.toml`, no `.incanfmt`, and no other side file.
 6. **Suppression is targeted.** `@allow("rule", reason="…")` on a declaration narrows a rule at the smallest scope, exactly as RFC 057's `@rust.allow(...)` does for the generated Rust of that declaration.
-7. **Fixes are the formatter's.** A catalog entry marked fixable by the formatter is decidable on the syntax tree alone, idempotent, and structure-preserving. `incan fmt` applies it, `incan fmt --check` fails on it, and no other command rewrites source.
+7. **Fixes are the formatter's.** A catalog entry marked fixable by the formatter is decidable on the syntax tree alone, idempotent, and structure-preserving. `incan fmt` applies it, `incan fmt --check` fails on it, and no other command rewrites source. In Ruff's vocabulary every formatter fix is a safe fix and every suggestion is display-only; the catalog has no unsafe tier, because the line between the two is drawn by construction, not by judgment per rule.
+8. **Every rule explains itself.** Each entry carries the documentation `incan explain` renders, in one template: what it does, why it matters, an example with its fix, and its options. A rule without that documentation is not a catalog entry.
 
 ## Motivation
 
 Incan today decides "style" in three places, and none of them is a catalog. The formatter normalizes layout by rules stated in RFC 053 and the style guide, but reports every deviation as "file would be reformatted". The checker emits one lint-shaped diagnostic, unreachable code after `return` (`INCAN-T0101`), and four warnings about interop and async contracts (an async call that is not awaited, a `rust.module()` directive with no effect, a public function that calls a checked C symbol, dot-notation in a `rust` import), none with a level anyone can set. RFC 105 proposes an engine for design findings with its own categories and leaves suppression, configuration, and the relationship to formatting unresolved. A project that also carries Rust facets configures clippy in a fourth place. A Rust developer who reaches for `needless_bool` or `unwrap_used` finds nothing by that name; a Python developer who expects Ruff's "format and lint in one tool" finds a formatter that does not lint.
 
-Clippy is the right reference for three reasons. First, expectations: Incan's audience includes Rust developers, and a rule that has the same name and the same meaning as the clippy lint they already know costs nothing to learn. Second, the compiler itself: the toolchain's own Rust facets are linted with clippy, and #1698 moves that configuration into `loaf.toml` as `[rust.lints]`; if Incan's rules used other names, levels, or defaults, one repository would carry two vocabularies for the same intent. Third, calibration: clippy's group boundaries (`correctness` denied; `suspicious`, `style`, `complexity`, and `perf` warned; `pedantic` and `restriction` opt-in) encode years of judgement about what a default-on lint may cost, so adopting them means Incan starts from a defensible default set rather than inventing one.
+Clippy is the right reference for three reasons. First, expectations: Incan's audience includes Rust developers, and a rule that has the same name and the same meaning as the clippy lint they already know costs nothing to learn. Second, the compiler itself: the toolchain's own Rust facets are linted with clippy, and #1698 moves that configuration into `loaf.toml` as `[rust.lints]`; if Incan's rules used other names, levels, or defaults, one repository would carry two vocabularies for the same intent. Third, calibration: clippy's group boundaries (`correctness` denied; `suspicious`, `style`, `complexity`, and `perf` warned; `pedantic` and `restriction` opt-in) encode years of judgment about what a default-on lint may cost, so adopting them means Incan starts from a defensible default set rather than inventing one. Ruff, which grew up on Flake8's letter-prefixed codes, is converging on the same grouping: its preview rule categories are `correctness`, `suspicious`, `complexity`, `performance`, `style`, `security`, `formatting`, `pedantic`, and `restriction`, with the first five as the default set and a stated plan to retire the per-tool linter groups. Two tools with different histories arriving at one taxonomy is a second, independent vote for it.
 
-Clippy is not a template to copy blindly. A large share of its catalog exists because Rust exposes ownership, borrowing, lifetimes, raw pointers, `unsafe`, and `as` casts. Incan exposes none of those: the compiler's duckborrowing planner decides how generated Rust moves, borrows, or clones, and source code never spells a borrow. An honest catalog lists those lints as untranslatable by construction rather than inventing lookalikes, and it adds the rules a Python-shaped language needs that clippy has no notion of: f-strings, comprehensions and generator expressions, docstrings, decorators, `mut self`, `pass`, and `...` bodies.
+Clippy is not a template to copy blindly. A large share of its catalog exists because Rust exposes ownership, borrowing, lifetimes, raw pointers, `unsafe`, and `as` casts. Incan exposes none of those: the compiler's duckborrowing planner decides how generated Rust moves, borrows, or clones, and source code never spells a borrow. An honest catalog lists those lints as untranslatable by construction rather than inventing lookalikes, and it adds the rules a Python-shaped language needs that clippy has no notion of: f-strings, comprehensions and generator expressions, docstrings, decorators, `mut self`, `pass`, and `...` bodies. Ruff is the reference for that half, and the prior-art section says which of it this RFC takes: not its hundreds of pycodestyle layout codes, which a canonical formatter makes unnecessary, and not its `noqa` culture, but its fix-safety vocabulary, its rule documentation template, its import-sorting family, and its per-file configuration shape.
 
 ## Goals
 
 - Define the rule model: identity, naming, groups, levels, priority, defaults, declared facts, declared evaluator, and declared fix mode.
 - Publish the correspondence between clippy's catalog and Incan's, group by group, in three dispositions: translates, translates under another name, does not translate.
 - Name the entries without a clippy counterpart: the formatter's normalizations from RFC 053 and the style guide, the rustc lints that translate, and the Python-shaped idiom rules.
-- Define `[lints.incan]` and `[workspace.lints.incan]` in `loaf.toml`, their precedence, and the manifest refusals.
+- Define `[lints.incan]` and `[workspace.lints.incan]` in `loaf.toml`, their precedence, the per-path allow table, and the manifest refusals.
 - Define `@allow(...)` as the Incan-side twin of `@rust.allow(...)`.
 - Define how `incan architect` evaluates the catalog and how `incan fmt` fixes its fixable subset, including `--check` semantics, machine-readable output, and exit codes.
+- Define the documentation every entry carries, in one template, and how `incan explain` renders it by code or by name.
+- Define fix applicability in Ruff's terms, so a reader who knows safe, unsafe, and display-only fixes knows what `fmt`, `suggest`, and `none` mean.
+- Define preview gating for entries that are not yet stable, and import ordering as a rule over Incan's namespace roots.
 - Give #159's trivia-aware formatter its rule surface: every formatter rewrite has a name, a code, and a reason.
 
 ## Non-Goals
@@ -54,10 +58,11 @@ Clippy is not a template to copy blindly. A large share of its catalog exists be
 - Changing language syntax or semantics. Every rule reports on programs the compiler already accepts.
 - Replacing `incan check`. Type errors, resolution errors, and exhaustiveness are the checker's and stay errors, not lints.
 - Redefining RFC 105's engine, finding record, evidence model, profiles, priorities, or confidence. RFC 105 defines the engine and the finding contract; this RFC defines the rule set and the configuration that engine evaluates.
-- Auto-fixing anything the formatter cannot decide from the syntax tree. `incan architect` reports; it does not rewrite. A later RFC may define engine-applied fixes.
+- Auto-fixing anything the formatter cannot decide from the syntax tree. `incan architect` reports; it does not rewrite. There is no unsafe fix tier and no `--unsafe-fixes` flag: a later RFC may define engine-applied fixes, and it must do so by adding a fix mode, not by loosening `fmt`.
 - Linting generated Rust. `[rust.lints]` (#1698, to be recorded in RFC 119) and `@rust.allow(...)` (RFC 057) own the Rust side.
-- A `# fmt: off` region or any other formatter opt-out. None exists today and this RFC adds none.
-- Statement-level suppression. `@allow(...)` attaches to declarations; a narrower form is an unresolved question.
+- A `# fmt: off` region, an `# isort: skip` marker, or any other formatter opt-out. None exists today and this RFC adds none.
+- Statement-level suppression. `@allow(...)` attaches to declarations; a narrower form is an unresolved question. A blanket line directive that names no rule (Ruff's bare `# noqa`) is not a question: it is rejected, because a suppression that names nothing suppresses everything.
+- A tool that inserts suppressions (Ruff's `--add-noqa`). Suppressions are written by hand, with a reason.
 - Porting all of clippy. The catalog grows by correspondence entries; this RFC fixes the model and seeds it with the entries in the tables below.
 - Nursery and cargo lints. Nursery lints are not stable in clippy; cargo lints check `Cargo.toml`, whose Incan counterpart is validated by RFC 117 itself.
 
@@ -99,6 +104,37 @@ The third command, `incan check`, is not involved. It reports what the type syst
 
 The same catalog holds rules the formatter cannot fix. `too_many_arguments` needs a threshold and a human decision; `unwrap_used` is a policy, not a rewrite; `float_cmp` needs to know that both operands are floats. `incan architect` reports those, and the level table decides whether they are advice (`warn`) or enforcement (`deny`).
 
+### Reading a rule
+
+Every entry documents itself in one template, and `incan explain` renders it for a code or a bare name:
+
+```text
+$ incan explain needless_bool
+needless_bool (INCAN-L0042)  complexity  warn by default  clippy: needless_bool
+facts: syntax  fix: fmt (applied by `incan fmt`)  options: none
+
+What it does
+  Reports an `if` whose two branches only return `true` and `false`.
+
+Why it matters
+  The condition is already the boolean; the branches restate it.
+
+Example
+    if age >= 18:
+        return true
+    else:
+        return false
+
+Use instead
+    return age >= 18
+
+Fix
+  `incan fmt` rewrites the `if`/`else` to `return <condition>`. The condition
+  is a `bool` by its position, so the rewrite needs no type information.
+```
+
+The template is Ruff's ("What it does", "Why is this bad?", "Example", "Use instead", "Fix safety", "Options"), and it is the same text the generated catalog reference page carries, so the documentation site, the terminal, and an editor hover all say one thing.
+
 ### Configuring levels in `loaf.toml`
 
 A project that carries Incan and Rust sources configures both in one manifest, with the same vocabulary:
@@ -128,9 +164,15 @@ unwrap_used = "deny"
 too_many_arguments = { level = "warn", threshold = 6 }
 print_stdout = "warn"
 fstring_over_concat = "allow"
+
+# Paths where a rule is allowed: Ruff's per-file-ignores, with `allow` as its only verb.
+[lints.incan.per-file-allow]
+"tests/**" = ["unwrap_used", "print_stdout"]
 ```
 
-The `[rust.lints]` shape is #1698's and appears here only to put the two tables side by side. The `[lints.incan]` table reads the way a Rust developer expects: a group at priority `-1` so the single rules below it win, a rule raised to `deny`, a rule with a parameter, an Incan-only rule switched off. A project that writes no `[lints.incan]` gets clippy's defaults.
+The `[rust.lints]` shape is #1698's and appears here only to put the two tables side by side. The `[lints.incan]` table reads the way a Rust developer expects: a group at priority `-1` so the single rules below it win, a rule raised to `deny`, a rule with a parameter, an Incan-only rule switched off. A project that writes no `[lints.incan]` gets clippy's defaults. The per-path table reads the way a Python developer expects: a glob, and the rules that are allowed under it. It is the manifest-side counterpart of a module-level `@allow(...)`, for the case where every file under `tests/` would otherwise carry the same decorator.
+
+Ruff's `select` and `ignore` lists are not a second spelling of this table. `select = ["pedantic"]` is `pedantic = "warn"`, `ignore = ["print_stdout"]` is `print_stdout = "allow"`, and Ruff's rule that a narrower selector beats a broader one is what Cargo's `priority` says out loud. One table, one spelling.
 
 ### Suppressing at the smallest scope
 
@@ -144,6 +186,8 @@ def decode_header(version: int, flags: int, length: int, stream: int, offset: in
 
 `@allow(...)` is the Incan twin of `@rust.allow(...)`: a compiler-owned decorator, string arguments that name catalog rules or groups, an optional `reason`, and an effect limited to the declaration it decorates. A `@rust.allow("clippy::unwrap_used")` on the same declaration still means the generated Rust; the two decorators never name each other's rules. The twin is not a copy: RFC 057 rejects keyword arguments, group names, and the module position, and the reference-level explanation says where and why `@allow(...)` differs.
 
+When the reason goes away, so should the decorator: `unused_allow` reports an `@allow(...)` whose rules would not have fired, the way Ruff's `unused-noqa` retires a stale `# noqa`. There is no `# noqa` line directive. A decorator is a declaration's metadata: the checker validates its names, the codegraph records it, `unused_allow` retires it, and a reviewer finds it where the declaration is. A trailing comment is none of those, and a tool that writes them for you is how a codebase ends up with hundreds.
+
 ### What does not translate, and why
 
 Clippy's `needless_borrow`, `ptr_arg`, `needless_lifetimes`, and `needless_pass_by_value` have no Incan rule because Incan source has no borrow, no lifetime, and no pass-by-value spelling to get wrong: parameters are values, `self` and `mut self` say whether a method mutates, and the compiler plans the Rust shape. Clippy's `needless_return` has no Incan rule because `return` is the only way to yield a value: there are no tail expressions to prefer. Clippy's `single_match` translates only for `Option`, because `if x is not None:` is a real narrowing form and there is no `if let` for an enum payload. Each of those facts is a row in the correspondence tables, so a Rust developer who types a clippy name into `[lints.incan]` is told exactly why it is not there.
@@ -151,6 +195,8 @@ Clippy's `needless_borrow`, `ptr_arg`, `needless_lifetimes`, and `needless_pass_
 ### The formatter's own rules
 
 RFC 053's three blank-line buckets, the trailing newline, docstring interior spacing, comment placement, and the style guide's horizontal spacing are catalog entries in a `format` group named `fmt_*`. They are not configurable, they are always applied by `incan fmt`, and they are reported by name under `--check`. Their value is identity: a formatter rewrite is no longer "the file changed" but `fmt_blank_lines` at a line, with a reason, which is what #159's trivia-aware formatter needs to be testable rule by rule.
+
+Ruff draws the same line between `ruff format` and `ruff check --fix`, and pays for it: its formatter does not sort imports, so a project runs `ruff check --select I --fix` and then `ruff format`, in that order, and its documentation lists the lint rules that conflict with the formatter and must be switched off. Incan pays neither cost. The fixable lint subset and the `format` group run in one `incan fmt` pass over one tree, so there is no order to get wrong, and no catalog entry may report what the `format` group normalizes, so there is nothing to switch off.
 
 ## Reference-level explanation
 
@@ -164,7 +210,11 @@ Every catalog entry must have:
 - a **default level**;
 - an **origin**: `clippy` (same name and meaning as the clippy lint), `clippy-renamed` (an Incan name with the clippy counterpart recorded), `rustc` (a rustc lint that translates), or `incan` (no counterpart);
 - a **fact tier**, an **evaluator**, and a **fix mode** as defined below;
-- zero or more **parameters**, each with a name, a type, and a default.
+- zero or more **parameters**, each with a name, a type, and a default;
+- a **preview** flag, `false` for a stable entry, as defined below;
+- **documentation** in the template defined under "Rule documentation" below.
+
+The `INCAN-L` family is a family of the compiler's diagnostic catalog in `incan_syntax::diagnostics`, beside `INCAN-P` (parser), `INCAN-T` (typecheck), `INCAN-I` (import), `INCAN-C` (tooling), and `INCAN-U` (unknown). Each lint entry is projected into that catalog's entry shape (code, title, severity, phase, summary, explanation, examples, common causes, fixes, documentation URL), which is the shape `incan explain` renders today, so a lint code needs no second lookup path and `incan explain INCAN-T0101` and `incan explain INCAN-L0042` go through one table. Ruff's letter prefix names the tool a rule came from (`F` for Pyflakes, `E` for pycodestyle, `I` for isort); the `L` says only "lint". The group is a catalog field, not a digit of the code, so an entry can change group without renumbering, which is what Ruff's own move from per-tool prefixes to categories would have needed.
 
 Naming rules:
 
@@ -201,6 +251,8 @@ Priority semantics must match Cargo's `[lints]` table: every entry has an intege
 
 `all` names the default-on set: `correctness`, `suspicious`, `style`, `complexity`, and `perf`. It never includes `pedantic`, `restriction`, or `format`, and RFC 105's `experimental` profile is never part of it. A rule belongs to exactly one group, and its default level is its group's default level; clippy has no exceptions to that and neither does this catalog.
 
+**Preview entries.** A new entry enters the catalog with `preview = true` and stays in preview for at least one release. While in preview it has a group, so its documentation and `--list-rules` show where it will sit, but its default level is `allow` whatever the group, it is not a member of `all` or of its group for level resolution, and it is enabled only by naming it in a level table. Promotion clears the flag, gives the entry its group's default level, and is a release-notes item, as it is in Ruff's versioning policy. This is Ruff's `explicit-preview-rules` made the only mode: there is no `preview = true` manifest switch that enables every preview entry at once, because the manifest names rules and a switch would be a second way to select them. An RFC 105 rule in the `experimental` profile is a preview entry of this catalog; the profile is how `incan architect` selects it, the flag is how the level table treats it.
+
 ### Declared facts, evaluator, and fix mode
 
 Every entry declares:
@@ -208,6 +260,17 @@ Every entry declares:
 - **Fact tier**: `syntax` when the rule is decidable on the trivia-aware syntax tree of one file, or `semantic` when it needs resolved names, types, or other codegraph facts. A `syntax` rule must run on any file that parses; a `semantic` rule must be skipped, with a note in the output, for a file the checker rejects.
 - **Evaluator**: `architect` (RFC 105's engine), `check` (the checker emits it as a by-product of resolution or flow analysis), or `fmt` (the formatter applies it as part of formatting).
 - **Fix mode**: `fmt` (the formatter applies the rewrite), `suggest` (the finding carries a suggestion and nothing rewrites source), or `none`.
+
+The fix modes are Ruff's fix applicability levels with one level removed:
+
+| Fix mode | Ruff applicability | Who applies it | What the reader may assume |
+| --- | --- | --- | --- |
+| `fmt` | safe | `incan fmt`, always, at any level other than `allow` | meaning preserved for every well-typed program, comments preserved, idempotent |
+| `suggest` | display-only | nobody; `incan architect` prints the replacement text | the suggestion may be wrong for the reasons the finding's risks name |
+| `none` | no fix | nobody | the finding is a report |
+| (not defined) | unsafe | nobody | Ruff applies these behind `--unsafe-fixes`; no Incan command does |
+
+Ruff needs the unsafe level because its safe/unsafe line is drawn per rule by judgment and moved per project by `extend-safe-fixes` and `extend-unsafe-fixes`; its common reason for marking a fix unsafe is "comments may be dropped", which is a property of a formatter and a linter that hold two different trees. This catalog draws the line by construction: an `fmt` fix is one the constraints below admit, and every other rewrite is a suggestion. Fix safety is therefore a catalog property and not a project setting: there is no manifest key that promotes a suggestion to a fix or demotes a fix to a suggestion, and no `fixable`/`unfixable` list, because a project that does not want a rewrite sets the entry to `allow`. The name `unsafe` is reserved for a later RFC that defines engine-applied fixes, so that such fixes arrive as a new mode with its own flag rather than as a loosening of `fmt`.
 
 Constraints:
 
@@ -236,6 +299,25 @@ Rules:
 - Entries for the `format` group or for any `fmt_*` rule must be refused: formatter rules are not configurable through the level table.
 - An entry for the `restriction` group as a whole must be refused: restriction rules are enabled individually, as clippy's `blanket_clippy_restriction_lints` insists.
 - `[lints.incan]` never carries a Rust lint, and `[rust.lints]` never carries an Incan rule.
+- There is no `select`, `ignore`, `extend-select`, `fixable`, `unfixable`, or `preview` key. Each is either the level table said another way (`select` and `ignore`), a property of the catalog rather than of the project (`fixable` and `unfixable`), or a switch this RFC deliberately does not provide (`preview`). A key with one of those names is refused with a diagnostic that names the spelling to use.
+
+### The per-path allow table
+
+`[lints.incan.per-file-allow]` is a subtable of `[lints.incan]` whose keys are path globs and whose values are arrays of rule or group names. Its name is hyphenated so it can never collide with a rule name, which is always `lower_snake_case`, and it follows whichever spelling the table-name question below settles on.
+
+```toml
+[lints.incan.per-file-allow]
+"tests/**" = ["unwrap_used", "print_stdout", "missing_docstrings"]
+"src/generated/**" = ["too_many_lines"]
+```
+
+Rules:
+
+- A glob is resolved against the directory of the manifest that declares it, matches `.incn` files, and uses `*`, `**`, and `?` with the meaning Cargo gives them in `[workspace] members` and Ruff gives them in `per-file-ignores`. A glob that matches no file is not a refusal, because the table describes policy, not inventory.
+- Each value must name a catalog rule or a group other than `all`, `format`, and `restriction`, with the same rejections as `@allow(...)`: `all` is a blanket, `format` has no opt-out, and `restriction` is enabled one rule at a time. `fmt_*` names are refused.
+- The only effect is `allow`. The table cannot raise a level, set a parameter, or carry a priority; Ruff's `per-file-ignores` has the same single verb, and a per-path level table would be a second manifest inside the first.
+- It may appear in `[workspace.lints.incan]` as well, where its globs resolve against the workspace root. A member's per-path table adds to the workspace's; neither can relax a `forbid`.
+- `[lints.incan.per-file-allow]` is exactly a module-position `@allow(...)` applied to every file the glob matches. A file that carries both is allowed the union.
 
 ### Workspace policy and precedence
 
@@ -246,9 +328,10 @@ The effective level of a rule at a source location is resolved in this order, ea
 1. the catalog default for the rule;
 2. `[workspace.lints.incan]` at the workspace root, in priority order;
 3. `[lints.incan]` in the member's own `loaf.toml`, in priority order;
-4. `@allow(...)` on the enclosing declarations, innermost last.
+4. the per-path allow tables of the workspace and the member, for the file that contains the location;
+5. `@allow(...)` on the enclosing declarations, innermost last.
 
-A member manifest may raise a level the workspace set and must not lower it: the workspace table is the floor, which is what RFC 117's "narrow but not replace" means for lint policy. `@allow(...)` may lower any level except `forbid`, because it is targeted at one declaration and carries a reason, where a member table would relax the rule for a whole package. This layering diverges from Cargo's `[lints] workspace = true`, which is all-or-nothing: a Cargo member either inherits the whole workspace table or writes its own, and cannot merge the two. The divergence is deliberate and is recorded in the design decisions. There are no command-line level flags: the manifest is the single source of truth, and a flag would be a second one.
+A member manifest may raise a level the workspace set and must not lower it: the workspace table is the floor, which is what RFC 117's "narrow but not replace" means for lint policy. A per-path allow table and `@allow(...)` may lower any level except `forbid`, because each is targeted, at a path or at one declaration, where a member table would relax the rule for a whole package. Ruff resolves the same question by directory walk: the nearest `ruff.toml` wins, and `extend` inherits from a parent. That is not adopted, because RFC 117 already says who is the authority over whom, and a second, path-shaped precedence would let a nested file override the workspace's floor. This layering diverges from Cargo's `[lints] workspace = true`, which is all-or-nothing: a Cargo member either inherits the whole workspace table or writes its own, and cannot merge the two. The divergence is deliberate and is recorded in the design decisions. There are no command-line level flags: the manifest is the single source of truth, and a flag would be a second one.
 
 ### Manifest refusals
 
@@ -259,7 +342,9 @@ Oven must refuse a manifest, with the diagnostic naming the offending entry, whe
 - two entries tie as defined above: a group and one of its member rules, or two overlapping groups, at the same priority with different levels;
 - a member manifest lowers a level the workspace root set;
 - an entry targets the `format` group, an `fmt_*` rule, or the `restriction` group as a whole;
-- a parameter is unknown for the rule, has the wrong type, or appears on a group entry.
+- a parameter is unknown for the rule, has the wrong type, or appears on a group entry;
+- a key is one of the Ruff spellings this table does not carry (`select`, `ignore`, `extend-select`, `fixable`, `unfixable`, `preview`); the diagnostic names the spelling to use instead;
+- a per-path allow entry names an unknown rule, `all`, `format`, `restriction`, or an `fmt_*` rule, or would relax a `forbid`, or its value is not an array of strings.
 
 ### `@allow(...)`
 
@@ -273,6 +358,7 @@ Oven must refuse a manifest, with the diagnostic naming the offending entry, whe
 - Naming an `fmt_*` rule or the `format` group must be rejected: this RFC provides no formatter opt-out.
 - `@allow(...)` never names a Rust lint; `@rust.allow(...)` never names an Incan rule. Each must reject the other's names.
 - The restriction rule `allow_without_reason` reports an `@allow(...)` with no `reason`.
+- The style rule `unused_allow` reports an `@allow(...)` naming a rule that would not have fired anywhere in the decorated scope, as Ruff's `unused-noqa` does for a stale `# noqa`. It is evaluated after every other rule, so its fact tier is `semantic` and its evaluator is `architect`; the finding names the unused rule and suggests removing the name or, when nothing is left, the decorator. Ruff keeps `unused-noqa` opt-in because a `# noqa` may be addressed to another tool (its `external` setting exists for that); `@allow(...)` names only catalog rules, so the entry is on by default.
 
 ### `incan architect` evaluates the catalog
 
@@ -282,14 +368,17 @@ Oven must refuse a manifest, with the diagnostic naming the offending entry, whe
 - It must include entries the checker emits (evaluator `check`) by projecting the codegraph's diagnostic records into findings rather than re-evaluating them, so a checker diagnostic is never reported twice.
 - Findings must carry RFC 105's record (the qualified name in the rule code field, category, priority, confidence, evidence, suggestions, risks) and, for catalog entries, the bare rule name, the stable code, the group, the effective level, and the manifest layer that set it.
 - `--profile` selects groups; the level table decides what is on. A `syntax`-tier rule must run over a file the checker rejects, and a `semantic`-tier rule must be reported as skipped for that file.
-- `incan architect --list-rules` is a new flag on RFC 105's command surface, added by this RFC: it must print every catalog entry with its effective level and the layer that set it, and with `--format json` it must print the same table as a record per entry.
+- `incan architect --list-rules` is a new flag on RFC 105's command surface, added by this RFC: it must print every catalog entry with its group, its fix mode, its preview flag, its effective level, and the layer that set it, and with `--format json` it must print the same table as a record per entry. It is the one place that answers both of Ruff's questions, `ruff rule --all` (what exists) and `ruff check --show-settings` (what is on here).
+- A preview entry is evaluated only when a level table names it; a `--profile` never selects a preview entry by group.
 
 ### `incan fmt` fixes the fixable subset
 
 `incan fmt` keeps its command surface (`incan fmt [PATH]`, `--check`, `--diff`, `--workspace`, `--member`) and gains catalog identities:
 
-- Formatting applies every `format`-group entry and every entry whose fix mode is `fmt` and whose effective level is not `allow`. To know which those are, the formatter must resolve the same precedence chain as the engine: catalog default, `[workspace.lints.incan]`, `[lints.incan]`, and `@allow(...)`.
+- Formatting applies every `format`-group entry and every entry whose fix mode is `fmt` and whose effective level is not `allow`. To know which those are, the formatter must resolve the same precedence chain as the engine: catalog default, `[workspace.lints.incan]`, `[lints.incan]`, the per-path allow tables, and `@allow(...)`.
 - The `format` group is canonical: its output is the same for every project. The `fmt`-fixable lint subset is project-selected, because a level table can switch an entry off, so `incan fmt` output is canonical only within one project's configuration. This is Ruff's split between `format` and `check --fix`, and it is stated plainly so nobody expects two projects with different `[lints.incan]` tables to format identically.
+- The two run in one pass over one tree. There is no command to run first and no ordering between the fixable subset and the `format` group, where Ruff runs `ruff check --select I --fix` before `ruff format` because its formatter does not sort imports. The output must not depend on the order in which the fixable entries are applied; a pair of entries whose rewrites do not commute is a catalog defect, not a documented ordering.
+- No catalog entry may report a construct the `format` group normalizes. Ruff documents the lint rules that conflict with its formatter and asks projects to switch them off; here the conflict cannot arise, because the same tree and the same pass own both.
 - `--check` must report each construct that formatting would change by rule name, location, and a one-line reason, and must exit non-zero when any file would change.
 - `--diff` shows the rewrite as today.
 - `incan fmt` must not report entries it does not fix. Reporting is `incan architect`'s job; the two commands share the syntactic rule implementations, not the output.
@@ -328,9 +417,27 @@ Oven must refuse a manifest, with the diagnostic naming the offending entry, whe
 }
 ```
 
-`incan architect --format json` keeps RFC 105's finding record and adds the same five fields.
+`incan architect --format json` keeps RFC 105's finding record and adds the same five fields. `fix` carries the entry's fix mode and is what Ruff's `applicability` field carries: `fmt` where Ruff says `safe`, `suggest` where Ruff says `display-only`. A `suggest` record carries the replacement text in `hints`, so a consumer that wants to show a fix it will not apply has it, as Ruff's JSON output always carries a fix whether or not `--fix` would apply it.
 
-`incan explain INCAN-L0042` must resolve every catalog entry to its name, group, default level, origin, clippy counterpart when there is one, fact tier, fix mode, parameters, and a description with a before-and-after example.
+### Rule documentation
+
+Every entry carries its documentation in the catalog, in one template, and `incan explain` renders it. The template is Ruff's per-rule page with the headings renamed where the catalog's vocabulary differs:
+
+| Section | Ruff heading | Content | Diagnostic catalog field |
+| --- | --- | --- | --- |
+| header | (badges) | name, code, group, default level, origin and clippy counterpart, fact tier, fix mode, preview flag | `code`, `title`, `severity`, `phase` |
+| What it does | What it does | one sentence naming the construct the entry reports | `summary` |
+| Why it matters | Why is this bad? | the reason; renamed because a `restriction` or `pedantic` entry reports a policy, not a defect | `explanation` |
+| Example / Use instead | Example / Use instead | a before-and-after pair in Incan | `examples` |
+| Fix | Fix safety | for `fmt`, what `incan fmt` rewrites; for `suggest`, the suggestion's shape and its risks; for `none`, "none" | `fixes` |
+| Options | Options | each parameter with its type, default, and `[lints.incan]` spelling | parameters (a lint-only field) |
+| Known problems | Known problems | optional: the counterexamples RFC 105's finding names as risks | `common_causes` |
+
+Rules:
+
+- Both halves of the example must parse. The "before" must produce the entry's finding and the "after" must not; a documentation test runs both through the engine, so a rule's documentation cannot drift from its implementation.
+- `incan explain` accepts the bare rule name as well as the code (`incan explain needless_bool`, `incan explain INCAN-L0042`); the name resolves through the catalog to the code. `--format json` prints the entry as a record with the template's fields.
+- The generated catalog reference page is rendered from the same entries, so the terminal, the site, and an editor hover agree.
 
 ### Exit codes
 
@@ -342,6 +449,8 @@ Oven must refuse a manifest, with the diagnostic naming the offending entry, whe
 
 A manifest refusal is an operational error for every command that reads the manifest.
 
+Ruff's contract has a third value: `0` clean, `1` violations, `2` abnormal termination (an invalid configuration, a bad flag, an internal error), so a CI job can tell "the code has findings" from "the tool did not run". The distinction is adopted; the third exit code is not. The toolchain's convention is that success is `0` and everything else is `1` (`incan check`, `incan test`, and `incan fmt --check` today), and one pair of commands with a three-valued contract would be a second convention. Under `--format json` the two cases are told apart by the report: an operational error is a diagnostic in the `tooling` phase or RFC 117's manifest family, carries no `rule` field, and sets `ok` to `false` with no catalog record beside it. Ruff's `--exit-zero` and `--exit-non-zero-on-fix` are not adopted: a project that wants a finding not to fail CI sets its level to `warn`, and `incan fmt --check` is the CI form of the formatter.
+
 ### Diagnostics the checker emits today
 
 The checker emits one lint-shaped diagnostic today: unreachable code after `return`, stable code `INCAN-T0101`, a warning produced by flow analysis. It becomes a catalog entry with evaluator `check`, keeps its code, its text, and its position in output, and gains a level:
@@ -350,7 +459,7 @@ The checker emits one lint-shaped diagnostic today: unreachable code after `retu
 | --- | --- | --- | --- | --- |
 | unreachable code after `return` (`INCAN-T0101`) | `unreachable_code` | `rustc` | `suspicious` | `warn` |
 
-Nothing else the checker emits is a lint. An unused binding, an unused import, and a wildcard `_` arm are not reported today: the exhaustiveness check treats `_` as covering the remaining cases and says nothing. The three entries that cover them are new, not renamed. `unused_variables` and `unused_imports` are by-products of name resolution, which the checker already performs, so their evaluator is `check` and they join `unreachable_code` as the checker's catalog entries. `wildcard_enum_match_arm` needs the scrutinee's enum type and clippy's restriction-group judgement, so its evaluator is `architect`:
+Nothing else the checker emits is a lint. An unused binding, an unused import, and a wildcard `_` arm are not reported today: the exhaustiveness check treats `_` as covering the remaining cases and says nothing. The three entries that cover them are new, not renamed. `unused_variables` and `unused_imports` are by-products of name resolution, which the checker already performs, so their evaluator is `check` and they join `unreachable_code` as the checker's catalog entries. `wildcard_enum_match_arm` needs the scrutinee's enum type and clippy's restriction-group judgment, so its evaluator is `architect`:
 
 | Entry | Origin | Group | Default | Facts | Evaluator |
 | --- | --- | --- | --- | --- | --- |
@@ -366,7 +475,7 @@ The checker's four other warnings stay outside the catalog: an async call that i
 
 ### Correspondence catalog
 
-The tables below are the seed catalog. Each row is one clippy lint and fills exactly one of the three Incan columns. Parenthesised markers give the fact tier (`syntax` or `semantic`) and, where the fix mode is `fmt`, say so; every other translated entry has fix mode `suggest` unless its row says `none`. Group membership and default levels follow clippy's; the `restriction` and `pedantic` rows are `allow` by default. Lints in clippy's `nursery`, `cargo`, and `deprecated` groups are out of scope. The clippy names and groups in this draft were reconciled against the clippy `master` lint list published on 2026-09-20; the catalog itself records, as its reconciliation baseline, the clippy release that ships with the Rust release the toolchain pins.
+The tables below are the seed catalog. Each row is one clippy lint and fills exactly one of the three Incan columns. Parenthesized markers give the fact tier (`syntax` or `semantic`) and, where the fix mode is `fmt`, say so; every other translated entry has fix mode `suggest` unless its row says `none`. Group membership and default levels follow clippy's; the `restriction` and `pedantic` rows are `allow` by default. Lints in clippy's `nursery`, `cargo`, and `deprecated` groups are out of scope. The clippy names and groups in this draft were reconciled against the clippy `master` lint list published on 2026-09-20; the catalog itself records, as its reconciliation baseline, the clippy release that ships with the Rust release the toolchain pins.
 
 #### Correctness (default `deny`)
 
@@ -495,7 +604,7 @@ The tables below are the seed catalog. Each row is one clippy lint and fills exa
 | `double_parens` | `((x))` and `f((x))` (syntax; fmt) | | |
 | `excessive_nesting` | blocks nested past a threshold; clippy's default is off until a threshold is configured, and so is this entry's: `threshold` defaults to `0`, meaning never (syntax; parameter `threshold`) | | |
 | `explicit_auto_deref` | | | no dereference operator |
-| `explicit_counter_loop` | a counter initialised before a `for` and incremented once per iteration, where `enumerate` is meant (syntax) | | |
+| `explicit_counter_loop` | a counter initialized before a `for` and incremented once per iteration, where `enumerate` is meant (syntax) | | |
 | `identity_op` | `x + 0`, `x * 1`, `x // 1`, and a bitwise or with `0` (syntax) | | |
 | `int_plus_one` | `x >= y + 1` where `x > y` is meant (syntax) | | |
 | `iter_count` | `xs.iter().count()` where `len(xs)` is meant (syntax) | | |
@@ -608,7 +717,7 @@ The tables below are the seed catalog. Each row is one clippy lint and fills exa
 | `question_mark_used` | any use of `?` (syntax) | | |
 | `redundant_type_annotations` | `x: int = 1` where the literal already fixes the type (semantic) | | |
 | `renamed_function_params` | a trait method implementation whose parameter names differ from the trait's, which changes keyword call sites (semantic) | | |
-| `single_call_fn` | a function called from exactly one place (semantic); RFC 105's `maintainability.single_use_trivial_helper` is the evidence-backed neighbour and stays a separate entry | | |
+| `single_call_fn` | a function called from exactly one place (semantic); RFC 105's `maintainability.single_use_trivial_helper` is the evidence-backed neighbor and stays a separate entry | | |
 | `string_slice` | | | string indexing and slicing count scalars and cannot split a code point |
 | `tests_outside_test_module` | a `test_*` function declared outside a `module tests:` block and outside a test file (syntax) | | |
 | `todo` | | `ellipsis_body`: a function or method whose body is only `...`, which the grammar reads as `pass` (syntax) | |
@@ -632,10 +741,35 @@ Rules clippy has no notion of: rustc lints that translate, rules for Python-shap
 | `redundant_pass` | `style` | `incan` | syntax | fmt | `pass` in a block that has other statements |
 | `while_true` | `style` | `rustc` | syntax | fmt | `while true:` where `loop:` is meant |
 | `unused_mut` | `style` | `rustc` | semantic | suggest | a `mut` binding, or a `mut self` receiver, that is never mutated |
-| `unsorted_imports` | `pedantic` | `incan` | syntax | fmt | import statements out of the canonical order (`std` modules, then dependencies, then local modules, alphabetical within each block); the order needs a style-guide ruling before this entry ships |
+| `unsorted_imports` | `pedantic` | `incan` | syntax | fmt | import statements out of the canonical order: the sections and the sort key are defined under "Import ordering" below, which adapts Ruff's isort rule to Incan's namespace roots; the section order needs a style-guide ruling before this entry ships |
 | `unused_variables` | `style` | `rustc` | semantic | suggest | an unused local binding; new, evaluator `check` |
 | `unused_imports` | `style` | `rustc` | semantic | suggest | an unused import; new, evaluator `check` |
 | `unreachable_code` | `suspicious` | `rustc` | semantic | suggest | statements after a `return` in the same block; evaluator `check`; keeps `INCAN-T0101` |
+| `unused_allow` | `style` | `incan` | semantic | suggest | an `@allow(...)` naming a rule that would not have fired in the decorated scope; Ruff's `unused-noqa` (`RUF100`) for the decorator form; evaluated after every other rule |
+
+### Import ordering (`unsorted_imports`)
+
+Ruff's `unsorted-imports` (`I001`) de-duplicates, groups, and sorts imports by isort's rules, and isort's rules are mostly configuration: which modules are `standard-library`, `third-party`, `first-party`, or `local-folder` is decided by `known-first-party`, `known-third-party`, and `known-local-folder`, because a Python import path does not say where it comes from. An Incan import path does. `std` and `rust` are reserved root namespaces, `pub::` is the published-library root, and everything else is the project, so the section of every import is decided by its first path segment and no `known-*` setting exists. The entry is defined as follows, and the section order is the ruling the style guide owes it:
+
+| Section | Root | Forms |
+| --- | --- | --- |
+| 1. standard library | `std` | `import std.async`, `from std.io import File`, `from std import toml` |
+| 2. published libraries | `pub::` | `from pub::hees_ai import hyperquant`, `import pub::hees_ai.hyperquant as hq` |
+| 3. Rust crates | `rust::` | `from rust::polars import (...)`, `import rust::serde_json` |
+| 4. project | `crate.`, `crate::`, a sibling or child module | `from crate.config import Settings`, `from db.models import User`, `import models::User` |
+| 5. parent-relative | `..`, `super::` | `from ..common import Logger`, `import super::utils::format_date` |
+
+Rules:
+
+- Sections are separated by exactly one blank line and contain none. RFC 053's bucket C already permits zero or one blank line inside an import run and leaves the choice open; this entry narrows it for import runs, which RFC 053 allows a later RFC to do.
+- Within a section, statements sort by module path, compared segment by segment, case-insensitively, with `import module` and `from module import ...` for the same module adjacent and the `import` form first (isort's `from-first = false`). The two spellings are never rewritten into each other: which spelling a project prefers is the style guide's, not this entry's.
+- Within one `from` statement, names sort case-insensitively; a name with an alias sorts by its original name. isort's `order-by-type` (constants, then classes, then functions) is not adopted: one sort key is enough, and the casing conventions that would drive it are the style guide's business.
+- Two `from` statements for one module merge into one statement, and a name listed twice is kept once; a name with an alias is distinct from the same name without one. This is Ruff's "de-duplicates" half, and it is safe because the merged statement binds exactly the names the two statements bound.
+- Two statements that bind one name are not reordered relative to each other, and the run they are in is reported without a fix. Reordering is meaning-preserving only when it cannot change resolution, and that pair is the one case where it might.
+- `pub from module import Item` re-exports form their own run, sorted by the same key, and are never merged into the plain import run. `import this` stays where it is.
+- Comments attached to an import move with it, which is why this entry waits for #159's trivia-aware tree.
+
+Not adopted from isort, with the reason: `force-single-line` and `combine-as-imports` (line shape is `fmt_line_length` and `fmt_trailing_comma`'s job); `force-sort-within-sections`, `force-to-top`, `no-lines-before`, `sections`, and `section-order` (configurability that makes two projects' import blocks disagree for no gain); `lines-after-imports` and `lines-between-types` (RFC 053 owns vertical spacing); `required-imports` (a Python `from __future__` need); `relative-imports-order` (one order, above); `detect-same-package` (the root segment answers it); and the `# isort: skip`, `# isort: off`, and `# isort: split` action comments (no formatter opt-out). The isort profile Ruff targets, `profile = "black"`, is the one that agrees with a canonical formatter, and that is the only profile this entry has.
 
 ### Formatter entries (the `format` group)
 
@@ -660,7 +794,7 @@ Formatter invariants apply to the group as a whole and to every `fmt`-fixable en
 
 RFC 105 defines the engine and the finding contract; this RFC defines the rule set and the configuration that engine evaluates. Concretely:
 
-- RFC 105's categories `arch`, `safety`, `idiom`, `maintainability`, and `risk` are groups of this catalog. Their default levels are RFC 105's to set, and this RFC does not decide them. RFC 105's `experimental` is a profile, not a category: a rule in that profile keeps its category's group here, the profile is never part of `all`, and RFC 105's rule that experimental findings may not fail CI by default holds because no such rule is `deny` by default.
+- RFC 105's categories `arch`, `safety`, `idiom`, `maintainability`, and `risk` are groups of this catalog. Their default levels are RFC 105's to set, and this RFC does not decide them. RFC 105's `experimental` is a profile, not a category: a rule in that profile keeps its category's group here, is a preview entry of this catalog, is never part of `all`, and RFC 105's rule that experimental findings may not fail CI by default holds because a preview entry defaults to `allow`.
 - An RFC 105 candidate that coincides with a clippy lint takes the clippy name and the clippy group: `idiom.compound_assignment_candidate` is `assign_op_pattern` and `idiom.comprehension_candidate` is `comprehension_over_loop`. `idiom.result_combinator_candidate` is the `map`, `map_err`, `and_then`, `or_else`, and `inspect` rewrite of an RFC 070 match; it yields the `map` shape to `manual_result_map` and keeps the others, which no single clippy lint expresses. `question_mark` has no RFC 105 counterpart: `?` propagation is not a combinator. RFC 105's own names remain for evidence-backed, project-scope rules that a clippy lint does not express: `safety.fail_fast_boundary_call` is not `unwrap_used` (it reasons about reachability from a public boundary), and `maintainability.single_use_trivial_helper` is not `single_call_fn` (it reasons about triviality and domain meaning). Both members of each pair are catalog entries.
 - Priority, confidence, evidence, suggestions, and risks are RFC 105's finding fields. Level, group, and fix mode are this RFC's. A finding at `deny` fails the command regardless of its priority; a `P1` finding at `warn` does not.
 - `@allow(...)` answers RFC 105's open suppression question for catalog entries, and `incan architect --list-rules` is a flag this RFC adds to RFC 105's command surface. Baselines remain RFC 105's.
@@ -669,7 +803,7 @@ RFC 105 defines the engine and the finding contract; this RFC defines the rule s
 
 - **async/await**: `unused_async` translates. The lock-holding lints do not, because Incan's `Mutex` and `RwLock` are the async runtime's own locks.
 - **Traits and derives**: the dunder protocol is what makes `derived_hash_with_manual_eq`, `inherent_to_string_shadow_display`, `recursive_format_impl`, `print_in_format_impl`, `unconditional_recursion`, and `renamed_function_params` translate: `__eq__`, `__str__`, `__hash__`, and `__lt__` are the manual implementations clippy's lints reason about, and every `model`, `class`, `enum`, and `newtype` carries Display.
-- **Imports and modules**: `wildcard_imports` does not translate because the parser refuses the form; `unsorted_imports` and `unused_imports` are Incan-side. `pub from module import Item` re-exports are ordinary declarations to every rule.
+- **Imports and modules**: `wildcard_imports` does not translate because the parser refuses the form; `unsorted_imports` and `unused_imports` are Incan-side, and `unsorted_imports` reads the section of an import off its root segment, as "Import ordering" defines. `pub from module import Item` re-exports are ordinary declarations to every rule, and a separate run to `unsorted_imports`.
 - **Result, Option, and `?`**: `question_mark`, `manual_result_map`, `unwrap_used`, `panicking_unwrap`, `unnecessary_unwrap`, and `redundant_pattern_matching` translate on the methods the surface has (`map`, `map_err`, `and_then`, `or_else`, `inspect`, `inspect_err`, `unwrap`, and `unwrap_or` on `Result`; `copied`, `unwrap_or`, and `unwrap` on `Option`) and on `is None` narrowing. Methods the surface lacks (`Option.map`, `map_or`, `ok_or`, `expect`, `unwrap_or_default`, `is_ok`) are recorded as untranslatable or narrow the entry to `Result`; when a later RFC adds such a method, the clippy entry moves from "does not translate" to "translates" without a rename.
 - **Rust interop**: `rust::` imports and `@rust.*` decorators are the Rust side. `[rust.lints]` and `@rust.allow(...)` own them; `@allow(...)` rejects a Rust lint name and `@rust.allow(...)` rejects an Incan rule name.
 - **Expression vocab blocks**: a brace-form vocab block is opaque to every rule except the `format` group's preservation of its surface. A vocab may register its own catalog entries under a later RFC.
@@ -677,7 +811,8 @@ RFC 105 defines the engine and the finding contract; this RFC defines the rule s
 
 ### Compatibility and migration
 
-- A project with no `[lints.incan]` gets the catalog defaults. Nothing needs to be written to keep today's behaviour.
+- A project with no `[lints.incan]` gets the catalog defaults. Nothing needs to be written to keep today's behavior.
+- A preview entry reports nothing until a level table names it, so a rule added to the catalog never changes a project's output on upgrade; its promotion does, and is a release-notes item.
 - Formatter output on already-formatted code does not change until an `fmt`-fixable entry lands. Each such entry changes formatter output for code that matches it; each is listed in the release notes and projects see it as a one-time reformat.
 - `INCAN-T0101` keeps its code, its text, and its position in output; its level becomes configurable. `unused_variables` and `unused_imports` are new checker by-products at `warn`, so a project sees them on upgrade as it would any new rustc lint; `wildcard_enum_match_arm` is new at clippy's `allow` default and reports nothing unless the unresolved question below decides otherwise or a project enables it.
 - `[rust.lints]` and `@rust.allow(...)` are untouched.
@@ -688,23 +823,62 @@ RFC 105 defines the engine and the finding contract; this RFC defines the rule s
 - **clippy**: lint groups and default levels, `renamed_and_removed_lints`, `lint_groups_priority`, `blanket_clippy_restriction_lints`, suggestion applicability. The correspondence tables are drawn against clippy's published lint list.
 - **rustc**: the four lint levels, `forbid` being unrelaxable, `allow(..., reason = "...")`, and the `unused` family this catalog adopts as `rustc`-origin entries.
 - **Cargo's `[lints]` table**: the `"level"` and `{ level, priority }` entry forms and the priority ordering, adopted verbatim so `[lints.incan]` and `[rust.lints]` read the same; its all-or-nothing `workspace = true` inheritance is not adopted, as the design decisions record.
-- **Ruff**: one tool for formatting and lint rules, fix safety classes, rule code plus rule name, per-file configuration in the project manifest, and isort-style import ordering.
+- **Ruff**: the reference for the Python-shaped half of the surface; what is adopted, adapted, and rejected is tabled in the next section.
 - **Black**: the canonical, non-configurable formatter that this RFC keeps the `format` group faithful to.
 - **The mypy, pylint, Ruff triad**: the analogy behind "three tools, three jobs": types, design advice, and style, respectively `incan check`, `incan architect`, and `incan fmt`.
+
+### Prior art: Ruff
+
+Ruff is worth a close reading because Incan is styled like Python, and Ruff is what the Python world converged on once one fast tool could hold what Flake8, its sixty-odd plugins, isort, pyupgrade, and Black used to hold separately. What it got right is mostly shape, not rules. A rule has a code and a name, and every rule page reads the same way: what it does, why it is bad, an example and what to use instead, how safe the fix is, which options apply. A fix is classified before it is applied: safe fixes run under `--fix`, unsafe ones only under `--unsafe-fixes`, display-only ones are shown and never applied, and the JSON output says which is which. New rules enter behind `preview` and stay there at least one minor release. Configuration is one `[lint]` table plus one `[format]` table, with `per-file-ignores` for the directory that needs a different policy. The formatter is Black, opinionated by design, with a handful of settings, and the linter's job is everything the formatter does not decide. Most striking, Ruff's preview rule categories are `correctness`, `suspicious`, `complexity`, `performance`, `style`, `security`, `formatting`, `pedantic`, and `restriction`, the first five on by default, with the per-tool linter groups slated for removal: a Python tool has arrived at clippy's taxonomy on its own.
+
+What Ruff got right for Python is not all right for Incan, because much of Ruff exists to work around what Python lacks. It has hundreds of pycodestyle `E` and `W` codes because Python has no canonical formatter in the standard toolchain and a linter had to police whitespace; it needs `known-first-party` because a Python import path does not say where a module comes from; it needs an unsafe fix tier because its formatter and its linter hold two different trees and a lint fix may drop a comment; it needs `# noqa`, `--add-noqa`, `# ruff: noqa`, `# ruff: disable`/`enable`, and `RUF100` to police them, because a comment is the only metadata surface a Python statement has. The table records each decision and its reason.
+
+| Ruff | Decision | Where it lands | Reason |
+| --- | --- | --- | --- |
+| Rule code plus rule name; names accepted in suppressions under preview | adopt, name primary | Rule identity | the name is what a Rust developer knows; the `INCAN-L` code is the diagnostic catalog's stable handle, and Ruff's own move to names in `ruff: ignore[...]` shows which of the two people reach for |
+| Letter prefix encodes the source tool (`E`, `F`, `I`) | reject | Rule identity | the group is a catalog field, not a digit of the code, so an entry can move groups without renumbering, which Ruff's per-tool prefixes could not survive |
+| Rule categories `correctness` … `restriction`, first five default-on | already adopted from clippy | Groups | independent confirmation; `security` has no entries here and RFC 105's `safety` is its neighbor; Ruff's `formatting` ("generally redundant with a code formatter") is this RFC's `format` group, made the formatter's outright |
+| `select` / `ignore` / `extend-select` with breadth-based precedence | reject as a spelling | `[lints.incan]` | it is the Cargo level table said another way, and Cargo's explicit `priority` with a tie refusal is stricter than "narrower wins"; one table, one spelling |
+| `per-file-ignores` | adapt as `[lints.incan.per-file-allow]` | `[lints.incan]` | the manifest-side form of a module-level `@allow(...)`; `allow` is its only verb, and `forbid` stays unrelaxable |
+| Nearest-config-wins discovery, `extend` | reject | Precedence | RFC 117 already says who is the authority over whom; a path-shaped precedence would let a nested file undercut the workspace floor |
+| Fix applicability: safe, unsafe, display-only; `applicability` in JSON | adopt two of three | Fix mode | `fmt` is safe, `suggest` is display-only, `fix` carries it in JSON; no unsafe tier, because the line is drawn by construction and the trivia-aware tree removes Ruff's reason for one |
+| `fixable` / `unfixable`, `extend-safe-fixes` / `extend-unsafe-fixes` | reject | Fix mode | fix safety is a catalog property; a project that does not want a rewrite sets the entry to `allow` |
+| Per-rule documentation template; `ruff rule <code>` | adopt | Rule documentation | the same headings, rendered by `incan explain` by code or by name, generated from the catalog, with the example pair tested |
+| `# noqa: CODE`, `# ruff: noqa`, `# ruff: disable`/`enable`, `--add-noqa` | reject | `@allow(...)` | declarations are Incan's metadata surface; a decorator is validated, recorded, and retired; `--add-noqa` institutionalizes sprawl. Statement scope stays an open question, and if it is ever answered the shape is Ruff's leading `ruff: ignore[rule]` on the line above, not a trailing `# noqa` |
+| `unused-noqa` (`RUF100`) | adapt as `unused_allow` | `@allow(...)` | a suppression should not outlive what it suppressed; on by default because `@allow(...)` names only catalog rules |
+| `preview` rules, `explicit-preview-rules`, one minor release before promotion | adapt as a catalog flag | Groups | preview entries default to `allow`, leave `all`, and are enabled by name; no manifest switch, because the manifest names rules |
+| isort sections and sort order | adapt | Import ordering | sections are decided by the root segment (`std`, `pub::`, `rust::`, project, parent), so `known-*` settings do not exist; the rest of isort's settings are rejected row by row in that section |
+| `ruff format` beside `ruff check --fix`, run in order; documented conflicting rules; `# fmt: off` | adopt the split, reject the seam | `incan fmt` | one pass over one tree, no order, no conflict list, no opt-out |
+| Formatter settings (`line-length`, `quote-style`, `indent-style`) | reject | `format` group | Black's stance, kept stricter than Ruff keeps it: the `format` group takes no project values |
+| Exit codes `0` / `1` / `2`, `--exit-zero`, `--exit-non-zero-on-fix` | adopt the distinction, reject the third code and the flags | Exit codes | the toolchain is `0`/`1`; the JSON report tells findings from operational errors; levels are the CI policy |
+| `ruff rule --all`, `--show-settings`, `--statistics`, twelve output formats | fold into `--list-rules`; reject the rest | `incan architect` | `--list-rules` answers "what exists" and "what is on here"; JSON is the one integration surface |
+| pycodestyle `E`/`W` layout codes, `dummy-variable-rgx`, rules that exist because Python has no static types | reject | catalog | the `format` group makes layout codes impossible, the underscore convention is fixed, and `incan check` owns what types know |
 
 ## Alternatives considered
 
 ### A separate `incan lint` command
 
-Ruff ships `ruff check` beside `ruff format`. An `incan lint` would be a third analyser beside `incan check` and `incan architect`, consuming the same facts as RFC 105's engine and reporting in a third shape. Rejected: the engine is already specified by RFC 105 for exactly this evaluation, and `incan fmt` already runs in every CI pipeline, so the fixable subset reaches users through a command they run today.
+Ruff ships `ruff check` beside `ruff format`. An `incan lint` would be a third analyzer beside `incan check` and `incan architect`, consuming the same facts as RFC 105's engine and reporting in a third shape. Rejected: the engine is already specified by RFC 105 for exactly this evaluation, and `incan fmt` already runs in every CI pipeline, so the fixable subset reaches users through a command they run today.
 
 ### Rule codes as the primary identity
 
-Ruff identifies rules by code (`E501`) with a name as an alias. Rejected as primary: the name is what a Rust developer knows, and a code alone says nothing about correspondence. Codes exist (`INCAN-L`) because `incan explain` and tooling need a stable, never-renamed handle.
+Ruff identifies rules by code (`E501`) with a name as an alias. Rejected as primary: the name is what a Rust developer knows, and a code alone says nothing about correspondence. Codes exist (`INCAN-L`) because `incan explain` and tooling need a stable, never-renamed handle. Ruff itself now accepts rule names in its `ruff: ignore[...]` comments under preview, which is the direction this RFC starts from.
+
+### Ruff-style `select` and `ignore` lists as a second spelling
+
+`select = ["pedantic"]` and `ignore = ["print_stdout"]` could be accepted beside the level table, for a Python developer who knows them. Rejected: they say exactly what `pedantic = "warn"` and `print_stdout = "allow"` say, so one manifest could state one policy two ways and a reader would have to merge them; and Ruff's precedence ("the narrower selector wins") is what Cargo's `priority` makes explicit and refuses to leave ambiguous. The refusal for those keys names the spelling to use.
+
+### An unsafe fix tier behind a flag
+
+Ruff applies fixes that may change behavior or drop comments under `--unsafe-fixes`, and lets a project move a fix across the line with `extend-safe-fixes` and `extend-unsafe-fixes`. Rejected: the `fmt` tier is defined by construction (syntax-only, meaning-preserving, idempotent, structure-preserving), so there is no judgment call to expose as a flag, and the trivia-aware tree removes the comment-dropping reason for the tier. A later RFC that defines engine-applied fixes adds a mode named `unsafe` with its own flag; it does not loosen `fmt`.
+
+### A `preview = true` manifest switch
+
+Ruff turns every preview rule on at once with `preview = true`. Rejected: the manifest names rules, and a preview entry is enabled by naming it, which is Ruff's `explicit-preview-rules` made the only mode. A switch would be a second way to select rules, and one that changes meaning on every upgrade.
 
 ### A facet-shaped `[incan.lints]` table
 
-RFC 117 namespaces facet tables as `[incan.source]` and `[rust.source]`, and #1698 puts Rust lint policy under `[rust.lints]`. By that symmetry, Incan lint policy would be `[incan.lints]`. This RFC chooses `[lints.incan]` because Cargo's `[lints.rust]` and `[lints.clippy]` is the shape a Rust developer recognises and the level and priority semantics are Cargo's. The resulting asymmetry with `[rust.lints]` is an unresolved question rather than a settled choice.
+RFC 117 namespaces facet tables as `[incan.source]` and `[rust.source]`, and #1698 puts Rust lint policy under `[rust.lints]`. By that symmetry, Incan lint policy would be `[incan.lints]`. This RFC chooses `[lints.incan]` because Cargo's `[lints.rust]` and `[lints.clippy]` is the shape a Rust developer recognizes and the level and priority semantics are Cargo's. The resulting asymmetry with `[rust.lints]` is an unresolved question rather than a settled choice.
 
 ### A side file for rule parameters
 
@@ -712,7 +886,7 @@ Clippy keeps thresholds and lists in `clippy.toml`. Rejected: #1698 settles the 
 
 ### Comment directives as the primary suppression
 
-Ruff uses `# noqa: CODE`; pylint uses `# pylint: disable=`. Rejected as primary: declarations are Incan's metadata surface (RFC 036 decorators, RFC 057 `@rust.allow`, RFC 096 metadata blocks), and a decorator is visible to the checker, the codegraph, and reflection in a way a comment is not. Statement-scope suppression is left open.
+Ruff uses `# noqa: CODE` on a line, `# ruff: noqa` for a file, `# ruff: disable[...]`/`enable[...]` for a range, `# ruff: ignore[...]` above a logical line, and `--add-noqa` to write them for you; pylint uses `# pylint: disable=`. Rejected as primary: declarations are Incan's metadata surface (RFC 036 decorators, RFC 057 `@rust.allow`, RFC 096 metadata blocks), and a decorator is visible to the checker, the codegraph, and reflection in a way a comment is not. The file form is the module-position `@allow(...)` and the many-files form is the per-path allow table, so neither needs a comment. Statement-scope suppression is left open; Ruff's experience says that if it is ever added, it is a leading directive above the statement, because a trailing `# noqa` on a multi-line construct forced Ruff to special-case strings and import blocks.
 
 ### Approximating ownership lints
 
@@ -720,7 +894,7 @@ Ruff uses `# noqa: CODE`; pylint uses `# pylint: disable=`. Rejected as primary:
 
 ### Formatter fixes for semantic rules
 
-The formatter could typecheck before formatting and then fix `comparison_to_empty` or `useless_conversion`. Rejected: the formatter must work on any file that parses, must stay fast, and must not grow a second semantic analyser; the fixable set is by construction the type-independent set.
+The formatter could typecheck before formatting and then fix `comparison_to_empty` or `useless_conversion`. Rejected: the formatter must work on any file that parses, must stay fast, and must not grow a second semantic analyzer; the fixable set is by construction the type-independent set.
 
 ### Configurable levels for formatter rules
 
@@ -734,12 +908,14 @@ The formatter could typecheck before formatting and then fix `comparison_to_empt
 - Every `fmt`-fixable entry added later changes formatter output, and a project that pins nothing sees a reformat on upgrade.
 - `syntax`-tier heuristics can over-report where types would have said otherwise; the fact tier is declared per entry so the trade is explicit, and the `semantic` tier is available when the heuristic is not good enough.
 - The seed catalog is large. The size is the point, since a partial correspondence table would leave a Rust developer guessing, but it is a review burden.
+- Without an unsafe tier, a mechanical rewrite that might move a comment or change an exception path (`unnecessary_comprehension`, `comprehension_over_loop`) stays a suggestion the author applies by hand, where Ruff would apply it under `--unsafe-fixes`. That is the cost of a fixable set with no judgment calls in it.
+- Every entry must ship its documentation and a tested example pair before it can land. Ruff's per-rule pages show that the discipline pays for itself, but it is a real cost per entry, and the seed catalog has more than two hundred of them.
 
 ## Implementation architecture
 
 This section is non-normative. It describes a recommended shape, not a task list.
 
-- **The catalog is a registry.** Like the language's other registries that generate reference tables, the catalog is a compiler-owned table of entries (name, code, group, default level, origin, clippy counterpart, fact tier, evaluator, fix mode, parameters, description, example) from which the docs-site reference page and `incan explain` are generated. A conformance test compares every `clippy` and `clippy-renamed` entry with the pinned clippy lint list.
+- **The catalog is a registry.** Like the language's other registries that generate reference tables, the catalog is a compiler-owned table of entries (name, code, group, default level, origin, clippy counterpart, fact tier, evaluator, fix mode, preview flag, parameters, and the documentation template) from which the docs-site reference page, the `INCAN-L` records of the diagnostic catalog in `incan_syntax::diagnostics` that `incan explain` reads, and the example-pair fixtures are generated. A conformance test compares every `clippy` and `clippy-renamed` entry with the pinned clippy lint list, and a documentation test runs every entry's "before" and "after" example through the engine.
 - **One rule implementation per entry, one engine.** `syntax`-tier rules are functions over the trivia-aware syntax tree; `semantic`-tier rules are functions over RFC 105's typed fact views. `incan architect` runs both tiers; `incan fmt` runs the `syntax` tier for entries with fix mode `fmt` and applies their rewrites. The formatter holds no rule logic of its own beyond the `format` group.
 - **Relationship to #159.** Rules are defined against the trivia-aware tree that #159 introduces, so comment and docstring trivia are inputs to a rule rather than repair work after it. The `fmt`-fixable set is the twenty entries the tables mark `(syntax; fmt)` or list with fix mode `fmt`: sixteen from the clippy tables and four without a clippy counterpart. The current AST-based formatter can host the `format` group and the sixteen fixable entries whose rewrite does not move a comment (`needless_bool`, `needless_bool_assign`, `needless_else`, `double_parens`, `precedence`, `useless_fstring` for the placeholder-free form, `nested_fstring`, `str_in_fstring`, `list_init_then_append`, `range_plus_one`, `range_minus_one`, `unreadable_literal`, `inconsistent_digit_grouping`, `while_true`, `redundant_pass`, `needless_bare_return`); the four that move comments or reorder declarations (`redundant_else`, `if_not_else`, `empty_line_after_decorator`, `unsorted_imports`) wait for #159.
 
@@ -749,15 +925,15 @@ This section is non-normative. It describes a recommended shape, not a task list
 - **Typechecker**: `unreachable_code` keeps its emitter and reads its level from the manifest; `unused_variables` and `unused_imports` are two new by-products of name resolution, emitted through the same channel. `@allow(...)` validation (unknown name, `forbid` conflict, Rust lint name, `fmt_*` name) is reported as an ordinary diagnostic.
 - **Lowering / emission**: unaffected.
 - **Stdlib / runtime**: unaffected.
-- **Manifest / Oven (RFC 117)**: `[lints.incan]` and `[workspace.lints.incan]` parsing, precedence, and the refusals; the manifest ownership map gains a `[lints.incan]` line owned by this RFC.
-- **CLI / tooling**: `incan architect` resolves levels from the manifest and carries the five catalog fields in its findings; `incan fmt --check` reports by rule and gains `--format json`; `incan explain` resolves `INCAN-L` codes; `incan architect --list-rules` is a new flag on RFC 105's surface and lists the catalog with effective levels.
+- **Manifest / Oven (RFC 117)**: `[lints.incan]` and `[workspace.lints.incan]` parsing, the `per-file-allow` subtable and its globs, precedence, and the refusals, including the refusal that names the spelling for a Ruff key; the manifest ownership map gains a `[lints.incan]` line owned by this RFC.
+- **CLI / tooling**: `incan architect` resolves levels from the manifest and carries the five catalog fields in its findings; `incan fmt --check` reports by rule and gains `--format json`; `incan explain` resolves `INCAN-L` codes and bare rule names and renders the documentation template; `incan architect --list-rules` is a new flag on RFC 105's surface and lists the catalog with group, fix mode, preview flag, and effective level.
 - **LSP / formatter**: the formatter hosts the `format` group and the `fmt`-fixable entries, and for the fixable entries it now resolves the manifest, workspace, and `@allow(...)` chain that the engine resolves, which it never needed before; the language server surfaces catalog findings through the engine, which is an unresolved question below.
 - **Documentation**: a generated catalog reference page; the formatting how-to and the style guide gain their rule names; the CLI reference documents `[lints.incan]`, `@allow(...)`, the `--check` output, and the exit codes.
 
 ## Inspectability and tooling surface
 
 - **Artifact or metadata:** the catalog registry and its generated reference page; the effective level table per project, which `incan architect --list-rules --format json` prints with each rule's level and the manifest layer that set it.
-- **Inspection command:** `incan architect --format json` for findings, `incan fmt --check --format json` for the fixable subset, `incan explain INCAN-L####` for any entry, `incan architect --list-rules` for the effective configuration.
+- **Inspection command:** `incan architect --format json` for findings, `incan fmt --check --format json` for the fixable subset, `incan explain INCAN-L####` or `incan explain <rule>` for any entry's documentation, `incan architect --list-rules` for the effective configuration, including which entries are in preview.
 - **Diagnostics:** manifest refusals in RFC 117's diagnostic family, naming the entry and, for a clippy name, the recorded rename or reason; `@allow(...)` diagnostics at the decorator; a per-file note when `semantic`-tier rules were skipped because the file does not typecheck.
 - **Provenance:** every finding carries its source span, its owning declaration, its rule name and code, its effective level, the layer that set the level (`default`, `workspace`, `member`, or the `@allow` decorator's span), and, for a suppressed rule, the `reason`.
 - **Not implicit:** no rule runs that is not a catalog entry; no level comes from anywhere but the defaults, the two manifest tables, and `@allow(...)`; no command rewrites source except `incan fmt`, and it rewrites only `format`-group and `fmt`-fixable entries.
@@ -766,12 +942,12 @@ This section is non-normative. It describes a recommended shape, not a task list
 
 This RFC is done when:
 
-- the catalog registry holds every entry in the tables above with name, code, group, default level, origin, fact tier, evaluator, fix mode, and parameters, and a conformance test checks every `clippy` and `clippy-renamed` entry against the pinned clippy lint list;
-- `[lints.incan]` and `[workspace.lints.incan]` parse with every refusal listed above, and precedence is covered by tests for each layer, for the member floor, for `forbid` stickiness, and for the same-priority conflict;
+- the catalog registry holds every entry in the tables above with name, code, group, default level, origin, fact tier, evaluator, fix mode, preview flag, parameters, and documentation in the template, a conformance test checks every `clippy` and `clippy-renamed` entry against the pinned clippy lint list, and a documentation test runs every entry's example pair;
+- `[lints.incan]`, `[workspace.lints.incan]`, and their `per-file-allow` subtables parse with every refusal listed above, and precedence is covered by tests for each layer, for the per-path layer, for the member floor, for `forbid` stickiness, for the same-priority conflict, and for a preview entry being excluded from `all` until it is named;
 - `@allow(...)` is accepted on the listed declarations and in the module-decorator position, rejected elsewhere, and diagnosed under `forbid`, for `all`, for a Rust lint name, and for an `fmt_*` name;
 - `incan architect --format json` findings carry rule, code, group, effective level, and level source, and the checker's entries appear once;
 - `incan fmt --check` reports by rule name, fails on the `format` group and every `fmt`-fixable entry at a level other than `allow`, and emits the schema-2-shaped report under `--format json`; `incan fmt` applies them, and the idempotency property test covers each fixable entry;
-- `incan explain` resolves every `INCAN-L` code, and `incan architect --list-rules` prints the effective table;
+- `incan explain` resolves every `INCAN-L` code and every bare rule name to the documentation template, `unused_allow` reports a stale `@allow(...)`, and `incan architect --list-rules` prints the effective table;
 - the generated catalog reference page exists, and the formatting how-to, the style guide, and the CLI reference name the rules and the table.
 
 ## Design Decisions
@@ -781,6 +957,10 @@ This RFC is done when:
 - **Members raise, they do not lower.** A member `[lints.incan]` may raise a level the workspace set and may not lower it, with `forbid` unrelaxable by any layer below the one that set it. This is RFC 117's "narrow but not replace" applied to lint policy, and it diverges from Cargo's all-or-nothing `[lints] workspace = true`, which cannot merge a member table with the workspace's.
 - **`@allow("all")` is rejected.** A group name is accepted on a declaration; `all` is not, because allowing every default-on rule for a declaration is a blanket, and blankets belong in the manifest.
 - **RFC 105's group defaults are RFC 105's.** The default levels of `arch`, `safety`, `idiom`, `maintainability`, and `risk` are decided in RFC 105, whose default profile is open there. This RFC gives those groups a place in the level table and nothing more.
+- **Fix safety is a catalog property.** `fmt` is Ruff's safe tier and `suggest` its display-only tier, decided by the entry's constraints and not by a project setting; there is no unsafe tier, no `--unsafe-fixes`, and no `fixable`/`unfixable` or `extend-safe-fixes`/`extend-unsafe-fixes` key. A later RFC that wants engine-applied fixes adds a mode named `unsafe` with its own flag.
+- **One selection spelling.** The Cargo level table is the only way to turn a rule on or off; Ruff's `select`/`ignore`/`extend-select` are refused with a diagnostic that names the equivalent entry.
+- **Preview entries are named, not switched on.** A preview entry defaults to `allow`, is outside `all` and its group, and is enabled by naming it; there is no `preview = true` manifest switch.
+- **Every entry documents itself.** The documentation template is part of the entry, generated into the diagnostic catalog and the reference page, and its example pair is tested; an entry without it cannot land.
 
 ## Unresolved questions
 
@@ -790,7 +970,9 @@ Three of these gate the move to Planned: the table spelling, the fixable set, an
 - **Gates Planned.** Which entries are `fmt`-fixable and which stay `suggest`? This draft marks twenty type-independent rewrites, the entries the tables mark `(syntax; fmt)` or list with fix mode `fmt`: `needless_bool`, `needless_bool_assign`, `needless_else`, `double_parens`, `precedence`, `useless_fstring` for the placeholder-free form, `nested_fstring`, `str_in_fstring`, `list_init_then_append`, `if_not_else`, `redundant_else`, `range_plus_one`, `range_minus_one`, `unreadable_literal`, `inconsistent_digit_grouping`, `empty_line_after_decorator`, `needless_bare_return`, `redundant_pass`, `while_true`, and `unsorted_imports`. Everything type-dependent stays a suggestion. One of the twenty needs a ruling before it can ship as a fix: `unsorted_imports` waits for the style guide to fix the canonical import order. The marker is the entry's fix mode; confirm the set or move entries across.
 - **Gates Planned.** Should Incan diverge from clippy's `allow` default for `wildcard_enum_match_arm` and report a wildcard arm on an enum by default, or follow clippy? This draft follows clippy.
 - One invocation or two: should `incan fmt` also print the `syntax`-tier findings it does not fix, or is `incan architect` the only reporting surface? This draft says `incan fmt` reports only what it fixes.
-- Statement-scope suppression: is a trailing `# allow: rule` directive wanted, or is declaration scope enough? This draft stops at declaration scope.
+- Statement-scope suppression: is a directive on a statement wanted, or is declaration scope plus the per-path table enough? This draft stops at declaration scope. If one is ever added, Ruff's experience says it is a leading directive on the line above the statement (its `ruff: ignore[rule]`), scoped to the logical line, and never a bare form that names no rule; a trailing `# noqa` forced Ruff to special-case multi-line strings and import blocks.
+- The per-path allow table: is `[lints.incan.per-file-allow]` wanted, or is a module-position `@allow(...)` in each file enough? This draft adds the table, because a `tests/` directory otherwise carries one identical decorator per file, and keeps it to Ruff's single verb.
+- Exit codes: should `incan fmt --check` and `incan architect` adopt Ruff's `2` for an operational error, so CI can tell findings from a tool that did not run without parsing the JSON report? This draft keeps the toolchain's `0`/`1` and puts the distinction in the report; a `2` would be a toolchain-wide change under RFC 118, not this RFC's.
 - Editor surfacing: should `incan check` run the `syntax` tier so style findings reach the editor through the existing diagnostics channel, or does the language server call the engine? This draft says the language server calls the engine.
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
