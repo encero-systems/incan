@@ -14,6 +14,7 @@ use incan_lang::lang::surface::constructors::ConstructorId;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 use super::TypeChecker;
+use crate::typechecker::check_stmt::{TupleShape, classify_tuple_shape};
 
 #[derive(Clone)]
 struct PatternBinding {
@@ -285,6 +286,27 @@ impl TypeChecker {
         }
     }
 
+    /// Record the canonical fields a model or class destructuring pattern leaves unnamed.
+    ///
+    /// `field_order` is the nominal's complete field list in declaration order and `provided` the canonical names
+    /// the pattern spelled (aliases already resolved). The difference is what a `..` would cover in Rust; lowering
+    /// spells it out per field because the pattern shape it hands the backend has no rest marker (#1708). A pattern
+    /// that names every field leaves no record, so a consumer reads absence as "nothing to add".
+    fn record_pattern_rest_fields(&mut self, span: Span, field_order: &[String], provided: &HashSet<String>) {
+        let rest: Vec<String> = field_order
+            .iter()
+            .filter(|field| !provided.contains(*field))
+            .cloned()
+            .collect();
+        if rest.is_empty() {
+            return;
+        }
+        self.type_info
+            .expressions
+            .pattern_rest_fields
+            .insert((span.start, span.end), rest);
+    }
+
     /// Record a constructor pattern that resolved through the active lexical binding.
     pub(in crate::typechecker) fn record_pattern_lexical_identity(&mut self, name: &str, span: Span) {
         let identity = self
@@ -468,15 +490,19 @@ impl TypeChecker {
                     ResolvedType::Named(type_name) if ctor_name == type_name => self
                         .lookup_type_info(type_name)
                         .and_then(|type_info| match type_info {
-                            TypeInfo::Model(model_info) => Some(model_info.fields.clone()),
-                            TypeInfo::Class(class_info) => Some(class_info.fields.clone()),
+                            TypeInfo::Model(model_info) => {
+                                Some((model_info.fields.clone(), model_info.field_order.clone()))
+                            }
+                            TypeInfo::Class(class_info) => {
+                                Some((class_info.fields.clone(), class_info.field_order.clone()))
+                            }
                             _ => None,
                         })
-                        .map(|fields| (type_name, fields)),
+                        .map(|(fields, field_order)| (type_name, fields, field_order)),
                     _ => None,
                 };
 
-                if let Some((type_name, fields)) = model_or_class_fields {
+                if let Some((type_name, fields, field_order)) = model_or_class_fields {
                     self.record_pattern_lexical_identity(type_name, name.span);
                     let mut provided = HashSet::new();
                     for arg in sub_patterns {
@@ -522,6 +548,7 @@ impl TypeChecker {
                             }
                         }
                     }
+                    self.record_pattern_rest_fields(name.span, &field_order, &provided);
                     return;
                 }
 
@@ -581,8 +608,13 @@ impl TypeChecker {
                 }
             }
             Pattern::Tuple(sub_patterns) => {
+                // A tuple subject arrives in two spellings: a tuple literal or a `(A, B)` annotation infers
+                // `ResolvedType::Tuple`, while a written `tuple[A, B]` resolves through the collection registry as
+                // `Generic("Tuple", …)`. Both destructure the same way, and the classification `for` and unpack
+                // already use is the one rule for it; matching only the first spelling left the sub-patterns of the
+                // second unvisited, so their names were never bound (#1714).
                 let (subject_ty, borrow) = borrowed_pattern_subject(expected_ty);
-                if let ResolvedType::Tuple(elem_types) = subject_ty {
+                if let TupleShape::Tuple(elem_types) = classify_tuple_shape(subject_ty) {
                     for (pat, elem_ty) in sub_patterns.iter().zip(elem_types.iter()) {
                         self.check_pattern(pat, &borrowed_pattern_payload(elem_ty.clone(), borrow));
                     }

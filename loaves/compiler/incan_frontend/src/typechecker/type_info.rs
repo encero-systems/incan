@@ -730,6 +730,14 @@ pub struct ExpressionArtifacts {
     /// The codegraph exporter consumes this instead of re-resolving names from syntax. Absence means the target is
     /// unsupported, ambiguous, degraded, or outside the current conservative source target set.
     pub source_targets: HashMap<(usize, usize), SourceTargetInfo>,
+    /// Fields a model or class destructuring pattern leaves unnamed, keyed by the constructor name's span.
+    ///
+    /// `Account(tier=1)` names one field and is silent about the rest; the source says nothing about them, and the
+    /// checker is the only stage that knows the complete canonical field list of the matched nominal wherever it
+    /// was declared (locally, in another source module or in a compiled dependency). The value is the omitted
+    /// canonical field names in declaration order. Lowering consumes it to record the rest explicitly in the
+    /// pattern shape it hands the backend (#1708). A pattern that names every field records nothing.
+    pub pattern_rest_fields: HashMap<(usize, usize), Vec<String>>,
 }
 
 /// Source-reference resolution facts keyed by source spans.
@@ -2007,6 +2015,17 @@ impl TypeCheckInfo {
     /// Return the final compiler-selected type of a binding introduced by an assignment statement.
     pub fn assignment_binding_type(&self, span: Span) -> Option<&ResolvedType> {
         self.expressions.assignment_binding_types.get(&(span.start, span.end))
+    }
+
+    /// Return the canonical fields a destructuring pattern leaves unnamed, keyed by its constructor name's span.
+    ///
+    /// `None` means the pattern names every field of its nominal or is not a model or class pattern at all; the
+    /// two cases need no distinction because both leave nothing for lowering to add.
+    pub fn pattern_rest_fields(&self, span: Span) -> Option<&[String]> {
+        self.expressions
+            .pattern_rest_fields
+            .get(&(span.start, span.end))
+            .map(Vec::as_slice)
     }
 
     /// Return exact Rust parameter displays recorded for a closure expression, if any.
