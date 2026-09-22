@@ -160,13 +160,31 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// Emit the callback argument passed to an Incan-authored `inspect` / `inspect_err` helper.
+    ///
+    /// The helper's observer parameter is a borrowed function pointer (`fn(&T)`) for every payload type, because
+    /// the helper reads the payload again after observing it. A named function over a non-Copy payload is passed
+    /// as its generated borrowed adapter; over a Copy payload it is passed as a non-capturing closure that reads the
+    /// payload through the borrow, which coerces to the same pointer type without an adapter item.
+    ///
+    /// Migration note (rust_source_backend_deprecation.md):
+    /// - Compatibility issue: #1718 -- `result.inspect(observe_int)` over a Copy payload passed the fn item `fn(i64)`
+    ///   where the helper wants `fn(&i64)` (E0308); the pre-emission analysis and the adapter generator both skip Copy
+    ///   payloads by design, so no recorded fact reached this site.
+    /// - Behavior evidence: `result_inspect_named_observer_copy_payload` (behaviour fixture, `snapshots_stdlib`),
+    ///   `copy_payload_named_observer_is_borrowed_through_a_closure_issue1718` below, and the untouched non-Copy
+    ///   adapter test `test_rfc070_result_inspect_non_copy_observer_borrows_payload`.
+    /// - Semantic owner: the RFC 070 combinator's callable fact (the observer takes the payload by borrow); Body IR
+    ///   passes the observer in the borrow shape the helper declares.
+    /// - Retirement condition: the Rust-source backend is deleted (#654); the replacement route emits the helper call
+    ///   from the recorded borrow shape and needs no Copy special case.
     fn emit_result_observer_stdlib_callback_arg(
         &self,
         callback: &TypedExpr,
         observed_ty: &IrType,
     ) -> Result<TokenStream, EmitError> {
         if observed_ty.is_copy() {
-            return self.emit_expr(callback);
+            let callback_tokens = self.emit_expr(callback)?;
+            return Ok(quote! { |__incan_result_value: &_| (#callback_tokens)(*__incan_result_value) });
         }
         if let IrExprKind::Var {
             name,
@@ -1449,5 +1467,66 @@ impl<'a> IrEmitter<'a> {
         matches!(&receiver.ty, IrType::NamedGeneric(name, _)
             if incan_lang::lang::types::collections::from_str(name.as_str())
                 == Some(incan_lang::lang::types::collections::CollectionTypeId::Generator))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use incan_ir::FunctionRegistry;
+
+    fn render(tokens: TokenStream) -> String {
+        tokens.to_string().replace(' ', "")
+    }
+
+    /// A named source function passed as an observer: a plain value reference with a function type.
+    fn named_observer(name: &str, param: IrType) -> TypedExpr {
+        TypedExpr::new(
+            IrExprKind::Var {
+                name: name.to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Function {
+                params: vec![param],
+                ret: Box::new(IrType::Unit),
+            },
+        )
+    }
+
+    /// Regression for #1718: the helper's observer parameter is `fn(&T)` for every payload type, so a named function
+    /// over a Copy payload is passed as a non-capturing closure reading the payload through the borrow, not as the
+    /// by-value fn item.
+    #[test]
+    fn copy_payload_named_observer_is_borrowed_through_a_closure_issue1718() -> Result<(), EmitError> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let observer = named_observer("observe_int", IrType::Int);
+
+        let tokens = emitter.emit_result_observer_stdlib_callback_arg(&observer, &IrType::Int)?;
+
+        assert_eq!(
+            render(tokens),
+            "|__incan_result_value:&_|(observe_int)(*__incan_result_value)"
+        );
+        Ok(())
+    }
+
+    /// A non-Copy payload keeps the generated borrowed adapter when the pre-emission analysis recorded one, and the
+    /// bare item otherwise; neither shape is the Copy closure.
+    #[test]
+    fn non_copy_payload_named_observer_keeps_the_adapter_route() -> Result<(), EmitError> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let payload = IrType::Struct("Payload".to_string());
+        let observer = named_observer("observe_payload", payload.clone());
+
+        let bare = emitter.emit_result_observer_stdlib_callback_arg(&observer, &payload)?;
+        assert_eq!(render(bare), "observe_payload");
+
+        emitter.set_borrowed_function_adapters(std::iter::once(("observe_payload".to_string(), vec![0])).collect());
+        let adapted = emitter.emit_result_observer_stdlib_callback_arg(&observer, &payload)?;
+        assert_eq!(render(adapted), "__incan_borrow_adapter_observe_payload_0");
+        Ok(())
     }
 }

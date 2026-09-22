@@ -284,7 +284,7 @@ pub trait Iterator[T]:
         """
         return BatchIterator[T, Self](source=self, size=size)
 
-    def collect(self) -> list[T]:
+    def collect(mut self) -> list[T]:
         """
         Consume the iterator and return all remaining items as a list.
         """
@@ -294,7 +294,7 @@ pub trait Iterator[T]:
                 Some(item) => items.append(item)
                 None => return items
 
-    def count(self) -> int:
+    def count(mut self) -> int:
         """
         Consume the iterator and return the number of remaining items.
         """
@@ -305,7 +305,7 @@ pub trait Iterator[T]:
                     total += 1
                 None => return total
 
-    def reduce[U](self, init: U, f: (U, T) -> U) -> U:
+    def reduce[U](mut self, init: U, f: (U, T) -> U) -> U:
         """
         Consume the iterator by repeatedly combining an accumulator and item.
 
@@ -313,7 +313,7 @@ pub trait Iterator[T]:
         """
         return self.fold(init, f)
 
-    def fold[U](self, init: U, f: (U, T) -> U) -> U:
+    def fold[U](mut self, init: U, f: (U, T) -> U) -> U:
         """
         Consume the iterator into an accumulator.
 
@@ -326,7 +326,7 @@ pub trait Iterator[T]:
                     acc = f(acc, item)
                 None => return acc
 
-    def any(self, f: (T) -> bool) -> bool:
+    def any(mut self, f: (T) -> bool) -> bool:
         """
         Consume items until `f(item)` returns `true`, or the iterator ends.
 
@@ -339,7 +339,7 @@ pub trait Iterator[T]:
                         return true
                 None => return false
 
-    def all(self, f: (T) -> bool) -> bool:
+    def all(mut self, f: (T) -> bool) -> bool:
         """
         Consume items until `f(item)` returns `false`, or the iterator ends.
 
@@ -352,7 +352,7 @@ pub trait Iterator[T]:
                         return false
                 None => return true
 
-    def find(self, f: (T) -> bool) -> Option[T]:
+    def find(mut self, f: (T) -> bool) -> Option[T]:
         """
         Consume items until one satisfies `f`.
 
@@ -366,7 +366,7 @@ pub trait Iterator[T]:
                         return Some(item)
                 None => return None
 
-    def for_each(self, f: (T) -> None) -> None:
+    def for_each(mut self, f: (T) -> None) -> None:
         """
         Consume every remaining item, calling `f(item)` for side effects.
         """

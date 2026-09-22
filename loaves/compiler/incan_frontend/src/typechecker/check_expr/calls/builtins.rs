@@ -11,7 +11,7 @@ use incan_lang::lang::surface::constructors::{self as surface_constructors, Cons
 use incan_lang::lang::surface::functions::SurfaceFnId;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_lang::lang::traits::{self as core_traits, TraitId};
-use incan_lang::lang::types::collections::CollectionTypeId;
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 impl TypeChecker {
     /// Return the builtin member name for an explicit `std.builtins.<name>` callee.
@@ -126,6 +126,33 @@ impl TypeChecker {
         let resolved =
             self.validate_function_call(callable, info, explicit_type_args, args, call_span, expected_return_ty);
         if arity_ok { resolved } else { ResolvedType::Unknown }
+    }
+
+    /// Return the union a `Some(payload)` checked against `Option[expected_inner]` injects its payload into.
+    ///
+    /// The destination's inner type, with source aliases expanded, must be an anonymous union that admits the
+    /// payload as one of its members, while the payload's own type is neither that union (a value already carried in
+    /// the wrapper needs no injection; a union-to-union widening keeps its own path) nor a placeholder the checker
+    /// has not resolved (`Unknown`, `Never`, a type variable, an inferred call-site slot), so error recovery and
+    /// generic bodies never record an instantiation the program did not establish.
+    fn some_payload_union_wrapper(
+        &self,
+        payload_ty: &ResolvedType,
+        expected_inner: &ResolvedType,
+    ) -> Option<ResolvedType> {
+        let expected_inner = self.expand_type_aliases(expected_inner.clone());
+        if !expected_inner.is_union() || payload_ty.is_union() {
+            return None;
+        }
+        if matches!(
+            payload_ty,
+            ResolvedType::Unknown | ResolvedType::Never | ResolvedType::TypeVar(_) | ResolvedType::CallSiteInfer
+        ) || self.is_generic_placeholder_type(payload_ty)
+        {
+            return None;
+        }
+        self.types_compatible(payload_ty, &expected_inner)
+            .then_some(expected_inner)
     }
 
     // ---- Rust boundary matching and coercion recording ----
@@ -263,6 +290,17 @@ impl TypeChecker {
                             self.call_argument_depth += 1;
                             let ty = self.check_expr_with_expected(expr, Some(expected_inner));
                             self.call_argument_depth -= 1;
+                            if let Some(union) = self.some_payload_union_wrapper(&ty, expected_inner) {
+                                // The constructor is instantiated at the destination's union: record that
+                                // parameter as the call's callable fact so lowering carries it and the payload is
+                                // injected into the wrapper at the argument, as it is for any callable taking the
+                                // union (#1724). The call's type is the instantiation, not `Option[member]`.
+                                self.type_info.record_call_site_callable_params_exact(
+                                    call_span,
+                                    &[CallableParam::positional(union.clone())],
+                                );
+                                return Some(option_ty(union));
+                            }
                             ty
                         }
                         _ => {
@@ -708,6 +746,24 @@ impl TypeChecker {
                 self.check_call_args(args);
                 self.errors
                     .push(errors::builtin_max_arity(name, 1, args.len(), call_span));
+                return Some(ResolvedType::Unknown);
+            }
+            if matches!(
+                cid,
+                CollectionTypeId::FrozenList | CollectionTypeId::FrozenDict | CollectionTypeId::FrozenSet
+            ) {
+                // A frozen collection is a `const` value; the language defines no constructor call for one, so the
+                // call is refused here rather than typed `Unknown` and left for the build to reject (#1719).
+                self.check_call_args(args);
+                let (type_params, literal) = if cid == CollectionTypeId::FrozenDict {
+                    ("[K, V]", "{...}")
+                } else {
+                    ("[T]", "[...]")
+                };
+                let canonical = format!("{}{type_params}", collections::as_str(cid));
+                self.errors.push(errors::frozen_collection_has_no_constructor(
+                    name, &canonical, literal, call_span,
+                ));
                 return Some(ResolvedType::Unknown);
             }
             return match cid {

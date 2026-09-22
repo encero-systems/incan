@@ -1,5 +1,8 @@
 from rust::std::env import args
 
+const INTS: FrozenList[int] = [7]
+const WORDS: FrozenList[str] = ["x"]
+
 
 def key_list(values: Dict[str, int]) -> list[str]:
     return list(values.keys())
@@ -79,8 +82,8 @@ def main() -> None:
     println(len(empty_names()))
     println(len(byte_values(b"ab")))
     println(len(counted()))
-    println(len(thawed(FrozenList([7]))))
-    println(len(thawed_text(FrozenList(["x"]))))
+    println(len(thawed(INTS)))
+    println(len(thawed_text(WORDS)))
     println(reused(["p", "q"]))
     println(len(from_generator((value for value in range(3)))))
     println(len(from_iterator(zip([1, 2], ["a", "b"]))))

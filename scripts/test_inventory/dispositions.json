@@ -62,6 +62,12 @@
       "owner": 1561,
       "notes": "behavior fixtures: programs with their expected observables in the header, run by behavior_smoke_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
     },
+    "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings": {
+      "pattern": "<name>.incn or <name>/",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "behaviour fixtures twinning codegen snapshot tests over lists, dicts, sets, comprehensions, iterators, strings and builtins; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+    },
     "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_enums_and_matching": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
@@ -73,6 +79,12 @@
       "disposition": "re-point",
       "owner": 1561,
       "notes": "behaviour fixtures twinning codegen snapshot tests over models, classes, fields, constructors and properties; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+    },
+    "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib": {
+      "pattern": "<name>.incn or <name>/",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "behaviour fixtures twinning codegen snapshot tests over stdlib module surfaces (math, fs, tempfile, testing, async, derives, registry, graph, uuid, regex, compression, traits, web); run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/invalid": {
       "pattern": "**/*.incn",
@@ -1229,6 +1241,24 @@
       "split_target": "",
       "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned."
     },
+    "loaves/compiler/incan_emit/src/emit/expressions/methods.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned.",
+      "tests": {
+        "copy_payload_named_observer_is_borrowed_through_a_closure_issue1718": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/result_inspect_named_observer_copy_payload.incn",
+          "notes": "asserts the closure the emitter passes for a named observer over a Copy payload (#1718); the twin runs inspect and inspect_err over int payloads with named functions and reads what the observers print."
+        },
+        "non_copy_payload_named_observer_keeps_the_adapter_route": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/result_inspect_named_observer_copy_payload.incn",
+          "notes": "asserts the adapter or bare item the emitter passes for a named observer over a non-Copy payload; the twin runs inspect over a model payload with a named function and reads what the observer prints."
+        }
+      }
+    },
     "loaves/compiler/incan_emit/src/emit/expressions/mod.rs": {
       "disposition": "retire",
       "owner": 1561,
@@ -1291,7 +1321,13 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter-side ownership and argument plans (borrow/clone/move for generated Rust); twins belong to Body IR ownership facts."
+      "notes": "emitter-side ownership and argument plans (borrow/clone/move for generated Rust); twins belong to Body IR ownership facts.",
+      "tests": {
+        "generator_sources_are_consumed_through_the_iterator_trait": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings/list_and_comprehension_over_generator.incn",
+          "notes": "asserts the plans list(generator) and a comprehension over a generator take so the chain reaches the Iterator trait's adapters (#1464); the twin materializes generators through list(), comprehensions and the generator's own adapters and prints the results."
+        }
+      }
     },
     "loaves/compiler/incan_emit/src/reference_shape.rs": {
       "disposition": "retire",
@@ -3739,6 +3775,14 @@
       "split_required": false,
       "split_target": "",
       "notes": "runs every behavior fixture of the smoke area as a program and compares its observables; the route changes under it, the fixtures do not."
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_snapshots_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs every behaviour fixture of the snapshots_* areas (one libtest case per leaf area) as a program and compares its observables; the route changes under it, the fixtures do not."
     },
     "loaves/toolchain/incan-cli/tests/behavior_snapshots_tests.rs": {
       "disposition": "re-point",
