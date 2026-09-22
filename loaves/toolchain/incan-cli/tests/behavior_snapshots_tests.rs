@@ -34,3 +34,15 @@ fn behavior_snapshots_collections_and_strings_fixtures_hold() -> Result<(), Box<
 fn behavior_snapshots_stdlib_fixtures_hold() -> Result<(), Box<dyn std::error::Error>> {
     assert_area_green("snapshots_stdlib")
 }
+
+/// Run the traits, supertraits, bounds, generics, protocol hooks and fallible iteration fixtures.
+#[test]
+fn behavior_snapshots_traits_and_generics_fixtures_hold() -> Result<(), Box<dyn std::error::Error>> {
+    assert_area_green("snapshots_traits_and_generics")
+}
+
+/// Run the newtypes, validation, JSON and serde trait fixtures.
+#[test]
+fn behavior_snapshots_newtypes_and_serde_fixtures_hold() -> Result<(), Box<dyn std::error::Error>> {
+    assert_area_green("snapshots_newtypes_and_serde")
+}

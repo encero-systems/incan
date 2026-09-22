@@ -13,6 +13,7 @@ use crate::typechecker::helpers::{collection_type_id, dict_ty, list_ty};
 
 use super::collect::decorators::resolve_decorator_id;
 use super::collect::{capability_description_text, dotted_path_segments};
+use super::trait_bound_relations::CallableMarkerOwner;
 use super::type_info::{
     CapabilityDeclarationInfo, ProviderOperationDeclarationInfo, RegistryDefinitionInfo, RegistryDescriptionInfo,
     RegistryDescriptionRegistry, RegistryExplicitEntryInfo,
@@ -2433,6 +2434,13 @@ impl TypeChecker {
             );
         }
         self.validate_type_param_bound_type_names(&alias.type_params);
+        self.refuse_unsupported_callable_markers(
+            &alias.type_params,
+            CallableMarkerOwner::Nominal {
+                kind: "type",
+                name: &alias.name,
+            },
+        );
         let _ = self.resolve_type_checked(&alias.target);
         self.symbols.exit_scope();
     }
@@ -3368,6 +3376,13 @@ impl TypeChecker {
                 SemanticSourceTargetKind::GenericBinder,
             );
         }
+        self.refuse_unsupported_callable_markers(
+            &model.type_params,
+            CallableMarkerOwner::Nominal {
+                kind: "model",
+                name: &model.name,
+            },
+        );
 
         // Check traits exist and are satisfied (models can adopt storage-free traits, RFC 000).
         // Note: do this after defining type params so `@requires(field: T)` can resolve `T`.
@@ -3789,6 +3804,13 @@ impl TypeChecker {
                 SemanticSourceTargetKind::GenericBinder,
             );
         }
+        self.refuse_unsupported_callable_markers(
+            &class.type_params,
+            CallableMarkerOwner::Nominal {
+                kind: "class",
+                name: &class.name,
+            },
+        );
 
         self.validate_decorators_rejecting_user_defined(&class.decorators, "class");
         self.validate_c_binding_class(class);
@@ -4045,6 +4067,13 @@ impl TypeChecker {
             );
         }
         self.validate_type_param_bound_type_names(&tr.type_params);
+        self.refuse_unsupported_callable_markers(
+            &tr.type_params,
+            CallableMarkerOwner::Nominal {
+                kind: "trait",
+                name: &tr.name,
+            },
+        );
         for supertrait in &tr.traits {
             for type_arg in &supertrait.node.type_args {
                 let _ = self.resolve_type_checked(type_arg);
@@ -4331,6 +4360,13 @@ impl TypeChecker {
             );
         }
         self.validate_type_param_bound_type_names(&nt.type_params);
+        self.refuse_unsupported_callable_markers(
+            &nt.type_params,
+            CallableMarkerOwner::Nominal {
+                kind: "newtype",
+                name: &nt.name,
+            },
+        );
 
         self.validate_decorators_rejecting_user_defined(&nt.decorators, "newtype");
         self.reject_registry_description_decorators(&nt.decorators, "newtype");
@@ -4675,6 +4711,13 @@ impl TypeChecker {
                 SemanticSourceTargetKind::GenericBinder,
             );
         }
+        self.refuse_unsupported_callable_markers(
+            &en.type_params,
+            CallableMarkerOwner::Nominal {
+                kind: "enum",
+                name: &en.name,
+            },
+        );
         // A value enum rejects type parameters outright (`check_value_enum_decl`), so only a payload-carrying enum
         // is asked whether every parameter is stored by some variant.
         if en.value_type.is_none() {
@@ -5824,6 +5867,7 @@ impl TypeChecker {
                 SemanticSourceTargetKind::GenericBinder,
             );
         }
+        self.refuse_unsupported_callable_markers(&func.type_params, CallableMarkerOwner::Callable);
         let active_bounds = self.type_param_bound_details_from_type_params(&func.type_params);
         self.current_type_param_bound_details.push(active_bounds);
         let previous_annotation_owner = self.enter_annotation_owner(&func.name, &func.type_params);
@@ -6166,6 +6210,7 @@ impl TypeChecker {
                 SemanticSourceTargetKind::GenericBinder,
             );
         }
+        self.refuse_unsupported_callable_markers(&method.type_params, CallableMarkerOwner::Callable);
         if let Some(target) = &method.trait_target {
             let trait_name = target.node.name.as_str();
             if self.lookup_trait_info(trait_name).is_some() {

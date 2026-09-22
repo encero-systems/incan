@@ -1421,6 +1421,70 @@ pub fn trait_not_implemented(type_name: &str, trait_name: &str, span: Span) -> C
     error
 }
 
+/// Why an `Fn`-family capability marker cannot stand where it was written (#1716).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallableMarkerRefusal<'a> {
+    /// The marker names more parameters than a marker can spell today.
+    ParameterCount {
+        /// How many parameters the marker names.
+        count: usize,
+        /// The most a marker can name.
+        limit: usize,
+    },
+    /// The marker bounds a type parameter of a nominal declaration rather than of a function or method.
+    NominalOwner {
+        /// The declaration kind as the source spells it (`model`, `class`, `enum`, `trait`, `newtype`, `type`).
+        owner_kind: &'a str,
+        /// The declaration's name.
+        owner_name: &'a str,
+    },
+}
+
+/// Report an `Fn`-family capability marker written where no generated code can spell it (#1716).
+///
+/// A marker names a callable's parameter list and leaves the return type to the call that passes the value.
+/// `marker` is the bound as the source spells it (`Fn[int, int, int]`), `type_param` the parameter it bounds, and
+/// `parameter_types` the marker's type arguments rendered one by one, which the hint reuses to spell the
+/// alternatives. A marker with more parameters than the limit has no bound to become; a marker on a nominal
+/// declaration's type parameter has no call to learn its return type from, so the hint names the bound that
+/// spells one. `INCAN-T0106` is its stable code.
+pub fn callable_marker_not_supported(
+    marker: &str,
+    type_param: &str,
+    parameter_types: &[String],
+    refusal: CallableMarkerRefusal<'_>,
+    span: Span,
+) -> CompileError {
+    let marker_name = marker.split('[').next().unwrap_or(marker);
+    let parameters = parameter_types.join(", ");
+    match refusal {
+        CallableMarkerRefusal::ParameterCount { count, limit } => CompileError::type_error(
+            format!("Callable marker '{marker}' on '{type_param}' names {count} parameters; a marker takes at most {limit}"),
+            span,
+        )
+        .with_stable_code("INCAN-T0106")
+        .with_hint(format!(
+            "Write at most {limit} parameters in the marker, or gather the parameters into one model and write \
+             '{marker_name}[ThatModel]'"
+        ))
+        .with_note("The marker's type arguments are the callable's parameter list; its return type comes from the value passed"),
+        CallableMarkerRefusal::NominalOwner { owner_kind, owner_name } => CompileError::type_error(
+            format!("Callable marker '{marker}' cannot bound type parameter '{type_param}' of {owner_kind} '{owner_name}'"),
+            span,
+        )
+        .with_stable_code("INCAN-T0106")
+        .with_hint(format!(
+            "Name the return type: bound '{type_param}' with 'Callable{}[{parameters}{}R]' from std.traits.callable, with \
+             'R' the return type, or give the field a function type '({parameters}) -> R'",
+            parameter_types.len(),
+            if parameter_types.is_empty() { "" } else { ", " }
+        ))
+        .with_note(format!(
+            "A callable marker leaves its return type to the call that passes the value; a {owner_kind} has no such call"
+        )),
+    }
+}
+
 /// What the name in a `with` bound resolved to, which decides the remedy a bound violation can offer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GenericBoundTarget {

@@ -765,7 +765,9 @@ pub enum IrMethodDispatch {
 /// Compiler-owned semantics and emission data for one selected trait dispatch.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IrTraitDispatch {
-    /// Canonical source declaration name selected by the typechecker, before backend path rewriting.
+    /// The trait as the call site's module spelled it (`JsonSerialize` for an aliased import, `json.Serialize` for a
+    /// module-qualified one), as the typechecker recorded it. This is the written spelling, not the declaration
+    /// name: lowering resolves it to the declaring module and declaration name before building `trait_path`.
     pub trait_source_name: String,
     /// Canonical source module that owns the selected trait, when semantic resolution crossed an import boundary.
     pub trait_module_path: Option<Vec<String>>,

@@ -80,11 +80,23 @@
       "owner": 1561,
       "notes": "behaviour fixtures twinning codegen snapshot tests over models, classes, fields, constructors and properties; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
     },
+    "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde": {
+      "pattern": "<name>.incn or <name>/",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "behaviour fixtures twinning codegen snapshot tests over newtypes, validation, JSON and serde trait adoption; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+    },
     "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
       "notes": "behaviour fixtures twinning codegen snapshot tests over stdlib module surfaces (math, fs, tempfile, testing, async, derives, registry, graph, uuid, regex, compression, traits, web); run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+    },
+    "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics": {
+      "pattern": "<name>.incn or <name>/",
+      "disposition": "re-point",
+      "owner": 1561,
+      "notes": "behaviour fixtures twinning codegen snapshot tests over traits, supertraits, bounds, generics, protocol hooks and fallible iteration; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/invalid": {
       "pattern": "**/*.incn",
@@ -1463,7 +1475,25 @@
       "twin": "",
       "split_required": true,
       "split_target": "",
-      "notes": "insta snapshot corpus of generated Rust; the .incn inputs under loaves/compiler/incan_emit/tests/codegen_snapshots are inventoried as a fixture root (re-point) and are the twin surface once run as programs."
+      "notes": "insta snapshot corpus of generated Rust; the .incn inputs under loaves/compiler/incan_emit/tests/codegen_snapshots are inventoried as a fixture root (re-point) and are the twin surface once run as programs.",
+      "tests": {
+        "test_rfc024_partial_alias_derive_codegen": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/partial_alias_derive.incn",
+          "notes": "twinned by the RFC 024 program that imports `std.serde.json.Serialize` as `JsonSerialize` and uses the alias in `@derive` and as a bound, printing `{\"value\":1}` (#1712: the dispatch path once spelled the alias into the stdlib path). The retired assertion on the emitted `impl JsonSerialize for Payload` text dies with #654."
+        },
+        "test_rfc041_capability_bounds_full_codegen": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_rust_capability_bounds.incn",
+          "notes": "twinned by the RFC 041 program with every `std.rust` marker: Send, Sync and Static over ordinary values, a Static-bounded identity, and Fn, FnMut and FnOnce each accepting a named function (#1716: the callable markers once emitted `Fn<i64>`, which rustc refuses). The retired snapshot (the program's whole generated Rust) dies with #654."
+        },
+        "test_rfc041_emit_static_bound_codegen": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_rust_capability_bounds.incn",
+          "notes": "twinned by the RFC 041 program with every `std.rust` marker: Send, Sync and Static over ordinary values, a Static-bounded identity, and Fn, FnMut and FnOnce each accepting a named function (#1716: the callable markers once emitted `Fn<i64>`, which rustc refuses). The retired snapshot (the program's whole generated Rust) dies with #654."
+        },
+        "test_rfc041_std_rust_capability_bounds_codegen": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_rust_capability_bounds.incn",
+          "notes": "twinned by the RFC 041 program with every `std.rust` marker: Send, Sync and Static over ordinary values, a Static-bounded identity, and Fn, FnMut and FnOnce each accepting a named function (#1716: the callable markers once emitted `Fn<i64>`, which rustc refuses). The retired snapshot (the program's whole generated Rust) dies with #654."
+        }
+      }
     },
     "loaves/compiler/incan_emit/tests/construction_diagnostics_tests.rs": {
       "disposition": "keep",
@@ -2432,7 +2462,17 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "tests": {
+        "aliased_stdlib_json_trait_dispatch_names_the_declaration_issue1712": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/partial_alias_derive.incn",
+          "notes": "asserts the recorded dispatch path of a `to_json` call through an aliased `std.serde.json.Serialize` bound names the declaration, not the alias (#1712); the twin runs that program and prints the encoded value."
+        },
+        "fn_family_capability_markers_lower_to_the_callable_bound_issue1716": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_rust_capability_bounds.incn",
+          "notes": "asserts the recorded bound shape of the `Fn`, `FnMut` and `FnOnce` markers: the canonical `CallableN` trait with a hidden return-type parameter (#1716); the twin runs each marker over a named function."
+        }
+      }
     },
     "loaves/compiler/incan_ir/src/lower/tests/unary_operand_grouping.rs": {
       "disposition": "retire",
@@ -2649,6 +2689,14 @@
       "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
     },
     "loaves/kernel/incan_lang/src/errors.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+    },
+    "loaves/kernel/incan_lang/src/interop/capabilities.rs": {
       "disposition": "keep",
       "owner": 1561,
       "twin": "",
@@ -3775,6 +3823,14 @@
       "split_required": false,
       "split_target": "",
       "notes": "runs every behavior fixture of the smoke area as a program and compares its observables; the route changes under it, the fixtures do not."
+    },
+    "loaves/toolchain/incan-cli/tests/behavior_snapshots_tests.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "runs every behaviour fixture of the snapshots_* areas (one libtest case per leaf area) as a program and compares its observables; the route changes under it, the fixtures do not."
     },
     "loaves/toolchain/incan-cli/tests/behavior_snapshots_tests.rs": {
       "disposition": "re-point",
