@@ -4098,6 +4098,8 @@ mod tests {
     use crate::stmt::IrStmtKind;
     use incan_frontend::{lexer, parser, typechecker::TypeChecker};
 
+    mod unary_operand_grouping;
+
     fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {
         match result {
             Ok(value) => value,
