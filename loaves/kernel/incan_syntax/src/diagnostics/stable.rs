@@ -227,6 +227,25 @@ const UNREACHABLE_CODE: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/functions/"),
 };
 
+const CALLABLE_MARKER_NOT_SUPPORTED: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0106",
+    title: "Callable marker cannot be spelled here",
+    severity: "error",
+    phase: "typecheck",
+    summary: "An `Fn`, `FnMut` or `FnOnce` marker from `std.rust` names more than two parameters, or bounds a type parameter of a nominal declaration.",
+    explanation: "A callable marker names a callable's parameter list and learns its return type from a function or method call. It currently supports at most two parameters and cannot complete a nominal declaration's type parameter.",
+    examples: &["from std.rust import Fn\n\ndef run[F with Fn[int, int, int]](f: F) -> None:\n    pass"],
+    common_causes: &[
+        "A callback with three or more arguments.",
+        "A nominal declaration bounded with a marker instead of a callable trait.",
+    ],
+    fixes: &[
+        "Write at most two parameters, or gather them into one model.",
+        "Use `Callable1[int, R]` from `std.traits.callable` on a nominal declaration.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/how-to/rust_interop/"),
+};
+
 const SELF_MUTATION_REQUIRES_MUT_SELF: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-T0102",
     title: "Method changes the object but takes `self`",
@@ -421,6 +440,7 @@ const CATALOG: &[DiagnosticCatalogEntry] = &[
     PRINT_ARGUMENT_IS_TUPLE,
     TUPLE_ANNOTATION_REQUIRES_ELEMENT_TYPES,
     RUST_OWNER_TYPE_ARGS_NOT_INFERRED,
+    CALLABLE_MARKER_NOT_SUPPORTED,
     IMPORT,
     SDK_COMPONENT_DISABLED,
     SDK_COMPONENT_UNAVAILABLE,

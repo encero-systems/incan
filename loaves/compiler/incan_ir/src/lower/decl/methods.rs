@@ -1728,7 +1728,7 @@ impl AstLowering {
         let is_extern = Self::has_rust_extern_decorator(&m.decorators);
         let rust_attributes = self.extract_passthrough_attributes(&m.decorators);
         let lint_allows = self.extract_rust_lint_allows(&m.decorators);
-        let mut all_type_params = self.lower_type_params(&m.type_params);
+        let mut all_type_params = self.lower_callable_type_params(&m.type_params);
         all_type_params.extend(hidden_type_params);
 
         self.pop_scope();
@@ -2045,7 +2045,7 @@ impl AstLowering {
         let is_extern = Self::has_rust_extern_decorator(&m.decorators);
         let rust_attributes = self.extract_passthrough_attributes(&m.decorators);
         let lint_allows = self.extract_rust_lint_allows(&m.decorators);
-        let mut all_type_params = self.lower_type_params(&m.type_params);
+        let mut all_type_params = self.lower_callable_type_params(&m.type_params);
         all_type_params.extend(hidden_type_params);
 
         Ok(IrFunction {
