@@ -2231,13 +2231,13 @@ def main() -> None:
 import std.async
 from std.web import route, POST
 
-@route("/things", methods=[POST])
-async def create(id: int) -> int:
-  return id
+@route("/things/{id}", methods=[POST])
+async def create(id: int) -> str:
+  return str(id)
 
-@route("/search")
-async def search(id: int) -> int:
-  return id
+@route("/search/{id}")
+async def search(id: int) -> str:
+  return str(id)
 "#;
 
     let Ok(main_tokens) = lexer::lex(main_source) else {

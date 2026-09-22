@@ -53,6 +53,7 @@ pub mod stdlib_loader;
 mod trait_bound_relations;
 mod type_info;
 mod validate_rust_module;
+mod web_routes;
 
 pub use const_eval::ConstValue;
 pub use type_info::{

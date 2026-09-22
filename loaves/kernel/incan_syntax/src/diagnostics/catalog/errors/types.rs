@@ -327,6 +327,73 @@ pub fn decorator_type_argument_not_supported(path: &str, span: Span) -> CompileE
     .with_hint("Use expression arguments such as name=value for decorator factories")
 }
 
+// -- Web route handlers ------------------------------------------------------
+
+/// Report a `@route` handler whose declared return type has no response form (#1721).
+///
+/// A route handler's return value becomes the HTTP response, and only response types have that form: `str`, `None`,
+/// `Json[...]`, `Html`, `Response`, a `Result` of those, or a wrapper that derives `IntoResponse`. A handler declared
+/// `-> int` checked, but the route it registers had nothing to send and the build stopped on it. `handler` is the
+/// function's name and `return_type` its declared return type as the source spells it. The hint lists the response
+/// types and, for the common numeric case, the text form to return instead. `INCAN-T0107` is its stable code.
+pub fn route_handler_return_not_response(handler: &str, return_type: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Route handler '{handler}' returns '{return_type}', which is not a response type"),
+        span,
+    )
+    .with_stable_code("INCAN-T0107")
+    .with_hint(
+        "Return 'str', 'Json[...]', 'Html' or 'Response' from a route handler; to send a number or another value as \
+         text, return 'str(value)'",
+    )
+    .with_note("A route handler's return value is the HTTP response, so only a response type can be returned")
+}
+
+/// Report a `@route` handler parameter that nothing in the request supplies (#1722).
+///
+/// The route binds a handler parameter in one of two ways: a `{name}` segment of the path binds the parameter of that
+/// name, and a typed extractor (`Json[T]`, `Query[T]`, `Path[T]`, or a wrapper deriving `FromRequestParts`) reads the
+/// request itself. A parameter that is neither has no value to receive, and the route cannot be built. `handler` is
+/// the function's name, `parameter` the unbound parameter, `path` the route path as written, and `captures` the
+/// segment names the path does bind, so the hint can name a spelling that would bind the parameter and, when the path
+/// already captures other names, list them. `INCAN-T0108` is its stable code.
+pub fn route_handler_parameter_unbound(
+    handler: &str,
+    parameter: &str,
+    path: &str,
+    captures: &[String],
+    span: Span,
+) -> CompileError {
+    let bound_path = if path.ends_with('/') {
+        format!("{path}{{{parameter}}}")
+    } else {
+        format!("{path}/{{{parameter}}}")
+    };
+    let error = CompileError::type_error(
+        format!("Route handler '{handler}' has a parameter '{parameter}' that no segment of the path '{path}' binds"),
+        span,
+    )
+    .with_stable_code("INCAN-T0108")
+    .with_hint(format!(
+        "Add a '{{{parameter}}}' segment to the path, '{bound_path}', or read the value from the request with a \
+         'Query[...]' or 'Json[...]' parameter"
+    ))
+    .with_note(
+        "A route handler's parameters come from the request: a '{name}' path segment binds the parameter named \
+         'name', and a 'Json[T]', 'Query[T]' or 'Path[T]' parameter reads the body, the query string or the path",
+    );
+    if captures.is_empty() {
+        error
+    } else {
+        let bound = captures
+            .iter()
+            .map(|capture| format!("'{capture}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        error.with_note(format!("The path binds {bound}"))
+    }
+}
+
 /// Report a malformed `ValidationError(...)` constructor call.
 pub fn validation_error_constructor_shape(span: Span) -> CompileError {
     CompileError::type_error(
@@ -1601,6 +1668,35 @@ pub fn not_hashable(type_name: &str, span: Span) -> CompileError {
     )
     .with_hint("Add @derive(Hash, Eq) to make this type hashable")
     .with_note("Both Hash and Eq are required for Set membership and Dict keys")
+}
+
+/// Report `/`, `//`, `%` or `**` applied to values of a type parameter (#1715).
+///
+/// These four operators follow the language's numeric rules (true division yields `float`, floor division and modulo
+/// round toward negative infinity, power picks its result type from the exponent), which the concrete numeric types
+/// carry and no trait abstracts. `+`, `-` and `*` become inferred bounds on the type parameter; for these four there
+/// is no bound a type argument could satisfy, so the function could never be compiled for any argument. `operator`
+/// is the operator as written, `type_param` the parameter's name and `dunder` the RFC 028 hook (`__mod__`) that a
+/// bound trait could define to make the operator resolve through a trait instead. `INCAN-T0109` is its stable code.
+pub fn operator_has_no_type_parameter_bound(
+    operator: &str,
+    type_param: &str,
+    dunder: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!("Operator '{operator}' cannot be applied to values of type parameter '{type_param}'"),
+        span,
+    )
+    .with_stable_code("INCAN-T0109")
+    .with_hint(format!(
+        "Declare the operands as 'int' or 'float' instead of '{type_param}', or bound '{type_param}' by a trait that \
+         defines '{dunder}' so the operator resolves through that trait"
+    ))
+    .with_note(
+        "'/', '//', '%' and '**' follow the language's numeric rules, which only the concrete numeric types carry; \
+         unlike '+', '-' and '*', no bound on a type parameter stands for them",
+    )
 }
 
 // -- Validate derive ---------------------------------------------------------
