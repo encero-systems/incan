@@ -819,6 +819,43 @@ pub fn mutation_without_mut(name: &str, span: Span) -> CompileError {
         .with_note("This prevents accidental modifications and makes code easier to reason about")
 }
 
+/// How a method body changes the object its plain `self` receiver names (#1723).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelfMutation<'a> {
+    /// The body assigns to a place rooted at the receiver, `self.width *= factor` or `self.items[0] = value`.
+    Assignment,
+    /// The body calls a method that changes a place rooted at the receiver, `self.items.pop()`.
+    MutatingCall {
+        /// The method the body calls on the place.
+        callee: &'a str,
+    },
+}
+
+/// Report a method that changes the object it is called on while its receiver is a plain `self` (#1723).
+///
+/// The receiver spelling is a promise the generated code keeps literally: a plain `self` method reads the object
+/// only, so an assignment to `self.width` or a `self.items.pop()` inside it has no way to write. `method` is the
+/// method being checked, `target` the place it changes as the source spells it (`self.width`, `self.items[0]`), and
+/// `mutation` says whether the body assigns to that place or calls a method that changes it. The hint spells the
+/// receiver to declare; `INCAN-T0102` is its stable code.
+pub fn self_mutation_requires_mut_self(
+    method: &str,
+    target: &str,
+    mutation: SelfMutation<'_>,
+    span: Span,
+) -> CompileError {
+    let message = match mutation {
+        SelfMutation::Assignment => format!("Method '{method}' assigns to '{target}' but takes 'self'"),
+        SelfMutation::MutatingCall { callee } => {
+            format!("Method '{method}' calls '{target}.{callee}()', which changes '{target}', but takes 'self'")
+        }
+    };
+    CompileError::type_error(message, span)
+        .with_stable_code("INCAN-T0102")
+        .with_hint(format!("Declare the receiver as 'mut self': def {method}(mut self, ...)"))
+        .with_note("A method that changes the object it is called on says so in its receiver; a plain 'self' method only reads it")
+}
+
 /// A Rust interop parameter requires an exclusive borrow of an immutable Incan binding.
 pub fn mutable_rust_borrow_requires_mut(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Rust parameter requires a mutable borrow of '{name}'"), span).with_hint(format!(
@@ -1593,6 +1630,47 @@ pub fn rust_receiver_const_generics_not_supported(path: &str, span: Span) -> Com
     .with_note("Incan v0.5 does not accept const values in call-site type-argument syntax")
 }
 
+/// Report a Rust associated call whose owner type arguments nothing in the program fixes (#1720).
+///
+/// `HashMap.new()` leaves `K` and `V` open; Rust would fill them from a later insert, a typed return, or an
+/// annotation on the binding, but a binding that is never read again gives it nothing to work with, and the build
+/// stops on it. `owner` is the receiver as the source spells it (`HashMap`), `method` the associated function,
+/// `type_params` the owner's open parameters, and `binding` the local the result was bound to, or `None` when the
+/// value was discarded. The hint shows both spellings that close the parameters, with example types sized to the
+/// parameter count. `INCAN-T0105` is its stable code.
+pub fn rust_owner_type_args_not_inferred(
+    owner: &str,
+    method: &str,
+    type_params: &[String],
+    binding: Option<&str>,
+    span: Span,
+) -> CompileError {
+    const EXAMPLE_TYPES: [&str; 4] = ["str", "int", "float", "bool"];
+    let params = type_params.join(", ");
+    let examples = EXAMPLE_TYPES
+        .iter()
+        .cycle()
+        .take(type_params.len())
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let error = CompileError::type_error(
+        format!("Cannot infer the type arguments '{params}' of '{owner}.{method}()'"),
+        span,
+    )
+    .with_stable_code("INCAN-T0105");
+    match binding {
+        Some(name) => error
+            .with_note(format!("'{name}' is never read after this binding, so nothing later fixes them"))
+            .with_hint(format!(
+                "Write them in the call, '{owner}.{method}[{examples}]()', or annotate the binding, '{name}: {owner}[{examples}] = {owner}.{method}()'"
+            )),
+        None => error
+            .with_note("The value is not bound to a name, so nothing later fixes them")
+            .with_hint(format!("Write them in the call: '{owner}.{method}[{examples}]()'")),
+    }
+}
+
 /// A trait-qualified call `Trait.method(receiver, ...)` names an imported Rust trait whose method signature is not
 /// available, so the compiler cannot tell whether the receiver must be borrowed exclusively, shared, or moved.
 ///
@@ -2166,6 +2244,41 @@ pub fn mutable_tuple(span: Span) -> CompileError {
         span,
     )
     .with_hint("Remove 'mut' - tuples cannot be modified after creation")
+}
+
+/// Report a tuple annotation written without its element types (#1717).
+///
+/// `Tuple` names a family of types, one per element list, so a bare spelling names no type at all and the build
+/// has nothing to emit for it. `spelling` is the word the source used (`Tuple` or `tuple`) so the hint keeps the
+/// author's casing. `INCAN-T0104` is its stable code.
+pub fn tuple_annotation_requires_element_types(spelling: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Tuple annotation '{spelling}' is missing its element types"),
+        span,
+    )
+    .with_stable_code("INCAN-T0104")
+    .with_hint(format!(
+        "Write one type per element, for example '{spelling}[int, str]' for a pair of an int and a str"
+    ))
+}
+
+/// Report a `print`/`println` argument that is a tuple (#1725).
+///
+/// A tuple has no printed form in the language, so the call would print nothing the reader can rely on. `builtin`
+/// is the spelling the call used (`print` or `println`), `value` the argument as the source spells it when it is a
+/// plain name (`coords`) or a placeholder otherwise, and `arity` the tuple's length, which shapes the hint's
+/// element-by-element spelling. `INCAN-T0103` is its stable code.
+pub fn print_argument_is_tuple(builtin: &str, value: &str, arity: usize, span: Span) -> CompileError {
+    let elements = (0..arity.max(1))
+        .map(|index| format!("{value}[{index}]"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    CompileError::type_error(format!("'{builtin}' cannot print the tuple '{value}'"), span)
+        .with_stable_code("INCAN-T0103")
+        .with_hint(format!(
+            "Print the elements instead: {builtin}({elements}), or unpack them first and print the names"
+        ))
+        .with_note("Tuples have no printed form; each element prints on its own")
 }
 
 pub fn tuple_field_assignment(span: Span) -> CompileError {

@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use crate::ast::*;
-use crate::diagnostics::errors;
+use crate::diagnostics::errors::{self, SelfMutation};
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved};
 use crate::symbols::*;
 use incan_lang::lang::errors as runtime_errors;
@@ -177,6 +177,7 @@ impl TypeChecker {
             Statement::Surface(surface_stmt) => self.check_surface_stmt(surface_stmt, stmt.span),
             Statement::Expr(expr) => {
                 self.check_expr(expr);
+                self.reject_discarded_open_rust_generic_call(expr.span);
             }
             Statement::VocabExpressionItem(_item) => {
                 self.errors.push(crate::diagnostics::CompileError::new(
@@ -422,8 +423,11 @@ impl TypeChecker {
                             }
                         }
                         Expr::Index(_, _) | Expr::Field(_, _) => {
-                            // Index and field expressions are valid lvalues
-                            // Type compatibility is checked below
+                            // Index and field expressions are valid lvalues; type compatibility is checked below.
+                            // A place rooted at the receiver is a write through `self` like any other (#1723).
+                            if let Some(place) = Self::self_rooted_place(target) {
+                                self.reject_write_through_immutable_self(&place, SelfMutation::Assignment, target.span);
+                            }
                         }
                         _ => {
                             self.errors.push(errors::invalid_tuple_assignment_target(target.span));
@@ -458,6 +462,45 @@ impl TypeChecker {
             }
         }
         self.reject_unbound_c_abi_span_constructors();
+        // A call nested somewhere other than a direct binding or a bare statement may still be fixed by its
+        // context (an argument's declared type, a typed return); only the two shapes above are refused (#1720).
+        self.open_rust_generic_calls.clear();
+    }
+
+    /// Spell a place expression rooted at the method receiver the way the source reads it (`self.width`,
+    /// `self.items[...]`), or return `None` when the expression does not read through `self`.
+    ///
+    /// Only place steps are followed: field reads and index reads, through parentheses. A call in the chain
+    /// (`self.items.clone()`) yields a fresh value, so nothing past it touches the receiver and the walk stops with
+    /// `None`. An index is rendered as `[...]` because the message names the place, not the element.
+    pub(in crate::typechecker) fn self_rooted_place(expr: &Spanned<Expr>) -> Option<String> {
+        match &expr.node {
+            Expr::SelfExpr => Some("self".to_string()),
+            Expr::Paren(inner) => Self::self_rooted_place(inner),
+            Expr::Field(base, field) => Self::self_rooted_place(base).map(|place| format!("{place}.{field}")),
+            Expr::Index(base, _) => Self::self_rooted_place(base).map(|place| format!("{place}[...]")),
+            _ => None,
+        }
+    }
+
+    /// Refuse a write to `place`, a place rooted at `self`, when the enclosing method takes a plain `self` (#1723).
+    ///
+    /// The receiver spelling is what the generated code honours: a plain `self` method has no way to write, so the
+    /// assignment or changing call would only fail later, in the build. Outside a plain-`self` method body nothing
+    /// is reported; a `mut self` method writes freely, and a function has no receiver. `mutation` says whether the
+    /// body assigns to the place or calls a method that changes it, which is the difference between the two
+    /// message shapes.
+    pub(in crate::typechecker) fn reject_write_through_immutable_self(
+        &mut self,
+        place: &str,
+        mutation: SelfMutation<'_>,
+        span: Span,
+    ) {
+        let Some(method) = self.current_immutable_self_method.as_deref() else {
+            return;
+        };
+        let error = errors::self_mutation_requires_mut_self(method, place, mutation, span);
+        self.errors.push(error);
     }
 
     /// Validate assignment to an object field, including generic-owner field substitution.
@@ -465,6 +508,13 @@ impl TypeChecker {
         // Check the object expression
         let obj_ty = self.check_expr(&field_assign.object);
         let field = &field_assign.field;
+        if let Some(place) = Self::self_rooted_place(&field_assign.object) {
+            self.reject_write_through_immutable_self(
+                &format!("{place}.{field}"),
+                SelfMutation::Assignment,
+                field_assign.target_span,
+            );
+        }
 
         // Tuples are immutable - disallow field assignment on tuples
         if matches!(obj_ty, ResolvedType::Tuple(_)) {
@@ -564,6 +614,9 @@ impl TypeChecker {
     fn check_index_assignment(&mut self, index_assign: &IndexAssignmentStmt, span: Span) {
         // Check the object expression (should be a collection)
         let obj_ty = self.check_expr(&index_assign.object);
+        if let Some(place) = Self::self_rooted_place(&index_assign.object) {
+            self.reject_write_through_immutable_self(&format!("{place}[...]"), SelfMutation::Assignment, span);
+        }
         // Check the index expression
         let index_ty = self.check_expr(&index_assign.index);
         // Check the value expression
@@ -718,6 +771,7 @@ impl TypeChecker {
             }
             self.consumed_iterator_bindings.remove(&assign.name);
             self.transferred_c_resource_bindings.remove(&assign.name);
+            self.mark_open_rust_generic_binding_read(&assign.name);
             return;
         }
 
@@ -800,6 +854,10 @@ impl TypeChecker {
         self.bind_c_abi_output_slot_assignment(&assign.name, assign.value.span);
         self.bind_c_abi_span_assignment(&assign.name, assign.value.span);
         self.bind_c_abi_raw_result_assignment(&assign.name, assign.value.span);
+        if assign.ty.is_none() {
+            // An annotation is itself what fixes the arguments; only an unannotated binding is watched (#1720).
+            self.bind_open_rust_generic_assignment(&assign.name, assign.value.span);
+        }
         self.consumed_iterator_bindings.remove(&assign.name);
         self.transferred_c_resource_bindings.remove(&assign.name);
     }
@@ -859,6 +917,7 @@ impl TypeChecker {
                 }
                 self.consumed_iterator_bindings.remove(name);
                 self.transferred_c_resource_bindings.remove(name);
+                self.mark_open_rust_generic_binding_read(name);
                 return;
             }
             if let Some(static_info) = self.lookup_static_info(name) {
@@ -979,6 +1038,82 @@ impl TypeChecker {
             .map(|symbol| symbol.span);
         result.local_name = Some(name.to_string());
         self.c_abi_raw_call_results.push(result);
+    }
+
+    /// Attach the open Rust associated call a new binding received to that binding, or refuse it at once when
+    /// the binding is the discard `_` (#1720).
+    ///
+    /// The call was recorded by its span when the method call resolved; a direct `name = call()` is the one place
+    /// a later reader can still fix the owner's type arguments, so the binding is watched until its block ends
+    /// instead of being refused here. `_` is never read, so nothing can fix them and the call is refused at once.
+    fn bind_open_rust_generic_assignment(&mut self, name: &str, value_span: Span) {
+        let Some(call) = self.open_rust_generic_calls.remove(&(value_span.start, value_span.end)) else {
+            return;
+        };
+        if name == "_" {
+            self.errors.push(errors::rust_owner_type_args_not_inferred(
+                &call.owner,
+                &call.method,
+                &call.type_params,
+                None,
+                value_span,
+            ));
+            return;
+        }
+        self.open_rust_generic_bindings.push(super::OpenRustGenericBinding {
+            name: name.to_string(),
+            block: self.current_statement_block,
+            span: value_span,
+            call,
+        });
+    }
+
+    /// Refuse an open Rust associated call whose value a bare expression statement throws away (#1720).
+    ///
+    /// `HashMap.new()` on its own line binds nothing, so no later statement can supply the type arguments Rust
+    /// would need; the call is refused where it stands.
+    fn reject_discarded_open_rust_generic_call(&mut self, expr_span: Span) {
+        let Some(call) = self.open_rust_generic_calls.remove(&(expr_span.start, expr_span.end)) else {
+            return;
+        };
+        self.errors.push(errors::rust_owner_type_args_not_inferred(
+            &call.owner,
+            &call.method,
+            &call.type_params,
+            None,
+            expr_span,
+        ));
+    }
+
+    /// Stop watching the open Rust generic bindings named `name`: a read or a reassignment reached it (#1720).
+    ///
+    /// Any later reader is taken as the one that fixes the type arguments. That is deliberately generous, since
+    /// Rust's own inference decides which uses fix them; the checker refuses only a binding nothing reads at all.
+    pub(in crate::typechecker) fn mark_open_rust_generic_binding_read(&mut self, name: &str) {
+        if self.open_rust_generic_bindings.is_empty() {
+            return;
+        }
+        self.open_rust_generic_bindings.retain(|binding| binding.name != name);
+    }
+
+    /// Refuse every open Rust generic binding that the statement block `block` declared and nothing read (#1720).
+    ///
+    /// Called when that block ends. Bindings of enclosing blocks stay watched: a read inside this block already
+    /// released them, and one after it still can.
+    pub(in crate::typechecker) fn reject_unread_open_rust_generic_bindings_of_block(&mut self, block: usize) {
+        let (left_unread, still_watched): (Vec<_>, Vec<_>) = std::mem::take(&mut self.open_rust_generic_bindings)
+            .into_iter()
+            .partition(|binding| binding.block == block);
+        self.open_rust_generic_bindings = still_watched;
+        for binding in left_unread {
+            self.errors.push(errors::rust_owner_type_args_not_inferred(
+                &binding.call.owner,
+                &binding.call.method,
+                &binding.call.type_params,
+                Some(binding.name.as_str()),
+                binding.span,
+            ));
+        }
     }
 
     /// Check a return statement against the active function context.

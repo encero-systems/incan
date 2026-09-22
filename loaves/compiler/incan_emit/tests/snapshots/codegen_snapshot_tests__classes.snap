@@ -275,7 +275,7 @@ impl Stack {
     pub fn push(&mut self, item: i64) {
         let _ = self.items.push(item);
     }
-    pub fn pop(&self) -> i64 {
+    pub fn pop(&mut self) -> i64 {
         if ::std::convert::identity(self.items.len() as i64) > 0 {
             return incan_std_core::collections::__private::list_pop(&mut self.items);
         }

@@ -1034,3 +1034,164 @@ def f(d: Data) -> str:
 "#;
     assert!(check_str(source).is_ok());
 }
+
+// ---- #1723: a plain-`self` method must not write through the receiver ----
+
+const SELF_MUTATION_CODE: &str = "INCAN-T0102";
+
+/// The `INCAN-T0102` diagnostics of a refused program, by message, so a test can name what it expects.
+fn self_mutation_messages(source: &str, context: &str) -> Vec<String> {
+    check_str_err(source, context)
+        .iter()
+        .filter(|error| error.stable_code() == Some(SELF_MUTATION_CODE))
+        .map(|error| error.message.clone())
+        .collect()
+}
+
+#[test]
+fn class_method_assigning_to_a_field_through_plain_self_is_refused_issue1723() {
+    // `self.count += 1` inside `def bump(self)`: the generated receiver is a shared borrow, so the assignment can
+    // only fail in the build. The checker names the method, the place it writes and the receiver to declare.
+    let source = r#"
+class Counter:
+    count: int
+
+    def bump(self) -> None:
+        self.count += 1
+
+    def reset(self) -> None:
+        self.count = 0
+"#;
+    let messages = self_mutation_messages(source, "a plain-self method assigning to a field must be refused");
+    assert_eq!(
+        messages,
+        vec![
+            "Method 'bump' assigns to 'self.count' but takes 'self'".to_string(),
+            "Method 'reset' assigns to 'self.count' but takes 'self'".to_string(),
+        ]
+    );
+    let errors = check_str_err(source, "the refusal carries its remedy");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.hints.iter().any(|hint| hint.contains("def bump(mut self, ...)"))),
+        "expected the hint to spell the receiver to declare, got: {:?}",
+        errors.iter().map(|error| &error.hints).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn class_method_calling_a_changing_collection_method_through_plain_self_is_refused_issue1723() {
+    // `self.items.pop()` and `self.items.append(...)` change the list the receiver owns; `len(self.items)`,
+    // `self.items.contains(...)` and an index read do not and stay accepted in a plain-`self` method.
+    let source = r#"
+class Stack:
+    items: list[int]
+
+    def pop(self) -> int:
+        return self.items.pop()
+
+    def push(self, item: int) -> None:
+        self.items.append(item)
+
+    def peek(self) -> int:
+        return self.items[len(self.items) - 1]
+
+    def has(self, item: int) -> bool:
+        return self.items.contains(item)
+"#;
+    let messages = self_mutation_messages(source, "a plain-self method changing a field's list must be refused");
+    assert_eq!(
+        messages,
+        vec![
+            "Method 'pop' calls 'self.items.pop()', which changes 'self.items', but takes 'self'".to_string(),
+            "Method 'push' calls 'self.items.append()', which changes 'self.items', but takes 'self'".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn index_and_tuple_writes_through_plain_self_are_refused_issue1723() {
+    let source = r#"
+class Grid:
+    cells: list[int]
+    width: int
+    height: int
+
+    def clear_first(self) -> None:
+        self.cells[0] = 0
+
+    def swap_dimensions(self) -> None:
+        self.width, self.height = self.height, self.width
+"#;
+    let messages = self_mutation_messages(
+        source,
+        "index and tuple-target writes through plain self must be refused",
+    );
+    assert_eq!(
+        messages,
+        vec![
+            "Method 'clear_first' assigns to 'self.cells[...]' but takes 'self'".to_string(),
+            "Method 'swap_dimensions' assigns to 'self.width' but takes 'self'".to_string(),
+            "Method 'swap_dimensions' assigns to 'self.height' but takes 'self'".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn mut_self_methods_and_local_collections_keep_writing_freely_issue1723() {
+    // The same bodies under `mut self` are the documented form; a local collection in a plain-`self` method is not
+    // a write through the receiver, and a `mut self` helper called from a `mut self` method is fine.
+    assert_check_ok(
+        r#"
+class Stack:
+    items: list[int]
+    count: int
+
+    def push(mut self, item: int) -> None:
+        self.items.append(item)
+        self.count += 1
+
+    def pop(mut self) -> int:
+        self.count -= 1
+        return self.items.pop()
+
+    def drain(mut self) -> int:
+        mut total: int = 0
+        while self.count > 0:
+            total += self.pop()
+        return total
+
+    def doubled(self) -> list[int]:
+        mut copy: list[int] = self.items.clone()
+        copy.append(0)
+        return copy
+
+    def size(self) -> int:
+        return self.count
+"#,
+    );
+}
+
+#[test]
+fn calling_a_mut_self_method_through_plain_self_is_refused_issue1723() {
+    let source = r#"
+class Counter:
+    count: int
+
+    def bump(mut self) -> None:
+        self.count += 1
+
+    def bump_twice(self) -> None:
+        self.bump()
+        self.bump()
+"#;
+    let messages = self_mutation_messages(source, "a plain-self method calling a mut-self method must be refused");
+    assert_eq!(
+        messages,
+        vec![
+            "Method 'bump_twice' calls 'self.bump()', which changes 'self', but takes 'self'".to_string(),
+            "Method 'bump_twice' calls 'self.bump()', which changes 'self', but takes 'self'".to_string(),
+        ]
+    );
+}

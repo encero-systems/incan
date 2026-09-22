@@ -46,7 +46,7 @@ fn test_collections() {
         .collect::<std::collections::HashMap<_, _>>();
     let pair: (i64, String) = (1, "one".to_string());
     let triple: (i64, i64, i64) = (1, 2, 3);
-    let _multiple: Tuple = ("a".to_string(), pair, "b".to_string(), triple, 42);
+    let _multiple: ((i64, String), (i64, i64, i64)) = (pair, triple);
     let _first: i64 = *incan_std_core::collections::list_get(&numbers, (0) as i64);
     let _last: i64 = *incan_std_core::collections::list_get(&numbers, (-1) as i64);
     let _value: i64 = *incan_std_core::collections::dict_get(

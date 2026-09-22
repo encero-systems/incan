@@ -138,6 +138,10 @@ Seeded catalog codes:
 - `INCAN-P0001`: Syntax error.
 - `INCAN-T0001`: Type checking error.
 - `INCAN-T0101`: Unreachable code — statements that follow a `return` in the same block. Reported as a warning, so the program still compiles.
+- `INCAN-T0102`: A method assigns to a field, or calls a method that changes one, while its receiver is a plain `self`; declare `mut self`.
+- `INCAN-T0103`: A `print` or `println` argument is a tuple, which has no printed form; print its elements.
+- `INCAN-T0104`: A `Tuple` or `tuple` annotation names no element types; write `tuple[int, str]`.
+- `INCAN-T0105`: A Rust associated call such as `HashMap.new()` leaves the owner's type arguments open and nothing later fixes them; write `HashMap.new[str, int]()` or annotate the binding.
 - `INCAN-I0001`: Import or module resolution error.
 - `INCAN-I0101`: A known SDK provider module belongs to a component disabled by the project.
 - `INCAN-I0102`: The project enabled an SDK component that is unavailable in the active installation.
