@@ -3603,8 +3603,11 @@ mod tests {
                 .any(|member| member.relative_path == Path::new("bin/rustc"))
         );
 
+        // Every launch below goes through the probe launcher so the copy loads the driver beside itself rather
+        // than the one an inherited loader path names; under the compiler suite that path is the selected
+        // toolchain's, which on Linux would make the copy report the ambient sysroot (#1755).
         drop(first_parent);
-        let output = std::process::Command::new(second.join("bin/rustc"))
+        let output = crate::rustc::rustc_probe_command(&second.join("bin/rustc"))
             .arg("-vV")
             .output()?;
         assert!(
@@ -3612,7 +3615,7 @@ mod tests {
             "retained rustc did not execute: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let sysroot = std::process::Command::new(second.join("bin/rustc"))
+        let sysroot = crate::rustc::rustc_probe_command(&second.join("bin/rustc"))
             .args(["--print", "sysroot"])
             .output()?;
         assert!(sysroot.status.success());
@@ -3626,7 +3629,7 @@ mod tests {
             .path()
             .join(format!("detached{}", std::env::consts::EXE_SUFFIX));
         fs::write(&source, "fn main() { println!(\"retained sysroot\"); }\n")?;
-        let compile = std::process::Command::new(second.join("bin/rustc"))
+        let compile = crate::rustc::rustc_probe_command(&second.join("bin/rustc"))
             .arg(&source)
             .arg("-o")
             .arg(&executable)
