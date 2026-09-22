@@ -5647,23 +5647,24 @@ pub async def fastest() -> int:
     assert_codegen_snapshot!("race_for_expression_codegen", rust_code);
 }
 
-/// Awaiting a declared wrapper must delegate to the proven awaitable field.
+/// A generic `F with Awaitable[T]` bound names the async runtime's `Awaitable<T>` trait, the one realization of RFC
+/// 039's protocol in generated Rust; the awaited operand stays a plain `.await` (#1711).
 #[test]
-fn test_awaitable_wrapper_delegation_codegen() {
+fn test_awaitable_bound_lowers_to_runtime_trait_codegen() {
     let source = r#"
 import std.async
-from std.async.task import JoinHandle, TaskJoinError
 
-pub model TaskBox[T] with Awaitable[Result[T, TaskJoinError]]:
-  pub handle: JoinHandle[T]
-
-pub async def wait_for(box: TaskBox[int]) -> Result[int, TaskJoinError]:
-  return await box
+pub async def wait_for[T, F with Awaitable[T]](task: F) -> T:
+  return await task
 "#;
     let rust_code = generate_rust(source);
     assert!(
-        rust_code.contains("r#box.handle.await"),
-        "awaitable wrapper should lower through its awaitable field, got:\n{rust_code}"
+        rust_code.contains("F: incan_std_async::task::Awaitable<T>"),
+        "an Awaitable bound should name the runtime trait, got:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("task.await"),
+        "the bound operand should be awaited directly, got:\n{rust_code}"
     );
 }
 

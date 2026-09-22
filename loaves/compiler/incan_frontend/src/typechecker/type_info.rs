@@ -698,11 +698,6 @@ pub struct ExpressionArtifacts {
     /// This differs from the initializer expression type when contextual numeric typing or a validated coercion
     /// selects the annotated destination type. Body IR consumes this fact instead of reconstructing annotations.
     pub assignment_binding_types: HashMap<(usize, usize), ResolvedType>,
-    /// Type names that implement `Awaitable[T]` by delegating to one concrete awaitable field.
-    ///
-    /// Lowering consumes this so `await wrapper` and `race for` arms can emit `wrapper.<field>.await` instead of
-    /// trying to await the wrapper struct itself.
-    pub awaitable_delegation_fields: HashMap<String, String>,
     /// RFC 046 computed property reads keyed by the full field-access expression span.
     ///
     /// Lowering/emission can use this to distinguish `obj.field` storage reads from `obj.property` getter calls while

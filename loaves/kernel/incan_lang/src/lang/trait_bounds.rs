@@ -28,6 +28,7 @@ pub enum TraitBoundId {
     Display,
     Serialize,
     Deserialize,
+    Awaitable,
 }
 
 /// Metadata for a trait bound mapping entry.
@@ -118,6 +119,14 @@ pub const TRAIT_BOUNDS: &[TraitBoundMapping] = &[
         RFC::_023,
         Since(0, 2),
     ),
+    mapping(
+        TraitBoundId::Awaitable,
+        "Awaitable",
+        rust::AWAITABLE,
+        "Awaitable values — the async runtime's realization of RFC 039's `Awaitable[T]`; a bound only, never adopted.",
+        RFC::_039,
+        Since(0, 6),
+    ),
 ];
 
 // ============================================================================
@@ -152,6 +161,8 @@ pub mod rust {
 
     // Async
     pub const FUTURE: &str = "std::future::Future";
+    /// The runtime trait a `with Awaitable[T]` bound lowers to (`IntoFuture<Output = T>` behind a blanket impl).
+    pub const AWAITABLE: &str = "incan_std_async::task::Awaitable";
 
     // Compiler-provided Incan reflection capabilities
     pub const INCAN_CLASS_NAME: &str = "incan_std_core::reflection::HasClassName";

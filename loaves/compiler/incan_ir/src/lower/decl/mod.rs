@@ -29,6 +29,19 @@ use super::errors::LoweringError;
 use incan_frontend::ast;
 use incan_lang::lang::decorators::{self, DecoratorId};
 
+/// Which physical spelling a checked source method carries after lowering.
+///
+/// See [`AstLowering::checked_method_spelling`] for where each one comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CheckedMethodSpelling {
+    /// The declaration's own name: the projection was declined.
+    Source,
+    /// The compiled provider's canonical projection: a provider plan serves the declaring module.
+    Provider,
+    /// The source-stdlib projection: the declaring module is compiled alongside this program.
+    Projected,
+}
+
 impl AstLowering {
     /// Map frontend visibility (`pub` / private) to IR visibility for Rust emission.
     pub(in crate::lower) fn map_visibility(vis: incan_frontend::ast::Visibility) -> Visibility {
@@ -116,7 +129,7 @@ impl AstLowering {
             }
             ast::Declaration::Static(s) => {
                 let mut value = self.lower_expr_spanned(&s.value)?;
-                self.rewrite_checked_registry_entry_subject(&s.name, &mut value)?;
+                self.rewrite_checked_registry_entry_subject(&s.name, s.value.span, &mut value)?;
                 let visibility = match s.visibility {
                     ast::Visibility::Public => Visibility::Public,
                     ast::Visibility::Private => Visibility::Private,
@@ -237,9 +250,16 @@ impl AstLowering {
     /// their source implementations must not escape into loaded runtime entries, however: the frontend has already
     /// fixed their subject kind and this lowering step supplies the compilation boundary's canonical identity. No
     /// runtime discovery or Rust-side registry implementation is involved.
+    ///
+    /// The entry call and its subject constructor are verified by the identities the checker recorded at their spans,
+    /// not by the spelling lowering gave them: one checked method has three admissible spellings (see
+    /// [`Self::checked_method_spelling`]), and which one a call carries depends on how the standard library is
+    /// provided to this compilation. The checked constructor is then spelled the way the placeholder was, so it names
+    /// a slot that exists under the same provision (#1713).
     fn rewrite_checked_registry_entry_subject(
         &self,
         entry_name: &str,
+        value_span: ast::Span,
         value: &mut TypedExpr,
     ) -> Result<(), LoweringError> {
         let Some(entry) = self.type_info.as_ref().and_then(|info| {
@@ -251,7 +271,7 @@ impl AstLowering {
             return Ok(());
         };
 
-        let identity = match entry.subject_kind {
+        let qualified_name = match entry.subject_kind {
             incan_semantics_core::SemanticRegistrySubjectKind::CompilationUnit => self
                 .current_source_module_name
                 .clone()
@@ -269,30 +289,49 @@ impl AstLowering {
                 });
             }
         };
-        let expected_source_constructor = Self::emitted_source_identity_name(&entry.subject_constructor_identity, true);
-        let expected_entry_method = Self::emitted_source_identity_name(&entry.entry_method_identity, true);
-        let checked_constructor = Self::emitted_source_identity_name(&entry.checked_constructor_identity, true);
-
-        let IrExprKind::MethodCall { method, args, .. } = &mut value.kind else {
-            return Err(LoweringError {
-                message: "checked registry entry lowering expected registry.entry(...)".to_string(),
-                span: IrSpan::default(),
-            });
-        };
-        if method != &expected_entry_method {
+        let subject_span = ast::Span::new(entry.subject_span.0, entry.subject_span.1);
+        let resolved_identity = |span: ast::Span| self.type_info.as_ref().and_then(|info| info.resolved_identity(span));
+        if resolved_identity(value_span) != Some(&entry.entry_method_identity) {
             return Err(LoweringError {
                 message: "checked registry entry lowering no longer matches its frontend-approved Registry.entry"
                     .to_string(),
-                span: IrSpan::default(),
+                span: value_span.into(),
+            });
+        }
+        if resolved_identity(subject_span) != Some(&entry.subject_constructor_identity) {
+            return Err(LoweringError {
+                message: "checked registry entry subject no longer matches its frontend-approved artifact".to_string(),
+                span: subject_span.into(),
+            });
+        }
+
+        let IrExprKind::MethodCall {
+            receiver, method, args, ..
+        } = &mut value.kind
+        else {
+            return Err(LoweringError {
+                message: "checked registry entry lowering expected registry.entry(...)".to_string(),
+                span: value_span.into(),
+            });
+        };
+        if self
+            .checked_method_spelling(method, &entry.entry_method_identity, value_span, &receiver.ty)
+            .is_none()
+        {
+            return Err(LoweringError {
+                message: "checked registry entry lowering no longer matches its frontend-approved Registry.entry"
+                    .to_string(),
+                span: value_span.into(),
             });
         }
         let Some(subject) = args.iter_mut().find(|arg| arg.name.as_deref() == Some("subject")) else {
             return Err(LoweringError {
                 message: "checked registry entry lowering expected a named subject argument".to_string(),
-                span: IrSpan::default(),
+                span: value_span.into(),
             });
         };
         let IrExprKind::MethodCall {
+            receiver: subject_receiver,
             method: subject_method,
             args: subject_args,
             ..
@@ -300,22 +339,86 @@ impl AstLowering {
         else {
             return Err(LoweringError {
                 message: "checked registry entry lowering expected a RegistrySubject constructor".to_string(),
-                span: IrSpan::default(),
+                span: subject_span.into(),
             });
         };
-        if subject_method != &expected_source_constructor {
+        let Some(spelling) = self.checked_method_spelling(
+            subject_method,
+            &entry.subject_constructor_identity,
+            subject_span,
+            &subject_receiver.ty,
+        ) else {
             return Err(LoweringError {
                 message: "checked registry entry subject no longer matches its frontend-approved artifact".to_string(),
-                span: IrSpan::default(),
+                span: subject_span.into(),
             });
-        }
+        };
+        let Some(checked_constructor) = self.spell_checked_method(
+            spelling,
+            &entry.checked_constructor_identity,
+            subject_span,
+            &subject_receiver.ty,
+        ) else {
+            return Err(LoweringError {
+                message: "checked registry entry subject has no spelling for its checked constructor under this standard-library provision".to_string(),
+                span: subject_span.into(),
+            });
+        };
         *subject_method = checked_constructor;
         *subject_args = vec![IrCallArg {
             name: None,
             kind: IrCallArgKind::Positional,
-            expr: TypedExpr::new(IrExprKind::String(identity), IrType::String),
+            expr: TypedExpr::new(IrExprKind::String(qualified_name), IrType::String),
         }];
         Ok(())
+    }
+
+    /// Classify the physical spelling lowering gave one checked source method, or `None` when it is none of them.
+    ///
+    /// `project_resolved_method_target` (`lower/expr`) can hand the same checked call one of three spellings: the
+    /// declaration's own name when the projection is declined (a package-owned method reached from outside its
+    /// build), the compiled provider's canonical projection when a provider plan serves the standard library
+    /// (`incan run`), or the source-stdlib projection when the standard library is compiled alongside (the in-process
+    /// codegen tests). A guard that pins one of them refuses the others; this names which one is in effect so the
+    /// checked constructor can follow it.
+    fn checked_method_spelling(
+        &self,
+        lowered: &str,
+        identity: &incan_semantics_core::CanonicalSymbolId,
+        call_span: ast::Span,
+        receiver_ty: &IrType,
+    ) -> Option<CheckedMethodSpelling> {
+        [
+            CheckedMethodSpelling::Source,
+            CheckedMethodSpelling::Provider,
+            CheckedMethodSpelling::Projected,
+        ]
+        .into_iter()
+        .find(|spelling| {
+            self.spell_checked_method(*spelling, identity, call_span, receiver_ty)
+                .is_some_and(|candidate| candidate == lowered)
+        })
+    }
+
+    /// Spell one checked source method the way `spelling` would, or `None` when that provision does not name it.
+    ///
+    /// The provider projection is looked up by declaration name in the provider's API, using the span of a call that
+    /// resolves into the same source module; that is how the compiler-reserved `_checked_*` constructors, which no
+    /// source call ever names, get the spelling of the placeholder call beside them.
+    fn spell_checked_method(
+        &self,
+        spelling: CheckedMethodSpelling,
+        identity: &incan_semantics_core::CanonicalSymbolId,
+        call_span: ast::Span,
+        receiver_ty: &IrType,
+    ) -> Option<String> {
+        match spelling {
+            CheckedMethodSpelling::Source => Some(identity.declaration_name.clone()),
+            CheckedMethodSpelling::Provider => {
+                self.compiled_provider_method_reference_name(call_span, receiver_ty, &identity.declaration_name)
+            }
+            CheckedMethodSpelling::Projected => Some(Self::emitted_source_identity_name(identity, true)),
+        }
     }
 
     /// Resolve the path that should be used when emitting a module-level alias declaration.
@@ -371,5 +474,244 @@ impl AstLowering {
         decorators_list
             .iter()
             .any(|d| decorators::from_segments(&d.node.path.segments) == Some(DecoratorId::RustExtern))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::IrProgram;
+    use incan_frontend::typechecker::{RegistryExplicitEntryInfo, TypeChecker};
+    use incan_frontend::{lexer, parser};
+
+    /// The explicit-entry program of #1713, with both subject kinds.
+    const REGISTRY_SUBJECTS: &str = r#"
+from std.registry import Registry, RegistryEntry, RegistrySubject, SubjectKind
+
+@derive(Clone, Eq)
+type CapabilityId = newtype str
+
+@derive(Descriptor)
+model CapabilitySpec:
+    title: str
+
+pub static capabilities: Registry[CapabilityId, CapabilitySpec] = Registry.define(
+    subjects=[SubjectKind.CompilationUnit, SubjectKind.Package],
+)
+
+pub static logging_capability: RegistryEntry[CapabilityId, CapabilitySpec] = capabilities.entry(
+    key=CapabilityId("std.logging"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=CapabilitySpec(title="Structured logging"),
+)
+
+pub static package_capability: RegistryEntry[CapabilityId, CapabilitySpec] = capabilities.entry(
+    key=CapabilityId("std.registry"),
+    subject=RegistrySubject.package(),
+    descriptor=CapabilitySpec(title="Typed declaration registries"),
+)
+"#;
+
+    /// Check and lower the program as the compilation unit `main` of the package `probe`.
+    fn lower_registry_subjects() -> Result<(ast::Program, AstLowering, IrProgram), String> {
+        let tokens = lexer::lex(REGISTRY_SUBJECTS).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
+        let mut lowering = AstLowering::new_with_type_info(checker.type_info().clone());
+        lowering.set_current_source_module_name(Some("main".to_string()));
+        lowering.set_registry_package_identity(Some("probe".to_string()));
+        let ir_program = lowering
+            .lower_program(&program)
+            .map_err(|errors| format!("lowering failed: {errors:?}"))?;
+        Ok((program, lowering, ir_program))
+    }
+
+    /// Return the source declaration of the named static.
+    fn static_declaration<'a>(program: &'a ast::Program, name: &str) -> Result<&'a ast::StaticDecl, String> {
+        program
+            .declarations
+            .iter()
+            .find_map(|declaration| match &declaration.node {
+                ast::Declaration::Static(static_decl) if static_decl.name == name => Some(static_decl),
+                _ => None,
+            })
+            .ok_or_else(|| format!("missing static `{name}`"))
+    }
+
+    /// Return the checked explicit entry recorded for the named static.
+    fn explicit_entry(lowering: &AstLowering, name: &str) -> Result<RegistryExplicitEntryInfo, String> {
+        lowering
+            .type_info
+            .as_ref()
+            .and_then(|info| {
+                info.registry
+                    .explicit_entries
+                    .iter()
+                    .find(|entry| entry.entry_name == name)
+            })
+            .cloned()
+            .ok_or_else(|| format!("the checker recorded no explicit entry for `{name}`"))
+    }
+
+    /// Return the subject argument's constructor spelling and positional string arguments.
+    fn subject_constructor(value: &TypedExpr) -> Result<(String, Vec<String>), String> {
+        let IrExprKind::MethodCall { args, .. } = &value.kind else {
+            return Err("the entry value is not a method call".to_string());
+        };
+        let subject = args
+            .iter()
+            .find(|arg| arg.name.as_deref() == Some("subject"))
+            .ok_or("the entry call has no named subject argument")?;
+        let IrExprKind::MethodCall { method, args, .. } = &subject.expr.kind else {
+            return Err("the subject is not a constructor call".to_string());
+        };
+        let strings = args
+            .iter()
+            .map(|arg| match &arg.expr.kind {
+                IrExprKind::String(text) => Ok(text.clone()),
+                other => Err(format!("unexpected subject argument {other:?}")),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((method.clone(), strings))
+    }
+
+    /// Rewrite one static's freshly lowered value after respelling its entry call and subject constructor the way
+    /// a declined projection would, which is the spelling `incan run` hands the guard for a package-owned method.
+    fn rewrite_with_spellings(
+        lowering: &mut AstLowering,
+        program: &ast::Program,
+        name: &str,
+        entry_spelling: &str,
+        subject_spelling: &str,
+    ) -> Result<Result<TypedExpr, LoweringError>, String> {
+        let static_decl = static_declaration(program, name)?;
+        let mut value = lowering
+            .lower_expr_spanned(&static_decl.value)
+            .map_err(|error| format!("lowering the entry value failed: {error:?}"))?;
+        {
+            let IrExprKind::MethodCall { method, args, .. } = &mut value.kind else {
+                return Err("the entry value is not a method call".to_string());
+            };
+            *method = entry_spelling.to_string();
+            let subject = args
+                .iter_mut()
+                .find(|arg| arg.name.as_deref() == Some("subject"))
+                .ok_or("the entry call has no named subject argument")?;
+            let IrExprKind::MethodCall { method, .. } = &mut subject.expr.kind else {
+                return Err("the subject is not a constructor call".to_string());
+            };
+            *method = subject_spelling.to_string();
+        }
+        let outcome = lowering
+            .rewrite_checked_registry_entry_subject(name, static_decl.value.span, &mut value)
+            .map(|()| value);
+        Ok(outcome)
+    }
+
+    /// With the standard library compiled alongside, the entry call carries the source-stdlib projection and the
+    /// checked constructor is spelled the same way, carrying the compilation unit or package identity.
+    #[test]
+    fn explicit_registry_entry_follows_the_source_stdlib_projection_issue1713() -> Result<(), String> {
+        let (_, lowering, ir_program) = lower_registry_subjects()?;
+        for (name, expected_identity) in [("logging_capability", "main"), ("package_capability", "probe")] {
+            let entry = explicit_entry(&lowering, name)?;
+            let value = ir_program
+                .declarations
+                .iter()
+                .find_map(|declaration| match &declaration.kind {
+                    IrDeclKind::Static {
+                        name: static_name,
+                        value,
+                        ..
+                    } if static_name == name => Some(value),
+                    _ => None,
+                })
+                .ok_or_else(|| format!("no lowered static `{name}`"))?;
+            let projected_placeholder =
+                AstLowering::emitted_source_identity_name(&entry.subject_constructor_identity, true);
+            let projected_checked =
+                AstLowering::emitted_source_identity_name(&entry.checked_constructor_identity, true);
+            assert_ne!(projected_placeholder, projected_checked);
+            assert_eq!(
+                lowering.checked_method_spelling(
+                    &projected_placeholder,
+                    &entry.subject_constructor_identity,
+                    ast::Span::new(entry.subject_span.0, entry.subject_span.1),
+                    &IrType::Struct("RegistrySubject".to_string()),
+                ),
+                Some(CheckedMethodSpelling::Projected)
+            );
+            assert_eq!(
+                subject_constructor(value)?,
+                (projected_checked, vec![expected_identity.to_string()])
+            );
+        }
+        Ok(())
+    }
+
+    /// A call whose projection was declined keeps its source spelling; the checked constructor follows it, so the
+    /// substituted call names the slot that exists under that provision (#1713).
+    #[test]
+    fn explicit_registry_entry_follows_a_declined_projection_issue1713() -> Result<(), String> {
+        let (program, mut lowering, _) = lower_registry_subjects()?;
+        let value = rewrite_with_spellings(&mut lowering, &program, "logging_capability", "entry", "current_unit")?
+            .map_err(|error| format!("the source spelling was refused: {error:?}"))?;
+        assert_eq!(
+            subject_constructor(&value)?,
+            ("_checked_current_unit".to_string(), vec!["main".to_string()])
+        );
+
+        let value = rewrite_with_spellings(&mut lowering, &program, "package_capability", "entry", "package")?
+            .map_err(|error| format!("the source spelling was refused: {error:?}"))?;
+        assert_eq!(
+            subject_constructor(&value)?,
+            ("_checked_package".to_string(), vec!["probe".to_string()])
+        );
+        Ok(())
+    }
+
+    /// A spelling that is none of the three admissible ones is drift, and still refused with the guard's message.
+    #[test]
+    fn explicit_registry_entry_refuses_an_unknown_spelling_issue1713() -> Result<(), String> {
+        let (program, mut lowering, _) = lower_registry_subjects()?;
+        let refused = rewrite_with_spellings(
+            &mut lowering,
+            &program,
+            "logging_capability",
+            "entry",
+            "current_unit_v2",
+        )?;
+        let Err(error) = refused else {
+            return Err("an unknown subject spelling was accepted".to_string());
+        };
+        assert!(
+            error
+                .message
+                .contains("subject no longer matches its frontend-approved artifact"),
+            "unexpected message: {}",
+            error.message
+        );
+
+        let refused = rewrite_with_spellings(
+            &mut lowering,
+            &program,
+            "logging_capability",
+            "entry_v2",
+            "current_unit",
+        )?;
+        let Err(error) = refused else {
+            return Err("an unknown entry spelling was accepted".to_string());
+        };
+        assert!(
+            error
+                .message
+                .contains("no longer matches its frontend-approved Registry.entry"),
+            "unexpected message: {}",
+            error.message
+        );
+        Ok(())
     }
 }

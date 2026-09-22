@@ -1199,17 +1199,20 @@ pub fn missing_trait_method(trait_name: &str, method: &str, span: Span) -> Compi
     .with_note("All required trait methods must be implemented")
 }
 
-/// Report an `Awaitable[T]` adoption with no compiler-known await realization path.
-pub fn invalid_awaitable_adoption(type_name: &str, expected_output: &str, span: Span) -> CompileError {
+/// Report a model, class, enum or newtype adopting `Awaitable[T]`: the wrapper form of RFC 039 has no realization.
+///
+/// `Awaitable[T]` is realized only as a generic bound (`F with Awaitable[T]`), where every future-like value
+/// satisfies it. Nothing can build a declared type as an awaitable wrapper, and a model, class or enum always derives
+/// `Clone` and `Debug`, which an awaitable handle such as `JoinHandle[T]` cannot be.
+pub fn awaitable_adoption_not_realized(type_name: &str, expected_output: &str, span: Span) -> CompileError {
     CompileError::type_error(
-        format!(
-            "Type '{}' adopts Awaitable[{}] but has no valid await realization",
-            type_name, expected_output
-        ),
+        format!("Type '{type_name}' cannot adopt Awaitable[{expected_output}]: a declared type is never an awaitable wrapper"),
         span,
     )
-    .with_hint("Wrap a known awaitable field such as JoinHandle[T] or Awaitable[T], or use a Rust-backed future type")
-    .with_note("Awaitable adoption must map to a compiler-known await output type")
+    .with_hint("Await the JoinHandle[T] itself, or take the awaitable through a generic bound (`F with Awaitable[T]`)")
+    .with_note(
+        "Awaitable[T] is realized only as a bound over future-like values; a model, class or enum also always derives Clone and Debug, which an awaitable handle such as JoinHandle[T] cannot be",
+    )
 }
 
 /// Report a required Rust associated type that has no adopting-type declaration.

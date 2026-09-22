@@ -2146,49 +2146,30 @@ impl TypeChecker {
         self.validate_overloaded_methods_are_trait_backed(type_name, adoptions, method_overloads, method_spans);
     }
 
-    /// Validate that explicit `Awaitable[T]` adoptions have a compiler-known await realization.
+    /// Refuse every explicit `Awaitable[T]` adoption on a source-declared nominal type: a model, class, enum or
+    /// newtype.
     ///
-    /// User-authored wrapper types may satisfy `Awaitable[T]` by containing a field whose type is itself awaitable and
-    /// whose output type is compatible with `T`. Rust-backed future types and stdlib task handles are handled by the
-    /// ordinary await-realization path outside this declaration check.
-    fn validate_awaitable_adoptions(
-        &mut self,
-        type_name: &str,
-        adoptions: &[ResolvedTraitAdoption],
-        fields: &[(&str, ResolvedType)],
-        type_param_bounds: HashMap<String, Vec<TypeBoundInfo>>,
-    ) {
+    /// RFC 039 admits three await realizations -- a Rust-backed future, a stdlib task handle, and a wrapper delegating
+    /// to an awaitable member -- and requires that nothing can write `with Awaitable[T]` and then fail to build. The
+    /// wrapper path has no realization: the adoption would be emitted as an implementation of a trait that is only a
+    /// bound (`incan_std_async::task::Awaitable<T>`, a blanket over `IntoFuture`, which rustc refuses a second
+    /// implementation of), and a model, class or enum always derives `Clone` and `Debug`, which the awaitable handle
+    /// it would wrap (`JoinHandle[T]`) cannot be. Rusttype adoptions are gated the same way by
+    /// `awaitable_future_bridge_blocked`. A program awaits the handle itself, or takes the awaitable through a generic
+    /// bound, which is the surface the runtime realizes (#1711).
+    fn refuse_awaitable_adoptions(&mut self, type_name: &str, adoptions: &[ResolvedTraitAdoption]) {
         let awaitable_name = builtin_traits::as_str(TraitId::Awaitable);
-        if !adoptions.iter().any(|adoption| adoption.name == awaitable_name) {
-            return;
-        }
-
-        self.current_type_param_bound_details.push(type_param_bounds);
         for adoption in adoptions.iter().filter(|adoption| adoption.name == awaitable_name) {
-            let Some(expected_output) = adoption.args.first() else {
-                continue;
-            };
-            let realization_field = fields.iter().find_map(|(field_name, field_ty)| {
-                self.await_output_type_from_type(field_ty).and_then(|actual_output| {
-                    (self.types_compatible(&actual_output, expected_output)
-                        || self.types_compatible(expected_output, &actual_output))
-                    .then(|| (*field_name).to_string())
-                })
-            });
-            if let Some(field_name) = realization_field {
-                self.type_info
-                    .expressions
-                    .awaitable_delegation_fields
-                    .insert(type_name.to_string(), field_name);
-            } else {
-                self.errors.push(errors::invalid_awaitable_adoption(
-                    type_name,
-                    &expected_output.to_string(),
-                    adoption.span,
-                ));
-            }
+            let expected_output = adoption
+                .args
+                .first()
+                .map_or_else(|| "T".to_string(), ToString::to_string);
+            self.errors.push(errors::awaitable_adoption_not_realized(
+                type_name,
+                &expected_output,
+                adoption.span,
+            ));
         }
-        self.current_type_param_bound_details.pop();
     }
 
     // ========================================================================
@@ -3428,17 +3409,7 @@ impl TypeChecker {
             .iter()
             .filter(|field| self.member_binding_is_active(field.span))
             .collect::<Vec<_>>();
-        let model_fields: Vec<_> = active_model_fields
-            .iter()
-            .map(|field| (field.node.name.as_str(), self.resolve_type_checked(&field.node.ty)))
-            .collect();
-        let model_type_param_bounds = self.type_param_bound_details_from_type_params(&model.type_params);
-        self.validate_awaitable_adoptions(
-            &model.name,
-            &resolved_trait_adoptions,
-            &model_fields,
-            model_type_param_bounds,
-        );
+        self.refuse_awaitable_adoptions(&model.name, &resolved_trait_adoptions);
 
         let mut method_names = HashSet::new();
         if let Some(TypeInfo::Model(info)) = self.lookup_type_info(&model.name) {
@@ -3871,17 +3842,7 @@ impl TypeChecker {
             .iter()
             .filter(|field| self.member_binding_is_active(field.span))
             .collect::<Vec<_>>();
-        let class_fields: Vec<_> = active_class_fields
-            .iter()
-            .map(|field| (field.node.name.as_str(), self.resolve_type_checked(&field.node.ty)))
-            .collect();
-        let class_type_param_bounds = self.type_param_bound_details_from_type_params(&class.type_params);
-        self.validate_awaitable_adoptions(
-            &class.name,
-            &resolved_trait_adoptions,
-            &class_fields,
-            class_type_param_bounds,
-        );
+        self.refuse_awaitable_adoptions(&class.name, &resolved_trait_adoptions);
 
         // RFC 021: Field aliases are NOT supported on class declarations.
         // Reject any field metadata on class fields.
@@ -4464,6 +4425,9 @@ impl TypeChecker {
             };
             resolved_trait_adoptions.push(resolved);
         }
+        // A rusttype's `Awaitable` adoption was refused above and never reached the list; a newtype's is refused here
+        // like a model's, since it would lower to the same impossible trait impl (#1711).
+        self.refuse_awaitable_adoptions(&nt.name, &resolved_trait_adoptions);
 
         for associated_type in &nt.associated_types {
             let trait_name = associated_type.node.trait_target.node.name.as_str();
@@ -4768,8 +4732,7 @@ impl TypeChecker {
             };
             resolved_trait_adoptions.push(resolved);
         }
-        let enum_type_param_bounds = self.type_param_bound_details_from_type_params(&en.type_params);
-        self.validate_awaitable_adoptions(&en.name, &resolved_trait_adoptions, &[], enum_type_param_bounds);
+        self.refuse_awaitable_adoptions(&en.name, &resolved_trait_adoptions);
 
         self.check_value_enum_decl(en);
         self.check_enum_variant_aliases(en);
