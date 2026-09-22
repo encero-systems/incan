@@ -2335,7 +2335,14 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level."
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "tests": {
+        "pub_model_field_read_keeps_dependency_owned_union_carrier_issue1697": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "#1697: asserts the recorded fact, not Rust text: the declared type of a dependency-owned model field lowers to the provider-owned union carrier and retention puts it in the checked type's union position (directly and inside `List`). The replacement route inherits the fact (#1675); re-point the assertion to Body IR when the lowering crate retires."
+        }
+      }
     },
     "loaves/compiler/incan_ir/src/lower/expr/mod.rs": {
       "disposition": "retire",
@@ -4536,6 +4543,11 @@
           "disposition": "keep",
           "twin": "",
           "notes": "`incan fmt` only; formatter surface, no generated Rust."
+        },
+        "external_pub_consumer_narrows_dependency_owned_union_through_model_field_issue1697": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "#1697: bakes a provider whose `pub model` field is a `pub type` union alias, then bakes and runs a consumer that narrows the field, a binding of the field, a helper result and a `List` field's loop element, asserting the exact run output; also asserts the provider-qualified wrapper in `target/incan/<project>/src/main.rs`, which drops in slice 7 while the run assertion stays."
         }
       }
     },
