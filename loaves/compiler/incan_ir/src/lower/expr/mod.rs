@@ -965,7 +965,7 @@ impl AstLowering {
 
         let mut arms = Vec::with_capacity(race.arms.len());
         for arm in &race.arms {
-            let awaitable = self.lower_awaitable_operand(&arm.awaitable)?;
+            let awaitable = self.lower_expr_spanned(&arm.awaitable)?;
             let binding_ty = Self::race_binding_type_for_awaitable(&awaitable);
 
             self.push_scope();
@@ -994,44 +994,6 @@ impl AstLowering {
             ast::RaceForBody::Expr(expr) => self.lower_expr_spanned(expr),
             ast::RaceForBody::Block(stmts) => self.lower_race_arm_block_body(stmts),
         }
-    }
-
-    /// Lower an await operand, applying typechecker-proven wrapper delegation when a concrete `Awaitable[T]` wrapper
-    /// delegates to one awaitable field.
-    fn lower_awaitable_operand(&mut self, operand: &Spanned<ast::Expr>) -> Result<TypedExpr, LoweringError> {
-        let lowered = self.lower_expr_spanned(operand)?;
-        let Some(field) = self.awaitable_delegation_field_for_span(operand.span) else {
-            return Ok(lowered);
-        };
-        Ok(TypedExpr::new(
-            IrExprKind::Field {
-                object: Box::new(lowered),
-                field,
-            },
-            IrType::Unknown,
-        ))
-    }
-
-    /// Return the delegated field name for an expression whose resolved type is a wrapper `Awaitable[T]`.
-    fn awaitable_delegation_field_for_span(&self, span: ast::Span) -> Option<String> {
-        let type_info = self.type_info.as_ref()?;
-        let expr_ty = type_info.expr_type(span)?;
-        let type_name = match expr_ty {
-            incan_frontend::symbols::ResolvedType::Named(name)
-            | incan_frontend::symbols::ResolvedType::Generic(name, _) => name,
-            incan_frontend::symbols::ResolvedType::Ref(inner)
-            | incan_frontend::symbols::ResolvedType::RefMut(inner) => match inner.as_ref() {
-                incan_frontend::symbols::ResolvedType::Named(name)
-                | incan_frontend::symbols::ResolvedType::Generic(name, _) => name,
-                _ => return None,
-            },
-            _ => return None,
-        };
-        type_info
-            .expressions
-            .awaitable_delegation_fields
-            .get(type_name)
-            .cloned()
     }
 
     /// Lower a block race arm, treating a trailing expression statement as the arm value.
@@ -2267,7 +2229,7 @@ impl AstLowering {
                         // Preserve explicit grouping: `await (x?)` should keep the grouped `Try` operand shape
                         // instead of applying await/try normalization for the unparenthesized `await x()?` case.
                         let parenthesized_operand = matches!(&inner.node, ast::Expr::Paren(_));
-                        let lowered_inner = self.lower_awaitable_operand(inner)?;
+                        let lowered_inner = self.lower_expr_spanned(inner)?;
                         if parenthesized_operand {
                             let ty = lowered_inner.ty.clone();
                             (IrExprKind::Await(Box::new(lowered_inner)), ty)
