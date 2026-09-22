@@ -81,6 +81,46 @@ fn can_use_source_method_projection(receiver: &TypedExpr, dispatch: Option<&IrMe
             )))
 }
 
+/// Group an operator-shaped operand of `not`, unary `-` and `~` so the operator applies to the whole expression.
+///
+/// `not (a == b)` negates the comparison. The Rust-emission backend spells a prefix operator directly in front of the
+/// operand's own tokens, and a Rust prefix operator binds tighter than every infix operator, cast and range: an
+/// operator expression handed over bare re-associates as `!a == b`, which compiles and prints the wrong answer
+/// (#1763), and a cast re-associates as `-x as i64`. The IR's grouping form is a block with no statements and a value
+/// -- one operand wherever the emitter places it, in the operand's own type. The grouped shapes are the ones the
+/// emitter may render as an infix, cast, conditional or range expression: an operator expression, the numeric
+/// adapters and interop coercions (a cast, or the operand's own tokens unchanged), the value conversions `int`,
+/// `float` and `bool` (a cast or a comparison), an `if` or `match` expression, and a range. Every other shape (a name,
+/// a literal, a call, a method chain, a field, an index, a nested prefix operator) is already one operand and is left
+/// as written, so its emission does not change; the `Ref`/`RefMut` operators parenthesise their own operand in the
+/// emitter, and the `not in` desugarings negate a method call. Sibling of `grouped_conversion_operand`
+/// (`lower/expr/calls.rs`, #1746), which groups the argument of `str(...)` for the same reason; unify the two once both
+/// have landed.
+fn grouped_unary_operand(operand: TypedExpr) -> TypedExpr {
+    let operator_shaped = match &operand.kind {
+        IrExprKind::BinOp { .. }
+        | IrExprKind::Cast { .. }
+        | IrExprKind::NumericResize { .. }
+        | IrExprKind::InteropCoerce { .. }
+        | IrExprKind::If { .. }
+        | IrExprKind::Match { .. }
+        | IrExprKind::Range { .. } => true,
+        IrExprKind::BuiltinCall { func, .. } => matches!(func, BuiltinFn::Int | BuiltinFn::Float | BuiltinFn::Bool),
+        _ => false,
+    };
+    if !operator_shaped {
+        return operand;
+    }
+    let ty = operand.ty.clone();
+    TypedExpr::new(
+        IrExprKind::Block {
+            stmts: Vec::new(),
+            value: Some(Box::new(operand)),
+        },
+        ty,
+    )
+}
+
 impl AstLowering {
     /// Select the physical method target while retaining any checked trait evidence needed after lowering.
     pub fn project_resolved_method_target(
@@ -1719,7 +1759,7 @@ impl AstLowering {
                                 ast::UnaryOp::Not => UnaryOp::Not,
                                 ast::UnaryOp::Invert => UnaryOp::Not,
                             },
-                            operand: Box::new(operand),
+                            operand: Box::new(grouped_unary_operand(operand)),
                         },
                         ty,
                     )
