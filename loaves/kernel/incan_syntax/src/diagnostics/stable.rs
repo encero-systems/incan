@@ -232,94 +232,76 @@ const CALLABLE_MARKER_NOT_SUPPORTED: DiagnosticCatalogEntry = DiagnosticCatalogE
     title: "Callable marker cannot be spelled here",
     severity: "error",
     phase: "typecheck",
-    summary: "An `Fn`, `FnMut` or `FnOnce` marker from `std.rust` names more than two parameters, or bounds a type parameter of a nominal declaration.",
+    summary: "An `Fn`, `FnMut` or `FnOnce` marker from `std.rust` names more than two parameters, or bounds a nominal declaration.",
     explanation: "A callable marker names a callable's parameter list and learns its return type from a function or method call. It currently supports at most two parameters and cannot complete a nominal declaration's type parameter.",
     examples: &["from std.rust import Fn\n\ndef run[F with Fn[int, int, int]](f: F) -> None:\n    pass"],
-    common_causes: &[
-        "A callback with three or more arguments.",
-        "A nominal declaration bounded with a marker instead of a callable trait.",
-    ],
+    common_causes: &["A callback with three or more arguments."],
     fixes: &[
-        "Write at most two parameters, or gather them into one model.",
-        "Use `Callable1[int, R]` from `std.traits.callable` on a nominal declaration.",
+        "Write at most two parameters, or use `Callable1[int, R]` from `std.traits.callable` on a nominal declaration.",
     ],
     docs_url: Some("https://encero-systems.github.io/incan/language/how-to/rust_interop/"),
 };
 
-const SELF_MUTATION_REQUIRES_MUT_SELF: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
-    code: "INCAN-T0102",
-    title: "Method changes the object but takes `self`",
+const ROUTE_HANDLER_RETURN_NOT_RESPONSE: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0107",
+    title: "Route handler returns a non-response type",
     severity: "error",
     phase: "typecheck",
-    summary: "A method assigns to a field, or calls a method that changes one, while its receiver is a plain `self`.",
-    explanation: "The receiver spelling is a contract the compiled code keeps literally: `self` reads the object, `mut self` may change it. A body that assigns to `self.field`, writes `self.items[i]`, or calls a changing method such as `self.items.append(...)` or a `mut self` method of its own therefore needs a `mut self` receiver. The check applies to classes, models, trait default methods and trait implementations alike, and follows field and index chains rooted at `self`.",
+    summary: "A `@route` handler's declared return type is not a response type, so the route has nothing to send.",
+    explanation: "A route handler's return value is the HTTP response. The response types are `str`, `None`, `Json[...]`, `Html`, `Response`, a `Result` whose both sides are response types, and a wrapper type that derives `IntoResponse` from `std.web.macros`. A handler declared with any other return type, such as `int`, `float`, a tuple, a list or a plain model, checked before but could not be built: the route registration needs a response and had none. The check reads the declared return type only; a type the compiler cannot classify, such as a Rust-origin type, is left to the build.",
     examples: &[
-        "class Stack:\n    items: list[int]\n\n    def pop(self) -> int:\n        return self.items.pop()",
-        "class Carton with Resizable:\n    width: float\n\n    def resize(self, factor: float) -> None:\n        self.width *= factor",
+        "from std.web import route\nimport std.async\n\n@route(\"/users/{id}\")\nasync def create_user(id: int) -> int:\n    return id",
     ],
     common_causes: &[
-        "A method written with `self` that grew a field assignment or a changing collection call.",
-        "A trait implementation whose trait declares the method with `self` while the implementation needs to write.",
+        "Returning a number or a computed value directly instead of its text or JSON form.",
+        "Returning a model without wrapping it in `Json(...)`.",
     ],
     fixes: &[
-        "Declare the receiver as `mut self`: `def pop(mut self) -> int`.",
-        "When the method implements a trait method, declare `mut self` in the trait as well so the signatures match.",
+        "Return the value as text: `-> str` and `return str(id)`.",
+        "Return JSON: `-> Json[User]` and `return Json(user)`, with `@derive(json)` on the model.",
+        "Return `Html(...)` or a `Response` builder result for other bodies.",
     ],
-    docs_url: Some("https://encero-systems.github.io/incan/language/explanation/models_and_classes/classes/"),
+    docs_url: Some("https://encero-systems.github.io/incan/language/tutorials/web_framework/"),
 };
 
-const PRINT_ARGUMENT_IS_TUPLE: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
-    code: "INCAN-T0103",
-    title: "Tuple passed to `print`",
+const ROUTE_HANDLER_PARAMETER_UNBOUND: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0108",
+    title: "Route handler parameter is not bound by the route",
     severity: "error",
     phase: "typecheck",
-    summary: "A `print` or `println` argument is a tuple, which has no printed form.",
-    explanation: "Tuples have no printed form in the language, so a program that prints one has no output to promise and cannot be built. Each element prints on its own: index into the tuple or unpack it first.",
-    examples: &["coords: tuple[int, int] = (10, 20)\nprint(coords)"],
+    summary: "A `@route` handler has a parameter that no `{segment}` of the path binds and no extractor supplies.",
+    explanation: "A route handler receives its parameters from the request in two ways. A `{name}` segment in the path binds the parameter named `name`, and a typed extractor parameter reads the request itself: `Json[T]` the body, `Query[T]` the query string, `Path[T]` the path, or a wrapper type deriving `FromRequestParts` from `std.web.macros`. A parameter that is neither has no value to receive, so the route cannot be registered and the build stopped on it. The check reads the path when it is a string literal in the decorator; a parameter whose type the compiler cannot classify is left to the build.",
+    examples: &[
+        "from std.web import route, POST\nimport std.async\n\n@route(\"/things\", methods=[POST])\nasync def create(id: int) -> str:\n    return str(id)",
+    ],
     common_causes: &[
-        "Printing a tuple-returning call's result directly.",
-        "Printing a tuple binding as a shortcut for printing its elements.",
+        "A `{segment}` left out of the path, or spelled differently from the parameter.",
+        "A value meant to come from the query string or the body declared as a plain scalar parameter.",
     ],
     fixes: &[
-        "Print the elements: `print(coords[0], coords[1])`.",
-        "Unpack first, then print the names: `x, y = coords` and `print(x, y)`.",
+        "Add the segment to the path: `@route(\"/things/{id}\")`.",
+        "Read the value from the request: `params: Query[Params]` or `body: Json[Payload]`.",
     ],
-    docs_url: Some("https://encero-systems.github.io/incan/language/reference/language/"),
+    docs_url: Some("https://encero-systems.github.io/incan/language/tutorials/web_framework/"),
 };
 
-const TUPLE_ANNOTATION_REQUIRES_ELEMENT_TYPES: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
-    code: "INCAN-T0104",
-    title: "Tuple annotation without element types",
+const OPERATOR_HAS_NO_TYPE_PARAMETER_BOUND: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0109",
+    title: "Numeric operator on a type parameter",
     severity: "error",
     phase: "typecheck",
-    summary: "A `Tuple` (or `tuple`) annotation names no element types.",
-    explanation: "`Tuple` is a family of types, one per element list, so the bare word names no type: nothing can be emitted for it and the build stops. Every tuple annotation spells its element types in order.",
-    examples: &["multiple: Tuple = (\"a\", 1)"],
+    summary: "`/`, `//`, `%` or `**` is applied to values of a type parameter, which no bound can support.",
+    explanation: "A generic function's arithmetic on a type parameter becomes an inferred bound: `+`, `-` and `*` require the type argument to support that operator. True division, floor division, modulo and power do not work that way. They follow the language's numeric rules, which the concrete numeric types carry: `/` yields `float` for any operands, `//` and `%` round toward negative infinity, `**` picks its result type from the exponent. No trait stands for those rules, so a function that applies one of these operators to values of a type parameter has no bound a type argument could satisfy and could never be compiled for any argument. The operator still resolves through a bound trait that defines its hook (`__div__`, `__floordiv__`, `__mod__`, `__pow__`), so a type parameter bounded by such a trait is accepted.",
+    examples: &["def modulo[T](a: T, b: T) -> T:\n    return a % b"],
     common_causes: &[
-        "A Python habit of annotating with the bare `Tuple` name.",
-        "An annotation left incomplete while the value's shape was still changing.",
-    ],
-    fixes: &["Write one type per element: `tuple[str, int]` or `Tuple[str, int]`."],
-    docs_url: Some("https://encero-systems.github.io/incan/language/reference/language/"),
-};
-
-const RUST_OWNER_TYPE_ARGS_NOT_INFERRED: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
-    code: "INCAN-T0105",
-    title: "Rust type arguments cannot be inferred",
-    severity: "error",
-    phase: "typecheck",
-    summary: "A Rust associated call leaves its owner's type arguments open and nothing later in the program fixes them.",
-    explanation: "`HashMap.new()` on `rust::std::collections::HashMap` leaves `K` and `V` open. Rust fills them from a later use of the binding, such as an insert, a typed return, or an annotation on the binding; a binding that is never read again, or a result that is not bound at all, gives it nothing to work with, and the build stops on the call. The check fires only when the compiler can see the owner's type parameters and the value has no later reader.",
-    examples: &["from rust::std::collections import HashMap\n\ndef main() -> None:\n    mut untyped = HashMap.new()"],
-    common_causes: &[
-        "A collection constructed and then never used.",
-        "A binding whose only later uses do not mention the element types, such as `len(m)`.",
+        "A numeric helper written generically when its operands are always `int` or `float`.",
+        "Expecting `/` on a type parameter to become a `Div` bound the way `+` becomes an `Add` bound.",
     ],
     fixes: &[
-        "Write the type arguments in the call: `HashMap.new[str, int]()`.",
-        "Annotate the binding: `untyped: HashMap[str, int] = HashMap.new()`.",
+        "Declare the operands as `int` or `float`: `def modulo(a: int, b: int) -> int`.",
+        "Bound the parameter by a trait that defines the operator's hook, `def modulo[T with Remainder](a: T, b: T) -> T`, and implement `__mod__` on the trait.",
     ],
-    docs_url: Some("https://encero-systems.github.io/incan/language/how-to/rust_interop/"),
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/numeric_semantics/"),
 };
 
 const IMPORT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
@@ -436,11 +418,10 @@ const CATALOG: &[DiagnosticCatalogEntry] = &[
     PARSER_SYNTAX,
     TYPECHECK,
     UNREACHABLE_CODE,
-    SELF_MUTATION_REQUIRES_MUT_SELF,
-    PRINT_ARGUMENT_IS_TUPLE,
-    TUPLE_ANNOTATION_REQUIRES_ELEMENT_TYPES,
-    RUST_OWNER_TYPE_ARGS_NOT_INFERRED,
     CALLABLE_MARKER_NOT_SUPPORTED,
+    ROUTE_HANDLER_RETURN_NOT_RESPONSE,
+    ROUTE_HANDLER_PARAMETER_UNBOUND,
+    OPERATOR_HAS_NO_TYPE_PARAMETER_BOUND,
     IMPORT,
     SDK_COMPONENT_DISABLED,
     SDK_COMPONENT_UNAVAILABLE,
@@ -677,49 +658,45 @@ mod tests {
     }
 
     #[test]
-    fn checker_refusals_of_unbuildable_programs_use_distinct_stable_codes() -> Result<(), Box<dyn std::error::Error>> {
-        let self_mutation = errors::self_mutation_requires_mut_self(
-            "pop",
-            "self.items",
-            errors::SelfMutation::MutatingCall { callee: "pop" },
+    fn route_handler_and_type_parameter_operator_refusals_use_distinct_stable_codes() {
+        let return_type = errors::route_handler_return_not_response("create_user", "int", Span::default());
+        let unbound = errors::route_handler_parameter_unbound(
+            "create",
+            "id",
+            "/things",
+            &["year".to_string(), "month".to_string()],
             Span::default(),
         );
-        let print_tuple = errors::print_argument_is_tuple("print", "coords", 2, Span::default());
-        let bare_tuple = errors::tuple_annotation_requires_element_types("Tuple", Span::default());
-        let open_generics = errors::rust_owner_type_args_not_inferred(
-            "HashMap",
-            "new",
-            &["K".to_string(), "V".to_string()],
-            Some("untyped"),
-            Span::default(),
-        );
+        let operator = errors::operator_has_no_type_parameter_bound("%", "T", "__mod__", Span::default());
 
-        assert_eq!(
-            code_for_error(&self_mutation, DiagnosticPhase::Typecheck),
-            "INCAN-T0102"
-        );
-        assert_eq!(code_for_error(&print_tuple, DiagnosticPhase::Typecheck), "INCAN-T0103");
-        assert_eq!(code_for_error(&bare_tuple, DiagnosticPhase::Typecheck), "INCAN-T0104");
-        assert_eq!(
-            code_for_error(&open_generics, DiagnosticPhase::Typecheck),
-            "INCAN-T0105"
-        );
-        for code in ["INCAN-T0102", "INCAN-T0103", "INCAN-T0104", "INCAN-T0105"] {
+        assert_eq!(code_for_error(&return_type, DiagnosticPhase::Typecheck), "INCAN-T0107");
+        assert_eq!(code_for_error(&unbound, DiagnosticPhase::Typecheck), "INCAN-T0108");
+        assert_eq!(code_for_error(&operator, DiagnosticPhase::Typecheck), "INCAN-T0109");
+        for code in ["INCAN-T0107", "INCAN-T0108", "INCAN-T0109"] {
             let Some(entry) = explain(code) else {
-                return Err(format!("{code} must have a catalog explanation").into());
+                panic!("{code} must have a catalog explanation");
             };
             assert_eq!(entry.severity, "error");
             assert_eq!(entry.phase, "typecheck");
         }
         assert!(
-            open_generics
-                .hints
-                .iter()
-                .any(|hint| hint.contains("HashMap.new[str, int]()") && hint.contains("untyped: HashMap[str, int]")),
-            "the remedy must spell both the call and the binding form, got {:?}",
-            open_generics.hints
+            unbound.hints.iter().any(|hint| hint.contains("'/things/{id}'")),
+            "the remedy must spell the path with the segment added, got {:?}",
+            unbound.hints
         );
-        Ok(())
+        assert!(
+            unbound
+                .notes
+                .iter()
+                .any(|note| note == "The path binds 'year', 'month'"),
+            "the captures the path does bind must be listed, got {:?}",
+            unbound.notes
+        );
+        assert!(
+            operator.hints.iter().any(|hint| hint.contains("'__mod__'")),
+            "the remedy must name the operator's trait hook, got {:?}",
+            operator.hints
+        );
     }
 
     #[test]

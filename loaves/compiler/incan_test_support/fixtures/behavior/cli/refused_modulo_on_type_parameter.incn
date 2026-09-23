@@ -1,0 +1,12 @@
+# behavior: a generic function applying % or / to values of its type parameter is refused at check time because no bound stands for those operators
+# expect-diagnostic: INCAN-T0109
+
+def modulo[T](a: T, b: T) -> T:
+    return a % b
+
+def divide[T](a: T, b: T) -> T:
+    return a / b
+
+def main() -> None:
+    println(modulo(8, 3))
+    println(divide(8.0, 2.0))

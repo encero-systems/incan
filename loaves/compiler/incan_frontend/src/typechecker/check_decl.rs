@@ -5836,6 +5836,8 @@ impl TypeChecker {
         let previous_annotation_owner = self.enter_annotation_owner(&func.name, &func.type_params);
 
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&func.params);
+        let return_type = self.resolve_type_checked(&func.return_type);
+        self.check_route_handler_signature(func, &return_type, &resolved_param_types);
 
         // Define parameters after checking defaults so a declaration-owned default cannot resolve a callable-frame
         // binding. The function body still receives its ordinary parameter locals below.
@@ -5858,7 +5860,6 @@ impl TypeChecker {
             self.record_write_target_identity(param.span, &param.node.name);
         }
 
-        let return_type = self.resolve_type_checked(&func.return_type);
         let has_yield = any_expr_in_body(&func.body, |expr| matches!(expr, Expr::Yield(_)));
         if return_type.generator_element_type().is_some() && !has_yield && !body_has_return_value(&func.body) {
             self.errors

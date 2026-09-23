@@ -297,8 +297,8 @@ from std.web.routing import GET
 import std.async
 
 @std.web.routing.route("/", methods=[GET])
-async def index() -> int:
-  return 1
+async def index() -> str:
+  return "1"
 "#;
     assert_check_ok(source);
 }
@@ -312,8 +312,8 @@ from std.web.routing import GET
 import std.async
 
 @web.route("/", methods=[GET])
-async def index() -> int:
-  return 1
+async def index() -> str:
+  return "1"
 "#;
     assert_check_ok(source);
 }
@@ -326,8 +326,8 @@ from std.web import route, GET
 import std.async
 
 @route("/", methods=[GET])
-async def index() -> int:
-  return 1
+async def index() -> str:
+  return "1"
 "#;
     assert_check_ok(source);
 }
@@ -340,8 +340,8 @@ from std.web.routing import GET
 import std.async
 
 @std::web::routing::route("/", methods=[GET])
-async def index() -> int:
-  return 1
+async def index() -> str:
+  return "1"
 "#;
     assert_check_ok(source);
 }

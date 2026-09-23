@@ -2285,6 +2285,14 @@
       "split_target": "",
       "notes": "typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics."
     },
+    "loaves/compiler/incan_frontend/src/typechecker/web_routes.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker: route-handler signature rules (#1721, #1722); the inline tests cover the path-capture reader and the shape combinator, the checker rows live in loaves/compiler/incan_frontend/src/typechecker/tests/stdlib_surfaces.rs. No emit/driver dependency."
+    },
     "loaves/compiler/incan_frontend/src/vocab_ast_bridge.rs": {
       "disposition": "keep",
       "owner": 1561,

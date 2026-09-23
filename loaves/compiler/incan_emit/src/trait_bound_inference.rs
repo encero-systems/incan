@@ -14,11 +14,14 @@
 //! | `+`                         | `std::ops::Add<Output = T>`    |
 //! | `-`                         | `std::ops::Sub<Output = T>`    |
 //! | `*`                         | `std::ops::Mul<Output = T>`    |
-//! | `/`                         | `std::ops::Div<Output = T>`    |
-//! | `%`                         | `std::ops::Rem<Output = T>`    |
 //! | `clone()`                   | `Clone`                        |
 //! | used as `Dict` key          | `Eq + Hash`                    |
 //! | used as `Set` element       | `Eq + Hash`                    |
+//!
+//! `/`, `//`, `%` and `**` between values of a type parameter never reach this pass: the typechecker refuses them
+//! (`INCAN-T0109`, #1715) because their Python-shaped numeric semantics are provided by the runtime for the concrete
+//! numeric types only, so no bound a type argument could satisfy exists for them. The `Div` and `Rem` rows of
+//! `binop_to_trait_bound` remain as RFC 023 wrote them; no checked program reaches them.
 //!
 //! ## Transitive inference
 //!
