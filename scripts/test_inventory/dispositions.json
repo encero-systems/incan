@@ -1582,7 +1582,7 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_constructor_surfaces",
           "notes": "asserted a compiled dependency's model with a private defaulted field takes only its public fields, and a class takes all; the twin (a project with dependencies) builds `Envelope(label=...)` and `Vault(secret=..., label=...)` from a dependency and prints their methods. The bridge argument order dies with #654."
         },
-        "manifest_constructor_metadata_recognises_phantom_type_parameters_issue1370": {
+        "manifest_constructor_metadata_recognizes_phantom_type_parameters_issue1370": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_constructor_surfaces",
           "notes": "asserted a compiled dependency's model with a phantom type parameter is constructed with its marker (#1370); the twin constructs `Columns[int, str](...)` from a dependency and prints its fields. The `PhantomData` initializer dies with #654."
         },

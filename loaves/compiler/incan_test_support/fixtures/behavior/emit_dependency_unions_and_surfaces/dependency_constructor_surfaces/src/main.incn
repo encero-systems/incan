@@ -2,7 +2,7 @@
 # retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::alternate_type_name_call_uses_exact_private_library_constructor_bridge_issue883
 # retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::qualified_public_module_model_call_emits_struct_and_constant_paths_issue948
 # retires: loaves/compiler/incan_emit/src/emit/mod.rs::manifest_constructor_metadata_exports_only_public_fields_for_private_defaults
-# retires: loaves/compiler/incan_emit/src/emit/mod.rs::manifest_constructor_metadata_recognises_phantom_type_parameters_issue1370
+# retires: loaves/compiler/incan_emit/src/emit/mod.rs::manifest_constructor_metadata_recognizes_phantom_type_parameters_issue1370
 # expect-stdout:
 #   sealed:42
 #   named:7
