@@ -66,43 +66,43 @@
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures twinning codegen snapshot tests over lists, dicts, sets, comprehensions, iterators, strings and builtins; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+      "notes": "behavior fixtures twinning codegen snapshot tests over lists, dicts, sets, comprehensions, iterators, strings and builtins; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_enums_and_matching": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures twinning codegen snapshot tests over enums, patterns, match, unions and `isinstance`; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+      "notes": "behavior fixtures twinning codegen snapshot tests over enums, patterns, match, unions and `isinstance`; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_functions_and_projections": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures twinning codegen snapshot tests over functions, calls, decorators, aliases, partials and RFC 120 projections; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+      "notes": "behavior fixtures twinning codegen snapshot tests over functions, calls, decorators, aliases, partials and RFC 120 projections; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_models_and_classes": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures twinning codegen snapshot tests over models, classes, fields, constructors and properties; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+      "notes": "behavior fixtures twinning codegen snapshot tests over models, classes, fields, constructors and properties; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures twinning codegen snapshot tests over newtypes, validation, JSON and serde trait adoption; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+      "notes": "behavior fixtures twinning codegen snapshot tests over newtypes, validation, JSON and serde trait adoption; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures twinning codegen snapshot tests over stdlib module surfaces (math, fs, tempfile, testing, async, derives, registry, graph, uuid, regex, compression, traits, web); run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+      "notes": "behavior fixtures twinning codegen snapshot tests over stdlib module surfaces (math, fs, tempfile, testing, async, derives, registry, graph, uuid, regex, compression, traits, web); run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics": {
       "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
       "owner": 1561,
-      "notes": "behaviour fixtures twinning codegen snapshot tests over traits, supertraits, bounds, generics, protocol hooks and fallible iteration; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+      "notes": "behavior fixtures twinning codegen snapshot tests over traits, supertraits, bounds, generics, protocol hooks and fallible iteration; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
     },
     "loaves/compiler/incan_test_support/fixtures/invalid": {
       "pattern": "**/*.incn",
@@ -2516,19 +2516,19 @@
       "tests": {
         "hoisted_literal_tests_conjoin_with_the_arm_guard_issue1707": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_enums_and_matching/tuple_str_literal_pattern.incn",
-          "notes": "Asserts the recorded guard shape on the legacy IR (literal tests ahead of the user's guard; a nested alternation of str literals as one binding tested with `or`); retires with `incan_ir`. The behaviour is carried by the named fixture's guarded and alternation arms (#1707)."
+          "notes": "Asserts the recorded guard shape on the legacy IR (literal tests ahead of the user's guard; a nested alternation of str literals as one binding tested with `or`); retires with `incan_ir`. The behavior is carried by the named fixture's guarded and alternation arms (#1707)."
         },
         "nested_string_literal_pattern_lowers_to_a_guarded_binding_issue1707": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_enums_and_matching/tuple_str_literal_pattern.incn",
-          "notes": "Asserts the recorded pattern fact on the legacy IR (a nested str literal becomes a `__incan_match_str_<n>` binding whose equality test is the arm's guard); retires with `incan_ir`. The behaviour, a str literal nested in a tuple pattern selecting its arm, is carried by the named fixture (#1707)."
+          "notes": "Asserts the recorded pattern fact on the legacy IR (a nested str literal becomes a `__incan_match_str_<n>` binding whose equality test is the arm's guard); retires with `incan_ir`. The behavior, a str literal nested in a tuple pattern selecting its arm, is carried by the named fixture (#1707)."
         },
         "partial_constructor_pattern_records_its_rest_fields_as_wildcards_issue1708": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_models_and_classes/partial_constructor_pattern.incn",
-          "notes": "Asserts the recorded pattern fact on the legacy IR (the checker's rest fields appear as wildcards in the struct pattern, alias keys canonical); retires with `incan_ir`. The behaviour, a partial constructor pattern selecting its arm, is carried by the named fixture (#1708)."
+          "notes": "Asserts the recorded pattern fact on the legacy IR (the checker's rest fields appear as wildcards in the struct pattern, alias keys canonical); retires with `incan_ir`. The behavior, a partial constructor pattern selecting its arm, is carried by the named fixture (#1708)."
         },
         "tuple_pattern_over_a_written_tuple_annotation_binds_its_names_issue1714": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_enums_and_matching/tuple_pattern_bindings.incn",
-          "notes": "Asserts the recorded bindings on the legacy IR (a tuple pattern over a `tuple[int, str]` scrutinee binds its names with the element types); retires with `incan_ir`. The behaviour is carried by the named fixture (#1714)."
+          "notes": "Asserts the recorded bindings on the legacy IR (a tuple pattern over a `tuple[int, str]` scrutinee binds its names with the element types); retires with `incan_ir`. The behavior is carried by the named fixture (#1714)."
         }
       }
     },
@@ -2560,7 +2560,7 @@
       "tests": {
         "prefix_operator_over_an_operator_expression_lowers_a_grouped_operand_issue1763": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/negation_keeps_its_operand_grouping.incn",
-          "notes": "Asserts the recorded shape on the legacy IR (an operator-shaped operand of `not`, unary `-` or `~` is handed to the emitter as one grouped value in its own type; an atomic operand stays as written); retires with `incan_ir`. The behaviour, `not (1 == 2)` printing `true` and `-(2 + 3)` printing `-5`, is carried by the named fixture (#1763)."
+          "notes": "Asserts the recorded shape on the legacy IR (an operator-shaped operand of `not`, unary `-` or `~` is handed to the emitter as one grouped value in its own type; an atomic operand stays as written); retires with `incan_ir`. The behavior, `not (1 == 2)` printing `true` and `-(2 + 3)` printing `-5`, is carried by the named fixture (#1763)."
         }
       }
     },
@@ -3906,7 +3906,7 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "runs every behaviour fixture of the snapshots_* areas (one libtest case per leaf area) as a program and compares its observables; the route changes under it, the fixtures do not."
+      "notes": "runs every behavior fixture of the snapshots_* areas (one libtest case per leaf area) as a program and compares its observables; the route changes under it, the fixtures do not."
     },
     "loaves/toolchain/incan-cli/tests/canonical_item_imports.rs": {
       "disposition": "re-point",
