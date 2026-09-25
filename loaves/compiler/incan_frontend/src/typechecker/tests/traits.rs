@@ -1091,14 +1091,15 @@ def main() -> None:
         vec!["Method 'resize' assigns to 'self.width' but takes 'self'"]
     );
 
-    // Declaring `mut self` on both the trait and the implementation is the accepted form.
+    // Declaring `mut self` on both the trait and the implementation is the accepted form. `width` is `pub` here
+    // because `main` reads it, and a class field is private to the class's own methods by default.
     assert_check_ok(
         r#"
 trait Resizable:
     def resize(mut self, factor: float) -> None
 
 class Carton with Resizable:
-    width: float
+    pub width: float
 
     def resize(mut self, factor: float) -> None:
         self.width *= factor

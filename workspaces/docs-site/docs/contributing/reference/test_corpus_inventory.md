@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3153 | 191 | 7 |
+| keep | 3154 | 191 | 7 |
 | re-point | 496 | 48 | 424 |
 | retire | 1126 | 77 | 0 |
 | unaffected | 1437 | 134 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **6212** | **450** | **436** |
+| **Total** | **6213** | **450** | **436** |
 
 - Retire-class tests: 1126, of which twinned 57, dies 115, open 954 (neither yet).
 - Retire-class files with open rows: 62 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -474,7 +474,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 | `loaves/compiler/incan_frontend/src/typechecker/tests/statements_and_bindings.rs` | 69 | 1175 | 1175 | keep | - | - | - | #1561 | checker 66, parser 1 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/stdlib_surfaces.rs` | 50 | 1439 | 1439 | keep | - | - | - | #1561 | checker 35, parser 12 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/trait_instantiation_and_operators.rs` | 42 | 1363 | 1363 | keep | - | - | - | #1561 | checker 41, parser 11 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
-| `loaves/compiler/incan_frontend/src/typechecker/tests/traits.rs` | 48 | 1136 | 1136 | keep | - | - | - | #1561 | checker 44, parser 22 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/traits.rs` | 48 | 1137 | 1137 | keep | - | - | - | #1561 | checker 44, parser 22 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/validate_rust_module.rs` | 2 | 270 | 30 | keep | - | - | - | #1561 | - | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/typechecker/web_routes.rs` | 2 | 340 | 37 | keep | - | - | - | #1561 | - | typechecker: route-handler signature rules (#1721, #1722); the inline tests cover the path-capture reader and the shape combinator, the checker rows live in loaves/compiler/incan_frontend/src/typechecker/tests/stdlib_surfaces.rs. No emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/vocab_ast_bridge.rs` | 12 | 1896 | 491 | keep | - | - | - | #1561 | - | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
@@ -608,13 +608,13 @@ Per-test overrides in `loaves/compiler/incan_ir/src/lower/tests/unary_operand_gr
 | `loaves/kernel/incan_semantics_core/src/stable_identity.rs` | 7 | 444 | 245 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/types.rs` | 7 | 435 | 95 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 
-### `loaves/kernel/incan_syntax` (308 tests in 15 files: keep 308)
+### `loaves/kernel/incan_syntax` (309 tests in 15 files: keep 309)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/kernel/incan_syntax/src/ast/types.rs` | 1 | 252 | 39 | keep | - | - | - | #1561 | - | lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/diagnostics/base.rs` | 2 | 396 | 39 | keep | - | - | - | #1561 | checker 1 | lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
-| `loaves/kernel/incan_syntax/src/diagnostics/stable.rs` | 6 | 728 | 163 | keep | - | - | - | #1561 | checker 6 | lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
+| `loaves/kernel/incan_syntax/src/diagnostics/stable.rs` | 7 | 858 | 209 | keep | - | - | - | #1561 | checker 7 | lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/lexer/mod.rs` | 20 | 909 | 400 | keep | - | - | - | #1561 | checker 20, parser 20 | lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/embedded/tests.rs` | 28 | 915 | 907 | keep | - | - | - | #1561 | checker 24, parser 4 | lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/expressions.rs` | 26 | 769 | 769 | keep | - | - | - | #1561 | checker 20, parser 26 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |

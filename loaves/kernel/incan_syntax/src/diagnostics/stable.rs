@@ -232,12 +232,92 @@ const CALLABLE_MARKER_NOT_SUPPORTED: DiagnosticCatalogEntry = DiagnosticCatalogE
     title: "Callable marker cannot be spelled here",
     severity: "error",
     phase: "typecheck",
-    summary: "An `Fn`, `FnMut` or `FnOnce` marker from `std.rust` names more than two parameters, or bounds a nominal declaration.",
+    summary: "An `Fn`, `FnMut` or `FnOnce` marker from `std.rust` names more than two parameters, or bounds a type parameter of a nominal declaration.",
     explanation: "A callable marker names a callable's parameter list and learns its return type from a function or method call. It currently supports at most two parameters and cannot complete a nominal declaration's type parameter.",
     examples: &["from std.rust import Fn\n\ndef run[F with Fn[int, int, int]](f: F) -> None:\n    pass"],
-    common_causes: &["A callback with three or more arguments."],
+    common_causes: &[
+        "A callback with three or more arguments.",
+        "A nominal declaration bounded with a marker instead of a callable trait.",
+    ],
     fixes: &[
-        "Write at most two parameters, or use `Callable1[int, R]` from `std.traits.callable` on a nominal declaration.",
+        "Write at most two parameters, or gather them into one model.",
+        "Use `Callable1[int, R]` from `std.traits.callable` on a nominal declaration.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/how-to/rust_interop/"),
+};
+
+const SELF_MUTATION_REQUIRES_MUT_SELF: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0102",
+    title: "Method changes the object but takes `self`",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A method assigns to a field, or calls a method that changes one, while its receiver is a plain `self`.",
+    explanation: "The receiver spelling is a contract the compiled code keeps literally: `self` reads the object, `mut self` may change it. A body that assigns to `self.field`, writes `self.items[i]`, or calls a changing method such as `self.items.append(...)` or a `mut self` method of its own therefore needs a `mut self` receiver. The check applies to classes, models, trait default methods and trait implementations alike, and follows field and index chains rooted at `self`.",
+    examples: &[
+        "class Stack:\n    items: list[int]\n\n    def pop(self) -> int:\n        return self.items.pop()",
+        "class Carton with Resizable:\n    width: float\n\n    def resize(self, factor: float) -> None:\n        self.width *= factor",
+    ],
+    common_causes: &[
+        "A method written with `self` that grew a field assignment or a changing collection call.",
+        "A trait implementation whose trait declares the method with `self` while the implementation needs to write.",
+    ],
+    fixes: &[
+        "Declare the receiver as `mut self`: `def pop(mut self) -> int`.",
+        "When the method implements a trait method, declare `mut self` in the trait as well so the signatures match.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/explanation/models_and_classes/classes/"),
+};
+
+const PRINT_ARGUMENT_IS_TUPLE: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0103",
+    title: "Tuple passed to `print`",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A `print` or `println` argument is a tuple, which has no printed form.",
+    explanation: "Tuples have no printed form in the language, so a program that prints one has no output to promise and cannot be built. Each element prints on its own: index into the tuple or unpack it first.",
+    examples: &["coords: tuple[int, int] = (10, 20)\nprint(coords)"],
+    common_causes: &[
+        "Printing a tuple-returning call's result directly.",
+        "Printing a tuple binding as a shortcut for printing its elements.",
+    ],
+    fixes: &[
+        "Print the elements: `print(coords[0], coords[1])`.",
+        "Unpack first, then print the names: `x, y = coords` and `print(x, y)`.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/language/"),
+};
+
+const TUPLE_ANNOTATION_REQUIRES_ELEMENT_TYPES: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0104",
+    title: "Tuple annotation without element types",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A `Tuple` (or `tuple`) annotation names no element types.",
+    explanation: "`Tuple` is a family of types, one per element list, so the bare word names no type: nothing can be emitted for it and the build stops. Every tuple annotation spells its element types in order.",
+    examples: &["multiple: Tuple = (\"a\", 1)"],
+    common_causes: &[
+        "A Python habit of annotating with the bare `Tuple` name.",
+        "An annotation left incomplete while the value's shape was still changing.",
+    ],
+    fixes: &["Write one type per element: `tuple[str, int]` or `Tuple[str, int]`."],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/language/"),
+};
+
+const RUST_OWNER_TYPE_ARGS_NOT_INFERRED: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0105",
+    title: "Rust type arguments cannot be inferred",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A Rust associated call leaves its owner's type arguments open and nothing later in the program fixes them.",
+    explanation: "`HashMap.new()` on `rust::std::collections::HashMap` leaves `K` and `V` open. Rust fills them from a later use of the binding, such as an insert, a typed return, or an annotation on the binding; a binding that is never read again, or a result that is not bound at all, gives it nothing to work with, and the build stops on the call. The check fires only when the compiler can see the owner's type parameters and the value has no later reader.",
+    examples: &["from rust::std::collections import HashMap\n\ndef main() -> None:\n    mut untyped = HashMap.new()"],
+    common_causes: &[
+        "A collection constructed and then never used.",
+        "A binding whose only later uses do not mention the element types, such as `len(m)`.",
+    ],
+    fixes: &[
+        "Write the type arguments in the call: `HashMap.new[str, int]()`.",
+        "Annotate the binding: `untyped: HashMap[str, int] = HashMap.new()`.",
     ],
     docs_url: Some("https://encero-systems.github.io/incan/language/how-to/rust_interop/"),
 };
@@ -418,6 +498,10 @@ const CATALOG: &[DiagnosticCatalogEntry] = &[
     PARSER_SYNTAX,
     TYPECHECK,
     UNREACHABLE_CODE,
+    SELF_MUTATION_REQUIRES_MUT_SELF,
+    PRINT_ARGUMENT_IS_TUPLE,
+    TUPLE_ANNOTATION_REQUIRES_ELEMENT_TYPES,
+    RUST_OWNER_TYPE_ARGS_NOT_INFERRED,
     CALLABLE_MARKER_NOT_SUPPORTED,
     ROUTE_HANDLER_RETURN_NOT_RESPONSE,
     ROUTE_HANDLER_PARAMETER_UNBOUND,
@@ -655,6 +739,52 @@ mod tests {
         for code in ["INCAN-I0101", "INCAN-I0102", "INCAN-I0103"] {
             assert!(explain(code).is_some(), "{code} must have a catalog explanation");
         }
+    }
+
+    #[test]
+    fn checker_refusals_of_unbuildable_programs_use_distinct_stable_codes() -> Result<(), Box<dyn std::error::Error>> {
+        let self_mutation = errors::self_mutation_requires_mut_self(
+            "pop",
+            "self.items",
+            errors::SelfMutation::MutatingCall { callee: "pop" },
+            Span::default(),
+        );
+        let print_tuple = errors::print_argument_is_tuple("print", "coords", 2, Span::default());
+        let bare_tuple = errors::tuple_annotation_requires_element_types("Tuple", Span::default());
+        let open_generics = errors::rust_owner_type_args_not_inferred(
+            "HashMap",
+            "new",
+            &["K".to_string(), "V".to_string()],
+            Some("untyped"),
+            Span::default(),
+        );
+
+        assert_eq!(
+            code_for_error(&self_mutation, DiagnosticPhase::Typecheck),
+            "INCAN-T0102"
+        );
+        assert_eq!(code_for_error(&print_tuple, DiagnosticPhase::Typecheck), "INCAN-T0103");
+        assert_eq!(code_for_error(&bare_tuple, DiagnosticPhase::Typecheck), "INCAN-T0104");
+        assert_eq!(
+            code_for_error(&open_generics, DiagnosticPhase::Typecheck),
+            "INCAN-T0105"
+        );
+        for code in ["INCAN-T0102", "INCAN-T0103", "INCAN-T0104", "INCAN-T0105"] {
+            let Some(entry) = explain(code) else {
+                return Err(format!("{code} must have a catalog explanation").into());
+            };
+            assert_eq!(entry.severity, "error");
+            assert_eq!(entry.phase, "typecheck");
+        }
+        assert!(
+            open_generics
+                .hints
+                .iter()
+                .any(|hint| hint.contains("HashMap.new[str, int]()") && hint.contains("untyped: HashMap[str, int]")),
+            "the remedy must spell both the call and the binding form, got {:?}",
+            open_generics.hints
+        );
+        Ok(())
     }
 
     #[test]
