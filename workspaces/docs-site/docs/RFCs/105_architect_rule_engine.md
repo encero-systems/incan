@@ -447,7 +447,7 @@ The rule engine should provide a small metadata contract for rule authors. A rul
 
 The report layer should be shared by all rules. Sorting, de-duplication, JSON serialization, text formatting, suppression matching, and baseline matching should not be implemented per rule.
 
-The first version should ship with a small calibrated rule set rather than a large catalogue. New rules should be added only when they have clear positive fixtures, negative fixtures, and calibration evidence from real source.
+The first version should ship with a small calibrated rule set rather than a large catalog. New rules should be added only when they have clear positive fixtures, negative fixtures, and calibration evidence from real source.
 
 Experimental peer-baseline analysis is a later consumer of the same fact and query layers. It may construct explainable signatures and compare declared or derived peer groups, but it must remain outside the deterministic rule path until its calibration, storage, and user-facing contract are independently settled.
 

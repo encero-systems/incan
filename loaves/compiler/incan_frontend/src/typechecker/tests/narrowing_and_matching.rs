@@ -148,12 +148,15 @@ def normalize(value: str | None) -> str:
     assert!(check_str(source).is_ok());
 }
 
+/// The callable parameters and the resolved type the checker recorded for one call site.
+type CallSiteFacts = (Option<Vec<CallableParam>>, Option<ResolvedType>);
+
 /// The callable fact recorded for the `Some(...)` call whose text is `call`, and the type recorded for it.
 fn some_call_facts(
     info: &TypeCheckInfo,
     source: &str,
     call: &str,
-) -> Result<(Option<Vec<CallableParam>>, Option<ResolvedType>), Box<dyn std::error::Error>> {
+) -> Result<CallSiteFacts, Box<dyn std::error::Error>> {
     let start = source
         .find(call)
         .ok_or_else(|| format!("missing `{call}` in the source"))?;
