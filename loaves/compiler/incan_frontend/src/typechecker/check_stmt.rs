@@ -485,7 +485,7 @@ impl TypeChecker {
 
     /// Refuse a write to `place`, a place rooted at `self`, when the enclosing method takes a plain `self` (#1723).
     ///
-    /// The receiver spelling is what the generated code honours: a plain `self` method has no way to write, so the
+    /// The receiver spelling is what the generated code honors: a plain `self` method has no way to write, so the
     /// assignment or changing call would only fail later, in the build. Outside a plain-`self` method body nothing
     /// is reported; a `mut self` method writes freely, and a function has no receiver. `mutation` says whether the
     /// body assigns to the place or calls a method that changes it, which is the difference between the two

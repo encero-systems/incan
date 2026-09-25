@@ -150,7 +150,7 @@
         }
       ],
       "compatibility_issue": "#1718",
-      "behavior_evidence": "behaviour fixture snapshots_stdlib/result_inspect_named_observer_copy_payload.incn (Oven Linux replay), emitter unit test copy_payload_named_observer_is_borrowed_through_a_closure_issue1718 in emit/expressions/methods.rs, and the unchanged non-Copy adapter test test_rfc070_result_inspect_non_copy_observer_borrows_payload",
+      "behavior_evidence": "behavior fixture snapshots_stdlib/result_inspect_named_observer_copy_payload.incn (Oven Linux replay), emitter unit test copy_payload_named_observer_is_borrowed_through_a_closure_issue1718 in emit/expressions/methods.rs, and the unchanged non-Copy adapter test test_rfc070_result_inspect_non_copy_observer_borrows_payload",
       "semantic_owner": "the RFC 070 combinator callable fact: the observer takes the payload by borrow (Body IR passes the observer in the borrow shape the std.result helper declares, fn(&T) for every T)",
       "retirement_condition": "the Rust-source backend is deleted (#654); the replacement route emits the helper call from the recorded borrow shape and needs no Copy special case"
     }

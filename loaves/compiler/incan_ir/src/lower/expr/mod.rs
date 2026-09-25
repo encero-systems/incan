@@ -92,7 +92,7 @@ fn can_use_source_method_projection(receiver: &TypedExpr, dispatch: Option<&IrMe
 /// adapters and interop coercions (a cast, or the operand's own tokens unchanged), the value conversions `int`,
 /// `float` and `bool` (a cast or a comparison), an `if` or `match` expression, and a range. Every other shape (a name,
 /// a literal, a call, a method chain, a field, an index, a nested prefix operator) is already one operand and is left
-/// as written, so its emission does not change; the `Ref`/`RefMut` operators parenthesise their own operand in the
+/// as written, so its emission does not change; the `Ref`/`RefMut` operators parenthesize their own operand in the
 /// emitter, and the `not in` desugarings negate a method call. Sibling of `grouped_conversion_operand`
 /// (`lower/expr/calls.rs`, #1746), which groups the argument of `str(...)` for the same reason; unify the two once both
 /// have landed.

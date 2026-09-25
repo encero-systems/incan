@@ -19,7 +19,7 @@ pub const STDLIB_WEB: &str = "web";
 
 /// `std.web.routing.route`, the decorator that registers a function as an HTTP route handler.
 ///
-/// The checker recognises the decorator by this name together with its backing crate
+/// The checker recognizes the decorator by this name together with its backing crate
 /// ([`STDLIB_WEB_MACROS_CRATE`]) rather than by import spelling, so `@route`, `@web.route` and
 /// `@std.web.routing.route` are one decorator once the import resolves.
 pub const STDLIB_WEB_ROUTE_DECORATOR: &str = "route";

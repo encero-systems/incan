@@ -985,7 +985,7 @@ def has_manifest(files: Dict[str, str]) -> bool:
 // ---- #1717: a tuple annotation spells its element types ----
 
 #[test]
-fn bare_tuple_annotation_is_refused_with_the_parameterised_spelling_issue1717() {
+fn bare_tuple_annotation_is_refused_with_the_parameterized_spelling_issue1717() {
     // The program from #1717, plus the lowercase spelling and a parameter position: each bare occurrence is refused
     // once, with a hint in the author's casing.
     let source = r#"
@@ -1020,7 +1020,7 @@ def main() -> None:
 }
 
 #[test]
-fn parameterised_tuple_annotations_and_a_shadowing_tuple_type_are_accepted_issue1717() {
+fn parameterized_tuple_annotations_and_a_shadowing_tuple_type_are_accepted_issue1717() {
     assert_check_ok(
         r#"
 def main() -> None:

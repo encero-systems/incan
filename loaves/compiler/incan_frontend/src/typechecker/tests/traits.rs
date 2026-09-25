@@ -1055,7 +1055,7 @@ model M with Leaf:
     Ok(())
 }
 
-// ---- #1723: trait implementations and default methods honour the receiver the same way ----
+// ---- #1723: trait implementations and default methods honor the receiver the same way ----
 
 #[test]
 fn trait_implementation_mutating_through_plain_self_is_refused_issue1723() {
