@@ -1307,6 +1307,32 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/emitted_spellings.rs": {
+      "disposition": "retire",
+      "notes": "asserts the Rust text emission gives keyword identifiers, a program type named like a runtime surface type, `set()` over a generator and `const` `FrozenDict` reads; generated Rust dies with #654.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "const_frozen_dict_reads_use_the_frozen_lookup_issue1757": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/const_frozen_collection_reads.incn",
+          "notes": "Asserts generated Rust text; the behavior is carried by the named fixture (#1757)."
+        },
+        "host_keyword_identifiers_are_raw_in_every_position_issue1775": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/host_keyword_identifiers.incn",
+          "notes": "Asserts generated Rust text; the behavior, keyword-named fields, parameters, variants and type parameters running and reflection and JSON reporting `impl`, is carried by the named fixture (#1775)."
+        },
+        "program_type_named_like_a_runtime_surface_type_keeps_its_own_spelling_issue1770": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/user_model_named_field_info.incn",
+          "notes": "Asserts generated Rust text; the behavior, `FieldInfo(label=\"custom\").label` printing `custom`, is carried by the named fixture (#1770)."
+        },
+        "set_constructor_over_a_generator_collects_through_the_iterator_trait_issue1744": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/set_constructor_over_generator.incn",
+          "notes": "Asserts generated Rust text; the behavior is carried by the named fixture (#1744)."
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/tests/lowering_through_emission.rs": {
       "disposition": "retire",
       "notes": "lowering through emission end to end.",
@@ -2474,6 +2500,32 @@
         "fn_family_capability_markers_lower_to_the_callable_bound_issue1716": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_rust_capability_bounds.incn",
           "notes": "asserts the recorded bound shape of the `Fn`, `FnMut` and `FnOnce` markers: the canonical `CallableN` trait with a hidden return-type parameter (#1716); the twin runs each marker over a named function."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/collection_sources_and_static_reads.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "annotated_local_bound_from_a_static_aliases_its_storage_issue1777": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/static_alias_with_type_annotation.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (a local annotated with its static's type binds the static's storage alias and carries no Rust annotation); retires with `incan_ir`. The behavior, `count: int = COUNT` printing the static's value and an annotated list alias appending to the static, is carried by the named fixture (#1777)."
+        },
+        "comprehension_over_frozen_text_iterates_owned_items_issue1757": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/const_frozen_collection_reads.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (a comprehension over a `const` `FrozenList[str]` iterates the source's `list(...)` conversion); retires with `incan_ir`. The behavior, `\" \".join([name for name in NAMES])` printing `alpha beta`, is carried by the named fixture (#1757)."
+        },
+        "frozen_dict_index_carries_the_value_type_issue1757": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/const_frozen_collection_reads.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (a `const` `FrozenDict` index read typed as the value type, `contains_key` as keyed membership); retires with `incan_ir`. The behavior, `TABLE[\"names\"]` and `TABLE.contains_key(...)` answering, is carried by the named fixture (#1757)."
+        },
+        "set_constructor_over_a_generator_plans_the_iterator_trait_issue1744": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/set_constructor_over_generator.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (`set(generator)` plans collection through the `Iterator` trait); retires with `incan_ir`. The behavior, `set(numbers(3))` holding three values, is carried by the named fixture (#1744)."
         }
       },
       "twin": ""

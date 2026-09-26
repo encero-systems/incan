@@ -1,7 +1,7 @@
 //! Struct and enum emission.
 
 use proc_macro2::{Ident, Literal, TokenStream};
-use quote::{format_ident, quote};
+use quote::quote;
 
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
@@ -80,7 +80,7 @@ impl<'a> IrEmitter<'a> {
                         segs.push(quote! { #d_ident });
                         super::join_path_tokens(&segs)
                     } else {
-                        let d_ident = format_ident!("{}", d);
+                        let d_ident = Self::rust_ident(d);
                         quote! { #d_ident }
                     }
                 }
@@ -208,7 +208,7 @@ impl<'a> IrEmitter<'a> {
                 .fields
                 .iter()
                 .map(|f| {
-                    let fname = format_ident!("{}", &f.name);
+                    let fname = Self::rust_ident(&f.name);
                     let fty = self.emit_type(&f.ty);
                     let fvis = self.emit_visibility(&f.visibility);
                     let dead_code_expect = if field_value_reflection_reads_fields {
@@ -265,7 +265,7 @@ impl<'a> IrEmitter<'a> {
                 let mut param_tokens = Vec::with_capacity(s.fields.len());
                 let mut field_assigns = Vec::with_capacity(s.fields.len());
                 for field in &s.fields {
-                    let field_name = format_ident!("{}", &field.name);
+                    let field_name = Self::rust_ident(&field.name);
                     let field_ty = self.emit_type(&field.ty);
                     let provider_owns_private_default =
                         matches!(constructor_surface, StructConstructorSurface::PublicBridge) && field.is_type_private;
@@ -360,7 +360,7 @@ impl<'a> IrEmitter<'a> {
             let debug_generics = self.emit_type_params_with_extra_bound(&s.type_params, &quote! { std::fmt::Debug });
             let field_entries = s.fields.iter().map(|f| {
                 let field_name = f.name.as_str();
-                let field_ident = format_ident!("{}", &f.name);
+                let field_ident = Self::rust_ident(&f.name);
                 quote! { .field(#field_name, &self.#field_ident) }
             });
             quote! {
@@ -527,7 +527,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit the string value used by generic field-value reflection for one concrete field.
     fn field_reflection_string_expr(field: &StructField) -> TokenStream {
-        let field_ident = format_ident!("{}", field.name);
+        let field_ident = Self::rust_ident(&field.name);
         let none = constructors::as_str(ConstructorId::None);
         match &field.ty {
             IrType::Option(inner) if Self::field_type_supports_scalar_value_reflection(inner) => {
@@ -583,7 +583,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit a Rust enum definition plus shared and value-enum-specific helper implementations.
     pub(in crate::emit) fn emit_enum(&self, e: &IrEnum) -> Result<TokenStream, EmitError> {
-        let name = format_ident!("{}", &e.name);
+        let name = Self::rust_ident(&e.name);
         let vis = self.emit_visibility(&e.visibility);
         let is_value_enum = e.value_type.is_some();
 
@@ -591,7 +591,7 @@ impl<'a> IrEmitter<'a> {
             .variants
             .iter()
             .map(|v| {
-                let vname = format_ident!("{}", &v.name);
+                let vname = Self::rust_ident(&v.name);
                 match &v.fields {
                     VariantFields::Unit => quote! { #vname },
                     VariantFields::Tuple(types) => {
@@ -602,7 +602,7 @@ impl<'a> IrEmitter<'a> {
                         let field_tokens: Vec<_> = fields
                             .iter()
                             .map(|f| {
-                                let fname = format_ident!("{}", &f.name);
+                                let fname = Self::rust_ident(&f.name);
                                 let fty = self.emit_type(&f.ty);
                                 quote! { #fname: #fty }
                             })
@@ -642,7 +642,7 @@ impl<'a> IrEmitter<'a> {
                         segs.push(quote! { #d_ident });
                         super::join_path_tokens(&segs)
                     } else {
-                        let d_ident = format_ident!("{}", d);
+                        let d_ident = Self::rust_ident(d);
                         quote! { #d_ident }
                     }
                 }
@@ -674,7 +674,7 @@ impl<'a> IrEmitter<'a> {
                 .variants
                 .iter()
                 .map(|v| {
-                    let vname = format_ident!("{}", &v.name);
+                    let vname = Self::rust_ident(&v.name);
                     let vname_str = &v.name;
                     match &v.fields {
                         VariantFields::Unit => {

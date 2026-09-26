@@ -18,7 +18,8 @@ use super::{FunctionSignature, IrSpan, IrType, Ownership};
 use incan_lang::interop::CoercionPolicy;
 use incan_lang::lang::builtins::{self as core_builtins, BuiltinFnId};
 use incan_lang::lang::surface::{
-    bytes_methods, dict_methods, iterator_methods, list_methods, result_methods, set_methods, string_methods,
+    bytes_methods, dict_methods, frozen_dict_methods, iterator_methods, list_methods, result_methods, set_methods,
+    string_methods,
 };
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
@@ -1043,6 +1044,15 @@ impl MethodKind {
                 ) && iterator_methods::from_str(name) == Some(iterator_methods::IteratorMethodId::Iter) =>
             {
                 Some(Self::Iterator(IteratorMethodKind::Iter))
+            }
+            // A frozen dict answers `contains_key` with the keyed membership a dict takes; its other methods (`len`,
+            // `is_empty`) are ordinary calls on the runtime wrapper (#1757).
+            IrType::NamedGeneric(type_name, _)
+                if collection_types::from_str(type_name) == Some(CollectionTypeId::FrozenDict)
+                    && frozen_dict_methods::from_str(name)
+                        == Some(frozen_dict_methods::FrozenDictMethodId::ContainsKey) =>
+            {
+                Some(Self::Collection(CollectionMethodKind::Contains))
             }
             IrType::NamedGeneric(type_name, _) | IrType::Struct(type_name)
                 if core_traits::from_qualified_str(type_name) == Some(TraitId::Iterator) =>

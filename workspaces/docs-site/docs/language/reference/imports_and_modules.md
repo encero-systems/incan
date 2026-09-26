@@ -373,6 +373,24 @@ async def do_work() -> None:
     await sleep(0.5)
 ```
 
+### Module declarations and `std.*` type names
+
+A type declared at module scope (`model`, `class`, `enum`, `trait`, `newtype` or `type` alias) is the type its name refers to throughout that module, including in its own method signatures. This holds when a `std.*` module declares a type of the same name, such as `Response` in `std.web` or `FieldInfo` in `std.reflection`: that `std.*` type is referred to by name only through an import.
+
+```incan
+model Response:
+    body: str
+
+    @staticmethod
+    def make(body: str) -> Response:  # the module's own `Response`
+        return Response(body=body)
+
+def main() -> None:
+    println(Response.make("ok").body)  # ok
+```
+
+Without the declaration and without an import, `Response` is refused where it is written: `INCAN-T0001`, "Unknown symbol 'Response'".
+
 ### Reserved root namespaces
 
 The names `std` and `rust` are reserved at the root level. You cannot shadow them with local modules or aliases:

@@ -1,0 +1,19 @@
+# behavior: a local annotated with its static's type reads the static and stays a live alias of the static's storage
+# retires: loaves/compiler/incan_ir/src/lower/tests/collection_sources_and_static_reads.rs::annotated_local_bound_from_a_static_aliases_its_storage_issue1777
+# expect-stdout:
+#   3
+#   4
+#   1
+
+static COUNT: int = 3
+static ITEMS: list[int] = []
+
+
+def main() -> None:
+    count: int = COUNT
+    println(count)
+    let fixed: int = COUNT
+    println(fixed + 1)
+    live_items: list[int] = ITEMS
+    live_items.append(7)
+    println(len(ITEMS))

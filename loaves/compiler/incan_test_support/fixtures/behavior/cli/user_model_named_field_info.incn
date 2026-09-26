@@ -1,0 +1,23 @@
+# behavior: a model named FieldInfo, a name std.reflection also uses, is the program's own type in a program that does not import std.reflection
+# retires: loaves/compiler/incan_emit/src/tests/emitted_spellings.rs::program_type_named_like_a_runtime_surface_type_keeps_its_own_spelling_issue1770
+# expect-stdout:
+#   custom
+#   made
+#   made
+
+model FieldInfo:
+    label: str
+
+    @staticmethod
+    def made() -> FieldInfo:
+        return FieldInfo(label="made")
+
+
+def describe(info: FieldInfo) -> str:
+    return info.label
+
+
+def main() -> None:
+    println(FieldInfo(label="custom").label)
+    println(FieldInfo.made().label)
+    println(describe(FieldInfo.made()))

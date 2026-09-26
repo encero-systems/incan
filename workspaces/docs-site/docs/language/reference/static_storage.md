@@ -102,6 +102,16 @@ def add_default() -> None:
 
 Direct aliases from statics preserve live behavior for ordinary mutation paths.
 
+An alias may be annotated with the static's own type; the annotated binding is the same live alias:
+
+```incan
+static items: list[int] = []
+
+def add_default() -> None:
+    live_items: list[int] = items
+    live_items.append(1)  # appends to `items`
+```
+
 ## Disallowed forms
 
 ### Missing type annotation

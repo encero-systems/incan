@@ -1,0 +1,61 @@
+# behavior: impl, dyn, ref, move, use, where, unsafe and mod are ordinary identifiers for fields, methods, parameters, keyword arguments, enum variants and type parameters, and reflection and JSON report the fields as written
+# retires: loaves/compiler/incan_emit/src/tests/emitted_spellings.rs::host_keyword_identifiers_are_raw_in_every_position_issue1775
+# expect-stdout:
+#   1
+#   3
+#   7
+#   5
+#   unsafe
+#   6
+#   impl
+#   dyn
+#   {"impl":1,"dyn":"x"}
+
+from std.serde.json import Serialize
+
+
+@derive(Serialize)
+model Slot:
+    impl: int
+    dyn: str = "d"
+
+    def move(self, ref: int) -> int:
+        return self.impl + ref
+
+
+class Holder:
+    use: int
+
+    def where(self) -> int:
+        return self.use
+
+
+enum Mode:
+    Loop
+    unsafe
+
+
+def pick[mod](value: mod) -> mod:
+    return value
+
+
+def call(ref: int, move: int) -> int:
+    return ref + move
+
+
+def main() -> None:
+    slot = Slot(impl=1, dyn="x")
+    println(slot.impl)
+    println(slot.move(ref=2))
+    println(call(ref=3, move=4))
+    holder = Holder(use=5)
+    println(holder.where())
+    match Mode.unsafe:
+        case Mode.unsafe:
+            println("unsafe")
+        case Mode.Loop:
+            println("loop")
+    println(pick(6))
+    for info in slot.__fields__():
+        println(info.name)
+    println(json_stringify(slot))

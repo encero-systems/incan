@@ -69,4 +69,15 @@ Lazy adapters return iterator values and do not materialize intermediate lists. 
 
 Advancing a generator resumes it until the next yielded value or until it finishes. Exhausting a generator ends iteration normally.
 
+`list(gen)` and `set(gen)` consume a generator and collect the values it yields: `list` keeps every value in the order yielded, `set` keeps one of each distinct value.
+
+```incan
+def parities(limit: int) -> Generator[int]:
+    for value in range(limit):
+        yield value % 2
+
+println(len(list(parities(4))))  # 4
+println(len(set(parities(4))))   # 2
+```
+
 Generator functions do not execute their body when the generator value is created. Execution starts when a consumer asks for the first item.

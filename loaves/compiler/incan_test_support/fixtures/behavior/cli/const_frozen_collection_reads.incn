@@ -1,0 +1,32 @@
+# behavior: a const FrozenDict answers indexing and contains_key, and a comprehension over a const FrozenList[str] yields str items
+# retires: loaves/compiler/incan_ir/src/lower/tests/collection_sources_and_static_reads.rs::frozen_dict_index_carries_the_value_type_issue1757
+# retires: loaves/compiler/incan_ir/src/lower/tests/collection_sources_and_static_reads.rs::comprehension_over_frozen_text_iterates_owned_items_issue1757
+# retires: loaves/compiler/incan_emit/src/tests/emitted_spellings.rs::const_frozen_dict_reads_use_the_frozen_lookup_issue1757
+# expect-stdout:
+#   2
+#   true
+#   alpha beta
+#   false
+#   ALPHA
+#   2
+#   9
+#   ex
+
+const TABLE: FrozenDict[str, FrozenList[str]] = {"names": ["alpha", "beta"], "empty": []}
+const NAMES: FrozenList[str] = ["alpha", "beta"]
+const CODES: FrozenDict[FrozenStr, int] = {"a": 1, "b": 2}
+const SQUARES: FrozenDict[int, int] = {2: 4, 3: 9}
+const LABELS: FrozenDict[str, str] = {"x": "ex"}
+
+
+def main() -> None:
+    names = TABLE["names"]
+    println(len(names))
+    println(TABLE.contains_key("names"))
+    println(" ".join([name for name in NAMES]))
+    key = "missing"
+    println(TABLE.contains_key(key))
+    println(", ".join([name.upper() for name in NAMES if name != "beta"]))
+    println(CODES["b"])
+    println(SQUARES[3])
+    println(LABELS["x"])

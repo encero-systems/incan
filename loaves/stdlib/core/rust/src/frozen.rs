@@ -16,6 +16,7 @@
 //! assert_eq!(L.len(), 3);
 //! ```
 
+use core::borrow::Borrow;
 use core::fmt;
 
 /// Represent an immutable string baked into the binary.
@@ -70,6 +71,15 @@ impl fmt::Display for FrozenStr {
 
 impl AsRef<str> for FrozenStr {
     fn as_ref(&self) -> &str {
+        self.0
+    }
+}
+
+/// Let a `FrozenStr`-keyed frozen dict answer a lookup by a borrowed `str` probe.
+///
+/// Equality and ordering compare the wrapped text, so borrowing as `str` agrees with them.
+impl Borrow<str> for FrozenStr {
+    fn borrow(&self) -> &str {
         self.0
     }
 }
@@ -272,7 +282,7 @@ impl<T: 'static> IntoIterator for FrozenList<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::FrozenList;
+    use super::{FrozenDict, FrozenList, FrozenStr};
     use crate::collections::__private::{list_max_copy, list_min_copy};
 
     static NUMS: [i64; 3] = [3, 1, 4];
@@ -284,6 +294,22 @@ mod tests {
         assert_eq!(numbers.as_ref(), &[3, 1, 4]);
         assert_eq!(list_min_copy(&numbers), 1);
         assert_eq!(list_max_copy(&numbers), 4);
+    }
+
+    /// A text-keyed frozen dict answers a `str` probe of any lifetime, whether its keys are `&'static str` or
+    /// `FrozenStr`, and a stored-key probe still works (#1757).
+    #[test]
+    fn frozen_dict_lookups_accept_borrowed_text_probes() {
+        const NAMES: FrozenDict<&'static str, i64> = FrozenDict::new(&[("alpha", 1), ("beta", 2)]);
+        const CODES: FrozenDict<FrozenStr, i64> = FrozenDict::new(&[(FrozenStr::new("a"), 10)]);
+        let runtime_probe = String::from("beta");
+
+        assert_eq!(NAMES.get(runtime_probe.as_str()), Some(&2));
+        assert!(NAMES.contains_key("alpha"));
+        assert!(!NAMES.contains_key("gamma"));
+        assert!(NAMES.contains_key(&"alpha"));
+        assert_eq!(CODES.get("a"), Some(&10));
+        assert!(CODES.contains_key(&FrozenStr::new("a")));
     }
 }
 
@@ -401,19 +427,24 @@ impl<K: 'static, V: 'static> FrozenDict<K, V> {
     }
 
     /// Return the value for `key`, if present (linear scan).
-    pub fn get(&self, key: &K) -> Option<&'static V>
+    ///
+    /// Like `HashMap::get`, the probe may be any form the stored key type borrows as, so a `&'static str`- or
+    /// `FrozenStr`-keyed dict answers a borrowed `str` probe that is not itself `'static`.
+    pub fn get<Q>(&self, key: &Q) -> Option<&'static V>
     where
-        K: PartialEq,
+        K: Borrow<Q>,
+        Q: PartialEq + ?Sized,
     {
         self.data
             .iter()
-            .find_map(|(k, v)| if k == key { Some(v) } else { None })
+            .find_map(|(k, v)| if k.borrow() == key { Some(v) } else { None })
     }
 
-    /// Return true if `key` exists.
-    pub fn contains_key(&self, key: &K) -> bool
+    /// Return true if `key` exists; the probe follows the same borrowing rule as [`Self::get`].
+    pub fn contains_key<Q>(&self, key: &Q) -> bool
     where
-        K: PartialEq,
+        K: Borrow<Q>,
+        Q: PartialEq + ?Sized,
     {
         self.get(key).is_some()
     }

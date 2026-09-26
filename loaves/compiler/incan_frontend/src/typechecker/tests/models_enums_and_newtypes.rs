@@ -960,3 +960,50 @@ type B = newtype A
         errors.iter().map(|error| &error.message).collect::<Vec<_>>()
     );
 }
+
+/// A program's own model named like a stdlib surface type (`Response` from `std.web`, `FieldInfo` from
+/// `std.reflection`) is the return type of its own static method: the stdlib type is reached only by importing it, so
+/// it never shadows the module declaration, even from a signature collected before the model itself (#1795).
+#[test]
+fn model_named_like_a_stdlib_surface_type_is_the_programs_own_type_issue1795() -> Result<(), String> {
+    let source = r#"
+model Response:
+    body: str
+
+    @staticmethod
+    def make(body: str) -> Response:
+        return Response(body=body)
+
+
+model FieldInfo:
+    label: str
+
+    @staticmethod
+    def custom() -> FieldInfo:
+        return FieldInfo(label="custom")
+
+
+def main() -> None:
+    println(Response.make("ok").body)
+    println(FieldInfo.custom().label)
+"#;
+    check_str(source).map_err(|errors| {
+        format!(
+            "a module model must win over the stdlib surface name: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        )
+    })?;
+
+    // Without a declaration or an import the name still belongs to `std.web` and is refused where it is written.
+    let errors = match check_str("def make() -> Response:\n    return make()\n") {
+        Err(errors) => errors,
+        Ok(()) => return Err("an undeclared, unimported `Response` must stay refused".to_string()),
+    };
+    if !has_unknown_symbol_error(&errors, "Response") {
+        return Err(format!(
+            "expected the unknown-symbol refusal, got: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        ));
+    }
+    Ok(())
+}

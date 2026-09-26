@@ -714,6 +714,13 @@ pub struct TypeChecker {
     /// The stored symbol id must remain the active lookup binding; later local declarations or user imports with the
     /// same name shadow these constructor semantics.
     pub surface_type_import_bindings: HashMap<String, (SurfaceTypeId, SymbolId)>,
+    /// Type names the program being checked declares at module scope (models, classes, enums, newtypes, traits, type
+    /// aliases), recorded before collection so every annotation sees them.
+    ///
+    /// A module declaration is the program's own type: a stdlib surface type of the same name is reached only by
+    /// importing it, so it never shadows the declaration, even from a signature collected before the declaration
+    /// itself (#1795).
+    pub module_declared_type_names: HashSet<String>,
     /// Fixture function names collected before body checking so dependency metadata is order-independent.
     pub testing_fixture_names: HashSet<String>,
     /// Checked `std.testing` marker contract supplied by the active provider projection.
@@ -865,6 +872,7 @@ impl TypeChecker {
             testing_marker_import_bindings: HashSet::new(),
             surface_function_import_bindings: HashMap::new(),
             surface_type_import_bindings: HashMap::new(),
+            module_declared_type_names: HashSet::new(),
             testing_fixture_names: HashSet::new(),
             testing_marker_semantics: None,
             surface_context: SurfaceContext::default(),
@@ -4643,13 +4651,39 @@ impl TypeChecker {
         }
     }
 
+    /// Report a stdlib surface type name (`Response`, `FieldInfo`, ...) that no binding in scope provides.
+    ///
+    /// A name the program declares at module scope is its own type and never the stdlib's, whether or not the
+    /// declaration has been collected yet when this annotation is resolved: a model's own method signatures are
+    /// collected before the model itself (#1795).
     fn validate_stdlib_type_name(&mut self, name: &str, span: Span) {
         let Some(id) = surface_types::from_str(name) else {
             return;
         };
-        if surface_types::stdlib_module_path(id).is_some() && self.symbols.lookup(name).is_none() {
+        if surface_types::stdlib_module_path(id).is_some()
+            && !self.module_declared_type_names.contains(name)
+            && self.symbols.lookup(name).is_none()
+        {
             self.errors.push(errors::unknown_symbol(name, span));
         }
+    }
+
+    /// Collect the type names one program declares at module scope: models, classes, enums, newtypes, traits and
+    /// type aliases.
+    fn collect_module_declared_type_names(program: &Program) -> HashSet<String> {
+        program
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.node {
+                Declaration::Model(model) => Some(model.name.clone()),
+                Declaration::Class(class) => Some(class.name.clone()),
+                Declaration::Enum(enum_decl) => Some(enum_decl.name.clone()),
+                Declaration::Newtype(newtype) => Some(newtype.name.clone()),
+                Declaration::Trait(trait_decl) => Some(trait_decl.name.clone()),
+                Declaration::TypeAlias(alias) => Some(alias.name.clone()),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Record every compiler-proven declaration identity referenced by one source type annotation.
@@ -6506,6 +6540,7 @@ impl TypeChecker {
         self.testing_marker_import_bindings.clear();
         self.surface_function_import_bindings.clear();
         self.surface_type_import_bindings.clear();
+        self.module_declared_type_names = Self::collect_module_declared_type_names(program);
         self.testing_fixture_names.clear();
         self.testing_marker_semantics = None;
         self.local_rust_derive_paths.clear();

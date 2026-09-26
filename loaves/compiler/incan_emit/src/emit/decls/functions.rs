@@ -944,7 +944,7 @@ impl<'a> IrEmitter<'a> {
                 .type_params
                 .iter()
                 .map(|tp| {
-                    let ident = format_ident!("{}", &tp.name);
+                    let ident = Self::rust_ident(&tp.name);
                     quote! { #ident }
                 })
                 .collect();
@@ -1179,7 +1179,7 @@ impl<'a> IrEmitter<'a> {
                 .type_params
                 .iter()
                 .map(|tp| {
-                    let ident = format_ident!("{}", &tp.name);
+                    let ident = Self::rust_ident(&tp.name);
                     quote! { #ident }
                 })
                 .collect();
@@ -1215,7 +1215,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit an Incan trait declaration, including source docstrings and direct supertrait bounds.
     pub(in crate::emit) fn emit_trait(&self, trait_decl: &incan_ir::decl::IrTrait) -> Result<TokenStream, EmitError> {
-        let name = format_ident!("{}", &trait_decl.name);
+        let name = Self::rust_ident(&trait_decl.name);
         let iterator_trait_name = core_traits::as_str(TraitId::Iterator);
         let iterator_trait = format_ident!("{iterator_trait_name}");
         let sum_trait = format_ident!("{}", core_traits::as_str(TraitId::Sum));

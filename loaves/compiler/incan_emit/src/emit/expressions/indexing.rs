@@ -11,9 +11,10 @@
 //! expressions, lvalue emission, and assignment targets.
 
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 
 use super::super::{EmitError, IrEmitter};
+use crate::ownership::{frozen_dict_entry_types, plan_dict_lookup_key};
 use incan_ir::expr::{IrExprKind, TypedExpr, UnaryOp, VarRefKind};
 use incan_ir::types::IrType;
 
@@ -154,6 +155,27 @@ impl<'a> IrEmitter<'a> {
         ) {
             let idx_tokens = self.emit_expr(index)?;
             return Ok(quote! { incan_std_core::strings::str_index(&#o, (#idx_tokens) as i64) });
+        }
+
+        // Migration note (rust_source_backend_deprecation.md):
+        // - Compatibility issue: #1757 -- `TABLE["names"]` on a `const` `FrozenDict` fell through to Rust indexing,
+        //   which the runtime wrapper does not offer (E0608).
+        // - Behavior evidence: the `const_frozen_collection_reads` behavior fixture and the lowering test
+        //   `frozen_dict_index_carries_the_value_type_issue1757`.
+        // - Semantic owner: the checked index type (`FrozenDict[K, V][K]` is `V`), lowering's `Index` node carrying it,
+        //   and the ownership planner's dict key probe (`plan_dict_lookup_key`); this arm only spells the lookup.
+        // - Retirement condition: the Rust-source backend is deleted (#654); Body IR evaluates the lookup from the same
+        //   checked facts.
+        if let Some((_, value_ty)) = frozen_dict_entry_types(obj_ty) {
+            let i = self.emit_expr(index)?;
+            let key = plan_dict_lookup_key(&object.ty, &index.ty).apply(i);
+            let lookup = quote! { incan_std_core::collections::frozen_dict_get(&#o, #key) };
+            // The frozen wrapper stores Incan `str` as `'static` text; the checked value type is an owned `str`.
+            return Ok(match value_ty {
+                IrType::String => quote! { (#lookup).to_string() },
+                value_ty if value_ty.is_copy() => quote! { *#lookup },
+                _ => quote! { (#lookup).clone() },
+            });
         }
 
         match obj_ty {
@@ -300,7 +322,7 @@ impl<'a> IrEmitter<'a> {
                 {
                     path
                 } else {
-                    let ident = format_ident!("{}", name);
+                    let ident = Self::rust_ident(name);
                     quote! { #ident }
                 };
                 let f = Self::rust_ident(canonical_field);
@@ -312,7 +334,7 @@ impl<'a> IrEmitter<'a> {
                 {
                     path
                 } else {
-                    let ident = format_ident!("{}", name);
+                    let ident = Self::rust_ident(name);
                     quote! { #ident }
                 };
                 let f = Self::rust_ident(field);

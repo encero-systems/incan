@@ -33,7 +33,11 @@ See:
 
 ## Keyword
 
-A keyword is a reserved word with special meaning in the language syntax (for example `def`, `return`, `class`).
+A keyword is a reserved word with special meaning in the language syntax (for example `def`, `return`, `class`). The keywords are listed in the [Language reference (generated)](language.md).
+
+## Identifier
+
+An identifier is a name that is not a keyword. Any identifier, `impl`, `dyn`, `ref`, `move` or `use` included, can name a model or class field, a method, a parameter or keyword argument, an enum variant, a type parameter or a module. Reflection (`__fields__()`) and JSON serialization report a field by its identifier as written.
 
 ## Soft keyword
 

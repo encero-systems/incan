@@ -37,7 +37,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit an impl block, including generated convenience methods and trait impl adapters.
     pub(in crate::emit) fn emit_impl(&self, impl_block: &incan_ir::decl::IrImpl) -> Result<TokenStream, EmitError> {
-        let target_type = format_ident!("{}", &impl_block.target_type);
+        let target_type = Self::rust_ident(&impl_block.target_type);
 
         // RFC 023: emit generic type parameters with trait bounds (declaration) and bare names (type positions).
         let generics = self.emit_type_params(&impl_block.type_params);
@@ -166,7 +166,7 @@ impl<'a> IrEmitter<'a> {
                 let mut init_fields: Vec<TokenStream> = Vec::new();
 
                 for fname in field_names {
-                    let f_ident = format_ident!("{}", fname);
+                    let f_ident = Self::rust_ident(&fname);
                     if let Some(default_expr) = self
                         .struct_field_defaults
                         .get(&(impl_block.target_type.clone(), fname.clone()))
@@ -200,7 +200,7 @@ impl<'a> IrEmitter<'a> {
                 .associated_types
                 .iter()
                 .map(|associated_type| {
-                    let name = format_ident!("{}", associated_type.name);
+                    let name = Self::rust_ident(&associated_type.name);
                     let ty = self.emit_type(&associated_type.ty);
                     quote! { type #name = #ty; }
                 })
@@ -689,7 +689,7 @@ impl<'a> IrEmitter<'a> {
     /// Heterogeneous overlays wrap cloned field values in the generated union variant that corresponds to the field's
     /// concrete type. Homogeneous overlays can clone the field value directly.
     fn field_overlay_value_expr(&self, value_ty: &IrType, field_ty: &IrType, field_name: &str) -> TokenStream {
-        let field_ident = format_ident!("{}", field_name);
+        let field_ident = Self::rust_ident(field_name);
         if value_ty.is_union()
             && let Some(variant_index) = value_ty.union_variant_index_for_member(field_ty)
         {

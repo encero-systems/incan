@@ -1042,3 +1042,62 @@ def sum(pair: Tuple) -> int:
 "#,
     );
 }
+
+// ---- #1757: a `const` `FrozenDict` is read like a dict ----
+
+/// `table[key]` on a `const` `FrozenDict[K, V]` is typed `V`: the lookup's value carries its declared type into the
+/// binding, a text key accepts any text probe, and a probe outside the key type is refused (#1757).
+#[test]
+fn frozen_dict_index_reads_the_value_type_issue1757() -> Result<(), String> {
+    check_str(
+        r#"
+const TABLE: FrozenDict[str, FrozenList[str]] = {"names": ["alpha", "beta"], "empty": []}
+const CODES: FrozenDict[FrozenStr, int] = {"a": 1}
+const SQUARES: FrozenDict[int, int] = {2: 4}
+
+
+def main() -> None:
+    key = "names"
+    names: FrozenList[str] = TABLE[key]
+    code: int = CODES["a"]
+    square: int = SQUARES[2]
+    println(len(names) + code + square)
+"#,
+    )
+    .map_err(|errors| {
+        format!(
+            "a frozen dict lookup must check as its value type: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        )
+    })?;
+
+    let errors = match check_str(
+        r#"
+const CODES: FrozenDict[FrozenStr, int] = {"a": 1}
+
+
+def code_text() -> str:
+    return CODES["a"]
+
+
+def by_number() -> int:
+    return CODES[1]
+"#,
+    ) {
+        Err(errors) => errors,
+        Ok(()) => return Err("a mistyped frozen dict read must be refused".to_string()),
+    };
+    let messages = errors.iter().map(|error| error.message.as_str()).collect::<Vec<_>>();
+    if !messages
+        .iter()
+        .any(|message| message.contains("Index type mismatch: expected 'FrozenStr', found 'int'"))
+    {
+        return Err(format!("expected the key type refusal, got: {messages:?}"));
+    }
+    if errors.len() < 2 {
+        return Err(format!(
+            "expected the value type refusal for `str` as well, got: {messages:?}"
+        ));
+    }
+    Ok(())
+}

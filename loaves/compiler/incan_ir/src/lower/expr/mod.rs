@@ -2109,6 +2109,13 @@ impl AstLowering {
                         IrType::List(e) => (**e).clone(),
                         IrType::Dict(_, v) => (**v).clone(),
                         IrType::String => IrType::String,
+                        // A `const` `FrozenDict[K, V]` lookup yields its value type (#1757).
+                        IrType::NamedGeneric(name, args)
+                            if collection_types::from_str(name) == Some(CollectionTypeId::FrozenDict)
+                                && args.len() == 2 =>
+                        {
+                            args[1].clone()
+                        }
                         _ => IrType::Unknown,
                     };
                     (

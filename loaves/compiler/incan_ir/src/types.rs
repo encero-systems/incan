@@ -33,6 +33,12 @@ pub enum SetConstructorIteration {
     IntoOwnedItems,
     /// Iterate over an immutable collection and clone each borrowed element.
     CloneBorrowedItems,
+    /// Collect an owned runtime generator (`Generator[T]`) through the `Iterator` trait, named in full.
+    ///
+    /// The runtime wrapper keeps an inherent `collect(self) -> Vec<T>` with no type parameter (the shape a
+    /// source-level `gen.collect()` relies on), and on an owned receiver that inherent method shadows the trait's, so
+    /// the method-call spelling with a turbofish is refused. `list(generator)` takes the same route (#1464, #1744).
+    CollectOwnedIterator,
 }
 
 /// Mutability of a binding
@@ -201,6 +207,8 @@ pub fn same_exact_binary_float_type(left: &IrType, right: &IrType) -> Option<IrT
 
 impl IrType {
     /// Return the canonical element and iteration plan for one accepted `Set` constructor source.
+    ///
+    /// A runtime generator is consumed through the `Iterator` trait rather than its inherent adapters (#1744).
     pub fn set_constructor_source(&self) -> Option<(&IrType, SetConstructorIteration)> {
         match self {
             Self::List(item) | Self::Set(item) => Some((item, SetConstructorIteration::IntoOwnedItems)),
@@ -211,6 +219,9 @@ impl IrType {
                 Some(CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet) => items
                     .first()
                     .map(|item| (item, SetConstructorIteration::CloneBorrowedItems)),
+                Some(CollectionTypeId::Generator) => items
+                    .first()
+                    .map(|item| (item, SetConstructorIteration::CollectOwnedIterator)),
                 _ => None,
             },
             Self::Ref(inner) | Self::RefMut(inner) => inner.set_constructor_source(),
@@ -861,6 +872,38 @@ mod tests {
         assert_eq!(
             isinstance_union_variant_indices(&mixed_storage_union, &IrType::String),
             Some(vec![0, 1])
+        );
+    }
+
+    /// `set(generator)` collects through the `Iterator` trait, a frozen source clones its borrowed items, and a
+    /// mutable collection is consumed; a borrowed source plans like the value it borrows (#1744).
+    #[test]
+    fn set_constructor_source_plans_a_generator_through_the_iterator_trait_issue1744() {
+        let generator = IrType::NamedGeneric(
+            collections::as_str(CollectionTypeId::Generator).to_string(),
+            vec![IrType::Int],
+        );
+        assert_eq!(
+            generator.set_constructor_source(),
+            Some((&IrType::Int, SetConstructorIteration::CollectOwnedIterator))
+        );
+        let borrowed_generator = IrType::RefMut(Box::new(generator.clone()));
+        assert_eq!(
+            borrowed_generator.set_constructor_source(),
+            Some((&IrType::Int, SetConstructorIteration::CollectOwnedIterator))
+        );
+        let frozen = IrType::NamedGeneric(
+            collections::as_str(CollectionTypeId::FrozenList).to_string(),
+            vec![IrType::Int],
+        );
+        assert_eq!(
+            frozen.set_constructor_source(),
+            Some((&IrType::Int, SetConstructorIteration::CloneBorrowedItems))
+        );
+        let list = IrType::List(Box::new(IrType::Int));
+        assert_eq!(
+            list.set_constructor_source(),
+            Some((&IrType::Int, SetConstructorIteration::IntoOwnedItems))
         );
     }
 

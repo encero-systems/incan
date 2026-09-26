@@ -140,5 +140,6 @@ const LIMIT: int = BASE * 2
 
 ## See also
 
+- [Frozen collections (reference)](../reference/frozen_collections.md)
 - [Module static storage](static_storage.md)
 - [Static storage (reference)](../reference/static_storage.md)

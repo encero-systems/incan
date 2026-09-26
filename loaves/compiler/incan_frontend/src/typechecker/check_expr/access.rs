@@ -4237,6 +4237,20 @@ impl TypeChecker {
                 }
                 ResolvedType::Str
             }
+            // A `const` `FrozenDict[K, V]` is read like a dict: `table[key]` is the value, or a `KeyError` at run
+            // time. A text key (`str` or `FrozenStr`) accepts any text probe (#1757).
+            ResolvedType::FrozenDict(key_ty, value_ty) => {
+                let is_text = |ty: &ResolvedType| matches!(ty, ResolvedType::Str) || is_frozen_str(ty);
+                let text_probe_for_text_key = is_text(&index_ty) && is_text(&key_ty);
+                if !text_probe_for_text_key && !self.types_compatible(&index_ty, &key_ty) {
+                    self.errors.push(errors::index_type_mismatch(
+                        &key_ty.to_string(),
+                        &index_ty.to_string(),
+                        index.span,
+                    ));
+                }
+                *value_ty
+            }
             ResolvedType::Tuple(elems) => {
                 // Guardrail: tuple indexing must be an integer literal so we can bounds-check.
                 let Expr::Literal(Literal::Int(raw_idx)) = &index.node else {

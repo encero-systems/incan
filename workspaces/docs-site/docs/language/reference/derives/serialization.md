@@ -97,6 +97,8 @@ When `json` is derived, the alias is used as the JSON key (`"type"`). The canoni
 
 `class` does not support field metadata/aliases, so class JSON keys always match the canonical field names.
 
+A field without an alias serializes under its identifier as written, including an identifier such as `impl` or `dyn` (see [Identifier](../glossary.md#identifier)): `Slot(impl=1)` serializes as `{"impl":1}`.
+
 ## Enums
 
 Ordinary enums support `@derive(json)` just like models:

@@ -563,6 +563,15 @@ impl<'a> IrEmitter<'a> {
             }
             BuiltinFn::JsonStringify => emit_json_stringify(self, args),
             BuiltinFn::CollectionConstructor(CollectionTypeId::Set) => {
+                // Migration note (rust_source_backend_deprecation.md):
+                // - Compatibility issue: #1744 -- `set(generator)` chained `collect::<HashSet<_>>()` onto the runtime
+                //   generator, whose inherent `collect` shadows the `Iterator` trait's on an owned receiver (E0107).
+                // - Behavior evidence: the `set_constructor_over_generator` behavior fixture and the IR test
+                //   `set_constructor_source_plans_a_generator_through_the_iterator_trait_issue1744`.
+                // - Semantic owner: `IrType::set_constructor_source`, which decides the iteration plan from the checked
+                //   source type; this arm only realizes the plan.
+                // - Retirement condition: the Rust-source backend is deleted (#654); Body IR lowers the conversion as
+                //   the same general iteration a `for` statement takes.
                 if args.len() > 1 {
                     return Err(EmitError::InternalInvariant(format!(
                         "Set collection constructor reached emission with {} arguments",
@@ -591,6 +600,9 @@ impl<'a> IrEmitter<'a> {
                     }),
                     SetConstructorIteration::IntoOwnedItems => Ok(quote! {
                         (#values).into_iter().collect::<std::collections::HashSet<_>>()
+                    }),
+                    SetConstructorIteration::CollectOwnedIterator => Ok(quote! {
+                        ::std::iter::Iterator::collect::<std::collections::HashSet<_>>(#values)
                     }),
                 }
             }
