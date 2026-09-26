@@ -3839,6 +3839,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/for_item_taking.rs": {
+      "disposition": "keep",
+      "notes": "typechecker unit tests for #1844: which `for` loops take the items out of their list, the fact recorded for lowering, and the `INCAN-T0119` refusal of the list read after the loop, inside it, or by an enclosing loop that repeats it; typechecker only, no emit/driver dependency. `list_read_inside_the_loop_that_takes_its_items_is_refused_issue1844` and `enclosing_loop_repeating_a_taking_loop_is_refused_issue1844` are the proofs of those two cases: the refusal fixture reads the list after the loop.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/generics_and_type_tokens.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -4624,6 +4632,28 @@
         "derive_vocabulary_imports_lower_to_no_ir_import_issue1727": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters_with_imported_clone.incn",
           "notes": "Asserts the recorded import fact on the legacy IR (an import of a derivable trait's stdlib stub lowers to no IR import; the source-owned protocol and callable imports stay; the expanded adapter default and an aliased `Eq` bound spell the derive-owned Rust traits); retires with `incan_ir`. The behavior, the FallibleIterator adapters driven with derived callables beside `from std.derives.copying import Clone`, is carried by the named fixture (#1727)."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/for_item_taking.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "copyable_and_cloneable_items_keep_their_list_issue1844": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/passing_each_task_handle_of_a_list_on.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (a loop over strings, integers, models, or handles it does not hand on keeps iterating its list in place); retires with `incan_ir`. The behavior, strings and models passed on in a loop with their lists read afterwards, is carried by the named fixture (#1844)."
+        },
+        "handle_passed_on_moves_at_its_final_read_in_the_loop_body_issue1844": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/passing_each_task_handle_of_a_list_on.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (a handle the loop takes out of its list moves into the call at its final read); retires with `incan_ir`. The behavior, each handle passed to an async function and the joined values summed, is carried by the named fixture (#1844)."
+        },
+        "loop_awaiting_each_handle_iterates_the_list_by_value_issue1844": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/awaiting_each_task_handle_of_a_list.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (a loop awaiting each handle iterates the list through `into_iter()` and awaits the owned handle); retires with `incan_ir`. The behavior, each spawned task's result printed, is carried by the named fixture (#1844)."
         }
       },
       "twin": ""

@@ -64,6 +64,7 @@ mod checked_facts_and_registries;
 mod collections_strings_and_bytes;
 mod extern_and_c_bindings;
 mod fields_and_members;
+mod for_item_taking;
 mod generics_and_type_tokens;
 mod imports_and_stdlib_modules;
 mod method_decorator_receivers;

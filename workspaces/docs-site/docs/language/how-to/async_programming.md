@@ -200,6 +200,28 @@ println(f"Background task returned: {result}")
 
 Spawned tasks are durable once spawned. Dropping `handle` detaches the task and loses the result; it does not cancel the task. Use `handle.abort()` when an async task should be cancelled.
 
+### Await every task in a list
+
+Spawn the tasks into a list, then await each handle in a `for` loop:
+
+```incan
+from std.async import spawn
+
+async def double(n: int) -> int:
+    return n * 2
+
+async def main() -> None:
+    handles = [spawn(double(1)), spawn(double(2))]
+    mut results: list[int] = []
+    for handle in handles:
+        match await handle:
+            Ok(value) => results.append(value)
+            Err(error) => println(f"task failed: {error.message()}")
+    println(len(results))
+```
+
+Awaiting a handle uses it up, so the loop takes the handles out of `handles`, and the compiler refuses any later read of `handles` with `INCAN-T0119`. Keep what the rest of the function needs in a list of its own, like `results` above, or read it before the loop, such as `count = len(handles)`. Build the list inside an enclosing `while` or `loop:` when that loop awaits a fresh set of tasks on each pass.
+
 ### spawn_blocking
 
 Run CPU-intensive or blocking code on a dedicated thread:

@@ -86,6 +86,17 @@ from std.async.task import JoinHandle, TaskJoinError, spawn, spawn_blocking, yie
 
 Awaiting a handle produces `Result[T, TaskJoinError]`. Dropping it detaches the task. `handle.abort() -> None` requests cancellation of async work; for `spawn_blocking`, abort can only prevent work that is still queued.
 
+A handle can be neither copied nor cloned. A `for` loop over a list of handles held by a local binding or by a parameter not marked `mut`, whose body awaits each handle, returns it, assigns it to another name, passes it to a call or places it in a new value, takes the handles out of the list. Reading the list inside the loop or after it, or running the loop again from an enclosing loop over a list built outside that loop, is refused with `INCAN-T0119`.
+
+```incan
+handles = [spawn(work()), spawn(work())]
+for handle in handles:
+    match await handle:         # takes each handle out of `handles`
+        Ok(value) => println(value)
+        Err(_) => println("join failed")
+println(len(handles))           # refused: INCAN-T0119
+```
+
 ### `TaskJoinError`
 
 | Method | Returns |

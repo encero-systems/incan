@@ -48,6 +48,7 @@ mod check_stmt;
 mod collect;
 mod const_eval;
 mod decorated_method_receivers;
+mod for_item_taking;
 mod helpers;
 mod mut_marker;
 mod reachability;
@@ -148,6 +149,8 @@ pub struct LoopContext {
     pub expected_break_ty: Option<ResolvedType>,
     /// Types observed from `break` statements that contribute to the loop result.
     pub break_types: Vec<(ResolvedType, Span)>,
+    /// Symbol-table scope of the loop body: a binding held by an outer scope outlives each pass of the loop.
+    pub scope: usize,
 }
 
 /// Resolved target for a source-level `type Alias = Target` declaration.
@@ -471,6 +474,8 @@ pub struct TypeChecker {
     pub consumed_iterator_bindings: HashMap<String, Span>,
     /// Resource bindings transferred to an owning C ABI parameter in the current local checking flow.
     pub transferred_c_resource_bindings: HashMap<String, Span>,
+    /// Lists whose items a `for` loop of the current body takes, and that body's `for` pattern bindings (#1844).
+    for_item_taking: for_item_taking::ForItemTaking,
     /// Checked span constructors waiting for the enclosing direct assignment to name their only legal owner.
     pub unbound_c_abi_span_constructors: HashMap<(usize, usize), CAbiSpanKind>,
     /// Opaque checked typed span carriers keyed by their direct source local.
@@ -792,6 +797,7 @@ impl TypeChecker {
             current_immutable_self_method: None,
             consumed_iterator_bindings: HashMap::new(),
             transferred_c_resource_bindings: HashMap::new(),
+            for_item_taking: for_item_taking::ForItemTaking::default(),
             unbound_c_abi_span_constructors: HashMap::new(),
             c_abi_span_bindings: HashMap::new(),
             consumed_c_abi_span_bindings: HashMap::new(),
@@ -910,6 +916,7 @@ impl TypeChecker {
             kind,
             expected_break_ty,
             break_types: Vec::new(),
+            scope: self.symbols.current_scope_index(),
         });
     }
 
