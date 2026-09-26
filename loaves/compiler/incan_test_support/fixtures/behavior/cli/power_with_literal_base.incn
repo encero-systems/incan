@@ -1,0 +1,20 @@
+# behavior: ** over a literal base, a negated or grouped literal base, a literal-bound name or a narrow integer base computes in the result type
+# retires: loaves/compiler/incan_ir/src/lower/tests/power_base_type.rs::power_base_is_converted_to_the_result_type_issue1811
+# retires: loaves/compiler/incan_emit/src/tests/numeric_operator_emission.rs::power_base_is_emitted_in_the_result_type_issue1811
+# expect-stdout:
+#   8
+#   4.0
+#   -8
+#   9
+#   8
+#   400
+
+def main() -> None:
+    println(2 ** 3)
+    println(2.0 ** 2.0)
+    println((-2) ** 3)
+    println((1 + 2) ** 2)
+    base = 2
+    println(base ** 3)
+    small: u8 = 20
+    println(small ** 2)

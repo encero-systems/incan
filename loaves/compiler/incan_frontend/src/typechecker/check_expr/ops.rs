@@ -21,7 +21,7 @@ use incan_lang::lang::magic_methods::{self, MagicMethodId};
 use incan_lang::{NumericTy, result_numeric_type};
 
 use super::TypeChecker;
-use crate::typechecker::helpers::{collection_type_id, is_str_like};
+use crate::typechecker::helpers::{collection_type_id, decimal_shape, is_str_like};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::types::numerics::{self, NumericFamily, NumericTypeId};
 
@@ -262,6 +262,47 @@ impl TypeChecker {
         }
     }
 
+    /// Return the result type of an arithmetic operator over two numeric operands, by the operator result table.
+    ///
+    /// The table's one home for `a op b` and for `x op= y` (checked as `x = x op y`): the unsigned `//` and `%` rows,
+    /// the same-exact-float rows, then the `int`/`float` table. A refusal is recorded and yields `Unknown`.
+    pub(in crate::typechecker) fn numeric_arithmetic_result_type(
+        &mut self,
+        (left, left_ty): (&Spanned<Expr>, &ResolvedType),
+        op: BinaryOp,
+        (right, right_ty): (&Spanned<Expr>, &ResolvedType),
+        span: Span,
+    ) -> ResolvedType {
+        let (Some(lhs), Some(rhs)) = (numeric_ty_from_resolved(left_ty), numeric_ty_from_resolved(right_ty)) else {
+            let found = format!("{left_ty} {op} {right_ty}");
+            self.errors.push(errors::type_mismatch("numeric", &found, span));
+            return ResolvedType::Unknown;
+        };
+        if let Some(result_ty) = self.check_exact_unsigned_integer_binary(left, op, right, left_ty, right_ty, span) {
+            return result_ty;
+        }
+        let Some(num_op) = numeric_op_from_ast(&op) else {
+            self.errors
+                .push(errors::type_mismatch("numeric operator", &op.to_string(), span));
+            return ResolvedType::Unknown;
+        };
+        let pow_exp = if matches!(op, BinaryOp::Pow) {
+            Some(pow_exponent_kind_from_ast(right, right_ty))
+        } else {
+            None
+        };
+        // Exact-width floating operands must not flow through the legacy two-class numeric promotion table: it only
+        // distinguishes `int` and `float`, so `f32 + f32` would incorrectly become the default `float` (`f64`).
+        // Mixed-width expressions still use that established policy.
+        if left_ty == right_ty && matches!(left_ty, ResolvedType::Numeric(NumericTypeId::F32 | NumericTypeId::F64)) {
+            return left_ty.clone();
+        }
+        match result_numeric_type(num_op, lhs, rhs, pow_exp) {
+            NumericTy::Int => ResolvedType::Int,
+            NumericTy::Float => ResolvedType::Float,
+        }
+    }
+
     /// Type-check a binary operation and return its result type.
     pub(in crate::typechecker::check_expr) fn check_binary(
         &mut self,
@@ -433,35 +474,8 @@ impl TypeChecker {
                 let rhs_num = numeric_ty_from_resolved(&right_ty);
 
                 match (lhs_num, rhs_num) {
-                    (Some(lhs), Some(rhs)) => {
-                        if let Some(result_ty) =
-                            self.check_exact_unsigned_integer_binary(left, op, right, &left_ty, &right_ty, span)
-                        {
-                            return result_ty;
-                        }
-                        let Some(num_op) = numeric_op_from_ast(&op) else {
-                            self.errors
-                                .push(errors::type_mismatch("numeric operator", &op.to_string(), span));
-                            return ResolvedType::Unknown;
-                        };
-                        let pow_exp = if matches!(op, BinaryOp::Pow) {
-                            Some(pow_exponent_kind_from_ast(right, &right_ty))
-                        } else {
-                            None
-                        };
-                        // Exact-width floating operands must not flow through the legacy two-class numeric promotion
-                        // table: it only distinguishes `int` and `float`, so `f32 + f32` would incorrectly become
-                        // the default `float` (`f64`). Mixed-width expressions still use that established policy.
-                        if left_ty == right_ty
-                            && matches!(left_ty, ResolvedType::Numeric(NumericTypeId::F32 | NumericTypeId::F64))
-                        {
-                            return left_ty;
-                        }
-                        let result = result_numeric_type(num_op, lhs, rhs, pow_exp);
-                        match result {
-                            NumericTy::Int => ResolvedType::Int,
-                            NumericTy::Float => ResolvedType::Float,
-                        }
+                    (Some(_), Some(_)) => {
+                        self.numeric_arithmetic_result_type((left, &left_ty), op, (right, &right_ty), span)
                     }
                     // Allow Unknown with numeric partner (treat as that numeric type).
                     (Some(n), None) if matches!(right_ty, ResolvedType::Unknown | ResolvedType::RustPath(_)) => match n
@@ -570,6 +584,13 @@ impl TypeChecker {
                     // Mixed numeric comparison is valid (promotion handled at codegen)
                     ResolvedType::Bool
                 } else if (is_str_like)(&left_ty) && (is_str_like)(&right_ty) {
+                    ResolvedType::Bool
+                } else if let (Some(left_shape), Some(right_shape)) =
+                    (decimal_shape(&left_ty), decimal_shape(&right_ty))
+                    && left_shape.constructor == right_shape.constructor
+                {
+                    // Decimal values compare by value, whatever precision and scale each side declares (#1810);
+                    // assignability between the two shapes does not enter into it.
                     ResolvedType::Bool
                 } else if let Some(method) = binary_operator_dunder(op)
                     && self.type_has_derive_backed_comparison_operator(&left_ty, op)

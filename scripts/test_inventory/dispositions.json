@@ -1315,6 +1315,24 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/numeric_operator_emission.rs": {
+      "disposition": "retire",
+      "notes": "generated-Rust text of numeric operators: the typed `**` receiver and the checked zero-divisor helpers.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "power_base_is_emitted_in_the_result_type_issue1811": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/power_with_literal_base.incn",
+          "notes": "Asserts the emitted `(2 as i64).pow(3 as u32)` receiver spelling; the program printing its powers is carried by the named fixture (#1811)."
+        },
+        "zero_divisors_reach_checked_helpers_issue1813": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/unsigned_zero_divisor_stops_the_program.incn",
+          "notes": "Asserts that unsigned `//` and `%` call `py_floor_div_unsigned`/`py_mod_unsigned` and integer `/` calls `py_div_int`. The named fixture carries the unsigned results and the stop at a zero divisor; the `ZeroDivisionError` message itself goes to stderr, which fixtures do not compare, and is kept by the runtime tests in `incan_std_core::num` (#1813)."
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/trait_bound_inference.rs": {
       "disposition": "retire",
       "notes": "infers Rust trait bounds for generated generics; Rust-shape concern.",
@@ -2097,6 +2115,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/numeric_assignment_and_compound.rs": {
+      "disposition": "keep",
+      "notes": "typechecker tests for decimal assignability and comparison (#1809, #1810) and compound-assignment result types (#1812); no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/numerics_const_and_static.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -2511,6 +2537,20 @@
           "notes": "Asserts the recorded import fact on the legacy IR (an import of a derivable trait's stdlib stub lowers to no IR import; the source-owned protocol and callable imports stay; the expanded adapter default and an aliased `Eq` bound spell the derive-owned Rust traits); retires with `incan_ir`. The behavior, the FallibleIterator adapters driven with derived callables beside `from std.derives.copying import Clone`, is carried by the named fixture (#1727)."
         }
       }
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/power_base_type.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "power_base_is_converted_to_the_result_type_issue1811": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/power_with_literal_base.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (the base of `**` is handed to the emitter converted to the operation's result type, an operator-shaped base grouped inside the conversion); retires with `incan_ir`. The behavior, `2 ** 3` printing `8` and a `u8` base squaring to `400`, is carried by the named fixture (#1811)."
+        }
+      },
+      "twin": ""
     },
     "loaves/compiler/incan_ir/src/lower/tests/unary_operand_grouping.rs": {
       "disposition": "retire",

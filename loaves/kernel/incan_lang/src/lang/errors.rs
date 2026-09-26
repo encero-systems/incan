@@ -93,7 +93,7 @@ pub const EXCEPTIONS: &[ExceptionInfo] = &[
             code: r#"def main() -> None:
     print(1 / 0)
 "#,
-            note: Some("Panics at runtime with `ZeroDivisionError: float division by zero`."),
+            note: Some("Panics at runtime with `ZeroDivisionError: division by zero`."),
         }],
     ),
     info(

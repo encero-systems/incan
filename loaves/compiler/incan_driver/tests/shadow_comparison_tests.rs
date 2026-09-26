@@ -267,7 +267,7 @@ fn division_failure_preserves_prior_stdout_and_reports_stderr_divergence() -> Re
     assert_eq!(replacement.observation.stdout, legacy.observation.stdout);
     assert_eq!(
         legacy.observation.stderr,
-        b"ZeroDivisionError: float division by zero\n"
+        b"ZeroDivisionError: integer division or modulo by zero\n"
     );
     assert!(replacement.observation.stderr.is_empty());
     assert!(

@@ -10,7 +10,7 @@
 use crate::ast::*;
 use crate::diagnostics::{CompileError, errors};
 use crate::symbols::{FieldInfo, FunctionInfo, ResolvedType, SymbolKind, VariableInfo};
-use crate::typechecker::helpers::{is_frozen_bytes, is_frozen_str};
+use crate::typechecker::helpers::{decimal_shape, is_frozen_bytes, is_frozen_str};
 use incan_lang::lang::keywords;
 use incan_lang::numeric_values::{IntegerBounds, integer_bounds};
 use incan_semantics_core::SurfaceExprTypeCheck;
@@ -667,35 +667,12 @@ impl TypeChecker {
 
 /// Return whether a resolved type is one of the parameterized decimal families.
 fn is_decimal_type(ty: &ResolvedType) -> bool {
-    match ty {
-        ResolvedType::Generic(name, args) => {
-            incan_lang::lang::types::numerics::decimal_constructor_from_str(name.as_str()).is_some() && args.len() == 2
-        }
-        _ => false,
-    }
+    decimal_shape(ty).is_some()
 }
 
 /// Extract precision and scale from a checked resolved decimal type.
 fn decimal_precision_scale(ty: &ResolvedType) -> Option<(usize, usize)> {
-    match ty {
-        ResolvedType::Generic(name, args)
-            if incan_lang::lang::types::numerics::decimal_constructor_from_str(name.as_str()).is_some()
-                && args.len() == 2 =>
-        {
-            let precision = decimal_type_arg_usize(&args[0])?;
-            let scale = decimal_type_arg_usize(&args[1])?;
-            Some((precision, scale))
-        }
-        _ => None,
-    }
-}
-
-/// Parse one resolved decimal type argument into a host integer for validation.
-fn decimal_type_arg_usize(ty: &ResolvedType) -> Option<usize> {
-    match ty {
-        ResolvedType::TypeVar(value) => value.parse().ok(),
-        _ => None,
-    }
+    decimal_shape(ty).map(|shape| (usize::from(shape.precision), usize::from(shape.scale)))
 }
 
 /// Count integer, fractional, and total digits in a plain decimal literal body.

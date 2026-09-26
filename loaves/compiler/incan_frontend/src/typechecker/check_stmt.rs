@@ -6,11 +6,11 @@ use crate::ast::*;
 use crate::diagnostics::errors::{self, SelfMutation};
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved};
 use crate::symbols::*;
+use incan_lang::NumericTy;
 use incan_lang::lang::errors as runtime_errors;
 use incan_lang::lang::keywords;
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::types::collections::CollectionTypeId;
-use incan_lang::{NumericTy, result_numeric_type};
 use incan_semantics_core::SurfaceStmtTypeCheck;
 use incan_semantics_core::rust_tuple_arity;
 
@@ -135,6 +135,75 @@ impl TypeChecker {
     // Statements
     // ========================================================================
 
+    /// Check the value of a compound assignment `x op= y` against the type `var_ty` of the local or static it writes.
+    ///
+    /// Numeric operands are checked as `x = x op y`: the operator's result type from the operator result table, then
+    /// the assignment rule. So `s *= s` on an `f32` binding keeps `f32` and is accepted, while `n += 1` on an `i32`
+    /// binding stays refused because its `int` result is not assignable to `i32` (#1812). A user operator receiver
+    /// resolves through its in-place or binary hook, and any other value must be assignable to the binding.
+    fn check_compound_assignment_value(
+        &mut self,
+        compound: &CompoundAssignmentStmt,
+        var_ty: &ResolvedType,
+        value_ty: &ResolvedType,
+        stmt_span: Span,
+    ) {
+        let binop = compound.op.binary_op();
+        if let (Some(lhs), Some(rhs)) = (numeric_ty_from_resolved(var_ty), numeric_ty_from_resolved(value_ty)) {
+            let result_ty = if numeric_op_from_ast(&binop).is_some() {
+                let target = Spanned::new(Expr::Ident(compound.name.clone()), compound.name_span);
+                self.numeric_arithmetic_result_type(
+                    (&target, var_ty),
+                    binop,
+                    (&compound.value, value_ty),
+                    compound.value.span,
+                )
+            } else if matches!(
+                binop,
+                BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr
+            ) && matches!((lhs, rhs), (NumericTy::Int, NumericTy::Int))
+            {
+                ResolvedType::Int
+            } else {
+                self.errors.push(errors::type_mismatch(
+                    "supported compound operator operands",
+                    &format!("{var_ty} {binop} {value_ty}"),
+                    compound.value.span,
+                ));
+                return;
+            };
+            if !self.types_compatible(&result_ty, var_ty) {
+                self.errors.push(errors::type_mismatch(
+                    &var_ty.to_string(),
+                    &result_ty.to_string(),
+                    compound.value.span,
+                ));
+            }
+        } else if self.is_user_operator_receiver(var_ty) {
+            match self.resolve_compound_assignment_operator(var_ty, compound.op, &compound.value, value_ty, stmt_span) {
+                Some(result_ty) if !self.types_compatible(&result_ty, var_ty) => {
+                    self.errors.push(errors::type_mismatch(
+                        &var_ty.to_string(),
+                        &result_ty.to_string(),
+                        compound.value.span,
+                    ));
+                }
+                Some(_) => {}
+                None => self.errors.push(errors::missing_method(
+                    &var_ty.to_string(),
+                    compound_assignment_fallback_dunder(compound.op),
+                    stmt_span,
+                )),
+            }
+        } else if !self.types_compatible(value_ty, var_ty) {
+            self.errors.push(errors::type_mismatch(
+                &var_ty.to_string(),
+                &value_ty.to_string(),
+                compound.value.span,
+            ));
+        }
+    }
+
     /// Return whether a local annotation names a trait surface that does not yet have a local value representation.
     ///
     /// Callable parameters and returns have dedicated trait-bound lowering paths, but local bindings do not preserve a
@@ -211,75 +280,7 @@ impl TypeChecker {
                     // Type check the value expression
                     let value_ty = self.check_expr(&compound.value);
 
-                    // Treat `x <op>= y` as `x = x <op> y` using numeric policy.
-                    let binop = compound.op.binary_op();
-
-                    let lhs_num = numeric_ty_from_resolved(&var_ty);
-                    let rhs_num = numeric_ty_from_resolved(&value_ty);
-
-                    if let (Some(lhs), Some(rhs)) = (lhs_num, rhs_num) {
-                        if let Some(num_op) = numeric_op_from_ast(&binop) {
-                            let res_num = result_numeric_type(num_op, lhs, rhs, None);
-                            let res_ty = match res_num {
-                                NumericTy::Int => ResolvedType::Int,
-                                NumericTy::Float => ResolvedType::Float,
-                            };
-                            if !self.types_compatible(&res_ty, &var_ty) {
-                                self.errors.push(errors::type_mismatch(
-                                    &var_ty.to_string(),
-                                    &res_ty.to_string(),
-                                    compound.value.span,
-                                ));
-                            }
-                        } else if matches!(
-                            binop,
-                            BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr
-                        ) && matches!((lhs, rhs), (NumericTy::Int, NumericTy::Int))
-                        {
-                            if !self.types_compatible(&ResolvedType::Int, &var_ty) {
-                                self.errors.push(errors::type_mismatch(
-                                    &var_ty.to_string(),
-                                    &ResolvedType::Int.to_string(),
-                                    compound.value.span,
-                                ));
-                            }
-                        } else {
-                            self.errors.push(errors::type_mismatch(
-                                "supported compound operator operands",
-                                &format!("{} {} {}", var_ty, binop, value_ty),
-                                compound.value.span,
-                            ));
-                        }
-                    } else if self.is_user_operator_receiver(&var_ty) {
-                        if let Some(res_ty) = self.resolve_compound_assignment_operator(
-                            &var_ty,
-                            compound.op,
-                            &compound.value,
-                            &value_ty,
-                            stmt.span,
-                        ) {
-                            if !self.types_compatible(&res_ty, &var_ty) {
-                                self.errors.push(errors::type_mismatch(
-                                    &var_ty.to_string(),
-                                    &res_ty.to_string(),
-                                    compound.value.span,
-                                ));
-                            }
-                        } else {
-                            self.errors.push(errors::missing_method(
-                                &var_ty.to_string(),
-                                compound_assignment_fallback_dunder(compound.op),
-                                stmt.span,
-                            ));
-                        }
-                    } else if !self.types_compatible(&value_ty, &var_ty) {
-                        // Non-numeric: fall back to simple compatibility check.
-                        self.errors.push(errors::type_mismatch(
-                            &var_ty.to_string(),
-                            &value_ty.to_string(),
-                            compound.value.span,
-                        ));
-                    }
+                    self.check_compound_assignment_value(compound, &var_ty, &value_ty, stmt.span);
                 } else if let Some(static_info) = self.lookup_static_info(&compound.name).cloned() {
                     if static_info.is_imported {
                         self.errors.push(errors::imported_static_reassignment_not_allowed(
@@ -291,86 +292,7 @@ impl TypeChecker {
                     let value_ty = self.check_expr(&compound.value);
                     let var_ty = static_info.ty;
 
-                    let binop = match compound.op {
-                        CompoundOp::Add => BinaryOp::Add,
-                        CompoundOp::Sub => BinaryOp::Sub,
-                        CompoundOp::Mul => BinaryOp::Mul,
-                        CompoundOp::Div => BinaryOp::Div,
-                        CompoundOp::FloorDiv => BinaryOp::FloorDiv,
-                        CompoundOp::Mod => BinaryOp::Mod,
-                        CompoundOp::MatMul => BinaryOp::MatMul,
-                        CompoundOp::BitAnd => BinaryOp::BitAnd,
-                        CompoundOp::BitOr => BinaryOp::BitOr,
-                        CompoundOp::BitXor => BinaryOp::BitXor,
-                        CompoundOp::Shl => BinaryOp::Shl,
-                        CompoundOp::Shr => BinaryOp::Shr,
-                    };
-
-                    let lhs_num = numeric_ty_from_resolved(&var_ty);
-                    let rhs_num = numeric_ty_from_resolved(&value_ty);
-
-                    if let (Some(lhs), Some(rhs)) = (lhs_num, rhs_num) {
-                        if let Some(num_op) = numeric_op_from_ast(&binop) {
-                            let res_num = result_numeric_type(num_op, lhs, rhs, None);
-                            let res_ty = match res_num {
-                                NumericTy::Int => ResolvedType::Int,
-                                NumericTy::Float => ResolvedType::Float,
-                            };
-                            if !self.types_compatible(&res_ty, &var_ty) {
-                                self.errors.push(errors::type_mismatch(
-                                    &var_ty.to_string(),
-                                    &res_ty.to_string(),
-                                    compound.value.span,
-                                ));
-                            }
-                        } else if matches!(
-                            binop,
-                            BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr
-                        ) && matches!((lhs, rhs), (NumericTy::Int, NumericTy::Int))
-                        {
-                            if !self.types_compatible(&ResolvedType::Int, &var_ty) {
-                                self.errors.push(errors::type_mismatch(
-                                    &var_ty.to_string(),
-                                    &ResolvedType::Int.to_string(),
-                                    compound.value.span,
-                                ));
-                            }
-                        } else {
-                            self.errors.push(errors::type_mismatch(
-                                "supported compound operator operands",
-                                &format!("{} {} {}", var_ty, binop, value_ty),
-                                compound.value.span,
-                            ));
-                        }
-                    } else if self.is_user_operator_receiver(&var_ty) {
-                        if let Some(res_ty) = self.resolve_compound_assignment_operator(
-                            &var_ty,
-                            compound.op,
-                            &compound.value,
-                            &value_ty,
-                            stmt.span,
-                        ) {
-                            if !self.types_compatible(&res_ty, &var_ty) {
-                                self.errors.push(errors::type_mismatch(
-                                    &var_ty.to_string(),
-                                    &res_ty.to_string(),
-                                    compound.value.span,
-                                ));
-                            }
-                        } else {
-                            self.errors.push(errors::missing_method(
-                                &var_ty.to_string(),
-                                compound_assignment_fallback_dunder(compound.op),
-                                stmt.span,
-                            ));
-                        }
-                    } else if !self.types_compatible(&value_ty, &var_ty) {
-                        self.errors.push(errors::type_mismatch(
-                            &var_ty.to_string(),
-                            &value_ty.to_string(),
-                            compound.value.span,
-                        ));
-                    }
+                    self.check_compound_assignment_value(compound, &var_ty, &value_ty, stmt.span);
                 } else if self.const_decls.contains_key(&compound.name) {
                     self.errors
                         .push(errors::const_reassignment_suggests_static(&compound.name, stmt.span));

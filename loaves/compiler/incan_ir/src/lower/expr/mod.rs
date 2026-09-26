@@ -39,6 +39,7 @@ use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId, TASK_JOIN_ERROR_TYPE_NAME};
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
+use incan_lang::lang::types::numerics::NumericTypeId;
 use incan_lang::lang::{stdlib, trait_bounds};
 use incan_semantics_core::SurfaceExprLoweringAction;
 
@@ -118,6 +119,33 @@ fn grouped_unary_operand(operand: TypedExpr) -> TypedExpr {
             value: Some(Box::new(operand)),
         },
         ty,
+    )
+}
+
+/// Give the base of `**` the operation's concrete numeric result type (#1811).
+///
+/// `**` is spelled as a method call on its base (`.pow`, `.powf`), and a method call needs its receiver's numeric type
+/// to be settled. A literal base (`2 ** 3`, `(-2) ** 3`, `(1 + 2) ** 2`) or a binding initialized from one leaves Rust
+/// with an ambiguous `{integer}` or `{float}` receiver, which it refuses (E0689); an exact-width integer base would
+/// raise in its own width although the checked result is `int`. Converting the base to the result type (`int`,
+/// `float`, or the exact float both operands share) settles both; a base that already has that type converts to
+/// itself. An operator-shaped base is grouped first so the conversion covers the whole base, and a base or result
+/// outside the numeric carriers is left as it is.
+fn power_base_in_result_type(base: TypedExpr, result_ty: &IrType) -> TypedExpr {
+    let concrete_result = matches!(
+        result_ty,
+        IrType::Int | IrType::Float | IrType::Numeric(NumericTypeId::F32 | NumericTypeId::F64)
+    );
+    let numeric_base = matches!(base.ty, IrType::Int | IrType::Float | IrType::Numeric(_));
+    if !concrete_result || !numeric_base {
+        return base;
+    }
+    TypedExpr::new(
+        IrExprKind::Cast {
+            expr: Box::new(grouped_unary_operand(base)),
+            to_type: result_ty.clone(),
+        },
+        result_ty.clone(),
     )
 }
 
@@ -1703,6 +1731,11 @@ impl AstLowering {
                                 None
                             };
                             let result_ty = self.binary_result_type(&left.ty, &right.ty, op, pow_exp_kind);
+                            let left = if matches!(op, ast::BinaryOp::Pow) {
+                                power_base_in_result_type(left, &result_ty)
+                            } else {
+                                left
+                            };
                             (
                                 IrExprKind::BinOp {
                                     op: self.lower_binop(op, expr_span)?,

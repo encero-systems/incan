@@ -8,7 +8,9 @@
 //! - `py_div`: always returns `f64`.
 //! - `py_mod`: remainder has the sign of the divisor (Python semantics).
 //! - `py_floor_div`: rounds toward negative infinity (Python `//`).
-//! - Zero division (int or float) panics with `ZeroDivisionError: float division by zero`.
+//! - A zero divisor raises `ZeroDivisionError` with the message for its operator and operand family
+//!   ([`ZeroDivisionOperation`]): `division by zero` and `integer division or modulo by zero` for integer operands,
+//!   `float division by zero`, `float floor division by zero` and `float modulo` when a float is involved.
 //! - NaN/Inf follow IEEE/Rust behavior (documented divergence from Python).
 //!
 //! ## Examples
@@ -35,10 +37,15 @@
 /// assert_eq!(py_floor_div_i64(-7, -3), 2);
 /// ```
 use crate::errors::{raise, raise_value_error, raise_zero_division};
+use core::cmp::Ordering;
 use core::fmt;
+use core::hash::{Hash, Hasher};
+use incan_lang::errors::ZeroDivisionOperation;
 use incan_lang::{
     errors::IncanError,
-    numeric_values::{format_decimal_value, parse_decimal_literal_body},
+    numeric_values::{
+        canonical_decimal_value, compare_decimal_values, format_decimal_value, parse_decimal_literal_body,
+    },
     python_floor_div_i64, python_mod_i64,
 };
 
@@ -118,7 +125,7 @@ fn non_negative_i64_or_overflow(value: u64, fn_name: &str) -> i64 {
 #[inline]
 fn checked_python_floor_div_i64(dividend: i64, divisor: i64) -> i64 {
     if divisor == 0 {
-        raise_zero_division();
+        raise_zero_division(ZeroDivisionOperation::IntegerFloorDivisionOrModulo);
     }
     if dividend == i64::MIN && divisor == -1 {
         raise_value_error("integer floor division result overflows Incan int");
@@ -137,6 +144,12 @@ mod sealed {
     pub trait Sealed {}
     impl Sealed for i64 {}
     impl Sealed for f64 {}
+    impl Sealed for u8 {}
+    impl Sealed for u16 {}
+    impl Sealed for u32 {}
+    impl Sealed for u64 {}
+    impl Sealed for u128 {}
+    impl Sealed for usize {}
 
     // --- Incan integer types ---
     /// Marker for Incan integer types (future-friendly: add i8/i16/i32/i64/etc.).
@@ -177,11 +190,14 @@ mod sealed {
     // --- Unified numeric trait ---
     /// Unified numeric trait to allow shared bounds across supported ints/floats.
     pub trait IncanNumeric: Sealed {
+        /// Whether the carrier is float-family; a zero divisor's message names the operand family it met.
+        const IS_FLOAT: bool;
         fn to_float(self) -> f64;
         fn is_zero(&self) -> bool;
     }
 
     impl IncanNumeric for i64 {
+        const IS_FLOAT: bool = false;
         #[inline]
         fn to_float(self) -> f64 {
             <Self as IncanInt>::to_float(self)
@@ -193,6 +209,7 @@ mod sealed {
     }
 
     impl IncanNumeric for f64 {
+        const IS_FLOAT: bool = true;
         #[inline]
         fn to_float(self) -> f64 {
             <Self as IncanFloat>::to_float(self)
@@ -212,7 +229,8 @@ mod sealed {
 ///
 /// ## Panics
 ///
-/// - `ZeroDivisionError: float division by zero` if `rhs` is zero (finite zero)
+/// - `ZeroDivisionError: division by zero` if `rhs` is zero and both operands are integers
+/// - `ZeroDivisionError: float division by zero` if `rhs` is zero and either operand is a float
 ///
 /// ## Notes
 ///
@@ -239,16 +257,32 @@ where
     let l: f64 = lhs.to_float();
     let r: f64 = rhs.to_float();
     if r == 0.0 {
-        raise_zero_division();
+        raise_zero_division(if L::IS_FLOAT || R::IS_FLOAT {
+            ZeroDivisionOperation::FloatTrueDivision
+        } else {
+            ZeroDivisionOperation::IntegerTrueDivision
+        });
     }
     l / r
+}
+
+/// Python-like true division of two integer-family operands, which generated Rust widens to `f64` before the call.
+///
+/// The widening erases the operands' family, so the family is carried by the helper instead: a zero divisor raises
+/// `ZeroDivisionError: division by zero`, where [`py_div`] over the same widened operands would name a float division.
+#[inline]
+pub fn py_div_int(lhs: f64, rhs: f64) -> f64 {
+    if rhs == 0.0 {
+        raise_zero_division(ZeroDivisionOperation::IntegerTrueDivision);
+    }
+    lhs / rhs
 }
 
 /// Python-like division over exact `f32`, retaining its checked carrier width.
 #[inline]
 pub fn py_div_f32(lhs: f32, rhs: f32) -> f32 {
     if rhs == 0.0 {
-        raise_zero_division();
+        raise_zero_division(ZeroDivisionOperation::FloatTrueDivision);
     }
     lhs / rhs
 }
@@ -261,7 +295,8 @@ pub fn py_div_f32(lhs: f32, rhs: f32) -> f32 {
 ///
 /// ## Panics
 ///
-/// - `ZeroDivisionError: float division by zero` if `rhs` is zero (finite zero)
+/// - `ZeroDivisionError: integer division or modulo by zero` if `rhs` is zero and both operands are integers
+/// - `ZeroDivisionError: float modulo` if `rhs` is zero and either operand is a float
 ///
 /// ## Notes
 ///
@@ -287,9 +322,6 @@ where
     L: PyModImpl<R>,
     R: sealed::IncanNumeric + Copy,
 {
-    if rhs.is_zero() {
-        raise_zero_division();
-    }
     <L as PyModImpl<R>>::py_mod(lhs, rhs)
 }
 
@@ -301,7 +333,8 @@ where
 ///
 /// ## Panics
 ///
-/// - `ZeroDivisionError: float division by zero` if `rhs` is zero (finite zero)
+/// - `ZeroDivisionError: integer division or modulo by zero` if `rhs` is zero and both operands are integers
+/// - `ZeroDivisionError: float floor division by zero` if `rhs` is zero and either operand is a float
 ///
 /// ## Notes
 ///
@@ -327,9 +360,6 @@ where
     L: PyFloorDivImpl<R>,
     R: sealed::IncanNumeric + Copy,
 {
-    if rhs.is_zero() {
-        raise_zero_division();
-    }
     <L as PyFloorDivImpl<R>>::py_floor_div(lhs, rhs)
 }
 
@@ -338,45 +368,53 @@ where
 // --- Python-like modulo -----------------------------------------------------------------------
 
 /// Trait for Python-like modulo across type pairs.
+///
+/// Each implementation checks its own zero divisor, so the `ZeroDivisionError` names the operand family of the pair.
 pub trait PyModImpl<Rhs>: sealed::Sealed {
     type Output;
+    /// Return the remainder with the sign of `rhs`, raising `ZeroDivisionError` for a zero `rhs`.
     fn py_mod(self, rhs: Rhs) -> Self::Output;
 }
 
 impl PyModImpl<i64> for i64 {
     type Output = i64;
+    /// Integer remainder; a zero divisor raises `integer division or modulo by zero`.
     #[inline]
     fn py_mod(self, rhs: i64) -> Self::Output {
-        python_mod_i64(self, rhs)
+        py_mod_i64(self, rhs)
     }
 }
 
 impl PyModImpl<f64> for i64 {
     type Output = f64;
+    /// Float remainder of a widened integer dividend; a zero divisor raises `float modulo`.
     #[inline]
     fn py_mod(self, rhs: f64) -> Self::Output {
-        py_mod_f64_impl(self as f64, rhs)
+        py_mod_f64(self as f64, rhs)
     }
 }
 
 impl PyModImpl<i64> for f64 {
     type Output = f64;
+    /// Float remainder by a widened integer divisor; a zero divisor raises `float modulo`.
     #[inline]
     fn py_mod(self, rhs: i64) -> Self::Output {
-        py_mod_f64_impl(self, rhs as f64)
+        py_mod_f64(self, rhs as f64)
     }
 }
 
 impl PyModImpl<f64> for f64 {
     type Output = f64;
+    /// Float remainder; a zero divisor raises `float modulo`.
     #[inline]
     fn py_mod(self, rhs: f64) -> Self::Output {
-        py_mod_f64_impl(self, rhs)
+        py_mod_f64(self, rhs)
     }
 }
 
 impl PyFloorDivImpl<i64> for i64 {
     type Output = i64;
+    /// Integer floor division; a zero divisor raises `integer division or modulo by zero`.
     #[inline]
     fn py_floor_div(self, rhs: i64) -> Self::Output {
         checked_python_floor_div_i64(self, rhs)
@@ -386,32 +424,38 @@ impl PyFloorDivImpl<i64> for i64 {
 // --- Python-like floor division ----------------------------------------------------------------
 
 /// Trait for Python-like floor division across type pairs.
+///
+/// Each implementation checks its own zero divisor, so the `ZeroDivisionError` names the operand family of the pair.
 pub trait PyFloorDivImpl<Rhs>: sealed::Sealed {
     type Output;
+    /// Return the quotient rounded toward negative infinity, raising `ZeroDivisionError` for a zero `rhs`.
     fn py_floor_div(self, rhs: Rhs) -> Self::Output;
 }
 
 impl PyFloorDivImpl<f64> for i64 {
     type Output = f64;
+    /// Float floor division of a widened integer dividend; a zero divisor raises `float floor division by zero`.
     #[inline]
     fn py_floor_div(self, rhs: f64) -> Self::Output {
-        (self as f64 / rhs).floor()
+        py_floor_div_f64(self as f64, rhs)
     }
 }
 
 impl PyFloorDivImpl<i64> for f64 {
     type Output = f64;
+    /// Float floor division by a widened integer divisor; a zero divisor raises `float floor division by zero`.
     #[inline]
     fn py_floor_div(self, rhs: i64) -> Self::Output {
-        (self / rhs as f64).floor()
+        py_floor_div_f64(self, rhs as f64)
     }
 }
 
 impl PyFloorDivImpl<f64> for f64 {
     type Output = f64;
+    /// Float floor division; a zero divisor raises `float floor division by zero`.
     #[inline]
     fn py_floor_div(self, rhs: f64) -> Self::Output {
-        (self / rhs).floor()
+        py_floor_div_f64(self, rhs)
     }
 }
 
@@ -445,7 +489,7 @@ pub fn py_floor_div_i64(a: i64, b: i64) -> i64 {
 #[inline]
 pub fn py_floor_div_f64(a: f64, b: f64) -> f64 {
     if b == 0.0 {
-        raise_zero_division();
+        raise_zero_division(ZeroDivisionOperation::FloatFloorDivision);
     }
     (a / b).floor()
 }
@@ -454,7 +498,7 @@ pub fn py_floor_div_f64(a: f64, b: f64) -> f64 {
 #[inline]
 pub fn py_floor_div_f32(a: f32, b: f32) -> f32 {
     if b == 0.0 {
-        raise_zero_division();
+        raise_zero_division(ZeroDivisionOperation::FloatFloorDivision);
     }
     (a / b).floor()
 }
@@ -477,7 +521,7 @@ pub fn py_floor_div_f32(a: f32, b: f32) -> f32 {
 #[inline(always)]
 pub fn py_mod_i64(a: i64, b: i64) -> i64 {
     if b == 0 {
-        raise_zero_division();
+        raise_zero_division(ZeroDivisionOperation::IntegerFloorDivisionOrModulo);
     }
     python_mod_i64(a, b)
 }
@@ -497,7 +541,7 @@ pub fn py_mod_i64(a: i64, b: i64) -> i64 {
 #[inline]
 pub fn py_mod_f64(a: f64, b: f64) -> f64 {
     if b == 0.0 {
-        raise_zero_division();
+        raise_zero_division(ZeroDivisionOperation::FloatModulo);
     }
     py_mod_f64_impl(a, b)
 }
@@ -506,7 +550,7 @@ pub fn py_mod_f64(a: f64, b: f64) -> f64 {
 #[inline]
 pub fn py_mod_f32(a: f32, b: f32) -> f32 {
     if b == 0.0 {
-        raise_zero_division();
+        raise_zero_division(ZeroDivisionOperation::FloatModulo);
     }
     let remainder = a % b;
     if (remainder > 0.0 && b < 0.0) || (remainder < 0.0 && b > 0.0) {
@@ -514,6 +558,67 @@ pub fn py_mod_f32(a: f32, b: f32) -> f32 {
     } else {
         remainder
     }
+}
+
+/// Exact-width unsigned integer carriers whose `//` and `%` keep their own type.
+///
+/// Sealed: generated Rust names only the six unsigned widths. In an unsigned domain rounding toward negative infinity
+/// is truncation, so the native operators compute Python's results once the zero divisor is refused.
+pub trait IncanUnsignedInteger:
+    sealed::Sealed + Copy + PartialEq + core::ops::Div<Output = Self> + core::ops::Rem<Output = Self>
+{
+    /// The carrier's zero, the one divisor `//` and `%` refuse.
+    const ZERO: Self;
+}
+
+impl IncanUnsignedInteger for u8 {
+    const ZERO: Self = 0;
+}
+
+impl IncanUnsignedInteger for u16 {
+    const ZERO: Self = 0;
+}
+
+impl IncanUnsignedInteger for u32 {
+    const ZERO: Self = 0;
+}
+
+impl IncanUnsignedInteger for u64 {
+    const ZERO: Self = 0;
+}
+
+impl IncanUnsignedInteger for u128 {
+    const ZERO: Self = 0;
+}
+
+impl IncanUnsignedInteger for usize {
+    const ZERO: Self = 0;
+}
+
+/// Python-style floor division over one exact-width unsigned type, keeping that type.
+///
+/// ## Panics
+///
+/// Raises `ZeroDivisionError: integer division or modulo by zero` when `rhs` is zero.
+#[inline]
+pub fn py_floor_div_unsigned<T: IncanUnsignedInteger>(lhs: T, rhs: T) -> T {
+    if rhs == T::ZERO {
+        raise_zero_division(ZeroDivisionOperation::IntegerFloorDivisionOrModulo);
+    }
+    lhs / rhs
+}
+
+/// Python-style modulo over one exact-width unsigned type, keeping that type.
+///
+/// ## Panics
+///
+/// Raises `ZeroDivisionError: integer division or modulo by zero` when `rhs` is zero.
+#[inline]
+pub fn py_mod_unsigned<T: IncanUnsignedInteger>(lhs: T, rhs: T) -> T {
+    if rhs == T::ZERO {
+        raise_zero_division(ZeroDivisionOperation::IntegerFloorDivisionOrModulo);
+    }
+    lhs % rhs
 }
 
 /// Greatest common divisor for signed 64-bit integers.
@@ -553,7 +658,10 @@ pub fn lcm_i64(a: i64, b: i64) -> i64 {
 /// Precision and scale are checked by the compiler at Incan boundaries. The runtime keeps the coefficient plus
 /// literal scale so generated programs have a stable, toolchain-owned Rust type without depending on a third-party
 /// decimal crate before arithmetic semantics are specified.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+///
+/// Equality, ordering and hashing are numeric: `1.5` and `1.50` are equal and hash alike, and `1.49` orders before
+/// `1.5`. Only [`Display`](fmt::Display) keeps the written scale.
+#[derive(Clone, Copy, Debug)]
 pub struct Decimal128 {
     coefficient: i128,
     scale: u8,
@@ -582,6 +690,36 @@ impl Decimal128 {
             raise_value_error(&format!("invalid decimal literal `{literal}`"));
         };
         Self::new(parsed.coefficient, parsed.literal_scale)
+    }
+}
+
+impl PartialEq for Decimal128 {
+    /// Compare by value: the canonical forms agree whatever scale each side was written with.
+    fn eq(&self, other: &Self) -> bool {
+        canonical_decimal_value(self.coefficient, self.scale) == canonical_decimal_value(other.coefficient, other.scale)
+    }
+}
+
+impl Eq for Decimal128 {}
+
+impl PartialOrd for Decimal128 {
+    /// Order by value; every pair of decimals is comparable.
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Decimal128 {
+    /// Order by value, whatever scale each side was written with.
+    fn cmp(&self, other: &Self) -> Ordering {
+        compare_decimal_values(self.coefficient, self.scale, other.coefficient, other.scale)
+    }
+}
+
+impl Hash for Decimal128 {
+    /// Hash the canonical form, so values equal under [`PartialEq`] hash alike.
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        canonical_decimal_value(self.coefficient, self.scale).hash(state);
     }
 }
 
@@ -956,7 +1094,7 @@ mod tests {
     // --- Zero division panics ---
 
     #[test]
-    #[should_panic(expected = "ZeroDivisionError: float division by zero")]
+    #[should_panic(expected = "ZeroDivisionError: division by zero")]
     fn test_div_zero_int() {
         let _ = py_div(1_i64, 0_i64);
     }
@@ -969,26 +1107,136 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "ZeroDivisionError: float division by zero")]
+    fn test_div_zero_mixed_float_divisor() {
+        let _ = py_div(1_i64, 0.0_f64);
+    }
+
+    #[test]
+    #[should_panic(expected = "ZeroDivisionError: integer division or modulo by zero")]
     fn test_mod_zero_int() {
         let _ = py_mod(1_i64, 0_i64);
     }
 
     #[test]
-    #[should_panic(expected = "ZeroDivisionError: float division by zero")]
+    #[should_panic(expected = "ZeroDivisionError: float modulo")]
     fn test_mod_zero_float() {
         let _ = py_mod(1.0_f64, 0.0_f64);
     }
 
     #[test]
-    #[should_panic(expected = "ZeroDivisionError: float division by zero")]
+    #[should_panic(expected = "ZeroDivisionError: float modulo")]
+    fn test_mod_zero_mixed_int_divisor() {
+        let _ = py_mod(1.0_f64, 0_i64);
+    }
+
+    #[test]
+    #[should_panic(expected = "ZeroDivisionError: integer division or modulo by zero")]
     fn test_floor_div_zero_int() {
         let _ = py_floor_div(1_i64, 0_i64);
     }
 
     #[test]
-    #[should_panic(expected = "ZeroDivisionError: float division by zero")]
+    #[should_panic(expected = "ZeroDivisionError: float floor division by zero")]
     fn test_floor_div_zero_float() {
         let _ = py_floor_div(1.0_f64, 0.0_f64);
+    }
+
+    #[test]
+    #[should_panic(expected = "ZeroDivisionError: float floor division by zero")]
+    fn test_floor_div_zero_mixed_float_divisor() {
+        let _ = py_floor_div(1_i64, 0.0_f64);
+    }
+
+    /// Integer true division widened to `f64` keeps the integer message (#1813).
+    #[test]
+    #[should_panic(expected = "ZeroDivisionError: division by zero")]
+    fn integer_true_division_by_zero_names_no_float_issue1813() {
+        let _ = py_div_int(7.0, 0.0);
+    }
+
+    /// Run `operation` and return the message it panicked with; an operation that returns is an error.
+    fn panic_message(operation: fn()) -> Result<String, String> {
+        let payload = match std::panic::catch_unwind(operation) {
+            Ok(()) => return Err("the operation returned instead of raising".to_string()),
+            Err(payload) => payload,
+        };
+        payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|message| (*message).to_string()))
+            .ok_or_else(|| "the panic payload is not a message".to_string())
+    }
+
+    /// Exact `f32` operators raise the float messages (#1813).
+    #[test]
+    fn exact_f32_zero_divisors_raise_float_messages_issue1813() -> Result<(), String> {
+        assert_eq!(
+            panic_message(|| {
+                let _ = py_div_f32(1.0, 0.0);
+            })?,
+            "ZeroDivisionError: float division by zero"
+        );
+        assert_eq!(
+            panic_message(|| {
+                let _ = py_floor_div_f32(1.0, 0.0);
+            })?,
+            "ZeroDivisionError: float floor division by zero"
+        );
+        assert_eq!(
+            panic_message(|| {
+                let _ = py_mod_f32(1.0, 0.0);
+            })?,
+            "ZeroDivisionError: float modulo"
+        );
+        Ok(())
+    }
+
+    /// Unsigned floor division and modulo keep their type and compute Python's results (#1813).
+    #[test]
+    fn unsigned_floor_division_and_modulo_keep_their_type_issue1813() {
+        assert_eq!(py_floor_div_unsigned(7_u8, 2), 3_u8);
+        assert_eq!(py_mod_unsigned(7_u8, 2), 1_u8);
+        assert_eq!(py_floor_div_unsigned(u128::MAX, 2), u128::MAX / 2);
+        assert_eq!(py_mod_unsigned(10_usize, 4), 2_usize);
+    }
+
+    /// An unsigned zero divisor raises `ZeroDivisionError`, not Rust's native panic (#1813).
+    #[test]
+    #[should_panic(expected = "ZeroDivisionError: integer division or modulo by zero")]
+    fn unsigned_floor_division_by_zero_raises_zero_division_error_issue1813() {
+        let _ = py_floor_div_unsigned(7_u32, 0);
+    }
+
+    /// An unsigned zero divisor raises `ZeroDivisionError` for `%` too (#1813).
+    #[test]
+    #[should_panic(expected = "ZeroDivisionError: integer division or modulo by zero")]
+    fn unsigned_modulo_by_zero_raises_zero_division_error_issue1813() {
+        let _ = py_mod_unsigned(7_u64, 0);
+    }
+
+    /// Decimal equality, ordering and hashing are numeric, whatever scale a value was written with (#1810).
+    #[test]
+    fn decimal_equality_ordering_and_hashing_are_numeric_issue1810() {
+        use std::collections::HashSet;
+
+        let one_point_five = Decimal128::from_literal("1.5d");
+        let one_point_fifty = Decimal128::from_literal("1.50d");
+        let one_point_forty_nine = Decimal128::from_literal("1.49d");
+        assert_eq!(one_point_five, one_point_fifty);
+        assert!(one_point_forty_nine < one_point_five);
+        assert!(one_point_fifty > one_point_forty_nine);
+        assert_eq!(one_point_five.cmp(&one_point_fifty), Ordering::Equal);
+        assert!(Decimal128::from_literal("-1.5d") < Decimal128::from_literal("-1.49d"));
+        assert_eq!(Decimal128::from_literal("0.00d"), Decimal128::from_literal("0d"));
+
+        let set: HashSet<Decimal128> = [one_point_five, one_point_fifty, one_point_forty_nine]
+            .into_iter()
+            .collect();
+        assert_eq!(set.len(), 2);
+
+        // Display keeps the written scale.
+        assert_eq!(one_point_fifty.to_string(), "1.50");
+        assert_eq!(one_point_five.to_string(), "1.5");
     }
 
     // --- NaN/Inf divergence (documented) ---

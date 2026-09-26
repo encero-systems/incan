@@ -1,0 +1,14 @@
+# behavior: an unsigned // by zero stops the program at the division, after the output before it, as every other zero divisor does
+# retires: loaves/compiler/incan_emit/src/tests/numeric_operator_emission.rs::zero_divisors_reach_checked_helpers_issue1813
+# expect-stdout:
+#   3
+#   1
+# expect-exit: 101
+
+def main() -> None:
+    b: u8 = 7
+    zero: u8 = 0
+    println(b // 2)
+    println(b % 2)
+    println(b // zero)
+    println("unreachable")

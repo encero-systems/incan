@@ -1,0 +1,20 @@
+# behavior: decimal equality, ordering and set membership compare values whatever scale each was written with, and a decimal widens to a type that keeps its digits
+# expect-stdout:
+#   true
+#   false
+#   true
+#   1
+#   1.50
+#   1.5
+
+def main() -> None:
+    a: decimal[4, 2] = 1.50d
+    b: decimal[3, 1] = 1.5d
+    c: decimal[4, 2] = 1.49d
+    widened: decimal[4, 2] = b
+    println(a == widened)
+    println(b < c)
+    println(c < b)
+    println(len({a, b}))
+    println(a)
+    println(b)

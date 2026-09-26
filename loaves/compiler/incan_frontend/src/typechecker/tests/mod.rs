@@ -68,6 +68,7 @@ mod generics_and_type_tokens;
 mod imports_and_stdlib_modules;
 mod models_enums_and_newtypes;
 mod narrowing_and_matching;
+mod numeric_assignment_and_compound;
 mod numerics_const_and_static;
 mod partials_and_callable_aliases;
 mod pub_imports_namespaces_and_fields;

@@ -603,6 +603,23 @@ fn add_type_mismatch_hints(mut error: CompileError, expected: &str, found: &str)
         error = error.with_hint("Use f-string or str() to convert to string");
     }
 
+    // Decimal shape hints: a decimal is assignable only where no digit is lost (#1809)
+    if let (
+        Some((expected_constructor, expected_precision, expected_scale)),
+        Some((found_constructor, found_precision, found_scale)),
+    ) = (rendered_decimal_shape(expected), rendered_decimal_shape(found))
+        && expected_constructor == found_constructor
+    {
+        let found_integer_digits = found_precision.saturating_sub(found_scale);
+        let expected_integer_digits = expected_precision.saturating_sub(expected_scale);
+        error = error.with_note(format!(
+            "'{found}' holds up to {found_integer_digits} digit(s) before the point and {found_scale} after it; '{expected}' keeps {expected_integer_digits} before the point and {expected_scale} after it"
+        ));
+        error = error.with_hint(format!(
+            "A decimal is assignable only to a decimal type that keeps at least its digits before and after the point, and the language defines no decimal rounding or resize: declare the target as '{found}', or as any {found_constructor}[p, s] with p - s >= {found_integer_digits} and s >= {found_scale}"
+        ));
+    }
+
     // Bool condition hints
     if expected == "bool" {
         if found.starts_with("Option[") {
@@ -627,6 +644,14 @@ fn add_type_mismatch_hints(mut error: CompileError, expected: &str, found: &str)
     }
 
     error
+}
+
+/// Parse a rendered decimal type (`decimal[10, 2]`, `decimal128[10, 2]`) into its constructor, precision and scale.
+fn rendered_decimal_shape(rendered: &str) -> Option<(&str, u8, u8)> {
+    let (constructor, arguments) = rendered.split_once('[')?;
+    let (precision, scale) = arguments.strip_suffix(']')?.split_once(',')?;
+    incan_lang::lang::types::numerics::decimal_constructor_from_str(constructor)?;
+    Some((constructor, precision.trim().parse().ok()?, scale.trim().parse().ok()?))
 }
 
 pub fn field_type_mismatch(field: &str, expected: &str, found: &str, span: Span) -> CompileError {

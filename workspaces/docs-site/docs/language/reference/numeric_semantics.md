@@ -111,12 +111,18 @@ Rules:
 
 The integer digit count must fit `p - s`, and the fractional digit count must fit `s`.
 
+A decimal value is assignable to a decimal type of the same constructor when the target keeps at least the source's digits before the point (`p - s`) and at least its scale `s`. Every other decimal assignment, argument, or return is refused with `INCAN-T0001`, naming both types.
+
+Two decimal values of the same constructor compare by value with `==`, `!=`, `<`, `<=`, `>`, and `>=`, whatever the precision and scale of each: `1.5d == 1.50d` is `true`, and `1.49d < 1.5d` is `true`. Equal values hash alike, so a set holds one of them. Display keeps the scale the value was written with.
+
 ```incan
 ok_money: decimal[10, 2] = 12345678.90d
 ok_whole: decimal[5, 0] = 12345d
 too_precise: decimal[10, 2] = 1.234d
 too_large: decimal[7, 2] = 123456.78d
 missing_shape: decimal = 1.00d
+widened: decimal[12, 2] = ok_money   # accepted: 10 digits before the point, scale 2
+narrowed: decimal[5, 2] = ok_money   # refused, INCAN-T0001: 3 digits before the point, 8 needed
 ```
 
 Decimal arithmetic is not defined by the language yet. The implemented decimal surface covers syntax, type checking, literal validation, formatting, Rust emission, display, and runtime representation.
@@ -226,7 +232,7 @@ All other operand combinations produce `float`.
 7 / 2.0
 ```
 
-Division by zero currently panics with a `ZeroDivisionError: float division by zero`-style runtime message.
+A zero divisor fails at runtime with `ZeroDivisionError: division by zero` when both operands are integer-family, and with `ZeroDivisionError: float division by zero` when either operand is float-family.
 
 ### Floor division
 
@@ -239,7 +245,7 @@ Division by zero currently panics with a `ZeroDivisionError: float division by z
 -7 // -3
 ```
 
-Floor division by zero currently panics with a `ZeroDivisionError: float division by zero`-style runtime message.
+A zero divisor fails at runtime with `ZeroDivisionError: integer division or modulo by zero` when both operands are integer-family, unsigned included, and with `ZeroDivisionError: float floor division by zero` when either operand is float-family.
 
 ### Modulo
 
@@ -252,7 +258,7 @@ Floor division by zero currently panics with a `ZeroDivisionError: float divisio
 -7 % -3
 ```
 
-Modulo by zero currently panics with a `ZeroDivisionError: float division by zero`-style runtime message.
+A zero divisor fails at runtime with `ZeroDivisionError: integer division or modulo by zero` when both operands are integer-family, unsigned included, and with `ZeroDivisionError: float modulo` when either operand is float-family.
 
 ### Power
 

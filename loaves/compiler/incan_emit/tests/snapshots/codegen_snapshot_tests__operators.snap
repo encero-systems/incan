@@ -14,7 +14,7 @@ fn test_operators() {
     let _add: i64 = 1 + 2;
     let _sub: i64 = 5 - 3;
     let _mul: i64 = 4 * 6;
-    let _float_div: f64 = incan_std_core::num::py_div((10) as f64, (3) as f64);
+    let _float_div: f64 = incan_std_core::num::py_div_int((10) as f64, (3) as f64);
     let _mod_result: i64 = incan_std_core::num::py_mod_i64(10, 3);
     let _eq: bool = 5 == 5;
     let _ne: bool = 3 != 4;
