@@ -60,7 +60,7 @@ impl AstLowering {
                     .map(|param| self.lower_pattern_type_with_aliases(&param.node, visiting))
                     .collect::<Vec<_>>();
                 if base == super::super::super::types::IR_UNION_TYPE_NAME {
-                    union_ir_type(lowered_params)
+                    self.lower_union_members(lowered_params)
                 } else {
                     IrType::NamedGeneric(base.clone(), lowered_params)
                 }

@@ -607,7 +607,10 @@ pub fn is_string_storage_type(ty: &IrType) -> bool {
 /// Storage distinctions are native lowering details, so every `str` storage form matches every other form. This
 /// relation is deliberately symmetric; ordinary union-carrier admission remains directional.
 pub fn isinstance_type_matches(value_ty: &IrType, target_ty: &IrType) -> bool {
-    value_ty == target_ty || (is_string_storage_type(value_ty) && is_string_storage_type(target_ty))
+    value_ty == target_ty
+        || (is_string_storage_type(value_ty) && is_string_storage_type(target_ty))
+        || crate_qualified_type_matches(value_ty, target_ty)
+        || crate_qualified_type_matches(target_ty, value_ty)
 }
 
 /// Return every source union variant whose semantic identity satisfies one retained `isinstance` target.
@@ -625,8 +628,79 @@ pub fn isinstance_union_variant_indices(union_ty: &IrType, target_ty: &IrType) -
 }
 
 /// Return whether a concrete value type can inhabit a normalized union member type.
+///
+/// A member spelled by its declaring crate module (see [`crate_qualified_member_local_name`]) is inhabited by a value
+/// spelled by that nominal's module-local name.
 pub fn union_member_type_matches(member: &IrType, value_ty: &IrType) -> bool {
-    member == value_ty || (matches!(member, IrType::String) && is_string_storage_type(value_ty))
+    member == value_ty
+        || (matches!(member, IrType::String) && is_string_storage_type(value_ty))
+        || crate_qualified_type_matches(member, value_ty)
+}
+
+/// Return the module-local name of a union member nominal that lowering spelled by its declaring crate module.
+///
+/// When two modules of one crate declare the same nominal name, lowering spells a union member of that name by the
+/// Rust path of its declaring module (`crate::first::Product`), so each module's union gets its own wrapper and the
+/// wrapper's payload names the right declaration (#1796). Everything else still names that nominal by its
+/// module-local name: the values that inhabit the union and the members a library publishes, whose names the
+/// publication binds to their checked declarations. Standard-library paths (`crate::__incan_std::...`) are Rust
+/// paths the compiler spells itself, never such a member. Returns `None` for every other spelling.
+pub fn crate_qualified_member_local_name(name: &str) -> Option<&str> {
+    let path = name.strip_prefix("crate::")?;
+    if path.split("::").next() == Some(incan_lang::lang::stdlib::INCAN_STD_NAMESPACE) {
+        return None;
+    }
+    path.rsplit("::").next().filter(|local| !local.is_empty())
+}
+
+/// Return whether a union member names the same type as a value once crate-qualified member nominals are read by
+/// their module-local names.
+///
+/// Only the member side may carry the qualification; a value spelled `crate::...` must equal the member exactly.
+fn crate_qualified_type_matches(member: &IrType, value: &IrType) -> bool {
+    if member == value {
+        return true;
+    }
+    let names_match =
+        |member: &str, value: &str| member == value || crate_qualified_member_local_name(member) == Some(value);
+    let all_match = |members: &[IrType], values: &[IrType]| {
+        members.len() == values.len()
+            && members
+                .iter()
+                .zip(values)
+                .all(|(member, value)| crate_qualified_type_matches(member, value))
+    };
+    match (member, value) {
+        (IrType::Struct(member), IrType::Struct(value)) | (IrType::Enum(member), IrType::Enum(value)) => {
+            names_match(member, value)
+        }
+        (IrType::NamedGeneric(member_name, member_args), IrType::NamedGeneric(value_name, value_args)) => {
+            names_match(member_name, value_name) && all_match(member_args, value_args)
+        }
+        (IrType::List(member), IrType::List(value))
+        | (IrType::Set(member), IrType::Set(value))
+        | (IrType::Option(member), IrType::Option(value))
+        | (IrType::Ref(member), IrType::Ref(value))
+        | (IrType::RefMut(member), IrType::RefMut(value))
+        | (IrType::TypeToken(member), IrType::TypeToken(value)) => crate_qualified_type_matches(member, value),
+        (IrType::Dict(member_key, member_value), IrType::Dict(value_key, value_value))
+        | (IrType::Result(member_key, member_value), IrType::Result(value_key, value_value)) => {
+            crate_qualified_type_matches(member_key, value_key)
+                && crate_qualified_type_matches(member_value, value_value)
+        }
+        (IrType::Tuple(members), IrType::Tuple(values)) => all_match(members, values),
+        (
+            IrType::Function {
+                params: member_params,
+                ret: member_ret,
+            },
+            IrType::Function {
+                params: value_params,
+                ret: value_ret,
+            },
+        ) => all_match(member_params, value_params) && crate_qualified_type_matches(member_ret, value_ret),
+        _ => false,
+    }
 }
 
 /// Compare two physical type trees using only nominal identities retained by the successful checker.
@@ -799,8 +873,12 @@ pub fn manifest_type_ref_from_ir(ty: &IrType) -> Result<TypeRef, String> {
         IrType::Tuple(elements) => applied("Tuple", elements),
         IrType::Option(inner) => applied("Option", std::slice::from_ref(inner.as_ref())),
         IrType::Result(ok, err) => applied("Result", &[ok.as_ref().clone(), err.as_ref().clone()]),
-        IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) => Ok(named(name)),
-        IrType::NamedGeneric(name, args) => applied(name, args),
+        // A crate-qualified union member publishes under its module-local name, the name the publication binds to the
+        // member's checked declaration.
+        IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) => {
+            Ok(named(crate_qualified_member_local_name(name).unwrap_or(name)))
+        }
+        IrType::NamedGeneric(name, args) => applied(crate_qualified_member_local_name(name).unwrap_or(name), args),
         IrType::TypeToken(inner) => Ok(TypeRef::TypeToken {
             inner: Box::new(manifest_type_ref_from_ir(inner)?),
         }),
@@ -841,6 +919,48 @@ pub fn manifest_type_ref_from_ir(ty: &IrType) -> Result<TypeRef, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1796: a union member lowering spelled by its declaring crate module is inhabited by the module-local spelling
+    /// and publishes under it, while standard-library paths and other qualifications keep their exact meaning.
+    #[test]
+    fn crate_qualified_union_members_match_and_publish_by_their_local_name_issue1796() -> Result<(), String> {
+        let member = IrType::Struct("crate::first::Product".to_string());
+        let union = IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), vec![member.clone(), IrType::Int]);
+        assert_eq!(
+            union.union_variant_index_for_member(&IrType::Struct("Product".to_string())),
+            Some(0)
+        );
+        assert_eq!(
+            union.union_variant_index_for_member(&IrType::Struct("Receipt".to_string())),
+            None
+        );
+        assert!(union_member_type_matches(
+            &IrType::List(Box::new(member.clone())),
+            &IrType::List(Box::new(IrType::Struct("Product".to_string())))
+        ));
+        assert!(isinstance_type_matches(&member, &IrType::Struct("Product".to_string())));
+        assert_eq!(crate_qualified_member_local_name("crate::Product"), Some("Product"));
+        assert_eq!(
+            crate_qualified_member_local_name("crate::__incan_std::io::IoError"),
+            None
+        );
+        assert_eq!(crate_qualified_member_local_name("querykit::Product"), None);
+        assert_eq!(
+            manifest_type_ref_from_ir(&member)?,
+            TypeRef::Named {
+                origin: None,
+                name: "Product".to_string(),
+            }
+        );
+        assert_eq!(
+            manifest_type_ref_from_ir(&IrType::Struct("crate::__incan_std::io::IoError".to_string()))?,
+            TypeRef::Named {
+                origin: None,
+                name: "crate::__incan_std::io::IoError".to_string(),
+            }
+        );
+        Ok(())
+    }
 
     #[test]
     fn isinstance_string_storage_identity_is_symmetric_without_widening_union_carriers() {

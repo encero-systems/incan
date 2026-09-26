@@ -1048,6 +1048,10 @@
       "split_required": true,
       "split_target": "",
       "tests": {
+        "same_named_nominals_in_two_modules_get_one_union_wrapper_each_issue1796": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_same_named_declarations_in_two_modules",
+          "notes": "Asserts the generated Rust (one wrapper per module, each carrying its own module's `Product`); dies with the Rust-source backend (#654). The behavior is carried by the named fixture (#1796)."
+        },
         "string_membership_probe_borrows_loop_binding_used_later_in_branch_issue1057": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/smoke/membership_loop_binding.incn",
           "notes": "twinned by the #1057 program run to completion: the loop binding is used after the membership probe, which is the observable half. Of the retired test's three assertions, the one a run cannot see, `!code.contains(\"name.clone()\")` (the probe borrows rather than clones), is not user-observable and dies with #654; the twin stays."
@@ -1203,6 +1207,16 @@
       "owner": 1561,
       "split_required": false,
       "split_target": "",
+      "tests": {
+        "emitted_union_publication_is_scoped_to_module_and_span": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_same_named_declarations_in_two_modules",
+          "notes": "twinned by the program the corpus work parked as a candidate: a dependency whose `first` and `second` modules declare `Product` and `Answer = Product | int` at the same source positions bakes and each module's union serves its own `Product`. The bake stopped at the publication invariant until each module's union got its own wrapper (#1796); the `rust_name` spellings and the manifest capture die with #654."
+        },
+        "native_union_local_nominals_keep_module_identity_through_forwarding": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_same_named_declarations_in_two_modules",
+          "notes": "twinned by the same candidate program: each module's `Product` keeps its module identity, observed as each `label` printing its own module's payload. The forwarding plan dies with #654 (#1796)."
+        }
+      },
       "twin": ""
     },
     "loaves/compiler/incan_emit/src/emit/program.rs": {
@@ -2522,6 +2536,20 @@
         "prefix_operator_over_an_operator_expression_lowers_a_grouped_operand_issue1763": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/negation_keeps_its_operand_grouping.incn",
           "notes": "Asserts the recorded shape on the legacy IR (an operator-shaped operand of `not`, unary `-` or `~` is handed to the emitter as one grouped value in its own type; an atomic operand stays as written); retires with `incan_ir`. The behavior, `not (1 == 2)` printing `true` and `-(2 + 3)` printing `-5`, is carried by the named fixture (#1763)."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/union_member_identity.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "shared_nominal_union_members_are_spelled_by_their_declaring_module_issue1796": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_same_named_declarations_in_two_modules",
+          "notes": "Asserts the recorded shape on the legacy IR (a union member nominal two modules of the crate declare is spelled by its declaring module); retires with `incan_ir`. The behavior, a dependency whose two modules each declare `Product` and `Answer = Product | int` building and serving both unions, is carried by the named fixture (#1796)."
         }
       },
       "twin": ""

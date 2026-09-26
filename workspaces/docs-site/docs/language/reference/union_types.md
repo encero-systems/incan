@@ -11,6 +11,22 @@ def parse_value(flag: bool) -> int | str:
 
 `Union[A, B, ...]` is the canonical spelling for ordinary unions. `A | B` is equivalent syntax in type positions, and nested unions, duplicate members, and member ordering normalize to the same semantic type.
 
+A member names a declaration, not a spelling. Two modules that each declare a type of the same name and write the same union over it declare two distinct union types:
+
+```incan
+# first.incn
+pub model Product:
+    pub value: int
+
+pub type Answer = Product | int     # first.Product | int
+
+# second.incn
+pub model Product:
+    pub value: str
+
+pub type Answer = Product | int     # second.Product | int, a different type from first.Answer
+```
+
 When `None` appears in a union, the type canonicalizes through `Option[...]`:
 
 ```incan

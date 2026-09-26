@@ -30,6 +30,9 @@ mod errors;
 mod expr;
 mod stmt;
 mod types;
+mod union_identity;
+
+pub use union_identity::{CrateNominalContext, declared_nominal_names};
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -300,6 +303,12 @@ pub struct AstLowering {
     /// declarations from another package's -- see [`AstLowering::produced_library_identity`]. It is `None` when no
     /// project owns the compilation, and every package identity is then genuinely foreign.
     pub registry_package_identity: Option<String>,
+    /// Crate-wide facts about nominal names several modules of the crate declare, shared by every module's lowering.
+    ///
+    /// `None` outside a code generator that knows the whole crate; union members then keep their spellings (#1796).
+    pub crate_nominal_context: Option<Arc<CrateNominalContext>>,
+    /// Nominal type names the module being lowered declares, read from its declarations when lowering starts.
+    pub module_declared_nominals: HashSet<String>,
 }
 
 impl AstLowering {
@@ -710,6 +719,8 @@ impl AstLowering {
             declared_trait_names: HashSet::new(),
             local_function_declared_returns: HashMap::new(),
             registry_package_identity: None,
+            crate_nominal_context: None,
+            module_declared_nominals: HashSet::new(),
         }
     }
 
@@ -721,6 +732,11 @@ impl AstLowering {
     /// Set the canonical defining package identity used by compiler-materialized registry subjects.
     pub fn set_registry_package_identity(&mut self, identity: Option<String>) {
         self.registry_package_identity = identity;
+    }
+
+    /// Share the crate-wide nominal facts that let a union member name its declaring module (#1796).
+    pub fn set_crate_nominal_context(&mut self, context: Option<Arc<CrateNominalContext>>) {
+        self.crate_nominal_context = context;
     }
 
     /// Provide a warmed stdlib metadata cache for lowering stages that need stdlib-backed decorator or helper
@@ -2146,6 +2162,7 @@ impl AstLowering {
         let mut ir_program = IrProgram::new();
         self.emitted_member_projections.clear();
         ir_program.source_module_name = self.current_source_module_name.clone();
+        self.module_declared_nominals = declared_nominal_names(program);
         let mut errors: Vec<LoweringError> = Vec::new();
         self.import_aliases = decorator_resolution::collect_import_aliases(program);
         self.rust_import_aliases = decorator_resolution::collect_rust_import_aliases(program);
@@ -4113,6 +4130,7 @@ mod tests {
     mod builtin_str_arguments;
     mod derive_vocabulary_imports;
     mod unary_operand_grouping;
+    mod union_member_identity;
 
     fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {
         match result {
