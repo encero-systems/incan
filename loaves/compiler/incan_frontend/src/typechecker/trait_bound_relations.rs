@@ -8,7 +8,9 @@ use crate::diagnostics::errors::{self, CallableMarkerRefusal, GenericBoundTarget
 use crate::resolved_type_subst::substitute_resolved_type;
 use crate::symbols::{ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo};
 use crate::typechecker::helpers::collection_type_id;
-use incan_lang::interop::{is_rust_callable_capability_bound, is_rust_capability_bound};
+use incan_lang::interop::{
+    is_rust_callable_capability_bound, is_rust_capability_bound, is_rust_future_capability_bound,
+};
 use incan_lang::lang::callables;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::trait_capabilities::{
@@ -87,6 +89,9 @@ impl TypeChecker {
         bound: &TypeBoundInfo,
         bindings: &HashMap<String, ResolvedType>,
     ) -> bool {
+        if Self::function_value_misses_future_bound(ty, &bound.name) {
+            return false;
+        }
         if let Some(defer) = self.foreign_trait_bound_requires_native_check(&bound.name) {
             return defer;
         }
@@ -260,8 +265,33 @@ impl TypeChecker {
             .flatten()
     }
 
+    /// Return whether a bound names a capability marker that requires a future (`RuntimeFuture`), under any spelling.
+    ///
+    /// A bound read from a provider's checked signature may carry a module or Rust path, so the marker is matched by
+    /// its last path segment.
+    pub(in crate::typechecker) fn bound_requires_future(bound: &str) -> bool {
+        let marker = bound
+            .rsplit(['.', ':'])
+            .find(|segment| !segment.is_empty())
+            .unwrap_or(bound);
+        is_rust_future_capability_bound(marker)
+    }
+
+    /// Return whether `ty` is a function value checked against a bound that requires a future (#1772).
+    ///
+    /// Every other type is admitted at a Rust capability marker and left to the build, because the checker gives an
+    /// `async def` call's result its output type and cannot tell it from a plain value of that type. A function value
+    /// is never a future, whatever it returns, so it is refused here: this runs before the foreign-trait deferral so
+    /// that a marker imported from `rust::` in a provider's own scope cannot hide it.
+    fn function_value_misses_future_bound(ty: &ResolvedType, bound: &str) -> bool {
+        matches!(ty, ResolvedType::Function(_, _)) && Self::bound_requires_future(bound)
+    }
+
     /// Best-effort check whether a concrete type satisfies an explicit generic bound.
     pub(in crate::typechecker) fn type_satisfies_explicit_bound(&self, ty: &ResolvedType, bound: &str) -> bool {
+        if Self::function_value_misses_future_bound(ty, bound) {
+            return false;
+        }
         if let Some(defer) = self.foreign_trait_bound_requires_native_check(bound) {
             return defer;
         }

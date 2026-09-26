@@ -47,6 +47,7 @@ mod check_expr;
 mod check_stmt;
 mod collect;
 mod const_eval;
+mod derive_requirements;
 mod helpers;
 mod reachability;
 pub mod stdlib_loader;
@@ -5145,7 +5146,12 @@ impl TypeChecker {
             &|segments| self.qualified_type_annotation_resolved_type(segments),
         );
         self.record_mutable_rust_type_argument_projection(ty);
-        self.expand_type_aliases(resolved)
+        let resolved = self.expand_type_aliases(resolved);
+        // Only the checking pass sees every declaration's derives; collection may resolve a name declared further on.
+        if self.validate_source_type_names {
+            self.refuse_unhashable_collection_keys(ty, &resolved);
+        }
+        resolved
     }
 
     /// Return whether a simple annotation is the builtin tuple family written without element types (#1717).

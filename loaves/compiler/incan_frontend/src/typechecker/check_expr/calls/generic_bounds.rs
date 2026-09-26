@@ -1,7 +1,7 @@
 //! Generic call-site inference, monomorph recording, and explicit bound validation.
 
 use super::TypeChecker;
-use crate::ast::{CallArg, ParamKind, Span, Spanned, Type};
+use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned, Type};
 use crate::diagnostics::errors::{self, TypeArgumentOrigin};
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map_call_site};
 use crate::symbols::{CallableParam, FunctionInfo, MethodInfo, ResolvedType, TypeInfo};
@@ -116,6 +116,14 @@ impl TypeChecker {
             &arg_types,
             &mut type_bindings,
             call_span,
+        );
+        self.refuse_function_values_for_future_bounds(
+            func_name,
+            &contextual_params,
+            args,
+            &arg_types,
+            &info.type_param_bound_details,
+            &mut type_bindings,
         );
         self.infer_type_param_bindings_from_source_callables(&info.type_param_bound_details, &mut type_bindings);
         let resolved_params = Self::substitute_callable_params(&contextual_params, &type_bindings);
@@ -318,6 +326,14 @@ impl TypeChecker {
             &arg_types,
             &mut type_bindings,
             call_site_span,
+        );
+        self.refuse_function_values_for_future_bounds(
+            method,
+            &contextual_params,
+            args,
+            &arg_types,
+            &method_info.type_param_bound_details,
+            &mut type_bindings,
         );
         self.infer_type_param_bindings_from_source_callables(&method_info.type_param_bound_details, &mut type_bindings);
         let resolved_params = Self::substitute_callable_params(&contextual_params, &type_bindings);
@@ -627,6 +643,80 @@ impl TypeChecker {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Refuse a function value passed where a future-bounded type parameter needs a running task (#1772).
+    ///
+    /// `spawn(work)` binds `TaskFuture with RuntimeFuture[T]` to the function `work` instead of to the task `work()`
+    /// creates. The explicit bound check refuses that binding as well, but only this pass sees the argument as
+    /// written, so it names the call to make. A reported parameter's binding becomes `Unknown`, which every bound
+    /// admits, so the same argument is not reported twice.
+    fn refuse_function_values_for_future_bounds(
+        &mut self,
+        callee: &str,
+        params: &[CallableParam],
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        bound_details: &std::collections::HashMap<String, Vec<crate::symbols::TypeBoundInfo>>,
+        type_bindings: &mut std::collections::HashMap<String, ResolvedType>,
+    ) {
+        let mut positional_params = params
+            .iter()
+            .filter(|param| param.kind == ParamKind::Normal && !param.is_partial_preset);
+        for (arg, arg_ty) in args.iter().zip(arg_types) {
+            let param = match arg {
+                CallArg::Positional(_) => positional_params.next(),
+                CallArg::Named(name, _) => params.iter().find(|param| param.name() == Some(name.node.as_str())),
+                // An unpacked argument hides which parameters the later positional arguments bind.
+                CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => return,
+            };
+            let Some(type_param) = param.and_then(|param| match &param.ty {
+                ResolvedType::TypeVar(name) | ResolvedType::Named(name) => Some(name.as_str()),
+                _ => None,
+            }) else {
+                continue;
+            };
+            let requires_future = bound_details
+                .get(type_param)
+                .is_some_and(|bounds| bounds.iter().any(|bound| Self::bound_requires_future(&bound.name)));
+            if requires_future && self.refuse_function_value_task_argument(callee, arg, arg_ty) {
+                type_bindings.insert(type_param.to_string(), ResolvedType::Unknown);
+            }
+        }
+    }
+
+    /// Refuse a function value given where a task belongs, such as `spawn(work)`, and report whether it did (#1772).
+    ///
+    /// Shared by the generic call path above and by the stdlib task helpers typed on their surface path (`spawn`,
+    /// `timeout`), so both name the same call to make. Only a function value is refused: the checker gives an
+    /// `async def` call's result its output type, so no other argument type can be told apart from a task here.
+    pub(in crate::typechecker::check_expr::calls) fn refuse_function_value_task_argument(
+        &mut self,
+        callee: &str,
+        arg: &CallArg,
+        arg_ty: &ResolvedType,
+    ) -> bool {
+        if !matches!(arg_ty, ResolvedType::Function(_, _)) {
+            return false;
+        }
+        let expr = Self::call_arg_expr(arg);
+        let value = Self::function_value_spelling(&expr.node);
+        self.errors.push(errors::function_value_is_not_a_task(
+            callee,
+            value.as_deref(),
+            expr.span,
+        ));
+        true
+    }
+
+    /// Spell a function-valued argument the way the source wrote it, when it is a name or a field path.
+    fn function_value_spelling(expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Ident(name) => Some(name.clone()),
+            Expr::SelfExpr => Some("self".to_string()),
+            Expr::Field(base, member) => Some(format!("{}.{member}", Self::function_value_spelling(&base.node)?)),
+            _ => None,
         }
     }
 

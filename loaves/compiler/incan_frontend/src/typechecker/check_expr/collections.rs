@@ -4,7 +4,7 @@
 //! checker's compatibility rules.
 
 use crate::ast::*;
-use crate::diagnostics::errors;
+use crate::diagnostics::errors::{self, HashedCollectionRole};
 use crate::symbols::ResolvedType;
 use crate::typechecker::helpers::{collection_type_id, dict_ty, list_ty, set_ty};
 use incan_lang::lang::types::collections::CollectionTypeId;
@@ -217,7 +217,8 @@ impl TypeChecker {
         self.check_dict_with_expected(entries, None)
     }
 
-    /// Type-check a dict literal with an optional destination-type hint.
+    /// Type-check a dict literal with an optional destination-type hint, refusing a key type that does not derive `Eq`
+    /// and `Hash` when no destination annotation already did (#1758).
     pub(in crate::typechecker::check_expr) fn check_dict_with_expected(
         &mut self,
         entries: &[DictEntry],
@@ -226,10 +227,14 @@ impl TypeChecker {
         let (hinted_key_ty, hinted_value_ty) = Self::dict_expected_entry_types(expected);
         let mut key_ty = hinted_key_ty.clone().unwrap_or(ResolvedType::Unknown);
         let mut val_ty = hinted_value_ty.clone().unwrap_or(ResolvedType::Unknown);
+        let mut first_key_span = None;
 
         for entry in entries {
             match entry {
                 DictEntry::Pair(key, value) => {
+                    if first_key_span.is_none() {
+                        first_key_span = Some(key.span);
+                    }
                     let observed_key_ty = self.check_expr_with_expected(key, hinted_key_ty.as_ref());
                     let observed_value_ty = self.check_expr_with_expected(value, hinted_value_ty.as_ref());
                     self.check_collection_member_type(hinted_key_ty.as_ref(), &mut key_ty, observed_key_ty, key.span);
@@ -262,13 +267,22 @@ impl TypeChecker {
             }
         }
 
+        // A destination annotation has already had its key type checked where it is written (#1758).
+        if hinted_key_ty.is_none()
+            && let Some(span) = first_key_span
+        {
+            self.refuse_unhashable_collection_member(HashedCollectionRole::DictKey, &key_ty, span);
+        }
+
         dict_ty(key_ty, val_ty)
     }
 
-    /// Type-check a set literal.
+    /// Type-check a set literal, refusing an element type that does not derive `Eq` and `Hash` (#1758).
     pub(in crate::typechecker::check_expr) fn check_set(&mut self, elems: &[Spanned<Expr>]) -> ResolvedType {
         let elem_ty = if let Some(first) = elems.first() {
-            self.check_expr(first)
+            let elem_ty = self.check_expr(first);
+            self.refuse_unhashable_collection_member(HashedCollectionRole::SetElement, &elem_ty, first.span);
+            elem_ty
         } else {
             ResolvedType::Unknown
         };

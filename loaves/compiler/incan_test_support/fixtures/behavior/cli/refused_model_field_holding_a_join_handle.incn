@@ -1,0 +1,22 @@
+# behavior: a model field holding a JoinHandle is refused at check time because a model always derives Clone and Debug and a task handle supports neither
+# expect-diagnostic: INCAN-T0001
+
+import std.async
+from std.async.task import spawn, JoinHandle
+
+
+model Pending:
+    label: str
+    handle: JoinHandle[int]
+
+
+async def nine() -> int:
+    return 9
+
+
+async def main() -> None:
+    pending = Pending(label="nine", handle=spawn(nine()))
+    println(pending.label)
+    match await pending.handle:
+        Ok(value) => println(value)
+        Err(error) => println(f"join failed: {error.message()}")

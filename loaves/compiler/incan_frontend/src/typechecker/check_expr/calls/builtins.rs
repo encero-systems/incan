@@ -632,12 +632,22 @@ impl TypeChecker {
                                 .push(errors::type_mismatch(expected_name, &arg_ty.to_string(), arg_expr.span));
                         }
                     }
-                    self.check_call_args(args);
+                    let arg_types = self.check_call_arg_types(args);
+                    // The second argument is the task the deadline applies to (`RuntimeFuture[T]`).
+                    if let (Some(task), Some(task_ty)) = (args.get(1), arg_types.get(1)) {
+                        self.refuse_function_value_task_argument(name, task, task_ty);
+                    }
                     Some(ResolvedType::Unknown)
                 }
                 SurfaceFnId::YieldNow => Some(ResolvedType::Unit),
                 SurfaceFnId::Spawn | SurfaceFnId::SpawnBlocking => {
-                    self.check_call_args(args);
+                    let arg_types = self.check_call_arg_types(args);
+                    // `spawn` takes the task itself (`RuntimeFuture[T]`); `spawn_blocking` takes a function to call.
+                    if fid == SurfaceFnId::Spawn
+                        && let (Some(task), Some(task_ty)) = (args.first(), arg_types.first())
+                    {
+                        self.refuse_function_value_task_argument(name, task, task_ty);
+                    }
                     Some(ResolvedType::Generic(
                         surface_types::as_str(SurfaceTypeId::JoinHandle).to_string(),
                         vec![ResolvedType::Unknown],

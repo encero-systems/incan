@@ -1,0 +1,22 @@
+# behavior: a set[Tag] field over an enum with no derives is refused at check time because a set element must derive Eq and Hash
+# expect-diagnostic: INCAN-T0001
+
+from std.serde.json import Serialize
+
+
+@derive(Serialize)
+model Payload:
+    tags: set[Tag]
+    id: UserId
+
+
+enum Tag:
+    A
+    B
+
+
+type UserId = newtype int
+
+
+def main() -> None:
+    println(Payload(tags={Tag.A}, id=UserId(7)).to_json())

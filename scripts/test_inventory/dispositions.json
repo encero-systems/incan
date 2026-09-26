@@ -2033,6 +2033,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/capability_requirements.rs": {
+      "disposition": "keep",
+      "notes": "typechecker refusals of types lacking a capability the program needs (#1754 automatic derives, #1758 set elements and dict keys, #1772 a function value passed as a task); no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/checked_facts_and_registries.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -2775,6 +2783,14 @@
     "loaves/kernel/incan_lang/src/lang/stdlib.rs": {
       "disposition": "keep",
       "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/kernel/incan_lang/src/lang/surface/types.rs": {
+      "disposition": "keep",
+      "notes": "language registry (surface type automatic-derive support, #1754); below the emitter.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",

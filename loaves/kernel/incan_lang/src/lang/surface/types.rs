@@ -6,6 +6,7 @@
 //! Each entry carries explicit ownership metadata so stdlib/runtime-facing vocabulary can be filtered without
 //! hard-coded side tables.
 
+use crate::lang::derives::DeriveId;
 use crate::lang::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
 
 /// Stable identifier for a surface type. TODO: given RFC 023 approach, we should move/remove some of these types.
@@ -401,6 +402,55 @@ pub fn category(id: SurfaceTypeId) -> SurfaceTypeCategory {
     info_for(id).ownership.category
 }
 
+/// How a surface type's runtime realization answers the automatic `Clone` and `Debug` derives.
+///
+/// A `model`, `class` or `enum` always derives `Clone` and `Debug`, and a derive holds only when every field type
+/// supports it. The typechecker reads this to refuse a declaration whose field holds a type that cannot, naming the
+/// field, instead of leaving the refusal to the generated program's build (#1754).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutomaticDeriveSupport {
+    /// A field of this type is not refused: the runtime type implements both derives for every type argument (a
+    /// handle over shared state, such as `Mutex[T]`), or its support is left to the build.
+    Implements,
+    /// The runtime type implements a derive exactly when its type arguments do, as Rust's `Vec` and `HashMap` do.
+    FollowsTypeArguments,
+    /// The runtime type implements none of these derives, whatever its type arguments.
+    Missing(&'static [DeriveId]),
+}
+
+/// Return how this surface type's runtime realization answers the automatic `Clone` and `Debug` derives.
+///
+/// The match is exhaustive over the closed enum, so a new surface type states its answer when it is added.
+#[must_use]
+pub fn automatic_derive_support(id: SurfaceTypeId) -> AutomaticDeriveSupport {
+    match id {
+        // A task handle owns its task and a race arm owns its pending future; neither can be duplicated or printed.
+        SurfaceTypeId::JoinHandle | SurfaceTypeId::RaceArm => {
+            AutomaticDeriveSupport::Missing(&[DeriveId::Clone, DeriveId::Debug])
+        }
+        SurfaceTypeId::Vec | SurfaceTypeId::HashMap => AutomaticDeriveSupport::FollowsTypeArguments,
+        SurfaceTypeId::Mutex
+        | SurfaceTypeId::RwLock
+        | SurfaceTypeId::Semaphore
+        | SurfaceTypeId::Barrier
+        | SurfaceTypeId::TaskJoinError
+        | SurfaceTypeId::Sender
+        | SurfaceTypeId::Receiver
+        | SurfaceTypeId::OneshotSender
+        | SurfaceTypeId::OneshotReceiver
+        | SurfaceTypeId::App
+        | SurfaceTypeId::Response
+        | SurfaceTypeId::Html
+        | SurfaceTypeId::Json
+        | SurfaceTypeId::Query
+        | SurfaceTypeId::Path
+        | SurfaceTypeId::Body
+        | SurfaceTypeId::Request
+        | SurfaceTypeId::FieldInfo
+        | SurfaceTypeId::ValidationError => AutomaticDeriveSupport::Implements,
+    }
+}
+
 /// Iterate over all surface types with the given implementation owner.
 pub fn types_for_owner(owner: SurfaceTypeOwner) -> impl Iterator<Item = &'static SurfaceTypeInfo> {
     SURFACE_TYPES.iter().filter(move |t| t.ownership.owner == owner)
@@ -521,5 +571,39 @@ const fn interop(category: SurfaceTypeCategory, rationale: &'static str) -> Surf
         category,
         stdlib_module_path: None,
         rationale,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_handle_and_race_arm_lack_the_automatic_derives() {
+        for id in [SurfaceTypeId::JoinHandle, SurfaceTypeId::RaceArm] {
+            assert_eq!(
+                automatic_derive_support(id),
+                AutomaticDeriveSupport::Missing(&[DeriveId::Clone, DeriveId::Debug]),
+                "{} must be recorded as lacking Clone and Debug",
+                as_str(id)
+            );
+        }
+    }
+
+    #[test]
+    fn shared_state_handles_implement_and_interop_collections_follow_their_arguments() {
+        for id in [
+            SurfaceTypeId::Mutex,
+            SurfaceTypeId::Sender,
+            SurfaceTypeId::TaskJoinError,
+        ] {
+            assert_eq!(automatic_derive_support(id), AutomaticDeriveSupport::Implements);
+        }
+        for id in [SurfaceTypeId::Vec, SurfaceTypeId::HashMap] {
+            assert_eq!(
+                automatic_derive_support(id),
+                AutomaticDeriveSupport::FollowsTypeArguments
+            );
+        }
     }
 }

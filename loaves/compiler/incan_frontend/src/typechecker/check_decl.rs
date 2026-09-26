@@ -2,7 +2,7 @@
 
 use crate::ast::*;
 use crate::ast_walk::any_expr_in_body;
-use crate::diagnostics::errors::StoredTypeParamOwner;
+use crate::diagnostics::errors::{DerivedMember, StoredTypeParamOwner};
 use crate::diagnostics::{CompileError, errors};
 use crate::resolved_type_subst::{
     substitute_method_info, substitute_property_info, substitute_resolved_type, type_param_subst_map,
@@ -3431,6 +3431,13 @@ impl TypeChecker {
         for field in active_model_fields {
             let ty = self.resolve_type_checked(&field.node.ty);
             self.validate_direct_recursive_model_field(&model.name, &ty, field.span);
+            self.refuse_member_without_automatic_derives(
+                "model",
+                &model.name,
+                DerivedMember::Field(&field.node.name),
+                &ty,
+                field.span,
+            );
             self.symbols.define(Symbol {
                 name: field.node.name.clone(),
                 kind: SymbolKind::Field(FieldInfo {
@@ -3866,6 +3873,13 @@ impl TypeChecker {
         // Define fields
         for field in active_class_fields {
             let ty = self.resolve_type_checked(&field.node.ty);
+            self.refuse_member_without_automatic_derives(
+                "class",
+                &class.name,
+                DerivedMember::Field(&field.node.name),
+                &ty,
+                field.span,
+            );
             self.symbols.define(Symbol {
                 name: field.node.name.clone(),
                 kind: SymbolKind::Field(FieldInfo {
@@ -4749,6 +4763,13 @@ impl TypeChecker {
                     self.errors
                         .push(errors::unknown_symbol(&format!("{:?}", field_ty.node), field_ty.span));
                 }
+                self.refuse_member_without_automatic_derives(
+                    "enum",
+                    &en.name,
+                    DerivedMember::VariantPayload(&variant.node.name),
+                    &resolved,
+                    field_ty.span,
+                );
             }
         }
 

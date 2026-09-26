@@ -62,6 +62,14 @@ Notes:
 
 - `Debug` and `Display` are always available for these constructs.
 - `Display` has a default representation (like Python’s default `__str__`) unless you define `__str__`.
+- An automatic derive holds only when every field type supports it. A `model` or `class` field, or an `enum` variant payload, whose type does not implement `Clone` and `Debug` is refused at the declaration with `INCAN-T0001`; the diagnostic names the field, its type and the derives it lacks. `JoinHandle[T]` and `RaceArm[R]` from `std.async` implement neither, and neither does a `list`, `dict`, `Option`, `Result` or tuple that contains one. Where to keep such a value instead: [Async programming](../how-to/async_programming.md#spawn).
+
+```incan
+from std.async.task import JoinHandle
+
+model Pending:
+    handle: JoinHandle[int]  # refused: INCAN-T0001, 'JoinHandle[int]' does not support Clone and Debug
+```
 
 ---
 
@@ -687,6 +695,8 @@ model Task:
 **What it does**: enables use as `Set` members and `Dict` keys.
 
 **Custom behavior**: define `__hash__(self) -> int`.
+
+**Requirement**: a `set` element type and a `dict` key type implement `Eq` and `Hash`; a declared type that does not is refused with `INCAN-T0001` where it is written. See [Comparison](derives/comparison.md#hash).
 
 > Conflict rule: if you define `__hash__`, you must not also `@derive(Hash)`.
 >

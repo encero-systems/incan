@@ -4,6 +4,16 @@
 
 All APIs that accept a future require the future to produce the declared result type. Public spawned tasks and race arms also require transferable, runtime-owned values through the `Send` and `Static` bounds shown in the signatures.
 
+A parameter bounded by `RuntimeFuture[T]` (`task` of `spawn`, `timeout`, `timeout_ms` and `race_timeout`, `awaitable` of `arm`) takes a future, such as the result of calling an `async def`. A function value in that position is refused at check time with `INCAN-T0001`:
+
+```incan
+async def work() -> int:
+    return 41
+
+handle = spawn(work())  # accepted: work() is a future
+handle = spawn(work)    # refused: INCAN-T0001, 'spawn' needs a task to run, but 'work' is a function, not a task
+```
+
 ## Cancellation terms
 
 | Term | Contract |
@@ -86,6 +96,8 @@ from std.async.task import JoinHandle, TaskJoinError, spawn, spawn_blocking, yie
 
 Awaiting a handle produces `Result[T, TaskJoinError]`. Dropping it detaches the task. `handle.abort() -> None` requests cancellation of async work; for `spawn_blocking`, abort can only prevent work that is still queued.
 
+`JoinHandle[T]` implements neither `Clone` nor `Debug`. A `model` or `class` field or an `enum` variant payload of this type, directly or inside a `list`, `dict`, `Option`, `Result` or tuple, is refused at check time with `INCAN-T0001` (see [Automatic derives](../derives_and_traits.md#automatic-derives)).
+
 ### `TaskJoinError`
 
 | Method | Returns |
@@ -107,7 +119,7 @@ from std.async.race import RaceArm, arm, race, race_timeout
 | `async race[R with (Send, Static)](*arms: RaceArm[R]) -> R` | Polls arms concurrently and returns the winning callback result. Losing arms are dropped. Ready ties use source order. At least one arm is required. |
 | `async race_timeout[T with (Send, Static), TaskFuture with RuntimeFuture[T]](seconds: float, task: TaskFuture) -> Option[T]` | Returns `Some(value)` before the deadline or `None` at the deadline. Negative values, NaN, and either infinity are treated as zero. Expiry or cancellation drops `task`; spawn it first when it must continue. |
 
-`RaceArm[R]` is the packaged branch type consumed by `race`.
+`RaceArm[R]` is the packaged branch type consumed by `race`. It implements neither `Clone` nor `Debug`; as a `model` or `class` field or an `enum` variant payload it is refused like `JoinHandle[T]`.
 
 ## `std.async.channel`
 
