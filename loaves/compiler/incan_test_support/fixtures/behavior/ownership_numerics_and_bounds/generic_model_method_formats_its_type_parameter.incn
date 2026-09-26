@@ -1,0 +1,18 @@
+# behavior: a generic model whose method interpolates its type parameter renders an int, a str and a float payload through that method
+# retires: loaves/compiler/incan_emit/src/trait_bound_inference.rs::impl_owner_generic_bounds_are_written_to_impl_header
+# expect-stdout:
+#   boxed 7
+#   boxed seven
+#   boxed 7.5
+
+model Boxed[T]:
+    value: T
+
+    def render(self) -> str:
+        return f"boxed {self.value}"
+
+
+def main() -> None:
+    println(Boxed(value=7).render())
+    println(Boxed(value="seven").render())
+    println(Boxed(value=7.5).render())

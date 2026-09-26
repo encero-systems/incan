@@ -2868,6 +2868,7 @@ impl TypeChecker {
             kind: ParamKind::Normal,
             has_default: false,
             is_partial_preset: false,
+            is_mut: false,
         }];
         params.extend(sig.params[1..].iter().map(|param| CallableParam {
             name: param.name.clone(),
@@ -2878,6 +2879,7 @@ impl TypeChecker {
             kind: ParamKind::Normal,
             has_default: false,
             is_partial_preset: false,
+            is_mut: false,
         }));
         self.type_info.record_call_site_callable_params_exact(span, &params);
     }
@@ -3433,6 +3435,7 @@ impl TypeChecker {
                 kind: param.kind,
                 has_default: param.has_default,
                 is_partial_preset: param.is_partial_preset,
+                is_mut: param.is_mut,
             })
             .collect();
         let return_type = self.substitute_self_in_resolved_type(method_info.return_type.clone(), receiver_ty);

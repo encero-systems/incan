@@ -163,6 +163,7 @@ nav:
           - Workspaces: language/how-to/workspaces.md
           - Testing: language/how-to/testing_stdlib.md
           - Typed registries: language/how-to/typed_registries.md
+          - Decorators and callables: language/how-to/decorators.md
           - String processing: language/how-to/string_processing.md
           - Regular expressions: language/how-to/regular_expressions.md
           - Working with UUIDs: language/how-to/working_with_uuids.md

@@ -1,0 +1,9 @@
+[project]
+name = "rust_buf_parameter_from_bytes"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[rust-dependencies]
+tiny_buf = { path = "rust/tiny_buf" }

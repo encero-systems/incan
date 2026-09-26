@@ -1,0 +1,104 @@
+# behavior: std.builtins.isinstance narrows through a type alias, a shadowing user function, consts and frozen-string unions and options
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::isinstance_alias_target_uses_the_typecheckers_resolved_target_in_native_lowering
+# expect-stdout:
+#   false
+#   true false
+#   ABC number
+#   number missing UP
+#   true
+#   frozen text number
+#   frozen text missing
+#   frozen text other
+#   frozen text plain number
+#   frozen text plain other
+
+type Whole = int
+
+
+const STATIC_TEXT: str = "static text"
+const FROZEN_TEXT: FrozenStr = "frozen text"
+
+
+def isinstance(value: int, target: int) -> bool:
+    return false
+
+
+pub def probe(value: int | str) -> bool:
+    return std.builtins.isinstance(value, Whole)
+
+
+pub def narrow_union(value: int | str) -> str:
+    if std.builtins.isinstance(value, str):
+        return value.upper()
+    return "number"
+
+
+pub def narrow_option(value: int | str | None) -> str:
+    if std.builtins.isinstance(value, int):
+        return "number"
+    else:
+        if value is None:
+            return "missing"
+        else:
+            return value.upper()
+
+
+pub def static_text_is_str() -> bool:
+    return std.builtins.isinstance(STATIC_TEXT, str)
+
+
+pub def frozen_union_kind(value: FrozenStr | int) -> str:
+    if std.builtins.isinstance(value, str):
+        return str(value)
+    return "number"
+
+
+pub def frozen_option_kind(value: FrozenStr | None) -> str:
+    if std.builtins.isinstance(value, str):
+        return str(value)
+    return "missing"
+
+
+pub def frozen_option_union_kind(value: Option[FrozenStr | int]) -> str:
+    if std.builtins.isinstance(value, str):
+        return str(value)
+    return "other"
+
+
+pub def mixed_string_union_kind(value: FrozenStr | str | int) -> str:
+    if std.builtins.isinstance(value, str):
+        return str(value)
+    return "number"
+
+
+pub def mixed_string_option_union_kind(value: Option[FrozenStr | str | int]) -> str:
+    if std.builtins.isinstance(value, str):
+        return str(value)
+    return "other"
+
+
+def frozen_or_int(pick_text: bool) -> FrozenStr | int:
+    if pick_text:
+        return FROZEN_TEXT
+    return 1
+
+
+def mixed(pick: int) -> FrozenStr | str | int:
+    if pick == 0:
+        return FROZEN_TEXT
+    if pick == 1:
+        return "plain"
+    return 1
+
+
+def main() -> None:
+    println(isinstance(1, 2))
+    println(f"{probe(1)} {probe("one")}")
+    println(f"{narrow_union("abc")} {narrow_union(1)}")
+    println(f"{narrow_option(1)} {narrow_option(None)} {narrow_option("up")}")
+    println(static_text_is_str())
+    println(f"{frozen_union_kind(frozen_or_int(true))} {frozen_union_kind(frozen_or_int(false))}")
+    println(f"{frozen_option_kind(Some(FROZEN_TEXT))} {frozen_option_kind(None)}")
+    println(f"{frozen_option_union_kind(Some(frozen_or_int(true)))} {frozen_option_union_kind(Some(frozen_or_int(false)))}")
+    println(f"{mixed_string_union_kind(mixed(0))} {mixed_string_union_kind(mixed(1))} {mixed_string_union_kind(mixed(2))}")
+    println(f"{mixed_string_option_union_kind(Some(mixed(0)))} {mixed_string_option_union_kind(Some(mixed(1)))} {mixed_string_option_union_kind(None)}")

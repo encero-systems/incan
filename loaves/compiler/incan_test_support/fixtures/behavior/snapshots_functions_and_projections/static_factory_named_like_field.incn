@@ -1,0 +1,19 @@
+# behavior: a static factory method that shares its spelling with a stored newtype field builds the model, and the field reads back the value
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::static_factory_projection_coexists_with_same_named_instance_field
+# expect-stdout:
+#   -7
+
+type Days = newtype int
+
+
+model TimeDelta:
+    pub days: Days
+
+    @staticmethod
+    def days(value: Days) -> TimeDelta:
+        return TimeDelta(days=value)
+
+
+def main() -> None:
+    delta = TimeDelta.days(-7)
+    println(delta.days.0)

@@ -1,0 +1,36 @@
+# behavior: a by-value method argument taken from another instance's private field merges two wrappers without disturbing either (#241)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue241_field_backed_method_arg_clone_codegen
+# expect-stdout:
+#   left+right
+#   left
+#   right
+
+"""Issue #241 regression: field-backed by-value method args should clone through the ownership planner."""
+
+
+@derive(Clone)
+class Cursor:
+    pub name: str
+
+    def join(self, other: Self, on: bool) -> Self:
+        return Cursor(name=f"{self.name}+{other.name}")
+
+
+@derive(Clone)
+class Wrapper:
+    _cursor: Cursor
+
+    def merge(self, other: Self) -> Self:
+        return Wrapper(_cursor=self._cursor.join(other._cursor, true))
+
+    def label(self) -> str:
+        return self._cursor.name
+
+
+def main() -> None:
+    left = Wrapper(_cursor=Cursor(name="left"))
+    right = Wrapper(_cursor=Cursor(name="right"))
+    merged = left.merge(right)
+    println(merged.label())
+    println(left.label())
+    println(right.label())

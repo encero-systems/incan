@@ -1,0 +1,5 @@
+pub from helpers import cast as safe_cast
+
+
+pub def cast(value: int) -> int:
+    return value + 1

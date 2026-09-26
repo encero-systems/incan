@@ -4274,6 +4274,7 @@ def main() -> None:
             emitted_name: None,
             type_params: Vec::new(),
             params: vec![ParamExport {
+                is_mut: false,
                 name: "name".to_string(),
                 ty: TypeRef::Named {
                     origin: None,

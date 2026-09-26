@@ -157,6 +157,7 @@ fn library_index_with_callable_alias_export() -> LibraryManifestIndex {
                     emitted_name: None,
                     type_params: Vec::new(),
                     params: vec![ParamExport {
+                        is_mut: false,
                         name: "value".to_string(),
                         ty: TypeRef::Named {
                             origin: None,
@@ -205,6 +206,7 @@ fn library_index_with_identity_graph_alias_collision() -> LibraryManifestIndex {
         emitted_name: None,
         type_params: Vec::new(),
         params: vec![ParamExport {
+            is_mut: false,
             name: "value".to_string(),
             ty: TypeRef::Named {
                 origin: None,
@@ -231,6 +233,7 @@ fn library_index_with_identity_graph_alias_collision() -> LibraryManifestIndex {
         decorators: Vec::new(),
         type_params: Vec::new(),
         params: vec![ParamExport {
+            is_mut: false,
             name: "value".to_string(),
             ty: TypeRef::Named {
                 origin: None,

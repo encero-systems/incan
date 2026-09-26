@@ -1,0 +1,13 @@
+# behavior: an Incan bytes value handed to a Rust function taking a Buf is read through that trait, and the bytes are still usable afterwards
+# retires: loaves/compiler/incan_emit/src/ownership.rs::argument_plan_external_buf_param_lends_incan_bytes_as_slice
+# expect-stdout:
+#   3
+#   3
+
+from rust::tiny_buf import remaining
+
+
+def main() -> None:
+    payload = b"abc"
+    println(remaining(payload))
+    println(len(payload))

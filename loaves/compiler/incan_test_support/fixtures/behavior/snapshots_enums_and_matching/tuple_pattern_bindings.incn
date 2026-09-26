@@ -7,11 +7,13 @@
 
 """Issue #1714: the names a tuple pattern binds are usable, typed as the tuple's elements."""
 
+
 def describe(pair: tuple[int, str]) -> str:
     """Bind both items and use them with their element types."""
     match pair:
         (0, _) => return "zero"
         (number, word) => return f"{number + 1} {word.upper()}"
+
 
 def main() -> None:
     """The issue's program, then the same bindings through a function parameter."""

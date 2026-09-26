@@ -1,0 +1,13 @@
+# behavior: a Rust struct with public fields is constructed by named fields from Incan values, and its fields read back
+# retires: loaves/compiler/incan_ir/src/lower/expr/calls.rs::lower_rust_named_field_constructor_wraps_fields_with_rust_arg_coercion
+# expect-stdout:
+#   1 4
+#   true
+
+from rust::std::ops import Range
+
+
+def main() -> None:
+    span = Range(start=1, end=4)
+    println(f"{span.start} {span.end}")
+    println(span.contains(2))

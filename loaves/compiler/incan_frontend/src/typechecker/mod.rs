@@ -47,9 +47,11 @@ mod check_expr;
 mod check_stmt;
 mod collect;
 mod const_eval;
+mod decorated_method_receivers;
 mod derive_requirements;
 mod hash_key_inference;
 mod helpers;
+mod mut_marker;
 mod reachability;
 pub mod stdlib_loader;
 mod trait_bound_relations;
@@ -64,13 +66,14 @@ pub use type_info::{
     CBindingParameter, CBindingRawCall, CBindingRawCallOwner, CBindingResource, CBindingStruct, CBindingStructField,
     CBindingSymbol, CBindingType, COutputMode, CResourceAccess, CapabilityDeclarationInfo, CheckedImportBindings,
     CheckedSourceBinding, ComputedPropertyAccessInfo, DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo,
-    FixedUnpackPlan, FunctionBindingInfo, IdentKind, ImportedRegistryDefinitionInfo, MutableRustTypeArgumentProjection,
-    PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind, ProtocolIterationInfo,
-    ProviderOperationDeclarationInfo, QualifiedTypeReferenceInfo, RegistryArtifacts, RegistryDefinitionInfo,
-    RegistryDescriptionRegistry, RegistryExplicitEntryInfo, ResolvedMethodCall, ResolvedMethodDispatch,
-    ResolvedOperatorCall, ResolvedOperatorKind, RustArgCoercionInfo, RustArgCoercionKind, SourceTargetInfo,
-    StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo, ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode,
-    ValidatedNewtypeCoercionStep, c_binding_descriptor_identity,
+    FixedUnpackPlan, FunctionBindingInfo, IdentKind, ImportedRegistryDefinitionInfo, MethodDecoratorReceiverRole,
+    MethodDecoratorReceiverSlot, MutableRustTypeArgumentProjection, PartialProjectionInfo, PartialProjectionPreset,
+    PartialProjectionTargetKind, ProtocolIterationInfo, ProviderOperationDeclarationInfo, QualifiedTypeReferenceInfo,
+    RegistryArtifacts, RegistryDefinitionInfo, RegistryDescriptionRegistry, RegistryExplicitEntryInfo,
+    ResolvedMethodCall, ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind, RustArgCoercionInfo,
+    RustArgCoercionKind, SourceTargetInfo, StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo,
+    ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode, ValidatedNewtypeCoercionStep,
+    c_binding_descriptor_identity,
 };
 pub use type_info::{ClassFieldDefaultInfo, semantic_type_from_resolved};
 #[cfg(test)]
@@ -540,6 +543,8 @@ pub struct TypeChecker {
     pub static_decls: Vec<(StaticDecl, Span)>,
     /// Collected module-level function declarations for static dependency analysis.
     pub local_function_decls: HashMap<String, FunctionDecl>,
+    /// What method-decorator receiver planning (#1790) gathers while bodies are checked.
+    receiver_plan_inputs: decorated_method_receivers::ReceiverPlanInputs,
     /// Function symbols collected in the current module pass, keyed by source name.
     ///
     /// The checker imports dependency modules into one ambient symbol table. Same-name overload grouping is
@@ -838,6 +843,7 @@ impl TypeChecker {
             const_decls: HashMap::new(),
             static_decls: Vec::new(),
             local_function_decls: HashMap::new(),
+            receiver_plan_inputs: Default::default(),
             current_module_function_symbols: HashMap::new(),
             type_aliases: HashMap::new(),
             rejected_member_bindings: HashSet::new(),
@@ -4655,7 +4661,7 @@ impl TypeChecker {
                 }
                 self.validate_stdlib_type_usage_inner(&ret.node, ret.span);
             }
-            Type::Ref(inner) | Type::RefMut(inner) => {
+            Type::Ref(inner) | Type::RefMut(inner) | Type::MutParam(inner) => {
                 self.validate_stdlib_type_usage_inner(&inner.node, inner.span);
             }
             Type::Tuple(elems) => {
@@ -4705,7 +4711,9 @@ impl TypeChecker {
                 }
                 self.record_type_reference_identities(ret);
             }
-            Type::Ref(inner) | Type::RefMut(inner) => self.record_type_reference_identities(inner),
+            Type::Ref(inner) | Type::RefMut(inner) | Type::MutParam(inner) => {
+                self.record_type_reference_identities(inner)
+            }
             Type::Tuple(items) => {
                 for item in items {
                     self.record_type_reference_identities(item);
@@ -4803,7 +4811,9 @@ impl TypeChecker {
                 }
                 self.resolve_qualified_type_annotations(ret);
             }
-            Type::Ref(inner) | Type::RefMut(inner) => self.resolve_qualified_type_annotations(inner),
+            Type::Ref(inner) | Type::RefMut(inner) | Type::MutParam(inner) => {
+                self.resolve_qualified_type_annotations(inner)
+            }
             Type::Simple(_)
             | Type::Qualified(_)
             | Type::ConstrainedPrimitive(..)
@@ -4986,6 +4996,7 @@ impl TypeChecker {
                         kind: param.kind,
                         has_default: param.has_default,
                         is_partial_preset: param.is_partial_preset,
+                        is_mut: param.is_mut,
                     })
                     .collect(),
                 Box::new(self.expand_type_aliases_inner(*ret, expanding)),
@@ -5124,6 +5135,7 @@ impl TypeChecker {
             self.record_type_reference_identities(ty);
         }
         self.validate_stdlib_type_usage(ty);
+        self.refuse_marked_copied_scalars(ty);
         if let Type::Simple(name) = &ty.node
             && Self::reserved_numeric_type_name(name)
         {
@@ -5614,7 +5626,7 @@ impl TypeChecker {
                 }
                 self.validate_source_type_annotation_names(&ret.node, ret.span);
             }
-            Type::Ref(inner) | Type::RefMut(inner) => {
+            Type::Ref(inner) | Type::RefMut(inner) | Type::MutParam(inner) => {
                 self.validate_source_type_annotation_names(&inner.node, inner.span);
             }
             Type::Tuple(items) => {
@@ -6523,6 +6535,7 @@ impl TypeChecker {
         self.const_decls.clear();
         self.static_decls.clear();
         self.local_function_decls.clear();
+        self.receiver_plan_inputs = Default::default();
         self.current_module_function_symbols.clear();
         self.rejected_member_bindings.clear();
         self.warned_public_c_abi_raw_call_owners.clear();
@@ -6593,6 +6606,7 @@ impl TypeChecker {
         self.record_trait_metadata_for_lowering(program);
         self.record_model_field_visibilities_for_lowering(program);
         self.record_class_layouts_for_lowering(program);
+        self.record_method_decorator_receiver_slots(program);
 
         // ---- RFC 023: validate rust.module() and @rust.extern rules ----
         self.validate_rust_module_and_extern(program);
@@ -8611,11 +8625,13 @@ impl TypeChecker {
                     && a1.iter().zip(a2.iter()).all(|(t1, t2)| self.types_compatible(t1, t2))
             }
             (ResolvedType::Function(p1, r1), ResolvedType::Function(p2, r2)) => {
+                // The `mut` marker decides how the argument is passed, so it must agree exactly (#1790).
                 p1.len() == p2.len()
-                    && p1
-                        .iter()
-                        .zip(p2.iter())
-                        .all(|(t1, t2)| t1.kind == t2.kind && self.callable_param_types_compatible(&t1.ty, &t2.ty))
+                    && p1.iter().zip(p2.iter()).all(|(t1, t2)| {
+                        t1.kind == t2.kind
+                            && t1.is_mut == t2.is_mut
+                            && self.callable_param_types_compatible(&t1.ty, &t2.ty)
+                    })
                     && self.types_compatible(r1, r2)
             }
             (ResolvedType::Tuple(e1), ResolvedType::Tuple(e2)) => {

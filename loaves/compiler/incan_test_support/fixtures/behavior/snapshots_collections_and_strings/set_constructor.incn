@@ -1,0 +1,89 @@
+# behavior: set() and Set() build sets from lists, sets, frozen lists, frozen sets, optional elements and nothing, without consuming a source that is read again (#951)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue951_set_constructor_codegen
+# expect-stdout:
+#   source:3
+#   generic-source:3
+#   set-source:2
+#   2:2:2:2:2:2:2:1:2:0
+
+"""Exercise every accepted source family for the canonical Set constructor."""
+
+const FROZEN_LIST_VALUES: FrozenList[str] = ["beta", "alpha", "beta"]
+const FROZEN_SET_VALUES: FrozenSet[str] = {"beta", "alpha", "beta"}
+
+
+def unique_ids(values: List[str]) -> Set[str]:
+    """Build a set through the Python-style lowercase spelling."""
+    return set(values)
+
+
+def canonical_unique_ids(values: List[str]) -> Set[str]:
+    """Build the same set through the canonical collection type spelling."""
+    return Set(values)
+
+
+def unique_without_consuming_source(values: List[str]) -> Set[str]:
+    """Preserve a mutable list when code reads it again after construction."""
+    result = set(values)
+    println(f"source:{len(values)}")
+    return result
+
+
+def generic_unique_without_consuming_source[T](values: List[T]) -> Set[T]:
+    """Infer collection and ownership bounds for a reused generic list."""
+    result = set(values)
+    println(f"generic-source:{len(values)}")
+    return result
+
+
+def unique_set_without_consuming_source(values: Set[str]) -> Set[str]:
+    """Preserve a mutable set when code reads it again after construction."""
+    result = set(values)
+    println(f"set-source:{len(values)}")
+    return result
+
+
+def unique_frozen_list[T](values: FrozenList[T]) -> Set[T]:
+    """Clone borrowed values while converting an immutable list into a set."""
+    return set(values)
+
+
+def unique_frozen_set[T](values: FrozenSet[T]) -> Set[T]:
+    """Clone borrowed values while converting an immutable set into a mutable set."""
+    return set(values)
+
+
+def unique_optional_values[T](values: List[Option[T]]) -> Set[Option[T]]:
+    """Infer hash and equality bounds through a nested optional element type."""
+    return set(values)
+
+
+def unique_vec[T](values: Vec[T]) -> Set[T]:
+    """Preserve generic bounds for the accepted Rust-compatible Vec spelling."""
+    return set(values)
+
+
+def empty_ids() -> Set[str]:
+    """Construct an empty set whose element type comes from the return contract."""
+    return set()
+
+
+def main() -> None:
+    """Run the constructor matrix and print deterministic cardinalities."""
+    values = ["beta", "alpha", "beta"]
+    lowercase = unique_ids(values)
+    canonical = canonical_unique_ids(values)
+    retained = unique_without_consuming_source(values)
+    generic = generic_unique_without_consuming_source(values)
+    set_values = {"beta", "alpha", "beta"}
+    retained_set = unique_set_without_consuming_source(set_values)
+    frozen_list = unique_frozen_list(FROZEN_LIST_VALUES)
+    frozen_set = unique_frozen_set(FROZEN_SET_VALUES)
+    optional = unique_optional_values([Some("alpha"), Some("alpha")])
+    vec_values = unique_vec(["delta", "delta", "gamma"])
+    empty = empty_ids()
+    summary = (
+        f"{len(lowercase)}:{len(canonical)}:{len(retained)}:{len(generic)}:{len(retained_set)}:"
+        + f"{len(frozen_list)}:{len(frozen_set)}:{len(optional)}:{len(vec_values)}:{len(empty)}"
+    )
+    println(summary)

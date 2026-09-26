@@ -215,7 +215,8 @@ impl TypeChecker {
                     incan_semantics_core::SemanticSourceTargetKind::Parameter,
                 );
                 self.record_write_target_identity(param.span, &param.node.name);
-                CallableParam::named(param.node.name.clone(), ty, param.node.kind)
+                // The closure takes each argument the way the expected shape passes it, `mut` marker included.
+                CallableParam::named(param.node.name.clone(), ty, param.node.kind).with_mut(expected.is_mut)
             })
             .collect();
 

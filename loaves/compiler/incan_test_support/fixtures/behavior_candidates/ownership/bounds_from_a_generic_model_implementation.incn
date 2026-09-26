@@ -1,0 +1,25 @@
+# behavior: a generic function that walks a generic stream through a trait the stream adopts runs for two payload types, and the trait method sees the stream's own item
+# retires: loaves/compiler/incan_emit/src/trait_bound_inference.rs::implementation_bound_matching_is_canonical_and_instantiation_exact
+# expect-stdout:
+#   walked 7
+#   walked seven
+
+
+trait Walk:
+    def walk(self) -> str: ...
+
+
+model Stream[R with Clone] with Walk:
+    item: R
+
+    def walk(self) -> str:
+        return f"walked {self.item}"
+
+
+def consume[T](stream: Stream[T]) -> str:
+    return stream.walk()
+
+
+def main() -> None:
+    println(consume(Stream(item=7)))
+    println(consume(Stream(item="seven")))

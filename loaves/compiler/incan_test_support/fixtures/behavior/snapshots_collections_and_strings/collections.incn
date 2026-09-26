@@ -1,0 +1,70 @@
+# behavior: list, dict, nested and tuple literals index, slice, concatenate and extend without consuming their sources
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_collections_codegen
+# expect-stdout:
+#   0 0 3 2
+#   1 5 1
+#   2 3 4
+#   2 3 4 5
+#   1 2 3 4
+#   5 7 7
+#   7 7
+#   4 4 one
+
+def test_collections() -> None:
+    # Empty collections
+    empty_list: List[int] = []
+    empty_dict: Dict[str, int] = {}
+
+    # List literals
+    numbers: List[int] = [1, 2, 3, 4, 5]
+    strings: List[str] = ["a", "b", "c"]
+    # Note: Union types not yet implemented
+    # mixed_ok: list[int | str] = [1, "two", 3]
+
+    # Nested lists
+    matrix: List[List[int]] = [[1, 2], [3, 4]]
+
+    # Dict literals
+    simple_dict: Dict[str, int] = {"a": 1, "b": 2}
+    int_keys: Dict[int, str] = {1: "one", 2: "two"}
+
+    # Nested dicts
+    nested: Dict[str, Dict[str, int]] = {
+        "first": {"x": 1, "y": 2},
+        "second": {"x": 3, "y": 4},
+    }
+    println(f"{len(empty_list)} {len(empty_dict)} {len(strings)} {len(matrix)}")
+
+    # Tuple literals
+    pair: tuple[int, str] = (1, "one")
+    triple: tuple[int, int, int] = (1, 2, 3)
+
+    # Indexing
+    first: int = numbers[0]
+    last: int = numbers[-1]
+    value: int = simple_dict["a"]
+    println(f"{first} {last} {value}")
+
+    # Slicing
+    sub_list: List[int] = numbers[1:3]
+    all_but_first: List[int] = numbers[1:]
+    all_but_last: List[int] = numbers[:-1]
+    println(f"{sub_list[0]} {sub_list[1]} {len(all_but_first)}")
+    println(f"{all_but_first[0]} {all_but_first[1]} {all_but_first[2]} {all_but_first[3]}")
+    println(f"{all_but_last[0]} {all_but_last[1]} {all_but_last[2]} {all_but_last[3]}")
+    more_numbers: List[int] = [6, 7]
+    combined: List[int] = numbers + more_numbers
+    original_tail: int = numbers[-1]
+    source_tail: int = more_numbers[-1]
+    combined_tail: int = combined[-1]
+    println(f"{original_tail} {source_tail} {combined_tail}")
+    mut extended: List[int] = [8, 9]
+    extended.extend(more_numbers)
+    extended_tail: int = extended[-1]
+    source_tail_after_extend: int = more_numbers[-1]
+    println(f"{extended_tail} {source_tail_after_extend}")
+    println(f"{nested["second"]["y"]} {matrix[1][1]} {int_keys[1]}")
+
+
+def main() -> None:
+    test_collections()

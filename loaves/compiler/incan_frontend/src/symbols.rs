@@ -1489,6 +1489,13 @@ pub struct CallableParam {
     /// surface stays stable. This flag is meaningful only for a local `partial` expression; module partial
     /// declarations retain their established full-signature metadata without it.
     pub is_partial_preset: bool,
+    /// The callable type marks this parameter `mut`: the callable's changes to the argument are visible to the caller.
+    ///
+    /// The `(mut T, ...) -> R` spelling, a `def` parameter declared `mut` whose changes reach the caller, a closure
+    /// checked against a marked shape, and a `mut self` method's receiver in the callable shape its decorators see set
+    /// the marker (#1790). The marker decides how the argument is passed, so two callable types are compatible only
+    /// when their markers agree.
+    pub is_mut: bool,
 }
 
 impl CallableParam {
@@ -1500,6 +1507,7 @@ impl CallableParam {
             kind,
             has_default: false,
             is_partial_preset: false,
+            is_mut: false,
         }
     }
 
@@ -1511,6 +1519,7 @@ impl CallableParam {
             kind,
             has_default,
             is_partial_preset: false,
+            is_mut: false,
         }
     }
 
@@ -1522,7 +1531,14 @@ impl CallableParam {
             kind: ParamKind::Normal,
             has_default: false,
             is_partial_preset: false,
+            is_mut: false,
         }
+    }
+
+    /// Return this parameter with the callable type's `mut` marker set as given.
+    pub fn with_mut(mut self, is_mut: bool) -> Self {
+        self.is_mut = is_mut;
+        self
     }
 
     /// Return the source name when the callable metadata has one.
@@ -2172,6 +2188,7 @@ impl std::fmt::Display for ResolvedType {
                         write!(f, ", ")?;
                     }
                     match p.kind {
+                        ParamKind::Normal if p.is_mut => write!(f, "mut {}", p.ty)?,
                         ParamKind::Normal => write!(f, "{}", p.ty)?,
                         ParamKind::RestPositional => write!(f, "*{}", p.ty)?,
                         ParamKind::RestKeyword => write!(f, "**{}", p.ty)?,
@@ -2439,16 +2456,22 @@ where
         }
         Type::IntLiteral(value) => ResolvedType::TypeVar(value.repr.clone()),
         Type::Function(params, ret) => {
+            // A `mut`-marked parameter keeps its type and carries the marker on the callable parameter (#1790).
             let resolved_params: Vec<_> = params
                 .iter()
                 .map(|param| {
+                    let (param_ty, is_mut) = match &param.node {
+                        Type::MutParam(inner) => (&inner.node, true),
+                        other => (other, false),
+                    };
                     CallableParam::positional(resolve_type_with_rust_arg_renderer(
-                        &param.node,
+                        param_ty,
                         symbols,
                         render_rust_arg,
                         qualify_structured_rust_arg,
                         resolve_qualified_type,
                     ))
+                    .with_mut(is_mut)
                 })
                 .collect();
             let resolved_ret = resolve_type_with_rust_arg_renderer(
@@ -2467,6 +2490,15 @@ where
             qualify_structured_rust_arg,
             resolve_qualified_type,
         ))),
+        // The parser produces the marker only inside a callable type's parameters, handled above; anywhere else it
+        // names its type.
+        Type::MutParam(inner) => resolve_type_with_rust_arg_renderer(
+            &inner.node,
+            symbols,
+            render_rust_arg,
+            qualify_structured_rust_arg,
+            resolve_qualified_type,
+        ),
         Type::RefMut(inner) => ResolvedType::RefMut(Box::new(resolve_type_with_rust_arg_renderer(
             &inner.node,
             symbols,

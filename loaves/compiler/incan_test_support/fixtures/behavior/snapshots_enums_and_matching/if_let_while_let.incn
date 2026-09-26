@@ -1,0 +1,31 @@
+# behavior: if-let binds an Option payload once and while-let loops until the binding becomes None (RFC 049)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc049_if_let_while_let_codegen
+# expect-stdout:
+#   5
+#   0
+#   7
+#   0
+
+"""RFC 049: if let + while let"""
+
+
+def first(opt: Option[int]) -> int:
+    if let Some(value) = opt:
+        return value
+    return 0
+
+
+def sum_once(opt: Option[int]) -> int:
+    mut total = 0
+    mut current = opt
+    while let Some(value) = current:
+        total += value
+        current = None
+    return total
+
+
+def main() -> None:
+    println(first(Some(5)))
+    println(first(None))
+    println(sum_once(Some(7)))
+    println(sum_once(None))

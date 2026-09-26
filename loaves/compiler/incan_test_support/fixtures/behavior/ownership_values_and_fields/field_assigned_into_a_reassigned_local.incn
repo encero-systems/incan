@@ -1,0 +1,19 @@
+# behavior: a method that starts a local from a literal and then overwrites it with a str field of self returns the field's text, and the field is still readable afterwards
+# retires: loaves/compiler/incan_emit/tests/implicit_borrowing_codegen_tests.rs::owned_reassignment_preserves_a_field_source
+# expect-stdout:
+#   holder
+#   holder holder
+
+pub class Holder:
+    pub name: str
+
+    def copy_name(self) -> str:
+        mut current = ""
+        current = self.name
+        return current
+
+
+def main() -> None:
+    holder = Holder(name="holder")
+    println(holder.copy_name())
+    println(f"{holder.copy_name()} {holder.name}")

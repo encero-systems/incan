@@ -1,0 +1,33 @@
+# behavior: a decorator factory on a `self` method yields a decorator whose returned function takes the method's place, and a direct call of that function in its module takes the owner as an ordinary argument (RFC 036)
+# retires: loaves/compiler/incan_ir/src/lower/tests/method_decorator_receivers.rs::factory_slot_plans_the_decorator_shape_it_returns
+# retires: loaves/compiler/incan_ir/src/lower/tests/method_decorator_receivers.rs::direct_call_of_a_planned_replacement_uses_the_planned_signature
+# expect-stdout:
+#   8
+#   13
+#   11
+
+class Box:
+    pub value: int
+
+    @labeled("count")
+    def label(self, value: int) -> str:
+        return f"{value}"
+
+
+def parse(box: Box, value: int) -> int:
+    return box.value + value
+
+
+def as_int(func: (Box, int) -> str) -> (Box, int) -> int:
+    return parse
+
+
+def labeled(name: str) -> ((Box, int) -> str) -> (Box, int) -> int:
+    return as_int
+
+
+def main() -> None:
+    box = Box(value=5)
+    println(box.label(3))
+    println(box.label(8))
+    println(parse(box, 6))

@@ -4,14 +4,18 @@
 import std.async
 from std.async.task import spawn, JoinHandle, TaskJoinError
 
+
 pub model TaskBox[T] with Awaitable[Result[T, TaskJoinError]]:
     pub handle: JoinHandle[T]
+
 
 pub async def wait_for(box: TaskBox[int]) -> Result[int, TaskJoinError]:
     return await box
 
+
 async def nine() -> int:
     return 9
+
 
 async def main() -> None:
     match await wait_for(TaskBox(handle=spawn(nine()))):

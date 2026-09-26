@@ -1,0 +1,86 @@
+# behavior: every lazy adapter and terminal of the RFC 088 iterator surface classifies against an Iterator[int] receiver, and a list's .iter() starts one
+# retires: loaves/compiler/incan_ir/src/expr.rs::iterator_method_kind_for_receiver_classifies_rfc088_surface
+# expect-stdout:
+#   map 2,4,6,8
+#   filter 2,4
+#   enumerate 0:1 1:2
+#   zip 1:10 2:20
+#   take 1,2
+#   skip 3,4
+#   take_while 1,2
+#   skip_while 3,4
+#   chain 1,2,3,4,9,8
+#   flat_map 1,1,2,2
+#   batch 1,2|3,4|5
+#   count 4
+#   reduce 10
+#   fold 10
+#   any true
+#   all false
+#   find 3
+#   for_each 1
+#   for_each 2
+#   sum 10
+
+def double(value: int) -> int:
+    return value * 2
+
+
+def is_even(value: int) -> bool:
+    return value % 2 == 0
+
+
+def below_three(value: int) -> bool:
+    return value < 3
+
+
+def above_two(value: int) -> bool:
+    return value > 2
+
+
+def twice(value: int) -> list[int]:
+    return [value, value]
+
+
+def add(acc: int, value: int) -> int:
+    return acc + value
+
+
+def show(value: int) -> None:
+    println(f"for_each {value}")
+
+
+def render(items: list[int]) -> str:
+    return ",".join([str(item) for item in items])
+
+
+def render_pairs(pairs: list[tuple[int, int]]) -> str:
+    return " ".join([f"{left}:{right}" for left, right in pairs])
+
+
+def main() -> None:
+    items = [1, 2, 3, 4]
+    println(f"map {render(items.iter().map(double).collect())}")
+    println(f"filter {render(items.iter().filter(is_even).collect())}")
+    println(f"enumerate {render_pairs(items.iter().take(2).enumerate().collect())}")
+    println(f"zip {render_pairs(items.iter().zip([10, 20].iter()).collect())}")
+    println(f"take {render(items.iter().take(2).collect())}")
+    println(f"skip {render(items.iter().skip(2).collect())}")
+    println(f"take_while {render(items.iter().take_while(below_three).collect())}")
+    println(f"skip_while {render(items.iter().skip_while(below_three).collect())}")
+    println(f"chain {render(items.iter().chain([9, 8].iter()).collect())}")
+    println(f"flat_map {render([1, 2].iter().flat_map(twice).collect())}")
+    batches: list[list[int]] = [1, 2, 3, 4, 5].iter().batch(2).collect()
+    println(f"batch {"|".join([render(batch) for batch in batches])}")
+    println(f"count {items.iter().count()}")
+    println(f"reduce {items.iter().reduce(0, add)}")
+    println(f"fold {items.iter().fold(0, add)}")
+    println(f"any {items.iter().any(is_even)}")
+    println(f"all {items.iter().all(is_even)}")
+    match items.iter().find(above_two):
+        case Some(found):
+            println(f"find {found}")
+        case None:
+            println("find none")
+    items.iter().take(2).for_each(show)
+    println(f"sum {items.iter().sum()}")

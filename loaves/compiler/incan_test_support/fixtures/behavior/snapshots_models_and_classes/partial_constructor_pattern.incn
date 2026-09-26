@@ -9,10 +9,12 @@
 
 """Issue #1708: a partial constructor pattern; the alias form is the documented RFC 021 example."""
 
+
 model Account:
     """A two-field model matched on one field."""
     tier: int
     name: str
+
 
 def describe(a: Account) -> str:
     """The issue's program: a pattern naming `tier` only."""
@@ -20,11 +22,13 @@ def describe(a: Account) -> str:
         Account(tier=1) => return "Premium"
         _ => return "Other"
 
+
 model Plan:
     """The documented alias model, matched by alias on one field."""
     type_ [alias="type", description="Plan type"]: str
     class_ [alias="class"]: str
     name: str
+
 
 def describe_plan(p: Plan) -> str:
     """The docs' RFC 021 example: alias keys with str literal values."""
@@ -32,6 +36,7 @@ def describe_plan(p: Plan) -> str:
         Plan(type="premium") => return "Premium account"
         Plan(type="basic") => return "Basic account"
         _ => return "Unknown"
+
 
 def main() -> None:
     """Print what each pattern selects."""

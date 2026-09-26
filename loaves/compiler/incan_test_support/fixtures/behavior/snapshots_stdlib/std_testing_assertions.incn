@@ -1,0 +1,73 @@
+# behavior: std.testing assertion helpers accept comparison operands, plain and Option and Result payloads, and the assert statement carries a message
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_testing_compiled_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_assert_surface_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::model_constructor_comparison_assertion_forms_codegen
+# expect-stdout:
+#   basics ok
+#   forms ok
+#   7 3
+#   assertions ok
+
+from std.testing import assert_eq, assert_ne, assert_true, assert_false, assert_is_some, assert_is_none, assert_is_ok, assert_is_err
+
+
+@derive(Eq)
+model Pair:
+    x: int
+
+
+def check_basics() -> None:
+    assert 1 + 1 == 2
+    assert 3 != 4
+    assert not false
+    assert true
+    assert 10 > 5, "ten should be greater than five"
+    println("basics ok")
+
+
+def encoded_len() -> int:
+    return 1
+
+
+def check_assert_eq_accepts_comparison_operand() -> None:
+    assert_eq(encoded_len() > 0, true)
+
+
+def check_constructor_comparison_forms() -> None:
+    value = Pair(x=1)
+    expected = Pair(x=1)
+    assert value == Pair(x=1)
+    assert Pair(x=1) == value
+    assert Pair(x=1) == Pair(x=1)
+    assert value != Pair(x=2)
+    assert Pair(x=2) != value
+    assert (value == Pair(x=1)) == (Pair(x=1) == value)
+    assert not (value != Pair(x=1))
+    assert_eq(value, Pair(x=1))
+    assert_eq(Pair(x=1), value)
+    assert_ne(value, Pair(x=2))
+    assert_ne(Pair(x=2), value)
+    assert_false(value != Pair(x=1))
+    assert value == expected
+    println("forms ok")
+
+
+def check_payload_helpers() -> None:
+    some: Option[int] = Some(7)
+    none: Option[int] = None
+    seven = assert_is_some(some)
+    assert_is_none(none)
+    ok: Result[int, str] = Ok(3)
+    err: Result[int, str] = Err("failed")
+    three = assert_is_ok(ok)
+    message = assert_is_err(err)
+    assert_true(message == "failed")
+    println(f"{seven} {three}")
+
+
+def main() -> None:
+    check_basics()
+    check_assert_eq_accepts_comparison_operand()
+    check_constructor_comparison_forms()
+    check_payload_helpers()
+    println("assertions ok")

@@ -36,7 +36,11 @@ use crate::symbols::{ImplementationTraitBoundInfo, ImplementationTraitBoundOrigi
 use crate::typechecker::{ConstValue, TypeChecker};
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
-pub const CHECKED_API_METADATA_SCHEMA_VERSION: u32 = 1;
+/// Schema version of checked API metadata packages and modules.
+///
+/// Version 2 adds the `mut` marker: `is_mut` on a callable parameter and the `MutParam` type reference inside a
+/// function type (#1790).
+pub const CHECKED_API_METADATA_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CheckedApiMetadataPackage {
@@ -2787,6 +2791,7 @@ fn type_ref_doc_name(ty: &TypeRef) -> String {
         TypeRef::TypeParam { name } => name.clone(),
         TypeRef::SelfType => "Self".to_string(),
         TypeRef::Ref { inner } => format!("&{}", type_ref_doc_name(inner)),
+        TypeRef::MutParam { inner } => format!("mut {}", type_ref_doc_name(inner)),
         TypeRef::RustPath { path } => path.clone(),
         TypeRef::NativeUnion(native) => native
             .members
