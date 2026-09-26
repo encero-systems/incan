@@ -185,7 +185,7 @@
       ],
       "compatibility_issue": "#1773",
       "behavior_evidence": "behavior fixture cli/trait_default_method_mutable_parameter.incn (combined-branch run); emitter unit tests trait_method_mut_parameter_keeps_one_shape_across_slot_impl_and_wrapper_issue1773 and mut_arguments_follow_the_checker_facts_issue1773 in incan_emit/src/tests/trait_parameters_and_element_bounds.rs; codegen_snapshot_tests and stdlib_generated_rust_snapshot_tests unchanged",
-      "semantic_owner": "1561: the checked parameter marker lowering already carries (FunctionParam mutability, Mutable = the caller sees the change); after the cutover Body IR states the parameter-passing shape and the trait slot, implementation and wrapper read it from there",
+      "semantic_owner": "#1561: the checked parameter marker lowering already carries (FunctionParam mutability, Mutable = the caller sees the change); after the cutover Body IR states the parameter-passing shape and the trait slot, implementation and wrapper read it from there",
       "retirement_condition": "#654: the Rust-source backend is deleted; the replacement route passes a mut parameter from the recorded parameter fact and needs no separate trait-method or wrapper spelling"
     }
   ]

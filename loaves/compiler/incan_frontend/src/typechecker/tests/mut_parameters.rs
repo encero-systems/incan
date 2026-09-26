@@ -485,6 +485,51 @@ fn immutable_argument_to_a_marked_library_parameter_is_refused_issue1773() -> Re
     Ok(())
 }
 
+/// #1773: a call through a local bound to a function is checked as that function only while the local is never
+/// reassigned; once it is, anywhere in the module, the call may run any function assigned to it and counts as changing
+/// each marked parameter, and the refusal says the callee may change it.
+#[test]
+fn call_through_a_reassigned_function_local_counts_as_changing_issue1773() -> Result<(), String> {
+    let prelude = r#"
+def reads(mut items: list[int]) -> int:
+    return len(items)
+
+def extend(mut items: list[int]) -> int:
+    items.append(9)
+    return len(items)
+"#;
+    let refused = mut_argument_refusals(&format!(
+        r#"{prelude}
+def main() -> None:
+    fixed: list[int] = [1]
+    mut f = reads
+    println(f(fixed))
+    f = extend
+    println(f(fixed))
+"#
+    ));
+    assert_eq!(
+        refusals_by_callee(&refused),
+        ["reads", "reads"],
+        "both calls through the reassigned local are refused, the one before the reassignment too, got {refused:?}"
+    );
+    assert!(
+        refused
+            .iter()
+            .all(|refusal| refusal.notes.iter().any(|note| note.starts_with("'reads' may change"))),
+        "the callee is not known at the call, got {refused:?}"
+    );
+    let (_, info) = checked(&format!(
+        "{prelude}\ndef main() -> None:\n    fixed: list[int] = [1]\n    g = reads\n    println(g(fixed))\n"
+    ))?;
+    assert_eq!(
+        info.calls.mut_argument_copies.len(),
+        1,
+        "a local that is never reassigned runs the function it was bound to, which only reads"
+    );
+    Ok(())
+}
+
 /// Return the callee each `INCAN-T0117` refusal names, in order.
 fn refusals_by_callee(refusals: &[CompileError]) -> Vec<String> {
     refusals

@@ -23,7 +23,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{CallArg, Expr, Param, ParamKind, Span, Spanned};
-use crate::diagnostics::errors::{self, MutArgumentPlace, MutParameterLabel};
+use crate::diagnostics::errors::{self, MutArgumentPlace, MutParameterChange, MutParameterLabel};
 use crate::symbols::{CallableParam, ResolvedType, SymbolKind, TypeInfo};
 use incan_lang::lang::keywords::{self, KeywordId};
 use incan_lang::lang::surface::{dict_methods, list_methods, set_methods};
@@ -82,6 +82,21 @@ struct PendingMutArgument {
     position: usize,
     place: ArgumentPlace,
     span: Span,
+    /// The declaration span of the local the call went through (`f(items)` after `f = extend`), when it did.
+    through_local: Option<(usize, usize)>,
+}
+
+/// A caller-visible parameter passed on to another callee's caller-visible parameter.
+#[derive(Debug, Clone)]
+struct MutParamForward {
+    /// The callable whose parameter is passed on, and that parameter.
+    owner: CanonicalSymbolId,
+    param: String,
+    /// The callee it is passed to, and the callee's parameter.
+    callee: CanonicalSymbolId,
+    callee_param: String,
+    /// The declaration span of the local the call went through, when it did.
+    through_local: Option<(usize, usize)>,
 }
 
 /// The body currently being checked and its caller-visible `mut` parameters, by name, with their declaration spans.
@@ -100,12 +115,14 @@ pub(crate) struct MutParamFacts {
     bodies_checked: HashSet<CanonicalSymbolId>,
     /// Caller-visible parameters each callable's body changes directly.
     changed: HashMap<CanonicalSymbolId, HashSet<String>>,
-    /// A caller-visible parameter passed on to another callee's caller-visible parameter: (owner, param, callee,
-    /// param).
-    forwards: Vec<(CanonicalSymbolId, String, CanonicalSymbolId, String)>,
+    /// Caller-visible parameters passed on to another callee's caller-visible parameter.
+    forwards: Vec<MutParamForward>,
     /// Local bindings that hold a declared callable by reference, `f = extend`, keyed by the binding's declaration
     /// span, so a call through them is checked too.
     function_values: HashMap<(usize, usize), CanonicalSymbolId>,
+    /// Local bindings reassigned anywhere in the module, keyed by declaration span. A call through such a local may
+    /// run any callable it was assigned, so it counts as changing every marked parameter.
+    reassigned_locals: HashSet<(usize, usize)>,
     /// Arguments waiting for the module's change facts.
     pending: Vec<PendingMutArgument>,
     /// The body being checked, when it declares caller-visible parameters.
@@ -377,6 +394,21 @@ impl TypeChecker {
         }
     }
 
+    /// Record that the local binding `name` resolves to is reassigned, so calls through it are not taken to run the
+    /// callable it was first bound to.
+    pub(in crate::typechecker) fn note_local_reassignment(&mut self, name: &str) {
+        if let Some(symbol) = self
+            .symbols
+            .lookup(name)
+            .and_then(|symbol_id| self.symbols.get(symbol_id))
+            && matches!(symbol.kind, SymbolKind::Variable(_))
+        {
+            self.mut_params
+                .reassigned_locals
+                .insert((symbol.span.start, symbol.span.end));
+        }
+    }
+
     // ========================================================================
     // Calls
     // ========================================================================
@@ -410,14 +442,15 @@ impl TypeChecker {
                 MutArgumentCallee::Method { receiver, method } => self.trait_self_method_identity(receiver, method),
                 MutArgumentCallee::Function(_) => None,
             });
+        let mut through_local = None;
         if let Some(local) = &identity
             && local.kind == SemanticSourceTargetKind::Local
-            && let Some(callee) = self
-                .mut_params
-                .function_values
-                .get(&(local.declaration_span.start, local.declaration_span.end))
         {
-            identity = Some(callee.clone());
+            let key = (local.declaration_span.start, local.declaration_span.end);
+            through_local = Some(key);
+            if let Some(callee) = self.mut_params.function_values.get(&key) {
+                identity = Some(callee.clone());
+            }
         }
         let declared = identity
             .as_ref()
@@ -492,12 +525,13 @@ impl TypeChecker {
                 && let Some(body) = &self.mut_params.current
             {
                 match &identity {
-                    Some(callee) => self.mut_params.forwards.push((
-                        body.identity.clone(),
-                        param.clone(),
-                        callee.clone(),
-                        slot.name.clone(),
-                    )),
+                    Some(callee) => self.mut_params.forwards.push(MutParamForward {
+                        owner: body.identity.clone(),
+                        param: param.clone(),
+                        callee: callee.clone(),
+                        callee_param: slot.name.clone(),
+                        through_local,
+                    }),
                     // Passing the parameter on to a callee whose body is unknown may change it.
                     None => {
                         let owner = body.identity.clone();
@@ -512,6 +546,7 @@ impl TypeChecker {
                 position: index + 1,
                 place,
                 span: value.span,
+                through_local,
             });
         }
     }
@@ -683,10 +718,15 @@ impl TypeChecker {
         let changed = self.mut_param_change_closure();
         let pending = std::mem::take(&mut self.mut_params.pending);
         for argument in pending {
-            let changes = argument.callee.as_ref().is_none_or(|callee| {
-                !self.mut_params.bodies_checked.contains(callee)
-                    || changed.contains(&(callee.clone(), argument.param.clone()))
+            let known_callee = argument.callee.as_ref().filter(|callee| {
+                self.mut_params.bodies_checked.contains(*callee)
+                    && !self.call_goes_through_a_reassigned_local(argument.through_local)
             });
+            let change = match known_callee {
+                Some(_) => MutParameterChange::Changes,
+                None => MutParameterChange::MayChange,
+            };
+            let changes = known_callee.is_none_or(|callee| changed.contains(&(callee.clone(), argument.param.clone())));
             let refused_place = match (&argument.place, changes) {
                 (ArgumentPlace::Immutable { binding }, true) => Some(match binding {
                     Some(name) => MutArgumentPlace::Binding(name.clone()),
@@ -710,8 +750,13 @@ impl TypeChecker {
             } else {
                 MutParameterLabel::Named(&argument.param)
             };
-            let error =
-                errors::immutable_argument_to_mut_parameter(parameter, &argument.callee_name, place, argument.span);
+            let error = errors::immutable_argument_to_mut_parameter(
+                parameter,
+                &argument.callee_name,
+                change,
+                place,
+                argument.span,
+            );
             let already_reported = self
                 .errors
                 .iter()
@@ -720,6 +765,12 @@ impl TypeChecker {
                 self.errors.push(error);
             }
         }
+    }
+
+    /// Return whether a call went through a local that is reassigned somewhere in the module, so the callable it runs
+    /// is not known at the call.
+    fn call_goes_through_a_reassigned_local(&self, through_local: Option<(usize, usize)>) -> bool {
+        through_local.is_some_and(|local| self.mut_params.reassigned_locals.contains(&local))
     }
 
     /// Return every (callable, parameter) pair whose caller-visible parameter the callable changes, transitively.
@@ -732,10 +783,11 @@ impl TypeChecker {
             .collect::<HashSet<_>>();
         loop {
             let mut grew = false;
-            for (owner, param, callee, callee_param) in &self.mut_params.forwards {
-                let callee_changes = !self.mut_params.bodies_checked.contains(callee)
-                    || changed.contains(&(callee.clone(), callee_param.clone()));
-                if callee_changes && changed.insert((owner.clone(), param.clone())) {
+            for forward in &self.mut_params.forwards {
+                let callee_changes = !self.mut_params.bodies_checked.contains(&forward.callee)
+                    || self.call_goes_through_a_reassigned_local(forward.through_local)
+                    || changed.contains(&(forward.callee.clone(), forward.callee_param.clone()));
+                if callee_changes && changed.insert((forward.owner.clone(), forward.param.clone())) {
                     grew = true;
                 }
             }

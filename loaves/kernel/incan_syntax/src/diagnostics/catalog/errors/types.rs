@@ -1052,6 +1052,16 @@ impl MutParameterLabel<'_> {
     }
 }
 
+/// Whether an `INCAN-T0117` refusal's callee is known to change the `mut` parameter or may change it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MutParameterChange {
+    /// The body that runs changes the parameter.
+    Changes,
+    /// The body that runs is not known at the call (a method reached by trait dispatch, a callable known only by its
+    /// type, a declaration whose body the check does not read), and it may change the parameter.
+    MayChange,
+}
+
 /// Refuse an argument for a `mut` parameter whose changes reach the caller when the callee changes it and the change
 /// would fail to reach the argument (#1773).
 ///
@@ -1059,10 +1069,12 @@ impl MutParameterLabel<'_> {
 /// callee's changes to the caller. When the callee does change it, the argument must be a place the caller may change:
 /// an immutable binding or a field of one cannot be changed, and an element or a static reaches the callee as a copy,
 /// so the change would be lost. `parameter` and `callee` name the declaration and `place` the argument, which picks the
-/// remedy; a callee known only by its callable type names the parameter by position. `INCAN-T0117` is its stable code.
+/// remedy; a callee known only by its callable type names the parameter by position. `change` says whether the callee
+/// is known to change the parameter or may change it. `INCAN-T0117` is its stable code.
 pub fn immutable_argument_to_mut_parameter(
     parameter: MutParameterLabel<'_>,
     callee: &str,
+    change: MutParameterChange,
     place: MutArgumentPlace,
     span: Span,
 ) -> CompileError {
@@ -1082,7 +1094,11 @@ pub fn immutable_argument_to_mut_parameter(
     .with_stable_code("INCAN-T0117")
     .with_hint(hint)
     .with_note(format!(
-        "'{callee}' changes the parameter {parameter}, and its changes are visible to the caller, so the caller passes a binding declared with 'mut'"
+        "'{callee}' {} the parameter {parameter}, and its changes are visible to the caller, so the caller passes a binding declared with 'mut'",
+        match change {
+            MutParameterChange::Changes => "changes",
+            MutParameterChange::MayChange => "may change",
+        }
     ))
 }
 

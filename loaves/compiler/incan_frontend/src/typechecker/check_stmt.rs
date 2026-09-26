@@ -775,6 +775,7 @@ impl TypeChecker {
             } else {
                 self.refuse_caller_visible_mut_param_rebinding(&assign.name, target_span);
             }
+            self.note_local_reassignment(&assign.name);
             if !self.types_compatible(&value_ty, &var_ty) {
                 self.errors.push(errors::assignment_type_mismatch(
                     &assign.name,
@@ -924,6 +925,7 @@ impl TypeChecker {
                 } else {
                     self.refuse_caller_visible_mut_param_rebinding(name, target_span);
                 }
+                self.note_local_reassignment(name);
                 if !self.types_compatible(&value_ty, &declared_ty) {
                     self.errors.push(errors::assignment_type_mismatch(
                         name,
