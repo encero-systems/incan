@@ -1,3 +1,12 @@
+/// How the right side of a tuple statement may be spelled where it is parsed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TupleValueSpelling {
+    /// Statement position: `a, b = b, a` reads the right side as the tuple `(b, a)`, like `a, b = (b, a)`.
+    BareOrParenthesized,
+    /// An item of a braced vocab body, where a comma separates items: the right side is one expression.
+    SingleExpression,
+}
+
 /// Statement parsing methods.
 ///
 /// This chunk parses statement forms (e.g. `if`, `while`, `for`, `return`, assignments) as well as indentation-based
@@ -93,7 +102,7 @@ impl<'a> Parser<'a> {
             self.advance();
             Statement::Pass
         } else if self.check_keyword(KeywordId::Let) || self.check_keyword(KeywordId::Mut) {
-            self.assignment_stmt()?
+            self.assignment_stmt(TupleValueSpelling::BareOrParenthesized)?
         } else {
             // Could be assignment or expression
             self.assignment_or_expr_stmt()?
@@ -130,7 +139,7 @@ impl<'a> Parser<'a> {
         } else if let Some(surface_stmt) = self.try_surface_keyword_statement()? {
             surface_stmt
         } else if self.check_keyword(KeywordId::Let) || self.check_keyword(KeywordId::Mut) {
-            self.assignment_stmt()?
+            self.assignment_stmt(TupleValueSpelling::BareOrParenthesized)?
         } else {
             self.assignment_or_expr_stmt()?
         };
@@ -917,7 +926,10 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse a named assignment or tuple-unpacking statement.
-    fn assignment_stmt(&mut self) -> Result<Statement, CompileError> {
+    ///
+    /// `spelling` says whether a tuple unpacking's value may be a bare comma-separated tuple (`a, b = b, a`); see
+    /// [`Self::tuple_assignment_value`].
+    fn assignment_stmt(&mut self, spelling: TupleValueSpelling) -> Result<Statement, CompileError> {
         let binding = if self.match_token(&TokenKind::Keyword(KeywordId::Let)) {
             BindingKind::Let
         } else if self.match_token(&TokenKind::Keyword(KeywordId::Mut)) {
@@ -941,7 +953,7 @@ impl<'a> Parser<'a> {
                 }
             }
             self.expect(&TokenKind::Operator(OperatorId::Eq), "Expected '=' in tuple unpacking")?;
-            let value = self.expression()?;
+            let value = self.tuple_assignment_value(spelling)?;
             return Ok(Statement::TupleUnpack(TupleUnpackStmt {
                 binding,
                 names,
@@ -996,8 +1008,61 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse either an assignment-like statement or a plain expression statement.
+    /// Parse the value side of a tuple unpacking (`a, b = ...`) or a tuple assignment (`self.x, self.y = ...`).
+    ///
+    /// The value may be written as a bare comma-separated tuple, the Python swap idiom `a, b = b, a`. It builds the
+    /// same [`Expr::Tuple`] as the parenthesized spelling `a, b = (b, a)`, spanning the first element to the last,
+    /// so the checker and everything after it see one shape whichever spelling the source uses. A single expression
+    /// is returned unchanged.
+    ///
+    /// With [`TupleValueSpelling::SingleExpression`] (an item of a braced vocab body, where a comma separates items)
+    /// the value is one expression and a following comma is left for the body.
+    fn tuple_assignment_value(&mut self, spelling: TupleValueSpelling) -> Result<Spanned<Expr>, CompileError> {
+        let first = self.expression()?;
+        if spelling == TupleValueSpelling::SingleExpression || !self.tuple_value_continues() {
+            return Ok(first);
+        }
+
+        let start = first.span.start;
+        let mut elements = vec![first];
+        while self.tuple_value_continues() {
+            self.advance(); // the comma separating the next element
+            elements.push(self.expression()?);
+        }
+        let end = elements.last().map_or(start, |element| element.span.end);
+        Ok(Spanned::new(Expr::Tuple(elements), Span::new(start, end)))
+    }
+
+    /// Return whether the current token is a comma that introduces another element of a bare tuple value.
+    ///
+    /// A comma followed by the end of the line, the end of the block or a closing delimiter introduces no element, so
+    /// it is left in place for the enclosing construct.
+    fn tuple_value_continues(&self) -> bool {
+        self.check(&TokenKind::Punctuation(PunctuationId::Comma))
+            && !matches!(
+                self.peek_next().kind,
+                TokenKind::Newline
+                    | TokenKind::Dedent
+                    | TokenKind::Eof
+                    | TokenKind::Punctuation(PunctuationId::RParen | PunctuationId::RBracket | PunctuationId::RBrace)
+            )
+    }
+
+    /// Parse either an assignment-like statement or a plain expression statement in statement position.
+    ///
+    /// A tuple assignment's value may be a bare comma-separated tuple (`self.x, self.y = self.y, self.x`); see
+    /// [`Self::tuple_assignment_value`].
     fn assignment_or_expr_stmt(&mut self) -> Result<Statement, CompileError> {
+        self.assignment_or_expr_item(TupleValueSpelling::BareOrParenthesized)
+    }
+
+    /// Parse either an assignment-like statement or a plain expression statement.
+    ///
+    /// `spelling` says whether a tuple statement's right side may be a bare comma-separated tuple: it may in statement
+    /// position, and may not in an item of a braced vocab body, where a comma separates items. There
+    /// `{ a, b = pair, c = 3 }` is two items and `{ a, b = x, y }` is the unpacking `a, b = x` followed by the item
+    /// `y`.
+    fn assignment_or_expr_item(&mut self, spelling: TupleValueSpelling) -> Result<Statement, CompileError> {
         // Look for `ident = expr` or `ident, ident = expr` pattern (simple or tuple assignment)
         if let TokenKind::Ident(_) = &self.peek().kind {
             // Check if next is = or : (for assignment) or , (for tuple unpacking)
@@ -1006,7 +1071,7 @@ impl<'a> Parser<'a> {
                     && !self.active_scoped_glyph_starts_at_offset(1))
                 || self.peek_next().kind == TokenKind::Punctuation(PunctuationId::Comma)
             {
-                return self.assignment_stmt();
+                return self.assignment_stmt(spelling);
             }
             // Check for compound assignment: ident += expr, ident -= expr, etc.
             let compound_op = Self::compound_op_from_token_kind(&self.peek_next().kind);
@@ -1042,7 +1107,7 @@ impl<'a> Parser<'a> {
                 }
             }
             self.expect(&TokenKind::Operator(OperatorId::Eq), "Expected '=' in tuple assignment")?;
-            let value = self.expression()?;
+            let value = self.tuple_assignment_value(spelling)?;
             return Ok(Statement::TupleAssign(TupleAssignStmt { targets, value }));
         }
 

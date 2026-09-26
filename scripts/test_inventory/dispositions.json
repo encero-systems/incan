@@ -1315,6 +1315,20 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/power_grouping_emission.rs": {
+      "disposition": "retire",
+      "notes": "asserts the generated Rust text of a prefix operator over a power (#1786); retires with the Rust-source backend.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "prefix_operator_over_a_power_emits_over_the_whole_power_issue1786": {
+          "notes": "Asserts `-x ** 2` emits the negation over the grouped power and `(-x) ** 2` raises the negated base; the fixture prints both values.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/operator_precedence_follows_the_parser_ladder.incn"
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/trait_bound_inference.rs": {
       "disposition": "retire",
       "notes": "infers Rust trait bounds for generated generics; Rust-shape concern.",
@@ -2519,6 +2533,10 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "prefix_operator_over_a_power_lowers_a_grouped_power_issue1786": {
+          "notes": "Asserts the legacy IR hands `-x ** 2` and `~x ** 2` to the emitter as a prefix operator over one grouped power; the fixture prints `-4` and `-5`.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/operator_precedence_follows_the_parser_ladder.incn"
+        },
         "prefix_operator_over_an_operator_expression_lowers_a_grouped_operand_issue1763": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/negation_keeps_its_operand_grouping.incn",
           "notes": "Asserts the recorded shape on the legacy IR (an operator-shaped operand of `not`, unary `-` or `~` is handed to the emitter as one grouped value in its own type; an atomic operand stays as written); retires with `incan_ir`. The behavior, `not (1 == 2)` printing `true` and `-(2 + 3)` printing `-5`, is carried by the named fixture (#1763)."
@@ -2814,6 +2832,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/kernel/incan_lang/src/lang/surface/method_arity.rs": {
+      "disposition": "keep",
+      "notes": "the method registry's argument counts for the builtin collection methods (#1783); a language fact below the emitter, cannot reach codegen.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/kernel/incan_lang/src/lang/text_codecs.rs": {
       "disposition": "keep",
       "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level.",
@@ -3062,6 +3088,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/kernel/incan_syntax/src/parser/tests/operator_precedence.rs": {
+      "disposition": "keep",
+      "notes": "parser grouping of mixed operators checked against the operator registry precedence (#1786); lexer, parser and registry, below the emitter, cannot reach codegen.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/kernel/incan_syntax/src/parser/tests/patterns_and_matching.rs": {
       "disposition": "keep",
       "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level.",
@@ -3081,6 +3115,14 @@
     "loaves/kernel/incan_syntax/src/parser/tests/statements_and_blocks.rs": {
       "disposition": "keep",
       "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/kernel/incan_syntax/src/parser/tests/tuple_assignments.rs": {
+      "disposition": "keep",
+      "notes": "the bare-tuple value side of tuple assignment and unpacking (#1789); parser only, below the emitter, cannot reach codegen.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",

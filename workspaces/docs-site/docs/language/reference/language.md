@@ -427,8 +427,9 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 
 ### Notes
 
-- **Precedence**: Higher binds tighter (e.g. `*` > `+`). Values are relative and must be consistent with the parser.
-- **Associativity**: How operators of the same precedence group (left-to-right vs right-to-left).
+- **Precedence**: Higher binds tighter (e.g. `*` > `+`). Values are relative and record how the parser groups operators. From loosest to tightest, one level per `<`: `or` < `and` < `not` < comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `not in`, `is`, `is not`, `|>`, `<|`) < ranges (`..`, `..=`) < `|` < `^` < `&` < shifts (`<<`, `>>`) < `+`, `-` < `*`, `/`, `//`, `%`, `@` < prefix `-`, `~` < `**`.
+- **Prefix operators**: `not` binds looser than the comparisons: `not a == b` is `not (a == b)`. `**` binds tighter than a prefix `-` or `~` on its left and looser than one on its right: `-x ** 2` is `-(x ** 2)`, `~x ** 2` is `~(x ** 2)`, and `2 ** -1` is `2 ** (-1)`. Prefix `-` has no row of its own (`Minus` is its infix spelling) and binds like `~`.
+- **Associativity**: How operators of the same precedence group (left-to-right vs right-to-left). A prefix operator is `Right`: `not not a` is `not (not a)`. `None` means the operator does not chain: `a..b..c` is a syntax error.
 - **Fixity**: Whether the operator is used as a prefix unary operator or an infix binary operator.
 - **KeywordSpelling**: Whether the operator token is spelled as a reserved word (e.g. `and`, `not`).
 
@@ -469,13 +470,13 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 | CaretEq | `^=` | 10 | Left | Infix | false | RFC 028 | 0.3 | Stable |
 | ShlEq | `<<=` | 10 | Left | Infix | false | RFC 028 | 0.3 | Stable |
 | ShrEq | `>>=` | 10 | Left | Infix | false | RFC 028 | 0.3 | Stable |
-| DotDot | `..` | 30 | Left | Infix | false | RFC 000 | 0.1 | Stable |
-| DotDotEq | `..=` | 30 | Left | Infix | false | RFC 000 | 0.1 | Stable |
-| And | `and` | 35 | Left | Infix | true | RFC 000 | 0.1 | Stable |
-| Or | `or` | 35 | Left | Infix | true | RFC 000 | 0.1 | Stable |
-| Not | `not` | 45 | Left | Prefix | true | RFC 000 | 0.1 | Stable |
-| In | `in` | 35 | Left | Infix | true | RFC 000 | 0.1 | Stable |
-| Is | `is` | 35 | Left | Infix | true | RFC 000 | 0.1 | Stable |
+| DotDot | `..` | 42 | None | Infix | false | RFC 000 | 0.1 | Stable |
+| DotDotEq | `..=` | 42 | None | Infix | false | RFC 000 | 0.1 | Stable |
+| And | `and` | 25 | Left | Infix | true | RFC 000 | 0.1 | Stable |
+| Or | `or` | 20 | Left | Infix | true | RFC 000 | 0.1 | Stable |
+| Not | `not` | 30 | Right | Prefix | true | RFC 000 | 0.1 | Stable |
+| In | `in` | 40 | Left | Infix | true | RFC 000 | 0.1 | Stable |
+| Is | `is` | 40 | Left | Infix | true | RFC 000 | 0.1 | Stable |
 
 ## Punctuation
 
@@ -661,7 +662,7 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 | Swap | `swap` |  | Swap two elements by index. | RFC 009 | 0.1 | Stable |
 | Reserve | `reserve` |  | Reserve capacity for at least N more elements. | RFC 009 | 0.1 | Stable |
 | ReserveExact | `reserve_exact` |  | Reserve capacity for exactly N more elements. | RFC 009 | 0.1 | Stable |
-| Remove | `remove` |  | Remove and return the element at the given index. | RFC 009 | 0.1 | Stable |
+| Remove | `remove` |  | `remove(index) -> None`: remove the element at the given index. Takes exactly one argument. | RFC 009 | 0.1 | Stable |
 | Count | `count` |  | Count occurrences of a value. | RFC 009 | 0.1 | Stable |
 | Index | `index` |  | Return the index of a value (or error if not found). | RFC 009 | 0.1 | Stable |
 
@@ -672,7 +673,7 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 |---|---|---|---|---|---|---|
 | Keys | `keys` |  | Return an iterable/list of keys. | RFC 009 | 0.1 | Stable |
 | Values | `values` |  | Return an iterable/list of values. | RFC 009 | 0.1 | Stable |
-| Get | `get` |  | Get a value by key, optionally with a default. | RFC 009 | 0.1 | Stable |
+| Get | `get` |  | `get(key) -> Option[V]`: `Some(value)` when the key is present, `None` when it is absent. Takes exactly one argument. | RFC 009 | 0.1 | Stable |
 | Insert | `insert` |  | Insert or overwrite a key/value pair. | RFC 009 | 0.1 | Stable |
 | ContainsKey | `contains_key` |  | Return true if the dict contains a key. | RFC 009 | 0.6 | Stable |
 

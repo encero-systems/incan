@@ -60,6 +60,10 @@ Rust APIs often encode numeric decisions in parameter types. If Rust expects `i6
 
 Keeping Rust interop on the same exact-or-lossless rule prevents a separate "interop cast system" from growing at the boundary. It also means code that typechecks for an Incan assignment is aligned with code that typechecks for a Rust scalar argument.
 
+## Power groups the way Python groups it
+
+`**` binds tighter than a prefix `-` or `~` on its left and looser than one on its right, so `-x ** 2` is `-(x ** 2)` and `2 ** -1` is `2 ** (-1)`. This is Python's grouping, and it matches mathematical notation, where −x² means the negation of x². Python code that writes `-x ** 2` for a negated square therefore computes the same value in Incan; raising a negative value to a power takes parentheses in both languages, as described in [Raise a negative value to a power](../how-to/choosing_numeric_types.md#raise-a-negative-value-to-a-power).
+
 ## Decimal is in scope, arithmetic is not yet
 
 Decimal types are included because fixed-scale values are central to data, finance, and analytics code. Precision and scale belong in the type because they define what values can be represented.

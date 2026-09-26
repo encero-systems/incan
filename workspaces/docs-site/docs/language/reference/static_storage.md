@@ -87,8 +87,11 @@ static counts: dict[str, int] = {}
 
 def record(name: str) -> None:
     items.append(len(items))
-    counts[name] = counts.get(name, 0) + 1
+    current = counts.get(name).unwrap_or(0)
+    counts[name] = current + 1
 ```
+
+`dict.get(key)` returns `Option[V]`, `None` when the key is absent; `unwrap_or(0)` gives the count `0` for an absent name.
 
 ### Bind a direct alias
 

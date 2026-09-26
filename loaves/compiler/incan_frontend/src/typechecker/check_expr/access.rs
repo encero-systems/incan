@@ -5685,6 +5685,7 @@ impl TypeChecker {
             }
         }
 
+        self.check_builtin_collection_method_args(&base_ty, method, args, span);
         match &base_ty {
             ResolvedType::FrozenList(_) => {
                 if let Some(id) = frozen_list_methods::from_str(method) {
@@ -5873,13 +5874,6 @@ impl TypeChecker {
                             return ResolvedType::Unit;
                         }
                         M::Clone => {
-                            if !args.is_empty() {
-                                self.errors.push(errors::type_mismatch(
-                                    "no arguments",
-                                    &format!("{} argument(s)", args.len()),
-                                    span,
-                                ));
-                            }
                             if !self.is_copy_type(&elem) && !self.is_clone_type(&elem) {
                                 self.errors
                                     .push(errors::list_clone_requires_clone(&elem.to_string(), span));

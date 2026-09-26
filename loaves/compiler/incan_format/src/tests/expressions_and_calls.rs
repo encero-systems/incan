@@ -312,6 +312,33 @@ def high_value_orders(orders: DataFrame) -> DataFrame:
 }
 
 #[test]
+fn test_format_source_keeps_a_tuple_value_parenthesized_in_a_braced_vocab_body_issue1789() -> Result<(), FormatError> {
+    // A comma separates the items of a braced body, so a tuple value there keeps its parentheses; the same statement
+    // outside the body is written bare.
+    let source = r#"import pub::analytics
+
+def pairs(orders: DataFrame, x: int, y: int) -> DataFrame:
+    c, d = (x, y)
+    return query {
+        a, b = (x, y)
+        FROM orders
+        SELECT .order_id as order_id
+    }
+"#;
+    let formatted = format_source_with_query_vocab(source)?;
+    assert!(
+        formatted.contains("        a, b = (x, y)\n"),
+        "a braced-body tuple value keeps its parentheses; got:\n{formatted}"
+    );
+    assert!(
+        formatted.contains("    c, d = x, y\n"),
+        "a statement-position tuple value is written bare; got:\n{formatted}"
+    );
+    assert_eq!(format_source_with_query_vocab(&formatted)?, formatted);
+    Ok(())
+}
+
+#[test]
 fn test_format_source_generator_expression_full_clause_shape() -> Result<(), FormatError> {
     let source = r#"def run(xs: list[int], ys: list[int]) -> Generator[int]:
   return (x*y for x in xs if x>0 for y in ys if y>x)

@@ -146,3 +146,45 @@ def double_negation(x: int) -> int:
     );
     Ok(())
 }
+
+/// #1786: `-x ** 2` is `-(x ** 2)` and `~x ** 2` is `~(x ** 2)`: the prefix operator's operand is the whole power,
+/// handed to the emitter as one grouped value, so the operator applies to the power's result.
+#[test]
+fn prefix_operator_over_a_power_lowers_a_grouped_power_issue1786() -> Result<(), String> {
+    let ir = lower_source(
+        r#"
+def negated_square(x: int) -> int:
+    return -x ** 2
+
+def inverted_square(x: int) -> int:
+    return ~x ** 2
+"#,
+    )
+    .map_err(|errors| format!("lowering failed: {errors:?}"))?;
+
+    for (name, op) in [("negated_square", UnaryOp::Neg), ("inverted_square", UnaryOp::Not)] {
+        let (lowered_op, operand) = unary_parts(&ir, name)?;
+        assert_eq!(lowered_op, op, "`{name}` keeps its prefix operator at the root");
+        let IrExprKind::Block {
+            stmts,
+            value: Some(value),
+        } = &operand.kind
+        else {
+            return Err(format!(
+                "`{name}` must hand the emitter a grouped power, got {operand:?}"
+            ));
+        };
+        assert!(stmts.is_empty(), "a grouped operand carries no statements: {stmts:?}");
+        assert!(
+            matches!(
+                value.kind,
+                IrExprKind::BinOp {
+                    op: crate::expr::BinOp::Pow,
+                    ..
+                }
+            ),
+            "`{name}` groups the power itself, got {value:?}"
+        );
+    }
+    Ok(())
+}

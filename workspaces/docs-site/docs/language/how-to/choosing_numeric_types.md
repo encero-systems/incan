@@ -64,8 +64,10 @@ Aliases canonicalize to exact Incan types.
 | `int`, `bigint`, `long`   | `i64`           |
 | `hugeint`                 | `i128`          |
 | `real`, `fp32`            | `f32`           |
-| `float`, `double`, `fp64` | `f64`           |
+| `double`, `fp64`          | `f64`           |
 | `numeric[p, s]`           | `decimal[p, s]` |
+
+`float` is not in this table: it is the broad IEEE type that admits NaN and infinity, while `f64` holds finite values only. Use `f64` or `double` when the boundary requires finite 64-bit values.
 
 Use canonical names when the exact width is the important thing. Use aliases when matching source vocabulary matters more.
 
@@ -119,7 +121,7 @@ bad_scale: decimal[6, 2] = 123.456d
 bad_precision: decimal[6, 2] = 12345.67d
 ```
 
-Decimal arithmetic is not general language behavior yet. Use decimals today for typed boundaries, literal validation, formatting, generated Rust, and display.
+The language does not define decimal arithmetic, and arithmetic operators refuse decimal operands (see [Not defined or refused](../reference/numeric_semantics.md#not-defined-or-refused)). Use decimal types to carry validated fixed-scale values across boundaries and to display them.
 
 ## Pick a resize policy before narrowing
 
@@ -150,6 +152,57 @@ Use `saturating_resize()` when clipping to the target range is intended.
 sample: i16 = 500
 clipped: i8 = sample.saturating_resize()
 ```
+
+Arithmetic on exact-width integers produces `int`, so storing a result back at the narrow width is a narrowing too. Apply the policy to the result:
+
+```incan
+n: i8 = 10
+maybe_next: Option[i8] = (n + 1).try_resize()
+next_or_max: i8 = (n + 1).saturating_resize()
+```
+
+Compound assignment applies no policy, so `n += 1` is refused on an `i8` binding. Compute the result into a binding through a resize method instead, as above.
+
+## Divide, take a remainder, or raise a power in generic code
+
+`/`, `//`, `%` and `**` between two values of a type parameter are refused with `INCAN-T0109`, because only the concrete numeric types carry their rules. Pick one of two fixes.
+
+If the operands are always ordinary numbers, declare them with the concrete type instead of a type parameter:
+
+```incan
+def modulo(a: int, b: int) -> int:
+    return a % b
+```
+
+If the function must stay generic, bound the parameter by a trait that defines the operator's hook (`__div__`, `__floordiv__`, `__mod__` or `__pow__`), and implement the hook on each type you pass:
+
+```incan
+trait Remainder[Rhs, Output]:
+    def __mod__(self, other: Rhs) -> Output: ...
+
+model Cents with Remainder[Cents, Cents]:
+    value: int
+
+    def __mod__(self, other: Cents) -> Cents:
+        return Cents(value=self.value % other.value)
+
+def modulo[T with Remainder[T, T]](a: T, b: T) -> T:
+    return a % b
+```
+
+`+`, `-` and `*` need neither fix: on a type parameter they become bounds that the type argument must satisfy.
+
+## Raise a negative value to a power
+
+`**` binds tighter than a prefix `-` on its left, so `-x ** 2` negates the square of `x`. Parenthesize the base when you mean to raise the negated value:
+
+```incan
+x = 3
+negated_square = -x ** 2          # -9
+square_of_negative = (-x) ** 2    # 9
+```
+
+The same holds for prefix `~`. For the full precedence order, see the [operator table](../reference/language.md#operators).
 
 ## Avoid unsigned integers as validation
 

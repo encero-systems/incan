@@ -1,6 +1,6 @@
 //! Statement and pattern formatting: short match arm blocks, pattern alternation and its wrapping, the blank line after
 //! a match arm arrow or an `elif` / `else` header, blank lines around multi-line `match` statements, qualified
-//! constructor patterns, and `if let` / `while let` headers and bodies.
+//! constructor patterns, `if let` / `while let` headers and bodies, and the bare right side of a tuple statement.
 
 use super::*;
 
@@ -276,5 +276,30 @@ fn test_format_source_while_let_normalizes_header_and_body_indentation() -> Resu
     return total
 "#;
     assert_eq!(formatted, expected);
+    Ok(())
+}
+
+#[test]
+fn test_format_source_writes_a_tuple_statement_value_bare_issue1789() -> Result<(), FormatError> {
+    // The right side of a tuple unpacking or tuple assignment is written bare, `a, b = b, a`, which parses to the same
+    // tuple; a tuple anywhere else keeps its parentheses.
+    let source = r#"def swap() -> None:
+    mut a = 1
+    mut b = 2
+    a, b = (b, a)
+    mut items = [1, 2]
+    items[0], items[1] = (items[1], items[0])
+    pair = (a, b)
+"#;
+    let expected = r#"def swap() -> None:
+    mut a = 1
+    mut b = 2
+    a, b = b, a
+    mut items = [1, 2]
+    items[0], items[1] = items[1], items[0]
+    pair = (a, b)
+"#;
+    assert_eq!(format_source(source)?, expected);
+    assert_eq!(format_source(expected)?, expected);
     Ok(())
 }
