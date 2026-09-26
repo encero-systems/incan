@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 
 use crate::ast::*;
+use crate::diagnostics::errors::SelfMutation;
 use crate::diagnostics::{CompileError, errors};
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::*;
@@ -2624,6 +2625,24 @@ impl TypeChecker {
                         }
                     }
                 }
+                if specializes_receiver && resolved_type_args.is_empty() {
+                    let open_type_params = Self::open_rust_owner_type_args(&sig, type_info);
+                    if !open_type_params.is_empty() {
+                        // Nothing at the call fixes the owner's parameters; whether a later reader does is the
+                        // enclosing statement's question (#1720).
+                        let owner = receiver_binding
+                            .map(str::to_string)
+                            .unwrap_or_else(|| rust_path.rsplit("::").next().unwrap_or(rust_path).to_string());
+                        self.open_rust_generic_calls.insert(
+                            (span.start, span.end),
+                            crate::typechecker::OpenRustGenericCall {
+                                owner,
+                                method: method.to_string(),
+                                type_params: open_type_params,
+                            },
+                        );
+                    }
+                }
                 let effective_sig = if specializes_receiver && !resolved_type_args.is_empty() {
                     self.specialize_rust_owner_signature(
                         &sig,
@@ -4730,6 +4749,143 @@ impl TypeChecker {
         self.check_method_call_with_expected(base, method, type_args, args, span, None)
     }
 
+    /// Refuse a call that changes a place rooted at `self` inside a plain-`self` method (#1723).
+    ///
+    /// `self.items.pop()` in a `def pop(self)` body writes through a receiver the generated code borrows shared, so
+    /// the build would refuse it; reporting it here names the receiver to declare instead. The receiver chain is
+    /// followed the way assignments are (`Self::self_rooted_place`), and the method is judged by its declaration:
+    /// the changing builtin collection methods, and a source method whose every candidate takes `mut self`. A
+    /// method the checker cannot classify is left alone, as is a receiver that is not rooted at `self`; a local
+    /// collection's mutability is the emitter's inference to make, not a source contract.
+    fn reject_mutating_call_through_immutable_self(
+        &mut self,
+        base: &Spanned<Expr>,
+        base_ty: &ResolvedType,
+        method: &str,
+        span: Span,
+    ) {
+        if self.current_immutable_self_method.is_none() {
+            return;
+        }
+        let Some(place) = Self::self_rooted_place(base) else {
+            return;
+        };
+        if self.method_requires_mutable_receiver(base_ty, method, span) {
+            self.reject_write_through_immutable_self(&place, SelfMutation::MutatingCall { callee: method }, span);
+        }
+    }
+
+    /// Return whether `method` is declared to change the receiver it is called on.
+    ///
+    /// Builtin `list`, `dict` and `set` methods are classified from the surface registries: the ones that add,
+    /// remove or reorder elements change the receiver, the readers do not. A source-declared type answers from its
+    /// own method table, its overloads and its adopted traits, and only when every candidate agrees on `mut self`,
+    /// so an overload set the call could resolve either way is never refused on the receiver alone. Inside a trait
+    /// default method the receiver is `Self` and the trait's own declarations answer. Anything else (Rust
+    /// receivers, unknown methods) is `false`: the checker refuses only what it can read from a declaration.
+    fn method_requires_mutable_receiver(&mut self, base_ty: &ResolvedType, method: &str, span: Span) -> bool {
+        match base_ty {
+            ResolvedType::Generic(name, _) => match collection_type_id(name.as_str()) {
+                Some(CollectionTypeId::List) => list_methods::from_str(method).is_some_and(|id| {
+                    use list_methods::ListMethodId as M;
+                    matches!(
+                        id,
+                        M::Append | M::Extend | M::Pop | M::Swap | M::Reserve | M::ReserveExact | M::Remove
+                    )
+                }),
+                Some(CollectionTypeId::Dict) => {
+                    dict_methods::from_str(method) == Some(dict_methods::DictMethodId::Insert)
+                }
+                Some(CollectionTypeId::Set) => set_methods::from_str(method) == Some(set_methods::SetMethodId::Add),
+                Some(_) => false,
+                None => self.nominal_method_requires_mutable_receiver(name, method, span),
+            },
+            ResolvedType::Named(name) => self.nominal_method_requires_mutable_receiver(name, method, span),
+            ResolvedType::SelfType => self
+                .current_trait_name
+                .as_deref()
+                .and_then(|trait_name| self.lookup_semantic_trait_info(trait_name))
+                .and_then(|info| info.methods.get(method))
+                .is_some_and(|info| info.receiver == Some(Receiver::Mutable)),
+            _ => false,
+        }
+    }
+
+    /// Return whether every declaration of `method` on the source type `type_name` takes `mut self`.
+    ///
+    /// The type's own method table and overload set answer first, after resolving a method alias to its target;
+    /// when the type declares nothing by that name, the methods its adopted traits provide answer instead. An empty
+    /// candidate set is `false`, so a method the checker does not know never counts as changing.
+    fn nominal_method_requires_mutable_receiver(&mut self, type_name: &str, method: &str, span: Span) -> bool {
+        let Some((declared, adoptions)) = self.declared_method_receivers_and_adoptions(type_name, method) else {
+            return false;
+        };
+        if !declared.is_empty() {
+            return declared.iter().all(|receiver| *receiver == Some(Receiver::Mutable));
+        }
+        let adopted = adoptions
+            .iter()
+            .filter_map(|adoption| {
+                self.trait_method_entry_resolved_for_adoption(adoption, method, span)
+                    .map(|entry| entry.info.receiver)
+            })
+            .collect::<Vec<_>>();
+        !adopted.is_empty() && adopted.iter().all(|receiver| *receiver == Some(Receiver::Mutable))
+    }
+
+    /// Collect the receivers of every declaration of `method` that the source type `type_name` itself carries, an
+    /// alias resolved to its target, together with the traits the type adopts.
+    ///
+    /// `None` when the name is not a source-declared type with a method table (a builtin or a type alias). The
+    /// receivers are the type's own answer; the adoptions let the caller ask the traits when that answer is empty,
+    /// and are returned owned because that question needs the checker mutably.
+    fn declared_method_receivers_and_adoptions(
+        &self,
+        type_name: &str,
+        method: &str,
+    ) -> Option<(Vec<Option<Receiver>>, Vec<TypeBoundInfo>)> {
+        let (aliases, methods, overloads, adoptions) = match self.lookup_semantic_type_info(type_name)? {
+            TypeInfo::Class(class) => (
+                Some(&class.method_aliases),
+                &class.methods,
+                &class.method_overloads,
+                &class.trait_adoptions,
+            ),
+            TypeInfo::Model(model) => (
+                Some(&model.method_aliases),
+                &model.methods,
+                &model.method_overloads,
+                &model.trait_adoptions,
+            ),
+            TypeInfo::Newtype(newtype) => (
+                Some(&newtype.method_aliases),
+                &newtype.methods,
+                &newtype.method_overloads,
+                &newtype.trait_adoptions,
+            ),
+            TypeInfo::Enum(enum_info) => (
+                None,
+                &enum_info.methods,
+                &enum_info.method_overloads,
+                &enum_info.trait_adoptions,
+            ),
+            TypeInfo::Builtin | TypeInfo::TypeAlias => return None,
+        };
+        let target = aliases
+            .and_then(|aliases| aliases.get(method))
+            .map(String::as_str)
+            .unwrap_or(method);
+        let mut receivers = methods
+            .get(target)
+            .map(|info| info.receiver)
+            .into_iter()
+            .collect::<Vec<_>>();
+        if let Some(candidates) = overloads.get(target) {
+            receivers.extend(candidates.iter().map(|info| info.receiver));
+        }
+        Some((receivers, adoptions.clone()))
+    }
+
     /// Classify a checked member-call receiver without recovering ownership from its spelling.
     ///
     /// The identifier resolution fact is authoritative for ordinary and parenthesized type expressions. A
@@ -5008,6 +5164,7 @@ impl TypeChecker {
             self.check_call_args(args);
             return ResolvedType::Unknown;
         }
+        self.reject_mutating_call_through_immutable_self(base, &base_ty, method, span);
         if let Some(identity) = Self::compiler_builtin_method_identity(&base_ty, method) {
             self.type_info.record_resolved_identity(span, identity);
         }
@@ -6181,6 +6338,47 @@ impl TypeChecker {
             ("xxhash_rust::xxh3::Xxh3Default", "digest128") => Some(ResolvedType::Numeric(N::U128)),
             _ => None,
         }
+    }
+
+    /// Return the owner type parameters an associated function's result carries that neither its arguments nor a
+    /// declared default can fix, in declaration order; empty when the call is not open.
+    ///
+    /// `HashMap::new() -> HashMap<K, V, RandomState>` leaves `K` and `V` to the caller's context, while the hasher
+    /// parameter has a declared default and is never open; `from_iter(iter: I) where I: IntoIterator<Item = (K,
+    /// V)>` names them in a parameter, so the argument fixes them and nothing is open. A result written as `Self`
+    /// stands for the owner with every parameter. The displays are compared token by token so a parameter named
+    /// `K` does not match inside `Key`.
+    pub(in crate::typechecker) fn open_rust_owner_type_args(
+        sig: &RustFunctionSig,
+        type_info: &incan_lang::interop::RustTypeInfo,
+    ) -> Vec<String> {
+        let mentions = |display: &str, param: &str| {
+            display
+                .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                .any(|token| token == param)
+        };
+        let result_is_self = mentions(sig.return_type.as_str(), "Self");
+        let open = type_info
+            .type_params
+            .iter()
+            .enumerate()
+            .filter(|(index, param)| {
+                let has_default = type_info
+                    .type_param_defaults
+                    .get(*index)
+                    .is_some_and(|default| default.is_some());
+                !has_default && (result_is_self || mentions(sig.return_type.as_str(), param))
+            })
+            .map(|(_, param)| param.clone())
+            .collect::<Vec<_>>();
+        if open.iter().any(|param| {
+            sig.params
+                .iter()
+                .any(|argument| mentions(argument.type_display.as_str(), param))
+        }) {
+            return Vec::new();
+        }
+        open
     }
 
     /// Return whether a borrowed Rust value's `to_vec` method produces Incan `bytes`.

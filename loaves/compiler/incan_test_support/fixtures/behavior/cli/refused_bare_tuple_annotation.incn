@@ -1,0 +1,7 @@
+# behavior: a Tuple annotation with no element types is refused at check time
+# expect-diagnostic: INCAN-T0104
+
+def main() -> None:
+    pair: tuple[int, str] = (1, "one")
+    multiple: Tuple = ("a", pair, "b", 42)
+    println("ok")

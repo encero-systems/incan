@@ -1,32 +1,52 @@
 # Awaitable values (Reference)
 
-`Awaitable[T]` is the async protocol for values that can be used with `await` and produce `T`.
+`Awaitable[T]` is the async capability bound for a value whose `await` result is `T`.
+
+## Bound form
 
 ```incan
-import std.async
+F with Awaitable[T]
+```
+
+`F` is the value type. `T` is the type produced by `await value`.
+
+The compiler does not infer `T` from `F`; callers provide both type arguments when they cannot be inferred elsewhere.
+
+```incan
+from std.async.task import JoinHandle, TaskJoinError
 
 async def wait_for[T, F with Awaitable[T]](task: F) -> T:
     return await task
+
+# A JoinHandle[int] awaits to Result[int, TaskJoinError].
+wait_for[Result[int, TaskJoinError], JoinHandle[int]](handle)
 ```
 
-The compiler recognizes these await realization paths:
+## Accepted values
 
-- direct async function and async method calls
-- Rust-backed future values that cross the Rust interop boundary
-- `JoinHandle[T]`, which awaits to `Result[T, TaskJoinError]`
-- model or class wrappers that explicitly adopt `Awaitable[T]` and contain a compatible awaitable field
+| Value | Await result |
+| --- | --- |
+| Rust-backed future | Its declared output type |
+| `JoinHandle[T]` | `Result[T, TaskJoinError]` |
+| Direct async call | The call's declared return type, only at an `await` expression |
 
-Wrapper adoption is checked. A type cannot claim `Awaitable[T]` unless the compiler can lower `await wrapper` to one known awaitable member:
+An async call result does not satisfy an `Awaitable` bound as a value. Pass a `JoinHandle` from `spawn(...)` when a bounded parameter requires an awaitable value.
+
+## Declaration restrictions
+
+`model`, `class`, `enum`, `newtype`, and `rusttype` declarations cannot adopt `Awaitable[T]`. `Awaitable` is a generic bound, not an adoptable nominal trait.
 
 ```incan
-import std.async
-from std.async.task import JoinHandle, TaskJoinError
-
-model TaskBox[T] with Awaitable[Result[T, TaskJoinError]]:
-    handle: JoinHandle[T]
-
-async def wait_for(box: TaskBox[int]) -> Result[int, TaskJoinError]:
-    return await box
+model TaskBox[T] with Awaitable[T]:  # refused
+    pass
 ```
 
-This is intentionally not a pure nominal marker. The adoption must preserve actual await behavior so generic bounds and ordinary `await` expressions agree.
+Use a generic bound on a function or method instead.
+
+## Diagnostics
+
+The type checker rejects an invalid `Awaitable` adoption at the declaration. It also rejects a bound whose awaited output does not match `T`; for example, `JoinHandle[int]` does not satisfy `Awaitable[int]` because its await result is `Result[int, TaskJoinError]`.
+
+See [async programming](../../how-to/async_programming.md) for task creation and use, and [Rust interop](../../how-to/rust_interop.md) for Rust-backed futures.
+
+--8<-- "_snippets/rfcs_refs.md"

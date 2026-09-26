@@ -148,6 +148,118 @@ def normalize(value: str | None) -> str:
     assert!(check_str(source).is_ok());
 }
 
+/// The callable parameters and the resolved type the checker recorded for one call site.
+type CallSiteFacts = (Option<Vec<CallableParam>>, Option<ResolvedType>);
+
+/// The callable fact recorded for the `Some(...)` call whose text is `call`, and the type recorded for it.
+fn some_call_facts(
+    info: &TypeCheckInfo,
+    source: &str,
+    call: &str,
+) -> Result<CallSiteFacts, Box<dyn std::error::Error>> {
+    let start = source
+        .find(call)
+        .ok_or_else(|| format!("missing `{call}` in the source"))?;
+    let span = Span::new(start, start + call.len());
+    Ok((
+        info.call_site_callable_params(span).map(<[CallableParam]>::to_vec),
+        info.expr_type(span).cloned(),
+    ))
+}
+
+/// Regression for #1724: `Some(member)` checked against `Option[union]` is the constructor instantiated at the
+/// union. The checker records that parameter as the call's callable fact (lowering carries it as the call's
+/// signature, so the payload is injected into the wrapper at the argument) and types the call as `Option[union]`.
+#[test]
+fn some_payload_admitted_into_an_option_union_records_the_instantiated_parameter_issue1724()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+@derive(Clone)
+type LocalPath = newtype str
+
+const FROZEN_TEXT: FrozenStr = "frozen text"
+
+def describe(value: Option[LocalPath | str]) -> str:
+  return "described"
+
+def frozen_option_union_kind(value: Option[FrozenStr | int]) -> str:
+  return "kind"
+
+def frozen_or_int(pick_text: bool) -> FrozenStr | int:
+  if pick_text:
+    return FROZEN_TEXT
+  return 1
+
+def main() -> None:
+  println(describe(Some("plain")))
+  println(describe(Some(LocalPath("p"))))
+  println(frozen_option_union_kind(Some(FROZEN_TEXT)))
+  println(frozen_option_union_kind(Some(1)))
+  println(frozen_option_union_kind(Some(frozen_or_int(true))))
+  local: Option[LocalPath | str] = Some("local")
+  println(describe(local))
+"#;
+    let info = typecheck_info_for_module(source, vec!["main".to_string()], "Some payloads into Option[union]")?;
+    let path_or_str = union_ty(vec![ResolvedType::Named("LocalPath".to_string()), ResolvedType::Str]);
+    let frozen_or_int = union_ty(vec![ResolvedType::FrozenStr, ResolvedType::Int]);
+    let option_of = |inner: &ResolvedType| {
+        ResolvedType::Generic(
+            collection_types::as_str(CollectionTypeId::Option).to_string(),
+            vec![inner.clone()],
+        )
+    };
+
+    for (call, union) in [
+        ("Some(\"plain\")", &path_or_str),
+        ("Some(LocalPath(\"p\"))", &path_or_str),
+        ("Some(FROZEN_TEXT)", &frozen_or_int),
+        ("Some(1)", &frozen_or_int),
+        ("Some(\"local\")", &path_or_str),
+    ] {
+        let (params, ty) = some_call_facts(&info, source, call)?;
+        assert_eq!(
+            params,
+            Some(vec![CallableParam::positional(union.clone())]),
+            "`{call}` must record the union as the constructor's parameter"
+        );
+        assert_eq!(
+            ty,
+            Some(option_of(union)),
+            "`{call}` is the constructor instantiated at the union"
+        );
+    }
+
+    // A payload that already carries the union needs no injection: no fact, and the call keeps the payload's type.
+    let (params, ty) = some_call_facts(&info, source, "Some(frozen_or_int(true))")?;
+    assert_eq!(params, None, "a union-typed payload records no parameter fact");
+    assert_eq!(ty, Some(option_of(&frozen_or_int)));
+    Ok(())
+}
+
+/// The fact is specific to a union destination: `Some(member)` against a plain `Option[T]` records nothing and keeps
+/// its payload-derived type, so ordinary option constructors lower exactly as before.
+#[test]
+fn some_payload_into_a_plain_option_records_no_parameter_fact() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def describe(value: Option[str]) -> str:
+  return "described"
+
+def main() -> None:
+  println(describe(Some("plain")))
+"#;
+    let info = typecheck_info_for_module(source, vec!["main".to_string()], "Some payload into Option[str]")?;
+    let (params, ty) = some_call_facts(&info, source, "Some(\"plain\")")?;
+    assert_eq!(params, None);
+    assert_eq!(
+        ty,
+        Some(ResolvedType::Generic(
+            collection_types::as_str(CollectionTypeId::Option).to_string(),
+            vec![ResolvedType::Str],
+        ))
+    );
+    Ok(())
+}
+
 #[test]
 fn test_union_isinstance_narrows_option_wrapped_union_else_branch() {
     let source = r#"
@@ -506,6 +618,89 @@ def size(s: Shape, o: Option[str]) -> int:
         info.expr_type(Span::new(circle_start, circle_start + "Shape.Circle(radius)".len())),
         Some(&ResolvedType::Named("Shape".to_string())),
         "a constructor pattern node records the type it was checked against"
+    );
+    Ok(())
+}
+
+/// A tuple pattern binds its names over both tuple spellings: the `(A, B)` form that infers `ResolvedType::Tuple`
+/// and the written `tuple[A, B]` annotation that resolves as `Generic("Tuple", …)`. Before #1714 only the first
+/// spelling was destructured, so the bindings of a `match` over a `tuple[int, str]`-typed value were never
+/// defined; the element types recorded at each binding's own span prove the sub-patterns are now visited.
+#[test]
+fn tuple_pattern_binds_over_a_written_tuple_annotation_issue1714() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def describe(pair: tuple[int, str]) -> str:
+  match pair:
+    (0, _) =>
+      return "zero"
+    (number, word) =>
+      return f"{number + 1} {word.upper()}"
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+
+    let pattern_start = source
+        .find("(number, word)")
+        .ok_or("fixture must spell the tuple pattern")?;
+    for (name, offset, expected) in [("number", 1, ResolvedType::Int), ("word", 9, ResolvedType::Str)] {
+        let start = pattern_start + offset;
+        assert_eq!(
+            info.expr_type(Span::new(start, start + name.len())),
+            Some(&expected),
+            "the element type must be recorded at `{name}`'s own span"
+        );
+    }
+    Ok(())
+}
+
+/// A model or class pattern that names a subset of the fields records the canonical fields it leaves unnamed at
+/// the constructor name's span, in declaration order and with aliases resolved (#1708); a pattern that names every
+/// field records nothing.
+#[test]
+fn partial_constructor_pattern_records_its_rest_fields_issue1708() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Account:
+  type_ [alias="type"]: str
+  tier: int
+  name: str
+
+def describe(a: Account) -> str:
+  match a:
+    Account(type="premium") =>
+      return "premium"
+    Account(tier=1, name=n, type=t) =>
+      return t
+    _ =>
+      return "other"
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+
+    let name_span = |pattern: &str| -> Result<Span, Box<dyn std::error::Error>> {
+        let start = source
+            .find(pattern)
+            .ok_or_else(|| format!("fixture must spell `{pattern}`"))?;
+        Ok(Span::new(start, start + "Account".len()))
+    };
+    assert_eq!(
+        info.pattern_rest_fields(name_span("Account(type=\"premium\")")?),
+        Some(["tier".to_string(), "name".to_string()].as_slice()),
+        "the fields the partial pattern leaves unnamed are recorded in declaration order"
+    );
+    assert_eq!(
+        info.pattern_rest_fields(name_span("Account(tier=1, name=n, type=t)")?),
+        None,
+        "a pattern naming every field, aliases included, records no rest"
     );
     Ok(())
 }

@@ -1,0 +1,42 @@
+# behavior: a constructor pattern naming a subset of a model's fields, by canonical name or alias, selects the arm whose values match
+# retires: loaves/compiler/incan_ir/src/lower/expr/patterns.rs::partial_constructor_pattern_records_its_rest_fields_as_wildcards_issue1708
+# expect-stdout:
+#   Premium
+#   Other
+#   Premium account
+#   Basic account
+#   Unknown
+
+"""Issue #1708: a partial constructor pattern; the alias form is the documented RFC 021 example."""
+
+model Account:
+    """A two-field model matched on one field."""
+    tier: int
+    name: str
+
+def describe(a: Account) -> str:
+    """The issue's program: a pattern naming `tier` only."""
+    match a:
+        Account(tier=1) => return "Premium"
+        _ => return "Other"
+
+model Plan:
+    """The documented alias model, matched by alias on one field."""
+    type_ [alias="type", description="Plan type"]: str
+    class_ [alias="class"]: str
+    name: str
+
+def describe_plan(p: Plan) -> str:
+    """The docs' RFC 021 example: alias keys with str literal values."""
+    match p:
+        Plan(type="premium") => return "Premium account"
+        Plan(type="basic") => return "Basic account"
+        _ => return "Unknown"
+
+def main() -> None:
+    """Print what each pattern selects."""
+    println(describe(Account(tier=1, name="A")))
+    println(describe(Account(tier=2, name="B")))
+    println(describe_plan(Plan(type="premium", class="gold", name="A")))
+    println(describe_plan(Plan(type="basic", class="silver", name="B")))
+    println(describe_plan(Plan(type="other", class="bronze", name="C")))

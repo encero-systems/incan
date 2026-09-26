@@ -1160,3 +1160,215 @@ def contextual() -> Factory[f32]:
     );
     Ok(())
 }
+
+// ---- #1720: open owner type arguments on a Rust associated call ----
+
+/// A `HashMap`-shaped type item with the given parameters and defaults, carrying `new` (result `result_display`)
+/// and `insert(&mut self, k: K, v: V)`.
+fn hashmap_type_info(type_params: &[&str], defaults: &[Option<&str>], result_display: &str) -> RustTypeInfo {
+    RustTypeInfo {
+        type_params: type_params.iter().map(|param| param.to_string()).collect(),
+        type_param_defaults: defaults.iter().map(|default| default.map(str::to_string)).collect(),
+        mutable_reference_type_params: Vec::new(),
+        expanded_derive_traits: Vec::new(),
+        has_const_params: false,
+        alias_target: None,
+        metadata_completeness: Default::default(),
+        methods: vec![
+            RustMethodSig {
+                name: "new".to_string(),
+                signature: RustFunctionSig {
+                    receiver_contract: None,
+                    type_params: Vec::new(),
+                    params: Vec::new(),
+                    return_type: result_display.to_string(),
+                    is_async: false,
+                    is_unsafe: false,
+                },
+            },
+            RustMethodSig {
+                name: "insert".to_string(),
+                signature: RustFunctionSig {
+                    receiver_contract: None,
+                    type_params: Vec::new(),
+                    params: vec![
+                        RustParam {
+                            name: Some("self".to_string()),
+                            type_display: "&mut self".to_string(),
+                        },
+                        RustParam {
+                            name: Some("k".to_string()),
+                            type_display: "K".to_string(),
+                        },
+                        RustParam {
+                            name: Some("v".to_string()),
+                            type_display: "V".to_string(),
+                        },
+                    ],
+                    return_type: "Option<V>".to_string(),
+                    is_async: false,
+                    is_unsafe: false,
+                },
+            },
+        ],
+        implemented_traits: Vec::new(),
+        fields: vec![],
+        variants: vec![],
+    }
+}
+
+/// Shipped ABI metadata for `std::collections::HashMap` the way the checker sees it once a provider has recorded
+/// the inspected item: `K` and `V` are the owner's open type parameters.
+fn hashmap_library_index(name: &str) -> LibraryManifestIndex {
+    library_index_with_rust_abi_item(
+        name,
+        RustItemMetadata {
+            canonical_path: "std::collections::HashMap".to_string(),
+            definition_path: Some("std::collections::HashMap".to_string()),
+            visibility: RustVisibility::Public,
+            kind: RustItemKind::Type(hashmap_type_info(
+                &["K", "V"],
+                &[None, None],
+                "std::collections::HashMap<K, V>",
+            )),
+        },
+    )
+}
+
+#[test]
+fn open_rust_owner_type_args_skip_defaults_and_argument_fixed_parameters_issue1720()
+-> Result<(), Box<dyn std::error::Error>> {
+    // `HashMap<K, V, S = RandomState>`: `new` leaves `K` and `V` open and never the defaulted hasher; a
+    // constructor whose argument names the parameters, or whose result is a plain scalar, leaves nothing open.
+    let with_hasher = hashmap_type_info(
+        &["K", "V", "S"],
+        &[None, None, Some("std::hash::RandomState")],
+        "std::collections::HashMap<K, V, std::hash::RandomState>",
+    );
+    let new_sig = with_hasher
+        .methods
+        .iter()
+        .find(|method| method.name == "new")
+        .map(|method| method.signature.clone());
+    let Some(new_sig) = new_sig else {
+        return Err("the fixture declares `new`".into());
+    };
+    assert_eq!(
+        TypeChecker::open_rust_owner_type_args(&new_sig, &with_hasher),
+        vec!["K".to_string(), "V".to_string()]
+    );
+
+    let as_self = RustFunctionSig {
+        return_type: "Self".to_string(),
+        ..new_sig.clone()
+    };
+    assert_eq!(
+        TypeChecker::open_rust_owner_type_args(&as_self, &with_hasher),
+        vec!["K".to_string(), "V".to_string()],
+        "`Self` stands for the owner with every parameter"
+    );
+
+    let from_pairs = RustFunctionSig {
+        params: vec![RustParam {
+            name: Some("pairs".to_string()),
+            type_display: "Vec<(K, V)>".to_string(),
+        }],
+        ..new_sig.clone()
+    };
+    assert!(
+        TypeChecker::open_rust_owner_type_args(&from_pairs, &with_hasher).is_empty(),
+        "an argument that names the parameters fixes them"
+    );
+
+    let capacity = RustFunctionSig {
+        return_type: "usize".to_string(),
+        ..new_sig
+    };
+    assert!(
+        TypeChecker::open_rust_owner_type_args(&capacity, &with_hasher).is_empty(),
+        "a result that carries no parameter leaves nothing open"
+    );
+    Ok(())
+}
+
+#[test]
+fn untyped_hashmap_new_bound_to_an_unread_local_is_refused_issue1720() -> Result<(), Box<dyn std::error::Error>> {
+    // The program from #1720: `untyped` is never read, so nothing later could fix `K` and `V`; the explicit
+    // spelling beside it is fine, and a bare call binds nothing at all.
+    let source = r#"
+from rust::std::collections import HashMap
+
+def main() -> None:
+    mut untyped = HashMap.new()
+    mut typed = HashMap.new[str, int]()
+    HashMap.new()
+    println("ok")
+"#;
+    let errors = check_str_with_library_index_err(
+        source,
+        hashmap_library_index("hashmap_open_generics"),
+        "an untyped HashMap.new() that nothing reads must be refused",
+    )?;
+    let refused = errors
+        .iter()
+        .filter(|error| error.stable_code() == Some("INCAN-T0105"))
+        .map(|error| (error.message.clone(), error.notes.clone(), error.hints.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        refused
+            .iter()
+            .map(|(message, _, _)| message.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "Cannot infer the type arguments 'K, V' of 'HashMap.new()'",
+            "Cannot infer the type arguments 'K, V' of 'HashMap.new()'",
+        ],
+        "the discarded call is refused where it stands and the unread binding when its block ends; got {errors:?}"
+    );
+    let (_, discarded_notes, _) = &refused[0];
+    assert!(
+        discarded_notes.iter().any(|note| note.contains("not bound to a name")),
+        "the bare statement is reported as a discarded value, got: {discarded_notes:?}"
+    );
+    let (_, binding_notes, binding_hints) = &refused[1];
+    assert!(
+        binding_notes
+            .iter()
+            .any(|note| note.contains("'untyped' is never read")),
+        "the binding is reported as unread, got: {binding_notes:?}"
+    );
+    assert!(
+        binding_hints.iter().any(|hint| hint.contains("HashMap.new[str, int]()")
+            && hint.contains("untyped: HashMap[str, int] = HashMap.new()")),
+        "the hint spells both remedies, got: {binding_hints:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn untyped_hashmap_new_with_a_later_reader_or_an_annotation_is_accepted_issue1720()
+-> Result<(), Box<dyn std::error::Error>> {
+    // The documented `count_words` shape: a later insert gives Rust what it needs, and an annotated binding fixes
+    // the arguments on its own. Neither is the checker's to refuse.
+    let source = r#"
+from rust::std::collections import HashMap
+
+def count_words(words: list[str]) -> int:
+    mut counts = HashMap.new()
+    for word in words:
+        counts.insert(word, 1)
+    return len(counts)
+
+def main() -> None:
+    annotated: HashMap[str, int] = HashMap.new()
+    println(count_words(["a"]))
+    println(len(annotated))
+"#;
+    check_str_with_library_index(source, hashmap_library_index("hashmap_read_later")).map_err(|errors| {
+        std::io::Error::other(format!(
+            "a binding a later statement reads must stay accepted: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        ))
+    })?;
+    Ok(())
+}

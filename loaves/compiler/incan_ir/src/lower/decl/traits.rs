@@ -172,7 +172,7 @@ impl AstLowering {
 
                 self.pop_scope();
 
-                let mut all_type_params = self.lower_type_params(&m.node.type_params);
+                let mut all_type_params = self.lower_callable_type_params(&m.node.type_params);
                 all_type_params.extend(hidden_type_params);
 
                 Ok(IrFunction {
