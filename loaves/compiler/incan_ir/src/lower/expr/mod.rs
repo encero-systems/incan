@@ -1306,8 +1306,40 @@ impl AstLowering {
         lowered = self.wrap_with_rust_return_coercion(lowered, expr.span)?;
         // Apply RFC 017 implicit validated-newtype coercions at typechecker-approved destination sites.
         lowered = self.wrap_with_validated_newtype_coercion(lowered, expr.span)?;
+        lowered = self.copy_for_unchanged_mut_argument(lowered, expr.span);
         lowered.span = expr.span.into();
         Ok(lowered)
+    }
+
+    /// Hand an argument to a caller-visible `mut` parameter as a copy when the checker proved the callee never changes
+    /// that parameter and the argument is an immutable binding or a field of one (#1773).
+    ///
+    /// Such a call only reads the value, as the same call to a parameter without `mut` would, so a copy keeps it valid
+    /// without asking the caller to declare the binding `mut`. The fact is keyed by the argument's span in the module
+    /// being lowered, so it is not consulted while an imported trait default, whose spans belong to another file, is
+    /// expanded.
+    fn copy_for_unchanged_mut_argument(&self, lowered: TypedExpr, span: ast::Span) -> TypedExpr {
+        let copied = !self.active_imported_trait_defaults.last().copied().unwrap_or(false)
+            && self
+                .type_info
+                .as_ref()
+                .is_some_and(|info| info.mut_argument_is_copied(span));
+        if !copied {
+            return lowered;
+        }
+        let ty = lowered.ty.clone();
+        TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(lowered),
+                method: "clone".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            ty,
+        )
     }
 
     /// Lower a known model-constructor partial call through the ordinary constructor lowering path.
@@ -1381,6 +1413,34 @@ impl AstLowering {
             return Some(IdentKind::TypeName);
         }
         None
+    }
+
+    /// Build a read of `member` on the Rust path `path` (`crate::shapes::Corner` and `Top`).
+    ///
+    /// The path is a chain of field reads rooted in an external name, which the backend prints as one Rust path
+    /// (`crate::shapes::Corner::Top`), the same shape a member read through an imported module takes.
+    fn external_path_member_expr(path: &[String], member: &str) -> TypedExpr {
+        let mut segments = path.iter().chain(std::iter::once(&member.to_string())).cloned().collect::<Vec<_>>();
+        let root = segments.remove(0);
+        segments.into_iter().fold(
+            TypedExpr::new(
+                IrExprKind::Var {
+                    name: root,
+                    access: VarAccess::Read,
+                    ref_kind: VarRefKind::ExternalName,
+                },
+                IrType::Unknown,
+            ),
+            |object, field| {
+                TypedExpr::new(
+                    IrExprKind::Field {
+                        object: Box::new(object),
+                        field,
+                    },
+                    IrType::Unknown,
+                )
+            },
+        )
     }
 
     /// Return the known IR type for a synthetic type-like identifier.
@@ -2129,6 +2189,13 @@ impl AstLowering {
                     .and_then(|info| info.c_abi.enum_value_for_access(expr_span))
                 {
                     return Ok(TypedExpr::new(IrExprKind::Int(value), IrType::Int));
+                }
+                // An expanded source-module trait default reads a member of its module's type (`Corner.Top`) by that
+                // module's path, which the adopter need not import (#1759).
+                if let ast::Expr::Ident(type_name) = &o.node
+                    && let Some(path) = self.active_source_trait_default_type_path(type_name)
+                {
+                    return Ok(Self::external_path_member_expr(&path, f));
                 }
                 if let ast::Expr::Ident(type_name) = &o.node
                     && f.starts_with("__incan_original_")

@@ -428,6 +428,28 @@ const METHOD_DECORATOR_RECEIVER_NOT_PLANNED: DiagnosticCatalogEntry = Diagnostic
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/language/"),
 };
 
+const IMMUTABLE_ARGUMENT_TO_MUT_PARAMETER: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0117",
+    title: "Immutable argument for a changed `mut` parameter",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A `mut` parameter the callee changes, and whose changes reach the caller, receives an immutable binding, a field of one, a collection element or a static.",
+    explanation: "A parameter declared `mut` is a mutable binding inside its function. When its type is not `int`, `float`, `bool` or a Rust type, and it is not a `*args` or `**kwargs` parameter, the function's changes to it are visible to the caller after the call. When the call changes such a parameter, the argument has to be a place the caller may change: a binding or parameter declared `mut`, `self` in a `mut self` method, or a field of one of those. An immutable binding or a field of one is refused, and so are an element of a list or dict and a static, whose change would reach only a copy. A literal or a call result is accepted, and so is any argument for a parameter the call never changes. A call changes the parameter when the body that runs assigns to its elements or fields, calls a method that changes it, or passes it on to a parameter that is changed, directly or through the variable of a `for` loop over it. A method called through a type parameter's bound, on `self` in a trait default or on a trait-typed value counts as changing the parameter, because any adopter's method may run; so does a callee whose body the check does not read, such as a compiled library's function or a callable known only by a type that marks the parameter `mut`. A call through a local bound to a function is checked as a call of that function while the local is never reassigned; a call through a reassigned local counts as changing each parameter its type marks `mut`.",
+    examples: &[
+        "def extend(mut items: list[int]) -> None:\n    items.append(9)\n\ndef main() -> None:\n    items: list[int] = [1, 2]\n    extend(items)",
+        "def extend(mut items: list[int]) -> None:\n    items.append(9)\n\ndef main() -> None:\n    mut rows: list[list[int]] = [[1]]\n    extend(rows[0])",
+    ],
+    common_causes: &[
+        "A binding declared without `mut` passed to a function that changes it.",
+        "A list element, dict value or static passed straight to a function that changes it.",
+    ],
+    fixes: &[
+        "Declare the binding with `mut`: `mut items: list[int] = [1, 2]`.",
+        "Bind the element or static to a `mut` variable, pass the variable, and store it back.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/derives_and_traits/"),
+};
+
 const IMPORT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-I0001",
     title: "Import or module resolution error",
@@ -552,6 +574,7 @@ const CATALOG: &[DiagnosticCatalogEntry] = &[
     OPERATOR_HAS_NO_TYPE_PARAMETER_BOUND,
     METHOD_DECORATOR_RECEIVER_SPELLING,
     METHOD_DECORATOR_RECEIVER_NOT_PLANNED,
+    IMMUTABLE_ARGUMENT_TO_MUT_PARAMETER,
     IMPORT,
     SDK_COMPONENT_DISABLED,
     SDK_COMPONENT_UNAVAILABLE,
@@ -829,6 +852,65 @@ mod tests {
                 .any(|hint| hint.contains("HashMap.new[str, int]()") && hint.contains("untyped: HashMap[str, int]")),
             "the remedy must spell both the call and the binding form, got {:?}",
             open_generics.hints
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn immutable_argument_to_mut_parameter_uses_its_stable_code_issue1773() -> Result<(), String> {
+        let binding = errors::immutable_argument_to_mut_parameter(
+            errors::MutParameterLabel::Named("items"),
+            "extend",
+            errors::MutParameterChange::Changes,
+            errors::MutArgumentPlace::Binding("items".to_string()),
+            Span::default(),
+        );
+        let element = errors::immutable_argument_to_mut_parameter(
+            errors::MutParameterLabel::Named("items"),
+            "extend",
+            errors::MutParameterChange::Changes,
+            errors::MutArgumentPlace::Element,
+            Span::default(),
+        );
+        let positional = errors::immutable_argument_to_mut_parameter(
+            errors::MutParameterLabel::Position(1),
+            "step",
+            errors::MutParameterChange::MayChange,
+            errors::MutArgumentPlace::Binding("counter".to_string()),
+            Span::default(),
+        );
+        assert_eq!(
+            positional.message,
+            "Argument for the 'mut' parameter at position 1 of 'step' must be a mutable binding"
+        );
+        assert!(
+            positional
+                .notes
+                .iter()
+                .any(|note| note.starts_with("'step' may change")),
+            "a callee whose body is not known is said to possibly change the parameter, got {:?}",
+            positional.notes
+        );
+        assert!(
+            binding.notes.iter().any(|note| note.starts_with("'extend' changes")),
+            "a callee known to change the parameter is said to change it, got {:?}",
+            binding.notes
+        );
+        for error in [&binding, &element, &positional] {
+            assert_eq!(code_for_error(error, DiagnosticPhase::Typecheck), "INCAN-T0117");
+        }
+        let entry = explain("INCAN-T0117").ok_or("INCAN-T0117 must have a catalog explanation")?;
+        assert_eq!(entry.severity, "error");
+        assert_eq!(entry.phase, "typecheck");
+        assert!(
+            binding.hints.iter().any(|hint| hint.contains("mut items = ...")),
+            "an immutable binding's remedy names the binding to declare 'mut', got {:?}",
+            binding.hints
+        );
+        assert!(
+            element.hints.iter().any(|hint| hint.contains("store it back")),
+            "an element's remedy says to pass a 'mut' variable and store it back, got {:?}",
+            element.hints
         );
         Ok(())
     }

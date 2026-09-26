@@ -332,6 +332,9 @@ impl AstLowering {
     }
 
     /// Rebuild a callable signature from frontend metadata for rest-aware IR emission.
+    ///
+    /// A parameter the metadata marks `mut` is [`Mutability::Mutable`](super::super::super::types::Mutability), so a
+    /// call through a callable known only by its type passes it as a marked `def` parameter is passed.
     fn callable_signature_from_params(&self, params: &[CallableParam], ret: &ResolvedType) -> FunctionSignature {
         FunctionSignature {
             params: params
@@ -343,7 +346,13 @@ impl AstLowering {
                     FunctionParam {
                         name: param.name.clone().unwrap_or_else(|| format!("__incan_arg_{idx}")),
                         ty,
-                        mutability: super::super::super::types::Mutability::Immutable,
+                        // A parameter the callable type marks `mut` shows the callee's changes to the caller, so the
+                        // call passes it the way a marked `def` parameter is passed (#1773).
+                        mutability: if param.is_mut {
+                            super::super::super::types::Mutability::Mutable
+                        } else {
+                            super::super::super::types::Mutability::Immutable
+                        },
                         is_self: false,
                         kind: param.kind,
                         default: None,
@@ -544,6 +553,13 @@ impl AstLowering {
 
     /// Resolve the canonical imported callee path for identifier and module-qualified calls.
     fn imported_callee_path_for_expr(&self, expr: &ast::Spanned<ast::Expr>) -> Option<Vec<String>> {
+        // Inside an expanded source-module trait default, a helper of the trait's module is that module's function,
+        // whatever the adopter binds under the same name (#1759).
+        if let ast::Expr::Ident(name) = &expr.node
+            && let Some(path) = self.active_source_trait_default_function_path(name)
+        {
+            return Some(path);
+        }
         let is_import_reference = match &expr.node {
             ast::Expr::Ident(name) => self.import_aliases.contains_key(name),
             ast::Expr::Field(object, _) => self.imported_field_base_path(&object.node).is_some(),
@@ -3013,14 +3029,25 @@ impl AstLowering {
         ))
     }
 
-    /// Return the typechecker-proven callable signature for a full call expression span.
+    /// Return the typechecker-proven callable signature for a full call expression span, with the callee's
+    /// caller-visible `mut` parameters marked [`Mutability::Mutable`].
     pub(in crate::lower) fn callable_signature_for_call_span(&self, span: ast::Span) -> Option<FunctionSignature> {
         let info = self.type_info.as_ref()?;
         let params = info.call_site_callable_params(span)?;
+        let mut params = self
+            .callable_signature_from_params(params, &ResolvedType::Unknown)
+            .params;
+        // The callee's caller-visible `mut` parameters are passed the way its declaration takes them, whatever the
+        // receiver: a concrete type, a generic bound, or a type another module declares (#1773).
+        if let Some(caller_visible) = info.caller_visible_mut_arguments(span) {
+            for param in &mut params {
+                if caller_visible.contains(&param.name) {
+                    param.mutability = Mutability::Mutable;
+                }
+            }
+        }
         Some(FunctionSignature {
-            params: self
-                .callable_signature_from_params(params, &ResolvedType::Unknown)
-                .params,
+            params,
             return_type: IrType::Unknown,
         })
     }
@@ -3820,6 +3847,14 @@ impl AstLowering {
         } else {
             IrType::Unknown
         };
+        // A source-module trait default's helper is reached through its module's path from the adopter, which the
+        // backend spells out for a callee rooted in an external name (#1759).
+        if let ast::Expr::Ident(name) = &f.node
+            && self.active_source_trait_default_function_path(name).is_some()
+            && let IrExprKind::Var { ref_kind, .. } = &mut func.kind
+        {
+            *ref_kind = VarRefKind::ExternalName;
+        }
         Ok((
             IrExprKind::Call {
                 func: Box::new(func),

@@ -702,3 +702,101 @@ def main() -> Result[None, SessionError]:
         result.err()
     );
 }
+
+/// Build a library index whose `fallible_streams` package exports a `FallibleIterator[int, str]` adopter and a function
+/// returning one, from the checked exports of the package's own source.
+fn library_index_with_fallible_stream_adopter() -> Result<LibraryManifestIndex, Box<dyn std::error::Error>> {
+    let provider = r#"
+from std.derives.collection import FallibleIterator
+
+
+pub model NumberStream with FallibleIterator[int, str]:
+    pub items: list[int]
+    pub index: int = 0
+
+    def __next__(mut self) -> Result[Option[int], str]:
+        if self.index >= len(self.items):
+            return Ok(None)
+        item = self.items[self.index]
+        self.index += 1
+        return Ok(Some(item))
+
+
+pub def numbers() -> NumberStream:
+    return NumberStream(items=[1, 2, 3])
+"#;
+    let ast = parse_program(provider, "fallible stream provider");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errors| std::io::Error::other(format!("provider typecheck failed: {errors:?}")))?;
+    let exports = collect_checked_public_exports(&ast, &checker);
+    let manifest = LibraryManifest::from_checked_exports("fallible_streams", "0.1.0", &exports);
+    Ok(LibraryManifestIndex::from_entries(HashMap::from([(
+        "fallible_streams".to_string(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root(
+                "fallible_streams",
+                "fallible_streams",
+                synthetic_artifact_root("fallible_streams"),
+            ),
+        },
+    )])))
+}
+
+/// Check a consumer against `library_index` and return the dispatch recorded for the call spelled `call`.
+fn recorded_trait_dispatch(
+    source: &str,
+    library_index: LibraryManifestIndex,
+    call: &str,
+) -> Result<ResolvedMethodDispatch, Box<dyn std::error::Error>> {
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker.set_library_manifest_index(library_index);
+    checker
+        .check_program(&ast)
+        .map_err(|errors| std::io::Error::other(format!("consumer typecheck failed: {errors:?}")))?;
+    let start = source
+        .find(call)
+        .ok_or_else(|| std::io::Error::other(format!("`{call}` is not in the consumer")))?;
+    checker
+        .type_info()
+        .resolved_method_call(Span::new(start, start + call.len()))
+        .map(|resolved| resolved.dispatch.clone())
+        .ok_or_else(|| format!("no dispatch recorded for `{call}`").into())
+}
+
+/// #1761: a consumer that never imports `FallibleIterator` chains adapters on a dependency's adopter. `map` resolves
+/// through the adopter's protocol; `collect` is called on the `FallibleIterator[int, str]` value `map` returns, whose
+/// trait has no binding in the consumer, and resolves through the owning module `map` proved, recording the same
+/// trait dispatch an importing consumer gets.
+#[test]
+fn trait_value_from_an_adapter_resolves_without_the_trait_import_issue1761() -> Result<(), Box<dyn std::error::Error>> {
+    let index = library_index_with_fallible_stream_adopter()?;
+    let collection_module = vec!["std".to_string(), "derives".to_string(), "collection".to_string()];
+    for source in [
+        "from pub::fallible_streams import numbers\n\n\ndef double(value: int) -> int:\n    return value * 2\n\n\ndef main() -> None:\n    match numbers().map(double).collect():\n        Ok(items) => println(len(items))\n        Err(error) => println(f\"error {error}\")\n",
+        "from pub::fallible_streams import numbers\n\n\ndef double(value: int) -> int:\n    return value * 2\n\n\ndef main() -> None:\n    doubled = numbers().map(double)\n    match doubled.collect():\n        Ok(items) => println(len(items))\n        Err(error) => println(f\"error {error}\")\n",
+    ] {
+        let call = if source.contains("doubled.collect()") {
+            "doubled.collect()"
+        } else {
+            "numbers().map(double).collect()"
+        };
+        let dispatch = recorded_trait_dispatch(source, index.clone(), call)?;
+        let ResolvedMethodDispatch::Trait {
+            trait_name,
+            module_path,
+            type_args,
+            receiver_is_mutable,
+            ..
+        } = dispatch;
+        assert_eq!(trait_name, "FallibleIterator", "{call}");
+        assert_eq!(module_path.as_ref(), Some(&collection_module), "{call}");
+        assert_eq!(type_args, vec![ResolvedType::Int, ResolvedType::Str], "{call}");
+        assert!(receiver_is_mutable, "`collect` takes `mut self`: {call}");
+    }
+    Ok(())
+}

@@ -1,0 +1,15 @@
+pub model Extent:
+    pub width: int
+    pub height: int
+
+    def area(self) -> int:
+        return self.width * self.height
+
+
+pub trait Measured:
+    def width(self) -> int: ...
+
+    def height(self) -> int: ...
+
+    def extent(self) -> Extent:
+        return Extent(width=self.width(), height=self.height())

@@ -9,13 +9,13 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/decls/functions.rs",
-      "sha256": "d17d31fbec0df88c6cc95147b314b3a33d5cc530b41ad490c0d8bf9e9cd095a3",
-      "lines": 1996
+      "sha256": "e4fa0e923dbbdc742967c64980250cc88d6aa56c5a74b92020792fdcb39d8b0f",
+      "lines": 2015
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/decls/impls.rs",
-      "sha256": "f9ada4d020377247128cb0270a8ed3a2decfcbc56be82e8e496b40b48c928afd",
-      "lines": 779
+      "sha256": "b5961286436896cc851b4d1be99000db3cfcbe60d6436db28d10bf9df0ef12cc",
+      "lines": 787
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/decls/mod.rs",
@@ -168,6 +168,25 @@
       "behavior_evidence": "unit test marked_callable_parameter_publishes_its_marker_and_native_union in loaves/compiler/incan_emit/src/tests/mut_marker_publication.rs, which fails without the change (the union inside a mut-marked callable parameter stays unprojected)",
       "semantic_owner": "#1561: the checked callable-parameter marker (CallableParam.is_mut) published as TypeRef::MutParam; the replacement route reads the marker from checked facts",
       "retirement_condition": "the Rust-source backend is deleted (#654); native union projection for published types moves to the replacement route"
+    },
+    {
+      "kind": "change",
+      "pr": 1814,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/decls/functions.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/decls/impls.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1773",
+      "behavior_evidence": "behavior fixture cli/trait_default_method_mutable_parameter.incn (combined-branch run); emitter unit tests trait_method_mut_parameter_keeps_one_shape_across_slot_impl_and_wrapper_issue1773 and mut_arguments_follow_the_checker_facts_issue1773 in incan_emit/src/tests/trait_parameters_and_element_bounds.rs; codegen_snapshot_tests and stdlib_generated_rust_snapshot_tests unchanged",
+      "semantic_owner": "#1561: the checked parameter marker lowering already carries (FunctionParam mutability, Mutable = the caller sees the change); after the cutover Body IR states the parameter-passing shape and the trait slot, implementation and wrapper read it from there",
+      "retirement_condition": "#654: the Rust-source backend is deleted; the replacement route passes a mut parameter from the recorded parameter fact and needs no separate trait-method or wrapper spelling"
     }
   ]
 }

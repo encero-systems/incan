@@ -1030,13 +1030,15 @@ pub struct DeclarationArtifacts {
     /// proved each of these declarations takes it. Lowering passes the receiver to them the way the method's
     /// generated wrapper passes it.
     pub method_decorator_receiver_slots: HashMap<(usize, usize), MethodDecoratorReceiverSlot>,
-    /// Whether each ordinary `mut` parameter of a checked function or method is marked, keyed by parameter span
-    /// (#1790).
+    /// Whether each ordinary `mut` parameter of a function or method is marked, keyed by parameter span and name
+    /// (#1790, #1773).
     ///
     /// A marked parameter's changes reach the caller; an unmarked one (an `int`, `float` or `bool`, also through an
     /// alias, or a Rust handle) is the function's own value. Lowering takes each `mut` parameter's passing mode from
-    /// this fact, not from the parameter's IR type.
-    pub mut_param_markers: HashMap<(usize, usize), bool>,
+    /// this fact, not from the parameter's IR type. The parameters of imported source modules a check collects are
+    /// recorded too, for their trait defaults expanded into this module; the name keeps them apart from this module's
+    /// parameters at the same offsets.
+    pub mut_param_markers: HashMap<(usize, usize, String), bool>,
 }
 
 /// Where a local function declaration takes a decorated method's receiver, and how the method takes it (#1790).
@@ -1331,6 +1333,12 @@ pub enum PartialProjectionTargetKind {
 /// Call-site semantic decisions selected by the typechecker.
 #[derive(Debug, Default, Clone)]
 pub struct CallArtifacts {
+    /// The callee's caller-visible `mut` parameter names for each call that resolved to such a callee, keyed by the
+    /// full call span, so lowering passes those arguments the way the declaration takes them (#1773).
+    pub caller_visible_mut_arguments: HashMap<(usize, usize), Vec<String>>,
+    /// Argument expressions, by span, that a call hands to a caller-visible `mut` parameter the callee never changes
+    /// while the argument is an immutable binding or field: lowering passes a copy of the value (#1773).
+    pub mut_argument_copies: HashSet<(usize, usize)>,
     /// Compiler-owned builtin selected for a call, keyed by the full call span.
     ///
     /// This distinguishes an explicit `std.builtins.name(...)` or unshadowed ambient builtin from a source/import
@@ -1778,7 +1786,29 @@ pub struct TestingFixtureInfo {
     pub dependencies: Vec<String>,
 }
 
+impl DeclarationArtifacts {
+    /// Return whether the `mut` parameter declared at `span` as `name` is marked, when the checker recorded it.
+    pub fn mut_param_marker(&self, span: Span, name: &str) -> Option<bool> {
+        self.mut_param_markers
+            .get(&(span.start, span.end, name.to_string()))
+            .copied()
+    }
+}
+
 impl TypeCheckInfo {
+    /// Return the caller-visible `mut` parameter names of the callee the call at `span` resolved to, if any.
+    pub fn caller_visible_mut_arguments(&self, span: Span) -> Option<&[String]> {
+        self.calls
+            .caller_visible_mut_arguments
+            .get(&(span.start, span.end))
+            .map(Vec::as_slice)
+    }
+
+    /// Return whether the argument expression at `span` is passed to its `mut` parameter as a copy.
+    pub fn mut_argument_is_copied(&self, span: Span) -> bool {
+        self.calls.mut_argument_copies.contains(&(span.start, span.end))
+    }
+
     /// Return the checked source path associated with one active import-derived binding.
     pub fn import_binding_path(&self, local_name: &str) -> Option<&[String]> {
         self.import_bindings.path(local_name)

@@ -15,6 +15,7 @@ use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_semantics_core::encode_incan_symbol_identity;
 
 use super::super::{EmitError, IrEmitter};
+use crate::conversions::incan_mutable_param_passed_as_rust_mut_ref;
 use incan_ir::types::{IR_UNION_TYPE_NAME, IrType};
 
 impl<'a> IrEmitter<'a> {
@@ -331,7 +332,8 @@ impl<'a> IrEmitter<'a> {
     /// Emit a recoverable Incan-origin entry point beside a Rust ABI-constrained method slot.
     ///
     /// The trait slot itself must keep the trait declaration's Rust spelling. This inherent wrapper is the concrete
-    /// source declaration's independently decodable artifact symbol, and concrete call sites target it directly.
+    /// source declaration's independently decodable artifact symbol, and concrete call sites target it directly, so
+    /// each parameter keeps the slot's Rust shape: a `mut` aggregate parameter is `&mut T` in both.
     fn emit_trait_method_projection(
         &self,
         impl_block: &incan_ir::decl::IrImpl,
@@ -354,7 +356,13 @@ impl<'a> IrEmitter<'a> {
                 } else {
                     let param_name = Self::rust_ident(&param.name);
                     let ty = self.emit_type(&param.ty);
-                    quote! { #param_name: #ty }
+                    // The wrapper forwards to the trait slot, so a `mut` aggregate parameter keeps the slot's `&mut`
+                    // shape here too (#1773).
+                    if incan_mutable_param_passed_as_rust_mut_ref(param) {
+                        quote! { #param_name: &mut #ty }
+                    } else {
+                        quote! { #param_name: #ty }
+                    }
                 }
             })
             .collect::<Vec<_>>();

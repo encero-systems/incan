@@ -1781,6 +1781,7 @@ impl TypeChecker {
                 span,
             )),
         };
+        self.record_caller_visible_mut_params(binding.identity.as_ref(), &func.params, &params);
         let mut info = FunctionInfo {
             params,
             return_type,

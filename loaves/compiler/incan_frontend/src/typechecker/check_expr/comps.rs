@@ -161,7 +161,9 @@ impl TypeChecker {
             })
             .collect();
 
+        self.enter_mut_param_closure();
         let return_ty = self.check_expr(body);
+        self.exit_mut_param_closure();
         self.current_return_error_type = prev_return_error_type;
         self.in_async_body = prev_in_async_body;
         self.symbols.exit_scope();
@@ -219,7 +221,9 @@ impl TypeChecker {
             })
             .collect();
 
+        self.enter_mut_param_closure();
         let return_ty = self.check_expr_with_expected(body, Some(expected_ret));
+        self.exit_mut_param_closure();
         if !matches!(return_ty, ResolvedType::Unknown) && !self.types_compatible(&return_ty, expected_ret) {
             self.errors.push(errors::type_mismatch(
                 &expected_ret.to_string(),

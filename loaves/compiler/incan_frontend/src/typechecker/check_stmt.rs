@@ -186,7 +186,12 @@ impl TypeChecker {
                 ));
             }
             Statement::Pass => {}
-            Statement::Break(value) => self.check_break_stmt(value.as_ref(), stmt.span),
+            Statement::Break(value) => {
+                if let Some(value) = value {
+                    self.refuse_mut_param_held_by(value);
+                }
+                self.check_break_stmt(value.as_ref(), stmt.span)
+            }
             Statement::Continue => self.check_continue_stmt(stmt.span),
             Statement::CompoundAssignment(compound) => {
                 self.record_write_target_identity(compound.name_span, &compound.name);
@@ -207,6 +212,8 @@ impl TypeChecker {
                     if !is_mutable {
                         self.errors
                             .push(errors::mutation_without_mut(&compound.name, stmt.span));
+                    } else {
+                        self.refuse_caller_visible_mut_param_rebinding(&compound.name, stmt.span);
                     }
                     // Type check the value expression
                     let value_ty = self.check_expr(&compound.value);
@@ -381,6 +388,7 @@ impl TypeChecker {
             Statement::TupleUnpack(unpack) => {
                 // Check the value expression and get its type
                 let value_ty = self.check_expr(&unpack.value);
+                self.refuse_mut_param_held_by(&unpack.value);
 
                 let element_types = self.destructured_element_types(&value_ty, unpack.names.len(), stmt.span);
 
@@ -395,6 +403,7 @@ impl TypeChecker {
             Statement::TupleAssign(assign) => {
                 // Check the value expression (should be a tuple)
                 let value_ty = self.check_expr(&assign.value);
+                self.refuse_mut_param_held_by(&assign.value);
 
                 let element_types = self.destructured_element_types(&value_ty, assign.targets.len(), stmt.span);
 
@@ -407,8 +416,11 @@ impl TypeChecker {
                     match &target.node {
                         Expr::Ident(name) => {
                             self.record_write_target_identity(target.span, name);
-                            // Check that the variable is mutable
-                            if let Some(var_info) = self.lookup_local_variable_info(name)
+                            // Check that the variable is mutable; a caller-visible `mut` parameter is changed in
+                            // place, never rebound (#1773).
+                            if self.refuse_caller_visible_mut_param_rebinding(name, target.span) {
+                                // Reported by the refusal itself.
+                            } else if let Some(var_info) = self.lookup_local_variable_info(name)
                                 && !var_info.is_mutable
                             {
                                 self.errors.push(errors::mutation_without_mut(name, target.span));
@@ -428,6 +440,7 @@ impl TypeChecker {
                             if let Some(place) = Self::self_rooted_place(target) {
                                 self.reject_write_through_immutable_self(&place, SelfMutation::Assignment, target.span);
                             }
+                            self.note_mut_param_write(target);
                         }
                         _ => {
                             self.errors.push(errors::invalid_tuple_assignment_target(target.span));
@@ -447,6 +460,7 @@ impl TypeChecker {
             Statement::ChainedAssignment(ca) => {
                 // Check the value expression
                 let value_ty = self.check_expr(&ca.value);
+                self.refuse_mut_param_held_by(&ca.value);
 
                 // Chained source assignment has the same declaration/reassignment distinction as a single target.
                 for (index, target) in ca.targets.iter().enumerate() {
@@ -507,6 +521,8 @@ impl TypeChecker {
     fn check_field_assignment(&mut self, field_assign: &FieldAssignmentStmt, span: Span) {
         // Check the object expression
         let obj_ty = self.check_expr(&field_assign.object);
+        self.note_mut_param_write(&field_assign.object);
+        self.refuse_mut_param_held_by(&field_assign.value);
         let field = &field_assign.field;
         if let Some(place) = Self::self_rooted_place(&field_assign.object) {
             self.reject_write_through_immutable_self(
@@ -614,6 +630,8 @@ impl TypeChecker {
     fn check_index_assignment(&mut self, index_assign: &IndexAssignmentStmt, span: Span) {
         // Check the object expression (should be a collection)
         let obj_ty = self.check_expr(&index_assign.object);
+        self.note_mut_param_write(&index_assign.object);
+        self.refuse_mut_param_held_by(&index_assign.value);
         if let Some(place) = Self::self_rooted_place(&index_assign.object) {
             self.reject_write_through_immutable_self(&format!("{place}[...]"), SelfMutation::Assignment, span);
         }
@@ -738,6 +756,7 @@ impl TypeChecker {
         } else {
             self.check_expr_with_expected(&assign.value, annotated_ty.as_ref())
         };
+        self.refuse_mut_param_held_by(&assign.value);
 
         // A `const` is registered as a module-scope variable, so the scope-chain walk below finds it. Answer the
         // more specific question first: reassigning a const is not a mutability mistake to be fixed with `mut`, it
@@ -760,7 +779,10 @@ impl TypeChecker {
             if !is_mutable {
                 self.errors
                     .push(errors::mutation_without_mut(&assign.name, target_span));
+            } else {
+                self.refuse_caller_visible_mut_param_rebinding(&assign.name, target_span);
             }
+            self.note_local_reassignment(&assign.name);
             if !self.types_compatible(&value_ty, &var_ty) {
                 self.errors.push(errors::assignment_type_mismatch(
                     &assign.name,
@@ -851,6 +873,7 @@ impl TypeChecker {
             self.symbols.define(symbol);
         }
         self.record_write_target_identity(target_span, &assign.name);
+        self.note_function_value_binding(target_span, &assign.value);
         self.bind_c_abi_output_slot_assignment(&assign.name, assign.value.span);
         self.bind_c_abi_span_assignment(&assign.name, assign.value.span);
         self.bind_c_abi_raw_result_assignment(&assign.name, assign.value.span);
@@ -906,7 +929,10 @@ impl TypeChecker {
                 let declared_ty = var_info.ty.clone();
                 if !is_mutable {
                     self.errors.push(errors::mutation_without_mut(name, target_span));
+                } else {
+                    self.refuse_caller_visible_mut_param_rebinding(name, target_span);
                 }
+                self.note_local_reassignment(name);
                 if !self.types_compatible(&value_ty, &declared_ty) {
                     self.errors.push(errors::assignment_type_mismatch(
                         name,
@@ -1596,8 +1622,10 @@ impl TypeChecker {
         self.record_expr_type(for_stmt.pattern.span, elem_ty.clone());
         self.define_for_pattern_bindings(&for_stmt.pattern, &elem_ty);
         self.push_loop_context(LoopContextKind::Statement, None);
+        let loop_elements = self.enter_for_over_mut_param(&for_stmt.pattern.node, &for_stmt.iter);
 
         self.check_statement_block(&for_stmt.body);
+        self.exit_for_over_mut_param(loop_elements);
         let _ = self.pop_loop_context();
         self.symbols.exit_scope();
     }

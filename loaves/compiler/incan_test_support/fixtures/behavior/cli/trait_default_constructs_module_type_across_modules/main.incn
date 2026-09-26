@@ -1,0 +1,15 @@
+# behavior: an imported trait's default method constructs a model of the trait's module by named fields while the adopting module imports that model too
+# expect-stdout:
+#   3
+#   5
+
+from shapes import Extent, Measured
+
+
+model Card with Measured:
+    size: int
+
+
+def main() -> None:
+    println(Card(size=1).extent().n)
+    println(Extent(n=5).n)

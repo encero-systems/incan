@@ -209,6 +209,9 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
     // Trait dispatch selects an impl header rather than an ordinary generic function. Re-run transitive inference with
     // those exact checked selections after backend-owned bounds have reached the impl headers.
     propagate_local_implementation_bounds(program);
+
+    // ---- Pass 6: trait slots admit what their implementations require ----
+    merge_implementation_method_bounds_into_trait_declarations(program);
 }
 
 /// Infer `Clone` bounds required by backend-inserted ownership materialization.
@@ -2579,9 +2582,18 @@ fn scan_expr_for_bounds(
             scan_expr_for_bounds(operand, type_params, params, bounds_map);
         }
 
-        // ---- Field/Index: recurse ----
+        // ---- Field: recurse ----
         IrExprKind::Field { object, .. } => scan_expr_for_bounds(object, type_params, params, bounds_map),
+
+        // ---- Element read: `items[i]` produces its own copy of the element, which requires `Clone` (#1756) ----
         IrExprKind::Index { object, index } => {
+            if let Some(element_ty) = index_read_copied_element_type(&object.ty) {
+                let mut dependencies = CloneExpressionDependencies::default();
+                collect_clone_expression_dependencies(element_ty, type_params, &mut dependencies);
+                for tp_name in dependencies.explicit_params {
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
+                }
+            }
             scan_expr_for_bounds(object, type_params, params, bounds_map);
             scan_expr_for_bounds(index, type_params, params, bounds_map);
         }
@@ -2700,12 +2712,20 @@ fn scan_expr_for_bounds(
         }
 
         // ---- Slice: recurse ----
+        // ---- List slice: `items[a:b]` copies the selected elements, which requires `Clone` (#1756) ----
         IrExprKind::Slice {
             target,
             start,
             end,
             step,
         } => {
+            if let Some(element_ty) = slice_copied_element_type(&target.ty) {
+                let mut dependencies = CloneExpressionDependencies::default();
+                collect_clone_expression_dependencies(element_ty, type_params, &mut dependencies);
+                for tp_name in dependencies.explicit_params {
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
+                }
+            }
             scan_expr_for_bounds(target, type_params, params, bounds_map);
             if let Some(s) = start {
                 scan_expr_for_bounds(s, type_params, params, bounds_map);
@@ -2775,6 +2795,89 @@ fn scan_expr_for_bounds(
         | IrExprKind::FieldsList(_)
         | IrExprKind::SerdeToJson
         | IrExprKind::SerdeFromJson(_) => {}
+    }
+}
+
+/// Return the element type an index read copies out of its collection, or `None` when the read copies nothing.
+///
+/// `items[i]` on a `list[T]` and `table[key]` on a `dict[K, V]` are values in their own right: Incan has no shared
+/// element reads, so the generated program duplicates a non-`Copy` element as it looks it up (`list_get(..).clone()`,
+/// `dict_get(..).clone()` in the Rust-source backend's index emission). A duplicated value of a type parameter needs
+/// that parameter to be `Clone` (RFC 023 section 6: a clone implies a `Clone` bound), which an unbounded
+/// `def first[K](items: list[K]) -> K` never states (#1756). The shape mirrors that emission exactly: one level of
+/// reference is looked through, only lists and dicts duplicate, and a `Copy` element is copied without a bound.
+fn index_read_copied_element_type(object_ty: &IrType) -> Option<&IrType> {
+    let object_ty = match object_ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => inner.as_ref(),
+        other => other,
+    };
+    let element_ty = match object_ty {
+        IrType::List(element) => element.as_ref(),
+        IrType::Dict(_, value) => value.as_ref(),
+        _ => return None,
+    };
+    (!element_ty.is_copy()).then_some(element_ty)
+}
+
+/// Return the element type a list slice copies into its new list, or `None` when the slice copies no list elements.
+///
+/// `items[a:b]` builds a new list from the selected elements (`list_slice` in the Rust-source backend), so a
+/// non-`Copy` element of a type parameter needs that parameter to be `Clone`, as an element read does. Strings slice
+/// to strings and copy nothing of a type parameter.
+fn slice_copied_element_type(target_ty: &IrType) -> Option<&IrType> {
+    let target_ty = match target_ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => inner.as_ref(),
+        other => other,
+    };
+    match target_ty {
+        IrType::List(element) if !element.is_copy() => Some(element.as_ref()),
+        _ => None,
+    }
+}
+
+/// Merge each trait implementation method's inferred generic bounds into the same trait method's declaration.
+///
+/// A trait slot is declared without a body, so bound inference sees only the implementations' bodies: an expanded
+/// default or an override that reads a `list[K]` element infers `K: Clone`, and Rust refuses an implementation whose
+/// method generics are stricter than the trait's (E0276). The declaration takes the union of its local
+/// implementations' bounds, position by position, which every implementation then satisfies (#1756).
+fn merge_implementation_method_bounds_into_trait_declarations(program: &mut IrProgram) {
+    let mut required: HashMap<(String, String), Vec<Vec<IrTraitBound>>> = HashMap::new();
+    for decl in &program.declarations {
+        let IrDeclKind::Impl(impl_block) = &decl.kind else {
+            continue;
+        };
+        let Some(trait_name) = impl_block.trait_name.as_deref() else {
+            continue;
+        };
+        for method in &impl_block.methods {
+            let entry = required
+                .entry((trait_name.to_string(), method.name.clone()))
+                .or_insert_with(|| vec![Vec::new(); method.type_params.len()]);
+            if entry.len() != method.type_params.len() {
+                continue;
+            }
+            for (bounds, type_param) in entry.iter_mut().zip(&method.type_params) {
+                bounds.extend(type_param.bounds.iter().cloned());
+            }
+        }
+    }
+    for decl in &mut program.declarations {
+        let IrDeclKind::Trait(trait_decl) = &mut decl.kind else {
+            continue;
+        };
+        for method in &mut trait_decl.methods {
+            let Some(bounds) = required.get(&(trait_decl.name.clone(), method.name.clone())) else {
+                continue;
+            };
+            if bounds.len() != method.type_params.len() {
+                continue;
+            }
+            for (type_param, extra) in method.type_params.iter_mut().zip(bounds) {
+                type_param.bounds.extend(extra.iter().cloned());
+                type_param.bounds = deduplicate_bounds(std::mem::take(&mut type_param.bounds));
+            }
+        }
     }
 }
 

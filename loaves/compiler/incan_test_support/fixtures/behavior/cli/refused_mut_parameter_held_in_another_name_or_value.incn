@@ -1,0 +1,71 @@
+# behavior: a mut list parameter bound to another name, held in a tuple, list, dict, field, construction or partial preset, produced as a match, if, break or yield value, bound by a match arm, or held by a closure that changes or returns it is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+model Holder:
+    items: list[int]
+
+
+enum Wrap:
+    Held(list[int])
+
+
+def extend(mut items: list[int]) -> None:
+    items.append(3)
+
+
+def bound(mut items: list[int]) -> int:
+    mut other = items
+    let copy = items
+    mut annotated: list[int] = items
+    annotated = items
+    return len(other) + len(copy) + len(annotated)
+
+
+def held(mut items: list[int]) -> int:
+    pair = (items, 1)
+    table = {"k": items}
+    mut holder = Holder(items=[])
+    holder.items = items
+    for xs in [items]:
+        xs.append(3)
+    return pair[1] + len(table) + len(holder.items)
+
+
+def constructed(mut items: list[int]) -> int:
+    boxed = Holder(items=items)
+    maybe = Some(items)
+    wrapped = Wrap.Held(items)
+    later = partial extend(items=items)
+    later()
+    return len(boxed.items) + len(maybe.unwrap())
+
+
+def produced(mut items: list[int]) -> int:
+    chosen = match len(items):
+        0 => items
+        _ => []
+    picked = if len(items) > 0:
+        items
+    else:
+        []
+    looped = loop:
+        break items
+    return len(chosen) + len(picked) + len(looped)
+
+
+def captured(mut items: list[int]) -> int:
+    match items:
+        xs => xs.append(3)
+    add = () => items.append(1)
+    add()
+    get = () => items
+    return len(get())
+
+
+def generated(mut items: list[int]) -> Generator[list[int]]:
+    yield items
+
+
+def main() -> None:
+    mut items: list[int] = [1]
+    println(bound(items) + held(items) + constructed(items) + produced(items) + captured(items))

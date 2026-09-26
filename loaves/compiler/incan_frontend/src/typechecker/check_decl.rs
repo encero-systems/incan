@@ -5839,16 +5839,24 @@ impl TypeChecker {
 
         // Define parameters after checking defaults so a declaration-owned default cannot resolve a callable-frame
         // binding. The function body still receives its ordinary parameter locals below.
+        let mut_param_body = self.enter_mut_param_body(
+            &func.name,
+            SemanticSourceTargetKind::Function,
+            decl_span,
+            &func.params,
+            &resolved_param_types,
+        );
         for (param, resolved_ty) in func.params.iter().zip(resolved_param_types) {
             self.record_mut_param_marker(&param.node, param.span, &resolved_ty);
             let ty = local_type_for_param(param.node.kind, resolved_ty);
             self.validate_protected_builtin_binding(&param.node.name, param.span);
+            self.bind_mut_param_as_mutable(&param.node);
             self.symbols.define_with_target_kind(
                 Symbol {
                     name: param.node.name.clone(),
                     kind: SymbolKind::Variable(VariableInfo {
                         ty,
-                        is_mutable: false,
+                        is_mutable: param.node.is_mut,
                         is_used: false,
                     }),
                     span: param.span,
@@ -5913,6 +5921,7 @@ impl TypeChecker {
         self.current_return_error_type = None;
         self.current_type_param_bound_details.pop();
         self.annotation_owner = previous_annotation_owner;
+        self.exit_mut_param_body(mut_param_body);
         self.symbols.exit_scope();
         self.apply_user_defined_function_decorators(func, decl_span);
     }
@@ -6261,6 +6270,13 @@ impl TypeChecker {
         // Define parameters, capturing each checked callable-parameter fact once so it can be recorded for Body IR
         // lowering below without re-resolving the annotation (and re-emitting any of its diagnostics) a second time.
         let mut checked_params = Vec::with_capacity(method.params.len());
+        let mut_param_body = self.enter_mut_param_body(
+            &method.name,
+            SemanticSourceTargetKind::Method,
+            method_span,
+            &method.params,
+            &resolved_param_types,
+        );
         for (param, resolved_ty) in method.params.iter().zip(resolved_param_types) {
             checked_params.push(CallableParam::named_with_default(
                 param.node.name.clone(),
@@ -6271,12 +6287,13 @@ impl TypeChecker {
             self.record_mut_param_marker(&param.node, param.span, &resolved_ty);
             let ty = local_type_for_param(param.node.kind, resolved_ty);
             self.validate_protected_builtin_binding(&param.node.name, param.span);
+            self.bind_mut_param_as_mutable(&param.node);
             self.symbols.define_with_target_kind(
                 Symbol {
                     name: param.node.name.clone(),
                     kind: SymbolKind::Variable(VariableInfo {
                         ty,
-                        is_mutable: false,
+                        is_mutable: param.node.is_mut,
                         is_used: false,
                     }),
                     span: param.span,
@@ -6353,6 +6370,7 @@ impl TypeChecker {
         self.annotation_owner = previous_annotation_owner;
         self.current_immutable_self_method = previous_immutable_self_method;
         self.mutable_bindings.remove("self");
+        self.exit_mut_param_body(mut_param_body);
         self.symbols.exit_scope();
     }
 }

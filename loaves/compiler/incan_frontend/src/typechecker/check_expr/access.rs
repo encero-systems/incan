@@ -16,7 +16,8 @@ use crate::typechecker::helpers::{
     string_method_return,
 };
 use crate::typechecker::type_info::{
-    CBindingEnumAccess, RustArgCoercionInfo, RustArgCoercionKind, RustMethodTraitImportUse, RustTraitImportInfo,
+    CBindingEnumAccess, ResolvedMethodCall, RustArgCoercionInfo, RustArgCoercionKind, RustMethodTraitImportUse,
+    RustTraitImportInfo,
 };
 use crate::typechecker::{IdentKind, MemberBindingSurface, canonical_public_library_type_name};
 use incan_lang::interop::{
@@ -439,7 +440,9 @@ impl TypeChecker {
             })
             .collect::<Vec<_>>();
 
+        self.enter_mut_param_closure();
         let return_ty = self.check_expr_with_expected(body, Some(&signature.return_ty));
+        self.exit_mut_param_closure();
         if !matches!(return_ty, ResolvedType::Unknown) && !self.types_compatible(&return_ty, &signature.return_ty) {
             self.errors.push(errors::type_mismatch(
                 &signature.return_ty.to_string(),
@@ -4032,6 +4035,76 @@ impl TypeChecker {
         )
     }
 
+    /// Resolve a method on a trait-typed value whose trait this module never bound, through the trait's owning module.
+    ///
+    /// A trait method may return a value of its own trait (`FallibleIterator.map` returns `FallibleIterator[U, E]`),
+    /// and a consumer can hold such a value without importing the trait: `numbers().map(double)` on a dependency's
+    /// adopter is checked through the adopter's own protocol, which the dependency's type carries together with the
+    /// trait's owning module. The next call in the chain names the trait only by its spelling, which is not bound here,
+    /// so it used to stay unresolved and the generated program called the method with the trait out of scope (#1761).
+    ///
+    /// The owning module is taken from what the checker already proved: the receiver's own trait dispatch when the
+    /// receiver is a call on the same trait, otherwise the stdlib module that trait resolution loaded it from. The
+    /// method then resolves exactly as it does on an adopter that carries the trait with that module, and records the
+    /// same dispatch, so lowering names the trait by its path. A name that is bound here, as a trait or as a type, is
+    /// left to ordinary resolution, and nothing is resolved when no owning module is known.
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_unbound_trait_receiver_method(
+        &mut self,
+        receiver_span: Span,
+        receiver_ty: &ResolvedType,
+        method: &str,
+        receiver_surface: MemberBindingSurface,
+        explicit_type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        call_site_span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> Option<ResolvedType> {
+        let (trait_name, trait_args) = match receiver_ty {
+            ResolvedType::Named(name) => (name.as_str(), Vec::new()),
+            ResolvedType::Generic(name, args) => (name.as_str(), args.clone()),
+            _ => return None,
+        };
+        if self.lookup_semantic_trait_info(trait_name).is_some() || self.lookup_semantic_type_info(trait_name).is_some()
+        {
+            return None;
+        }
+        let receiver_module = match self.type_info.resolved_method_call(receiver_span) {
+            Some(ResolvedMethodCall {
+                dispatch:
+                    crate::typechecker::ResolvedMethodDispatch::Trait {
+                        trait_name: receiver_trait,
+                        module_path: Some(module_path),
+                        ..
+                    },
+                ..
+            }) if receiver_trait == trait_name => Some(module_path.clone()),
+            _ => None,
+        };
+        let module_path = receiver_module.or_else(|| self.stdlib_cache.loaded_trait_module_path(trait_name))?;
+        let adoption = TypeBoundInfo {
+            name: trait_name.to_string(),
+            source_name: Some(trait_name.to_string()),
+            type_args: trait_args,
+            module_path: Some(module_path),
+            implementation_type_params: Vec::new(),
+        };
+        self.resolve_named_method(
+            &std::collections::HashMap::new(),
+            None,
+            Some(std::slice::from_ref(&adoption)),
+            method,
+            receiver_surface,
+            explicit_type_args,
+            args,
+            arg_types,
+            call_site_span,
+            receiver_ty,
+            expected_return_ty,
+        )
+    }
+
     /// Resolve a newtype/rusttype rebound method alias to its target method name.
     pub(in crate::typechecker) fn resolve_newtype_method_name<'a>(
         &self,
@@ -5168,6 +5241,7 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
         self.reject_mutating_call_through_immutable_self(base, &base_ty, method, span);
+        self.note_mut_param_method_call(base, &base_ty, method);
         if let Some(identity) = Self::compiler_builtin_method_identity(&base_ty, method) {
             self.type_info.record_resolved_identity(span, identity);
         }
@@ -5972,6 +6046,19 @@ impl TypeChecker {
             self.errors
                 .push(errors::missing_method(&base_ty.to_string(), method, span));
             return ResolvedType::Unknown;
+        }
+        if let Some(ret) = self.resolve_unbound_trait_receiver_method(
+            base.span,
+            &base_ty,
+            method,
+            receiver_surface,
+            type_args,
+            args,
+            &arg_types,
+            span,
+            expected_return_ty,
+        ) {
+            return ret;
         }
 
         if let ResolvedType::Generic(type_name, _type_args) = &base_ty
