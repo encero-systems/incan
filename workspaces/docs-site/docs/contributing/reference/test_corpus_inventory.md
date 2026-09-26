@@ -12,16 +12,16 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3154 | 191 | 7 |
-| re-point | 496 | 48 | 426 |
+| keep | 3154 | 209 | 7 |
+| re-point | 496 | 50 | 426 |
 | retire | 1129 | 79 | 0 |
 | unaffected | 1437 | 134 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **6216** | **452** | **438** |
+| **Total** | **6216** | **472** | **438** |
 
 - Retire-class tests: 1129, of which twinned 60, dies 115, open 954 (neither yet).
 - Retire-class files with open rows: 62 (a file whose retire tests are all twinned or recorded `dies` is done).
-- Files whose test region exceeds the split threshold of 1500 lines: 22, of which 10 in the durable corpus (keep or re-point).
+- Files whose test region exceeds the split threshold of 1500 lines: 18, of which 6 in the durable corpus (keep or re-point).
 - Unreviewed files: 0.
 
 ## Dispositions
@@ -102,7 +102,7 @@ The collector counts these in the text of each test function and of the file-loc
 
 `Lines` is the file length; `Test lines` is the test region the split threshold applies to: the `#[cfg(test)]` modules when the file has any, otherwise the whole file. `Twins` is `twinned/retire-class` and `Dies` the number recorded `dies`, for files with retire-class tests. Per-test rows follow a file only when it carries per-test overrides.
 
-### `loaves/compiler/incan_driver` (745 tests in 98 files: keep 362, re-point 138, retire 102, unaffected 143)
+### `loaves/compiler/incan_driver` (745 tests in 107 files: keep 362, re-point 138, retire 102, unaffected 143)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -170,12 +170,21 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/tests/generated_rust_audit_tests.rs` | 4 | 193 | 193 | retire | 0/4 | 4 | - | #1561 | - | public generated-Rust artifact contract (RFC 120 projections, native consumers, audit) |
 | `loaves/compiler/incan_driver/tests/generated_rust_callability_artifact_tests.rs` | 1 | 258 | 258 | retire | 1/1 | 0 | - | #1561 | text 1, run 1, checker 1 | The generated Cargo manifests and the `transforms.rs`/`main.rs` text (fn-pointer parameters, qualified provider calls) die with #654; the surviving observable, the consumer run printing `2 3 4` (a `Callable` value passed across a `pub::` package boundary, which no other test runs), is the twin: a project fixture carrying the producer under `deps/callability_core`, which the runner bakes before `incan run` (harness-deps). |
 | `loaves/compiler/incan_driver/tests/generated_rust_native_consumer_tests.rs` | 1 | 367 | 367 | retire | 0/1 | 1 | - | #1561 | run 1 | public generated-Rust artifact contract (RFC 120 projections, native consumers, audit) |
-| `loaves/compiler/incan_driver/tests/parity_corpus_tests.rs` | 28 | 5792 | 5792 | re-point | - | - | required | #1561 | replacement 22 | the parity corpus: slice 7's own measurement instrument (RFC 120 coverage, replacement receipts, corpus validation). 16 of 28 tests assert a green legacy-vs-replacement shadow comparison through `loaves/compiler/incan_driver/tests/support/parity_corpus.rs` (`shadow_support::compare_source_observable`), the same evidence class as `backend/shadow/**`: slice 7 (#1675) re-points that baseline to the frozen corpus receipts or retires the comparison with the legacy route. The support helper lives outside the file, so the scanner sees only the `replacement` lane. |
+| `loaves/compiler/incan_driver/tests/parity_corpus_tests/corpus_proofs.rs` | 7 | 456 | 456 | re-point | - | - | - | #1561 | - | split of parity_corpus_tests.rs (the parity corpus: slice 7's own measurement instrument; the corpus support helper lives outside the file in `loaves/compiler/incan_driver/tests/support/parity_corpus.rs`, so the scanner sees only the `replacement` lane); corpus validation: the red-state schema proof, the green-state structural and behavioral proofs, the replacement rows' receipt-bound evidence and the CI summary. |
+| `loaves/compiler/incan_driver/tests/parity_corpus_tests/paired_row_proofs.rs` | 15 | 857 | 857 | re-point | - | - | - | #1561 | replacement 6 | split of parity_corpus_tests.rs (the parity corpus: slice 7's own measurement instrument; the corpus support helper lives outside the file in `loaves/compiler/incan_driver/tests/support/parity_corpus.rs`, so the scanner sees only the `replacement` lane); the paired-comparison rows: these tests assert a green (or explicitly unavailable) legacy-vs-replacement shadow comparison through `shadow_support::compare_source_observable`, the same evidence class as `backend/shadow/**`: slice 7 (#1675) re-points that baseline to the frozen corpus receipts or retires the comparison with the legacy route. |
+| `loaves/compiler/incan_driver/tests/parity_corpus_tests/rfc_120_proofs.rs` | 6 | 334 | 334 | re-point | - | - | - | #1561 | - | split of parity_corpus_tests.rs (the parity corpus: slice 7's own measurement instrument; the corpus support helper lives outside the file in `loaves/compiler/incan_driver/tests/support/parity_corpus.rs`, so the scanner sees only the `replacement` lane); the RFC 120 coverage and evidence proofs. |
 | `loaves/compiler/incan_driver/tests/protected_builtin_binding_tests.rs` | 3 | 141 | 141 | keep | - | - | - | #1561 | checker 3, parser 3 | lex/parse/typecheck only. |
 | `loaves/compiler/incan_driver/tests/protected_generic_binding_tests.rs` | 2 | 106 | 106 | keep | - | - | - | #1561 | checker 2, parser 2 | lex/parse/typecheck only. |
 | `loaves/compiler/incan_driver/tests/replacement_abs_sum_profile_shadow_tests.rs` | 1 | 154 | 154 | re-point | - | - | - | #1561 | run 1, replacement 1 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. |
 | `loaves/compiler/incan_driver/tests/replacement_abs_sum_profile_tests.rs` | 4 | 199 | 199 | keep | - | - | - | #1561 | run 1, replacement 3, checker 3, parser 3 | Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep. |
-| `loaves/compiler/incan_driver/tests/replacement_backend_execution_tests.rs` | 118 | 5699 | 5699 | keep (keep 117, retire 1) | 1/1 | 0 | required | #1561 | codegen 1, run 37, replacement 82, checker 81, parser 81 | Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep. Two tests compare against the legacy backend. |
+| `loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/async_tasks_and_race.rs` | 10 | 467 | 467 | keep | - | - | - | #1561 | run 4, replacement 6 | split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); async tasks and `race`, direct and through the CLI. |
+| `loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/bodies_bindings_and_scalars.rs` | 16 | 546 | 546 | keep | - | - | - | #1561 | replacement 16 | split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); core body execution, bindings, projections and scalars. |
+| `loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/callables_and_generators.rs` | 19 | 772 | 772 | keep | - | - | - | #1561 | replacement 19 | split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); named calls, closures, partials, callable defaults and generators. |
+| `loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/cli_nominal_and_enum_values.rs` | 9 | 703 | 703 | keep | - | - | - | #1561 | run 9 | split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); CLI-driven nominal and enum programs with their receipts and refusals. |
+| `loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/cli_refusals_shadow_and_boundaries.rs` | 13 | 815 | 815 | keep | - | - | - | #1561 | run 13, replacement 1 | split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); CLI-driven refusals without a receipt, shadow requests that stay explicitly non-green, module and Rust interop boundaries. |
+| `loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/collections_strings_and_print.rs` | 18 | 497 | 497 | keep (keep 17, retire 1) | 1/1 | 0 | - | #1561 | codegen 1, run 1, replacement 17, parser 1 | split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); collections, strings, scalar JSON and `print`; one test compares against the legacy backend and retires to its behavior fixture. |
+| `loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/modules_and_sessions.rs` | 14 | 921 | 921 | keep | - | - | - | #1561 | run 10, replacement 4, checker 4, parser 4 | split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); the execution graph's cross-module resolution and the CLI-driven module, facade and session tests. |
+| `loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/nominal_and_enum_values.rs` | 19 | 995 | 995 | keep (keep 19) | - | - | - | #1561 | replacement 19 | split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); source-local nominal models and enums through a direct callable, with the identity and layout refusals. |
 | `loaves/compiler/incan_driver/tests/replacement_bool_truthiness_shadow_tests.rs` | 1 | 77 | 77 | re-point | - | - | - | #1561 | run 1, replacement 1 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. |
 | `loaves/compiler/incan_driver/tests/replacement_bool_truthiness_tests.rs` | 6 | 198 | 198 | keep | - | - | - | #1561 | run 1, replacement 5, checker 5, parser 5 | Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep. |
 | `loaves/compiler/incan_driver/tests/replacement_collection_len_shadow_tests.rs` | 1 | 77 | 77 | re-point | - | - | - | #1561 | run 1, replacement 1 | shadow comparison against the legacy Oven baseline; slice 7 (#1675) re-points the baseline to the frozen corpus receipts or retires the comparison with the legacy route. |
@@ -245,12 +254,17 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/generated_rust_artifac
 | `path_dependency_artifact_rebuilds_for_a_b_a_feature_projections` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/refused_feature_gated_export_of_dependency` | - | build_run, checker | twinned by a refused-program project fixture: a consumer importing a feature-gated `pub::` export of its in-fixture provider while the package feature is off is refused with INCAN-I0103 (`incan check` prepares an unbaked provider's metadata itself). The alpha/beta/alpha re-bake sequence and the generated `lib.rs` half die with #654; the `.incnlib` `active_features` and `fact_requirements` fields are pinned by re-point rows (`cli_codegraph_and_inspection_tests.rs`, `cli_workspace_and_lock_tests.rs`, `package_executable_representation.rs`). |
 | `a_package_projects_a_call_into_its_own_sibling_module` | retire | `dies` | asserts the RFC 120 `__incan_v1_` projected wrapper name, not the source spelling `c.bumped()`, in a package's generated `lib.rs` (#1174 emitted-name recoverability); the emitted-name projection and the legacy `incan_ir` lowering that required it die with generated Rust. The package-calls-its-own-sibling behavior is reachable only through a `--lib`/SDK component build, which is not a run the fixture format can express. The surviving observable — a package whose library calls a sibling module's method builds — is carried by the SDK provider prewarm every suite root performs. | build_run | - |
 
-Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_execution_tests.rs`:
+Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/collections_strings_and_print.rs`:
 
 | Test | Disposition | Twin | Dies | Lanes | Notes |
 |---|---|---|---|---|---|
-| `replacement_refuses_a_nominal_pattern_after_its_exact_target_identity_is_removed` | keep | - | - | replacement, checker, parser | generated-text hit is a diagnostic string |
-| `both_backends_render_a_multi_argument_print_the_same_way` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/driver/println_multi_argument.incn` | - | codegen, replacement, checker, parser | compared the replacement executor's rendering of `println("count", 3, true)` with the IrCodegen placeholder count; the twin runs the program and reads `count 3 true` from its stdout, and the replacement-only half stays in the keep sibling replacement_executes_print_by_recording_its_output. |
+| `both_backends_render_a_multi_argument_print_the_same_way` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/driver/println_multi_argument.incn` | - | codegen, replacement, parser | compared the replacement executor's rendering of `println("count", 3, true)` with the IrCodegen placeholder count; the twin runs the program and reads `count 3 true` from its stdout, and the replacement-only half stays in the keep sibling replacement_executes_print_by_recording_its_output. |
+
+Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/nominal_and_enum_values.rs`:
+
+| Test | Disposition | Twin | Dies | Lanes | Notes |
+|---|---|---|---|---|---|
+| `replacement_refuses_a_nominal_pattern_after_its_exact_target_identity_is_removed` | keep | - | - | replacement | generated-text hit is a diagnostic string |
 
 ### `loaves/compiler/incan_emit` (927 tests in 56 files: keep 100, retire 825, unaffected 2)
 
@@ -389,13 +403,17 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 | `nested_list_empty_holes_retain_checked_string_types` | retire | - | - | checker, parser, legacy_ir | legacy IR shape; the checked-type assertions (`List[List[str]]` on the empty holes) are the keep-class content the twin must carry. |
 | `nested_list_loop_emits_owned_strings_without_caller_annotation` | retire | `loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs::nested_empty_first_list_runs_without_a_caller_annotation_issue1471` | - | codegen, parser | asserts generated Rust text |
 
-### `loaves/compiler/incan_format` (191 tests in 5 files: keep 191)
+### `loaves/compiler/incan_format` (191 tests in 9 files: keep 191)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/compiler/incan_format/src/config.rs` | 24 | 275 | 206 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/formatter/tests.rs` | 11 | 327 | 327 | keep | - | - | - | #1561 | parser 7, formatter 11 | formatter; no emit/driver dependency. Reviewed at crate level. |
-| `loaves/compiler/incan_format/src/lib.rs` | 112 | 2852 | 2623 | keep | - | - | required | #1561 | checker 1, parser 110, formatter 110 | formatter; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/incan_format/src/tests/comments_and_blank_lines.rs` | 20 | 488 | 488 | keep | - | - | - | #1561 | formatter 18 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/incan_format/src/tests/declarations.rs` | 28 | 755 | 755 | keep | - | - | - | #1561 | formatter 28 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/incan_format/src/tests/entry_points_imports_and_spacing.rs` | 27 | 455 | 455 | keep | - | - | - | #1561 | checker 1, parser 1, formatter 21 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/incan_format/src/tests/expressions_and_calls.rs` | 23 | 631 | 631 | keep | - | - | - | #1561 | parser 1, formatter 23 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/incan_format/src/tests/statements_and_patterns.rs` | 14 | 281 | 281 | keep | - | - | - | #1561 | formatter 14 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
@@ -900,11 +918,18 @@ Per-test overrides in `loaves/toolchain/incan-cli/tests/rfc031_pub_import_integr
 | `consumer_check_desugared_generic_method_call_uses_expected_return_type_issue735` | keep | - | - | checker, parser | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
 | `fmt_activates_clean_source_dependency_vocab_before_parsing_issue756` | keep | - | - | - | `incan fmt` only; formatter surface, no generated Rust. |
 
-### `loaves/toolchain/incan-lsp` (93 tests in 6 files: keep 92, retire 1)
+### `loaves/toolchain/incan-lsp` (93 tests in 13 files: keep 92, retire 1)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
-| `loaves/toolchain/incan-lsp/src/backend.rs` | 56 | 9413 | 2077 | keep | - | - | required | #1561 | checker 21, parser 33, lsp 3 | language server over the checker; no codegen. Reviewed at crate level. |
+| `loaves/toolchain/incan-lsp/src/backend/tests/completions.rs` | 20 | 648 | 648 | keep | - | - | - | #1561 | checker 6, parser 7 | split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level. |
+| `loaves/toolchain/incan-lsp/src/backend/tests/contract_model_command.rs` | 2 | 81 | 81 | keep | - | - | - | #1561 | - | split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level. |
+| `loaves/toolchain/incan-lsp/src/backend/tests/hover_previews.rs` | 14 | 511 | 511 | keep | - | - | - | #1561 | checker 9, parser 12, lsp 1 | split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level. |
+| `loaves/toolchain/incan-lsp/src/backend/tests/identity_navigation.rs` | 4 | 369 | 369 | keep | - | - | - | #1561 | checker 4, parser 4, lsp 2 | split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level. |
+| `loaves/toolchain/incan-lsp/src/backend/tests/parse_context_and_receivers.rs` | 3 | 88 | 88 | keep | - | - | - | #1561 | parser 3 | split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level. |
+| `loaves/toolchain/incan-lsp/src/backend/tests/rust_inspect_workspace.rs` | 3 | 149 | 149 | keep | - | - | - | #1561 | checker 1, parser 1 | split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level. |
+| `loaves/toolchain/incan-lsp/src/backend/tests/signature_help.rs` | 3 | 104 | 104 | keep | - | - | - | #1561 | parser 3 | split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level. |
+| `loaves/toolchain/incan-lsp/src/backend/tests/vocab_surfaces.rs` | 7 | 237 | 237 | keep | - | - | - | #1561 | parser 3 | split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level. |
 | `loaves/toolchain/incan-lsp/src/call_site_type_args.rs` | 4 | 747 | 48 | keep | - | - | - | #1561 | parser 1 | language server over the checker; no codegen. Reviewed at crate level. |
 | `loaves/toolchain/incan-lsp/src/diagnostics.rs` | 7 | 395 | 168 | keep | - | - | - | #1561 | checker 3 | language server over the checker; no codegen. Reviewed at crate level. |
 | `loaves/toolchain/incan-lsp/src/main.rs` | 3 | 98 | 30 | keep | - | - | - | #1561 | - | language server over the checker; no codegen. Reviewed at crate level. |
