@@ -29,6 +29,7 @@ mod decl;
 mod errors;
 mod expr;
 mod stmt;
+mod tuple_targets;
 mod types;
 
 use std::collections::{HashMap, HashSet};
@@ -4102,6 +4103,7 @@ mod tests {
     use incan_frontend::{lexer, parser, typechecker::TypeChecker};
     use incan_lang::lang::trait_bounds;
 
+    mod tuple_assignment;
     mod unary_operand_grouping;
 
     fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {
