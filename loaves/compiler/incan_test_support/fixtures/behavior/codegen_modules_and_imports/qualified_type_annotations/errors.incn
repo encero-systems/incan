@@ -1,0 +1,6 @@
+pub model TomlError:
+    pub message: str
+
+
+pub def make() -> TomlError:
+    return TomlError(message="x")

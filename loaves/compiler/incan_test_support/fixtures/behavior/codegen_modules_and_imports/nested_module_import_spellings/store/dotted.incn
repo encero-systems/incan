@@ -1,0 +1,5 @@
+from db.schema import Database
+
+
+pub def touch_dotted(db: Database) -> str:
+    return f"dotted:{db.id}"

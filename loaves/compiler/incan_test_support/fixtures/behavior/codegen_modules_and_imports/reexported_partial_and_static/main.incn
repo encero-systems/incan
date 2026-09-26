@@ -1,0 +1,17 @@
+# behavior: a partial and a static re-exported through a facade module are callable and readable under a consumer alias
+# retires: loaves/compiler/incan_emit/src/codegen.rs::top_level_partial_keeps_one_projection_through_reexport_and_consumer_alias
+# retires: loaves/compiler/incan_emit/src/codegen.rs::source_static_keeps_one_projection_through_reexport_and_consumer_alias
+# expect-stdout:
+#   core
+#   portable
+#   1
+
+from facade import portable as make_spec
+from facade import counter as shared
+
+
+def main() -> None:
+    let spec = make_spec(policy="portable")
+    println(spec.namespace)
+    println(spec.policy)
+    println(shared)

@@ -1,0 +1,32 @@
+# behavior: a source static and a source function spelled like the decorator machinery's own names coexist with a decorated function
+# retires: loaves/compiler/incan_emit/src/codegen.rs::generated_decorator_static_collision_keeps_distinct_identifiers_and_reads
+# retires: loaves/compiler/incan_emit/src/codegen.rs::generated_decorator_function_collision_keeps_distinct_identifiers_and_calls
+# expect-stdout:
+#   1
+#   41
+#   41
+
+static __incan_decorated_target: int = 41
+
+
+def preserve[F]() -> ((F) -> F):
+    return (func) => func
+
+
+@preserve()
+pub def target() -> int:
+    return 1
+
+
+pub def source_value() -> int:
+    return __incan_decorated_target
+
+
+def __incan_original_target() -> int:
+    return 41
+
+
+def main() -> None:
+    println(target())
+    println(source_value())
+    println(__incan_original_target())

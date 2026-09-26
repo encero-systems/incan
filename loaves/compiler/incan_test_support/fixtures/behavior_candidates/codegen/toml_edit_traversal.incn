@@ -1,0 +1,34 @@
+# behavior: a toml_edit document is traversed by borrowed items down a key path and the leaf is read back
+# retires: loaves/compiler/incan_emit/src/codegen.rs::toml_traversal_uses_extracted_receiver_contracts
+# expect-stdout:
+#   3
+#   none
+
+from rust::toml_edit import DocumentMut, Item
+
+
+def traverse(item: Item, keys: list[str]) -> Item:
+    mut current = item
+    for key in keys:
+        match current.get(key):
+            Some(child) => current = child
+            None => return Item.None
+    return current.clone()
+
+
+pub def observe(item: Item) -> Item:
+    return traverse(item, ["project", "count"])
+
+
+def main() -> None:
+    match DocumentMut.parse("[project]\ncount = 3\n"):
+        Ok(document) =>
+            leaf = observe(document.as_item().clone())
+            match leaf.as_integer():
+                Some(count) => println(count)
+                None => println("none")
+            missing = traverse(document.as_item().clone(), ["project", "absent"])
+            match missing.as_integer():
+                Some(count) => println(count)
+                None => println("none")
+        Err(_) => println("parse error")

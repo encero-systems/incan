@@ -1,0 +1,263 @@
+# behavior: the Rust interop contracts the retired codegen tests described through synthetic metadata hold over a real in-fixture crate: boxed variant payloads from every argument shape, a borrowed handle, owner-specialized and named-field constructors, a tuple-struct constructor, an owned mutable parameter, projected mutable tuple leaves and their unprojected control, two projected type arguments, a projection inside a trait method, a derived Component, an f32 boundary, keyword-spelled fields, a borrowing builder and client, a nested associated call, a trait method through its import, trait-qualified receiver modes, and a capturing closure passed to a crate method
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_boxes_variant_payloads_whatever_argument_shape
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_borrows_as_fd_generic_args_from_metadata
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_materializes_owner_specialized_rust_associated_function_arguments
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_emits_named_field_struct_literal_for_imported_rust_type_constructor
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_uses_source_field_names_for_metadata_free_rust_type_constructor
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_emits_tuple_struct_constructor_for_imported_rust_type
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_preserves_owned_mutable_direct_rust_parameter
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_preserves_explicit_mutable_rust_generic_arguments_in_mutating_for_loop
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_does_not_project_tuple_without_inspected_composition_contract
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_fails_closed_after_solver_rejects_associated_type_candidate
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_projects_local_type_from_actual_rust_derive_output
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_projects_each_metadata_directed_mutable_rust_generic_argument
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_projects_metadata_directed_mutable_rust_generic_arguments_in_trait_method
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_leaves_unconfigured_rust_generics_literal
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_preserves_f32_arithmetic_at_rust_boundary_issue1219
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_emits_raw_rust_field_names_for_keyword_fields_issue725
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_borrows_reqwest_json_payload_returned_from_registry_client
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_keeps_nested_rust_associated_calls_type_like_when_outer_receiver_is_unknown
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_try_generate_module_keeps_root_rust_trait_import_issue827
+# retires: loaves/compiler/incan_emit/src/checked_program/rust_trait_receiver_codegen.rs::trait_qualified_calls_pass_the_declared_receiver_mode
+# retires: loaves/compiler/incan_emit/src/checked_program/rust_trait_receiver_codegen.rs::owned_local_receivers_are_borrowed_once_by_the_recorded_mode
+# retires: loaves/compiler/incan_emit/tests/closure_local_call_codegen_tests.rs::a_closure_argument_to_a_metadata_free_crate_method_keeps_its_callee_identity_issue1492
+# expect-stdout:
+#   1 2 3 2
+#   7
+#   7 marker
+#   1 2
+#   3 4
+#   0.55
+#   2
+#   11 21
+#   1 2
+#   5 6
+#   3 4
+#   1 2
+#   0
+#   1.5
+#   6
+#   https://example.invalid 1
+#   6
+#   3
+#   3 true 3
+#   3 true 3
+#   true
+
+from rust::demo import (
+    Builder,
+    ClearColor,
+    Color,
+    Commands,
+    Component,
+    Dynamic,
+    Engine,
+    Entity,
+    Expression,
+    File,
+    FooBar,
+    FooBar2,
+    Gadget,
+    JoinRel,
+    Kind,
+    Mac,
+    Message,
+    Packet,
+    Pair,
+    PairFactory,
+    PlainBar,
+    Predicate,
+    SessionContext,
+    Static,
+    Widget,
+    WriteOptions,
+    accept_f32,
+    flock,
+)
+from rust::demo_derive import Component as ComponentMacro
+from rust::client_probe import Client
+
+
+def identity(value: int) -> int:
+    return value
+
+
+pub def build(values: list[int]) -> list[Kind]:
+    return [Kind.Tuple(1), Kind.Tuple(identity(2)), Kind.Tuple(values[0]), Kind.Tuple(len(values))]
+
+
+pub def retain(file: File) -> File:
+    flock(file)
+    return file
+
+
+pub def build_pair() -> PairFactory[int, str]:
+    return PairFactory.new(7, "marker")
+
+
+pub def make_pair() -> Pair:
+    return Pair(1, 2)
+
+
+pub def make_named_pair() -> Pair:
+    return Pair(zeta=3, alpha=4)
+
+
+pub def clear() -> ClearColor:
+    return ClearColor(Color.srgb(0.15, 0.55, 0.95))
+
+
+pub def setup(mut commands: Commands) -> int:
+    commands.spawn_empty()
+    commands.spawn_empty()
+    return commands.spawned
+
+
+pub def move_items(mut items: FooBar[tuple[&mut Widget, &mut Gadget]]) -> None:
+    for widget, gadget in items.iter_mut():
+        widget.value = widget.value + 10
+        gadget.value = gadget.value + 20
+
+
+pub def inspect_plain(items: PlainBar[tuple[Widget, Gadget]]) -> str:
+    widget, gadget = items.inner
+    return f"{widget.value} {gadget.value}"
+
+
+pub def inspect_dynamic(values: FooBar[Dynamic]) -> int:
+    return len(values)
+
+
+pub def inspect_static(values: FooBar[Static]) -> int:
+    return len(values)
+
+
+@rust.derive(ComponentMacro)
+model Velocity:
+    x: f32
+
+
+pub def inspect_velocity(mut values: FooBar[Velocity]) -> int:
+    return len(values)
+
+
+pub def inspect_two(items: FooBar2[Widget, Gadget]) -> str:
+    return f"{items.first.value} {items.second.value}"
+
+
+trait Replacer:
+    def replace(self, items: PlainBar[tuple[Widget, Gadget]]) -> str: ...
+
+
+model Swapper with Replacer:
+    def replace(self, items: PlainBar[tuple[Widget, Gadget]]) -> str:
+        return inspect_plain(items)
+
+
+pub def translate(time: f32, velocity: f32) -> f32:
+    return accept_f32(-time + time * velocity)
+
+
+pub def get_type(join: JoinRel) -> int:
+    return join.type + join.match + join.type_
+
+
+pub def rebuild(join: JoinRel) -> JoinRel:
+    return JoinRel(type=join.type, match=join.match, type_=join.type_)
+
+
+model Payload:
+    name: str
+
+
+pub def forward(payload: Payload) -> int:
+    builder = Builder.new()
+    return builder.json(payload)
+
+
+pub def post(payload: Payload) -> str:
+    builder = Client.new().post("https://example.invalid")
+    sent = builder.json(payload)
+    return f"{sent.url} {sent.payloads}"
+
+
+pub def write(uri: str) -> int:
+    ctx = SessionContext.new()
+    return ctx.write_csv(uri, WriteOptions.new(), None)
+
+
+pub def encode_packet(packet: Packet) -> int:
+    return len(packet.encode_to_vec())
+
+
+pub class Signer:
+    handle: Engine
+
+    def update(mut self, chunk: bytes) -> None:
+        Mac.update(self.handle, chunk.as_slice())
+
+    def is_ready(self) -> bool:
+        return Mac.is_ready(self.handle)
+
+    def finish(self) -> bytes:
+        return Mac.finalize(self.handle)
+
+
+pub def sign_field(chunk: bytes) -> str:
+    mut signer = Signer(handle=Engine.default())
+    signer.update(chunk)
+    return f"{len(chunk)} {signer.is_ready()} {len(signer.finish())}"
+
+
+pub def sign_local(chunk: bytes) -> str:
+    mut input = Engine.default()
+    Mac.update(input, chunk.as_slice())
+    _ = Mac.by_ref(input)
+    ready = Mac.is_ready(input)
+    return f"{len(chunk)} {ready} {len(Mac.finalize(input))}"
+
+
+model CfgSnapshot:
+    target: str
+
+
+def cfg_predicate(predicate: &Predicate, snapshot: CfgSnapshot) -> Option[bool]:
+    return Some(predicate.value > 0 and len(snapshot.target) > 0)
+
+
+pub def evaluate(expression: Expression, snapshot: CfgSnapshot) -> Option[bool]:
+    return expression.eval((predicate) => cfg_predicate(predicate, snapshot))
+
+
+def main() -> None:
+    kinds = build([3])
+    println(f"{kinds[0].payload()} {kinds[1].payload()} {kinds[2].payload()} {kinds[3].payload()}")
+    println(retain(File(number=7)).number)
+    pair = build_pair()
+    println(f"{pair.first} {pair.second}")
+    made = make_pair()
+    println(f"{made.zeta} {made.alpha}")
+    named = make_named_pair()
+    println(f"{named.zeta} {named.alpha}")
+    println(clear().0.green)
+    println(setup(Commands.new()))
+    mut widget = Widget(value=1)
+    mut gadget = Gadget(value=1)
+    move_items(FooBar.pair(widget, gadget))
+    println(f"{widget.value} {gadget.value}")
+    println(inspect_plain(PlainBar.new((Widget(value=1), Gadget(value=2)))))
+    println(inspect_two(FooBar2(first=Widget(value=5), second=Gadget(value=6))))
+    println(Swapper().replace(PlainBar.new((Widget(value=3), Gadget(value=4)))))
+    println(inspect_plain(PlainBar.new((Widget(value=1), Gadget(value=2)))))
+    println(inspect_dynamic(FooBar.new()) + inspect_static(FooBar.new()) + inspect_velocity(FooBar.new()))
+    println(translate(1.0, 2.5))
+    join = rebuild(JoinRel(type=1, match=2, type_=3))
+    println(get_type(join))
+    println(post(Payload(name="demo")))
+    println(write("a.csv") + forward(Payload(name="demo")))
+    println(encode_packet(Packet()))
+    println(sign_field(b"abc"))
+    println(sign_local(b"abc"))
+    match evaluate(Expression(seed=1), CfgSnapshot(target="x")):
+        Some(value) => println(value)
+        None => println("none")

@@ -1,0 +1,65 @@
+# behavior: an empty list payload of a generic enum variant takes the enum's supplied type argument from its destination, whether the names differ, match, the payload is concrete, or a local's annotation differs from the enclosing return (#1516)
+# retires: loaves/compiler/incan_emit/tests/checked_empty_collection_constructor_tests.rs::enum_variant_payload_uses_the_enum_type_argument_not_the_declared_name_issue1516
+# retires: loaves/compiler/incan_emit/tests/checked_empty_collection_constructor_tests.rs::enum_variant_payload_still_emits_a_matching_type_parameter_name_issue1516
+# retires: loaves/compiler/incan_emit/tests/checked_empty_collection_constructor_tests.rs::enum_variant_payload_keeps_a_concrete_declared_payload_type_issue1516
+# retires: loaves/compiler/incan_emit/tests/checked_empty_collection_constructor_tests.rs::enum_variant_payload_follows_the_destination_not_the_enclosing_return_issue1516
+# expect-stdout:
+#   0
+#   0
+#   0
+#   aside:0
+#   empty
+
+@derive(Clone)
+enum Holder[Elem with Clone]:
+    Names(list[str])
+    Items(list[Elem])
+    Empty
+
+
+@derive(Clone)
+model Maker[T with Clone]:
+    seed: T
+
+    def build[Picked with Clone](self) -> Holder[Picked]:
+        return Holder.Items([])
+
+
+def build[U with Clone]() -> Holder[U]:
+    return Holder.Items([])
+
+
+def build_names[Picked with Clone]() -> Holder[Picked]:
+    return Holder.Names([])
+
+
+def build_aside[Picked with Clone]() -> Holder[Picked]:
+    aside: Holder[str] = Holder.Items([])
+    match aside:
+        case Holder.Items(values):
+            println(f"aside:{len(values)}")
+        case _:
+            println("aside:other")
+    return Holder.Empty
+
+
+def show[E with Clone](holder: Holder[E]) -> str:
+    match holder:
+        case Holder.Items(values):
+            return f"{len(values)}"
+        case Holder.Names(names):
+            return f"{len(names)}"
+        case Holder.Empty:
+            return "empty"
+
+
+def main() -> None:
+    m = Maker[int](seed=1)
+    h: Holder[str] = m.build[str]()
+    println(show(h))
+    g: Holder[str] = build[str]()
+    println(show(g))
+    n: Holder[int] = build_names[int]()
+    println(show(n))
+    a: Holder[int] = build_aside[int]()
+    println(show(a))

@@ -1,0 +1,32 @@
+# behavior: the std toml derive bundle reached through a std root import, plain and aliased, lets a model serialize to TOML (#1434)
+# retires: loaves/compiler/incan_emit/src/codegen.rs::std_root_module_derive_retains_sdk_facade_import
+# expect-stdout:
+#   demo
+#   name = "demo"
+#   name = "other"
+
+from std import toml
+from std import toml as manifest
+
+
+@derive(toml)
+model Project:
+    name: str
+
+
+@derive(manifest)
+model Other:
+    name: str
+
+
+def show(encoded: Result[str, toml.TomlError]) -> str:
+    match encoded:
+        Ok(text) => return text.strip()
+        Err(error) => return error.message()
+
+
+def main() -> None:
+    project = Project(name="demo")
+    println(project.name)
+    println(show(toml.serialize(project)))
+    println(show(manifest.serialize(Other(name="other"))))

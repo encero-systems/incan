@@ -1,0 +1,33 @@
+# behavior: explicit type arguments on a function call, a method call and a mixed explicit-and-inferred call select the instantiation
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_emits_explicit_function_call_type_args
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_emits_explicit_method_call_type_args
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_emits_full_turbofish_for_mixed_explicit_and_inferred_type_args
+# expect-stdout:
+#   1
+#   text
+#   2
+#   3
+
+def id[T](x: T) -> T:
+    return x
+
+
+class Box:
+    def pick[T](self, value: T) -> T:
+        return value
+
+
+def pair_map[T, U](x: T, y: U) -> int:
+    return 3
+
+
+pub def run() -> int:
+    return id[int](1)
+
+
+def main() -> None:
+    println(run())
+    println(id[str]("text"))
+    let b = Box()
+    println(b.pick[int](2))
+    println(pair_map[int, _](1, 2))

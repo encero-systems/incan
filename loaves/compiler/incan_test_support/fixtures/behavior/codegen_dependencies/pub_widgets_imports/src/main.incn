@@ -1,0 +1,19 @@
+# behavior: a dependency's model, function and const are usable through `from pub::… import`, with an item alias, and through `import pub::… as` module alias
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_pub_from_import_emits_dependency_crate_item_paths
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_pub_import_expressions_codegen
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_pub_module_import_alias_emits_use_alias
+# expect-stdout:
+#   ok
+#   default
+#   aliased
+
+from pub::widgets import Widget as PublicWidget, make_widget, DEFAULT_NAME
+import pub::widgets as widgets_alias
+
+
+def main() -> None:
+    w: PublicWidget = make_widget("ok")
+    println(w.name)
+    mut d: PublicWidget = make_widget(DEFAULT_NAME)
+    println(d.name)
+    println(widgets_alias.make_widget("aliased").name)

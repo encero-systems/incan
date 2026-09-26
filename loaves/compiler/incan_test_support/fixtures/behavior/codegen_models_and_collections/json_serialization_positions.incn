@@ -1,0 +1,55 @@
+# behavior: a json-derived model and a Serialize-derived model serialize, and json_stringify works as a statement, in an if condition, an elif body, a while condition and a for iterator
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_serde_detection
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_serde_detection_single_derive
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_no_serde_when_not_used
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_serde_detection_json_stringify_builtin
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_serde_detection_json_stringify_in_if_condition
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_serde_detection_json_stringify_in_elif_body
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_serde_detection_json_stringify_in_while_condition
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_serde_detection_json_stringify_in_for_iterator
+# expect-stdout:
+#   {"name":"cfg"}
+#   {"id":7}
+#   3
+#   123
+#   if:1
+#   elif:1
+#   while:1
+#   for:1
+
+from std.serde import json
+from std.serde.json import Serialize
+
+
+@derive(json)
+model Config:
+    name: str
+
+
+@derive(Serialize)
+model User:
+    id: int
+
+
+@derive(Clone, Debug)
+model Plain:
+    id: int
+
+
+def main() -> None:
+    println(Config(name="cfg").to_json())
+    println(User(id=7).to_json())
+    println(Plain(id=3).id)
+    encoded = json_stringify(123)
+    println(encoded)
+    if json_stringify(1) == "1":
+        println("if:1")
+    if false:
+        pass
+    elif true:
+        println(f"elif:{json_stringify(1)}")
+    while json_stringify(1) == "1":
+        println("while:1")
+        break
+    for item in [json_stringify(1)]:
+        println(f"for:{item}")
