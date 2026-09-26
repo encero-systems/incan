@@ -961,7 +961,7 @@ mod tests {
                 "std".to_string(),
                 "derives".to_string(),
                 "comparison".to_string(),
-                "Eq".to_string(),
+                core_traits::as_str(core_traits::TraitId::Eq).to_string(),
             ],
         );
         lowering.import_aliases.insert(
@@ -970,7 +970,7 @@ mod tests {
                 "std".to_string(),
                 "derives".to_string(),
                 "copying".to_string(),
-                "Clone".to_string(),
+                core_traits::as_str(core_traits::TraitId::Clone).to_string(),
             ],
         );
 
@@ -999,7 +999,7 @@ mod tests {
                 "std".to_string(),
                 "derives".to_string(),
                 "collection".to_string(),
-                "Iterator".to_string(),
+                core_traits::as_str(core_traits::TraitId::Iterator).to_string(),
             ],
         );
         let stream = lowering.lower_trait_bound(&adopted_bound("Stream").node, &type_params);
