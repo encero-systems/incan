@@ -1022,6 +1022,8 @@ pub enum MutArgumentPlace {
     Element,
     /// A module static, which a call receives as a copy of its current value.
     Static,
+    /// A `for` loop variable, by name, which cannot be declared `mut`.
+    LoopVariable(String),
 }
 
 /// How an `INCAN-T0117` refusal names the `mut` parameter: by its declared name, or by its position when the callee is
@@ -1086,6 +1088,9 @@ pub fn immutable_argument_to_mut_parameter(
         MutArgumentPlace::Element | MutArgumentPlace::Static => format!(
             "Bind the value to a 'mut' variable, pass the variable, and store it back: mut {binding} = ..., then assign it to the element or static"
         ),
+        MutArgumentPlace::LoopVariable(name) => format!(
+            "A 'for' loop variable cannot be declared 'mut': loop over the indexes instead, bind each element to a 'mut' variable, pass that variable, and store it back: mut {name} = ...[i], then ...[i] = {name}"
+        ),
     };
     CompileError::type_error(
         format!("Argument for the 'mut' parameter {parameter} of '{callee}' must be a mutable binding"),
@@ -1132,7 +1137,8 @@ pub enum MutParameterCopy {
 ///
 /// `other = items`, a literal, comprehension, field store, construction or `partial` preset holding `items`, a
 /// `match`, `if`, `break` or `yield` value that is `items`, a `match items:` arm that binds it and a closure that
-/// returns, changes or passes it on would each hold the parameter's value under another name. Whether such a holder
+/// returns it, changes it or passes it on to a parameter that may change it would each hold the parameter's value under
+/// another name. Whether such a holder
 /// shares the caller's value or copies it is not defined, so the parameter is used only directly. `copy` spells the
 /// independent copy the hint offers.
 pub fn caller_visible_mut_parameter_held(name: &str, copy: &MutParameterCopy, span: Span) -> CompileError {

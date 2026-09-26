@@ -1614,6 +1614,8 @@ impl TypeChecker {
             }
         };
 
+        // The iterated parameter is resolved before the loop's bindings shadow it (`for items in items:`).
+        let loop_view_param = self.loop_view_param(&for_stmt.iter);
         self.symbols.enter_scope(ScopeKind::Block);
         // Record the resolved element type at the pattern's own span. Body IR's `lower_for` already reads the loop
         // pattern's type back through `TypeCheckInfo::expr_type`, and every binding the pattern introduces -- one
@@ -1622,10 +1624,10 @@ impl TypeChecker {
         self.record_expr_type(for_stmt.pattern.span, elem_ty.clone());
         self.define_for_pattern_bindings(&for_stmt.pattern, &elem_ty);
         self.push_loop_context(LoopContextKind::Statement, None);
-        let loop_elements = self.enter_for_over_mut_param(&for_stmt.pattern.node, &for_stmt.iter);
+        let loop_body = self.enter_for_loop_body(&for_stmt.pattern.node, loop_view_param);
 
         self.check_statement_block(&for_stmt.body);
-        self.exit_for_over_mut_param(loop_elements);
+        self.exit_for_loop_body(loop_body);
         let _ = self.pop_loop_context();
         self.symbols.exit_scope();
     }

@@ -8,12 +8,13 @@
 //!
 //! - each declared parameter's marker, recorded at collection for lowering by parameter span and name, so the Rust
 //!   shape of the declaration and of every call agrees ([`TypeCheckInfo`](super::TypeCheckInfo) declarations);
-//! - which caller-visible parameters a callable's body changes, directly, through the variable of a `for` loop over
-//!   one, or by passing them on to another callee that changes them; a method reached by trait dispatch and a callee
-//!   known only by its callable type are taken to change every marked parameter;
+//! - which caller-visible parameters a callable's body changes, directly, through the variable of a `for` loop that
+//!   iterates one in place, or by passing them on to another callee that changes them; a method reached by trait
+//!   dispatch and a callee known only by its callable type are taken to change every marked parameter;
 //! - where a caller-visible parameter would be held by another name or value (a new binding, a literal, comprehension,
-//!   field store, construction or `partial` preset, a `match`, `if`, `break` or `yield` value, a `match` arm binding, a
-//!   closure that returns, changes or passes it on), which is refused;
+//!   field or element store, construction or `partial` preset, a `match`, `if`, `break` or `yield` value, a `match` arm
+//!   binding, a closure that returns it, changes it or passes it on to a parameter that may change it), which is
+//!   refused;
 //! - which call arguments are refused (`INCAN-T0117`): an immutable binding or a field of one, an element of a
 //!   collection, or a static, passed to a caller-visible parameter the callee changes, where the change would fail to
 //!   build or be lost;
@@ -132,6 +133,8 @@ pub(crate) struct MutParamFacts {
     /// Local bindings that hold a declared callable by reference, `f = extend`, keyed by the binding's declaration
     /// span, so a call through them is checked too.
     function_values: HashMap<(usize, usize), CanonicalSymbolId>,
+    /// Binding spans of the variables of every `for` loop being checked, which are not mutable bindings.
+    loop_variables: Vec<Span>,
     /// Local bindings reassigned anywhere in the module, keyed by declaration span. A call through such a local may
     /// run any callable it was assigned, so it counts as changing every marked parameter.
     reassigned_locals: HashSet<(usize, usize)>,
@@ -258,56 +261,74 @@ impl TypeChecker {
             .map(|(_, _, param)| param.clone())
     }
 
-    /// Enter the body of `for <pattern> in <iter>`, whose bindings are already defined; returns the state to restore
-    /// with [`Self::exit_for_over_mut_param`].
+    /// Return the caller-visible parameter whose elements a `for` loop's variable is a view into, resolved before the
+    /// loop's own bindings are defined (so `for items in items:` reads the parameter).
     ///
-    /// When the loop iterates over a caller-visible parameter or its elements (`items`, `items[0]`, `table.values()`,
-    /// `enumerate(items)`, or a variable of an enclosing loop over one), each variable the pattern binds reaches the
-    /// parameter, so a change through it is a change to the parameter.
-    pub(in crate::typechecker) fn enter_for_over_mut_param(
+    /// Only a loop over a list parameter itself, over a field of it, or over the variable of an enclosing such loop
+    /// iterates the list in place, and only when its elements are not `int`, `float` or `bool`. Any other iterable (a
+    /// call such as `list(items)` or `enumerate(items)`, a method such as `items.clone()` or `table.values()`, an
+    /// element such as `items[0]`) yields copies, and a change through its variable does not reach the parameter.
+    pub(in crate::typechecker) fn loop_view_param(&self, iter: &Spanned<Expr>) -> Option<String> {
+        let mut node = iter;
+        while let Expr::Paren(inner) | Expr::Field(inner, _) = &node.node {
+            node = inner;
+        }
+        let Expr::Ident(root) = &node.node else {
+            return None;
+        };
+        let yields_views = self
+            .type_info
+            .expr_type(iter.span)
+            .is_some_and(list_of_changeable_elements);
+        if !yields_views {
+            return None;
+        }
+        self.caller_visible_param_reached_by(root)
+    }
+
+    /// Enter the body of `for <pattern> in ...`, whose bindings are already defined; returns the state to restore with
+    /// [`Self::exit_for_loop_body`].
+    ///
+    /// Every variable the pattern binds is a loop variable. When `param` names the caller-visible parameter the loop
+    /// iterates in place ([`Self::loop_view_param`]), each variable is a view into its elements, so a change through
+    /// it is a change to the parameter.
+    pub(in crate::typechecker) fn enter_for_loop_body(
         &mut self,
         pattern: &Pattern,
-        iter: &Spanned<Expr>,
-    ) -> usize {
-        let Some(previous) = self.mut_params.current.as_ref().map(|body| body.loop_elements.len()) else {
-            return 0;
-        };
-        let Some(param) = self.iterated_mut_param(iter) else {
-            return previous;
-        };
+        param: Option<String>,
+    ) -> (usize, usize) {
         let mut names = Vec::new();
         collect_pattern_bindings(pattern, &mut names);
-        let elements = names
+        let bindings = names
             .into_iter()
             .filter_map(|name| {
                 let span = self.lookup_symbol(&name)?.span;
-                Some((name, span, param.clone()))
+                Some((name, span))
             })
             .collect::<Vec<_>>();
-        if let Some(body) = &mut self.mut_params.current {
-            body.loop_elements.extend(elements);
+        let previous_variables = self.mut_params.loop_variables.len();
+        self.mut_params
+            .loop_variables
+            .extend(bindings.iter().map(|(_, span)| *span));
+        let Some(body) = &mut self.mut_params.current else {
+            return (0, previous_variables);
+        };
+        let previous_elements = body.loop_elements.len();
+        if let Some(param) = param {
+            body.loop_elements
+                .extend(bindings.into_iter().map(|(name, span)| (name, span, param.clone())));
         }
-        previous
+        (previous_elements, previous_variables)
     }
 
-    /// Leave a loop body entered with [`Self::enter_for_over_mut_param`].
-    pub(in crate::typechecker) fn exit_for_over_mut_param(&mut self, previous: usize) {
+    /// Leave a loop body entered with [`Self::enter_for_loop_body`].
+    pub(in crate::typechecker) fn exit_for_loop_body(
+        &mut self,
+        (previous_elements, previous_variables): (usize, usize),
+    ) {
+        self.mut_params.loop_variables.truncate(previous_variables);
         if let Some(body) = &mut self.mut_params.current {
-            body.loop_elements.truncate(previous);
-        }
-    }
-
-    /// Return the caller-visible parameter an iterable reaches: a place rooted at it, a method called on one, or an
-    /// argument of the call that produces the iterable.
-    fn iterated_mut_param(&self, iter: &Spanned<Expr>) -> Option<String> {
-        match &iter.node {
-            Expr::Paren(inner) => self.iterated_mut_param(inner),
-            Expr::MethodCall(base, _, _, _) => self.iterated_mut_param(base),
-            Expr::Call(_, _, args) => args.iter().find_map(|arg| match arg {
-                CallArg::Positional(value) | CallArg::Named(_, value) => self.iterated_mut_param(value),
-                CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => None,
-            }),
-            _ => self.caller_visible_param_reached_by(place_root_name(iter)?),
+            body.loop_elements.truncate(previous_elements);
         }
     }
 
@@ -979,6 +1000,11 @@ impl TypeChecker {
                 place: MutArgumentPlace::Element,
             };
         }
+        if !is_mutable && self.mut_params.loop_variables.contains(&symbol.span) {
+            return ArgumentPlace::Detached {
+                place: MutArgumentPlace::LoopVariable(root.to_string()),
+            };
+        }
         if is_mutable {
             return ArgumentPlace::Mutable {
                 forwarded_param: self.caller_visible_param_reached_by(root),
@@ -1120,6 +1146,20 @@ fn pattern_binds_whole_value(pattern: &Pattern) -> bool {
         Pattern::Or(alternatives) => alternatives
             .iter()
             .any(|alternative| pattern_binds_whole_value(&alternative.node)),
+        _ => false,
+    }
+}
+
+/// Return whether a value of `ty` is a list whose elements a loop can change in place: not `int`, `float` or `bool`.
+fn list_of_changeable_elements(ty: &ResolvedType) -> bool {
+    match ty {
+        ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => list_of_changeable_elements(inner),
+        ResolvedType::Generic(name, args) => {
+            collection_type_id(name) == Some(CollectionTypeId::List)
+                && args.first().is_some_and(|element| {
+                    !matches!(element, ResolvedType::Int | ResolvedType::Float | ResolvedType::Bool)
+                })
+        }
         _ => false,
     }
 }

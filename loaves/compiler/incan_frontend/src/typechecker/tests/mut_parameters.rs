@@ -602,28 +602,83 @@ def main() -> None:
     Ok(())
 }
 
-/// #1773: a change made through a variable of a `for` loop over a caller-visible parameter, or over one of its
-/// elements' loops, is a change to the parameter, so an immutable binding passed for it is refused.
+/// #1773: the variable of a `for` loop over a caller-visible list parameter, a field of it, or the variable of an
+/// enclosing such loop is a view into the parameter's elements, even when it reuses the iterated name, so a change
+/// through it is a change to the parameter and an immutable binding passed for it is refused. A loop over a copy (a
+/// call such as `list(items)` or `enumerate(items)`, a method such as `items.clone()`, an element such as `items[0]`)
+/// changes only the copy. A loop variable passed to a parameter the callee changes is refused, with a hint that can be
+/// followed.
 #[test]
 fn change_through_a_loop_variable_counts_as_changing_issue1773() -> Result<(), String> {
-    let prelude = r#"
+    let changes = r#"
 def grow(mut items: list[list[int]]) -> int:
     for row in items:
         row.append(3)
     return len(items[0])
 
-def indexed(mut items: list[list[int]]) -> int:
-    for i, row in enumerate(items):
-        row.append(i)
-    return len(items)
+def reuse(mut items: list[list[int]]) -> int:
+    for items in items:
+        items.append(3)
+    return 1
+
+def nested(mut items: list[list[list[int]]]) -> int:
+    for row in items:
+        for row in row:
+            row.append(3)
+    return 1
 "#;
     let refused = mut_argument_refusals(&format!(
-        "{prelude}\ndef main() -> None:\n    live: list[list[int]] = [[1]]\n    println(grow(live))\n    println(indexed(live))\n"
+        "{changes}\ndef main() -> None:\n    live: list[list[int]] = [[1]]\n    deep: list[list[list[int]]] = [[[1]]]\n    println(grow(live))\n    println(reuse(live))\n    println(nested(deep))\n"
     ));
-    assert_eq!(refusals_by_callee(&refused), ["grow", "indexed"], "got {refused:?}");
+    assert_eq!(
+        refusals_by_callee(&refused),
+        ["grow", "reuse", "nested"],
+        "got {refused:?}"
+    );
     checked(&format!(
-        "{prelude}\ndef main() -> None:\n    mut live: list[list[int]] = [[1]]\n    println(grow(live))\n    println(indexed(live))\n"
+        "{changes}\ndef main() -> None:\n    mut live: list[list[int]] = [[1]]\n    mut deep: list[list[list[int]]] = [[[1]]]\n    println(grow(live))\n    println(reuse(live))\n    println(nested(deep))\n"
     ))?;
+
+    let copies = r#"
+def fresh(n: int) -> list[list[int]]:
+    return [[n]]
+
+def copied(mut items: list[list[int]]) -> int:
+    for row in list(items):
+        row.append(1)
+    for row in items.clone():
+        row.append(2)
+    for row in fresh(len(items)):
+        row.append(3)
+    for i, row in enumerate(items):
+        row.append(i)
+    for cell in items[0]:
+        println(cell)
+    return len(items)
+
+def main() -> None:
+    live: list[list[int]] = [[1]]
+    println(copied(live))
+"#;
+    let (_, info) = checked(copies)?;
+    assert_eq!(
+        info.calls.mut_argument_copies.len(),
+        1,
+        "loops over copies leave the parameter unchanged, so the immutable binding is passed as a copy"
+    );
+
+    let passed = mut_argument_refusals(
+        "def bump(mut row: list[int]) -> None:\n    row.append(1)\n\ndef each(mut items: list[list[int]]) -> None:\n    for row in items:\n        bump(row)\n",
+    );
+    assert_eq!(refusals_by_callee(&passed), ["bump"], "got {passed:?}");
+    assert!(
+        passed[0]
+            .hints
+            .iter()
+            .any(|hint| hint.contains("loop over the indexes")),
+        "a loop variable cannot be declared `mut`, so the hint says what can be done, got {:?}",
+        passed[0].hints
+    );
     Ok(())
 }
 
