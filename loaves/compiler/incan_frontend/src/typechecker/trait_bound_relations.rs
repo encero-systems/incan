@@ -3,14 +3,18 @@
 use std::collections::{HashMap, HashSet};
 
 use super::TypeChecker;
+use super::derive_requirements::DeriveSupport;
 use crate::ast::TypeParam;
 use crate::diagnostics::errors::{self, CallableMarkerRefusal, GenericBoundTarget};
 use crate::resolved_type_subst::substitute_resolved_type;
 use crate::symbols::{ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo};
 use crate::typechecker::helpers::collection_type_id;
-use incan_lang::interop::{is_rust_callable_capability_bound, is_rust_capability_bound};
+use incan_lang::interop::{
+    is_rust_callable_capability_bound, is_rust_capability_bound, is_rust_future_capability_bound,
+};
 use incan_lang::lang::callables;
 use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::stdlib;
 use incan_lang::lang::trait_capabilities::{
     self, TraitCapabilityId, TraitCapabilityInfo, TraitCapabilityType, TraitCapabilityTypeArg,
 };
@@ -81,12 +85,24 @@ impl TypeChecker {
     }
 
     /// Return whether a type satisfies one explicit bound, including generic trait arguments.
+    ///
+    /// An `Eq` or `Hash` bound the checker inferred from a callable's body (#1758) holds unless the derive relation
+    /// knows the type lacks the derive.
     pub fn type_satisfies_explicit_bound_info(
         &self,
         ty: &ResolvedType,
         bound: &TypeBoundInfo,
         bindings: &HashMap<String, ResolvedType>,
     ) -> bool {
+        if Self::function_value_misses_future_bound(ty, &bound.name) {
+            return false;
+        }
+        // An inferred `Eq` or `Hash` bound (#1758) holds unless the type is known to lack the derive.
+        if bound.inferred
+            && let Some(derive) = derives::from_str(&bound.name)
+        {
+            return !matches!(self.derive_support(ty, derive), DeriveSupport::Missing(_));
+        }
         if let Some(defer) = self.foreign_trait_bound_requires_native_check(&bound.name) {
             return defer;
         }
@@ -260,8 +276,33 @@ impl TypeChecker {
             .flatten()
     }
 
+    /// Return whether a bound names a capability marker that requires a future (`RuntimeFuture`), under any spelling.
+    ///
+    /// A bound read from a provider's checked signature may carry a module or Rust path, so the marker is matched by
+    /// its last path segment.
+    pub(in crate::typechecker) fn bound_requires_future(bound: &str) -> bool {
+        let marker = bound
+            .rsplit(['.', ':'])
+            .find(|segment| !segment.is_empty())
+            .unwrap_or(bound);
+        is_rust_future_capability_bound(marker)
+    }
+
+    /// Return whether `ty` is a function value checked against a bound that requires a future (#1772).
+    ///
+    /// Every other type is admitted at a Rust capability marker and left to the build, because the checker gives an
+    /// `async def` call's result its output type and cannot tell it from a plain value of that type. A function value
+    /// is never a future, whatever it returns, so it is refused here: this runs before the foreign-trait deferral so
+    /// that a marker imported from `rust::` in a provider's own scope cannot hide it.
+    fn function_value_misses_future_bound(ty: &ResolvedType, bound: &str) -> bool {
+        matches!(ty, ResolvedType::Function(_, _)) && Self::bound_requires_future(bound)
+    }
+
     /// Best-effort check whether a concrete type satisfies an explicit generic bound.
     pub(in crate::typechecker) fn type_satisfies_explicit_bound(&self, ty: &ResolvedType, bound: &str) -> bool {
+        if Self::function_value_misses_future_bound(ty, bound) {
+            return false;
+        }
         if let Some(defer) = self.foreign_trait_bound_requires_native_check(bound) {
             return defer;
         }
@@ -278,6 +319,15 @@ impl TypeChecker {
         }
         if builtin_traits::from_str(bound).is_none() && self.lookup_semantic_trait_info(bound).is_some() {
             return self.type_satisfies_nominal_trait_bound(ty, bound);
+        }
+        // `Clone`, `Debug`, `Eq` and `Hash` are answered by the derive relation wherever it knows the type; an unknown
+        // answer keeps the per-type fallback below.
+        if let Some(derive) = self.builtin_derive_bound(bound) {
+            match self.derive_support(ty, derive) {
+                DeriveSupport::Supported => return true,
+                DeriveSupport::Missing(_) => return false,
+                DeriveSupport::Unknown => {}
+            }
         }
         match ty {
             ResolvedType::Never
@@ -328,6 +378,21 @@ impl TypeChecker {
         }
     }
 
+    /// Return the builtin derive a bound or trait adoption names, when its spelling reaches the builtin trait.
+    ///
+    /// An imported trait that merely shares a builtin's name (`from unrelated import Eq`) is not the builtin; an import
+    /// alias of the builtin (`from std.derives.comparison import Eq as Equality`) is.
+    pub(in crate::typechecker) fn builtin_derive_bound(&self, bound: &str) -> Option<DeriveId> {
+        let Some(path) = self.import_binding_path(bound) else {
+            return derives::from_str(bound).filter(|_| builtin_traits::from_str(bound).is_some());
+        };
+        let (trait_name, module_path) = path.split_last()?;
+        let derive = derives::from_str(trait_name).filter(|_| builtin_traits::from_str(trait_name).is_some())?;
+        stdlib::trait_method_module_segments(trait_name)
+            .is_some_and(|builtin_module| builtin_module == module_path)
+            .then_some(derive)
+    }
+
     /// Keep imported Rust bounds at the native validation boundary rather than requiring an Incan trait adoption.
     ///
     /// Rust decides whether the lowered scalar, container, or model implements the foreign trait. This does not
@@ -364,7 +429,7 @@ impl TypeChecker {
     }
 
     /// Check whether an active generic placeholder already carries the bound required by a nested generic call.
-    fn active_type_param_satisfies_bound_info(
+    pub(in crate::typechecker) fn active_type_param_satisfies_bound_info(
         &self,
         placeholder_name: &str,
         required: &TypeBoundInfo,
@@ -470,6 +535,7 @@ impl TypeChecker {
                         .collect(),
                     module_path,
                     implementation_type_params: Vec::new(),
+                    inferred: false,
                 };
                 self.type_bound_names_match(&candidate, required)
                     && self.type_bound_args_match(&candidate, required, bindings)
@@ -963,6 +1029,7 @@ impl TypeChecker {
                     .collect(),
             ),
             implementation_type_params: Vec::new(),
+            inferred: false,
         };
         adoptions
             .iter()

@@ -1,0 +1,21 @@
+# behavior: a newtype and a model whose @rust.derive names std::clone::Clone, a derive they already carry, build with one Clone implementation each
+# retires: loaves/compiler/incan_ir/src/lower/tests/newtype_automatic_derives.rs::rust_derive_path_of_an_automatic_derive_is_emitted_once_issue1754
+# retires: loaves/compiler/incan_ir/src/lower/tests/newtype_automatic_derives.rs::rust_derive_paths_of_automatic_and_implied_derives_are_emitted_once_issue1754
+# expect-stdout:
+#   ada
+#   2
+
+@rust.derive("std::clone::Clone")
+type Name = newtype str
+
+
+@rust.derive("std::clone::Clone")
+model Person:
+    name: Name
+
+
+def main() -> None:
+    mut people: list[Person] = [Person(name=Name("ada"))]
+    people.append(Person(name=Name("bo")))
+    println(people[0].name.0)
+    println(len(people))

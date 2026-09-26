@@ -3807,6 +3807,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/capability_requirements.rs": {
+      "disposition": "keep",
+      "notes": "typechecker refusals of types lacking a capability the program needs (#1754 automatic derives, #1758 set elements and dict keys, #1772 a function value passed as a task); no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/checked_facts_and_registries.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -4666,6 +4674,32 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_ir/src/lower/tests/newtype_automatic_derives.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, derive lists). Retire with `incan_ir` (#654); the typechecker's derive relation that decides a newtype's automatic derives stays covered by typechecker/tests/capability_requirements.rs (keep).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "newtype_automatic_derives_follow_the_underlying_type_issue1754": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/model_field_of_newtype_over_str.incn",
+          "notes": "Asserts the derive list lowering gives a newtype (Clone when the underlying type implements it, Debug unless it lacks it, Copy for Copy types). The behavior, a model holding a newtype over str building and reading it back, is carried by the named fixture (#1754)."
+        },
+        "rust_derive_path_of_an_automatic_derive_is_emitted_once_issue1754": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/cli/rust_derived_clone_path_on_newtype_and_model.incn`: a newtype with `@rust.derive(\"std::clone::Clone\")` builds and a model holds it. Waits for the Cargo-free bake that `rust::` programs need: a `std::` path in `@rust.derive(...)` is a Rust derive probe, which needs source-current project inspection authority, and under the suite the program stops at `no source-current project inspection authority is available`. A bare `@rust.derive(Clone)` needs no probe but is already the automatic spelling, so it does not exercise the rule. Asserts that a `@rust.derive` path to a derive a newtype already carries joins the derive list once (#1754)."
+        },
+        "rust_derive_paths_of_automatic_and_implied_derives_are_emitted_once_issue1754": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/cli/rust_derived_clone_path_on_newtype_and_model.incn`: a model with `@rust.derive(\"std::clone::Clone\")` builds. Waits for the Cargo-free bake that `rust::` programs need, for the same Rust derive probe as the newtype case above. Asserts that a model, class or enum names each automatic or implied derive once whatever `@rust.derive` path also names it (#1754)."
+        },
+        "ord_derive_adds_its_prerequisites_in_table_order": {
+          "twin": "dies",
+          "dies": "asserts the textual order of the lowered derive list (`Ord`, `PartialOrd`, `Eq`, `PartialEq`), a generated-Rust spelling that dies with the Rust-source backend (#654); the implication itself is the incan_lang registry table, tested there (keep)."
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_ir/src/lower/tests/unary_operand_grouping.rs": {
       "disposition": "retire",
       "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
@@ -5013,6 +5047,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/kernel/incan_lang/src/lang/derives.rs": {
+      "disposition": "keep",
+      "notes": "language registry (derive vocabulary and the implication table lowering and the typechecker share, #1754); below the emitter.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/kernel/incan_lang/src/lang/highlighting.rs": {
       "disposition": "keep",
       "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level.",
@@ -5032,6 +5074,14 @@
     "loaves/kernel/incan_lang/src/lang/stdlib.rs": {
       "disposition": "keep",
       "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/kernel/incan_lang/src/lang/surface/types.rs": {
+      "disposition": "keep",
+      "notes": "language registry (surface type derive support for Clone, Debug, Eq and Hash, #1754, #1758); below the emitter.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",

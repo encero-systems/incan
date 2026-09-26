@@ -1818,6 +1818,7 @@ fn type_bound(bound: &CheckedTypeBound) -> TypeBoundExport {
             .iter()
             .map(implementation_type_param)
             .collect(),
+        inferred: bound.inferred,
     }
 }
 

@@ -1126,6 +1126,7 @@ impl TypeChecker {
             type_args: receiver_args,
             module_path: Some(module_path.clone()),
             implementation_type_params: Vec::new(),
+            inferred: false,
         };
         self.resolve_named_method(
             &std::collections::HashMap::new(),

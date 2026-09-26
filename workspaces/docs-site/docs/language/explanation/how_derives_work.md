@@ -37,7 +37,9 @@ The compiler is responsible for providing the implementation; the stdlib is the 
 Incan separates two cases:
 
 - **Derives**: default, structural behavior (field-based)
-- **Dunder hooks**: custom behavior (`__str__`, `__eq__`, `__lt__`, `__hash__`)
+- **Dunder hooks**: custom behavior (`__str__`, `__eq__`, `__lt__`)
+
+Hashing has only the derive: a set or dict hashes through `@derive(Hash)`, and a method named `__hash__` is an ordinary method that does not provide it ([#1822](https://github.com/encero-systems/incan/issues/1822) tracks a custom hash).
 
 If you try to do *both* for the same capability, that’s a **conflict** and should be treated as an error: the compiler must not have to guess which implementation “wins”.
 

@@ -7,6 +7,21 @@ use incan_frontend::ast;
 use incan_lang::lang::derives::{self, DeriveId};
 
 impl AstLowering {
+    /// Return the derives a newtype gets automatically, before `Copy`: `Debug` and `Clone` as the typechecker recorded
+    /// them from the underlying type (#1754).
+    ///
+    /// The typechecker's derive relation gives a newtype `Clone` when its underlying type implements it and `Debug`
+    /// unless its underlying type is known to lack it; lowering spells exactly that, so a newtype implements what the
+    /// checker assumed of it. Without a checked record (a declaration lowered without its module's typecheck facts)
+    /// only `Debug` is derived, the conservative spelling used before the relation existed.
+    fn newtype_automatic_derives(&self, name: &str) -> Vec<String> {
+        self.type_info
+            .as_ref()
+            .and_then(|info| info.declarations.newtype_construction.get(name))
+            .map(|checked| checked.automatic_derives.clone())
+            .unwrap_or_else(|| vec![derives::as_str(DeriveId::Debug).to_string()])
+    }
+
     /// Lower a newtype declaration to tuple struct.
     pub(in crate::lower) fn lower_newtype(&mut self, n: &ast::NewtypeDecl) -> Result<IrStruct, LoweringError> {
         // Newtype compiles to a tuple struct: struct UserId(i64);
@@ -23,13 +38,13 @@ impl AstLowering {
             description: None,
         }];
 
-        // ---- Derives: auto-derive Debug (always), Copy/Clone for Copy types ----
-        // Newtypes auto-derive only Debug by default; external types (e.g., Axum extractors) may not support
-        // Clone/PartialEq, so we stay conservative.
-        let debug = derives::as_str(DeriveId::Debug).to_string();
-        let mut auto_derives = vec![debug];
+        // ---- Derives: automatic Debug and Clone as the typechecker decided them, Copy for Copy types ----
+        let mut auto_derives = self.newtype_automatic_derives(&n.name);
+        let clone = derives::as_str(DeriveId::Clone).to_string();
         if underlying_ty.is_copy() {
-            auto_derives.push(derives::as_str(DeriveId::Clone).to_string());
+            if !auto_derives.contains(&clone) {
+                auto_derives.push(clone);
+            }
             auto_derives.push(derives::as_str(DeriveId::Copy).to_string());
         }
 
@@ -37,10 +52,11 @@ impl AstLowering {
         let (mut user_derives, derive_rust_modules) = self.extract_derives(&n.decorators);
         self.extend_derives_with_adopted_serde_traits(&mut user_derives, &n.traits);
 
-        // Merge: auto-derives first, then user derives (skip duplicates)
+        // Merge: auto-derives first, then user derives, skipping one that names a derive already present under another
+        // spelling (`Clone` and `@rust.derive("std::clone::Clone")` are the same derive, and naming it twice is E0119).
         let mut derives = auto_derives;
         for d in user_derives {
-            if !derives.contains(&d) {
+            if !derives.iter().any(|existing| Self::same_derive(existing, &d)) {
                 derives.push(d);
             }
         }

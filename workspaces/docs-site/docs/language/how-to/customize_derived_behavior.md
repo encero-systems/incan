@@ -79,17 +79,17 @@ model Task:
 
 ---
 
-## Custom hashing (`Set` / `Dict` keys)
+## Key a set or dict by a custom identity
 
-### Goal (custom hashing)
+### Goal (custom identity keys)
 
-Use a type as a `Set` member / `Dict` key based on a custom identity.
+Use values as set elements or dict keys by one part of them (for example, by `id` only).
 
-### Steps (custom hashing)
+### Steps (custom identity keys)
 
-1. Define `__hash__(self) -> int`.
-2. Ensure it matches equality: if `a == b`, their hashes must match.
-3. Do not also `@derive(Hash)`.
+1. Key the collection by the field that carries the identity: a `dict[int, User]` keyed by `user.id`, or a `set[int]` of ids.
+2. When every field is part of the identity, add `@derive(Eq, Hash)` to the type and use it as the key directly.
+3. Do not rely on a `__hash__` method: a set or dict does not call it, and a type that defines `__eq__` is refused as a set element or dict key (`INCAN-T0114`). A custom hash is tracked in [#1822](https://github.com/encero-systems/incan/issues/1822).
 
 ```incan
 model User:
@@ -99,9 +99,14 @@ model User:
     def __eq__(self, other: User) -> bool:
         return self.id == other.id
 
-    def __hash__(self) -> int:
-        return self.id.__hash__()
+def index_by_id(users: list[User]) -> dict[int, User]:
+    by_id: dict[int, User] = {}
+    for user in users:
+        by_id[user.id] = user
+    return by_id
 ```
+
+See [Derives: Comparison → Hash](../reference/derives/comparison.md#hash) for which types can be set elements and dict keys.
 
 ---
 

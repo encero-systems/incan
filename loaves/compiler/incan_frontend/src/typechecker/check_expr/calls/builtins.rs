@@ -2,7 +2,7 @@
 
 use super::TypeChecker;
 use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned, Type};
-use crate::diagnostics::errors;
+use crate::diagnostics::errors::{self, HashedCollectionRole};
 use crate::symbols::{CallableParam, FunctionInfo, ResolvedType};
 use crate::typechecker::helpers::{collection_type_id, dict_ty, list_ty, option_ty, result_ty, set_ty};
 use incan_lang::lang::builtins::{self as core_builtins, BuiltinFnId};
@@ -632,12 +632,22 @@ impl TypeChecker {
                                 .push(errors::type_mismatch(expected_name, &arg_ty.to_string(), arg_expr.span));
                         }
                     }
-                    self.check_call_args(args);
+                    let arg_types = self.check_call_arg_types(args);
+                    // The second argument is the task the deadline applies to (`RuntimeFuture[T]`).
+                    if let (Some(task), Some(task_ty)) = (args.get(1), arg_types.get(1)) {
+                        self.refuse_non_task_argument(name, Self::call_arg_expr(task), task_ty);
+                    }
                     Some(ResolvedType::Unknown)
                 }
                 SurfaceFnId::YieldNow => Some(ResolvedType::Unit),
                 SurfaceFnId::Spawn | SurfaceFnId::SpawnBlocking => {
-                    self.check_call_args(args);
+                    let arg_types = self.check_call_arg_types(args);
+                    // `spawn` takes the task itself (`RuntimeFuture[T]`); `spawn_blocking` takes a function to call.
+                    if fid == SurfaceFnId::Spawn
+                        && let (Some(task), Some(task_ty)) = (args.first(), arg_types.first())
+                    {
+                        self.refuse_non_task_argument(name, Self::call_arg_expr(task), task_ty);
+                    }
                     Some(ResolvedType::Generic(
                         surface_types::as_str(SurfaceTypeId::JoinHandle).to_string(),
                         vec![ResolvedType::Unknown],
@@ -819,7 +829,7 @@ impl TypeChecker {
                     let elem_ty = if let Some(arg) = args.first() {
                         let arg_expr = Self::call_arg_expr(arg);
                         let arg_ty = self.check_expr(arg_expr);
-                        match &arg_ty {
+                        let source_elem_ty = match &arg_ty {
                             ResolvedType::Generic(name, type_args)
                                 if (name == surface_types::as_str(SurfaceTypeId::Vec)
                                     || matches!(
@@ -836,7 +846,14 @@ impl TypeChecker {
                                 type_args[0].clone()
                             }
                             _ => ResolvedType::Unknown,
-                        }
+                        };
+                        // `set(source)` hashes every item of its source (#1758).
+                        self.refuse_unhashable_collection_member(
+                            HashedCollectionRole::SetElement,
+                            &source_elem_ty,
+                            arg_expr.span,
+                        );
+                        source_elem_ty
                     } else if let Some(type_args) =
                         Self::matching_collection_constructor_args(expected_return_ty, cid, 1)
                     {

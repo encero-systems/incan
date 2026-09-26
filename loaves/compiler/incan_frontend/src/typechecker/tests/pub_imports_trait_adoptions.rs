@@ -17,6 +17,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
             name: "int".to_string(),
         }],
         implementation_type_params: Vec::new(),
+        inferred: false,
     };
     let convert_float = TypeBoundExport {
         name: "Convert".to_string(),
@@ -27,6 +28,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
             name: "float".to_string(),
         }],
         implementation_type_params: Vec::new(),
+        inferred: false,
     };
     let manifest = LibraryManifest {
         name: "mylib".to_string(),
@@ -313,6 +315,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                         module_path: None,
                         type_args: Vec::new(),
                         implementation_type_params: Vec::new(),
+                        inferred: false,
                     }],
                     derives: vec![shadowed_trait_name()],
                     fields: Vec::new(),
@@ -330,6 +333,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                         module_path: None,
                         type_args: Vec::new(),
                         implementation_type_params: Vec::new(),
+                        inferred: false,
                     }],
                     derives: vec![shadowed_trait_name()],
                     fields: Vec::new(),
@@ -402,6 +406,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                         module_path: None,
                         type_args: vec![TypeRef::TypeParam { name: "T".to_string() }],
                         implementation_type_params: Vec::new(),
+                        inferred: false,
                     }],
                     requires: Vec::new(),
                     methods: Vec::new(),

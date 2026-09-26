@@ -2,7 +2,7 @@
 
 use crate::ast::*;
 use crate::ast_walk::any_expr_in_body;
-use crate::diagnostics::errors::StoredTypeParamOwner;
+use crate::diagnostics::errors::{DerivedMember, StoredTypeParamOwner};
 use crate::diagnostics::{CompileError, errors};
 use crate::resolved_type_subst::{
     substitute_method_info, substitute_property_info, substitute_resolved_type, type_param_subst_map,
@@ -2602,6 +2602,7 @@ impl TypeChecker {
         let previous_validation_state = self.validate_source_type_names;
         self.validate_source_type_names = false;
         self.collect_declarations_for_check(&test_module.body);
+        self.infer_hash_key_type_params(&test_module.body, false);
         self.validate_source_type_names = previous_validation_state;
         if let Some(semantics) = self.testing_marker_semantics.clone() {
             self.collect_testing_fixture_names_from_decls(&test_module.body, &semantics);
@@ -3434,6 +3435,13 @@ impl TypeChecker {
         for field in active_model_fields {
             let ty = self.resolve_type_checked(&field.node.ty);
             self.validate_direct_recursive_model_field(&model.name, &ty, field.span);
+            self.refuse_member_without_automatic_derives(
+                "model",
+                &model.name,
+                DerivedMember::Field(&field.node.name),
+                &ty,
+                field.span,
+            );
             self.symbols.define(Symbol {
                 name: field.node.name.clone(),
                 kind: SymbolKind::Field(FieldInfo {
@@ -3869,6 +3877,13 @@ impl TypeChecker {
         // Define fields
         for field in active_class_fields {
             let ty = self.resolve_type_checked(&field.node.ty);
+            self.refuse_member_without_automatic_derives(
+                "class",
+                &class.name,
+                DerivedMember::Field(&field.node.name),
+                &ty,
+                field.span,
+            );
             self.symbols.define(Symbol {
                 name: field.node.name.clone(),
                 kind: SymbolKind::Field(FieldInfo {
@@ -4752,6 +4767,13 @@ impl TypeChecker {
                     self.errors
                         .push(errors::unknown_symbol(&format!("{:?}", field_ty.node), field_ty.span));
                 }
+                self.refuse_member_without_automatic_derives(
+                    "enum",
+                    &en.name,
+                    DerivedMember::VariantPayload(&variant.node.name),
+                    &resolved,
+                    field_ty.span,
+                );
             }
         }
 
@@ -5976,6 +5998,7 @@ impl TypeChecker {
                                     .collect(),
                                 module_path,
                                 implementation_type_params: Vec::new(),
+                                inferred: false,
                             }
                         })
                         .collect(),

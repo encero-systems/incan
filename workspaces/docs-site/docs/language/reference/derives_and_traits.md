@@ -41,7 +41,7 @@ This page is a **Reference** for Incan derives, dunder overrides, and trait auth
 
 Rules that resolve “derive vs dunder” (these are intentional and strict):
 
-- **Dunder overrides are explicit behavior**: if you write a dunder (`__str__`, `__eq__`, `__lt__`, `__hash__`), that is the behavior for that capability.
+- **Dunder overrides are explicit behavior**: if you write a dunder (`__str__`, `__eq__`, `__lt__`), that is the behavior for that capability. `Hash` has no dunder: a method named `__hash__` is an ordinary method (see [Hash][derive-hash]).
 - **Conflicts are errors**: you must not combine a dunder with the corresponding `@derive(...)`.
 - **Auto-added traits are the exception**: some traits are automatically added to `model` / `class` / `enum` / `newtype` (see [Automatic derives][auto-derives]). You don’t need to spell them out.
 
@@ -51,17 +51,32 @@ Rules that resolve “derive vs dunder” (these are intentional and strict):
 
 The compiler automatically adds these derives:
 
-| Construct | Auto-added derives                                             |
-| --------- | -------------------------------------------------------------- |
-| `model`   | `Debug`, `Display`, `Clone`                                    |
-| `class`   | `Debug`, `Display`, `Clone`                                    |
-| `enum`    | `Debug`, `Display`, `Clone`, `Eq`                              |
-| `newtype` | `Debug`, `Display`, `Clone` (and `Copy` if underlying is Copy) |
+| Construct | Auto-added derives |
+| --------- | ------------------ |
+| `model`   | `Debug`, `Display`, `Clone` |
+| `class`   | `Debug`, `Display`, `Clone` |
+| `enum`    | `Debug`, `Display`, `Clone`; `PartialEq` when every variant payload is a primitive or a builtin collection of primitives |
+| `newtype` | `Display`; `Debug` unless the underlying type is known to lack it; `Clone` when the underlying type is known to implement it or is `Copy`; `Copy` when the underlying type is `Copy` |
 
 Notes:
 
-- `Debug` and `Display` are always available for these constructs.
-- `Display` has a default representation (like Python’s default `__str__`) unless you define `__str__`.
+- `Display` has a default representation unless you define `__str__`.
+- `Eq`, `Ord` and `Hash` are never auto-added; `@derive(Eq)` also adds `PartialEq`, and `@derive(Ord)` adds `PartialOrd`, `Eq` and `PartialEq`.
+- A newtype's underlying type is known to implement `Clone` when it is a builtin scalar; a builtin collection, `Option`, `Result`, tuple, `model`, `class` or `enum` whose type arguments implement it; a newtype that carries `Clone`; a stdlib runtime type that implements it (such as `Mutex[T]` over such a `T`); or one of the newtype's own type parameters, whose derived implementation then requires `Clone` of the type argument. A Rust-origin type (imported from `rust::`) and a `rusttype` are not known to implement it, so a newtype over one carries `Clone` only through `@derive(Clone)` or `@rust.derive(Clone)`. `Debug` is left out only when the underlying type is known to lack it, as listed below.
+- An automatic derive holds only when every field type supports it. A `model` or `class` field, or an `enum` variant payload, whose type does not implement `Clone` and `Debug` is refused at the declaration with `INCAN-T0113`; the diagnostic names the field, its type and the derives it lacks. Types that implement neither: `JoinHandle[T]` and `RaceArm[R]`; `Receiver[T]`, `OneshotSender[T]` and `OneshotReceiver[T]` lack `Clone`; a newtype declared in the same module lacks what its underlying type lacks, and one declared elsewhere is not refused for it; a `list`, `dict`, `set`, `Option`, `Result`, tuple or generic declaration lacks what a type argument lacks. See [Async programming](../how-to/async_programming.md#spawn) for keeping task handles.
+
+```incan
+import std.async
+from std.async.task import JoinHandle
+
+type Handle = newtype JoinHandle[int]  # accepted: derives neither Clone nor Debug
+
+model Pending:
+    handle: JoinHandle[int]  # refused: INCAN-T0113, 'JoinHandle[int]' does not support Clone and Debug
+
+model Wrapped:
+    handle: Handle           # refused: INCAN-T0113, 'Handle' does not support Clone and Debug
+```
 
 ---
 
@@ -75,7 +90,7 @@ Only the items usable in `@derive(...)` are derives:
 | [Display][derive-display]         | Display formatting (`{}`) | `__str__`  | Auto-added              |
 | [Eq][derive-eq]                   | `==` / `!=`               | `__eq__`   | Conflicts are errors    |
 | [Ord][derive-ord]                 | Ordering + `sorted(...)`  | `__lt__`   | Conflicts are errors    |
-| [Hash][derive-hash]               | `Set` / `Dict` keys       | `__hash__` | Conflicts are errors    |
+| [Hash][derive-hash]               | `Set` / `Dict` keys       | —          | Keys also need `Eq`     |
 | [Clone][derive-clone]             | `.clone()`                | —          | Auto-added              |
 | [Copy][derive-copy]               | Implicit copy             | —          | Marker trait            |
 | [Default][derive-default]         | `Type.default()`          | —          | Baseline constructor    |
@@ -684,13 +699,11 @@ model Task:
 
 ## Hash
 
-**What it does**: enables use as `Set` members and `Dict` keys.
+**What it does**: enables use as `set` elements and `dict` keys, hashing every field.
 
-**Custom behavior**: define `__hash__(self) -> int`.
+**Provided by**: `@derive(Hash)`, or `Hash` in `@rust.derive(...)`. A method named `__hash__` is an ordinary method: it does not provide `Hash`, and a set or dict does not call it.
 
-> Conflict rule: if you define `__hash__`, you must not also `@derive(Hash)`.
->
-> Consistency rule: if `a == b`, then `a.__hash__() == b.__hash__()`.
+**Requirement**: a `set` element type and a `dict` key type implement `Eq` and `Hash`, or the program is refused with `INCAN-T0114`; so is a generic call whose type argument the callee hashes. See [Comparison](derives/comparison.md#hash).
 
 ```incan
 @derive(Eq, Hash)

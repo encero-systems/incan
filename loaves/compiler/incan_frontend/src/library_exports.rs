@@ -90,6 +90,8 @@ pub struct CheckedTypeBound {
     pub type_args: Vec<ResolvedType>,
     pub module_path: Option<Vec<String>>,
     pub implementation_type_params: Vec<ImplementationTypeParamInfo>,
+    /// Whether the checker inferred this `Eq` or `Hash` bound from the callable's body (#1758).
+    pub inferred: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1175,6 +1177,9 @@ fn checked_preset_path(expr: &Expr) -> Vec<String> {
 }
 
 /// Build checked export metadata for a function or callable-valued decorated function binding.
+///
+/// A type parameter exports its declared bounds as spelled in source, then the `Eq` and `Hash` bounds the checker
+/// inferred for it because the body hashes it (#1758).
 fn checked_function_export(
     function: &FunctionDecl,
     checker: &TypeChecker,
@@ -1213,7 +1218,15 @@ fn checked_function_export(
     Some(CheckedFunctionExport {
         name: function.name.clone(),
         emitted_name,
-        type_params: checked_type_params(&function.type_params, checker),
+        type_params: checked_type_params(&function.type_params, checker)
+            .into_iter()
+            .map(|mut type_param| {
+                type_param.bounds.extend(map_type_bound_infos(
+                    checker.inferred_type_param_bounds(&function.name, &type_param.name),
+                ));
+                type_param
+            })
+            .collect(),
         param_defaults: function
             .params
             .iter()
@@ -1512,6 +1525,7 @@ fn checked_trait_bound(bound: &TraitBound, checker: &TypeChecker) -> CheckedType
             .collect(),
         module_path: checker.trait_bound_module_path(&bound.name),
         implementation_type_params: Vec::new(),
+        inferred: false,
     }
 }
 
@@ -1525,6 +1539,7 @@ fn map_type_bound_infos(bounds: &[TypeBoundInfo]) -> Vec<CheckedTypeBound> {
             type_args: bound.type_args.clone(),
             module_path: bound.module_path.clone(),
             implementation_type_params: bound.implementation_type_params.clone(),
+            inferred: bound.inferred,
         })
         .collect()
 }
@@ -1790,6 +1805,7 @@ fn checked_method_from_info(name: &str, info: &MethodInfo) -> CheckedMethod {
                         type_args: bound.type_args,
                         module_path: bound.module_path,
                         implementation_type_params: bound.implementation_type_params,
+                        inferred: bound.inferred,
                     })
                     .collect(),
             })

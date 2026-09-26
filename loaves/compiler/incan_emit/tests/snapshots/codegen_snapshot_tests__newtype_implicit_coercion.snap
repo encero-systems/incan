@@ -31,7 +31,7 @@ impl Attempts {
         return Ok::<Attempts, incan_std_core::validation::ValidationError>(Attempts(n));
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct RetryAttempts(pub Attempts);
 impl incan_std_core::reflection::HasTypeClassName for RetryAttempts {
     fn __class_name__() -> &'static str {

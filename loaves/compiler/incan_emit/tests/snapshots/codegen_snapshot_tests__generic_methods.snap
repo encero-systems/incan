@@ -189,7 +189,7 @@ impl EchoBox {
         <Self as Echo>::echo::<T>(self, value)
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Wrapper<U>(pub U);
 impl<U> incan_std_core::reflection::HasTypeClassName for Wrapper<U> {
     fn __class_name__() -> &'static str {
