@@ -18,15 +18,17 @@ fn generated_rust_without_whitespace(source: &str) -> Result<String, Box<dyn std
     Ok(code.split_whitespace().collect::<String>().replace(",)", ")"))
 }
 
-/// #1793: the lookup key of a static dict's `get`, `insert` and membership test is copied into the temporary the
-/// storage access reads, so the parameter the arms read afterwards is still there; at its last read it is moved in,
-/// and a literal key is stored as an owned `str`. The `get` of a static dict hands back the value itself, so
-/// returning it as `Option[int]` checks and builds.
+/// #1793: a key the program reads again reaches a static dict's `get` and membership test as a view and its `insert`
+/// as a copy, in the temporary the storage access reads, so the parameter the arms read afterwards is still there; at
+/// its last read it is moved in, and a literal key is stored as an owned `str`. A static index assignment evaluates its
+/// value first, so the key read inside the value is a view and the key itself is moved in last; a receiver path that
+/// reads the argument's variable (`graph[node].contains(node)`) leaves the argument a view.
 #[test]
 fn static_collection_arguments_stay_readable_issue1793() -> Result<(), Box<dyn std::error::Error>> {
     let code = generated_rust_without_whitespace(
         r#"
 static counts: dict[str, int] = {}
+static graph: dict[str, list[str]] = {}
 
 
 def lookup(name: str) -> str:
@@ -40,6 +42,14 @@ def record(name: str) -> bool:
     return name in counts
 
 
+def bump(name: str) -> None:
+    counts[name] = counts.get(name).unwrap_or(0) + 1
+
+
+def linked(node: str) -> bool:
+    return graph[node].contains(node)
+
+
 def direct(name: str) -> Option[int]:
     return counts.get(name)
 
@@ -48,17 +58,32 @@ def main() -> None:
     counts.insert("a", 1)
     println(lookup("a"))
     println(record("b"))
+    bump("a")
+    println(linked("a"))
     println(direct("b").unwrap_or(0))
 "#,
     )?;
     assert_eq!(
-        code.matches("let__incan_static_arg_0=name.clone();").count(),
+        code.matches("let__incan_static_arg_0=&name;").count(),
         2,
-        "`lookup` and the `insert` in `record` copy the reused key: {code}"
+        "the lookups in `lookup` and `bump` view the reused key: {code}"
+    );
+    assert_eq!(
+        code.matches("let__incan_static_arg_0=name.clone();").count(),
+        1,
+        "the `insert` in `record` copies the reused key: {code}"
     );
     assert!(
         code.contains("let__incan_static_arg_0=name;"),
         "a key at its last read is moved into the temporary: {code}"
+    );
+    assert!(
+        code.contains(".insert(name,__incan_static_rhs)"),
+        "the index assignment moves its key in after the value: {code}"
+    );
+    assert!(
+        code.contains("let__incan_static_arg_0=&node;"),
+        "an argument the receiver path reads stays a view: {code}"
     );
     assert!(
         code.contains(".get(<_asAsRef<str>>::as_ref(&__incan_static_arg_0)).copied()"),
@@ -75,14 +100,52 @@ def main() -> None:
     Ok(())
 }
 
+/// `get` on a dict that is not static storage reads the entry in place and completes the lookup with a copy of the
+/// entry, so every dict's `get` answers with the stored value: `copied` for a `Copy` value, `cloned` otherwise.
+#[test]
+fn local_dict_get_answers_with_the_stored_value() -> Result<(), Box<dyn std::error::Error>> {
+    let code = generated_rust_without_whitespace(
+        r#"
+model Point:
+    x: int
+
+
+def count(table: dict[str, int], name: str) -> int:
+    return table.get(name).unwrap_or(0)
+
+
+def point(table: dict[str, Point], name: str) -> Option[Point]:
+    return table.get(name)
+
+
+def main() -> None:
+    println(count({"a": 1}, "a"))
+    println(point({}, "a") is None)
+"#,
+    )?;
+    assert!(
+        code.contains("table.get(<_asAsRef<str>>::as_ref(&name)).copied().unwrap_or(0)"),
+        "a `Copy` value is copied out of the dict: {code}"
+    );
+    assert!(
+        code.contains("table.get(<_asAsRef<str>>::as_ref(&name)).cloned()"),
+        "any other value is cloned out of the dict: {code}"
+    );
+    Ok(())
+}
+
 /// #1794: a `const` declared `str` is a `'static` string that carries `FrozenStr`, so every `FrozenStr` destination
 /// wraps it: a plain return, a `FrozenStr | int` return and argument, a `Some(...)` in an `Option[FrozenStr]` return,
-/// argument and binding, and an annotated binding.
+/// argument and binding, an annotated binding, a model field, a list element and a dict value.
 #[test]
 fn str_const_is_wrapped_at_frozen_str_destinations_issue1794() -> Result<(), Box<dyn std::error::Error>> {
     let code = generated_rust_without_whitespace(
         r#"
 const NAME: str = "policy"
+
+
+model Holder:
+    label: FrozenStr
 
 
 def frozen_or_int(flag: bool) -> FrozenStr | int:
@@ -119,12 +182,17 @@ def main() -> None:
     wrapped: Option[FrozenStr] = Some(NAME)
     println(bound)
     println(wrapped is not None)
+    held = Holder(label=NAME)
+    labels: list[FrozenStr] = [NAME]
+    by_key: dict[str, FrozenStr] = {"k": NAME}
+    println(held.label)
+    println(len(labels) + len(by_key))
 "#,
     )?;
     let wrapped_name = "incan_std_core::frozen::FrozenStr::new(NAME)";
     assert_eq!(
         code.matches(wrapped_name).count(),
-        7,
+        10,
         "every `FrozenStr` destination wraps the const: {code}"
     );
     assert!(
@@ -143,12 +211,17 @@ def main() -> None:
 }
 
 /// The reverse direction: a `FrozenStr` const at a `str` destination (a `Some(...)` in an `Option[str]` return,
-/// argument and binding, a `str | int` return and argument, a plain return) is converted to an owned string.
+/// argument and binding, a `str | int` return and argument, a plain return, a model field, a list element and a dict
+/// value) is converted to an owned string.
 #[test]
 fn frozen_str_const_is_converted_at_str_destinations_issue1794() -> Result<(), Box<dyn std::error::Error>> {
     let code = generated_rust_without_whitespace(
         r#"
 const FROZEN: FrozenStr = "frozen"
+
+
+model Text:
+    text: str
 
 
 def maybe_text(flag: bool) -> Option[str]:
@@ -183,11 +256,16 @@ def main() -> None:
     println(option_arg(Some(FROZEN)))
     bound: Option[str] = Some(FROZEN)
     println(bound is not None)
+    held = Text(text=FROZEN)
+    texts: list[str] = [FROZEN]
+    by_key: dict[str, str] = {"k": FROZEN}
+    println(held.text)
+    println(len(texts) + len(by_key))
 "#,
     )?;
     assert_eq!(
         code.matches("FROZEN.to_string()").count(),
-        6,
+        9,
         "every `str` destination converts the const: {code}"
     );
     assert!(

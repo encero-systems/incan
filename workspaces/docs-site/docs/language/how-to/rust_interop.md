@@ -661,12 +661,12 @@ async def main() -> None:
 ### Using Collections
 
 ```incan
-from rust::std::collections import HashMap, HashSet
+from rust::std::collections import HashMap
 
 def count_words(text: str) -> HashMap[str, int]:
-    counts = HashMap.new()
-    for word in text.split():
-        count = counts.get(word).copied().unwrap_or(0)
+    mut counts = HashMap.new()
+    for word in text.split_whitespace():
+        count = counts.get(word).unwrap_or(0)
         counts.insert(word, count + 1)
     return counts
 ```

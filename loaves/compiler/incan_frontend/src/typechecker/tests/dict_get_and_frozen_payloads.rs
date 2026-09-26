@@ -1,4 +1,4 @@
-//! What a read of module static storage answers with (a static dict's `get`), and the string type a `Some(...)` of a
+//! What a dict's `get` answers with (the stored value, for every dict), and the string type a `Some(...)` of a
 //! `FrozenStr` payload is instantiated at when its destination is `Option[str]` or `Option[FrozenStr]` (#1794).
 
 use super::*;
@@ -21,11 +21,11 @@ fn span_of(source: &str, text: &str, occurrence: usize) -> Result<Span, String> 
     Ok(Span::new(start, start + text.len()))
 }
 
-/// `get` on a module static dict answers with `Option[V]`: the value is copied out of the storage cell, so there is
-/// no view into the cell to hand back. That holds for a static, a field of a static, and in a `match`; a local dict
-/// keeps its `Option[&V]` view, and a parameter that shadows a static reads as the parameter.
+/// `get` answers with `Option[V]`, the stored value, on every dict: a module static, a field of a static, a local bound
+/// to a static, a parameter (including one that shadows a static) and a local dict; and in a `match`, whose arms bind
+/// the value itself. A result bound to an `Option[int]` annotation checks.
 #[test]
-fn get_on_a_static_dict_answers_with_the_value_type() -> Result<(), Box<dyn std::error::Error>> {
+fn get_on_every_dict_answers_with_the_value_type() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 model Registry:
     counts: dict[str, int]
@@ -49,48 +49,76 @@ def bumped(name: str) -> int:
         None => return 0
 
 
-def local(table: dict[str, int], name: str) -> Option[int]:
-    return table.get(name).copied()
+def local(table: dict[str, int], name: str) -> int:
+    return table.get(name).unwrap_or(0)
 
 
 def shadowed(counts: dict[str, int], name: str) -> Option[int]:
-    return counts.get(name).copied()
+    return counts.get(name)
+
+
+def aliased(name: str) -> Option[int]:
+    live = counts
+    found: Option[int] = live.get(name)
+    return found
+
+
+def built(name: str) -> Option[int]:
+    mut totals: dict[str, int] = {}
+    totals[name] = 1
+    return totals.get(name)
 "#;
-    let info = typecheck_info_for_module(source, vec!["main".to_string()], "static dict get")?;
-    let owned = option_of(ResolvedType::Int);
-    let viewed = option_of(ResolvedType::Ref(Box::new(ResolvedType::Int)));
-    for (text, occurrence, expected) in [
-        ("counts.get(name)", 0, &owned),
-        ("registry.counts.get(name)", 0, &owned),
-        ("counts.get(name)", 2, &owned),
-        ("table.get(name)", 0, &viewed),
-        ("counts.get(name)", 3, &viewed),
+    let info = typecheck_info_for_module(source, vec!["main".to_string()], "dict get")?;
+    let value = option_of(ResolvedType::Int);
+    for (text, occurrence) in [
+        ("counts.get(name)", 0),
+        ("registry.counts.get(name)", 0),
+        ("counts.get(name)", 2),
+        ("table.get(name)", 0),
+        ("counts.get(name)", 3),
+        ("live.get(name)", 0),
+        ("totals.get(name)", 0),
     ] {
         let span = span_of(source, text, occurrence)?;
         assert_eq!(
             info.expr_type(span),
-            Some(expected),
-            "`{text}` (occurrence {occurrence}) must type as `{expected}`"
+            Some(&value),
+            "`{text}` (occurrence {occurrence}) must type as `{value}`"
         );
     }
     Ok(())
 }
 
-/// The static dict's `get` already answers with the value, so the `Option[&V]` helper `copied` does not apply to it and
-/// the checker refuses it rather than leaving it to the build.
+/// `get` already answers with the value, so `.copied()` and `.cloned()` on its result are refused at check time, with a
+/// hint to remove them, rather than left to the build; a static dict and a local dict alike.
 #[test]
-fn copied_on_a_static_dict_get_is_refused() {
-    let source = r#"
-static counts: dict[str, int] = {}
-
-
-def lookup(name: str) -> Option[int]:
-    return counts.get(name).copied()
-"#;
-    assert!(
-        check_str(source).is_err(),
-        "`copied` on an owned `Option[int]` must not check"
-    );
+fn copied_and_cloned_on_a_dict_get_are_refused() {
+    for (source, method) in [
+        (
+            "static counts: dict[str, int] = {}\n\ndef lookup(name: str) -> Option[int]:\n    return counts.get(name).copied()\n",
+            "copied",
+        ),
+        (
+            "def lookup(table: dict[str, int], name: str) -> Option[int]:\n    return table.get(name).copied()\n",
+            "copied",
+        ),
+        (
+            "def lookup(table: dict[str, list[int]], name: str) -> Option[list[int]]:\n    return table.get(name).cloned()\n",
+            "cloned",
+        ),
+    ] {
+        let errors = check_str_err(source, "`.copied()` / `.cloned()` after `get` must not check");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains(&format!("no method '{method}(...)'"))
+                    && error
+                        .hints
+                        .iter()
+                        .any(|hint| hint.contains("`get` returns the stored value itself"))),
+            "`{method}` after `get` must be refused with the removal hint, got {errors:?}"
+        );
+    }
 }
 
 /// #1794: a `FrozenStr` payload (a `const` declared `str` carries `FrozenStr`, as does one declared `FrozenStr`) placed

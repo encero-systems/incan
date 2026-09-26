@@ -1,15 +1,23 @@
-# behavior: a str parameter handed to get, insert, a membership test and append on module statics is still readable after each call, a str literal inserted into a static dict is stored as its key, and get on a static dict returns the stored value
+# behavior: a str parameter handed to get, insert, a membership test and append on module statics is still readable after each call, also when the same name is the key of an index assignment or part of the receiver's path, a str literal inserted into a static dict is stored as its key, and get returns the stored value on a static dict, a local bound to one and a dict parameter
+# retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::local_dict_get_answers_with_the_stored_value
 # retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::static_collection_arguments_stay_readable_issue1793
-# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::arguments_read_after_a_static_method_call_are_copied_in_issue1793
+# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::arguments_read_after_a_static_method_call_are_kept_readable_issue1793
+# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::arguments_read_again_by_the_generated_code_are_kept_readable_issue1793
+# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::dict_get_answers_with_the_stored_value
 # expect-stdout:
 #   a=1
 #   b missing
 #   c recorded 2
 #   d listed
 #   2
+#   a counted 3
+#   true
+#   2
+#   4
 
 static counts: dict[str, int] = {}
 static names: list[str] = []
+static graph: dict[str, list[str]] = {}
 
 
 def lookup(name: str) -> str:
@@ -36,6 +44,27 @@ def count_of(name: str) -> Option[int]:
     return counts.get(name)
 
 
+def bump(name: str) -> None:
+    counts[name] = counts.get(name).unwrap_or(0) + 1
+
+
+def linked(node: str) -> bool:
+    return graph[node].contains(node)
+
+
+def aliased(name: str) -> int:
+    live = counts
+    found: Option[int] = live.get(name)
+    return found.unwrap_or(0)
+
+
+def total(table: dict[str, int], keys: list[str]) -> int:
+    mut sum = 0
+    for key in keys:
+        sum += table.get(key).unwrap_or(0)
+    return sum
+
+
 def main() -> None:
     counts.insert("a", 1)
     println(lookup("a"))
@@ -43,3 +72,11 @@ def main() -> None:
     println(record("c"))
     println(listed("d"))
     println(count_of("c").unwrap_or(0))
+    bump("a")
+    bump("a")
+    counted = count_of("a").unwrap_or(0)
+    println(f"a counted {counted}")
+    graph.insert("a", ["a", "b"])
+    println(linked("a"))
+    println(aliased("c"))
+    println(total({"x": 1, "y": 3}, ["x", "y", "z"]))

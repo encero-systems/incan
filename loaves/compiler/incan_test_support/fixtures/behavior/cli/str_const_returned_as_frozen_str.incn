@@ -1,4 +1,4 @@
-# behavior: a const declared str reaches FrozenStr destinations and a FrozenStr const reaches str destinations, returned bare, as a union member and inside Some, passed as an argument and bound to an annotated name, and isinstance reads each as a str
+# behavior: a const declared str reaches FrozenStr destinations and a FrozenStr const reaches str destinations, returned bare, as a union member and inside Some, passed as an argument, bound to an annotated name, stored in a model field, a list and a dict, and isinstance reads each as a str
 # retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::frozen_str_const_is_converted_at_str_destinations_issue1794
 # retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::planner_wraps_a_static_str_at_frozen_str_destinations_issue1794
 # retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::str_const_is_wrapped_at_frozen_str_destinations_issue1794
@@ -15,9 +15,22 @@
 #   true
 #   true
 #   policy frozen
+#   policy
+#   policy
+#   frozen
+#   frozen
+#   2
 
 const NAME: str = "policy"
 const FROZEN: FrozenStr = "frozen"
+
+
+model Holder:
+    label: FrozenStr
+
+
+model Text:
+    text: str
 
 
 def frozen_or_int(flag: bool) -> FrozenStr | int:
@@ -74,3 +87,14 @@ def main() -> None:
     println(isinstance(bound, str))
     println(wrapped is not None)
     println(f"{bound} {plain_text()}")
+    held = Holder(label=NAME)
+    labels: list[FrozenStr] = [NAME]
+    by_key: dict[str, FrozenStr] = {"k": NAME}
+    text = Text(text=FROZEN)
+    texts: list[str] = [FROZEN]
+    words: dict[str, str] = {"k": FROZEN}
+    println(held.label)
+    println(labels[0])
+    println(text.text)
+    println(texts[0])
+    println(len(by_key) + len(words))

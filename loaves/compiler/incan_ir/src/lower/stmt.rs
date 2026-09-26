@@ -1143,30 +1143,56 @@ impl AstLowering {
                 }
             }
 
-            ast::Statement::FieldAssignment(fa) => IrStmtKind::Assign {
-                target: AssignTarget::Field {
-                    object: Box::new(self.lower_expr_spanned(&fa.object)?),
-                    field: self
-                        .type_info
-                        .as_ref()
-                        .and_then(|info| info.rust_field_access_name(fa.target_span))
-                        .unwrap_or(fa.field.as_str())
-                        .to_string(),
-                },
-                value: self.lower_expr_spanned(&fa.value)?,
-            },
+            ast::Statement::FieldAssignment(fa) => {
+                // Through static storage the value is evaluated before the path (see `ast_path_reads_static_storage`),
+                // so its reads are counted first.
+                let early_value = if self.ast_path_reads_static_storage(&fa.object) {
+                    Some(self.lower_expr_spanned(&fa.value)?)
+                } else {
+                    None
+                };
+                let object = self.lower_expr_spanned(&fa.object)?;
+                let value = match early_value {
+                    Some(value) => value,
+                    None => self.lower_expr_spanned(&fa.value)?,
+                };
+                IrStmtKind::Assign {
+                    target: AssignTarget::Field {
+                        object: Box::new(object),
+                        field: self
+                            .type_info
+                            .as_ref()
+                            .and_then(|info| info.rust_field_access_name(fa.target_span))
+                            .unwrap_or(fa.field.as_str())
+                            .to_string(),
+                    },
+                    value,
+                }
+            }
 
             ast::Statement::IndexAssignment(ia) => {
-                let object = self.lower_expr_spanned(&ia.object)?;
-                let index = self.lower_expr_spanned(&ia.index)?;
-                let value = self.lower_expr_spanned(&ia.value)?;
-
-                if let Some(resolved_operator) = self
+                let resolved_index_assign = self
                     .type_info
                     .as_ref()
                     .and_then(|info| info.resolved_operator_call(stmt_span).cloned())
-                    && resolved_operator.kind == ResolvedOperatorKind::IndexAssign
-                {
+                    .filter(|resolved_operator| resolved_operator.kind == ResolvedOperatorKind::IndexAssign);
+                // A plain assignment through static storage evaluates the value before the path and the index (see
+                // `ast_path_reads_static_storage`), so its reads are counted first: `counts[name] =
+                // counts.get(name).unwrap_or(0) + 1` reads `name` last as the key (#1793). An `__setitem__` call
+                // evaluates its arguments in order.
+                let early_value = if resolved_index_assign.is_none() && self.ast_path_reads_static_storage(&ia.object) {
+                    Some(self.lower_expr_spanned(&ia.value)?)
+                } else {
+                    None
+                };
+                let object = self.lower_expr_spanned(&ia.object)?;
+                let index = self.lower_expr_spanned(&ia.index)?;
+                let value = match early_value {
+                    Some(value) => value,
+                    None => self.lower_expr_spanned(&ia.value)?,
+                };
+
+                if let Some(resolved_operator) = resolved_index_assign {
                     let dispatch = self
                         .type_info
                         .as_ref()

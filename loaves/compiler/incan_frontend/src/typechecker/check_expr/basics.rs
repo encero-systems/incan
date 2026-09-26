@@ -253,22 +253,6 @@ impl TypeChecker {
         ty
     }
 
-    /// Return whether an already-checked expression reads module static storage: an identifier that resolved to a
-    /// `static`, or a field or index path rooted at one.
-    ///
-    /// A value read out of static storage is copied out of the storage cell, so a builtin read on it (`get` on a
-    /// static dict) answers with an owned value, never a view into the cell. The identifier's recorded resolution is
-    /// the authority, so a local that shadows a static reads as a local.
-    pub(in crate::typechecker::check_expr) fn expr_reads_static_storage(&self, expr: &Spanned<Expr>) -> bool {
-        match &expr.node {
-            Expr::Ident(_) => self.type_info.ident_kind(expr.span) == Some(IdentKind::Static),
-            Expr::Field(object, _) | Expr::Index(object, _) | Expr::Paren(object) => {
-                self.expr_reads_static_storage(object)
-            }
-            _ => false,
-        }
-    }
-
     /// Resolve a literal value to its type.
     pub(in crate::typechecker::check_expr) fn check_literal(&self, lit: &Literal) -> ResolvedType {
         match lit {

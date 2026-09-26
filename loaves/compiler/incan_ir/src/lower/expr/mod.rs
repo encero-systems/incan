@@ -2017,6 +2017,7 @@ impl AstLowering {
                     // Rust ABI slot because no inherent owner is statically nameable there.
                     let (emitted_method_name, dispatch) =
                         self.project_resolved_method_target(expr_span, &method_name, &receiver, dispatch);
+                    Self::keep_rust_collection_static_args_readable(&receiver, &mut args_ir);
                     (
                         IrExprKind::MethodCall {
                             receiver: Box::new(receiver),

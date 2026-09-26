@@ -13,7 +13,8 @@ Both have frozen forms for constants, `FrozenStr` and `FrozenBytes`. `FrozenStr`
 | --- | --- | --- |
 | A `FrozenStr` | `str`, `FrozenStr` | The same text, as the destination's type. |
 | A `const` declared `str` | `str`, `FrozenStr` | The same text; the constant is a `FrozenStr`. |
-| A `str` that is not a `const` | `str` | Refused at a `FrozenStr` destination. |
+| A string literal (`"text"`) | `str`, `FrozenStr` | The literal's text, as the destination's type. |
+| Any other `str` value, such as a parameter | `str` | Refused at a `FrozenStr` destination. |
 
 A destination is a return value, an argument, an annotated binding, a field, a collection element, the matching member of a union (`FrozenStr | int`, `str | int`), and the payload of `Some(...)` where an `Option` of the type is expected. `isinstance(value, str)` is `true` for a `str` and for a `FrozenStr`.
 
