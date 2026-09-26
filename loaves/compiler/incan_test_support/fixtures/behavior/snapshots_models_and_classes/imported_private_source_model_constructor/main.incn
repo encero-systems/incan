@@ -1,0 +1,12 @@
+# behavior: a public model re-exported through two facades is constructible from the consumer with only its public field, private defaults staying provider-owned (#964)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue964_imported_private_source_model_constructor_codegen
+# expect-stdout:
+#   visible
+#   sealed 7
+
+from crate.public_api import ExportedVault as PublicVault
+
+def main() -> None:
+  vault = PublicVault(label="visible")
+  println(vault.label)
+  println(vault.describe())

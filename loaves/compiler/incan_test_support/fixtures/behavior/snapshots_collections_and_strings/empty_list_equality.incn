@@ -1,0 +1,24 @@
+# behavior: an empty list literal compares equal and unequal against a typed list in either operand position (#1493, #1476)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1493_empty_list_comparison_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1476_empty_list_equality_operands_codegen
+# expect-stdout:
+#   true false
+#   ok
+
+"""Issue #1476: an empty list operand carries the checked element type in both positions and both operators."""
+
+pub def probe(features: list[str]) -> bool:
+  return features == []
+
+def is_empty(values: list[str]) -> bool:
+    return values == []
+
+def is_not_empty(values: list[str]) -> bool:
+    return [] != values
+
+def main() -> None:
+    println(f"{probe([])} {probe(["x"])}")
+    assert is_empty([])
+    assert not is_empty(["value"])
+    assert is_not_empty(["value"])
+    println("ok")

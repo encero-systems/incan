@@ -1,0 +1,27 @@
+# behavior: a user-defined decorator on a mutating method runs once, when the method binding is initialized before main starts, keeps the method callable and leaves its mutation of the receiver visible after each call (RFC 036)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_user_defined_mutable_method_decorators_codegen
+# expect-stdout:
+#   decorating bump
+#   main
+#   3
+#   5
+
+# RFC 036: user-defined mutable method decorators
+
+class Counter:
+    value: int
+
+    @keep
+    def bump(mut self, by: int) -> int:
+        self.value = self.value + by
+        return self.value
+
+def keep(func: (&mut Counter, int) -> int) -> (&mut Counter, int) -> int:
+    println("decorating bump")
+    return func
+
+def main() -> None:
+    println("main")
+    mut counter = Counter(value=1)
+    println(counter.bump(2))
+    println(counter.bump(2))

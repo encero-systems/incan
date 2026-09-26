@@ -1,0 +1,18 @@
+# behavior: a constrained newtype accepts values satisfying gt=0 through coercion and explicit construction and refuses a violating value at run time
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_constrained_newtype_generated_validation_codegen
+# expect-stdout:
+#   1
+#   2
+# expect-exit: 101
+
+type PositiveInt = newtype int[gt=0]
+
+def take_positive(value: PositiveInt) -> None:
+    println(f"{value.0}")
+
+def main() -> None:
+    take_positive(1)
+    explicit = PositiveInt(2)
+    println(f"{explicit.0}")
+    take_positive(0)
+    println("unreachable")

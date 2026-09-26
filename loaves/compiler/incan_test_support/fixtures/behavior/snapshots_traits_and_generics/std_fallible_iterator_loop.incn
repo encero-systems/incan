@@ -1,0 +1,34 @@
+# behavior: a model adopting the stdlib FallibleIterator yields its items in a for loop with ? and through collect() on a temporary receiver
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_fallible_loop_preserves_qualified_trait_dispatch_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_projected_fallible_terminal_uses_mutable_receiver
+# expect-stdout:
+#   1
+#   2
+#   ok
+#   2
+
+from std.derives.collection import FallibleIterator
+
+model NumberStream with FallibleIterator[int, str]:
+  items: list[int]
+  index: int
+
+  def __next__(mut self) -> Result[Option[int], str]:
+    if self.index >= len(self.items):
+      return Ok(None)
+    item = self.items[self.index]
+    self.index += 1
+    return Ok(Some(item))
+
+def drain() -> Result[None, str]:
+  for value in NumberStream(items=[1, 2], index=0)?:
+    println(value)
+  return Ok(None)
+
+def main() -> None:
+  match drain():
+    Ok(_) => println("ok")
+    Err(error) => println(error)
+  match NumberStream(items=[1, 2], index=0).collect():
+    Ok(values) => println(len(values))
+    Err(error) => println(error)

@@ -1,0 +1,5 @@
+__derives__ = [Named]
+
+pub trait Named:
+  def schema_name(self) -> str:
+    return str("schema")

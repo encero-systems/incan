@@ -1,0 +1,61 @@
+# behavior: scalar, collection, Option and nested-collection annotations type their initializers, and annotated parameters print their values
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_type_annotations_codegen
+# expect-stdout:
+#   42 3.14 hello true
+#   3 c 2
+#   42 none
+#   4 3
+#   42
+#   10
+#   test
+#   true
+
+"""Test type annotation code generation"""
+
+def test_explicit_types() -> None:
+    x: int = 42
+    y: float = 3.14
+    z: str = "hello"
+    flag: bool = True
+    println(f"{x} {y} {z} {flag}")
+
+def test_collection_types() -> None:
+    numbers: list[int] = [1, 2, 3]
+    words: list[str] = ["a", "b", "c"]
+    mapping: dict[str, int] = {"a": 1, "b": 2}
+    println(f"{len(numbers)} {words[2]} {mapping["b"]}")
+
+def test_option_types() -> None:
+    maybe_num: Option[int] = Some(42)
+    nothing: Option[int] = None
+    mut first = "none"
+    match maybe_num:
+        Some(value) => first = str(value)
+        None => first = "none"
+    mut second = "none"
+    match nothing:
+        Some(value) => second = str(value)
+        None => second = "none"
+    println(f"{first} {second}")
+
+def test_nested_collections() -> None:
+    matrix: list[list[int]] = [[1, 2], [3, 4]]
+    dict_of_lists: dict[str, list[int]] = {"nums": [1, 2, 3]}
+    println(f"{matrix[1][1]} {len(dict_of_lists["nums"])}")
+
+def test_function_with_return_type() -> int:
+    return 42
+
+def test_function_parameters(x: int, y: str, z: bool) -> None:
+    print(x)
+    print(y)
+    print(z)
+
+def main() -> None:
+    test_explicit_types()
+    test_collection_types()
+    test_option_types()
+    test_nested_collections()
+    result: int = test_function_with_return_type()
+    println(result)
+    test_function_parameters(10, "test", True)

@@ -1,0 +1,16 @@
+# behavior: associated functions of imported Rust types are callable: a random Uuid renders as 36 characters, a typed HashMap starts empty and Instant.now() is taken
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rust_interop_associated_functions_codegen
+# expect-stdout:
+#   36
+#   0
+
+from rust::uuid import Uuid
+from rust::std::collections import HashMap
+from rust::std::time import Instant
+
+def main() -> None:
+  _id = Uuid.new_v4().to_string()
+  mut _typed = HashMap.new[str, int]()
+  _start = Instant.now()
+  println(len(_id))
+  println(_typed.len())

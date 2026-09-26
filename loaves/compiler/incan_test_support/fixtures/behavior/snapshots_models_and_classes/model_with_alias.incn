@@ -1,0 +1,56 @@
+# behavior: a model whose fields carry aliases, descriptions, defaults and non-identifier aliases is constructible through the alias names and readable through both spellings
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_model_with_alias_codegen
+# expect-stdout:
+#   savings retail crm
+#   0 42 active
+#   2024-01-01 true
+#   0 nick USD
+#   ext-9 1 2
+
+model Account:
+    # keyword clashing fields some with alias + description
+    type_ [alias="type", description="Account type"]: str
+    class_ [alias="class", description="Customer segment"]: str
+    from_ [description="Source system"] as "from": str
+    # default value + description
+    balance [description="Balance in cents"]: int = 0
+    # alias only
+    owner_id [alias="ownerId"]: int
+    # alias + description + default
+    status_ [alias="status", description="Lifecycle status"]: str = "active"
+    # alias with different casing
+    created_at [alias="createdAt", description="Creation timestamp (RFC3339)"]: str
+    is_active [alias="isActive"]: bool = true
+    # just description
+    tags [description="Account tags"]: list[str] = []
+    # optional field with alias
+    nick [alias="nickname"]: Option[str] = None
+    # dict type with alias + description
+    prefs [alias="preferences", description="Account preferences"]: dict[str, str] = {"currency": "USD"}
+    # using as sugar
+    external_id as "externalId": str
+    # non-identifier alias
+    one [alias="1", description="Numeric key example"]: int
+    # whitespace in alias
+    two [alias="t w o", description="whitespace key example"]: int
+
+def main() -> None:
+    account = Account(
+        type="savings",
+        class="retail",
+        from="crm",
+        ownerId=42,
+        createdAt="2024-01-01",
+        nickname=Some("nick"),
+        externalId="ext-9",
+        one=1,
+        two=2,
+    )
+    println(f"{account.type} {account.class_} {account.from_}")
+    println(f"{account.balance} {account.owner_id} {account.status}")
+    println(f"{account.created_at} {account.is_active}")
+    nick = account.nick
+    match nick:
+        Some(value) => println(f"{len(account.tags)} {value} {account.prefs["currency"]}")
+        None => println("no nickname")
+    println(f"{account.external_id} {account.one} {account.two}")

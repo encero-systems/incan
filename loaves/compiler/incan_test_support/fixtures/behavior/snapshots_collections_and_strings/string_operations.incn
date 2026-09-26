@@ -1,0 +1,69 @@
+# behavior: str methods for case, contains, split, replace, slicing, prefix and suffix tests, join and += concatenation give their results
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_string_operations_codegen
+# expect-stdout:
+#   HELLO WORLD hello world Hello World
+#   true false
+#   3 two
+#   hello python
+#   éll
+#   true true
+#   one, two, three
+#   hello world
+
+"""Test string operation code generation"""
+
+def test_string_methods() -> None:
+    s: str = "Hello World"
+    upper: str = s.upper()
+    lower: str = s.lower()
+    stripped: str = s.strip()
+    println(f"{upper} {lower} {stripped}")
+
+def test_string_contains() -> None:
+    text: str = "hello world"
+    has_hello: bool = text.contains("hello")
+    has_goodbye: bool = text.contains("goodbye")
+    println(f"{has_hello} {has_goodbye}")
+
+def test_string_split() -> None:
+    text: str = "one,two,three"
+    parts: list[str] = text.split(",")
+    println(f"{len(parts)} {parts[1]}")
+
+def test_string_replace() -> None:
+    text: str = "hello world"
+    replaced: str = text.replace("world", "python")
+    println(replaced)
+
+def test_string_slice() -> None:
+    text: str = "héllo"
+    mid: str = text.__slice__(1, -1)
+    println(mid)
+
+def test_string_startswith_endswith() -> None:
+    text: str = "hello.txt"
+    starts: bool = text.startswith("hello")
+    ends: bool = text.endswith(".txt")
+    println(f"{starts} {ends}")
+
+def test_string_join() -> None:
+    sep: str = ", "
+    words: list[str] = ["one", "two", "three"]
+    joined: str = sep.join(words)
+    println(joined)
+
+def test_string_concatenation() -> None:
+    mut result: str = "hello"
+    result += " "
+    result += "world"
+    print(result)
+
+def main() -> None:
+    test_string_methods()
+    test_string_contains()
+    test_string_split()
+    test_string_replace()
+    test_string_slice()
+    test_string_startswith_endswith()
+    test_string_join()
+    test_string_concatenation()

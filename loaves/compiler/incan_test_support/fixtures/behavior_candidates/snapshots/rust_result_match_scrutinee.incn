@@ -1,0 +1,32 @@
+# behavior: matching a Rust read_dir Result and each entry Result in a loop reads the directory's single file name and reports a missing directory (#492)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue492_rust_result_match_does_not_clone_scrutinee
+# expect-stdout:
+#   only.txt
+#   missing
+
+from rust::std::fs import read_dir
+from rust::std::path import Path as RustPath
+from std.io import IoError
+from std.tempfile import TemporaryDirectory
+
+def list_names(directory: str) -> None:
+    match read_dir(RustPath.new(directory)):
+        Ok(entries) =>
+            for entry_result in entries:
+                match entry_result:
+                    Ok(entry) => println(entry.file_name().to_string_lossy().into_owned())
+                    Err(err) => println(err.to_string())
+        Err(_) => println("missing")
+
+def prepare() -> Result[None, IoError]:
+    scratch = TemporaryDirectory.try_new()?
+    root = scratch.path()
+    root.joinpath("only.txt").write_text("x", "utf-8", "strict", None)?
+    list_names(root.0)
+    return Ok(None)
+
+def main() -> None:
+    match prepare():
+        Ok(_) => pass
+        Err(error) => println(error.message())
+    list_names("/definitely/not/a/directory")

@@ -1,0 +1,25 @@
+# behavior: Option, List and Dict values pass through functions declared with the same structural types unchanged (RFC 041)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc041_structural_coercion_codegen
+# expect-stdout:
+#   42
+#   alice bob
+#   1.5
+
+def accept_option(value: Option[int]) -> Option[int]:
+    return value
+
+def accept_names(values: List[str]) -> List[str]:
+    return values
+
+def accept_scores(values: Dict[str, float]) -> Dict[str, float]:
+    return values
+
+def main() -> None:
+    maybe_count: Option[int] = Some(42)
+    names: List[str] = ["alice", "bob"]
+    scores: Dict[str, float] = {"latency": 1.5}
+    match accept_option(maybe_count):
+        Some(count) => println(count)
+        None => println("none")
+    println(" ".join(accept_names(names)))
+    println(accept_scores(scores)["latency"])

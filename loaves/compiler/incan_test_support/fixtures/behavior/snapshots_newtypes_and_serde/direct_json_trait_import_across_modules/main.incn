@@ -1,0 +1,10 @@
+# behavior: a module importing std.serde.json Serialize directly serializes a json-derived model declared in another module (#946)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_direct_json_trait_import_keeps_canonical_owner_across_modules_issue946
+# expect-stdout:
+#   {"value":"item"}
+
+from crate.encode import encode
+from crate.models import Item
+
+def main() -> None:
+  println(encode(Item(value="item")))

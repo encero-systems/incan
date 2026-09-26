@@ -1,0 +1,34 @@
+# behavior: an enum adopting a trait answers the trait method by matching on self and exposes an associated constructor (RFC 050)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_enum_methods_traits_codegen
+# expect-stdout:
+#   start
+#   stop
+#   start
+
+"""RFC 050: enum methods and enum trait adoption emit Rust impl blocks."""
+
+pub trait Labeled:
+    def label(self) -> str
+
+pub enum Signal with Labeled:
+    Start
+    Stop
+
+    def label(self) -> str:
+        match self:
+            case Signal.Start:
+                return "start"
+            case Signal.Stop:
+                return "stop"
+
+    def default() -> Self:
+        return Signal.Start
+
+def describe(value: Labeled) -> str:
+    return value.label()
+
+def main() -> None:
+    signal: Signal = Signal.Start
+    println(describe(signal))
+    println(Signal.Stop.label())
+    println(Signal.default().label())

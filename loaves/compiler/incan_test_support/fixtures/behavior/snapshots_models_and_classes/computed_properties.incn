@@ -1,0 +1,25 @@
+# behavior: a computed property declared on a model and one required by a trait both evaluate their body on access (RFC 046)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc046_computed_properties_codegen
+# expect-stdout:
+#   11
+#   money
+
+trait Named:
+  property label -> str
+
+pub model Money with Named:
+  pub cents: int
+
+  pub property dollars -> int:
+    return self.cents + 1
+
+  property label -> str:
+    return "money"
+
+pub def property_total(value: Money) -> int:
+  return value.dollars + value.cents
+
+def main() -> None:
+  money = Money(cents=5)
+  println(property_total(money))
+  println(money.label)

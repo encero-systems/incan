@@ -1,0 +1,42 @@
+# behavior: three route handlers that read a str field through a Query extractor wrapper directly, through a local and through a list each return a Json reply when called (#1489)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1489_web_extractor_field_read_clones_codegen
+# expect-stdout:
+#   search replied
+#   assign replied
+#   listed replied
+
+"""Issue #1489: a field read through a web extractor wrapper clones at every owned sink, even at the wrapper's last use."""
+
+from std.web import route, Json, Query, GET
+from std.serde import json
+import std.async
+
+@derive(json)
+model Search:
+    q: str
+
+@derive(json)
+model Reply:
+    value: str
+
+@route("/search", methods=[GET])
+async def search(query: Query[Search]) -> Json[Reply]:
+    return Json(Reply(value=query.q))
+
+@route("/assign", methods=[GET])
+async def assign(query: Query[Search]) -> Json[Reply]:
+    picked = query.q
+    return Json(Reply(value=picked))
+
+@route("/list", methods=[GET])
+async def listed(query: Query[Search]) -> Json[Reply]:
+    values = [query.q]
+    return Json(Reply(value=values[0]))
+
+async def main() -> None:
+    searched = await search(Query(Search(q="orders")))
+    println("search replied")
+    assigned = await assign(Query(Search(q="orders")))
+    println("assign replied")
+    listed_reply = await listed(Query(Search(q="orders")))
+    println("listed replied")

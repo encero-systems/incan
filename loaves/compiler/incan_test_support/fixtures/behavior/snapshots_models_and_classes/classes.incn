@@ -1,0 +1,164 @@
+# behavior: classes with public fields, methods, self-mutating methods, list-backed state and composition run and print their state, and every declared method answers and every field is read
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_classes_codegen
+# expect-stdout:
+#   Point: (10, 20)
+#   Rectangle: 5x10
+#   Circle area: 78.53975, circumference: 31.4159
+#   Counter: 3
+#   After decrement: 2
+#   After reset: 0
+#   Stack size: 3
+#   Popped: 30
+#   Empty: false
+#   5 + 3 = 8
+#   BasicCalc: 5 - 3 = 2, 5 * 3 = 15
+#   Alice is 30
+#   Hello, I'm Alice (ID: 12345)
+
+"""Test class definitions, initialization, and methods"""
+
+# Simple class with fields
+class Point:
+    pub x: int
+    pub y: int
+
+
+class Rectangle:
+    pub width: int
+    pub height: int
+
+
+# Class with regular methods
+class Circle:
+    radius: float
+
+    def area(self) -> float:
+        return 3.14159 * self.radius * self.radius
+
+    def circumference(self) -> float:
+        return 2.0 * 3.14159 * self.radius
+
+# Classes with self parameter usage and mutable methods (self mutation)
+class Counter:
+    count: int
+
+    def increment(mut self) -> None:
+        self.count += 1
+
+    def decrement(mut self) -> None:
+        self.count -= 1
+
+    def get_count(self) -> int:
+        return self.count
+
+    def reset(mut self) -> None:
+        self.count = 0
+
+
+class Stack:
+    items: list[int]
+
+    def push(mut self, item: int) -> None:
+        self.items.append(item)
+
+    def pop(mut self) -> int:
+        if len(self.items) > 0:
+            return self.items.pop()
+        return -1
+
+    def is_empty(self) -> bool:
+        return len(self.items) == 0
+
+    def size(self) -> int:
+        return len(self.items)
+
+
+# Class with static-like methods (no self mutation)
+class Calculator:
+    name: str
+
+    def add(self, a: int, b: int) -> int:
+        return a + b
+
+    def subtract(self, a: int, b: int) -> int:
+        return a - b
+
+    def multiply(self, a: int, b: int) -> int:
+        return a * b
+
+    def label(self) -> str:
+        return self.name
+
+
+# Composition examples
+class Person:
+    name: str
+    age: int
+
+    def greet(self) -> str:
+        return f"Hello, I'm {self.name}"
+
+    def describe(self) -> str:
+        return f"{self.name} is {self.age}"
+
+class Employee:
+    person: Person
+    employee_id: int
+
+    def get_info(self) -> str:
+        greeting: str = self.person.greet()
+        return f"{greeting} (ID: {self.employee_id})"
+
+
+def main() -> None:
+    # Test simple class
+    mut p: Point = Point(x=0, y=0)
+    p.x = 10
+    p.y = 20
+    print(f"Point: ({p.x}, {p.y})")
+
+    # Test Rectangle with parameters
+    rect: Rectangle = Rectangle(width=5, height=10)
+    print(f"Rectangle: {rect.width}x{rect.height}")
+
+    # Test class with methods
+    circle: Circle = Circle(radius=5.0)
+    area: float = circle.area()
+    circumference: float = circle.circumference()
+    print(f"Circle area: {area}, circumference: {circumference}")
+
+    # Test mutable class
+    mut counter: Counter = Counter(count=0)
+    counter.increment()
+    counter.increment()
+    counter.increment()
+    count: int = counter.get_count()
+    print(f"Counter: {count}")
+    counter.decrement()
+    print(f"After decrement: {counter.get_count()}")
+    counter.reset()
+    print(f"After reset: {counter.get_count()}")
+
+    # Test stack
+    items_list: list[int] = []
+    mut stack: Stack = Stack(items=items_list)
+    stack.push(10)
+    stack.push(20)
+    stack.push(30)
+    print(f"Stack size: {stack.size()}")
+    top: int = stack.pop()
+    print(f"Popped: {top}")
+    print(f"Empty: {stack.is_empty()}")
+
+    # Test calculator
+    calc: Calculator = Calculator(name="BasicCalc")
+    result: int = calc.add(5, 3)
+    print(f"5 + 3 = {result}")
+    print(f"{calc.label()}: 5 - 3 = {calc.subtract(5, 3)}, 5 * 3 = {calc.multiply(5, 3)}")
+
+    # Test composed classes
+    alice: Person = Person(name="Alice", age=30)
+    print(alice.describe())
+    emp: Employee = Employee(person=alice, employee_id=12345)
+    info: str = emp.get_info()
+    print(info)

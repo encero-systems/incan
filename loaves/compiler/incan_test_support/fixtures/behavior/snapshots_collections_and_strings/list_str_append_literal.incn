@@ -1,0 +1,14 @@
+# behavior: a str list accepts an element from another list and a string literal through append (#391)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue391_list_str_append_literal_codegen
+# expect-stdout:
+#   orders_total count
+
+pub def columns(input_columns: list[str]) -> list[str]:
+    mut columns: list[str] = []
+    columns.append(input_columns[0])
+    columns.append("count")
+    return columns
+
+def main() -> None:
+    result = columns(["orders_total"])
+    println(" ".join(result))

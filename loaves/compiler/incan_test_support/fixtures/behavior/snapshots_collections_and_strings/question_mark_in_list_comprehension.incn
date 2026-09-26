@@ -1,0 +1,23 @@
+# behavior: the ? operator inside a list comprehension propagates the first Err out of the enclosing function and otherwise collects every Ok value (#633)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue633_question_mark_list_comprehension_codegen_uses_loop
+# expect-stdout:
+#   1 2 3
+#   negative: -2
+
+def parse_value(value: int) -> Result[int, str]:
+    if value < 0:
+        return Err(f"negative: {value}")
+    return Ok(value)
+
+
+def parse_all(values: list[int]) -> Result[list[int], str]:
+    return Ok([parse_value(value)? for value in values])
+
+
+def main() -> None:
+    match parse_all([1, 2, 3]):
+        Ok(values) => println(f"{values[0]} {values[1]} {values[2]}")
+        Err(err) => println(err)
+    match parse_all([1, -2, 3]):
+        Ok(values) => println(f"{values[0]} {values[1]} {values[2]}")
+        Err(err) => println(err)

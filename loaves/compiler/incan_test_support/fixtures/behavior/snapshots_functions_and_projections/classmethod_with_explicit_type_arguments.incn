@@ -1,0 +1,19 @@
+# behavior: a classmethod called on an explicitly instantiated generic class builds the instance with the given value
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::a_type_owned_call_with_explicit_type_arguments_projects_like_its_declaration
+# expect-stdout:
+#   1
+#   two
+
+@derive(Clone)
+class FactoryBox[T with Clone]:
+  pub value: T
+
+  @classmethod
+  def make(cls, value: T) -> Self:
+    return cls(value=value)
+
+def main() -> None:
+  boxed = FactoryBox[int].make(1)
+  println(f"{boxed.value}")
+  named = FactoryBox[str].make("two")
+  println(f"{named.value}")

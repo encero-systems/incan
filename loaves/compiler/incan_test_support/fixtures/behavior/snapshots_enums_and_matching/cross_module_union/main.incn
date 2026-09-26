@@ -1,0 +1,14 @@
+# behavior: a union returned by one module's function is accepted by another module's union parameter, and a literal converts to that union at the call (#457, #461)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue457_461_cross_module_union_codegen_uses_crate_wrapper
+# expect-stdout:
+#   FALLBACK
+#   number
+#   LITERAL
+
+from producers import parse_value
+from consumers import describe
+
+def main() -> None:
+  println(describe(parse_value(False)))
+  println(describe(parse_value(True)))
+  println(describe("literal"))

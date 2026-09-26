@@ -1,0 +1,29 @@
+# behavior: a generic newtype wraps any value, answers an instance method, builds through a static wrap and duplicates its payload into a tuple
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_newtype_generic_simple_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_newtype_generic_builder_methods_codegen
+# expect-stdout:
+#   Box
+#   42 42
+#   text
+
+"""Test generic newtype without external dependencies"""
+
+# Simple generic newtype wrapper
+type Box[T] = newtype T:
+    @staticmethod
+    def wrap(value: T) -> Self:
+        return Box(value)
+
+    def kind(self) -> str:
+        return "Box"
+
+    def duplicate(self) -> Tuple[T, T]:
+        return (self.0, self.0)
+
+def main() -> None:
+    b = Box(42)
+    print(b.kind())
+    boxed = Box.wrap(42)
+    pair = boxed.duplicate()
+    print(f"{pair[0]} {pair[1]}")
+    print(Box.wrap("text").0)

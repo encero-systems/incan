@@ -1,0 +1,84 @@
+# behavior: dict keys() and values() feed sorted(), membership, len(), loops and comprehensions, including sorted keys and values iterated directly (#1668, #1461)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1668_dict_keys_outside_comprehension_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1461_sorted_dict_keys_codegen
+# expect-stdout:
+#   a,b
+#   true
+#   2
+#   3
+#   2
+#   2,4
+#   1,2
+#   a
+#   b
+#   c
+#   1
+#   2
+#   3
+#   a,b,c
+#   3
+
+def names(d: Dict[str, int]) -> list[str]:
+    return sorted(d.keys())
+
+
+def has(d: Dict[str, int], key: str) -> bool:
+    return key in d.keys()
+
+
+def count_keys(d: Dict[str, int]) -> int:
+    keys = d.keys()
+    return len(keys)
+
+
+def total(d: Dict[str, int]) -> int:
+    mut sum = 0
+    for value in d.values():
+        sum += value
+    return sum
+
+
+def collect_keys(d: Dict[str, int]) -> list[str]:
+    mut out: list[str] = []
+    for key in d.keys():
+        out.append(key)
+    return out
+
+
+def doubled(d: Dict[str, int]) -> list[int]:
+    return sorted([value * 2 for value in d.values()])
+
+
+def ordered_values(d: Dict[str, int]) -> list[int]:
+    return sorted(d.values())
+
+
+def ordered_keys(values: Dict[str, int]) -> list[str]:
+    return sorted(values.keys())
+
+
+def render_ints(values: list[int]) -> str:
+    mut parts: list[str] = []
+    for value in values:
+        parts.append(str(value))
+    return ",".join(parts)
+
+
+def main() -> None:
+    mut d: Dict[str, int] = {}
+    d["b"] = 2
+    d["a"] = 1
+    println(",".join(names(d)))
+    println(has(d, "a"))
+    println(count_keys(d))
+    println(total(d))
+    println(len(collect_keys(d)))
+    println(render_ints(doubled(d)))
+    println(render_ints(ordered_values(d)))
+    values: Dict[str, int] = {"b": 2, "a": 1, "c": 3}
+    for key in sorted(values.keys()):
+        println(key)
+    for value in sorted(values.values()):
+        println(value)
+    println(",".join(ordered_keys(values)))
+    println(len(ordered_values(values)))

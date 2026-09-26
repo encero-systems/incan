@@ -1,0 +1,21 @@
+# behavior: json_stringify evaluates its operand exactly once through both spellings, serializes None as null and keeps the full width of an int
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::builtin_json_stringify_evaluates_its_operand_once
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::builtin_json_stringify_gives_untyped_none_a_concrete_rust_type
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::builtin_json_stringify_preserves_the_incan_int_width
+# expect-stdout:
+#   evaluated
+#   "line\né"
+#   evaluated
+#   "line\né"
+#   null
+#   9223372036854775807
+
+def next_value() -> str:
+  println("evaluated")
+  return "line\né"
+
+def main() -> None:
+  println(json_stringify(next_value()))
+  println(std.builtins.json_stringify(next_value()))
+  println(json_stringify(None))
+  println(json_stringify(9223372036854775807))

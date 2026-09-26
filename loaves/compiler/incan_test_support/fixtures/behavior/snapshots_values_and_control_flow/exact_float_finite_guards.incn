@@ -1,0 +1,48 @@
+# behavior: an ordinary float carries NaN through parsing and printing, while an exact f64 or f32 result refuses a non-finite value at its first observable use
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::exact_float_boundaries_emit_finite_guards_without_changing_ordinary_float
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::exact_float_arithmetic_is_validated_before_every_observable_use
+# expect-stdout:
+#   nan
+#   1.5
+#   2.5
+#   6
+#   6
+#   true
+#   6
+# expect-exit: 101
+
+pub def parsed_exact(value: str) -> f64:
+    return float(value)
+
+pub def widened_exact(value: f32) -> f64:
+    return value
+
+pub def exact_f32(value: f32) -> f32:
+    return value
+
+pub def ordinary(value: str) -> float:
+    return float(value)
+
+pub def returned_f32(left: f32, right: f32) -> f32:
+    return left * right
+
+pub def stored_f64(left: f64, right: f64) -> f64:
+    value: f64 = left * right
+    return value
+
+pub def compared_f32(left: f32, right: f32) -> bool:
+    return left * right > left
+
+pub def printed_f64(left: f64, right: f64) -> None:
+    println(left * right)
+
+def main() -> None:
+    println(ordinary("nan"))
+    println(parsed_exact("1.5"))
+    narrow: f32 = 2.5
+    println(widened_exact(exact_f32(narrow)))
+    println(returned_f32(2.0, 3.0))
+    println(stored_f64(2.0, 3.0))
+    println(compared_f32(2.0, 3.0))
+    printed_f64(2.0, 3.0)
+    println(parsed_exact("nan"))

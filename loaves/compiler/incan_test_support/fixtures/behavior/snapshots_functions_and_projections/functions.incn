@@ -1,0 +1,128 @@
+# behavior: plain, recursive, composed, list-mutating, early-return, void and tuple-returning functions run and print their results
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_functions_codegen
+# expect-stdout:
+#   Hello, World!
+#   5 + 3 = 8
+#   quadruple(5) = 20
+#   factorial(5) = 120
+#   fibonacci(7) = 13
+#   max = 9
+#   10 20 15
+#   negative
+#   Hello, Alice!
+#   10 20
+
+"""Test function definitions and calls"""
+
+# Simple function with no params
+def greet() -> str:
+    return "Hello, World!"
+
+# Function with parameters
+def add(a: int, b: int) -> int:
+    return a + b
+
+# Function with multiple parameter types
+def format_message(name: str, age: int, is_active: bool) -> str:
+    mut status: str = "inactive"
+    if is_active:
+        status = "active"
+    return f"{name} is {age} years old and {status}"
+
+# Function with return type annotation
+def multiply(x: int, y: int) -> int:
+    result: int = x * y
+    return result
+
+# Recursive function (factorial)
+def factorial(n: int) -> int:
+    if n <= 1:
+        return 1
+    return n * factorial(n - 1)
+
+# Recursive function (fibonacci)
+def fibonacci(n: int) -> int:
+    if n <= 1:
+        return n
+    return fibonacci(n - 1) + fibonacci(n - 2)
+
+# Multiple functions with one calling another
+def double(x: int) -> int:
+    return x * 2
+
+def quadruple(x: int) -> int:
+    return double(double(x))
+
+# Function modifying list in place
+def double_values(mut numbers: list[int]) -> None:
+    mut idx: int = 0
+    numbers[idx] = numbers[idx] * 2
+    idx = 1
+    numbers[idx] = numbers[idx] * 2
+
+# Function with complex logic
+def find_max(numbers: list[int]) -> int:
+    mut max_val: int = numbers[0]
+    for num in numbers:
+        if num > max_val:
+            max_val = num
+    return max_val
+
+# Function with early returns
+def classify_number(x: int) -> str:
+    if x < 0:
+        return "negative"
+    if x == 0:
+        return "zero"
+    if x < 10:
+        return "small positive"
+    return "large positive"
+
+# Function with no return (void)
+def print_greeting(name: str) -> None:
+    print(f"Hello, {name}!")
+
+# Function returning tuple
+def get_coordinates() -> tuple[int, int]:
+    return (10, 20)
+
+def main() -> None:
+    # Test simple functions
+    greeting: str = greet()
+    print(greeting)
+
+    # Test arithmetic functions
+    sum: int = add(5, 3)
+    print(f"5 + 3 = {sum}")
+
+    # Test function composition
+    result: int = quadruple(5)
+    print(f"quadruple(5) = {result}")
+
+    # Test recursive functions
+    fact: int = factorial(5)
+    print(f"factorial(5) = {fact}")
+
+    fib: int = fibonacci(7)
+    print(f"fibonacci(7) = {fib}")
+
+    # Test list functions
+    test_nums: list[int] = [1, 5, 3, 9, 2]
+    max_num: int = find_max(test_nums)
+    print(f"max = {max_num}")
+
+    mut nums: list[int] = [5, 10, 15]
+    double_values(nums)
+    print(f"{nums[0]} {nums[1]} {nums[2]}")
+
+    # Test classification
+    category: str = classify_number(-5)
+    print(category)
+
+    # Test void function
+    mut alice_name: str = "Alice"
+    print_greeting(alice_name)
+
+    # Test tuple return
+    coords: tuple[int, int] = get_coordinates()
+    print(f"{coords[0]} {coords[1]}")

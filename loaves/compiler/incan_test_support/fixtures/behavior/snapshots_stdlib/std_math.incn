@@ -1,0 +1,18 @@
+# behavior: std.math constants, float functions and integer gcd/lcm give their values, and NaN poisons a sum
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_math_codegen
+# expect-stdout:
+#   nan
+#   3.141592653589793 2.718281828459045 6.283185307179586
+#   1.0 3.0 0.7853981633974483 5.0
+#   6 24
+
+import std.math
+
+def main() -> None:
+  constants = math.PI + math.E + math.TAU + math.INFINITY + math.NAN
+  funcs = math.round(1.4) + math.log2(8.0) + math.atan2(1.0, 1.0) + math.hypot(3.0, 4.0)
+  ints = math.gcd(54, 24) + math.lcm(6, 8)
+  println(constants + funcs + float(ints))
+  println(f"{math.PI} {math.E} {math.TAU}")
+  println(f"{math.round(1.4)} {math.log2(8.0)} {math.atan2(1.0, 1.0)} {math.hypot(3.0, 4.0)}")
+  println(f"{math.gcd(54, 24)} {math.lcm(6, 8)}")

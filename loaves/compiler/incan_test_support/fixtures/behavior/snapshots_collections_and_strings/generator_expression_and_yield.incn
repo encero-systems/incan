@@ -1,0 +1,20 @@
+# behavior: a generator expression with nested for-clauses and filters yields lazily through take and collect, and a yield-based generator function collects its items (RFC 006)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc006_generator_expression_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc006_generator_function_yield_codegen
+# expect-stdout:
+#   2 3 4
+#   1 2 3
+
+def positives(xs: List[int], ys: List[int]) -> Generator[int]:
+  return (x * y for x in xs if x > 0 for y in ys if y > x)
+
+def numbers() -> Generator[int]:
+  yield 1
+  yield 2
+  yield 3
+
+def main() -> None:
+  values = positives([1, 2, 3], [2, 3, 4]).take(3).collect()
+  print(f"{values[0]} {values[1]} {values[2]}")
+  collected = numbers().collect()
+  println(f"{collected[0]} {collected[1]} {collected[2]}")

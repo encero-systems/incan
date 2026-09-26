@@ -1,0 +1,19 @@
+# behavior: a generic BinaryReader consumer loops over chunks() through map_err with ? and reports each chunk's length
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_fallible_adapter_loop_inherits_qualified_trait_dispatch_codegen
+# expect-stdout:
+#   16
+#   4
+#   done
+
+from std.io import BinaryReader, BytesIO
+
+pub def consume[R with BinaryReader](reader: R) -> Result[None, str]:
+  prefix = "read failed: "
+  for chunk in reader.chunks(16).map_err((error) => f"{prefix}{error.detail}")?:
+    println(len(chunk))
+  return Ok(None)
+
+def main() -> None:
+  match consume(BytesIO(b"0123456789abcdefghij")):
+    Ok(_) => println("done")
+    Err(error) => println(error)

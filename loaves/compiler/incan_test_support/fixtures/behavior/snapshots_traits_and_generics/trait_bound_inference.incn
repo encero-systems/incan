@@ -1,0 +1,55 @@
+# behavior: generic functions whose bounds are inferred from ==, >, f-strings, dict keys, +, -, * and clone() run for int and str arguments (RFC 023)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_trait_bound_inference_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_trait_bound_inference_more_codegen
+# expect-stdout:
+#   true false
+#   true false
+#   7 hi
+#   1
+#   5 1 6 3.5
+#   3 text
+#   true
+#   9
+
+# RFC 023: Trait bound inference from usage
+# Uses simple comparison operations on generic types to test inference.
+
+def are_equal[T](left: T, right: T) -> bool:
+    return left == right
+
+def is_greater[T](a: T, b: T) -> bool:
+    return a > b
+
+def show[T](x: T) -> str:
+    return f"{x}"
+
+def make_dict[T](k: T) -> Dict[T, int]:
+    return {k: 1}
+
+def add[T](a: T, b: T) -> T:
+    return a + b
+
+def subtract[T](a: T, b: T) -> T:
+    return a - b
+
+def multiply[T](a: T, b: T) -> T:
+    return a * b
+
+def duplicate[T](x: T) -> T:
+    return x.clone()
+
+def wrapper[T](a: T, b: T) -> bool:
+    return are_equal(a, b)
+
+def show_eq[T with Eq](x: T) -> str:
+    return f"{x}"
+
+def main() -> None:
+    println(f"{are_equal(1, 1)} {are_equal("a", "b")}")
+    println(f"{is_greater(2, 1)} {is_greater(1, 2)}")
+    println(f"{show(7)} {show("hi")}")
+    println(make_dict("key")["key"])
+    println(f"{add(2, 3)} {subtract(3, 2)} {multiply(2, 3)} {add(1.5, 2.0)}")
+    println(f"{duplicate(3)} {duplicate("text")}")
+    println(wrapper("same", "same"))
+    println(show_eq(9))

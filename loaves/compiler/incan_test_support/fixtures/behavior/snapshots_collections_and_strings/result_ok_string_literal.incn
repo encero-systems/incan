@@ -1,0 +1,34 @@
+# behavior: Ok with a string literal is an owned str payload in a typed local, an argument and a return, and each prints its text (#367)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue367_result_ok_string_literal_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue367_result_ok_string_literal_emits_owned_strings
+# expect-stdout:
+#   from_local
+#   from_call
+#   from_return
+
+"""Issue #367: `Ok("...")` in `Result[str, E]` contexts should emit owned `String`."""
+
+def takes_result(value: Result[str, str]) -> None:
+    match value:
+        case Ok(msg):
+            println(msg)
+        case Err(err):
+            println(err)
+
+def returns_result() -> Result[str, str]:
+    return Ok("from_return")
+
+def main() -> None:
+    direct: Result[str, str] = Ok("from_local")
+    match direct:
+        case Ok(msg):
+            println(msg)
+        case Err(err):
+            println(err)
+    takes_result(Ok("from_call"))
+    result: Result[str, str] = returns_result()
+    match result:
+        case Ok(msg):
+            println(msg)
+        case Err(err):
+            println(err)

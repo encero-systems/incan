@@ -1,0 +1,52 @@
+# behavior: a model adopting the stdlib collection Iterator drives a for loop, and a model adopting the stdlib FallibleIterator drives the map, filter and collect adapters with callable models as the mapping function and the predicate
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_derives_collection_compiled_codegen
+# expect-stdout:
+#   3
+#   2 4 6
+
+from std.derives.collection import Iterator, FallibleIterator
+from std.traits.callable import Callable1
+
+model Countdown with Iterator[int]:
+    remaining: int
+
+    def __iter__(self) -> Countdown:
+        return self
+
+    def __next__(mut self) -> Option[int]:
+        if self.remaining == 0:
+            return None
+        self.remaining -= 1
+        return Some(self.remaining + 1)
+
+model Readings with FallibleIterator[int, str]:
+    items: list[int]
+    index: int
+
+    def __next__(mut self) -> Result[Option[int], str]:
+        if self.index >= len(self.items):
+            return Ok(None)
+        item = self.items[self.index]
+        self.index += 1
+        return Ok(Some(item))
+
+@derive(Clone)
+model Double with Callable1[int, int]:
+    def __call__(self, value: int) -> int:
+        return value * 2
+
+@derive(Clone)
+model Above with Callable1[int, bool]:
+    threshold: int
+
+    def __call__(self, value: int) -> bool:
+        return value > self.threshold
+
+def main() -> None:
+    mut total = 0
+    for value in Countdown(remaining=2):
+        total += value
+    println(total)
+    match Readings(items=[1, 2, 3], index=0).map(Double()).filter(Above(threshold=2)).collect():
+        Ok(values) => println(f"{len(values)} {values[0]} {values[1]}")
+        Err(error) => println(error)

@@ -1,0 +1,63 @@
+# behavior: str.encode and bytes.decode round-trip UTF-8 with default, named and runtime encodings, a replace policy for invalid bytes, and an error under the strict default (#1668)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1668_str_encode_bytes_decode_codegen
+# expect-stdout:
+#   6
+#   héllo
+#   �
+#   2
+#   ok
+#   rawhéllo
+#   invalid-utf8: 'utf-8' codec can't decode bytes: invalid utf-8 sequence of 1 bytes from index 0
+
+const GREETING: FrozenStr = "héllo"
+const RAW: FrozenBytes = b"raw"
+
+
+def utf8_bytes(text: str) -> bytes:
+    return text.encode()
+
+
+def utf8_bytes_named(text: str) -> bytes:
+    return text.encode(encoding="UTF_8")
+
+
+def runtime_label(text: str, label: str) -> bytes:
+    return text.encode(label)
+
+
+def round_trip(data: bytes) -> Result[str, ValidationError]:
+    return data.decode()
+
+
+def lossy(data: bytes) -> str:
+    match data.decode(errors="replace"):
+        Ok(text) => return text
+        Err(_) => return "?"
+
+
+def runtime_policy(data: bytes, policy: str) -> Result[str, ValidationError]:
+    return data.decode("utf-8", policy)
+
+
+def frozen_round_trip() -> Result[str, ValidationError]:
+    return Ok(RAW.decode()? + GREETING.encode().decode()?)
+
+
+def run() -> Result[None, ValidationError]:
+    payload = utf8_bytes("héllo")
+    println(len(payload))
+    println(round_trip(payload)?)
+    println(lossy(b"\xff"))
+    println(len(utf8_bytes_named("b")) + len(runtime_label("c", "utf8")))
+    println(runtime_policy(b"ok", "strict")?)
+    println(frozen_round_trip()?)
+    match b"\xff".decode():
+        Ok(text) => println(text)
+        Err(error) => println(f"{error}")
+    return Ok(None)
+
+
+def main() -> None:
+    match run():
+        Ok(_) => pass
+        Err(error) => println(f"failed: {error}")

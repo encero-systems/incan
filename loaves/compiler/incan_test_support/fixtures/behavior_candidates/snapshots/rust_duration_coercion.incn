@@ -1,0 +1,10 @@
+# behavior: an f32 literal coerces into an imported Rust Duration constructor and reads back as seconds (RFC 041)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc041_rust_coercions_codegen
+# expect-stdout:
+#   1.5
+
+from rust::std::time import Duration
+
+def main() -> None:
+    _d = Duration.from_secs_f32(1.5)
+    println(_d.as_secs_f32())

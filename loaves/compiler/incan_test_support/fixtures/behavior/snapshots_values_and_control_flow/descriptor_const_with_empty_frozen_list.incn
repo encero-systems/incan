@@ -1,0 +1,45 @@
+# behavior: descriptor-derived model consts nest an empty FrozenList const and an Option field, and compare equal to the consts they were built from (#1001)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_descriptor_const_with_empty_frozen_list_codegen_issue1001
+# expect-stdout:
+#   true
+#   0
+#   0.1
+#   none
+
+@derive(Clone, Eq, Descriptor)
+model Version:
+  major: int
+  minor: int
+
+@derive(Clone, Eq, Descriptor)
+model Change:
+  version: Version
+  note: str
+
+@derive(Clone, Eq, Descriptor)
+model Deprecation:
+  since: Version
+  note: str
+
+@derive(Clone, Eq, Descriptor)
+model Lifecycle:
+  since: Version
+  changed: FrozenList[Change]
+  deprecated: Option[Deprecation]
+
+const INITIAL_VERSION: Version = Version(major=0, minor=1)
+const NO_CHANGES: FrozenList[Change] = []
+const INITIAL_LIFECYCLE: Lifecycle = Lifecycle(
+  since=INITIAL_VERSION,
+  changed=NO_CHANGES,
+  deprecated=None,
+)
+
+def main() -> None:
+  assert INITIAL_LIFECYCLE.changed == NO_CHANGES
+  println(INITIAL_LIFECYCLE.changed == NO_CHANGES)
+  println(INITIAL_LIFECYCLE.changed.len())
+  println(f"{INITIAL_LIFECYCLE.since.major}.{INITIAL_LIFECYCLE.since.minor}")
+  match INITIAL_LIFECYCLE.deprecated:
+    Some(deprecation) => println(deprecation.note)
+    None => println("none")

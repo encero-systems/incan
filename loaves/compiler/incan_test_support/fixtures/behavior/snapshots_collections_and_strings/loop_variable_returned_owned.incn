@@ -1,0 +1,43 @@
+# behavior: a loop variable returned directly, through Ok, or after being appended to a list yields the owned value (#1489)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1489_loop_variable_returned_owned_codegen
+# expect-stdout:
+#   1
+#   b
+#   1
+#   absent
+
+"""Issue #1489: returning a by-reference loop variable materializes the owned value."""
+
+def require_member(values: list[list[str]], name: str) -> Result[list[str], str]:
+    for row in values:
+        if row[0] == name:
+            return Ok(row)
+    return Err("absent")
+
+def first_named(names: list[str], name: str) -> Result[str, str]:
+    for candidate in names:
+        if candidate == name:
+            return Ok(candidate)
+    return Err("absent")
+
+def collect_named(names: list[str], name: str) -> Result[list[str], str]:
+    mut found: list[str] = []
+    for candidate in names:
+        if candidate == name:
+            found.append(candidate)
+            return Ok(found)
+    return Err("absent")
+
+def main() -> None:
+    match require_member([["a", "b"], ["c"]], "c"):
+        Ok(row) => println(len(row))
+        Err(reason) => println(reason)
+    match first_named(["a", "b"], "b"):
+        Ok(found) => println(found)
+        Err(reason) => println(reason)
+    match collect_named(["a", "b"], "b"):
+        Ok(found) => println(len(found))
+        Err(reason) => println(reason)
+    match first_named(["a", "b"], "z"):
+        Ok(found) => println(found)
+        Err(reason) => println(reason)

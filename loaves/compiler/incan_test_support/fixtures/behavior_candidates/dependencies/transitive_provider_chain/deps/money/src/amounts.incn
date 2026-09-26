@@ -1,0 +1,14 @@
+pub model Amount:
+    pub cents: int
+
+
+pub def cents(value: int) -> Amount:
+    return Amount(cents=value)
+
+
+pub def add(left: Amount, right: Amount) -> Amount:
+    return Amount(cents=left.cents + right.cents)
+
+
+pub def describe(amount: Amount) -> str:
+    return f"{amount.cents} cents"

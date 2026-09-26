@@ -1,0 +1,31 @@
+# behavior: lowercase collection, tuple and option type spellings annotate values that are usable as their capitalized forms
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_lowercase_types_codegen
+# expect-stdout:
+#   3 2 3
+#   42 hello
+#   none
+#   All lowercase types work!
+
+"""Test lowercase type names (Python-style)"""
+
+def test_lowercase_types() -> None:
+    # Lowercase collection types should work
+    numbers: list[int] = [1, 2, 3]
+    data: dict[str, int] = {"a": 1, "b": 2}
+    unique: set[int] = {1, 2, 3}
+    print(f"{len(numbers)} {len(data)} {len(unique)}")
+
+    # Tuple literals
+    pair: tuple[int, str] = (42, "hello")
+    print(f"{pair[0]} {pair[1]}")
+
+    # Lowercase option works
+    maybe: option[int] = None
+    match maybe:
+        Some(value) => print(value)
+        None => print("none")
+
+    print("All lowercase types work!")
+
+def main() -> None:
+    test_lowercase_types()

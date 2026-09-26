@@ -1,0 +1,39 @@
+# behavior: a newtype adopting two traits with a same-named method dispatches each targeted implementation through its trait bound (RFC 043)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc043_newtype_trait_targets_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::trait_targeted_method_overloads_keep_distinct_recoverable_projections
+# expect-stdout:
+#   1
+#   value
+#   5
+
+"""RFC 043: method-level trait targets disambiguate same-name newtype methods."""
+
+trait ToInt:
+    def convert(self) -> int
+
+trait ToStr:
+    def convert(self) -> str
+
+type Value = newtype int with ToInt, ToStr:
+    type Output for ToInt = Value
+
+    def convert(self) for ToInt -> int:
+        return 1
+
+    def convert(self) for ToStr -> str:
+        return "value"
+
+pub def as_int[T with ToInt](value: T) -> int:
+    return value.convert()
+
+pub def as_str[T with ToStr](value: T) -> str:
+    return value.convert()
+
+pub def keep_value(value: Value) -> Value:
+    return value
+
+def main() -> None:
+    value = Value(5)
+    println(as_int(value))
+    println(as_str(value))
+    println(keep_value(value).0)

@@ -1,0 +1,32 @@
+# behavior: indexing a JsonValue by key and by position returns the nested value or None
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_json_value_indexing_emits_checked_helpers
+# expect-stdout:
+#   found
+#   missing
+#   found
+#   missing
+
+from std.json import JsonValue, parse
+
+pub def by_name(data: JsonValue) -> Option[JsonValue]:
+  return data["name"]
+
+pub def by_index(data: JsonValue) -> Option[JsonValue]:
+  return data[0]
+
+def report(value: Option[JsonValue]) -> None:
+  match value:
+    Some(_) => println("found")
+    None => println("missing")
+
+def main() -> None:
+  match parse("{\"name\": \"ada\"}"):
+    Ok(object) =>
+      report(by_name(object))
+      report(by_index(object))
+    Err(_) => println("error")
+  match parse("[1]"):
+    Ok(array) =>
+      report(by_index(array))
+      report(by_name(array))
+    Err(_) => println("error")

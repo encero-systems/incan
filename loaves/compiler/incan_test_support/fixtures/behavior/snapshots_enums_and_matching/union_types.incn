@@ -1,0 +1,110 @@
+# behavior: union-typed values narrow through isinstance chains, type patterns and None checks to the branch for their runtime type (RFC 029)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc029_union_types_codegen
+# expect-stdout:
+#   number FALLBACK
+#   42 FALLBACK
+#   HELLO missing
+#   7 UP missing
+#   number true false TEXT
+#   number TEXT true false
+#   bool int float WIDE
+#   bool:true 3 2.5 WIDE
+#   number missing OPT
+
+pub def parse_value(flag: bool) -> int | str:
+  if flag:
+    return 42
+  return "fallback"
+
+pub def normalize(value: int | str) -> str:
+  if isinstance(value, int):
+    return "number"
+  else:
+    return value.upper()
+
+pub def describe(value: int | str) -> str:
+  match value:
+    int(n) =>
+      return str(n)
+    str(s) =>
+      return s.upper()
+
+pub def label(value: str | None) -> str:
+  if value is not None:
+    return value.upper()
+  return "missing"
+
+pub def describe_optional(value: int | str | None) -> str:
+  match value:
+    int(n) =>
+      return str(n)
+    str(s) =>
+      return s.upper()
+    None =>
+      return "missing"
+
+pub def describe_wide(value: int | str | bool) -> str:
+  if isinstance(value, int):
+    return "number"
+  else:
+    match value:
+      bool(flag) =>
+        if flag:
+          return "true"
+        return "false"
+      str(text) =>
+        return text.upper()
+
+pub def describe_chain(value: int | str | bool) -> str:
+  if isinstance(value, int):
+    return "number"
+  elif isinstance(value, str):
+    return value.upper()
+  else:
+    if value:
+      return "true"
+    return "false"
+
+pub def describe_wide_chain(value: int | float | str | bool) -> str:
+  if isinstance(value, bool):
+    return "bool"
+  elif isinstance(value, int):
+    return "int"
+  elif isinstance(value, float):
+    return "float"
+  elif isinstance(value, str):
+    return value.upper()
+  return "unknown"
+
+pub def describe_wide_match(value: int | float | str | bool) -> str:
+  match value:
+    bool(flag) =>
+      if flag:
+        return "bool:true"
+      return "bool:false"
+    int(n) =>
+      return str(n)
+    float(f) =>
+      return str(f)
+    str(s) =>
+      return s.upper()
+
+pub def describe_optional_narrow(value: int | str | None) -> str:
+  if isinstance(value, int):
+    return "number"
+  else:
+    if value is None:
+      return "missing"
+    else:
+      return value.upper()
+
+def main() -> None:
+  println(f"{normalize(parse_value(true))} {normalize(parse_value(false))}")
+  println(f"{describe(parse_value(true))} {describe(parse_value(false))}")
+  println(f"{label("hello")} {label(None)}")
+  println(f"{describe_optional(7)} {describe_optional("up")} {describe_optional(None)}")
+  println(f"{describe_wide(1)} {describe_wide(true)} {describe_wide(false)} {describe_wide("text")}")
+  println(f"{describe_chain(1)} {describe_chain("text")} {describe_chain(true)} {describe_chain(false)}")
+  println(f"{describe_wide_chain(true)} {describe_wide_chain(1)} {describe_wide_chain(2.5)} {describe_wide_chain("wide")}")
+  println(f"{describe_wide_match(true)} {describe_wide_match(3)} {describe_wide_match(2.5)} {describe_wide_match("wide")}")
+  println(f"{describe_optional_narrow(1)} {describe_optional_narrow(None)} {describe_optional_narrow("opt")}")

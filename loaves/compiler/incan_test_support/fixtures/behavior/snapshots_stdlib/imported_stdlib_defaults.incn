@@ -1,0 +1,18 @@
+# behavior: omitted default arguments of imported stdlib static methods are filled at the call site, for a datetime factory and an error constructor (#500)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::imported_stdlib_static_method_defaults_expand_at_call_site_issue500
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::imported_stdlib_associated_function_defaults_expand_in_generated_rust
+# expect-stdout:
+#   01:02:03
+#   -1
+#   badkey
+
+from std.collections import OrdinalMapError
+from std.datetime.civil.naive import Time
+
+def main() -> None:
+  match Time.from_fields(1, 2, 3):
+    Ok(time) => println(time.isoformat())
+    Err(error) => println(error.detail)
+  error = OrdinalMapError.invalid_key_record("badkey")
+  println(error.index())
+  print(error.message())

@@ -1,0 +1,33 @@
+# behavior: explicit Index adoption on a generic class and a Self-returning Index adoption on a plain class make [] call __getitem__ (#815)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue815_generic_index_adoption_emits_trait_impl
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue815_self_returning_index_adoption_uses_owner_type
+# expect-stdout:
+#   amount
+#   plain
+
+from std.traits.indexing import Index
+
+class GenericBox[T with Clone] with Index[str, str]:
+  pub label: str
+  pub witness: list[T]
+
+  def __getitem__(self, key: str) for Index[str, str] -> str:
+    return key
+
+pub def indexed_label[T with Clone](box: GenericBox[T]) -> str:
+  return box["amount"]
+
+class PlainBox with Index[list[str], Self]:
+  pub label: str
+
+  def __getitem__(self, key: list[str]) for Index[list[str], Self] -> Self:
+    return self
+
+pub def nested_box(box: PlainBox) -> PlainBox:
+  return box[["name"]]
+
+def main() -> None:
+  generic = GenericBox(label="generic", witness=[1])
+  println(indexed_label(generic))
+  plain = PlainBox(label="plain")
+  println(nested_box(plain).label)
