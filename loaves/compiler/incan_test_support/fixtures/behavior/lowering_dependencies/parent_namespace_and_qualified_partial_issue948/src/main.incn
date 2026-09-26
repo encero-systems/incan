@@ -1,0 +1,13 @@
+# behavior: a provider's directory namespace routes a call to the nested module's callable, and its qualified partial applies the preset taken from the provider's own const (#948)
+# retires: loaves/compiler/incan_ir/src/lower/expr/calls.rs::imported_pub_parent_namespace_routes_to_nested_checked_callable_issue948
+# retires: loaves/compiler/incan_ir/src/lower/expr/calls.rs::qualified_partial_expands_presets_without_a_callable_snapshot_issue948
+# expect-stdout:
+#   named of size 4
+#   direct of size 2
+
+from pub::modulelib import hyperquant
+
+
+def main() -> None:
+    println(hyperquant.default_index(label="named"))
+    println(hyperquant.build_index(2, "direct"))
