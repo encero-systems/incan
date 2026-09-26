@@ -1821,6 +1821,48 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs": {
+      "disposition": "retire",
+      "notes": "asserts the generated Rust text of multi-target assignments that write existing places (#1798, #1799, #1806); retires with the Rust-source backend.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "chained_assignment_gives_every_target_the_value_issue1806": {
+          "notes": "Asserts every chain target gets the value, each in its own type, and no target is written from another; the fixture prints the str, list, Option and union cases.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
+        },
+        "chained_assignment_in_a_loop_assigns_the_bound_name_issue1806": {
+          "notes": "Asserts the loop assigns `x` from the chain instead of shadowing it; the fixture runs the loop and prints 5.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
+        },
+        "chained_assignment_types_its_value_and_copies_for_a_static_issue1806": {
+          "notes": "Asserts `a = b = None` over two `Option[int]` targets reads `None` in their type and a module static target gets the value too; the fixture prints both cases.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
+        },
+        "chained_call_to_a_user_function_named_set_is_emitted_once_issue1806": {
+          "notes": "Asserts a call to a user function named `set` goes into one temporary that every target reads; the fixture prints `tick set` once for the chain.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
+        },
+        "chained_literal_over_disagreeing_targets_is_written_per_target_issue1806": {
+          "notes": "Asserts `None`, `[]` and `{}` over targets of different types are written once per target in its own type with no shared temporary; the fixture prints both targets of each.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
+        },
+        "chained_targets_of_equivalent_types_share_one_temporary_issue1806": {
+          "notes": "Asserts `list[int]` and `list[i64]` targets read one `Vec<i64>` temporary; the fixture assigns `empty()` to both and prints their lengths.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
+        },
+        "tuple_assignment_writes_each_field_and_element_issue1798": {
+          "notes": "Asserts the emitted writes of a field swap, a list-element swap and a field beside a name; the fixture runs the same shapes and prints the swapped values.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/tuple_assignment_swaps_fields_and_list_elements.incn"
+        },
+        "tuple_unpacking_in_a_loop_assigns_the_bound_names_issue1799": {
+          "notes": "Asserts the loop body assigns `a` and `b` instead of shadowing them; the fixture runs the Fibonacci loop and prints 55.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/tuple_unpacking_reassigns_names_inside_a_loop.incn"
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/trait_bound_inference.rs": {
       "disposition": "retire",
       "notes": "infers Rust trait bounds for generated generics. Twinned by the ownership_numerics_and_bounds fixtures (a bound is proved by the program running for concrete types); the absent-bound tests are open on a candidate that instantiates a non-`Clone` Rust type; the metadata-free, legacy-encoding and conservative-fallback tests die; the implementation-bound tests are open on #1280.",
@@ -4662,6 +4704,48 @@
         "shared_receiver_slots_are_planned_to_the_wrapper_form": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_functions_and_projections/user_defined_method_decorators.incn",
           "notes": "asserts that lowering rewrites a `self` method's decorator shapes and replacement to the form the method's wrapper passes the receiver in, and nothing else (#1790); the twin runs that decorator chain."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering of multi-target assignments into existing places (#1798, #1799, #1806); retires with `incan_ir`. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "chained_assignment_gives_every_target_the_value_issue1806": {
+          "notes": "Asserts the legacy IR gives every chain target the value from one temporary, left to right; the fixture prints the str, list, Option and union cases.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
+        },
+        "chained_assignment_into_bound_names_reassigns_them_inside_a_loop_issue1806": {
+          "notes": "Asserts the legacy IR assigns bound chain targets instead of declaring shadows; the fixture runs two loops and a new-name chain.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
+        },
+        "chained_assignment_types_its_value_by_the_targets_and_copies_for_a_static_issue1806": {
+          "notes": "Asserts the legacy IR types the chain value by the targets that agree and gives a module static target the value too; the fixture prints both cases.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
+        },
+        "chained_call_to_a_user_binding_named_like_a_constructor_is_evaluated_once_issue1806": {
+          "notes": "Asserts the legacy IR reads a call to a user function, closure or parameter named `Vec`, `list`, `dict` or `set` into one temporary; the fixture prints each call's tick once.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
+        },
+        "chained_literal_over_disagreeing_targets_is_written_per_target_issue1806": {
+          "notes": "Asserts the legacy IR writes a literal once per target when the targets disagree on a type; the fixture prints both targets of each case.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
+        },
+        "chained_targets_of_equivalent_types_share_one_typed_temporary_issue1806": {
+          "notes": "Asserts the legacy IR types the temporary of a `list[int]` and `list[i64]` chain, and of a `list[float]` and `list[f64]` chain, by their shared type; the fixture prints both chains.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
+        },
+        "tuple_assignment_to_fields_and_list_elements_writes_each_place_issue1798": {
+          "notes": "Asserts the legacy IR writes each field and element from one temporary; the fixture runs the swaps and prints the result.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/tuple_assignment_swaps_fields_and_list_elements.incn"
+        },
+        "tuple_unpacking_into_bound_names_reassigns_them_inside_a_loop_issue1799": {
+          "notes": "Asserts the legacy IR assigns bound names instead of declaring shadows; the fixture runs a Fibonacci loop, a while loop and a swap in a branch.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/tuple_unpacking_reassigns_names_inside_a_loop.incn"
         }
       },
       "twin": ""

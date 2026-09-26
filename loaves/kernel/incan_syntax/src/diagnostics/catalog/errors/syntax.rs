@@ -65,6 +65,18 @@ pub fn invalid_compound_assignment_target(span: Span) -> CompileError {
     CompileError::syntax("Invalid compound assignment target".to_string(), span)
 }
 
+/// Report a type annotation on a chained assignment, `x: T = y = value` (#1806).
+///
+/// An annotation declares the type of one binding, so an annotated assignment has one target; the chain's other
+/// targets would take the value without the declared type.
+pub fn annotated_chained_assignment(span: Span) -> CompileError {
+    CompileError::syntax(
+        "A type annotation applies to one assignment target; `x: T = y = value` is not allowed".to_string(),
+        span,
+    )
+    .with_hint("Annotate the target in its own statement, `x: T = value`, and assign the other targets from it")
+}
+
 pub fn invalid_tuple_assignment_target(span: Span) -> CompileError {
     CompileError::syntax("Invalid assignment target in tuple assignment".to_string(), span)
 }

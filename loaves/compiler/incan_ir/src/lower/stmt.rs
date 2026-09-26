@@ -82,7 +82,7 @@ struct IndependentIsInstanceChain {
 
 impl AstLowering {
     /// Resolve a named assignment to the nearest local, static binding, or source static target.
-    fn resolve_named_assign_target(&self, name: &str) -> AssignTarget {
+    pub(super) fn resolve_named_assign_target(&self, name: &str) -> AssignTarget {
         let direct_static = self
             .type_info
             .as_ref()
@@ -119,6 +119,27 @@ impl AstLowering {
                 ty: self.lookup_var(name),
             }
         }
+    }
+
+    /// Lower the place `object.field` that an assignment writes.
+    ///
+    /// A field of a Rust-interop type is written under the Rust field name the checker recorded for the place's span;
+    /// every other field keeps its source spelling.
+    pub(super) fn field_assign_target(
+        &mut self,
+        object: &Spanned<ast::Expr>,
+        field: &str,
+        target_span: ast::Span,
+    ) -> Result<AssignTarget, LoweringError> {
+        Ok(AssignTarget::Field {
+            object: Box::new(self.lower_expr_spanned(object)?),
+            field: self
+                .type_info
+                .as_ref()
+                .and_then(|info| info.rust_field_access_name(target_span))
+                .unwrap_or(field)
+                .to_string(),
+        })
     }
 
     /// Build a typed read of a source static binding.
@@ -1144,15 +1165,7 @@ impl AstLowering {
             }
 
             ast::Statement::FieldAssignment(fa) => IrStmtKind::Assign {
-                target: AssignTarget::Field {
-                    object: Box::new(self.lower_expr_spanned(&fa.object)?),
-                    field: self
-                        .type_info
-                        .as_ref()
-                        .and_then(|info| info.rust_field_access_name(fa.target_span))
-                        .unwrap_or(fa.field.as_str())
-                        .to_string(),
-                },
+                target: self.field_assign_target(&fa.object, &fa.field, fa.target_span)?,
                 value: self.lower_expr_spanned(&fa.value)?,
             },
 
@@ -1619,137 +1632,11 @@ impl AstLowering {
                 }
             }
 
-            ast::Statement::TupleUnpack(tu) => {
-                let value = self.lower_expr_spanned(&tu.value)?;
-                let value_ty = value.ty.clone();
-                let temp_name = format!("__incan_tuple_unpack_{}", tu.names.join("_"));
-                let mutability = match tu.binding {
-                    ast::BindingKind::Mutable => Mutability::Mutable,
-                    _ => Mutability::Immutable,
-                };
+            ast::Statement::TupleUnpack(tu) => return self.lower_tuple_unpack(tu),
 
-                self.define_local_binding(temp_name.clone(), value_ty.clone(), false);
+            ast::Statement::TupleAssign(ta) => return self.lower_tuple_assign(ta),
 
-                let mut stmts = vec![IrStmt::new(IrStmtKind::Let {
-                    name: temp_name.clone(),
-                    ty: value_ty.clone(),
-                    type_annotation: None,
-                    mutability: Mutability::Immutable,
-                    value,
-                })];
-                let element_types = match &value_ty {
-                    IrType::Tuple(items) => items.clone(),
-                    _ => vec![IrType::Unknown; tu.names.len()],
-                };
-
-                for (idx, name) in tu.names.iter().enumerate() {
-                    let field_ty = element_types.get(idx).cloned().unwrap_or(IrType::Unknown);
-                    let field_expr = TypedExpr::new(
-                        IrExprKind::Field {
-                            object: Box::new(TypedExpr::new(
-                                IrExprKind::Var {
-                                    name: temp_name.clone(),
-                                    access: VarAccess::Move,
-                                    ref_kind: VarRefKind::Value,
-                                },
-                                self.lookup_var(&temp_name),
-                            )),
-                            field: idx.to_string(),
-                        },
-                        field_ty.clone(),
-                    );
-
-                    self.define_local_binding(name.clone(), field_ty.clone(), false);
-                    if matches!(mutability, Mutability::Mutable) {
-                        self.mutable_vars.insert(name.clone(), true);
-                    }
-
-                    stmts.push(IrStmt::new(IrStmtKind::Let {
-                        name: name.clone(),
-                        ty: field_ty,
-                        type_annotation: None,
-                        mutability,
-                        value: field_expr,
-                    }));
-                }
-
-                return Ok(IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
-                    IrExprKind::Block { stmts, value: None },
-                    IrType::Unit,
-                ))));
-            }
-
-            ast::Statement::TupleAssign(_) => {
-                return Err(LoweringError {
-                    message: "TupleAssign not yet implemented".to_string(),
-                    span: IrSpan::default(),
-                });
-            }
-
-            ast::Statement::ChainedAssignment(ca) => {
-                // Lower chained assignment x = y = z = 5 into: let z = 5; let y = z; let x = y; We return a block
-                // expression that does all the assignments
-                let value = self.lower_expr_spanned(&ca.value)?;
-                let ty = value.ty.clone();
-
-                // Assign to last target first (rightmost)
-                let last_target = match ca.targets.last() {
-                    Some(t) => t,
-                    None => {
-                        return Err(LoweringError {
-                            message: "empty chained assignment".to_string(),
-                            span: IrSpan::default(),
-                        });
-                    }
-                };
-                let mutability = match ca.binding {
-                    ast::BindingKind::Mutable => Mutability::Mutable,
-                    _ => Mutability::Immutable,
-                };
-
-                // Record the last target in scope
-                self.define_local_binding(last_target.clone(), ty.clone(), false);
-
-                // Create the first assignment statement
-                let mut stmts = vec![IrStmt::new(IrStmtKind::Let {
-                    name: last_target.clone(),
-                    ty: ty.clone(),
-                    type_annotation: None,
-                    mutability,
-                    value,
-                })];
-
-                // Now assign to each previous target from the next one
-                for i in (0..ca.targets.len() - 1).rev() {
-                    let target = &ca.targets[i];
-                    let source = &ca.targets[i + 1];
-
-                    self.define_local_binding(target.clone(), ty.clone(), false);
-
-                    let source_expr = TypedExpr::new(
-                        IrExprKind::Var {
-                            name: source.clone(),
-                            access: if ty.is_copy() { VarAccess::Copy } else { VarAccess::Move },
-                            ref_kind: VarRefKind::Value,
-                        },
-                        ty.clone(),
-                    );
-
-                    stmts.push(IrStmt::new(IrStmtKind::Let {
-                        name: target.clone(),
-                        ty: ty.clone(),
-                        type_annotation: None,
-                        mutability,
-                        value: source_expr,
-                    }));
-                }
-
-                // Return a block that does all the assignments and returns unit
-                return Ok(IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
-                    IrExprKind::Block { stmts, value: None },
-                    IrType::Unit,
-                ))));
-            }
+            ast::Statement::ChainedAssignment(ca) => return self.lower_chained_assignment(ca),
         };
         Ok(IrStmt::new(kind))
     }

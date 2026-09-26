@@ -6,12 +6,13 @@ fn span() -> ast::Span {
 }
 
 #[test]
-fn lowering_tuple_assign_in_if_block_returns_error() {
-    // Build an expression-level if with a TupleAssign statement in the then branch.
+fn lowering_tuple_assign_in_if_block_returns_error() -> Result<(), String> {
+    // An expression-level `if` whose then branch assigns a tuple to something that is not a place: the statement's
+    // lowering error must reach the caller of `lower_expr`.
     let then_stmt = ast::Spanned::new(
         ast::Statement::TupleAssign(ast::TupleAssignStmt {
-            targets: vec![ast::Spanned::new(ast::Expr::Ident("a".into()), span())],
-            value: ast::Spanned::new(ast::Expr::Ident("b".into()), span()),
+            targets: vec![ast::Spanned::new(ast::Expr::Literal(ast::Literal::Bool(false)), span())],
+            value: ast::Spanned::new(ast::Expr::Literal(ast::Literal::Bool(true)), span()),
         }),
         span(),
     );
@@ -22,11 +23,9 @@ fn lowering_tuple_assign_in_if_block_returns_error() {
     }));
 
     let mut lowering = AstLowering::new();
-    let res = lowering.lower_expr(&if_expr, span());
-    match res {
-        Ok(_) => panic!("expected LoweringError, got Ok"),
-        Err(LoweringError { message, .. }) => {
-            assert!(message.contains("TupleAssign not yet implemented"));
-        }
+    match lowering.lower_expr(&if_expr, span()) {
+        Ok(_) => Err("expected the tuple-assignment target's LoweringError, got Ok".to_string()),
+        Err(LoweringError { message, .. }) if message.contains("tuple assignment target") => Ok(()),
+        Err(LoweringError { message, .. }) => Err(format!("unexpected lowering error: {message}")),
     }
 }

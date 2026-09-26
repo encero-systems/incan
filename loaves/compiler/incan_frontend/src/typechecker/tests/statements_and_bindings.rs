@@ -1172,3 +1172,161 @@ fn isinstance_retains_a_nominal_targets_canonical_declaration_identity() -> Resu
     );
     Ok(())
 }
+
+#[test]
+fn chained_assignment_checks_a_literal_against_each_target_issue1806() -> Result<(), String> {
+    // A value built only from literals adapts to each target the way `a = 5` adapts to `a`, even when the targets
+    // disagree on a type, because each target gets its own copy of it.
+    check_str(
+        r#"
+def literals() -> int:
+    mut a: i8 = 1
+    mut b: int = 2
+    a = b = 5
+    mut c: Option[int] = Some(1)
+    mut d: Option[str] = Some("s")
+    c = d = (None)
+    mut xs: list[Option[int]] = []
+    mut ys: list[Option[str]] = []
+    xs = ys = [None]
+    mut ints: list[int] = [1]
+    mut strs: list[str] = ["s"]
+    ints = strs = list()
+    return b
+"#,
+    )
+    .map_err(|errors| format!("the literal chains must check: {errors:?}"))?;
+
+    // Any other value has to take one type for every target; when the targets disagree and its type is not fully
+    // known, there is none, so the chain is refused.
+    let Err(errors) = check_str(
+        r#"
+def empty[T]() -> list[T]:
+    return []
+
+def fill() -> None:
+    mut ints: list[int] = [1]
+    mut strs: list[str] = ["s"]
+    ints = strs = empty()
+"#,
+    ) else {
+        return Err("a chain whose value has no one type must be refused".to_string());
+    };
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("The targets of this chained assignment have different types ('List[int]' and 'List[str]')")),
+        "expected the chained-assignment refusal naming both target types, got {errors:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn chained_assignment_targets_of_equivalent_types_share_the_value_issue1806() -> Result<(), String> {
+    // `int` and `i64`, and `float` and `f64`, are one type to the checker, so targets spelled with either agree and a
+    // generic value takes their type, as it would for a single target.
+    check_str(
+        r#"
+def empty[T]() -> list[T]:
+    return []
+
+def ints() -> int:
+    mut a: list[int] = [1]
+    mut b: list[i64] = [2]
+    a = b = empty()
+    return len(a) + len(b)
+
+def floats() -> int:
+    mut a: list[float] = [1.0]
+    mut b: list[f64] = [2.0]
+    a = b = empty()
+    return len(a) + len(b)
+"#,
+    )
+    .map_err(|errors| format!("targets of equivalent types must share the value: {errors:?}"))
+}
+
+#[test]
+fn chained_assignment_evaluates_a_user_function_named_like_a_constructor_once_issue1806()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Only a call the checker resolved to a builtin constructor is evaluated once per target; a user function spelled
+    // `set` or `Vec` is an ordinary call, evaluated once and shared.
+    let source = r#"
+def set() -> set[int]:
+    return {1}
+
+def Vec() -> list[int]:
+    return [1]
+
+def user_set() -> None:
+    mut a: set[int] = {2}
+    mut b: Option[set[int]] = None
+    a = b = set()
+
+def user_vec() -> None:
+    mut a: list[int] = []
+    mut b: Option[list[int]] = None
+    a = b = Vec()
+
+def builtin_list() -> None:
+    mut ints: list[int] = [1]
+    mut strs: list[str] = ["s"]
+    ints = strs = list()
+"#;
+    let info = typecheck_info_for_module(source, vec!["chains".to_string()], "chained constructor calls")?;
+    for (call, per_target) in [("set()", false), ("Vec()", false), ("list()", true)] {
+        let start = source.rfind(call).ok_or("fixture must contain the chained call")?;
+        let span = Span::new(start, start + call.len());
+        assert_eq!(
+            info.chained_value_is_written_per_target(span),
+            per_target,
+            "`{call}` is evaluated {}",
+            if per_target { "once per target" } else { "once" }
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn chained_literal_reports_an_error_that_does_not_depend_on_the_target_once_issue1806() -> Result<(), String> {
+    // Each target checks its own evaluation of the literal, but an error in the value itself is reported once, as a
+    // single assignment reports it.
+    for (targets, value) in [
+        ("mut a: int = 1\n    mut b: i8 = 1", r#"-"s""#),
+        ("mut a: list[int] = []\n    mut b: list[str] = []", r#"[-"s"]"#),
+        ("mut a: Option[bool] = None\n    mut b: bool = False", r#"not "s""#),
+        (
+            "mut a: tuple[int, Option[int]] = (1, None)\n    mut b: tuple[i8, Option[str]] = (1, None)",
+            "(~1.5, None)",
+        ),
+    ] {
+        let source = format!("def main() -> None:\n    {targets}\n    a = b = {value}\n");
+        let Err(errors) = check_str(&source) else {
+            return Err(format!("`a = b = {value}` must be refused"));
+        };
+        let value_start = source.rfind(value).ok_or("the source must contain the value")?;
+        let in_value = errors.iter().filter(|error| error.span.start >= value_start).count();
+        assert_eq!(in_value, 1, "`a = b = {value}` reports its error once, got {errors:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn chained_value_that_failed_its_check_gets_no_second_refusal_issue1806() -> Result<(), String> {
+    // A value whose own check reported an error is not refused again for having no one type over targets of
+    // different types.
+    for value in ["[missing]", "missing()", "[FrozenList()]"] {
+        let source =
+            format!("def main() -> None:\n    mut a: list[int] = []\n    mut b: list[str] = []\n    a = b = {value}\n");
+        let Err(errors) = check_str(&source) else {
+            return Err(format!("`a = b = {value}` must be refused"));
+        };
+        assert!(
+            !errors
+                .iter()
+                .any(|error| error.message.contains("The targets of this chained assignment")),
+            "`a = b = {value}` reports only its own error, got {errors:?}"
+        );
+    }
+    Ok(())
+}
