@@ -20,6 +20,17 @@ int | str | None    # Option[Union[int, str]]
 
 Concrete member values are assignable to a union that contains that member. A source union is assignable to a target union when every source member is accepted by some target member.
 
+A list, dict or tuple literal assigned where a union or an `Option[...]` is expected takes the type of the union's one member of the literal's kind (for a tuple, of the literal's length) when every other member is a scalar, a tuple, `None`, a `list`, `dict`, `set` or `Result`, or a model, class or enum; an empty or `None`-only literal is then still that member. Otherwise, as when the union has two members of the literal's kind, the literal is typed by its own elements.
+
+```incan
+mut values: list[int] | str = "none"
+values = []                   # an empty list[int]
+mut names: Option[list[Option[str]]] = None
+names = [None]                # Some([None]), a list[Option[str]]
+mut either: list[int] | list[str] = [1]
+either = ["a"]                # list[str], from its elements
+```
+
 Union values do not expose member-specific methods or operators until narrowed. Use `isinstance(value, T)` or a type pattern in `match`:
 
 ```incan
