@@ -1,0 +1,5 @@
+from ..db.schema import Database
+
+
+pub def touch(db: Database) -> str:
+    return f"relative:{db.id}"

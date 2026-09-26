@@ -129,6 +129,22 @@ import pub::hees_ai.hyperquant as hq
 
 Only declarations explicitly marked `pub` participate in the package namespace. Private declarations and private implementation imports remain unavailable to consumers. An explicit `pub from ... import ...` inside a source module can publish a facade alias for public callables, types, constants, statics, and traits.
 
+A facade alias of a dependency's export is itself a public binding of the module that declares it, under the alias name, whether the dependency published the name directly or as a rename of its own:
+
+```incan
+# calc_lib/src/lib.incn
+pub from helpers import calculate as facade_calculate
+
+# src/facade.incn, in a project that depends on calc_lib
+pub from pub::calc_lib import facade_calculate as b_calculate
+
+# src/main.incn
+from facade import b_calculate
+
+def main() -> None:
+    println(b_calculate(41))    # prints 42: calc_lib's helpers.calculate
+```
+
 The directory namespace exposes declarations from its own source unit, when present, and its immediate child source files. Deeper directories remain child namespaces. If separate child files publish the same name, the parent member is ambiguous and the compiler requires the exact child path:
 
 ```incan
@@ -178,6 +194,14 @@ import super::super::shared::utils::format_date
 | ------------------------- | ------------------------------------- |
 | `..` or `super::`         | Parent directory (one level up)       |
 | `...` or `super::super::` | Grandparent directory (two levels up) |
+
+A relative path climbs from the directory that contains the importing file, so the same import names the same module from every file in that directory:
+
+```incan
+# store/relative.incn
+from ..db.schema import Database          # db/schema.incn, beside the store/ directory
+from super::db::schema import Database    # the same module
+```
 
 ### Absolute imports (project root)
 
@@ -330,6 +354,17 @@ Incan's standard library lives under the `std` namespace. Import modules and ite
 | `std.traits.*`   | Core traits (`ops`, `convert`, `error`, ...)  | —                 |
 | `std.math`       | Math constants and functions                  | —                 |
 | `std.builtins`   | Explicit core builtin-function escape path    | —                 |
+
+### The `std` root
+
+The `std` root binds its submodules and nothing else. `from std import <name>` imports the module `std.<name>`; a name that is not a standard-library submodule is refused at check time with `INCAN-I0001`, and the diagnostic names the `std.*` module that declares it when there is one. Standard traits such as `Debug`, `Eq`, `Clone`, `From`, `Add`, `Error`, `Index` and `Callable1` are declared in `std.derives.*` and `std.traits.*` modules and are not members of the root.
+
+```incan
+from std import toml                   # binds the module std.toml
+from std import math as arithmetic     # binds the module std.math as `arithmetic`
+from std import Debug                  # refused: INCAN-I0001, `Debug` is declared in std.derives.string
+from std.derives.string import Debug   # binds the trait
+```
 
 ### Soft keywords
 

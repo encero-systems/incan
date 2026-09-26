@@ -1,0 +1,7 @@
+pub model Box:
+    pub value: int
+
+    def answer(self) -> int | str:
+        if self.value > 0:
+            return self.value
+        return "empty"

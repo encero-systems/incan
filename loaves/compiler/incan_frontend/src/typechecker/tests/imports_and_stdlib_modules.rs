@@ -1152,3 +1152,57 @@ fn test_unknown_stdlib_module_hint_includes_registry_entries() {
         err.hints
     );
 }
+
+/// #1767: the std root exports its submodules only. A prelude trait imported from it is refused, and the hint names
+/// the module that declares it, found through the builtin trait registry (`Debug`), the callable registry
+/// (`Callable1`) or the trait family's own modules (`Add`, `Index`).
+#[test]
+fn std_root_import_of_a_prelude_trait_is_refused_naming_its_module_issue1767() -> Result<(), String> {
+    let source = "from std import Debug, Add, Index, Callable1\n\ndef main() -> None:\n    println(\"ok\")\n";
+    let Err(errors) = check_str(source) else {
+        return Err("a prelude trait imported from the std root must be refused".to_string());
+    };
+    for (name, module) in [
+        ("Debug", "std.derives.string"),
+        ("Add", "std.traits.ops"),
+        ("Index", "std.traits.indexing"),
+        ("Callable1", "std.traits.callable"),
+    ] {
+        let refusal = errors
+            .iter()
+            .find(|error| error.message.contains(&format!("Cannot import `{name}` from `std`")))
+            .ok_or_else(|| format!("no refusal names `{name}`: {errors:?}"))?;
+        assert!(
+            refusal
+                .hints
+                .iter()
+                .any(|hint| hint.contains(&format!("from {module} import {name}"))),
+            "the refusal of `{name}` must name `{module}`: {refusal:?}"
+        );
+    }
+    Ok(())
+}
+
+/// #1767: a name the std root does not bind at all is refused the same way, with the root's modules as the hint.
+#[test]
+fn std_root_import_of_an_unknown_name_is_refused_issue1767() -> Result<(), String> {
+    let Err(errors) = check_str("from std import mathh\n\ndef main() -> None:\n    println(\"ok\")\n") else {
+        return Err("an unknown name imported from the std root must be refused".to_string());
+    };
+    let refusal = errors
+        .iter()
+        .find(|error| error.message.contains("Cannot import `mathh` from `std`"))
+        .ok_or_else(|| format!("no refusal names `mathh`: {errors:?}"))?;
+    assert!(
+        refusal.hints.iter().any(|hint| hint.contains("std.math")),
+        "{refusal:?}"
+    );
+    Ok(())
+}
+
+/// #1767: the std root still binds its submodules.
+#[test]
+fn std_root_import_of_a_submodule_binds_the_module_issue1767() -> Result<(), String> {
+    check_str("from std import math, toml\n\ndef main() -> None:\n    println(\"ok\")\n")
+        .map_err(|errors| format!("a std submodule imported from the root must bind: {errors:?}"))
+}

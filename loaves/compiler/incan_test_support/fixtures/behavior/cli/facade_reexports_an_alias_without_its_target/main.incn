@@ -1,0 +1,17 @@
+# behavior: a facade that re-exports an alias declaration without its target, a second facade renaming it again, and a facade listing the alias before its target all hand consumers callable names (#1750)
+# retires: loaves/compiler/incan_emit/src/emit/decls/mod.rs::alias_declaration_reexport_beside_its_target_binds_the_projection_once_issue1750
+# retires: loaves/compiler/incan_emit/src/emit/decls/mod.rs::alias_declaration_reexport_without_its_target_binds_the_projection_issue1750
+# expect-stdout:
+#   6
+#   42
+#   8
+
+from both_names import scale
+from facade import scale_alias
+from public_api import exported_scale
+
+
+def main() -> None:
+    println(scale(3))
+    println(scale_alias(21))
+    println(exported_scale(4))

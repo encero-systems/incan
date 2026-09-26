@@ -1,0 +1,16 @@
+# behavior: a relative import in a nested module climbs from the importing file's directory, in the `..` and the `super` spelling alike (#1766)
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_relative_from_import_uses_super_prefix
+# retires: loaves/compiler/incan_ir/src/lower/tests/import_paths.rs::relative_import_lowers_to_the_crate_absolute_module_the_checker_bound_issue1766
+# retires: loaves/compiler/incan_ir/src/lower/tests/import_paths.rs::rust_style_parent_import_lowers_to_the_same_module_issue1766
+# expect-stdout:
+#   relative:7
+#   rust-style:7
+
+from db.schema import Database
+from store.relative import touch
+from store.rust_style import touch_rust_style
+
+
+def main() -> None:
+    println(touch(Database(id=7)))
+    println(touch_rust_style(Database(id=7)))

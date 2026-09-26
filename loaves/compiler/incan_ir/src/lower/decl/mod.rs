@@ -174,12 +174,16 @@ impl AstLowering {
                 interop_edges: Vec::new(),
             },
             ast::Declaration::Alias(a) => {
+                let target_canonical = self.emitted_symbol_alias_target_identity(&a.name, span)?;
+                if let Some(member_import) = self.module_member_alias_import(a, target_canonical.as_ref()) {
+                    return Ok(IrDecl::new(member_import).with_span(span.into()));
+                }
                 let (target_path, target_origin, target_qualifier) = self.alias_reexport_target(&a.target.segments);
                 IrDeclKind::SymbolAlias {
                     visibility: Self::map_visibility(a.visibility),
                     name: a.name.clone(),
                     target_path,
-                    target_canonical: self.emitted_symbol_alias_target_identity(&a.name, span)?,
+                    target_canonical,
                     target_origin,
                     target_qualifier,
                 }

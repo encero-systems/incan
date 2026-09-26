@@ -1,0 +1,16 @@
+# behavior: an alias of a module member, public or private, calls the member it names (#1764)
+# retires: loaves/compiler/incan_emit/src/codegen.rs::top_level_qualified_alias_preserves_target_path
+# retires: loaves/compiler/incan_ir/src/lower/tests/import_paths.rs::module_member_alias_lowers_to_an_import_of_the_member_issue1764
+# expect-stdout:
+#   4
+#   6
+
+import std.math as math
+
+pub root = math.sqrt
+common_divisor = math.gcd
+
+
+def main() -> None:
+    println(int(root(16.0)))
+    println(common_divisor(12, 18))

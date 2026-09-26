@@ -42,7 +42,21 @@ A top-level alias target must resolve to an existing declaration symbol supporte
 - newtype
 - type alias
 - imported public symbol with compatible export metadata
+- a member of an imported module, written through the module binding
 - another acyclic alias to one of the supported target kinds
+
+An alias of a module member binds that member under the alias name with the alias's visibility, exactly as importing the member under that name does:
+
+```incan
+import std.math as math
+
+pub root = math.sqrt          # same binding as `pub from std.math import sqrt as root`
+common_divisor = math.gcd     # same binding as `from std.math import gcd as common_divisor`
+
+def main() -> None:
+    println(int(root(16.0)))          # 4
+    println(common_divisor(12, 18))   # 6
+```
 
 The target is written as a symbol path, not as an arbitrary expression. These are rejected:
 
@@ -98,6 +112,24 @@ from stats import mean as average_value
 ```
 
 `average_value` is an import-local name for the exported alias `mean`; `mean` remains an alias of `avg` in the exporting module metadata.
+
+A module can re-export an alias without its target, and a further module can re-export it again under another name. Every hop calls the aliased declaration:
+
+```incan
+# facade.incn
+pub from stats import mean
+
+# public_api.incn
+pub from facade import mean as average
+
+# main.incn
+from facade import mean
+from public_api import average
+
+def main() -> None:
+    println(mean(10, 20))      # 15
+    println(average(2, 4))     # 3
+```
 
 ## Same-type method aliases
 

@@ -756,7 +756,8 @@ impl<'a> IrEmitter<'a> {
                     // Rust binding as before.
                     // The rust-facing reexport below already binds such an alias under its own name, but only for
                     // an item this module re-exports. A module that merely imports one still needs a binding, so
-                    // suppress the import only when that reexport will actually carry it.
+                    // leave the alias's name to that reexport only when it will actually carry it; the projection
+                    // itself is still bound below unless an earlier item bound it.
                     let reexport_carries_alias = renames_shared_projection
                         && should_reexport_item(item)
                         && item
@@ -798,11 +799,21 @@ impl<'a> IrEmitter<'a> {
                         } else {
                             quote! {}
                         };
-                    let item_import = if reexport_carries_alias || repeats_projection_binding {
-                        // The declaration this alias renames already binds the projection in this module, so
-                        // importing it again would be a duplicate. Only the alias's own public name is still
-                        // missing, and the rust-facing reexport below adds exactly that.
+                    let item_import = if repeats_projection_binding {
+                        // An earlier item already binds the projection in this module, so importing it again would
+                        // be a duplicate. Only the alias's own public name is still missing, and the rust-facing
+                        // reexport below adds exactly that.
                         quote! {}
+                    } else if reexport_carries_alias {
+                        // This item took the module's one projection slot, so it has to fill it: nothing else here
+                        // binds the projection, and a consumer of the alias imports the projection from this module.
+                        // A facade re-exporting only an `alias` declaration, or a renamed `pub::` re-export, left the
+                        // slot claimed and empty (#1750, #1751). The rust-facing reexport below adds the alias's name.
+                        if absolute_path {
+                            quote! { pub use :: #path_ts_clone :: #name_ident; }
+                        } else {
+                            quote! { pub use #path_ts_clone :: #name_ident; }
+                        }
                     } else if let Some(alias_ident) = effective_alias_ident {
                         if let Some(runtime_path) = &runtime_surface_reexport_path {
                             quote! { pub use :: #runtime_path as #alias_ident; }
@@ -1146,6 +1157,165 @@ mod tests {
             emitted,
             encode_incan_symbol_identity(&provider_identity),
             "a stdlib re-export must name the linked provider's declaration, not a same-named source one"
+        );
+        Ok(())
+    }
+
+    /// Emit one module whose only declarations are public re-exports of `items` from `path`.
+    fn emit_public_reexports(
+        origin: incan_ir::decl::IrImportOrigin,
+        qualifier: incan_ir::decl::IrImportQualifier,
+        path: &[&str],
+        items: Vec<IrImportItem>,
+    ) -> Result<String, super::super::EmitError> {
+        let mut program = incan_ir::IrProgram::new();
+        program
+            .declarations
+            .push(incan_ir::IrDecl::new(incan_ir::IrDeclKind::Import {
+                visibility: incan_ir::decl::Visibility::Public,
+                origin,
+                qualifier,
+                path: path.iter().map(|segment| segment.to_string()).collect(),
+                alias: None,
+                items,
+            }));
+        let mut emitter = IrEmitter::new(&program.function_registry);
+        emitter.set_preserve_public_items(true);
+        emitter.emit_program(&program)
+    }
+
+    /// Build one import item over a projected identity, spelled `name` and bound locally as `alias`.
+    fn projected_item(name: &str, alias: Option<&str>, identity: &CanonicalSymbolId) -> IrImportItem {
+        IrImportItem {
+            name: name.to_string(),
+            alias: alias.map(str::to_string),
+            canonical: Some(identity.clone()),
+            is_static: false,
+            force_reexport: false,
+            rust_trait_import: None,
+        }
+    }
+
+    /// #1750: a facade that re-exports only an `alias` declaration binds the projection its consumers import, at
+    /// the first hop and at a renaming second hop, beside the alias's own name.
+    #[test]
+    fn alias_declaration_reexport_without_its_target_binds_the_projection_issue1750()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use incan_ir::decl::{IrImportOrigin, IrImportQualifier};
+
+        let scale = CanonicalSymbolId::module_declaration(
+            vec!["provider".to_string()],
+            "scale",
+            SemanticSourceTargetKind::Function,
+            HirSourceSpan::new(4, 60),
+        );
+        let projection = encode_incan_symbol_identity(&scale);
+
+        let facade = emit_public_reexports(
+            IrImportOrigin::Standard,
+            IrImportQualifier::Crate,
+            &["provider"],
+            vec![projected_item("scale_alias", None, &scale)],
+        )?;
+        assert!(
+            facade.contains(&format!("pub use crate::provider::{projection};")),
+            "the facade must bind the projection its consumers import:\n{facade}"
+        );
+        assert!(
+            facade.contains(&format!("pub use crate::provider::{projection} as scale_alias;")),
+            "{facade}"
+        );
+
+        let public_api = emit_public_reexports(
+            IrImportOrigin::Standard,
+            IrImportQualifier::Crate,
+            &["facade"],
+            vec![projected_item("scale_alias", Some("exported_scale"), &scale)],
+        )?;
+        assert!(
+            public_api.contains(&format!("pub use crate::facade::{projection};")),
+            "the second hop must bind the projection too:\n{public_api}"
+        );
+        assert!(
+            public_api.contains(&format!("pub use crate::facade::{projection} as exported_scale;")),
+            "{public_api}"
+        );
+        Ok(())
+    }
+
+    /// #1750: when the facade also re-exports the target, the projection is bound exactly once, whichever of the two
+    /// names comes first, and the alias keeps its own name.
+    #[test]
+    fn alias_declaration_reexport_beside_its_target_binds_the_projection_once_issue1750()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use incan_ir::decl::{IrImportOrigin, IrImportQualifier};
+
+        let scale = CanonicalSymbolId::module_declaration(
+            vec!["provider".to_string()],
+            "scale",
+            SemanticSourceTargetKind::Function,
+            HirSourceSpan::new(4, 60),
+        );
+        let projection = encode_incan_symbol_identity(&scale);
+        let binding = format!("pub use crate::provider::{projection};");
+        for items in [
+            vec![
+                projected_item("scale", None, &scale),
+                projected_item("scale_alias", None, &scale),
+            ],
+            vec![
+                projected_item("scale_alias", None, &scale),
+                projected_item("scale", None, &scale),
+            ],
+        ] {
+            let facade =
+                emit_public_reexports(IrImportOrigin::Standard, IrImportQualifier::Crate, &["provider"], items)?;
+            assert_eq!(
+                facade.matches(&binding).count(),
+                1,
+                "one module binds one projection once:\n{facade}"
+            );
+            assert!(
+                facade.contains(&format!("pub use crate::provider::{projection} as scale_alias;")),
+                "{facade}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #1751: a `pub::` re-export of a package's renamed function under a further name binds the projection, so a
+    /// module importing that name through this one finds it.
+    #[test]
+    fn renamed_package_reexport_binds_the_projection_issue1751() -> Result<(), Box<dyn std::error::Error>> {
+        use incan_ir::decl::{IrImportOrigin, IrImportQualifier};
+
+        let calculate = CanonicalSymbolId {
+            namespace: SymbolNamespace::OrdinaryLexical,
+            origin: SymbolOrigin::Package {
+                library: "calc_lib".to_string(),
+                module_path: vec!["helpers".to_string()],
+            },
+            declaration_name: "calculate".to_string(),
+            kind: SemanticSourceTargetKind::Function,
+            scope_discriminant: None,
+            declaration_span: HirSourceSpan::new(0, 48),
+        };
+        let projection = encode_incan_symbol_identity(&calculate);
+        let facade = emit_public_reexports(
+            IrImportOrigin::PubLibrary {
+                dependency_key: "calc_lib".to_string(),
+            },
+            IrImportQualifier::None,
+            &["calc_lib"],
+            vec![projected_item("facade_calculate", Some("b_calculate"), &calculate)],
+        )?;
+        assert!(
+            facade.contains(&format!("pub use calc_lib::{projection};")),
+            "the re-export must bind the projection its consumers import:\n{facade}"
+        );
+        assert!(
+            facade.contains(&format!("pub use calc_lib::{projection} as b_calculate;")),
+            "{facade}"
         );
         Ok(())
     }

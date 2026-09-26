@@ -2018,10 +2018,19 @@ impl AstLowering {
                         },
                         (_, None) => None,
                     };
-                    let expr_ty = compiled_provider_crate
-                        .as_deref()
-                        .map(|provider_crate| self.pub_external_type(provider_crate, expr_ty.clone()))
-                        .unwrap_or(expr_ty);
+                    // A `pub::` dependency's method returns its own crate's union wrapper, while the checked result
+                    // spells the union structurally and would be re-owned by this crate. The signature lowered from
+                    // the provider names the owning crate at every union position; the result takes those carriers,
+                    // as a dependency function's result and a dependency field read do (#1697, #1797).
+                    let expr_ty = match (public_receiver_library.as_deref(), callable_signature.as_ref()) {
+                        (Some(_), Some(signature)) => {
+                            Self::retain_provider_owned_union_representation(expr_ty, &signature.return_type)
+                        }
+                        _ => compiled_provider_crate
+                            .as_deref()
+                            .map(|provider_crate| self.pub_external_type(provider_crate, expr_ty.clone()))
+                            .unwrap_or(expr_ty),
+                    };
                     // Concrete Incan receivers use the compiler-proved recoverable projection even when semantic
                     // resolution found the method through a trait. Bare generic and trait-object receivers keep the
                     // Rust ABI slot because no inherent owner is statically nameable there.

@@ -1,0 +1,19 @@
+# behavior: a dependency model's method returning `int | str` hands the consumer a union it passes to its own `int | str` parameter and matches by member (#1797)
+# retires: loaves/compiler/incan_emit/src/emit/native_unions.rs::publication_captures_nominal_method_return_unions
+# retires: loaves/compiler/incan_ir/src/lower/tests/pub_method_results.rs::pub_dependency_method_result_keeps_the_providers_union_issue1797
+# expect-stdout:
+#   answer 3
+#   answer empty
+
+from pub::querykit import Box
+
+
+def show(value: int | str, label: str) -> str:
+    match value:
+        int(number) => return f"{label} {number}"
+        str(text) => return f"{label} {text}"
+
+
+def main() -> None:
+    println(show(Box(value=3).answer(), "answer"))
+    println(show(Box(value=0).answer(), "answer"))

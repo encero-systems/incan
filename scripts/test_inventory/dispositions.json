@@ -1064,6 +1064,10 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/smoke/model_fields.incn",
           "notes": "twinned by a program that builds the model and prints its fields."
         },
+        "test_relative_from_import_uses_super_prefix": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/relative_import_from_a_nested_module",
+          "notes": "twinned by the retired test's layout run to completion: `store/relative.incn` reads a field through `from ..db.schema import Database`, and a sibling uses the `super::` spelling. The retired test pinned `use super::db::schema::Database`, one level short (E0433); the import now names the module the checker bound by its crate-absolute path (#1766)."
+        },
         "test_simple_function": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/smoke/simple_function_add.incn",
           "notes": "twinned by a program that calls the function and prints the sum."
@@ -1071,6 +1075,10 @@
         "test_struct_instantiation": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/smoke/model_fields.incn",
           "notes": "twinned by a program that builds the model with named arguments and prints each field."
+        },
+        "top_level_qualified_alias_preserves_target_path": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/module_member_alias_calls_the_member.incn",
+          "notes": "twinned by the retired test's program run with a `main`: a public and a private alias of a `std.math` member reached through `import std.math as math` call the member. The program failed to build (E0425) until the alias lowered as an import of the member (#1764)."
         }
       },
       "twin": ""
@@ -1113,6 +1121,20 @@
       "owner": 1561,
       "split_required": false,
       "split_target": "",
+      "tests": {
+        "alias_declaration_reexport_beside_its_target_binds_the_projection_once_issue1750": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/facade_reexports_an_alias_without_its_target",
+          "notes": "Asserts the emitted `use` lines (a facade re-exporting an alias beside its target binds the projection once, in either order); dies with the emitter (#654). The behavior is carried by the named fixture's `both_names` facade, which lists the alias first (#1750)."
+        },
+        "alias_declaration_reexport_without_its_target_binds_the_projection_issue1750": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/facade_reexports_an_alias_without_its_target",
+          "notes": "Asserts the emitted `use` lines (a facade re-exporting only an `alias` declaration, and a renaming second hop, bind the projection beside the alias's name); dies with the emitter (#654). The behavior, consumers of both facades calling the alias, is carried by the named fixture (#1750)."
+        },
+        "renamed_package_reexport_binds_the_projection_issue1751": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_renamed_export_reexported_under_a_new_name",
+          "notes": "Asserts the emitted `use` lines (a `pub::` re-export of a dependency's renamed function under a further name binds the projection); dies with the emitter (#654). The behavior, a consumer calling the further name, is carried by the named fixture (#1751)."
+        }
+      },
       "twin": ""
     },
     "loaves/compiler/incan_emit/src/emit/decls/structures.rs": {
@@ -1203,6 +1225,12 @@
       "owner": 1561,
       "split_required": false,
       "split_target": "",
+      "tests": {
+        "publication_captures_nominal_method_return_unions": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_method_returning_a_union",
+          "notes": "twinned by the program the corpus work parked as a candidate: a dependency model method returning `int | str` is called for both members and each result is passed to a consumer `int | str` parameter. The run failed (E0308) until a dependency method's union result kept the provider's carrier (#1797); the captured wrapper name dies with #654."
+        }
+      },
       "twin": ""
     },
     "loaves/compiler/incan_emit/src/emit/program.rs": {
@@ -1551,6 +1579,12 @@
       "owner": 1561,
       "split_required": false,
       "split_target": "",
+      "tests": {
+        "std_root_prelude_import_snapshot": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/refused_prelude_trait_imported_from_the_std_root.incn",
+          "notes": "twinned by the snapshot's program as a refusal: the std root exports only its submodules, so `from std import Debug, Eq, Clone, …` is refused at check time (INCAN-I0001) instead of emitting `pub use crate::__incan_std::Debug;` and seven more re-exports no facade defines (E0432). The test now asserts that refusal (#1767)."
+        }
+      },
       "twin": ""
     },
     "loaves/compiler/incan_emit/tests/string_helper_codegen_tests.rs": {
@@ -2474,6 +2508,42 @@
         "fn_family_capability_markers_lower_to_the_callable_bound_issue1716": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_rust_capability_bounds.incn",
           "notes": "asserts the recorded bound shape of the `Fn`, `FnMut` and `FnOnce` markers: the canonical `CallableN` trait with a hidden return-type parameter (#1716); the twin runs each marker over a named function."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/import_paths.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "module_member_alias_lowers_to_an_import_of_the_member_issue1764": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/module_member_alias_calls_the_member.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (an alias of a module member lowers to an import of that member under the alias's name and visibility); retires with `incan_ir`. The behavior, a public and a private alias of a `std.math` member calling it, is carried by the named fixture (#1764)."
+        },
+        "relative_import_lowers_to_the_crate_absolute_module_the_checker_bound_issue1766": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/relative_import_from_a_nested_module",
+          "notes": "Asserts the recorded shape on the legacy IR (a relative import reaches the emitter as the crate-absolute path of the module the checker bound); retires with `incan_ir`. The behavior, `from ..db.schema import Database` in `store/relative.incn` printing `relative:7`, is carried by the named fixture (#1766)."
+        },
+        "rust_style_parent_import_lowers_to_the_same_module_issue1766": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/relative_import_from_a_nested_module",
+          "notes": "Asserts the recorded shape on the legacy IR for the `super::` spelling of the same climb; retires with `incan_ir`. The behavior is carried by the named fixture's `store/rust_style.incn` (#1766)."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/pub_method_results.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "pub_dependency_method_result_keeps_the_providers_union_issue1797": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_method_returning_a_union",
+          "notes": "Asserts the recorded shape on the legacy IR (a `pub::` dependency method's union result takes the provider-owned carrier); retires with `incan_ir`. The behavior, the consumer passing `Box.answer()` to its own `int | str` parameter, is carried by the named fixture (#1797)."
         }
       },
       "twin": ""

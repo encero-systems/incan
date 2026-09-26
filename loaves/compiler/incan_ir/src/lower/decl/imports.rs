@@ -4,7 +4,7 @@ use super::super::super::decl::{IrDeclKind, IrRustTraitImport};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use incan_frontend::ast;
-use incan_frontend::module::canonicalize_source_module_segments;
+use incan_frontend::module::{canonicalize_source_module_segments, logical_source_import_candidates};
 use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin};
 
 impl AstLowering {
@@ -105,6 +105,18 @@ impl AstLowering {
             _ => super::super::super::decl::IrImportQualifier::None,
         };
 
+        // A relative import names its module by where it sits in the source tree, and lowering hands the emitter the
+        // crate-absolute path of the module the checker resolved rather than a count of Rust `super` hops (#1766).
+        let relative_module = match &i.kind {
+            ast::ImportKind::Module(p) => self.resolved_relative_import_module(p),
+            ast::ImportKind::From { module, .. } => self.resolved_relative_import_module(module),
+            _ => None,
+        };
+        let (path, qualifier) = match relative_module {
+            Some(module_path) => (module_path, super::super::super::decl::IrImportQualifier::Crate),
+            None => (path, qualifier),
+        };
+
         // Convert AST import items to IR import items
         let ir_items: Vec<super::super::super::decl::IrImportItem> = ast_items
             .iter()
@@ -196,6 +208,76 @@ impl AstLowering {
             alias: i.alias.clone(),
             items: ir_items,
         })
+    }
+
+    /// Lower an alias of a module member (`root = math.sqrt` after `import std.math as math`) as an import of that
+    /// member under the alias's name.
+    ///
+    /// Every reference to an alias lowers to the projection of the declaration it names, so the module must bind that
+    /// projection. An imported target (`root = sqrt` after `from std.math import sqrt`) has its import to do that; a
+    /// member reached through a module binding had nothing, and the program called a projection no `use` brought into
+    /// scope (#1764). Such an alias says exactly what `from std.math import sqrt as root` says, with the alias's own
+    /// visibility, so it lowers to that import: the member's module path from the lowered import of the module
+    /// binding, the member as the item, the alias as its local name, and the target identity the checker proved.
+    ///
+    /// Returns `None`, leaving the alias a [`IrDeclKind::SymbolAlias`], for a single-segment target, a target without a
+    /// projected identity (types, traits, overload sets), and a leading segment that no import binds as a module.
+    pub(in crate::lower) fn module_member_alias_import(
+        &self,
+        alias: &ast::AliasDecl,
+        target_canonical: Option<&incan_semantics_core::CanonicalSymbolId>,
+    ) -> Option<IrDeclKind> {
+        let canonical = target_canonical.filter(|identity| crate::decl::is_projected_source_symbol(identity))?;
+        let [module_binding, rest @ ..] = alias.target.segments.as_slice() else {
+            return None;
+        };
+        let (member, intermediate) = rest.split_last()?;
+        let module = self.imported_module_bindings.get(module_binding)?;
+        let mut path = module.path.clone();
+        path.extend(intermediate.iter().cloned());
+        let item = super::super::super::decl::IrImportItem {
+            name: member.clone(),
+            alias: (alias.name != *member).then(|| alias.name.clone()),
+            canonical: Some(canonical.clone()),
+            is_static: self
+                .type_info
+                .as_ref()
+                .is_some_and(|info| info.static_binding(&alias.name).is_some()),
+            force_reexport: false,
+            rust_trait_import: None,
+        };
+        Some(IrDeclKind::Import {
+            visibility: Self::map_visibility(alias.visibility),
+            origin: module.origin.clone(),
+            qualifier: module.qualifier,
+            path,
+            alias: None,
+            items: vec![item],
+        })
+    }
+
+    /// Resolve a relative source import path to the crate-absolute module path the checker resolved it to.
+    ///
+    /// `..` and `super` climb from the importing file's directory (the language reference's "parent directory"), while
+    /// Rust's `super` climbs from the importing module, which for a file module is that directory itself. Spelling the
+    /// written levels as `super` hops therefore landed one level short: `from ..db.schema import Database` in
+    /// `store/relative.incn` became `use super::db::schema::Database`, a path under `store` (#1766). The checker binds
+    /// a relative import through [`logical_source_import_candidates`] against the importing module's logical path, and
+    /// this asks the same question, so the path lowering hands on names the module the checker bound. Returns `None`
+    /// for a path that is not relative, and when the importing module's own path is unknown or too short to climb.
+    pub(in crate::lower) fn resolved_relative_import_module(&self, path: &ast::ImportPath) -> Option<Vec<String>> {
+        if path.parent_levels == 0 || path.is_absolute {
+            return None;
+        }
+        let current_module = self
+            .current_source_module_name
+            .as_deref()?
+            .split('.')
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        logical_source_import_candidates(&canonicalize_source_module_segments(&current_module), path)
+            .into_iter()
+            .next()
     }
 
     /// Spell a projected source import by the name its declaring module binds the declaration under.

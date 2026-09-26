@@ -17,6 +17,7 @@ use super::{
 
 mod decl_helpers;
 pub(super) mod decorators;
+mod std_root_imports;
 mod stdlib_imports;
 
 use self::decl_helpers::{
