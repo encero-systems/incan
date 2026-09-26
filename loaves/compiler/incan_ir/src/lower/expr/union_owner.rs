@@ -11,8 +11,9 @@
 //! `Ok(member)` and `Err(member)` need no fact of their own: the emitter seeds them from the destination's `Result`
 //! type, which already carries the provider-owned union.
 
+use super::super::super::decl::FunctionParam;
 use super::super::super::expr::{IrCallArg, IrCallArgKind, IrDictEntry, IrExprKind, IrListEntry};
-use super::super::super::types::IrType;
+use super::super::super::types::{IrType, Mutability};
 use super::super::super::{FunctionSignature, TypedExpr};
 use super::super::AstLowering;
 use incan_frontend::ast::ParamKind;
@@ -56,8 +57,10 @@ impl AstLowering {
 
     /// Give each `Some(member)` in a value the provider-owned union its destination type declares.
     ///
-    /// The value itself, the elements of a list, set or tuple literal, and the keys and values of a dict literal are
-    /// each matched against the corresponding position of the destination; anything else is left alone.
+    /// The value itself, each arm of a `match` expression and the value of a block, the elements of a list, set or
+    /// tuple literal, and the keys and values of a dict literal are each matched against the corresponding position of
+    /// the destination; anything else is left alone. A `match` or block that now yields the destination in every arm
+    /// is typed as the destination.
     pub(in crate::lower) fn retain_union_owners_at(expr: &mut TypedExpr, destination: &IrType) {
         if let IrType::Option(owned) = destination
             && matches!(expr.kind, IrExprKind::Call { .. })
@@ -66,6 +69,23 @@ impl AstLowering {
             return;
         }
         match (&mut expr.kind, destination) {
+            (IrExprKind::Match { arms, .. }, _) => {
+                for arm in arms.iter_mut() {
+                    Self::retain_union_owners_at(&mut arm.body, destination);
+                }
+                if arms
+                    .iter()
+                    .all(|arm| arm.body.ty == *destination || matches!(arm.body.kind, IrExprKind::None))
+                {
+                    expr.ty = destination.clone();
+                }
+            }
+            (IrExprKind::Block { value: Some(value), .. }, _) => {
+                Self::retain_union_owners_at(value, destination);
+                if value.ty == *destination {
+                    expr.ty = destination.clone();
+                }
+            }
             (IrExprKind::List(entries), IrType::List(element)) => {
                 for entry in entries {
                     if let IrListEntry::Element(value) = entry {
@@ -111,18 +131,21 @@ impl AstLowering {
         }
     }
 
-    /// Replace the union a `Some(member)` constructor is instantiated at with the destination's provider-owned union.
+    /// Instantiate a `Some(member)` constructor at the destination's provider-owned union.
     ///
-    /// The constructor carries a union parameter only when the checker instantiated it at the destination's union
-    /// (#1724). The two are the same union exactly when each member of the one the constructor carries is a distinct
-    /// member of the provider's union and neither has more; only then is the owner handed over.
+    /// The constructor carries a union parameter when the checker instantiated it at the destination's union (#1724).
+    /// The two are the same union exactly when each member of the one the constructor carries is a distinct member of
+    /// the provider's union and neither has more; only then is the owner handed over. Where the checker recorded no
+    /// instantiation, as in an arm of a `match` expression, the constructor is instantiated at the provider's union
+    /// when its one payload is a member of that union.
     fn retain_some_payload_union_owner(expr: &mut TypedExpr, owned: &IrType) {
         if !matches!(owned, IrType::ExternalUnion { .. }) {
             return;
         }
         let IrExprKind::Call {
             func,
-            callable_signature: Some(constructor),
+            args,
+            callable_signature,
             ..
         } = &mut expr.kind
         else {
@@ -132,17 +155,59 @@ impl AstLowering {
             &func.kind,
             IrExprKind::Var { name, .. } if constructors::from_str(name) == Some(ConstructorId::Some)
         );
-        let [payload] = constructor.params.as_mut_slice() else {
-            return;
-        };
-        if !is_some
-            || matches!(payload.ty, IrType::ExternalUnion { .. })
-            || !Self::same_union_members(&payload.ty, owned)
-        {
+        if !is_some {
             return;
         }
-        payload.ty = owned.clone();
+        match callable_signature {
+            Some(constructor) => {
+                let [payload] = constructor.params.as_mut_slice() else {
+                    return;
+                };
+                if matches!(payload.ty, IrType::ExternalUnion { .. }) || !Self::same_union_members(&payload.ty, owned) {
+                    return;
+                }
+                payload.ty = owned.clone();
+            }
+            None => {
+                let [argument] = args.as_slice() else {
+                    return;
+                };
+                if !matches!(argument.kind, IrCallArgKind::Positional)
+                    || argument.expr.ty.is_union()
+                    || matches!(argument.expr.ty, IrType::Unknown)
+                    || owned.union_variant_index_for_member(&argument.expr.ty).is_none()
+                {
+                    return;
+                }
+                *callable_signature = Some(FunctionSignature {
+                    params: vec![FunctionParam {
+                        name: "__incan_arg_0".to_string(),
+                        ty: owned.clone(),
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind: ParamKind::Normal,
+                        default: None,
+                    }],
+                    return_type: IrType::Unknown,
+                });
+            }
+        }
         expr.ty = IrType::Option(Box::new(owned.clone()));
+    }
+
+    /// Give a `Some(member)` assigned to a field of a dependency model the provider-owned union the field declares.
+    pub(in crate::lower) fn retain_field_assignment_union_owner(
+        &self,
+        object: &TypedExpr,
+        field: &str,
+        value: &mut TypedExpr,
+    ) {
+        let Some(library) = self.public_library_for_nominal_receiver_type(&object.ty) else {
+            return;
+        };
+        if let Some(declared) = self.declared_field_type_for_imported_pub_type(&library, &object.ty, field) {
+            Self::retain_union_owners_at(value, &declared);
+        }
     }
 
     /// Return whether a consumer-spelled union and a provider-owned union have the same members.

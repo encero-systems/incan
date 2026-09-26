@@ -1,0 +1,15 @@
+# behavior: defaults and method-partial presets that name private consts and a private function of their module take those items' values when another module of the project omits the arguments
+# expect-stdout:
+#   4
+#   8
+#   chunk 4 bytes
+#   hello Ada
+
+from helpers import Greeter, describe, read
+
+
+def main() -> None:
+    println(read())
+    println(read(8))
+    println(describe())
+    println(Greeter(name="Ada").hello())

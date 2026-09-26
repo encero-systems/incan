@@ -1150,18 +1150,24 @@ impl AstLowering {
                 }
             }
 
-            ast::Statement::FieldAssignment(fa) => IrStmtKind::Assign {
-                target: AssignTarget::Field {
-                    object: Box::new(self.lower_expr_spanned(&fa.object)?),
-                    field: self
-                        .type_info
-                        .as_ref()
-                        .and_then(|info| info.rust_field_access_name(fa.target_span))
-                        .unwrap_or(fa.field.as_str())
-                        .to_string(),
-                },
-                value: self.lower_expr_spanned(&fa.value)?,
-            },
+            ast::Statement::FieldAssignment(fa) => {
+                let object = self.lower_expr_spanned(&fa.object)?;
+                let mut value = self.lower_expr_spanned(&fa.value)?;
+                // A `Some(member)` stored in a dependency model's field takes the union the provider declares (#1743).
+                self.retain_field_assignment_union_owner(&object, &fa.field, &mut value);
+                IrStmtKind::Assign {
+                    target: AssignTarget::Field {
+                        object: Box::new(object),
+                        field: self
+                            .type_info
+                            .as_ref()
+                            .and_then(|info| info.rust_field_access_name(fa.target_span))
+                            .unwrap_or(fa.field.as_str())
+                            .to_string(),
+                    },
+                    value,
+                }
+            }
 
             ast::Statement::IndexAssignment(ia) => {
                 let object = self.lower_expr_spanned(&ia.object)?;

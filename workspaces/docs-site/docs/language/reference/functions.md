@@ -30,7 +30,7 @@ Arguments bind to normal parameters in this order:
 4. Required parameters that remain unbound are reported as missing.
 5. Unknown named arguments are rejected unless the callee declares `**kwargs`.
 6. Extra positional arguments are rejected unless the callee declares `*args`.
-7. A defaulted parameter that remains unbound takes its declared default. A default that names a const declared in the callable's module, private or public, takes that const's value, whichever module or package the call is written in.
+7. A defaulted parameter that remains unbound takes its declared default. A default that names a const or calls a function declared in the callable's module, private or public, resolves that name in the callable's module, whichever module or package the call is written in. The same holds for the presets of a method partial.
 
 ```incan
 def connect(host: str, port: int) -> str:
@@ -42,23 +42,26 @@ def main() -> str:
     return a + " " + b
 ```
 
-A default that names a private const of its module, called from another module:
+Defaults that name a private const and call a private function of their module, called from another module:
 
 ```incan
 # helpers.incn
 const CHUNK: int = 4
 
-pub def read(n: int = CHUNK) -> int:
-    return n
+def _unit() -> str:
+    return "bytes"
+
+pub def describe(n: int = CHUNK, unit: str = _unit()) -> str:
+    return f"{n} {unit}"
 ```
 
 ```incan
 # main.incn
-from helpers import read
+from helpers import describe
 
 def main() -> None:
-    println(read())   # 4
-    println(read(8))  # 8
+    println(describe())   # 4 bytes
+    println(describe(8))  # 8 bytes
 ```
 
 ## Rest Parameter Mental Model

@@ -235,7 +235,8 @@ fn some_instantiations(ir: &IrProgram, function_name: &str) -> Result<Vec<(IrTyp
 
 /// #1743: a `Some(member)` whose destination is a `pub::` dependency's `Option[Kind | str]` is instantiated at the
 /// union the dependency declares, never at a consumer-local copy of it: as a call argument, as an element of a list
-/// argument, as a field of the dependency's model, as the value of an annotated binding and as a returned value.
+/// argument, as a field of the dependency's model at construction and by assignment, as the value of an annotated
+/// binding, as an arm of a `match` expression and as a returned value.
 #[test]
 fn some_member_takes_the_dependency_owned_union_at_every_destination_issue1743() -> Result<(), String> {
     let index = provider_index(&[(
@@ -282,6 +283,19 @@ def annotated_binding() -> str:
 
 def returned() -> Option[Choice]:
     return Some("a")
+
+
+def match_arm(flag: bool) -> str:
+    choice: Option[Choice] = match flag:
+        true => Some("a")
+        false => None
+    return describe(choice)
+
+
+def field_assignment() -> Holder:
+    mut holder = Holder(value=None)
+    holder.value = Some("b")
+    return holder
 "#,
         index,
     )?;
@@ -292,6 +306,8 @@ def returned() -> Option[Choice]:
         ("model_field", 1),
         ("annotated_binding", 1),
         ("returned", 1),
+        ("match_arm", 1),
+        ("field_assignment", 1),
     ] {
         let instantiations = some_instantiations(&ir, function_name)?;
         assert_eq!(

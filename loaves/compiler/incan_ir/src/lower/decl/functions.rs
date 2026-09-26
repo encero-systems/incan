@@ -349,8 +349,12 @@ impl AstLowering {
     /// # Returns
     ///
     /// The corresponding IR function.
+    ///
+    /// A private function a parameter default of the module calls is published, because the default is expanded at
+    /// call sites outside the module.
     pub(in crate::lower) fn lower_function(&mut self, f: &ast::FunctionDecl) -> Result<IrFunction, LoweringError> {
-        self.lower_function_named(f, f.name.clone(), self.map_callable_visibility(f.visibility))
+        let visibility = self.default_reachable_visibility(&f.name, self.map_callable_visibility(f.visibility));
+        self.lower_function_named(f, f.name.clone(), visibility)
     }
 
     /// Lower a function declaration using an explicit emitted name and visibility.

@@ -1,0 +1,24 @@
+const CHUNK: int = 4
+const PREFIX: str = "chunk"
+const GREETING: str = "hello"
+
+
+def _unit() -> str:
+    return "bytes"
+
+
+pub def read(n: int = CHUNK) -> int:
+    return n
+
+
+pub def describe(n: int = CHUNK, prefix: str = PREFIX, unit: str = _unit()) -> str:
+    return f"{prefix} {n} {unit}"
+
+
+pub model Greeter:
+    pub name: str
+
+    def greet(self, greeting: str) -> str:
+        return f"{greeting} {self.name}"
+
+    hello = partial greet(greeting=GREETING)

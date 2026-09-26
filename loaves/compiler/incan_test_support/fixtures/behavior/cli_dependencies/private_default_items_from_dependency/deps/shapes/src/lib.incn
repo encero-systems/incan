@@ -1,0 +1,12 @@
+const LABEL: str = "flat"
+
+
+def _unit() -> str:
+    return "cm"
+
+
+pub def build(size: int, label: str = LABEL, unit: str = _unit()) -> str:
+    return f"{label} of size {size}{unit}"
+
+
+pub default_build = partial build(size=3)

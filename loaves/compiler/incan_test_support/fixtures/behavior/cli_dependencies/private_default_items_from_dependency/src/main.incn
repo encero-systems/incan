@@ -1,0 +1,12 @@
+# behavior: a dependency's function whose defaults name a private const and call a private function of its module takes their values when a consumer omits the arguments, directly and through a partial over the function
+# retires: loaves/compiler/incan_ir/src/lower/tests/default_named_items.rs::private_item_a_default_names_is_published_for_its_callers
+# expect-stdout:
+#   flat of size 2cm
+#   flat of size 3cm
+
+from pub::shapes import build, default_build
+
+
+def main() -> None:
+    println(build(2))
+    println(default_build())
