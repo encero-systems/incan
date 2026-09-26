@@ -4,12 +4,6 @@
 #   answer 3
 #   answer empty
 
-# ROUTE BUG CANDIDATE: `incan check` accepts this program; the run refuses it (E0308: the method's result keeps the
-# provider's union type where the consumer's parameter has the consumer's own `int | str` union, while a provider
-# function's `int | str` result is accepted at the same parameter). Found when `emit_dependency_unions_and_surfaces`
-# first ran, as the `Box.answer()` part of `dependency_unions_across_the_package_boundary`. Lands there again when a
-# method's union result crosses the package boundary.
-
 from pub::querykit import Box
 
 
