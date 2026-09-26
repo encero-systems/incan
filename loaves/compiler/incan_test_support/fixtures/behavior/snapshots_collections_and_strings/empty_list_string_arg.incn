@@ -4,7 +4,8 @@
 #   0
 
 def count_names(names: List[str]) -> int:
-  return len(names)
+    return len(names)
+
 
 def main() -> None:
-  println(count_names([]))
+    println(count_names([]))

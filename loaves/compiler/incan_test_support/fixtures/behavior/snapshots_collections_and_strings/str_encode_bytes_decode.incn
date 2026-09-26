@@ -53,7 +53,7 @@ def run() -> Result[None, ValidationError]:
     println(frozen_round_trip()?)
     match b"\xff".decode():
         Ok(text) => println(text)
-        Err(error) => println(f"{error}")
+        Err(error) => println(error)
     return Ok(None)
 
 

@@ -44,6 +44,7 @@
 
 """Test control flow statements"""
 
+
 def test_if_statements() -> None:
     x: int = 10
 
@@ -65,6 +66,7 @@ def test_if_statements() -> None:
     else:
         print("large")
 
+
 def test_while_loops() -> None:
     # Basic while loop
     mut i: int = 0
@@ -74,7 +76,7 @@ def test_while_loops() -> None:
 
     # While with break
     mut j: int = 0
-    while True:
+    while true:
         if j >= 3:
             break
         print(j)
@@ -87,6 +89,7 @@ def test_while_loops() -> None:
         if k == 3:
             continue
         print(k)
+
 
 def test_for_loops() -> None:
     # For loop over list
@@ -110,6 +113,7 @@ def test_for_loops() -> None:
             continue
         print(i)
 
+
 def test_nested_control_flow() -> None:
     # Nested loops
     for i in range(3):
@@ -117,6 +121,7 @@ def test_nested_control_flow() -> None:
             if i == j:
                 continue
             print(f"{i},{j}")
+
 
 def main() -> None:
     test_if_statements()

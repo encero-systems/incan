@@ -7,6 +7,7 @@ model User:
     name: str
     age: int
 
+
 def main() -> None:
     user = User(name="Alice", age=30)
     println(user.name)

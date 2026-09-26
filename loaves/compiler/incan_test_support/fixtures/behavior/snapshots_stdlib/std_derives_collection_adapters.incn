@@ -7,6 +7,7 @@
 from std.derives.collection import Iterator, FallibleIterator
 from std.traits.callable import Callable1
 
+
 model Countdown with Iterator[int]:
     remaining: int
 
@@ -19,6 +20,7 @@ model Countdown with Iterator[int]:
         self.remaining -= 1
         return Some(self.remaining + 1)
 
+
 model Readings with FallibleIterator[int, str]:
     items: list[int]
     index: int
@@ -30,10 +32,12 @@ model Readings with FallibleIterator[int, str]:
         self.index += 1
         return Ok(Some(item))
 
+
 @derive(Clone)
 model Double with Callable1[int, int]:
     def __call__(self, value: int) -> int:
         return value * 2
+
 
 @derive(Clone)
 model Above with Callable1[int, bool]:
@@ -41,6 +45,7 @@ model Above with Callable1[int, bool]:
 
     def __call__(self, value: int) -> bool:
         return value > self.threshold
+
 
 def main() -> None:
     mut total = 0

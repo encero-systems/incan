@@ -28,7 +28,7 @@ def describe(reading: Reading, exact: f64) -> str:
     converted = str(total) + " " + str(reading.value)
     println(total, quarter)
     println(str(quarter))
-    return interpolated + " " + converted
+    return f"{interpolated} {converted}"
 
 
 def main() -> None:

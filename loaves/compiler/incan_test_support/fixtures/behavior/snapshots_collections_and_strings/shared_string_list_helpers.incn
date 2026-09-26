@@ -11,7 +11,7 @@ def match_index(xs: list[str], y: int) -> int:
     while idx < len(xs):
         if len(xs[idx]) == y:
             return idx
-        idx = idx + 1
+        idx += 1
     return -1
 
 

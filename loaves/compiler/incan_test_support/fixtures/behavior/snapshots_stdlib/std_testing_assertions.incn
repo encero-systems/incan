@@ -10,9 +10,11 @@
 
 from std.testing import assert_eq, assert_ne, assert_true, assert_false, assert_is_some, assert_is_none, assert_is_ok, assert_is_err
 
+
 @derive(Eq)
 model Pair:
     x: int
+
 
 def check_basics() -> None:
     assert 1 + 1 == 2

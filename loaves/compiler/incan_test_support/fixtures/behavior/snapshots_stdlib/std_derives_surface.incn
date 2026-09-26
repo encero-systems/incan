@@ -15,10 +15,12 @@ from std.derives.comparison import Eq, Ord, Hash
 from std.derives.copying import Clone, Copy, Default
 from std.derives.string import Debug
 
+
 @derive(Eq, Ord, Hash, Clone, Copy, Default, Debug)
 model Point:
     x: int = 0
     y: int = 0
+
 
 def main() -> None:
     a = Point(x=1, y=2)

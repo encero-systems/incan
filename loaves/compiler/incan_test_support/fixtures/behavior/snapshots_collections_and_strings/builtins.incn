@@ -21,23 +21,28 @@
 
 """Test builtin function handling"""
 
+
 def test_print_builtin() -> None:
     print("hello")
     print("world")
+
 
 def test_len_builtin() -> None:
     items: list[int] = [1, 2, 3, 4, 5]
     length: int = len(items)
     print(length)
 
+
 def test_range_builtin() -> None:
     for i in range(5):
         print(i)
+
 
 def test_sum_builtin() -> None:
     numbers: list[int] = [1, 2, 3, 4, 5]
     total: int = sum(numbers)
     print(total)
+
 
 def test_min_max_builtins() -> None:
     values: list[int] = [3, 1, 4, 1, 5, 9]
@@ -46,38 +51,43 @@ def test_min_max_builtins() -> None:
     print(minimum)
     print(maximum)
 
+
 def test_abs_builtin() -> None:
     negative: int = -42
     positive: int = abs(negative)
     print(positive)
+
 
 def test_str_builtin() -> None:
     number: int = 123
     text: str = str(number)
     print(text)
 
+
 def test_int_builtin() -> None:
     text: str = "456"
     number: int = int(text)
     print(number)
+
 
 def test_float_builtin() -> None:
     whole: int = 42
     decimal: float = float(whole)
     print(decimal)
 
+
 def test_bool_builtin() -> None:
     value: int = 1
     flag: bool = bool(value)
     print(flag)
 
+
 def test_sorted_builtin() -> None:
     items: list[int] = [3, 1, 4, 1, 5]
     sorted_items: list[int] = sorted(items)
-    mut parts: list[str] = []
-    for item in sorted_items:
-        parts.append(str(item))
+    parts: list[str] = [str(item) for item in sorted_items]
     print(" ".join(parts))
+
 
 def main() -> None:
     test_print_builtin()

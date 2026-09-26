@@ -8,6 +8,7 @@ import std.async
 import api::routes
 from api.routes import create, search
 
+
 async def main() -> None:
-  println(await create(3))
-  println(await search(4))
+    println(await create(3))
+    println(await search(4))

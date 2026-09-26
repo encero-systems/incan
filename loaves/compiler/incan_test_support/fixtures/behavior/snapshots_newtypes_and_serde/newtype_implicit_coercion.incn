@@ -10,13 +10,17 @@ type Attempts = newtype int:
             return Err(ValidationError("attempts must be >= 1"))
         return Ok(Attempts(n))
 
+
 type RetryAttempts = newtype Attempts
+
 
 model Job:
     attempts: Attempts
 
+
 def take_attempts(a: Attempts) -> None:
-    println(f"{a.0}")
+    println(a.0)
+
 
 def main() -> None:
     take_attempts(3)

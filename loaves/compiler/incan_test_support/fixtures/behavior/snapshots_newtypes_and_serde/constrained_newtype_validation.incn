@@ -7,12 +7,14 @@
 
 type PositiveInt = newtype int[gt=0]
 
+
 def take_positive(value: PositiveInt) -> None:
-    println(f"{value.0}")
+    println(value.0)
+
 
 def main() -> None:
     take_positive(1)
     explicit = PositiveInt(2)
-    println(f"{explicit.0}")
+    println(explicit.0)
     take_positive(0)
     println("unreachable")

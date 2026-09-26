@@ -6,6 +6,7 @@
 
 """Class field visibility should preserve private backing state."""
 
+
 pub class LazyFrame:
     _cursor: int
     pub schema: str

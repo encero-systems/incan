@@ -1,5 +1,6 @@
 from std.serde import json
 
+
 @derive(json)
 pub model Item:
-  pub value: str
+    pub value: str

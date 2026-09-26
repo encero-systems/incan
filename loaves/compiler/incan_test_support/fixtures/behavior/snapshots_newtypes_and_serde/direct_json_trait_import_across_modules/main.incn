@@ -6,5 +6,6 @@
 from crate.encode import encode
 from crate.models import Item
 
+
 def main() -> None:
-  println(encode(Item(value="item")))
+    println(encode(Item(value="item")))

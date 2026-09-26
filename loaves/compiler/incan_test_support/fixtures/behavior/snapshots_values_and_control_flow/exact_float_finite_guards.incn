@@ -14,27 +14,35 @@
 pub def parsed_exact(value: str) -> f64:
     return float(value)
 
+
 pub def widened_exact(value: f32) -> f64:
     return value
+
 
 pub def exact_f32(value: f32) -> f32:
     return value
 
+
 pub def ordinary(value: str) -> float:
     return float(value)
 
+
 pub def returned_f32(left: f32, right: f32) -> f32:
     return left * right
+
 
 pub def stored_f64(left: f64, right: f64) -> f64:
     value: f64 = left * right
     return value
 
+
 pub def compared_f32(left: f32, right: f32) -> bool:
     return left * right > left
 
+
 pub def printed_f64(left: f64, right: f64) -> None:
     println(left * right)
+
 
 def main() -> None:
     println(ordinary("nan"))

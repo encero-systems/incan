@@ -11,29 +11,34 @@
 @derive(Clone)
 type LocalPath = newtype str
 
+
 pub def describe(value: Option[LocalPath | str]) -> str:
-  if value is not None:
-    if isinstance(value, str):
-      return value.upper()
-    elif isinstance(value, LocalPath):
-      return value.0
-  return "missing"
+    if value is not None:
+        if isinstance(value, str):
+            return value.upper()
+        elif isinstance(value, LocalPath):
+            return value.0
+    return "missing"
+
 
 pub def normalize_path_like(value: LocalPath | str) -> LocalPath:
-  if isinstance(value, str):
-    return LocalPath(value)
-  if isinstance(value, LocalPath):
-    return value
+    if isinstance(value, str):
+        return LocalPath(value)
+    if isinstance(value, LocalPath):
+        return value
+
 
 def plain() -> LocalPath | str:
-  return "plain"
+    return "plain"
+
 
 def local() -> LocalPath | str:
-  return LocalPath("local")
+    return LocalPath("local")
+
 
 def main() -> None:
-  println(describe(Some(plain())))
-  println(describe(Some(local())))
-  println(describe(None))
-  println(normalize_path_like(plain()).0)
-  println(normalize_path_like(local()).0)
+    println(describe(Some(plain())))
+    println(describe(Some(local())))
+    println(describe(None))
+    println(normalize_path_like(plain()).0)
+    println(normalize_path_like(local()).0)

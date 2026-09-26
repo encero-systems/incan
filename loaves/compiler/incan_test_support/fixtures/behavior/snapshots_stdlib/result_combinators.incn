@@ -13,54 +13,66 @@
 
 from std.traits.callable import Callable1
 
+
 def double(value: int) -> int:
-  return value * 2
+    return value * 2
+
 
 def keep_positive(value: int) -> Result[int, str]:
-  if value > 0:
-    return Ok(value)
-  return Err("not positive")
+    if value > 0:
+        return Ok(value)
+    return Err("not positive")
+
 
 model Observer with Callable1[int, None]:
-  def __call__(self, value: int) -> None:
-    println(f"observer {value}")
+    def __call__(self, value: int) -> None:
+        println(f"observer {value}")
+
 
 def pipeline(result: Result[int, str]) -> Result[int, str]:
-  observer = Observer()
-  return result.map(double).and_then(keep_positive).inspect(observer)
+    observer = Observer()
+    return result.map(double).and_then(keep_positive).inspect(observer)
+
 
 model PlainError:
-  message: str
+    message: str
+
 
 pub def direct[E](result: Result[int, E]) -> int:
-  return result.unwrap()
+    return result.unwrap()
+
 
 model Payload:
-  name: str
+    name: str
+
 
 def observe_payload(payload: Payload) -> None:
-  println(f"payload {payload.name}")
+    println(f"payload {payload.name}")
+
 
 model PayloadObserver with Callable1[Payload, None]:
-  def __call__(self, payload: Payload) -> None:
-    println(f"observer {payload.name}")
+    def __call__(self, payload: Payload) -> None:
+        println(f"observer {payload.name}")
+
 
 pub def transform(result: Result[Payload, str]) -> Result[Payload, str]:
-  return result.inspect(observe_payload)
+    return result.inspect(observe_payload)
+
 
 pub def transform_with_observer(result: Result[Payload, str]) -> Result[Payload, str]:
-  observer = PayloadObserver()
-  return result.inspect(observer)
+    observer = PayloadObserver()
+    return result.inspect(observer)
+
 
 def main() -> None:
-  match pipeline(Ok(3)):
-    Ok(value) => println(f"ok {value}")
-    Err(error) => println(error)
-  match pipeline(Ok(-3)):
-    Ok(value) => println(f"ok {value}")
-    Err(error) => println(error)
-  plain: Result[int, PlainError] = Ok(9)
-  println(direct(plain))
-  match transform_with_observer(transform(Ok(Payload(name="orders")))):
-    Ok(payload) => println(f"ok {payload.name}")
-    Err(error) => println(error)
+    match pipeline(Ok(3)):
+        Ok(value) => println(f"ok {value}")
+        Err(error) => println(error)
+    match pipeline(Ok(-3)):
+        Ok(value) => println(f"ok {value}")
+        Err(error) => println(error)
+    plain: Result[int, PlainError] = Ok(9)
+    println(direct(plain))
+    match transform_with_observer(transform(Ok(Payload(name="orders")))):
+        Ok(payload) => println(f"ok {payload.name}")
+        Err(error) => println(error)

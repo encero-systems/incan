@@ -6,21 +6,23 @@
 #   1:Ada
 
 model User:
-  name: str
-  short = label
+    name: str
+    short = label
 
-  def label(self) -> str:
-    return self.name
+    def label(self) -> str:
+        return self.name
+
 
 model Tagged:
-  name: str
-  short = partial label(prefix=1)
+    name: str
+    short = partial label(prefix=1)
 
-  def label(self, prefix: int) -> str:
-    return f"{prefix}:{self.name}"
+    def label(self, prefix: int) -> str:
+        return f"{prefix}:{self.name}"
+
 
 def main() -> None:
-  user = User(name="Ada")
-  println(user.short())
-  tagged = Tagged(name="Ada")
-  println(tagged.short())
+    user = User(name="Ada")
+    println(user.short())
+    tagged = Tagged(name="Ada")
+    println(tagged.short())

@@ -20,6 +20,7 @@ from std.traits.indexing import Index
 from std.traits.callable import Callable1
 from std.traits.convert import From, TryFrom
 
+
 model Money with Add[Money, Money], Neg[Money], Sub[Money, Money]:
     cents: int
 
@@ -32,6 +33,7 @@ model Money with Add[Money, Money], Neg[Money], Sub[Money, Money]:
     def __sub__(self, other: Money) -> Money:
         return Money(cents=self.cents - other.cents)
 
+
 model AgeValidationError with Error:
     field: str
     reason: str
@@ -39,10 +41,12 @@ model AgeValidationError with Error:
     def message(self) -> str:
         return f"Validation failed for '{self.field}': {self.reason}"
 
+
 def validate_age(age: int) -> Result[int, AgeValidationError]:
     if age < 0:
         return Err(AgeValidationError(field="age", reason="cannot be negative"))
     return Ok(age)
+
 
 model Letters with Index[int, str]:
     values: list[str]
@@ -50,12 +54,15 @@ model Letters with Index[int, str]:
     def __getitem__(self, key: int) -> str:
         return self.values[key]
 
+
 model Tripler with Callable1[int, int]:
     def __call__(self, value: int) -> int:
         return value * 3
 
+
 def apply[F with Callable1[int, int]](callable: F, value: int) -> int:
     return callable(value)
+
 
 model UserId with From[int]:
     value: int
@@ -63,6 +70,7 @@ model UserId with From[int]:
     @classmethod
     def from(cls, value: int) -> Self:
         return UserId(value=value)
+
 
 model PositiveInt with TryFrom[int]:
     value: int
@@ -72,6 +80,7 @@ model PositiveInt with TryFrom[int]:
         if value <= 0:
             return Err("Value must be positive")
         return Ok(PositiveInt(value=value))
+
 
 def main() -> None:
     total = Money(cents=10) + Money(cents=20)

@@ -6,7 +6,8 @@
 
 from crate.public_api import ExportedVault as PublicVault
 
+
 def main() -> None:
-  vault = PublicVault(label="visible", revision=9)
-  println(vault.label)
-  println(vault.describe())
+    vault = PublicVault(label="visible", revision=9)
+    println(vault.label)
+    println(vault.describe())

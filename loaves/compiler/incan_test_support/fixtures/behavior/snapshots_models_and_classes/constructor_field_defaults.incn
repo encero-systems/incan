@@ -10,6 +10,7 @@ model Settings:
     font_size: int = 14
     auto_save: bool = true
 
+
 def main() -> None:
     a = Settings()
     b = Settings(font_size=16)

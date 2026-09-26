@@ -20,6 +20,7 @@ const C: str = B + "!"
 const RAW: bytes = b"\x00\x01"
 const FROZEN: FrozenBytes = b"\x02\x03"
 
+
 def main() -> None:
     print(C)
     # further concatenation should be allowed

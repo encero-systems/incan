@@ -6,14 +6,15 @@
 
 @derive(Clone)
 class FactoryBox[T with Clone]:
-  pub value: T
+    pub value: T
 
-  @classmethod
-  def make(cls, value: T) -> Self:
-    return cls(value=value)
+    @classmethod
+    def make(cls, value: T) -> Self:
+        return cls(value=value)
+
 
 def main() -> None:
-  boxed = FactoryBox[int].make(1)
-  println(f"{boxed.value}")
-  named = FactoryBox[str].make("two")
-  println(f"{named.value}")
+    boxed = FactoryBox[int].make(1)
+    println(boxed.value)
+    named = FactoryBox[str].make("two")
+    println(named.value)

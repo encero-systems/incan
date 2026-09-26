@@ -9,19 +9,24 @@
 
 # RFC 036: user-defined decorators
 
+
 def parse(value: int) -> int:
     return value
+
 
 def as_int(func: (int) -> str) -> (int) -> int:
     println("decorating label")
     return parse
 
+
 @as_int
 def label(value: int) -> str:
     return "value"
 
+
 def run(value: int) -> int:
     return label(value)
+
 
 def main() -> None:
     println("main")

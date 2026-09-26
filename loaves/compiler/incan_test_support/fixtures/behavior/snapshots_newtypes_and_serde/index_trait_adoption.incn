@@ -7,27 +7,32 @@
 
 from std.traits.indexing import Index
 
-class GenericBox[T with Clone] with Index[str, str]:
-  pub label: str
-  pub witness: list[T]
 
-  def __getitem__(self, key: str) for Index[str, str] -> str:
-    return key
+class GenericBox[T with Clone] with Index[str, str]:
+    pub label: str
+    pub witness: list[T]
+
+    def __getitem__(self, key: str) for Index[str, str] -> str:
+        return key
+
 
 pub def indexed_label[T with Clone](box: GenericBox[T]) -> str:
-  return box["amount"]
+    return box["amount"]
+
 
 class PlainBox with Index[list[str], Self]:
-  pub label: str
+    pub label: str
 
-  def __getitem__(self, key: list[str]) for Index[list[str], Self] -> Self:
-    return self
+    def __getitem__(self, key: list[str]) for Index[list[str], Self] -> Self:
+        return self
+
 
 pub def nested_box(box: PlainBox) -> PlainBox:
-  return box[["name"]]
+    return box[["name"]]
+
 
 def main() -> None:
-  generic = GenericBox(label="generic", witness=[1])
-  println(indexed_label(generic))
-  plain = PlainBox(label="plain")
-  println(nested_box(plain).label)
+    generic = GenericBox(label="generic", witness=[1])
+    println(indexed_label(generic))
+    plain = PlainBox(label="plain")
+    println(nested_box(plain).label)

@@ -8,6 +8,7 @@
 
 """Issue #731: generic receiver methods should fill default arguments at call sites."""
 
+
 class Box[T with Clone]:
     pub value: T
 

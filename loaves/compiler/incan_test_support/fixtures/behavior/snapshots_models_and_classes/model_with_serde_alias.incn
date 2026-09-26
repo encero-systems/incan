@@ -6,11 +6,13 @@
 
 from std.serde import json
 
+
 @derive(json)
 model Account:
     type_ [alias="type"]: str
     class_ as "class": str
     name: str
+
 
 def main() -> None:
     account = Account(type="premium", class="gold", name="Ada")

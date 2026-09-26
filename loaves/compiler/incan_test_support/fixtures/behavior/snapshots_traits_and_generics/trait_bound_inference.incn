@@ -14,35 +14,46 @@
 # RFC 023: Trait bound inference from usage
 # Uses simple comparison operations on generic types to test inference.
 
+
 def are_equal[T](left: T, right: T) -> bool:
     return left == right
+
 
 def is_greater[T](a: T, b: T) -> bool:
     return a > b
 
+
 def show[T](x: T) -> str:
     return f"{x}"
+
 
 def make_dict[T](k: T) -> Dict[T, int]:
     return {k: 1}
 
+
 def add[T](a: T, b: T) -> T:
     return a + b
+
 
 def subtract[T](a: T, b: T) -> T:
     return a - b
 
+
 def multiply[T](a: T, b: T) -> T:
     return a * b
+
 
 def duplicate[T](x: T) -> T:
     return x.clone()
 
+
 def wrapper[T](a: T, b: T) -> bool:
     return are_equal(a, b)
 
+
 def show_eq[T with Eq](x: T) -> str:
     return f"{x}"
+
 
 def main() -> None:
     println(f"{are_equal(1, 1)} {are_equal("a", "b")}")

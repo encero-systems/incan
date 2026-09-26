@@ -8,6 +8,7 @@
 # The bound must lower to the Rust `Default` trait that `@derive(Default)` implements,
 # and `T.default()` through that bound must dispatch through the same Rust trait.
 
+
 @derive(Default)
 model Settings:
     retries: int = 0

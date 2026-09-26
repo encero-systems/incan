@@ -12,6 +12,7 @@ enum Status:
     Retrying
     Done
 
+
 def label(status: Status) -> str:
     match status:
         Status.Pending | Status.Retrying =>
@@ -19,10 +20,12 @@ def label(status: Status) -> str:
         Status.Done =>
             return "done"
 
+
 def first(result: Result[int, int]) -> int:
     if let Ok(value) | Err(value) = result:
         return value
     return 0
+
 
 def main() -> None:
     print(label(Status.Pending))

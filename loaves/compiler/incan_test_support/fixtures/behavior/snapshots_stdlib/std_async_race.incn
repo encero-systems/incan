@@ -11,32 +11,34 @@ from std.async.time import sleep
 
 
 async def from_cache() -> str:
-  await sleep(0.02)
-  return "cache"
+    await sleep(0.02)
+    return "cache"
 
 
 async def from_origin() -> str:
-  await sleep(0.3)
-  return "origin"
+    await sleep(0.3)
+    return "origin"
 
 
 def label(source: str) -> str:
-  return f"answered by {source}"
+    return f"answered by {source}"
 
 
 pub async def fast() -> int:
-  return 1
+    return 1
+
 
 pub async def slow() -> int:
-  await sleep(0.3)
-  return 2
+    await sleep(0.3)
+    return 2
+
 
 pub async def fastest() -> int:
-  return race for value:
-    await fast() => value
-    await slow() => value
+    return race for value:
+        await fast() => value
+        await slow() => value
 
 
 async def main() -> None:
-  println(await race(arm(from_origin(), label), arm(from_cache(), label)))
-  println(await fastest())
+    println(await race(arm(from_origin(), label), arm(from_cache(), label)))
+    println(await fastest())

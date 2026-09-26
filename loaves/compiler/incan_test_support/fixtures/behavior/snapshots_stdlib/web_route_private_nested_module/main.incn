@@ -7,5 +7,6 @@ import std.async
 import api::routes
 from std.web import App
 
+
 def main() -> None:
-  println("routes loaded")
+    println("routes loaded")

@@ -10,11 +10,14 @@
 
 """Issue #1489: a planned clone of a method's own type parameter binds `Clone` on the method header."""
 
+
 pub model Decoded[T]:
     pub value: T
 
+
 pub trait Marker:
     def mark(self) -> int
+
 
 @derive(Clone)
 pub model Tag with Marker:
@@ -22,6 +25,7 @@ pub model Tag with Marker:
 
     def mark(self) -> int:
         return self.weight
+
 
 pub class Codec:
     pub name: str
@@ -39,13 +43,16 @@ pub class Codec:
     def decode[T with Marker](self, decoded: Decoded[T]) -> Result[T, str]:
         return Ok(decoded.value)
 
+
 pub def first[T](items: list[T]) -> Result[T, str]:
     for item in items:
         return Ok(item)
     return Err("empty")
 
+
 pub def unwrap[T](decoded: Decoded[T]) -> Result[T, str]:
     return Ok(decoded.value)
+
 
 pub def main() -> None:
     codec = Codec(name="codec")

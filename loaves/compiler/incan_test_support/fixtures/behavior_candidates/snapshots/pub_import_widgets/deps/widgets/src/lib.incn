@@ -1,10 +1,12 @@
 pub model Widget:
     pub name: str
 
+
 pub const DEFAULT_NAME: str = "default"
 
 pub static SHARED_COUNT: int = 0
 pub static SHARED_ITEMS: list[int] = []
+
 
 pub def make_widget(name: str) -> Widget:
     return Widget(name=name)

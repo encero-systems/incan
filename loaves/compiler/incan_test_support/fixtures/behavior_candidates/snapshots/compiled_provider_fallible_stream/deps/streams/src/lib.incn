@@ -1,5 +1,6 @@
 from std.derives.collection import FallibleIterator
 
+
 pub model Stream[R] with FallibleIterator[int, str]:
     pub value: R
     pub remaining: int = 2

@@ -12,8 +12,10 @@
 from std.serde import json
 from std.serde.json import Serialize
 
+
 model Payload with Serialize:
     value: int
+
 
 model Text with Serialize:
     value: str
@@ -21,12 +23,15 @@ model Text with Serialize:
     def display_text(self) -> str:
         return self.value
 
+
 @derive(json)
 model Derived:
     value: int
 
+
 def encode[T with json.Serialize](value: T) -> str:
     return value.to_json()
+
 
 def main() -> None:
     println(Payload(value=1).to_json())

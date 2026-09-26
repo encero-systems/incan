@@ -5,18 +5,22 @@
 
 """#1431: source traits merely spelled `Serialize` / `Deserialize` are not the std.serde.json protocol."""
 
+
 pub trait Serialize:
     """A marker trait that shares only its spelling with `std.serde.json.Serialize`."""
 
     pass
+
 
 pub trait Deserialize:
     """A marker trait that shares only its spelling with `std.serde.json.Deserialize`."""
 
     pass
 
+
 pub type Number = newtype int with Serialize, Deserialize:
     """A newtype adopting both local markers; it must compile to two empty impls."""
+
 
 def main() -> None:
     println(Number(7).0)

@@ -5,11 +5,13 @@
 
 """Ensure parameters are not marked mut when never mutated."""
 
+
 def energy(bodies: list[int]) -> int:
     mut total: int = 0
     for b in bodies:
         total += b
     return total
+
 
 def main() -> None:
     println(energy([1, 2, 3]))

@@ -17,6 +17,7 @@
 
 """Test class definitions, initialization, and methods"""
 
+
 # Simple class with fields
 class Point:
     pub x: int
@@ -37,6 +38,7 @@ class Circle:
 
     def circumference(self) -> float:
         return 2.0 * 3.14159 * self.radius
+
 
 # Classes with self parameter usage and mutable methods (self mutation)
 class Counter:
@@ -100,6 +102,7 @@ class Person:
 
     def describe(self) -> str:
         return f"{self.name} is {self.age}"
+
 
 class Employee:
     person: Person

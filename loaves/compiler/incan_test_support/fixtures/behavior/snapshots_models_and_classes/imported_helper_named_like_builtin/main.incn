@@ -5,10 +5,12 @@
 
 from functions import col, sum
 
+
 def selected_column_name() -> str:
-  amount = col("amount")
-  result = sum(amount)
-  return result.column_name
+    amount = col("amount")
+    result = sum(amount)
+    return result.column_name
+
 
 def main() -> None:
-  println(selected_column_name())
+    println(selected_column_name())

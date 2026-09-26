@@ -10,24 +10,30 @@ from std.serde import json
 import yaml
 import schema
 
+
 @derive(json, yaml)
 model Payload:
-  value: int
+    value: int
+
 
 @derive(schema)
 model Schematic:
-  value: int
+    value: int
+
 
 def encode_yaml[T with yaml.Serialize](value: T) -> str:
-  return value.to_yaml()
+    return value.to_yaml()
+
 
 def encode_json[T with json.Serialize](value: T) -> str:
-  return value.to_json()
+    return value.to_json()
+
 
 def name[T with schema.Named](value: T) -> str:
-  return value.schema_name()
+    return value.schema_name()
+
 
 def main() -> None:
-  println(encode_yaml(Payload(value=1)))
-  println(encode_json(Payload(value=1)))
-  println(name(Schematic(value=1)))
+    println(encode_yaml(Payload(value=1)))
+    println(encode_json(Payload(value=1)))
+    println(name(Schematic(value=1)))

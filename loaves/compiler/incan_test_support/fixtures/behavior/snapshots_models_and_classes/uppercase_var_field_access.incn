@@ -4,8 +4,9 @@
 #   Ada
 
 model Person:
-  name: str
+    name: str
+
 
 def main() -> None:
-  mut User: Person = Person(name="Ada")
-  println(User.name)
+    mut User: Person = Person(name="Ada")
+    println(User.name)

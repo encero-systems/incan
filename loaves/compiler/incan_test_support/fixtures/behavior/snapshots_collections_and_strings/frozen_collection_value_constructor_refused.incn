@@ -4,5 +4,6 @@
 def count(frozen: FrozenList[int]) -> int:
     return len(frozen)
 
+
 def main() -> None:
     println(count(FrozenList([7, 8])))

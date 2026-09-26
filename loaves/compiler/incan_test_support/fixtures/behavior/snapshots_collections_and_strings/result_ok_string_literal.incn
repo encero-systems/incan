@@ -8,6 +8,7 @@
 
 """Issue #367: `Ok("...")` in `Result[str, E]` contexts should emit owned `String`."""
 
+
 def takes_result(value: Result[str, str]) -> None:
     match value:
         case Ok(msg):
@@ -15,8 +16,10 @@ def takes_result(value: Result[str, str]) -> None:
         case Err(err):
             println(err)
 
+
 def returns_result() -> Result[str, str]:
     return Ok("from_return")
+
 
 def main() -> None:
     direct: Result[str, str] = Ok("from_local")

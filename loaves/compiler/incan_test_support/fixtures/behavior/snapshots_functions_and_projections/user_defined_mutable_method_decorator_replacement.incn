@@ -10,15 +10,18 @@ class Counter:
 
     @doubled
     def add(mut self, by: int) -> int:
-        self.value = self.value + by
+        self.value += by
         return self.value
 
+
 def grow(mut counter: Counter, by: int) -> int:
-    counter.value = counter.value + by * 2
+    counter.value += by * 2
     return counter.value
+
 
 def doubled(func: (mut Counter, int) -> int) -> (mut Counter, int) -> int:
     return grow
+
 
 def main() -> None:
     println("main")

@@ -7,14 +7,18 @@
 
 """Issue #1476: an empty list operand carries the checked element type in both positions and both operators."""
 
+
 pub def probe(features: list[str]) -> bool:
-  return features == []
+    return features == []
+
 
 def is_empty(values: list[str]) -> bool:
     return values == []
 
+
 def is_not_empty(values: list[str]) -> bool:
     return [] != values
+
 
 def main() -> None:
     println(f"{probe([])} {probe(["x"])}")

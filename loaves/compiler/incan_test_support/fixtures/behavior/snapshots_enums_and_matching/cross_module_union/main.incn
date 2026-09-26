@@ -8,7 +8,8 @@
 from producers import parse_value
 from consumers import describe
 
+
 def main() -> None:
-  println(describe(parse_value(False)))
-  println(describe(parse_value(True)))
-  println(describe("literal"))
+    println(describe(parse_value(false)))
+    println(describe(parse_value(true)))
+    println(describe("literal"))

@@ -5,9 +5,11 @@
 
 from rust::serde import Serialize
 
+
 @rust.derive(Serialize, Default, Eq, Hash)
 pub model PayloadKey:
-  pub value: int
+    pub value: int
+
 
 def main() -> None:
-  println(PayloadKey(value=1).value)
+    println(PayloadKey(value=1).value)

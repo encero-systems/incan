@@ -30,8 +30,8 @@ def test_literals() -> None:
     println(multiline)
 
     # Boolean literals
-    yes: bool = True
-    no: bool = False
+    yes: bool = true
+    no: bool = false
     println(f"{yes} {no}")
 
     # None literal (Optional type)

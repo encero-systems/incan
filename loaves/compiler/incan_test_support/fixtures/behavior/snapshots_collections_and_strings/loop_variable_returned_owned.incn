@@ -8,17 +8,20 @@
 
 """Issue #1489: returning a by-reference loop variable materializes the owned value."""
 
+
 def require_member(values: list[list[str]], name: str) -> Result[list[str], str]:
     for row in values:
         if row[0] == name:
             return Ok(row)
     return Err("absent")
 
+
 def first_named(names: list[str], name: str) -> Result[str, str]:
     for candidate in names:
         if candidate == name:
             return Ok(candidate)
     return Err("absent")
+
 
 def collect_named(names: list[str], name: str) -> Result[list[str], str]:
     mut found: list[str] = []
@@ -27,6 +30,7 @@ def collect_named(names: list[str], name: str) -> Result[list[str], str]:
             found.append(candidate)
             return Ok(found)
     return Err("absent")
+
 
 def main() -> None:
     match require_member([["a", "b"], ["c"]], "c"):

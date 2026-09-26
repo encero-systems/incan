@@ -5,5 +5,6 @@
 
 from helpers import calculate as compute
 
+
 def main() -> None:
-  println(compute(41))
+    println(compute(41))

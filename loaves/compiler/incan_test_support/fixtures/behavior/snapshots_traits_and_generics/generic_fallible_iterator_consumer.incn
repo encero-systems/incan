@@ -6,6 +6,7 @@
 
 from std.derives.collection import FallibleIterator
 
+
 model Stream[R] with FallibleIterator[int, str]:
     value: R
     remaining: int = 2
@@ -16,14 +17,17 @@ model Stream[R] with FallibleIterator[int, str]:
         self.remaining -= 1
         return Ok(Some(self.remaining))
 
+
 pub def drain[R](value: R) -> Result[int, str]:
     mut count = 0
     for _item in Stream[R](value=value)?:
         count += 1
     return Ok(count)
 
+
 pub def relay[R](value: R) -> Result[int, str]:
     return drain(value)
+
 
 def main() -> None:
     match drain("text"):

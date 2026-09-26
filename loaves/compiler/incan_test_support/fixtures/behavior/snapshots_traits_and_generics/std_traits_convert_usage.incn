@@ -9,6 +9,7 @@
 
 from std.traits.convert import From, TryFrom
 
+
 model UserId with From[int]:
     value: int
 
@@ -30,14 +31,14 @@ model PositiveInt with TryFrom[int]:
 def main() -> None:
     user = UserId.from(42)
     result = PositiveInt.try_from(3)
-    println(str(user.value))
+    println(user.value)
     match result:
         Ok(value) =>
-            println(str(value.value))
+            println(value.value)
         Err(error) =>
             println(error)
     match PositiveInt.try_from(0):
         Ok(value) =>
-            println(str(value.value))
+            println(value.value)
         Err(error) =>
             println(error)

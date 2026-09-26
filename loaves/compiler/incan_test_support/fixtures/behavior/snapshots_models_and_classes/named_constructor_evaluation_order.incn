@@ -8,16 +8,20 @@
 
 """Issue #1462: named constructor arguments evaluate in written order, then fill declared fields."""
 
+
 model Evidence:
     source: str
+
 
 model Document:
     evidence: Evidence
     intent: str
 
+
 def inspect(label: str, source: str) -> str:
     println(f"inspect {label}")
     return source
+
 
 def main() -> None:
     source = "manifest"

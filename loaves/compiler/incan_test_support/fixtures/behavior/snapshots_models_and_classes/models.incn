@@ -17,6 +17,7 @@
 
 from std.serde import json
 
+
 # Simple model with basic fields
 model User:
     name: str
@@ -128,7 +129,7 @@ def main() -> None:
     user: User = User(
         name="Alice",
         age=30,
-        email="alice@example.com"
+        email="alice@example.com",
     )
     print(f"User: {user.name}, Age: {user.age}, {user.email}")
 
@@ -136,7 +137,7 @@ def main() -> None:
     product: Product = Product(
         id=123,
         name="Laptop",
-        price=999.99
+        price=999.99,
     )
     print(f"Product ID: {product.id}, {product.name} at {product.price}")
 
@@ -144,7 +145,7 @@ def main() -> None:
     config: Config = Config(
         host="localhost",
         port=8080,
-        timeout=30
+        timeout=30,
     )
     print(f"Config port: {config.port}, {config.host}, timeout {config.timeout}")
 
@@ -152,13 +153,13 @@ def main() -> None:
     data1: OptionalData = OptionalData(
         required="must have",
         optional=Some("optional value"),
-        maybe_number=Some(42)
+        maybe_number=Some(42),
     )
 
     data2: OptionalData = OptionalData(
         required="also must have",
         optional=None,
-        maybe_number=None
+        maybe_number=None,
     )
     print(describe_optional(data1))
     print(describe_optional(data2))
@@ -167,7 +168,7 @@ def main() -> None:
     student: StudentData = StudentData(
         name="Bob",
         grades=[85, 90, 88, 92],
-        metadata={"school": "MIT", "year": "2024"}
+        metadata={"school": "MIT", "year": "2024"},
     )
     school: str = student.metadata["school"]
     print(f"Student: {student.name}, {len(student.grades)} grades, school {school}")
@@ -179,7 +180,7 @@ def main() -> None:
         ids=[1, 2],
         mapping={"a": 1},
         optional_list=Some(["x"]),
-        nested_dict={"k": [1, 2, 3]}
+        nested_dict={"k": [1, 2, 3]},
     )
     mut optional_count: int = 0
     match complex.optional_list:
@@ -197,13 +198,13 @@ def main() -> None:
     address: Address = Address(
         street="123 Main St",
         city="Boston",
-        zipcode="02101"
+        zipcode="02101",
     )
 
     contact: Contact = Contact(
         name="Charlie",
         address=address,
-        phone="555-1234"
+        phone="555-1234",
     )
     print(f"Contact: {contact.name} in {contact.address.city}, {contact.address.street} {contact.address.zipcode}, phone {contact.phone}")
 

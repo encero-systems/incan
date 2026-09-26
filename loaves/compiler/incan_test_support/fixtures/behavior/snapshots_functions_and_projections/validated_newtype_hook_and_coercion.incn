@@ -7,19 +7,21 @@
 #   accepted 1
 
 type Positive = newtype int:
-  def from_underlying(value: int) -> Result[Self, ValidationError]:
-    if value <= 0:
-      return Err(ValidationError("value must be positive"))
-    return Ok(Positive(value))
+    def from_underlying(value: int) -> Result[Self, ValidationError]:
+        if value <= 0:
+            return Err(ValidationError("value must be positive"))
+        return Ok(Positive(value))
+
 
 def accept(value: Positive) -> None:
-  println(f"accepted {value.0}")
+    println(f"accepted {value.0}")
+
 
 def main() -> None:
-  match Positive.from_underlying(1):
-    Ok(value) => println(f"ok {value.0}")
-    Err(error) => println(f"err {error}")
-  match Positive.from_underlying(0):
-    Ok(value) => println(f"ok {value.0}")
-    Err(error) => println(f"err {error}")
-  accept(1)
+    match Positive.from_underlying(1):
+        Ok(value) => println(f"ok {value.0}")
+        Err(error) => println(f"err {error}")
+    match Positive.from_underlying(0):
+        Ok(value) => println(f"ok {value.0}")
+        Err(error) => println(f"err {error}")
+    accept(1)

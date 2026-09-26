@@ -11,10 +11,12 @@ def score_pairs(left: list[int], right: list[int]) -> int:
         score += pair[0] * pair[1]
     return score
 
+
 def print_named_values(names: list[str], values: list[int]) -> None:
     """Exercise the explicit builtin namespace without invoking an iterator method."""
     for pair in std.builtins.zip(names, values):
         println(f"{pair[0]}:{pair[1]}")
+
 
 def main() -> None:
     """Exercise both direct builtin zip spellings through generated stdlib support."""

@@ -13,10 +13,12 @@
 
 from std.graph import DiGraph, Dag, MultiDiGraph, NodeId, EdgeId, GraphError
 
+
 def count(result: Result[list[NodeId], GraphError]) -> int:
     match result:
         Ok(nodes) => return len(nodes)
         Err(_) => return -1
+
 
 def exercise_graphs() -> None:
     mut graph = DiGraph[str]()
@@ -47,6 +49,7 @@ def exercise_graphs() -> None:
     match multi.edges_between(left, right):
         Ok(edges) => println(f"multi edges {len(edges)}")
         Err(_) => println("multi edges failed")
+
 
 def main() -> None:
     exercise_graphs()

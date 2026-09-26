@@ -15,16 +15,19 @@ def pick(n: int) -> str:
         1 => "one"
         _ => "other"
 
+
 def pick_bound(n: int) -> str:
     label = match n:
         1 => "one"
         _ => "other"
     return label
 
+
 def report(n: int) -> None:
     match n:
         1 => println("one")
         _ => println("other")
+
 
 def main() -> None:
     println(pick(1))

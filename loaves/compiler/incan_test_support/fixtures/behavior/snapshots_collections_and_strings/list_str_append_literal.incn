@@ -9,6 +9,7 @@ pub def columns(input_columns: list[str]) -> list[str]:
     columns.append("count")
     return columns
 
+
 def main() -> None:
     result = columns(["orders_total"])
     println(" ".join(result))

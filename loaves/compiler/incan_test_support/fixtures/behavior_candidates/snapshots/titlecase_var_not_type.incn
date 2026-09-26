@@ -5,9 +5,10 @@
 
 from rust::uuid import Uuid
 
+
 def main() -> None:
-  # A runtime variable named `TitleCase` with Unknown type (external interop result).
-  # This should stay a *value* method call (`TitleCase.to_string()`), NOT be rewritten to `TitleCase::to_string()`.
-  mut TitleCase = Uuid.new_v4()
-  rendered = TitleCase.to_string()
-  println(len(rendered))
+    # A runtime variable named `TitleCase` with Unknown type (external interop result).
+    # This should stay a *value* method call (`TitleCase.to_string()`), NOT be rewritten to `TitleCase::to_string()`.
+    mut TitleCase = Uuid.new_v4()
+    rendered = TitleCase.to_string()
+    println(len(rendered))

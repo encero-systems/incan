@@ -5,12 +5,14 @@
 
 from std.serde import json
 
+
 @derive(json)
 model Payload:
-  value: int
+    value: int
 
-  def encode(self) -> str:
-    return self.to_json()
+    def encode(self) -> str:
+        return self.to_json()
+
 
 def main() -> None:
-  println(Payload(value=1).encode())
+    println(Payload(value=1).encode())

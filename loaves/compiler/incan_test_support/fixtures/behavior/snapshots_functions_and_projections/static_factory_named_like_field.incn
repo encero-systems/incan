@@ -5,13 +5,15 @@
 
 type Days = newtype int
 
-model TimeDelta:
-  pub days: Days
 
-  @staticmethod
-  def days(value: Days) -> TimeDelta:
-    return TimeDelta(days=value)
+model TimeDelta:
+    pub days: Days
+
+    @staticmethod
+    def days(value: Days) -> TimeDelta:
+        return TimeDelta(days=value)
+
 
 def main() -> None:
-  delta = TimeDelta.days(-7)
-  println(f"{delta.days.0}")
+    delta = TimeDelta.days(-7)
+    println(delta.days.0)

@@ -11,13 +11,16 @@
 
 """Test return statements and early returns"""
 
+
 def simple_return() -> int:
     return 42
+
 
 def return_expression() -> int:
     x: int = 10
     y: int = 20
     return x + y
+
 
 def early_return(x: int) -> str:
     if x < 0:
@@ -27,10 +30,12 @@ def early_return(x: int) -> str:
     else:
         return "positive"
 
+
 def multiple_returns(x: int) -> int:
     if x < 10:
         return x * 2
     return x * 3
+
 
 def return_from_loop(numbers: list[int]) -> int:
     for num in numbers:
@@ -38,9 +43,11 @@ def return_from_loop(numbers: list[int]) -> int:
             return num
     return -1
 
+
 def void_return() -> None:
     print("Hello")
     return
+
 
 def implicit_void_return() -> None:
     x: int = 5
@@ -48,6 +55,7 @@ def implicit_void_return() -> None:
         print("positive")
         return
     print("not positive")
+
 
 def main() -> None:
     result1: int = simple_return()

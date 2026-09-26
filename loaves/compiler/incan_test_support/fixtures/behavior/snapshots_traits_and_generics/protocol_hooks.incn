@@ -8,56 +8,61 @@
 #   1 2 3
 
 model Flag:
-  ready: bool
+    ready: bool
 
-  def __bool__(self) -> bool:
-    return self.ready
+    def __bool__(self) -> bool:
+        return self.ready
+
 
 model Bag:
-  size: int
+    size: int
 
-  def __len__(self) -> int:
-    return self.size
+    def __len__(self) -> int:
+        return self.size
 
-  def __contains__(self, item: int) -> bool:
-    return item == self.size
+    def __contains__(self, item: int) -> bool:
+        return item == self.size
+
 
 model CallableBox:
-  seed: int
+    seed: int
 
-  def __call__(self, value: int) -> int:
-    return self.seed + value
+    def __call__(self, value: int) -> int:
+        return self.seed + value
+
 
 model CounterIter:
-  current: int
-  limit: int
+    current: int
+    limit: int
 
-  def __next__(mut self) -> Option[int]:
-    if self.current >= self.limit:
-      return None
-    self.current += 1
-    return Some(self.current)
+    def __next__(mut self) -> Option[int]:
+        if self.current >= self.limit:
+            return None
+        self.current += 1
+        return Some(self.current)
+
 
 model Counter:
-  limit: int
+    limit: int
 
-  def __iter__(self) -> CounterIter:
-    return CounterIter(current=0, limit=self.limit)
+    def __iter__(self) -> CounterIter:
+        return CounterIter(current=0, limit=self.limit)
+
 
 def main() -> None:
-  flag = Flag(ready=true)
-  bag = Bag(size=3)
-  callable = CallableBox(seed=4)
-  if flag:
-    println("ready")
-  n = len(bag)
-  println(n)
-  present = 3 in bag
-  absent = 4 in bag
-  println(f"{present} {absent}")
-  called = callable(5)
-  println(called)
-  mut seen: list[str] = []
-  for item in Counter(limit=3):
-    seen.append(str(item))
-  println(" ".join(seen))
+    flag = Flag(ready=true)
+    bag = Bag(size=3)
+    callable = CallableBox(seed=4)
+    if flag:
+        println("ready")
+    n = len(bag)
+    println(n)
+    present = 3 in bag
+    absent = 4 in bag
+    println(f"{present} {absent}")
+    called = callable(5)
+    println(called)
+    mut seen: list[str] = []
+    for item in Counter(limit=3):
+        seen.append(str(item))
+    println(" ".join(seen))

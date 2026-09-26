@@ -7,27 +7,30 @@
 
 """Issue #241 regression: field-backed by-value method args should clone through the ownership planner."""
 
+
 @derive(Clone)
 class Cursor:
-  pub name: str
+    pub name: str
 
-  def join(self, other: Self, on: bool) -> Self:
-    return Cursor(name=f"{self.name}+{other.name}")
+    def join(self, other: Self, on: bool) -> Self:
+        return Cursor(name=f"{self.name}+{other.name}")
+
 
 @derive(Clone)
 class Wrapper:
-  _cursor: Cursor
+    _cursor: Cursor
 
-  def merge(self, other: Self) -> Self:
-    return Wrapper(_cursor=self._cursor.join(other._cursor, true))
+    def merge(self, other: Self) -> Self:
+        return Wrapper(_cursor=self._cursor.join(other._cursor, true))
 
-  def label(self) -> str:
-    return self._cursor.name
+    def label(self) -> str:
+        return self._cursor.name
+
 
 def main() -> None:
-  left = Wrapper(_cursor=Cursor(name="left"))
-  right = Wrapper(_cursor=Cursor(name="right"))
-  merged = left.merge(right)
-  println(merged.label())
-  println(left.label())
-  println(right.label())
+    left = Wrapper(_cursor=Cursor(name="left"))
+    right = Wrapper(_cursor=Cursor(name="right"))
+    merged = left.merge(right)
+    println(merged.label())
+    println(left.label())
+    println(right.label())

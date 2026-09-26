@@ -12,8 +12,10 @@
 
 """Test loop code generation: while, for, range"""
 
+
 def flush(collected: list[str]) -> None:
     print(" ".join(collected))
+
 
 def test_while_loop() -> None:
     mut collected: list[str] = []
@@ -23,11 +25,13 @@ def test_while_loop() -> None:
         count += 1
     flush(collected)
 
+
 def test_for_range_one_arg() -> None:
     mut collected: list[str] = []
     for i in range(5):
         collected.append(str(i))
     flush(collected)
+
 
 def test_for_range_two_args() -> None:
     mut collected: list[str] = []
@@ -35,11 +39,13 @@ def test_for_range_two_args() -> None:
         collected.append(str(i))
     flush(collected)
 
+
 def test_for_range_three_args() -> None:
     mut collected: list[str] = []
     for i in range(0, 100, 10):
         collected.append(str(i))
     flush(collected)
+
 
 def test_for_list() -> None:
     mut collected: list[str] = []
@@ -47,6 +53,7 @@ def test_for_list() -> None:
     for n in numbers:
         collected.append(str(n))
     flush(collected)
+
 
 def test_for_with_break() -> None:
     mut collected: list[str] = []
@@ -56,6 +63,7 @@ def test_for_with_break() -> None:
         collected.append(str(i))
     flush(collected)
 
+
 def test_for_with_continue() -> None:
     mut collected: list[str] = []
     for i in range(10):
@@ -64,6 +72,7 @@ def test_for_with_continue() -> None:
         collected.append(str(i))
     flush(collected)
 
+
 def test_nested_loops() -> None:
     mut collected: list[str] = []
     for i in range(3):
@@ -71,6 +80,7 @@ def test_nested_loops() -> None:
             value = i * 10 + j
             collected.append(str(value))
     flush(collected)
+
 
 def main() -> None:
     test_while_loop()

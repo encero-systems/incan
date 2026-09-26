@@ -9,10 +9,11 @@
 from std.collections import OrdinalMapError
 from std.datetime.civil.naive import Time
 
+
 def main() -> None:
-  match Time.from_fields(1, 2, 3):
-    Ok(time) => println(time.isoformat())
-    Err(error) => println(error.detail)
-  error = OrdinalMapError.invalid_key_record("badkey")
-  println(error.index())
-  print(error.message())
+    match Time.from_fields(1, 2, 3):
+        Ok(time) => println(time.isoformat())
+        Err(error) => println(error.detail)
+    error = OrdinalMapError.invalid_key_record("badkey")
+    println(error.index())
+    print(error.message())

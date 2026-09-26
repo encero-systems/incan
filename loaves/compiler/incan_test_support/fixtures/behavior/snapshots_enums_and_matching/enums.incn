@@ -20,21 +20,25 @@
 
 """Test enum definitions and pattern matching"""
 
+
 # Simple enum with unit variants
 enum Color:
     Red
     Green
     Blue
 
+
 # Enum with data variants (Option-like)
 enum Maybe:
     Some(int)
     None
 
+
 # Enum with multiple field variants (Result-like)
 enum Result:
     Ok(int)
     Err(str)
+
 
 # Enum with different variant types
 enum Message:
@@ -43,11 +47,13 @@ enum Message:
     Write(str)
     ChangeColor(int, int, int)
 
+
 # Enum with complex data
 enum Shape:
     Circle(float)
     Rectangle(float, float)
     Triangle(float, float)
+
 
 # Multiple enums in one file
 enum Status:
@@ -56,11 +62,13 @@ enum Status:
     Complete
     Failed
 
+
 enum Priority:
     Low
     Medium
     High
     Critical
+
 
 # Enum with nested types
 enum DataContainer:
@@ -68,6 +76,7 @@ enum DataContainer:
     Single(int)
     Multiple(list[int])
     Mapped(dict[str, int])
+
 
 def get_color_name(color: Color) -> str:
     match color:
@@ -78,6 +87,7 @@ def get_color_name(color: Color) -> str:
         case Color.Blue:
             return "blue"
 
+
 def process_maybe(value: Maybe) -> int:
     match value:
         case Maybe.Some(x):
@@ -85,12 +95,14 @@ def process_maybe(value: Maybe) -> int:
         case Maybe.None:
             return -1
 
+
 def handle_result(result: Result) -> str:
     match result:
         case Result.Ok(value):
             return f"Success: {value}"
         case Result.Err(error):
             return f"Error: {error}"
+
 
 def handle_message(msg: Message) -> str:
     match msg:
@@ -103,6 +115,7 @@ def handle_message(msg: Message) -> str:
         case Message.ChangeColor(r, g, b):
             return f"Color: RGB({r}, {g}, {b})"
 
+
 def calculate_area(shape: Shape) -> float:
     match shape:
         case Shape.Circle(r):
@@ -111,6 +124,7 @@ def calculate_area(shape: Shape) -> float:
             return w * h
         case Shape.Triangle(b, h):
             return 0.5 * b * h
+
 
 def get_priority_level(priority: Priority) -> int:
     match priority:
@@ -123,6 +137,7 @@ def get_priority_level(priority: Priority) -> int:
         case Priority.Critical:
             return 4
 
+
 def count_items(container: DataContainer) -> int:
     match container:
         case DataContainer.Empty:
@@ -133,6 +148,7 @@ def count_items(container: DataContainer) -> int:
             return len(items)
         case DataContainer.Mapped(map):
             return len(map)
+
 
 def main() -> None:
     # Test simple enum

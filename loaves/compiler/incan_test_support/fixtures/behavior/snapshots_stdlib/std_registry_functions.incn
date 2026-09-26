@@ -28,7 +28,6 @@ pub static functions: Registry[FunctionId, FunctionSpec] = Registry.define(
     subjects=[SubjectKind.Function],
 )
 
-
 pub static targets: Registry[FunctionId, TargetSpec] = Registry.define(
     subjects=[SubjectKind.Function],
 )

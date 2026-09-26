@@ -9,6 +9,7 @@ from rust::std::path import Path as RustPath
 from std.io import IoError
 from std.tempfile import TemporaryDirectory
 
+
 def list_names(directory: str) -> None:
     match read_dir(RustPath.new(directory)):
         Ok(entries) =>
@@ -18,12 +19,14 @@ def list_names(directory: str) -> None:
                     Err(err) => println(err.to_string())
         Err(_) => println("missing")
 
+
 def prepare() -> Result[None, IoError]:
     scratch = TemporaryDirectory.try_new()?
     root = scratch.path()
     root.joinpath("only.txt").write_text("x", "utf-8", "strict", None)?
     list_names(root.0)
     return Ok(None)
+
 
 def main() -> None:
     match prepare():

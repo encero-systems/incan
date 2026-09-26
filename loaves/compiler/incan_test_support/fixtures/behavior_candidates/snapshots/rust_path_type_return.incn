@@ -6,8 +6,10 @@
 from rust::std::collections import HashMap
 from rust::std::string import String
 
+
 def empty_name_index() -> HashMap[String, int]:
-  return HashMap.new()
+    return HashMap.new()
+
 
 def main() -> None:
-  println(empty_name_index().len())
+    println(empty_name_index().len())

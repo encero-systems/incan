@@ -9,6 +9,7 @@
 
 # RFC 036: user-defined method decorators
 
+
 class Box:
     value: int
 
@@ -16,15 +17,19 @@ class Box:
     def label(self, value: int) -> str:
         return "value"
 
+
 def parse(box: Box, value: int) -> int:
     return value + 1
+
 
 def as_int(func: (Box, int) -> str) -> (Box, int) -> int:
     println("decorating label")
     return parse
 
+
 def run(box: Box, value: int) -> int:
     return box.label(value)
+
 
 def main() -> None:
     println("main")

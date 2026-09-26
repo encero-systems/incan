@@ -8,28 +8,33 @@
 #   bound
 
 trait Labeled:
-  def label(self) -> str
+    def label(self) -> str
+
 
 class Item with Labeled:
-  value: str
+    value: str
 
-  def label(self) -> str:
-    return self.value
+    def label(self) -> str:
+        return self.value
+
 
 trait Named:
-  def label(self) -> str:
-    return "default"
+    def label(self) -> str:
+        return "default"
+
 
 class Plain with Named:
-  value: str
+    value: str
+
 
 def describe[T with Labeled](x: T) -> str:
-  return x.label()
+    return x.label()
+
 
 def main() -> None:
-  item: Item = Item(value="ready")
-  println(item.label())
-  plain: Plain = Plain(value="unused")
-  println(plain.label())
-  println(describe(item))
-  println(describe(Item(value="bound")))
+    item: Item = Item(value="ready")
+    println(item.label())
+    plain: Plain = Plain(value="unused")
+    println(plain.label())
+    println(describe(item))
+    println(describe(Item(value="bound")))

@@ -8,23 +8,26 @@
 
 """Issue #244: recursive calls inside a loop must pass mut list params as &mut, not .clone()."""
 
+
 def walk(node_id: int, mut pending: list[int], mut visited: list[bool]) -> None:
     if node_id < 0:
         return
     if visited[node_id]:
         return
-    visited[node_id] = True
+    visited[node_id] = true
     pending.append(node_id - 1)
     while len(pending) > 0:
         nxt = pending.pop()
         walk(nxt, pending, visited)
 
+
 def bump(mut s: str) -> None:
     println(s)
 
+
 def main() -> None:
     mut q: list[int] = []
-    mut seen: list[bool] = [False, False, False]
+    mut seen: list[bool] = [false, false, false]
     walk(2, q, seen)
     println(f"{seen[0]} {seen[1]} {seen[2]}")
     println(len(q))

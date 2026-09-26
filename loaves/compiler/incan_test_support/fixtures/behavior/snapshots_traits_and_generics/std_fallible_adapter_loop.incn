@@ -7,13 +7,15 @@
 
 from std.io import BinaryReader, BytesIO
 
+
 pub def consume[R with BinaryReader](reader: R) -> Result[None, str]:
-  prefix = "read failed: "
-  for chunk in reader.chunks(16).map_err((error) => f"{prefix}{error.detail}")?:
-    println(len(chunk))
-  return Ok(None)
+    prefix = "read failed: "
+    for chunk in reader.chunks(16).map_err((error) => f"{prefix}{error.detail}")?:
+        println(len(chunk))
+    return Ok(None)
+
 
 def main() -> None:
-  match consume(BytesIO(b"0123456789abcdefghij")):
-    Ok(_) => println("done")
-    Err(error) => println(error)
+    match consume(BytesIO(b"0123456789abcdefghij")):
+        Ok(_) => println("done")
+        Err(error) => println(error)

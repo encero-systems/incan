@@ -118,6 +118,8 @@ A standalone run outside `make` needs the runtime environment `make test` export
 
 ## Adding a fixture
 
+Fixtures are read as examples of the language, so they follow the style guide (`workspaces/docs-site/docs/language/reference/code_style.md`): 4-space indentation, compound assignment (`total += item`, not `total = total + item`), f-strings rather than string concatenation. A fixture keeps a longhand form only where that form is its subject, and its `# behavior:` line says so.
+
 1. Write the program under the area it belongs to, header first. Copy the retired test's inline source where that is the whole point, and make the program print what the retired test asserted about.
 2. Name every retired test in a `# retires:` line.
 3. In `scripts/test_inventory/dispositions.json`, point each of those tests' rows at the fixture: `"twin": "<fixture path>"` (the file for a single-file fixture, the directory otherwise), on the file row or on the test's override under `tests`. `make test-inventory-check` refuses a fixture that names a test whose row does not point back at it, and a row whose fixture does not name the test.

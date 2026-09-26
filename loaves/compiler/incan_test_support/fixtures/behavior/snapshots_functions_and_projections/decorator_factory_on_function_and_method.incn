@@ -9,23 +9,26 @@
 #   14
 
 def preserve[F]() -> ((F) -> F):
-  println("preserving")
-  return (func) => func
+    println("preserving")
+    return (func) => func
+
 
 @preserve()
 def decorated_total(first: int, second: int) -> int:
-  return first + second
+    return first + second
+
 
 class Box:
-  base: int
+    base: int
 
-  @preserve()
-  def total(self, extra: int) -> int:
-    return self.base + extra
+    @preserve()
+    def total(self, extra: int) -> int:
+        return self.base + extra
+
 
 def main() -> None:
-  println("main")
-  box = Box(base=5)
-  println(decorated_total(1, 2))
-  println(box.total(6))
-  println(decorated_total(1, 2) + box.total(6))
+    println("main")
+    box = Box(base=5)
+    println(decorated_total(1, 2))
+    println(box.total(6))
+    println(decorated_total(1, 2) + box.total(6))

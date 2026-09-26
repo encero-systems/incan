@@ -10,6 +10,7 @@
 import rust::std::collections::HashMap
 import rust::std::vec::Vec
 
+
 def test_basic_rust_imports() -> None:
     """Test basic Rust stdlib imports generate proper use statements"""
     print("basic imports work")
@@ -18,6 +19,7 @@ def test_basic_rust_imports() -> None:
 import rust::std::collections::HashMap as Map
 import rust::std::fs::File as FileHandle
 
+
 def test_aliased_imports() -> None:
     """Test imports with aliases generate use statements with 'as'"""
     print("aliased imports work")
@@ -25,6 +27,7 @@ def test_aliased_imports() -> None:
 
 import rust::std::path::PathBuf
 import rust::std::io::Result
+
 
 def test_nested_imports() -> None:
     """Test nested module path imports"""

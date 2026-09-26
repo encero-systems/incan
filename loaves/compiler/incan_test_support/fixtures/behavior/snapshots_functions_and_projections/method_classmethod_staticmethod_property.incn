@@ -9,30 +9,33 @@
 #   100
 
 class Counter:
-  value: int
+    value: int
 
-  def next(self) -> int:
-    return self.value + 1
+    def next(self) -> int:
+        return self.value + 1
+
 
 class Factory:
-  @classmethod
-  def answer(cls) -> int:
-    return 42
+    @classmethod
+    def answer(cls) -> int:
+        return 42
 
-  @staticmethod
-  def twice(value: int) -> int:
-    return value * 2
+    @staticmethod
+    def twice(value: int) -> int:
+        return value * 2
+
 
 model Account:
-  cents: int
+    cents: int
 
-  property dollars -> int:
-    return self.cents
+    property dollars -> int:
+        return self.cents
+
 
 def main() -> None:
-  counter: Counter = Counter(value=41)
-  println(counter.next())
-  println(Factory.answer())
-  println(Factory.twice(21))
-  account: Account = Account(cents=100)
-  println(account.dollars)
+    counter: Counter = Counter(value=41)
+    println(counter.next())
+    println(Factory.answer())
+    println(Factory.twice(21))
+    account: Account = Account(cents=100)
+    println(account.dollars)

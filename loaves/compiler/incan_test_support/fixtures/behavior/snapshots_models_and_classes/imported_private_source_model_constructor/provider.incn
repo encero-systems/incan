@@ -1,7 +1,7 @@
 pub model Vault:
-  secret: str = "sealed"
-  pub label: str
-  revision: int = 7
+    secret: str = "sealed"
+    pub label: str
+    revision: int = 7
 
-  def describe(self) -> str:
-    return f"{self.secret} {self.revision}"
+    def describe(self) -> str:
+        return f"{self.secret} {self.revision}"

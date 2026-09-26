@@ -34,6 +34,7 @@ model Account:
     # whitespace in alias
     two [alias="t w o", description="whitespace key example"]: int
 
+
 def main() -> None:
     account = Account(
         type="savings",

@@ -6,11 +6,14 @@
 import std.async
 from std.async.task import spawn, JoinHandle, TaskJoinError
 
+
 async def wait_for[T, F with Awaitable[T]](task: F) -> T:
     return await task
 
+
 async def nine() -> int:
     return 9
+
 
 async def main() -> None:
     match await wait_for[Result[int, TaskJoinError], JoinHandle[int]](spawn(nine())):

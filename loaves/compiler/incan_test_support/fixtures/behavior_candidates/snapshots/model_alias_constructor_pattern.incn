@@ -10,17 +10,20 @@
 
 from std.serde import json
 
+
 @derive(json)
 model Account:
     type_ [alias="type", description="Account type"]: str
     class_ [alias="class"]: str
     name: str
 
+
 def describe_account(a: Account) -> str:
     match a:
         Account(type="premium") => return "Premium account"
         Account(type="basic") => return "Basic account"
         _ => return "Unknown"
+
 
 def main() -> None:
     println(describe_account(Account(type="premium", class="gold", name="A")))

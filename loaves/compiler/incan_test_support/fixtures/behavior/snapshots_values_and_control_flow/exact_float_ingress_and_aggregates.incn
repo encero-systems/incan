@@ -17,9 +17,11 @@
 
 rust.module("incan_std_core::num")
 
+
 @rust.extern
 pub def require_finite_f32(value: f32) -> f32:
     ...
+
 
 pub def observe_exact(left: f32, right: f64) -> bool:
     println(left)
@@ -29,14 +31,17 @@ pub def observe_exact(left: f32, right: f64) -> bool:
     println(formatted)
     return left < right
 
+
 pub def observe_ieee(value: float) -> bool:
     println(value)
     return value < value
+
 
 pub model ExactSamples:
     pub narrow: f32
     pub wide: f64
     pub maybe: Option[f32]
+
 
 pub def observe_aggregate(samples: ExactSamples, values: list[f64]) -> bool:
     forwarded = require_finite_f32(samples.narrow)
@@ -45,8 +50,10 @@ pub def observe_aggregate(samples: ExactSamples, values: list[f64]) -> bool:
         None => false
     return not samples.narrow.is_nan() and values[0].is_finite() and samples.wide.is_finite() and forwarded.is_finite() and maybe_finite
 
+
 def parsed_exact(value: str) -> f64:
     return float(value)
+
 
 def main() -> None:
     narrow: f32 = 2.5

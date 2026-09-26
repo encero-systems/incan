@@ -17,12 +17,14 @@ def score_pairs(left: list[float], right: list[float]) -> float:
         score += pair[0] * pair[1]
     return score
 
+
 def score_pairs_builtin(left: list[float], right: list[float]) -> float:
     """Compute a dot product through the direct builtin zip spelling."""
     mut score = 0.0
     for pair in zip(left, right):
         score += pair[0] * pair[1]
     return score
+
 
 def score_iterator_pairs(left: Iterator[float], right: Iterator[float]) -> float:
     """Pair canonical iterator values through the direct builtin zip spelling."""
@@ -31,6 +33,7 @@ def score_iterator_pairs(left: Iterator[float], right: Iterator[float]) -> float
         score += pair[0] * pair[1]
     return score
 
+
 def print_prefix(values: list[str]) -> None:
     """Print the first two values with their iterator-generated ranks."""
     mut rank = 0
@@ -38,17 +41,21 @@ def print_prefix(values: list[str]) -> None:
         println(f"{rank}:{value}")
         rank += 1
 
+
 def project_prefix(values: list[str]) -> list[str]:
     """Project the first two ranked values through a list comprehension."""
     return [f"{rank}:{value}" for rank, value in values.iter().take(2).enumerate()]
+
 
 def index_prefix(values: list[str]) -> dict[int, str]:
     """Index the first two values through a dictionary comprehension."""
     return {rank: value for rank, value in values.iter().take(2).enumerate()}
 
+
 def collect_prefix(values: list[str]) -> list[str]:
     """Collect a generator that reads from a source-owned iterator adapter."""
     return (value for value in values.iter().take(2)).collect()
+
 
 def main() -> None:
     """Exercise iterator adapters as direct loop and comprehension sources."""

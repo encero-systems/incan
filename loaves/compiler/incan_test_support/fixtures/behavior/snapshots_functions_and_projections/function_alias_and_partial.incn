@@ -8,16 +8,20 @@
 #   GET/
 
 def calculate(value: int) -> int:
-  return value + 1
+    return value + 1
+
 
 compute = calculate
 
+
 def route(method: str, path: str) -> str:
-  return method + path
+    return f"{method}{path}"
+
 
 get = partial route(method="GET")
 
+
 def main() -> None:
-  println(calculate(41))
-  println(compute(41))
-  println(get(path="/"))
+    println(calculate(41))
+    println(compute(41))
+    println(get(path="/"))

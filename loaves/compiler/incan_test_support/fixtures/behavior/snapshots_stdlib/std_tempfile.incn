@@ -12,15 +12,15 @@ from std.tempfile import NamedTemporaryFile, SpooledTemporaryFile, TemporaryDire
 
 
 def consume_file(file: NamedTemporaryFile) -> None:
-    return
+    pass
 
 
 def consume_dir(directory: TemporaryDirectory) -> None:
-    return
+    pass
 
 
 def consume_path(path: Path) -> None:
-    return
+    pass
 
 
 def exercise() -> Result[None, IoError]:

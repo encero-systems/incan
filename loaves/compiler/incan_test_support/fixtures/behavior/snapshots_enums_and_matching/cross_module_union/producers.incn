@@ -1,4 +1,4 @@
 pub def parse_value(flag: bool) -> int | str:
-  if flag:
-    return 1
-  return "fallback"
+    if flag:
+        return 1
+    return "fallback"

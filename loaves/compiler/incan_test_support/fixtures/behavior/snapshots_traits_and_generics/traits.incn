@@ -16,27 +16,33 @@
 
 """Test trait definitions and implementations"""
 
+
 # Empty trait definition
 trait Named:
     pass
 
+
 # Trait with single method signature
 trait Drawable:
     def draw(self) -> str
+
 
 # Trait with multiple methods
 trait Shape:
     def area(self) -> float
     def perimeter(self) -> float
 
+
 # Trait with methods (extended)
 trait Comparable:
     def compare(self, other: Self) -> int
     def is_equal(self, other: Self) -> bool
 
+
 # Class implementing single trait
 class Dog with Named:
     pub name: str
+
 
 # Class implementing trait with methods
 class Rectangle with Shape:
@@ -49,12 +55,14 @@ class Rectangle with Shape:
     def perimeter(self) -> float:
         return 2.0 * (self.width + self.height)
 
+
 # Class implementing trait with draw method
 class Circle with Drawable:
     radius: float
 
     def draw(self) -> str:
         return f"Circle with radius {self.radius}"
+
 
 # Class implementing multiple traits
 class Square with Shape, Drawable:
@@ -69,9 +77,11 @@ class Square with Shape, Drawable:
     def draw(self) -> str:
         return f"Square with side {self.side}"
 
+
 # Another trait
 trait Resizable:
     def resize(mut self, factor: float) -> None
+
 
 # Class with mutable trait implementation
 class Carton with Resizable:
@@ -87,12 +97,15 @@ class Carton with Resizable:
     def volume(self) -> float:
         return self.width * self.height * self.depth
 
+
 # Multiple traits in one file
 trait Printable:
     def to_string(self) -> str
 
+
 trait Serializable:
     def serialize(self) -> str
+
 
 class Document with Printable, Serializable:
     title: str
@@ -104,13 +117,16 @@ class Document with Printable, Serializable:
     def serialize(self) -> str:
         return f"title={self.title},content={self.content}"
 
+
 # Function accepting trait objects (if supported)
 def draw_shape(shape: Drawable) -> None:
     output: str = shape.draw()
     print(output)
 
+
 def calculate_area(shape: Shape) -> float:
     return shape.area()
+
 
 def main() -> None:
     # Test simple trait implementation

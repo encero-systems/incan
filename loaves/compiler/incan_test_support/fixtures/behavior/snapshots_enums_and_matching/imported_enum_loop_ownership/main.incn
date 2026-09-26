@@ -6,20 +6,23 @@
 
 from rels import ConformanceRel
 
+
 def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:
-  match rel:
-    ConformanceRel.Read =>
-      return "ReadRel"
-    _ =>
-      return "Other"
+    match rel:
+        ConformanceRel.Read =>
+            return "ReadRel"
+        _ =>
+            return "Other"
+
 
 def scenario_matches(required: list[ConformanceRel]) -> bool:
-  for expected in required:
-    if expected == ConformanceRel.Read:
-      if relation_kind_name_from_conformance(expected) == "ReadRel":
-        return true
-  return false
+    for expected in required:
+        if expected == ConformanceRel.Read:
+            if relation_kind_name_from_conformance(expected) == "ReadRel":
+                return true
+    return false
+
 
 def main() -> None:
-  println(scenario_matches([ConformanceRel.Filter, ConformanceRel.Read]))
-  println(scenario_matches([ConformanceRel.Filter]))
+    println(scenario_matches([ConformanceRel.Filter, ConformanceRel.Read]))
+    println(scenario_matches([ConformanceRel.Filter]))

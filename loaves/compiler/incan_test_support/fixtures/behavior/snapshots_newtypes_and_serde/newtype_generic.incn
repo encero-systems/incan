@@ -8,6 +8,7 @@
 
 """Test generic newtype without external dependencies"""
 
+
 # Simple generic newtype wrapper
 type Box[T] = newtype T:
     @staticmethod
@@ -19,6 +20,7 @@ type Box[T] = newtype T:
 
     def duplicate(self) -> Tuple[T, T]:
         return (self.0, self.0)
+
 
 def main() -> None:
     b = Box(42)

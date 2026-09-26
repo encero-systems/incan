@@ -6,15 +6,17 @@
 #   1 2 3
 
 def positives(xs: List[int], ys: List[int]) -> Generator[int]:
-  return (x * y for x in xs if x > 0 for y in ys if y > x)
+    return (x * y for x in xs if x > 0 for y in ys if y > x)
+
 
 def numbers() -> Generator[int]:
-  yield 1
-  yield 2
-  yield 3
+    yield 1
+    yield 2
+    yield 3
+
 
 def main() -> None:
-  values = positives([1, 2, 3], [2, 3, 4]).take(3).collect()
-  print(f"{values[0]} {values[1]} {values[2]}")
-  collected = numbers().collect()
-  println(f"{collected[0]} {collected[1]} {collected[2]}")
+    values = positives([1, 2, 3], [2, 3, 4]).take(3).collect()
+    print(f"{values[0]} {values[1]} {values[2]}")
+    collected = numbers().collect()
+    println(f"{collected[0]} {collected[1]} {collected[2]}")

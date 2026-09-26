@@ -6,32 +6,35 @@
 #   1 1.5
 
 trait Convert[T]:
-  def convert(self) -> T: ...
+    def convert(self) -> T: ...
+
 
 model Reading with Convert[int], Convert[float]:
-  value: int
+    value: int
 
-  def convert(self) -> int:
-    return self.value
+    def convert(self) -> int:
+        return self.value
 
-  def convert(self) -> float:
-    return 1.5
+    def convert(self) -> float:
+        return 1.5
+
 
 enum Token with Convert[int], Convert[float]:
-  Number
+    Number
 
-  def convert(self) -> int:
-    return 1
+    def convert(self) -> int:
+        return 1
 
-  def convert(self) -> float:
-    return 1.5
+    def convert(self) -> float:
+        return 1.5
+
 
 def main() -> None:
-  reading = Reading(value=1)
-  whole: int = reading.convert()
-  precise: float = reading.convert()
-  println(f"{whole} {precise}")
-  token: Token = Token.Number
-  token_whole: int = token.convert()
-  token_precise: float = token.convert()
-  println(f"{token_whole} {token_precise}")
+    reading = Reading(value=1)
+    whole: int = reading.convert()
+    precise: float = reading.convert()
+    println(f"{whole} {precise}")
+    token: Token = Token.Number
+    token_whole: int = token.convert()
+    token_precise: float = token.convert()
+    println(f"{token_whole} {token_precise}")

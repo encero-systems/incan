@@ -58,10 +58,7 @@ def ordered_keys(values: Dict[str, int]) -> list[str]:
 
 
 def render_ints(values: list[int]) -> str:
-    mut parts: list[str] = []
-    for value in values:
-        parts.append(str(value))
-    return ",".join(parts)
+    return ",".join([str(value) for value in values])
 
 
 def main() -> None:

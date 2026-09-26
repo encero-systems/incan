@@ -17,12 +17,12 @@ def spin(limit: int) -> int:
     loop:
         if current >= limit:
             break
-        current = current + 1
+        current += 1
     return current
 
 
 def main() -> None:
-    let answer: int = find_value(True)
+    let answer: int = find_value(true)
     println(answer)
-    println(find_value(False))
+    println(find_value(false))
     println(spin(answer))

@@ -11,8 +11,8 @@ def set(values: List[str]) -> int:
 
 
 def main() -> None:
-  mut seen: Set[str] = Set()
-  seen.add("value")
-  seen.add("value")
-  println(len(seen))
-  println(set(["alpha", "beta", "beta"]))
+    mut seen: Set[str] = Set()
+    seen.add("value")
+    seen.add("value")
+    println(len(seen))
+    println(set(["alpha", "beta", "beta"]))

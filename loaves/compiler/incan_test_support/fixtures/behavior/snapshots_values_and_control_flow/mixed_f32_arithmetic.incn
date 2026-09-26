@@ -14,11 +14,14 @@ pub def with_f64(left: f32, right: f64) -> float:
     println(f"{added} {divided} {floored} {remainder} {powered}")
     return left ** right
 
+
 pub def with_float(left: f32, right: float) -> float:
     return left + right
 
+
 pub def with_int(left: f32, right: int) -> float:
     return left + right
+
 
 def main() -> None:
     narrow: f32 = 2.5

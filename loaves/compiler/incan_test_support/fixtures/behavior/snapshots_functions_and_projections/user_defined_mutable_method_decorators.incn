@@ -8,17 +8,20 @@
 
 # RFC 036: user-defined mutable method decorators
 
+
 class Counter:
     value: int
 
     @keep
     def bump(mut self, by: int) -> int:
-        self.value = self.value + by
+        self.value += by
         return self.value
+
 
 def keep(func: (mut Counter, int) -> int) -> (mut Counter, int) -> int:
     println("decorating bump")
     return func
+
 
 def main() -> None:
     println("main")

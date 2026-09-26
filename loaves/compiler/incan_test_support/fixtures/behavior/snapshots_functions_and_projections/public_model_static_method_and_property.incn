@@ -5,19 +5,20 @@
 #   41
 
 pub model Counter:
-  value: int
+    value: int
 
-  @staticmethod
-  def make(value: int) -> Counter:
-    return Counter(value=value)
+    @staticmethod
+    def make(value: int) -> Counter:
+        return Counter(value=value)
 
-  def next(self) -> int:
-    return self.value + 1
+    def next(self) -> int:
+        return self.value + 1
 
-  pub property current -> int:
-    return self.value
+    pub property current -> int:
+        return self.value
+
 
 def main() -> None:
-  counter = Counter.make(41)
-  println(counter.next())
-  println(counter.current)
+    counter = Counter.make(41)
+    println(counter.next())
+    println(counter.current)

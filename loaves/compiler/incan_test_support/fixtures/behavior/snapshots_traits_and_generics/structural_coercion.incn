@@ -8,11 +8,14 @@
 def accept_option(value: Option[int]) -> Option[int]:
     return value
 
+
 def accept_names(values: List[str]) -> List[str]:
     return values
 
+
 def accept_scores(values: Dict[str, float]) -> Dict[str, float]:
     return values
+
 
 def main() -> None:
     maybe_count: Option[int] = Some(42)

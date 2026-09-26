@@ -13,6 +13,7 @@
 
 """Issue #364 regression: filtered list comprehensions must not destructure `&item`."""
 
+
 @derive(Clone)
 model StoredNode:
     store_id_raw: int
@@ -22,14 +23,18 @@ model StoredNode:
 def store_nodes(store_id: int, stored_nodes: list[StoredNode]) -> list[str]:
     return [stored.node for stored in stored_nodes if stored.store_id_raw == store_id]
 
+
 def squares(xs: list[int]) -> list[int]:
     return [x * x for x in xs]
+
 
 def positive_squares(xs: list[int]) -> list[int]:
     return [x * x for x in xs if x > 0]
 
+
 def index_by_value(xs: list[int]) -> dict[int, int]:
     return {x: x * x for x in xs if x > 0}
+
 
 def main() -> None:
     nodes: list[StoredNode] = [

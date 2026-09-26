@@ -15,11 +15,13 @@
 
 """Test advanced pattern matching in match expressions"""
 
+
 def test_pattern_wildcard() -> None:
     x: int = 42
     match x:
         case _:
             print("wildcard matches anything")
+
 
 def test_pattern_literals() -> None:
     value: int = 5
@@ -33,6 +35,7 @@ def test_pattern_literals() -> None:
         case _:
             print("other")
 
+
 def test_pattern_string_literal() -> None:
     name: str = "Alice"
     match name:
@@ -43,13 +46,15 @@ def test_pattern_string_literal() -> None:
         case _:
             print("Hello stranger")
 
+
 def test_pattern_bool() -> None:
-    flag: bool = True
+    flag: bool = true
     match flag:
-        case True:
+        case true:
             print("yes")
-        case False:
+        case false:
             print("no")
+
 
 def test_pattern_option_some() -> None:
     maybe: Option[int] = Some(42)
@@ -59,6 +64,7 @@ def test_pattern_option_some() -> None:
         case None:
             print("nothing")
 
+
 def test_pattern_option_none() -> None:
     maybe: Option[int] = None
     match maybe:
@@ -66,6 +72,7 @@ def test_pattern_option_none() -> None:
             print(n)
         case None:
             print("nothing")
+
 
 def test_pattern_result_ok() -> None:
     result: Result[int, str] = Ok(42)
@@ -75,6 +82,7 @@ def test_pattern_result_ok() -> None:
         case Err(error):
             print(error)
 
+
 def test_pattern_result_err() -> None:
     result: Result[int, str] = Err("failed")
     match result:
@@ -82,6 +90,7 @@ def test_pattern_result_err() -> None:
             print(value)
         case Err(error):
             print(error)
+
 
 def test_pattern_nested_option() -> None:
     nested: Option[Option[int]] = Some(Some(42))
@@ -93,6 +102,7 @@ def test_pattern_nested_option() -> None:
         case None:
             print("outer none")
 
+
 def test_pattern_tuple() -> None:
     pair: tuple[int, str] = (42, "answer")
     match pair:
@@ -103,6 +113,7 @@ def test_pattern_tuple() -> None:
         case _:
             print("something else")
 
+
 def test_pattern_multiple_bindings() -> None:
     value: Option[int] = Some(10)
     match value:
@@ -112,6 +123,7 @@ def test_pattern_multiple_bindings() -> None:
             print("small")
         case None:
             print("none")
+
 
 def main() -> None:
     test_pattern_wildcard()

@@ -8,11 +8,14 @@ class Box:
     def label(self, value: int) -> str:
         return "value"
 
+
 def parse(box: &Box, value: int) -> int:
     return value + 1
 
+
 def as_int(func: (&Box, int) -> str) -> (&Box, int) -> int:
     return parse
+
 
 def main() -> None:
     box = Box(value=1)

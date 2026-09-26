@@ -23,10 +23,13 @@ const T = ("x", 42)
 pub const PI: float = 3.14
 const E: float = 2.71
 
+
 model Metadata:
     pub canonical_forms: FrozenList[str]
 
+
 static METADATA: Metadata = Metadata(canonical_forms=TEXTS)
+
 
 def main() -> None:
     # Just reference a few to keep them "used"

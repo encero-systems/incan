@@ -9,6 +9,7 @@
 
 """Regression #194: list.pop() on Clone-only model must not require Default in generated Rust."""
 
+
 @derive(Clone)
 model PopRegressItem:
     id: int
@@ -23,11 +24,13 @@ def drain_items() -> None:
 
 @derive(Clone)
 model Node:
-  id: int
+    id: int
+
 
 def clone_nodes(nodes: List[Node]) -> List[Node]:
-  copy = nodes.clone()
-  return copy
+    copy = nodes.clone()
+    return copy
+
 
 def main() -> None:
     drain_items()

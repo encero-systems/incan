@@ -19,7 +19,7 @@ def long_arguments() -> list[str]:
 
 pub def main() -> None:
     arguments: list[str] = [argument for argument in args()]
-    println(f"{len(arguments)}")
+    println(len(arguments))
     println(len(lengths()))
     println(len(long_arguments()))
     positions: Dict[str, int] = {argument: index for index, argument in enumerate(arguments)}

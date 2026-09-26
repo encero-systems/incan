@@ -8,11 +8,12 @@
 
 """Test variable assignments and augmented assignments"""
 
+
 def test_basic_assignments() -> None:
     # Simple assignments
     x: int = 42
     y: str = "hello"
-    z: bool = True
+    z: bool = true
 
     # Multiple simple assignments
     mut a: int = 1
@@ -23,6 +24,7 @@ def test_basic_assignments() -> None:
     a = b
     b = temp
     println(f"{x} {y} {z} {a} {b}")
+
 
 def test_augmented_assignments() -> None:
     # Arithmetic augmented assignments
@@ -41,6 +43,7 @@ def test_augmented_assignments() -> None:
     s += " world"
     println(f"{x} {xf} {s}")
 
+
 def test_collection_assignments() -> None:
     # List element assignment
     mut numbers: list[int] = [1, 2, 3, 4]
@@ -53,6 +56,7 @@ def test_collection_assignments() -> None:
     data["a"] = 10
     println(f"{numbers[0]} {numbers[3]} {data["a"]} {data["b"]}")
 
+
 def test_multiple_targets() -> None:
     value: int = 5
     mut x: int = value
@@ -60,6 +64,7 @@ def test_multiple_targets() -> None:
     mut z: int = value
     x = y = z = 5
     println(f"{x} {y} {z}")
+
 
 def main() -> None:
     test_basic_assignments()

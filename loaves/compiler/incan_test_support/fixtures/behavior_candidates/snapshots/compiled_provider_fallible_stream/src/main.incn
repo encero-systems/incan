@@ -5,11 +5,13 @@
 
 from pub::streams import Stream
 
+
 pub def drain[R](stream: Stream[R]) -> Result[int, str]:
     mut count = 0
     for _item in stream?:
         count += 1
     return Ok(count)
+
 
 def main() -> None:
     match drain(Stream(value="text")):

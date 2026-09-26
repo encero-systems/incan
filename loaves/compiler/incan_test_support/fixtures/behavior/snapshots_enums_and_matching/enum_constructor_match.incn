@@ -7,6 +7,7 @@
 
 """Issue #374: qualified enum constructor patterns must resolve over enum scrutinees."""
 
+
 pub enum ConformanceRel:
     Read
     Filter

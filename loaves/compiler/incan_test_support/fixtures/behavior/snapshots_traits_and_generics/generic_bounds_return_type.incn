@@ -6,6 +6,7 @@
 
 """Issue #196: infer generic bounds required by trait return types."""
 
+
 pub trait DataSet[T with Clone]:
     def tag(self) -> T: ...
 

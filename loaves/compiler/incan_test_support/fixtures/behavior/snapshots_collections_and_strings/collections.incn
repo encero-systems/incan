@@ -31,7 +31,7 @@ def test_collections() -> None:
     # Nested dicts
     nested: Dict[str, Dict[str, int]] = {
         "first": {"x": 1, "y": 2},
-        "second": {"x": 3, "y": 4}
+        "second": {"x": 3, "y": 4},
     }
     println(f"{len(empty_list)} {len(empty_dict)} {len(strings)} {len(matrix)}")
 

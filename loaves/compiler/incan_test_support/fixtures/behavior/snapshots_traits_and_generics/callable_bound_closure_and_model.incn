@@ -5,20 +5,24 @@
 
 from std.traits.callable import Callable1
 
+
 def apply[Mapper with (Clone, Callable1[int, str])](mapper: Mapper, value: int) -> str:
-  return mapper(value)
+    return mapper(value)
+
 
 @derive(Clone)
 model Prefixer with Callable1[int, str]:
-  prefix: str
+    prefix: str
 
-  def __call__(self, value: int) -> str:
-    return f"{self.prefix}:{value}"
+    def __call__(self, value: int) -> str:
+        return f"{self.prefix}:{value}"
+
 
 def render() -> str:
-  prefix = "item"
-  closure_value = apply((value) => f"{prefix}:{value}", 3)
-  return f"{closure_value}:{apply(Prefixer(prefix="model"), 4)}"
+    prefix = "item"
+    closure_value = apply((value) => f"{prefix}:{value}", 3)
+    return f"{closure_value}:{apply(Prefixer(prefix="model"), 4)}"
+
 
 def main() -> None:
-  println(render())
+    println(render())

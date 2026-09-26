@@ -5,7 +5,9 @@
 
 from std.serde.json import Serialize
 
+
 type Wrapped = newtype str with Serialize
 
+
 def main() -> None:
-  println(Wrapped("wrapped").to_json())
+    println(Wrapped("wrapped").to_json())

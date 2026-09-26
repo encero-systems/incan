@@ -12,6 +12,7 @@ from pub::widgets import Widget, make_widget, DEFAULT_NAME, SHARED_ITEMS
 import pub::widgets
 import pub::widgets as w
 
+
 def main() -> None:
     mut first: Widget = make_widget(DEFAULT_NAME)
     println(first.name)

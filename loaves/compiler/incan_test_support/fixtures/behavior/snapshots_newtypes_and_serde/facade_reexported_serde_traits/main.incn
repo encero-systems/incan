@@ -6,16 +6,18 @@
 
 from facade import Serialize, Deserialize
 
-model Payload with Serialize, Deserialize:
-  value: int
 
-  def from_json(json_str: str) -> Result[Payload, str]:
-    return Ok(Payload(value=len(json_str)))
+model Payload with Serialize, Deserialize:
+    value: int
+
+    def from_json(json_str: str) -> Result[Payload, str]:
+        return Ok(Payload(value=len(json_str)))
+
 
 def main() -> None:
-  println(Payload(value=1).to_json())
-  match Payload.from_json("{}"):
-    case Ok(restored):
-      println(restored.value)
-    case Err(message):
-      println(message)
+    println(Payload(value=1).to_json())
+    match Payload.from_json("{}"):
+        case Ok(restored):
+            println(restored.value)
+        case Err(message):
+            println(message)

@@ -12,18 +12,21 @@
 
 """Test type annotation code generation"""
 
+
 def test_explicit_types() -> None:
     x: int = 42
     y: float = 3.14
     z: str = "hello"
-    flag: bool = True
+    flag: bool = true
     println(f"{x} {y} {z} {flag}")
+
 
 def test_collection_types() -> None:
     numbers: list[int] = [1, 2, 3]
     words: list[str] = ["a", "b", "c"]
     mapping: dict[str, int] = {"a": 1, "b": 2}
     println(f"{len(numbers)} {words[2]} {mapping["b"]}")
+
 
 def test_option_types() -> None:
     maybe_num: Option[int] = Some(42)
@@ -38,18 +41,22 @@ def test_option_types() -> None:
         None => second = "none"
     println(f"{first} {second}")
 
+
 def test_nested_collections() -> None:
     matrix: list[list[int]] = [[1, 2], [3, 4]]
     dict_of_lists: dict[str, list[int]] = {"nums": [1, 2, 3]}
     println(f"{matrix[1][1]} {len(dict_of_lists["nums"])}")
 
+
 def test_function_with_return_type() -> int:
     return 42
+
 
 def test_function_parameters(x: int, y: str, z: bool) -> None:
     print(x)
     print(y)
     print(z)
+
 
 def main() -> None:
     test_explicit_types()
@@ -58,4 +65,4 @@ def main() -> None:
     test_nested_collections()
     result: int = test_function_with_return_type()
     println(result)
-    test_function_parameters(10, "test", True)
+    test_function_parameters(10, "test", true)

@@ -12,13 +12,17 @@
 def is_even(n: int) -> bool:
     return n % 2 == 0
 
+
 def double(n: int) -> int:
     return n * 2
+
 
 def add(acc: int, n: int) -> int:
     return acc + n
 
+
 type Money = newtype int
+
 
 type PositiveInt = newtype int:
     def from_underlying(n: int) -> Result[PositiveInt, ValidationError]:
@@ -26,11 +30,14 @@ type PositiveInt = newtype int:
             return Err(ValidationError("positive int must be greater than zero"))
         return Ok(PositiveInt(n))
 
+
 def sum_money(items: list[Money]) -> Money:
     return items.iter().sum()
 
+
 def sum_positive(items: list[PositiveInt]) -> PositiveInt:
     return items.iter().sum()
+
 
 def main() -> None:
     xs = [1, 2, 3, 4, 5]

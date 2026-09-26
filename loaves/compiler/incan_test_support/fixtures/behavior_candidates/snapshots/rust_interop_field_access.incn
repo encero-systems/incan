@@ -5,5 +5,6 @@
 
 import rust::std::f64::consts as consts
 
+
 def main() -> None:
-  println(consts.PI)
+    println(consts.PI)

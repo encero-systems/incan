@@ -11,14 +11,17 @@
 import std.async
 from std.web import route, GET, POST
 
+
 @route("/posts/{year}/{month}", methods=[GET])
 async def get_posts(year: int, month: int) -> str:
     total = year + month
     return str(total)
 
+
 @route("/users/{id}", methods=[POST])
 async def create_user(id: int) -> str:
     return str(id)
+
 
 async def main() -> None:
     println(await get_posts(2024, 5))

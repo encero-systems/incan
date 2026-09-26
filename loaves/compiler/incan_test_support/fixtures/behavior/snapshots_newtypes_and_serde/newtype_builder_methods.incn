@@ -9,6 +9,7 @@
 
 # Test newtype with static builder methods (RFC 017 foundation for std.web migration)
 
+
 type Response = newtype str:
     def ok() -> Response:
         return Response("200 OK")
@@ -17,16 +18,18 @@ type Response = newtype str:
         return Response("201 Created")
 
     def status(code: int, body: str) -> Response:
-        return Response(str(code) + " " + body)
+        return Response(f"{code} {body}")
+
 
 # Simple newtype wrapping string
 type CustomResponse = newtype str:
     def ok(message: str) -> CustomResponse:
-        return CustomResponse(message + " OK")
+        return CustomResponse(f"{message} OK")
 
     # User provides __into_response__ - this should prevent auto-delegation
     def __into_response__(self) -> str:
-        return "Custom: " + self.0
+        return f"Custom: {self.0}"
+
 
 def main() -> None:
     # Test static builders

@@ -5,6 +5,7 @@
 
 """Generic instance methods should lower through class impls."""
 
+
 class Box:
     def get[T with Clone](self, value: T) -> T:
         return value
@@ -44,7 +45,7 @@ def main() -> None:
     pair = Pair()
     swapped: str = pair.swap("a", "b")
     echo_box: EchoBox = EchoBox(marker=1)
-    echoed_bool: bool = echo_box.echo(True)
+    echoed_bool: bool = echo_box.echo(true)
     wrapper: Wrapper[int] = Wrapper(1)
     echoed_float: float = wrapper.echo(1.5)
     println(f"{value} {shelf_value} {swapped} {echoed_bool} {echoed_float}")
