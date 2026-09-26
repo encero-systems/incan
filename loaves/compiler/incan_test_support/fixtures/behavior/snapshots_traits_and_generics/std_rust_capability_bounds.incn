@@ -12,36 +12,45 @@
 # which imports Rust's standard library as foreign items (e.g. `Instant`).
 from std.rust import Send, Sync, Static, Fn, FnMut, FnOnce
 
+
 def run[T with Send, Sync](_t: T) -> None:
-  pass
+    pass
+
 
 def run_static[T with Send, Static](_t: T) -> None:
-  pass
+    pass
+
 
 def run_all[T with Send, Sync, Static](_value: T) -> None:
-  pass
+    pass
+
 
 def run_fn[F with Fn[int]](_f: F) -> None:
-  pass
+    pass
+
 
 def run_fn_mut[F with FnMut[int], Send](_f: F) -> None:
-  pass
+    pass
+
 
 def run_fn_once[F with FnOnce[int], Static](_f: F) -> None:
-  pass
+    pass
+
 
 def pin[T with Static](value: T) -> T:
-  return value
+    return value
+
 
 def double(value: int) -> int:
-  return value * 2
+    return value * 2
+
 
 def main() -> None:
-  run(1)
-  run_static("text")
-  run_all(2.5)
-  run_fn(double)
-  run_fn_mut(double)
-  run_fn_once(double)
-  println("ran")
-  println(pin(7))
+    run(1)
+    run_static("text")
+    run_all(2.5)
+    run_fn(double)
+    run_fn_mut(double)
+    run_fn_once(double)
+    println("ran")
+    println(pin(7))

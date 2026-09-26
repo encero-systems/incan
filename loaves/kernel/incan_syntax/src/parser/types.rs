@@ -206,13 +206,13 @@ impl<'a> Parser<'a> {
                 return Ok(Spanned::new(Type::Unit, Span::new(start, end)));
             }
             // Could be tuple type or function type
-            let first = self.type_expr()?;
+            let first = self.parenthesized_type_entry()?;
             if self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
                 // Tuple type
                 let mut types = vec![first];
                 if !self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
                     loop {
-                        types.push(self.type_expr()?);
+                        types.push(self.parenthesized_type_entry()?);
                         if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
                             break;
                         }
@@ -233,6 +233,7 @@ impl<'a> Parser<'a> {
                     ));
                 }
 
+                Self::refuse_mut_marker_outside_callable_params(&types)?;
                 let end = self.tokens[self.pos - 1].span.end;
                 return Ok(Spanned::new(Type::Tuple(types), Span::new(start, end)));
             }
@@ -249,6 +250,7 @@ impl<'a> Parser<'a> {
             }
 
             // Just a parenthesized type
+            Self::refuse_mut_marker_outside_callable_params(std::slice::from_ref(&first))?;
             return Ok(first);
         }
 
@@ -347,6 +349,35 @@ impl<'a> Parser<'a> {
         } else {
             let end = self.tokens[self.pos - 1].span.end;
             Ok(Spanned::new(Type::Qualified(path), Span::new(start, end)))
+        }
+    }
+
+    /// Parse one entry of a parenthesized type list, admitting the `mut` marker a callable type's parameter may carry.
+    ///
+    /// Whether the list holds a callable type's parameters is known only at the `->` after its `)`, so the marker is
+    /// read here for every entry and [`Self::refuse_mut_marker_outside_callable_params`] refuses it when the list turns
+    /// out to be a tuple or a grouped type. `Callable[...]` parses its parameter list as a tuple type argument, so it
+    /// does not take the marker; `(mut T, ...) -> R` is its one spelling.
+    fn parenthesized_type_entry(&mut self) -> Result<Spanned<Type>, CompileError> {
+        let start = self.current_span().start;
+        if !self.match_keyword(KeywordId::Mut) {
+            return self.type_expr();
+        }
+        let inner = self.type_expr()?;
+        let end = inner.span.end;
+        Ok(Spanned::new(Type::MutParam(Box::new(inner)), Span::new(start, end)))
+    }
+
+    /// Refuse a `mut` marker in a parenthesized type list that is not followed by `->`.
+    fn refuse_mut_marker_outside_callable_params(entries: &[Spanned<Type>]) -> Result<(), CompileError> {
+        match entries.iter().find(|entry| matches!(entry.node, Type::MutParam(_))) {
+            Some(marked) => Err(CompileError::syntax(
+                "`mut` marks a parameter of a callable type, as in `(mut Counter, int) -> int`; a tuple or a \
+                 parenthesized type cannot carry it"
+                    .to_string(),
+                marked.span,
+            )),
+            None => Ok(()),
         }
     }
 

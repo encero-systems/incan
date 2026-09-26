@@ -1,0 +1,25 @@
+# behavior: a generic function that declares no bound iterates the fallible chunk stream of a binary reader it is handed and reports each chunk's length
+# retires: loaves/compiler/incan_emit/src/trait_bound_inference.rs::external_implementation_bounds_propagate_through_checked_trait_dispatch
+# expect-stdout:
+#   2
+#   2
+#   1
+#   3 chunks
+
+from std.io import BytesIO, IoError, ReaderChunks
+
+
+# `R` has no bound of its own: `ReaderChunks[R with BinaryReader]` adopts `FallibleIterator` in `std.io`, and that
+# implementation's bound has to reach this caller. With the bound spelled here, the program runs either way.
+def count_chunks[R](chunks: ReaderChunks[R]) -> Result[int, IoError]:
+    mut count = 0
+    for chunk in chunks?:
+        println(len(chunk))
+        count += 1
+    return Ok(count)
+
+
+def main() -> None:
+    match count_chunks(BytesIO(b"abcde").chunks(2)):
+        Ok(count) => println(f"{count} chunks")
+        Err(error) => println(f"error {error.kind}")

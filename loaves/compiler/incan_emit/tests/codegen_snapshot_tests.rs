@@ -125,6 +125,7 @@ fn generate_rust_with_widgets_manifest(source: &str) -> String {
         emitted_name: None,
         type_params: Vec::new(),
         params: vec![ParamExport {
+            is_mut: false,
             name: "name".to_string(),
             ty: TypeRef::Named {
                 origin: None,
@@ -605,6 +606,7 @@ fn generate_rust_with_helper_backed_vocab_wasm_desugaring(source: &str, keyword_
         emitted_name: None,
         type_params: Vec::new(),
         params: vec![ParamExport {
+            is_mut: false,
             name: "value".to_string(),
             ty: TypeRef::Named {
                 origin: None,

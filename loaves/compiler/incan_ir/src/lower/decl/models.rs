@@ -140,7 +140,9 @@ impl AstLowering {
                     .any(|param| Self::type_has_qualified_spelling(&param.node))
                     || Self::type_has_qualified_spelling(&ret.node)
             }
-            ast::Type::Ref(inner) | ast::Type::RefMut(inner) => Self::type_has_qualified_spelling(&inner.node),
+            ast::Type::Ref(inner) | ast::Type::RefMut(inner) | ast::Type::MutParam(inner) => {
+                Self::type_has_qualified_spelling(&inner.node)
+            }
             ast::Type::Simple(_)
             | ast::Type::Qualified(_)
             | ast::Type::ConstrainedPrimitive(..)

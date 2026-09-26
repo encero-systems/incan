@@ -1,0 +1,32 @@
+# behavior: qualified enum constructor patterns select the arm for each unit variant of the scrutinee (#374)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue374_enum_constructor_match_codegen
+# expect-stdout:
+#   FilterRel
+#   ReadRel
+#   ProjectRel
+
+"""Issue #374: qualified enum constructor patterns must resolve over enum scrutinees."""
+
+
+pub enum ConformanceRel:
+    Read
+    Filter
+    Project
+
+
+pub def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:
+    match rel:
+        ConformanceRel.Read =>
+            return "ReadRel"
+        ConformanceRel.Filter =>
+            return "FilterRel"
+        ConformanceRel.Project =>
+            return "ProjectRel"
+        _ =>
+            return "UnknownRel"
+
+
+def main() -> None:
+    print(relation_kind_name_from_conformance(ConformanceRel.Filter))
+    print(relation_kind_name_from_conformance(ConformanceRel.Read))
+    print(relation_kind_name_from_conformance(ConformanceRel.Project))

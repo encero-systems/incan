@@ -1,0 +1,45 @@
+# behavior: module consts of int, frozen str, frozen list, frozen dict and tuple types and a static model are readable, and public and private float consts print (RFC 008)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_consts_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_pub_const_codegen
+# expect-stdout:
+#   7
+#   hello
+#   3
+#   2
+#   2
+#   x 42
+#   3.14
+#   2.71
+
+"""Module-level consts (RFC 008)"""
+
+const A: int = 1 + 2 * 3
+const S: FrozenStr = "hello"
+const L: FrozenList[int] = [1, 2, 3]
+const TEXTS: FrozenList[str] = ["alpha", "beta"]
+const D: FrozenDict[FrozenStr, int] = {"a": 1, "b": 2}
+const T = ("x", 42)
+
+pub const PI: float = 3.14
+const E: float = 2.71
+
+
+model Metadata:
+    pub canonical_forms: FrozenList[str]
+
+
+static METADATA: Metadata = Metadata(canonical_forms=TEXTS)
+
+
+def main() -> None:
+    # Just reference a few to keep them "used"
+    print(A)
+    print(S)
+    print(L.len())
+    print(METADATA.canonical_forms.len())
+    print(D.len())
+    match T:
+        case (label, number):
+            print(f"{label} {number}")
+    print(PI)
+    print(E)

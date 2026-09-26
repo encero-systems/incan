@@ -1113,6 +1113,7 @@ impl TypeChecker {
             return;
         }
 
+        self.record_returned_value(expr);
         let return_ty = if let Some(e) = expr {
             let expected_return_ty = self.symbols.current_return_type().cloned();
             self.check_expr_with_expected(e, expected_return_ty.as_ref())

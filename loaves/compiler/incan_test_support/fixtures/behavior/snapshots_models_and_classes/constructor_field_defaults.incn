@@ -1,0 +1,18 @@
+# behavior: model fields with defaults are omitted from the constructor and keep their defaults unless overridden
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_constructor_field_defaults_codegen
+# expect-stdout:
+#   dark 16
+#   14 true
+
+@derive(Debug)
+model Settings:
+    theme: str = "dark"
+    font_size: int = 14
+    auto_save: bool = true
+
+
+def main() -> None:
+    a = Settings()
+    b = Settings(font_size=16)
+    println(f"{a.theme} {b.font_size}")  # output: "dark 16"
+    println(f"{a.font_size} {b.auto_save}")

@@ -1,0 +1,44 @@
+# behavior: std.tempfile temporary files, directories and spooled files are created, report their state and use std.fs Path
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_tempfile_import_codegen
+# expect-stdout:
+#   std.tempfile import codegen
+#   false
+#   true
+#   true true
+
+from std.fs import Path
+from std.io import IoError
+from std.tempfile import NamedTemporaryFile, SpooledTemporaryFile, TemporaryDirectory
+
+
+def consume_file(file: NamedTemporaryFile) -> None:
+    pass
+
+
+def consume_dir(directory: TemporaryDirectory) -> None:
+    pass
+
+
+def consume_path(path: Path) -> None:
+    pass
+
+
+def exercise() -> Result[None, IoError]:
+    mut spool = SpooledTemporaryFile(max_size=4)
+    println(spool.rolled_to_disk())
+    _ = spool.write_bytes(b"more than four bytes")?
+    println(spool.rolled_to_disk())
+    file = NamedTemporaryFile.try_new()?
+    directory = TemporaryDirectory.try_new()?
+    consume_file(file)
+    consume_dir(directory)
+    consume_path(file.path())
+    println(f"{file.path().exists()} {directory.path().is_dir()}")
+    return Ok(None)
+
+
+def main() -> None:
+    println("std.tempfile import codegen")
+    match exercise():
+        Ok(_) => pass
+        Err(error) => println(f"io error: {error.message()}")

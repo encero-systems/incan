@@ -61,7 +61,6 @@ pub const EXCEPTIONS: &[ExceptionInfo] = &[
             },
             Example {
                 code: r#"def main() -> None:
-    # range step cannot be zero (Python-like)
     for i in range(0, 5, 0):
         print(i)
 "#,
@@ -77,7 +76,6 @@ pub const EXCEPTIONS: &[ExceptionInfo] = &[
         Since(0, 1),
         &[Example {
             code: r#"def main() -> None:
-    # Example: JSON serialization failures (e.g. NaN/Inf) raise TypeError
     _ = json_stringify(nan)
 "#,
             note: Some("Panics at runtime with a `TypeError: ... is not JSON serializable` message."),
@@ -86,7 +84,7 @@ pub const EXCEPTIONS: &[ExceptionInfo] = &[
     info(
         ErrorKind::ZeroDivisionError,
         "ZeroDivisionError",
-        "Raised when dividing or taking modulo by zero (Python-like numeric semantics).",
+        "Raised when dividing or taking modulo by zero.",
         RFC::_000,
         Since(0, 1),
         &[Example {
@@ -142,7 +140,7 @@ pub const EXCEPTIONS: &[ExceptionInfo] = &[
     info(
         ErrorKind::JsonDecodeError,
         "JSONDecodeError",
-        "Raised when parsing JSON fails (Python-like).",
+        "Raised when parsing JSON fails.",
         RFC::_000,
         Since(0, 1),
         &[Example {

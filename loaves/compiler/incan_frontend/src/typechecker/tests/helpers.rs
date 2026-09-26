@@ -113,6 +113,7 @@ pub(super) fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                 }],
                 type_params: Vec::new(),
                 params: vec![ParamExport {
+                    is_mut: false,
                     name: "name".to_string(),
                     ty: TypeRef::Named {
                         origin: None,
@@ -145,6 +146,7 @@ pub(super) fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                     emitted_name: None,
                     type_params: Vec::new(),
                     params: vec![ParamExport {
+                        is_mut: false,
                         name: "name".to_string(),
                         ty: TypeRef::Named {
                             origin: None,

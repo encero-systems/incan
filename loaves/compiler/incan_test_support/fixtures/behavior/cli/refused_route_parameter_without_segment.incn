@@ -4,9 +4,11 @@
 import std.async
 from std.web import route, POST
 
+
 @route("/things", methods=[POST])
 async def create(id: int) -> str:
     return str(id)
+
 
 async def main() -> None:
     println(await create(7))

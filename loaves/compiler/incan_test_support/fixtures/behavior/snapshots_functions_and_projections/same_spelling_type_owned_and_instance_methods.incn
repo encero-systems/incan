@@ -7,27 +7,29 @@
 #   -5
 
 model Counter:
-  value: int
+    value: int
 
-  @staticmethod
-  def next(value: int) -> Counter:
-    return Counter(value=value)
+    @staticmethod
+    def next(value: int) -> Counter:
+        return Counter(value=value)
 
-  def next(self) -> int:
-    return self.value + 1
+    def next(self) -> int:
+        return self.value + 1
+
 
 model Span:
-  days: int
+    days: int
 
-  @staticmethod
-  def days(value: int) -> Span:
-    return Span(days=value)
+    @staticmethod
+    def days(value: int) -> Span:
+        return Span(days=value)
 
-  def days(self, value: int) -> Span:
-    return Span(days=self.days + value)
+    def days(self, value: int) -> Span:
+        return Span(days=self.days + value)
+
 
 def main() -> None:
-  counter = Counter.next(4)
-  println(counter.next())
-  span = Span.days(-7).days(2)
-  println(span.days)
+    counter = Counter.next(4)
+    println(counter.next())
+    span = Span.days(-7).days(2)
+    println(span.days)

@@ -1,0 +1,72 @@
+# behavior: positional, default-argument, builtin, method, chained and collection calls each produce the value the caller prints
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_function_calls_codegen
+# expect-stdout:
+#   Hello, World!
+#   8
+#   Hello, Mr. Smith!
+#   Hello, Dr. Jones!
+#   5 3
+#   TEST test spaces
+#   HELLO WORLD
+#   4 3
+#   1
+
+def greet(name: str) -> str:
+    """Simple function for testing calls"""
+    return f"Hello, {name}!"
+
+
+def add(a: int, b: int) -> int:
+    """Test positional arguments"""
+    return a + b
+
+
+def greet_with_title(name: str, title: str = "Mr.") -> str:
+    """Test default arguments"""
+    return f"Hello, {title} {name}!"
+
+
+def test_function_calls() -> None:
+    # Simple function call
+    message: str = greet("World")
+    println(message)
+
+    # Multiple arguments
+    sum: int = add(5, 3)
+    println(sum)
+
+    # Default arguments
+    greeting1: str = greet_with_title("Smith")
+    greeting2: str = greet_with_title("Jones", "Dr.")
+    println(greeting1)
+    println(greeting2)
+
+    # Built-in functions
+    length: int = len("hello")
+    string_list: List[str] = ["a", "b", "c"]
+    count: int = len(string_list)
+    println(f"{length} {count}")
+
+    # Method calls
+    upper: str = "test".upper()
+    lower: str = "TEST".lower()
+    stripped: str = "  spaces  ".strip()
+    println(f"{upper} {lower} {stripped}")
+
+    # Chained method calls
+    result: str = "hello world".upper().strip()
+    println(result)
+
+    # List methods
+    numbers: List[int] = [1, 2, 3]
+    numbers.append(4)
+    popped: int = numbers.pop()
+    println(f"{popped} {len(numbers)}")
+
+    # Dict methods
+    data: Dict[str, int] = {"a": 1, "b": 2}
+    println(data["a"])
+
+
+def main() -> None:
+    test_function_calls()
