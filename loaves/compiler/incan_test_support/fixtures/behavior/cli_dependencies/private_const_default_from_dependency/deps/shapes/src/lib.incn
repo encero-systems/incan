@@ -1,0 +1,8 @@
+const LABEL: str = "flat"
+
+
+pub def build(size: int, label: str = LABEL) -> str:
+    return f"{label} of size {size}"
+
+
+pub default_build = partial build(size=3)

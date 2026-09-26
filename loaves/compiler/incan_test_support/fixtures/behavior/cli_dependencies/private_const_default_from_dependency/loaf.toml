@@ -1,0 +1,9 @@
+[project]
+name = "private_const_default_from_dependency"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+shapes = { path = "deps/shapes" }

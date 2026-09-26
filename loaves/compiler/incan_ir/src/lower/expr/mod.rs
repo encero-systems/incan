@@ -9,7 +9,6 @@
 mod calls;
 mod comprehensions;
 mod helpers;
-mod partial_exports;
 mod patterns;
 mod stdlib_defaults;
 mod union_owner;

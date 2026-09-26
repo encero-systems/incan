@@ -14,10 +14,10 @@ use incan_lang::lang::keywords::{self, KeywordId};
 impl AstLowering {
     /// Give a lowered method partial's forwarding call the nominal type of the method's owner as its receiver type.
     ///
-    /// Without the owner type the target reads as a method of an unknown foreign receiver: its `str` arguments are
-    /// passed the way a foreign method takes them rather than as the owned values the target declares, and the
-    /// generated-use analysis never records the target as called, so a target nothing else calls is dropped from the
-    /// impl (#1765). A receiver the lowering already typed, such as a trait default's `Self`, is left alone.
+    /// Without the owner type the target reads as a method of an unknown foreign receiver, so its `str` arguments are
+    /// passed the way a foreign method takes them rather than as the owned values the target declares (#1765). Only
+    /// inherent methods of models, classes and newtypes come through here; a trait's method partial is a
+    /// trait default method and is lowered with the trait.
     pub(in crate::lower) fn type_method_partial_forwarding_receiver(&self, owner: &str, function: &mut IrFunction) {
         let owner_ty = self
             .struct_names

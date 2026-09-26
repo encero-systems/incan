@@ -6,6 +6,7 @@
 //! The logic is split across submodules by declaration kind; all methods live on `impl AstLowering`.
 
 mod classes;
+mod default_consts;
 mod enums;
 mod functions;
 mod helpers;
@@ -117,8 +118,11 @@ impl AstLowering {
                 } else {
                     IrType::Unknown
                 };
+                // A private const a parameter default names is reached from the default's call sites, which lie
+                // outside this module.
                 let visibility = match c.visibility {
                     ast::Visibility::Public => Visibility::Public,
+                    ast::Visibility::Private if self.const_is_named_by_a_default(&c.name) => Visibility::Public,
                     ast::Visibility::Private => Visibility::Private,
                 };
                 IrDeclKind::Const {

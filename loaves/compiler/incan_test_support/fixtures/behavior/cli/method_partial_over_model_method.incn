@@ -1,9 +1,11 @@
-# behavior: a model's method partial calls its target method with the preset argument, whether it names the method directly or through a method alias, and a call can override the preset
+# behavior: a method partial calls its target method with the preset argument, whether it names the method directly or through a method alias, on a generic model and over a mut self method, and a call can override the preset
 # retires: loaves/compiler/incan_ir/src/lower/tests/method_partial_forwarding.rs::method_partial_forwards_on_a_receiver_typed_by_its_model_issue1765
 # expect-stdout:
 #   name
 #   name
 #   other
+#   wrapped
+#   2
 
 model User:
     name: str
@@ -16,6 +18,24 @@ model User:
     brief = partial label(prefix="name")
 
 
+model Wrapper[T]:
+    value: T
+
+    def tag(self, prefix: str) -> str:
+        return prefix
+
+    tagged = partial tag(prefix="wrapped")
+
+
+class Counter:
+    pub count: int
+
+    def bump(mut self, by: int) -> None:
+        self.count += by
+
+    bump_one = partial bump(by=1)
+
+
 pub def use_it(user: User) -> str:
     return user.short()
 
@@ -24,3 +44,8 @@ def main() -> None:
     println(use_it(User(name="Ada")))
     println(User(name="Ada").brief())
     println(User(name="Ada").short(prefix="other"))
+    println(Wrapper(value=1).tagged())
+    mut counter = Counter(count=0)
+    counter.bump_one()
+    counter.bump_one()
+    println(counter.count)

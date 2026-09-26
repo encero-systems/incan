@@ -138,7 +138,8 @@ impl AstLowering {
     /// recognized as that local's last use on the path (see
     /// [`AstLowering::select_var_access_for_ident`](super::AstLowering::select_var_access_for_ident) and
     /// [`ReturnOperandContext`]); the enclosing block counters stay in step because nested reads were already
-    /// counted there.
+    /// counted there. A `Some(member)` the operand returns takes the provider-owned union the callable's declared
+    /// return type names (#1743).
     fn lower_return_operand(&mut self, expr: &Spanned<ast::Expr>) -> Result<TypedExpr, LoweringError> {
         let mut read_counts = HashMap::new();
         self.count_expr_ident_reads(&expr.node, &mut read_counts);
@@ -151,7 +152,10 @@ impl AstLowering {
         let lowered = self.lower_expr_spanned(expr);
         self.return_operand = enclosing;
         let _ = self.remaining_ident_reads.pop();
-        let value = lowered?;
+        let mut value = lowered?;
+        if let Some(return_type) = self.callable_return_types.last() {
+            Self::retain_union_owners_at(&mut value, return_type);
+        }
         Ok(self.coerce_checked_c_return_value(expr, value))
     }
 
@@ -1031,7 +1035,7 @@ impl AstLowering {
 
             ast::Statement::Assignment(a) => {
                 let rhs_direct_static = self.is_direct_static_ident(&a.value);
-                let lowered_value = self.lower_expr_spanned(&a.value)?;
+                let mut lowered_value = self.lower_expr_spanned(&a.value)?;
                 let local_callable_signature = self.partial_expr_signature_for_span(a.value.span).or_else(|| {
                     if let ast::Expr::Ident(source_name) = &a.value.node {
                         self.lookup_local_callable_signature(source_name)
@@ -1040,6 +1044,9 @@ impl AstLowering {
                     }
                 });
                 let type_annotation = a.ty.as_ref().map(|t| self.lower_type(&t.node));
+                if let Some(annotation) = &type_annotation {
+                    Self::retain_union_owners_at(&mut lowered_value, annotation);
+                }
                 let ty = type_annotation.clone().unwrap_or_else(|| lowered_value.ty.clone());
 
                 match a.binding {

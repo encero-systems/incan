@@ -1,5 +1,10 @@
 @derive(Clone)
 pub type Kind = newtype str
+pub type Choice = Kind | str
+
+
+pub model Holder:
+    pub value: Option[Kind | str]
 
 
 pub def describe(value: Option[Kind | str]) -> str:
@@ -9,3 +14,17 @@ pub def describe(value: Option[Kind | str]) -> str:
         if isinstance(value, Kind):
             return f"kind {value.0}"
     return "missing"
+
+
+pub def count_present(values: List[Option[Kind | str]]) -> int:
+    mut count = 0
+    for value in values:
+        if value is not None:
+            count += 1
+    return count
+
+
+pub def result_kind(value: Result[Kind | str, str]) -> str:
+    match value:
+        Ok(member) => return describe(Some(member))
+        Err(message) => return f"error {message}"

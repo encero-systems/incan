@@ -37,15 +37,17 @@ fn forwarded_call<'a>(impl_block: &'a IrImpl, partial: &str) -> Result<(&'a Type
     }
 }
 
-/// #1765: `short = partial label(prefix="name")` forwards to `label` on `self`. The generated body carries the model's
-/// declaration span, so no checker fact types its receiver; lowering types it by the owner, which is what makes the
-/// target an owned-argument Incan method call that keeps `label` in the impl. The same holds when the partial names
-/// the target through a method alias.
+/// #1765: `short = partial label(prefix="name")` forwards to `label` on `self`. The generated body carries the owner's
+/// declaration span, so no checker fact types its receiver; lowering types it by the owner, which makes the target an
+/// owned-argument Incan method call. The same holds when the partial names the target through a method alias, over a
+/// generic model's method, and over a class's `mut self` method.
 #[test]
 fn method_partial_forwards_on_a_receiver_typed_by_its_model_issue1765() -> Result<(), String> {
-    for (label, source) in [
+    for (label, owner, partial, source) in [
         (
             "direct target",
+            "User",
+            "short",
             r#"
 model User:
     name: str
@@ -62,6 +64,8 @@ pub def use_it(user: User) -> str:
         ),
         (
             "target through a method alias",
+            "User",
+            "short",
             r#"
 model User:
     name: str
@@ -77,21 +81,58 @@ pub def use_it(user: User) -> str:
     return user.short()
 "#,
         ),
+        (
+            "generic model",
+            "Wrapper",
+            "tagged",
+            r#"
+model Wrapper[T]:
+    value: T
+
+    def tag(self, prefix: str) -> str:
+        return prefix
+
+    tagged = partial tag(prefix="wrapped")
+
+
+pub def use_it(wrapper: Wrapper[int]) -> str:
+    return wrapper.tagged()
+"#,
+        ),
+        (
+            "mut self target",
+            "Counter",
+            "bump_one",
+            r#"
+class Counter:
+    pub count: int
+
+    def bump(mut self, by: int) -> None:
+        self.count += by
+
+    bump_one = partial bump(by=1)
+
+
+pub def use_it(mut counter: Counter) -> None:
+    counter.bump_one()
+"#,
+        ),
     ] {
         let ir = lower_checked_source(source)?;
-        let impl_block = inherent_impl(&ir, "User")?;
-        let (receiver, target) = forwarded_call(impl_block, "short")?;
+        let impl_block = inherent_impl(&ir, owner)?;
+        let (receiver, target) = forwarded_call(impl_block, partial)?;
         assert_eq!(
-            receiver.ty,
-            IrType::Struct("User".to_string()),
-            "{label}: the forwarding receiver is typed by the model"
+            receiver.ty.nominal_type_name(),
+            Some(owner),
+            "{label}: the forwarding receiver is typed by `{owner}`, got {:?}",
+            receiver.ty
         );
         assert!(
             impl_block
                 .methods
                 .iter()
-                .any(|method| method.name == target && method.name != "short"),
-            "{label}: the partial forwards to the lowered `label` method, got `{target}`"
+                .any(|method| method.name == target && method.name != partial),
+            "{label}: the partial forwards to the lowered target method, got `{target}`"
         );
     }
     Ok(())

@@ -1,0 +1,8 @@
+# behavior: a call through an imported partial that omits a parameter whose target default the dependency cannot carry is refused at check time for the missing argument, as a direct call to the target is
+# expect-diagnostic: INCAN-T0001
+
+from pub::shapes import default_build
+
+
+def main() -> None:
+    println(default_build())

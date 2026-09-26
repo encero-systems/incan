@@ -6,11 +6,12 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::api_metadata::{
-    ApiDeclaration, DecoratorArgMetadata, DecoratorValue, SafeMetadataValue,
+    ApiDeclaration, CheckedApiMetadataPackage, DecoratorArgMetadata, DecoratorValue, SafeMetadataValue,
     checked_api_declaration_is_public_namespace_member, checked_api_modules_for_public_namespace,
     checked_api_public_module_paths, checked_api_public_namespace, class_export_from_api, enum_export_from_api,
-    function_export_from_api, function_export_from_api_projected, model_export_from_api, newtype_export_from_api,
-    partial_export_from_api, trait_export_from_api,
+    function_export_from_api, function_export_from_api_projected, manifest_partial_with_target_defaults,
+    model_export_from_api, newtype_export_from_api, partial_export_from_api, partial_export_with_target_defaults,
+    trait_export_from_api,
 };
 use crate::ast::*;
 use crate::diagnostics::errors;
@@ -657,7 +658,9 @@ impl TypeChecker {
                         self.dependency_trait_rust_derive_paths
                             .insert(format!("{module_key}.{}", trait_metadata.name), paths);
                     }
-                    let Some(mut kind) = self.symbol_kind_from_api_declaration(&declaration) else {
+                    let Some(mut kind) =
+                        self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), &declaration)
+                    else {
                         continue;
                     };
                     Self::qualify_provider_symbol_bounds(&mut kind, &[stdlib::STDLIB_ROOT.to_string()]);
@@ -1605,7 +1608,7 @@ impl TypeChecker {
                 ApiDeclaration::Alias(alias) => self
                     .symbol_kind_from_nominal_projection(alias.projected_type.as_ref())
                     .or_else(|| self.symbol_kind_from_api_target_path(manifest, &alias.target_path)),
-                _ => self.symbol_kind_from_api_declaration(declaration),
+                _ => self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration),
             })
             .collect::<Vec<_>>();
         let mut type_alias = declarations.iter().find_map(|declaration| {
@@ -1767,7 +1770,7 @@ impl TypeChecker {
             {
                 continue;
             }
-            let Some(mut kind) = self.symbol_kind_from_api_declaration(&declaration) else {
+            let Some(mut kind) = self.symbol_kind_from_api_declaration(Some(api), &declaration) else {
                 continue;
             };
             self.remap_symbol_kind_with_import_aliases(&mut kind, &remapping);
@@ -2330,7 +2333,12 @@ impl TypeChecker {
                 self.manifest_nominal_type_info(&artifact.manifest, &export.public_name)
             } else {
                 Self::api_declaration_for_target_path(&artifact.manifest, &export.source_path)
-                    .and_then(|declaration| self.symbol_kind_from_api_declaration(declaration))
+                    .and_then(|declaration| {
+                        self.symbol_kind_from_api_declaration(
+                            artifact.manifest.contract_metadata.api.as_ref(),
+                            declaration,
+                        )
+                    })
                     .and_then(|kind| match kind {
                         SymbolKind::Type(info) => Some(info),
                         _ => None,
@@ -2520,7 +2528,9 @@ impl TypeChecker {
                     SymbolKind::Type(TypeInfo::Class(self.class_info_from_manifest(export)))
                 }
                 ManifestExportRef::Function(export) => SymbolKind::Function(self.function_info_from_manifest(export)),
-                ManifestExportRef::Partial(export) => SymbolKind::Function(self.partial_info_from_manifest(export)),
+                ManifestExportRef::Partial(export) => {
+                    SymbolKind::Function(self.partial_info_from_manifest(&manifest, export))
+                }
                 ManifestExportRef::Trait(export) => SymbolKind::Trait(self.trait_info_from_manifest(export)),
                 ManifestExportRef::Enum(export) => {
                     SymbolKind::Type(TypeInfo::Enum(self.enum_info_from_manifest(export)))
@@ -2969,8 +2979,9 @@ impl TypeChecker {
             self.manifest_nominal_type_info(&artifact.manifest, &identity.public_name)
                 .map(SymbolKind::Type)
         } else {
-            Self::api_declaration_for_target_path(&artifact.manifest, &identity.source_path)
-                .and_then(|declaration| self.symbol_kind_from_api_declaration(declaration))
+            Self::api_declaration_for_target_path(&artifact.manifest, &identity.source_path).and_then(|declaration| {
+                self.symbol_kind_from_api_declaration(artifact.manifest.contract_metadata.api.as_ref(), declaration)
+            })
         }
     }
 
@@ -3021,7 +3032,9 @@ impl TypeChecker {
                 Some(SymbolKind::Type(TypeInfo::Class(self.class_info_from_manifest(export))))
             }
             ManifestExportRef::Function(export) => Some(SymbolKind::Function(self.function_info_from_manifest(export))),
-            ManifestExportRef::Partial(export) => Some(SymbolKind::Function(self.partial_info_from_manifest(export))),
+            ManifestExportRef::Partial(export) => {
+                Some(SymbolKind::Function(self.partial_info_from_manifest(manifest, export)))
+            }
             ManifestExportRef::Trait(export) => Some(SymbolKind::Trait(self.trait_info_from_manifest(export))),
             ManifestExportRef::Enum(export) => {
                 Some(SymbolKind::Type(TypeInfo::Enum(self.enum_info_from_manifest(export))))
@@ -3124,12 +3137,19 @@ impl TypeChecker {
                 self.symbol_kind_from_nominal_projection(alias.projected_type.as_ref())
                     .or_else(|| self.symbol_kind_from_api_target_path_inner(manifest, &alias.target_path, visited))
             }
-            _ => self.symbol_kind_from_api_declaration(declaration),
+            _ => self.symbol_kind_from_api_declaration(manifest.contract_metadata.api.as_ref(), declaration),
         }
     }
 
     /// Convert one checked API declaration into the same semantic symbols used for manifest exports.
-    fn symbol_kind_from_api_declaration(&self, declaration: &ApiDeclaration) -> Option<SymbolKind> {
+    ///
+    /// `api` is the checked API the declaration belongs to; a partial's leftover defaulted parameters are completed
+    /// from its target there (#1760).
+    fn symbol_kind_from_api_declaration(
+        &self,
+        api: Option<&CheckedApiMetadataPackage>,
+        declaration: &ApiDeclaration,
+    ) -> Option<SymbolKind> {
         match declaration {
             ApiDeclaration::Function(item) => Some(SymbolKind::Function(
                 self.function_info_from_manifest(&function_export_from_api(item)),
@@ -3170,9 +3190,12 @@ impl TypeChecker {
                     )
                 })
                 .or_else(|| self.symbol_kind_from_nominal_projection(item.projected_type.as_ref())),
-            ApiDeclaration::Partial(item) => Some(SymbolKind::Function(
-                self.partial_info_from_manifest(&partial_export_from_api(item)),
-            )),
+            ApiDeclaration::Partial(item) => {
+                Some(SymbolKind::Function(self.partial_info_from_export(&api.map_or_else(
+                    || partial_export_from_api(item),
+                    |api| partial_export_with_target_defaults(api, item),
+                ))))
+            }
         }
     }
 
@@ -3239,7 +3262,9 @@ impl TypeChecker {
                 SymbolKind::Type(TypeInfo::Class(self.class_info_from_manifest(export)))
             }
             ManifestExportRef::Function(export) => SymbolKind::Function(self.function_info_from_manifest(export)),
-            ManifestExportRef::Partial(export) => SymbolKind::Function(self.partial_info_from_manifest(export)),
+            ManifestExportRef::Partial(export) => {
+                SymbolKind::Function(self.partial_info_from_manifest(manifest, export))
+            }
             ManifestExportRef::Trait(export) => SymbolKind::Trait(self.trait_info_from_manifest(export)),
             ManifestExportRef::Enum(export) => SymbolKind::Type(TypeInfo::Enum(self.enum_info_from_manifest(export))),
             ManifestExportRef::EnumVariant {
@@ -3609,7 +3634,18 @@ impl TypeChecker {
     }
 
     /// Convert one manifest partial export into callable metadata for consumers.
-    fn partial_info_from_manifest(&self, export: &PartialExport) -> FunctionInfo {
+    ///
+    /// The partial's leftover defaulted parameters are completed from its target in the manifest's checked API, so a
+    /// call may omit one exactly when its default can be filled in (#1760).
+    fn partial_info_from_manifest(&self, manifest: &LibraryManifest, export: &PartialExport) -> FunctionInfo {
+        self.partial_info_from_export(&manifest_partial_with_target_defaults(
+            manifest.contract_metadata.api.as_ref(),
+            export,
+        ))
+    }
+
+    /// Convert one completed partial export into callable metadata for consumers.
+    fn partial_info_from_export(&self, export: &PartialExport) -> FunctionInfo {
         FunctionInfo {
             params: self.params_from_manifest(&export.params),
             return_type: resolved_type_from_manifest_type_ref(&export.return_type),

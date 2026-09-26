@@ -36,6 +36,10 @@ use crate::symbols::{ImplementationTraitBoundInfo, ImplementationTraitBoundOrigi
 use crate::typechecker::{ConstValue, TypeChecker};
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
+mod partial_defaults;
+
+pub use partial_defaults::{manifest_partial_with_target_defaults, partial_export_with_target_defaults};
+
 pub const CHECKED_API_METADATA_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

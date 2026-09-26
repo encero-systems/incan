@@ -236,6 +236,9 @@ pub struct AstLowering {
     /// Return statements need this source-owned context to widen a checked-C scalar result only when the
     /// typechecker has already accepted a lossless conversion to an ordinary Incan numeric type.
     pub callable_return_types: Vec<IrType>,
+    /// Module consts that a parameter default of the module names; their generated items are published because the
+    /// default is expanded at call sites outside the module.
+    pub default_named_consts: HashSet<String>,
     /// Module-level symbol aliases mapped from alias name to canonical target name.
     pub symbol_aliases: HashMap<String, String>,
     /// Imported overload bindings that must be reexported because a public alias projects them.
@@ -693,6 +696,7 @@ impl AstLowering {
             rust_import_aliases: HashMap::new(),
             callable_param_scopes: Vec::new(),
             callable_return_types: Vec::new(),
+            default_named_consts: HashSet::new(),
             symbol_aliases: HashMap::new(),
             overload_alias_reexport_targets: HashSet::new(),
             source_type_alias_targets: HashMap::new(),
@@ -2149,6 +2153,7 @@ impl AstLowering {
         let mut errors: Vec<LoweringError> = Vec::new();
         self.import_aliases = decorator_resolution::collect_import_aliases(program);
         self.rust_import_aliases = decorator_resolution::collect_rust_import_aliases(program);
+        self.collect_default_named_consts(program);
         ir_program.function_reexports = self.collect_function_reexports(program);
         self.imported_alias_targets = self.collect_imported_alias_targets(program);
         self.seed_imported_stdlib_trait_decls(program)?;
@@ -4102,6 +4107,7 @@ mod tests {
     use incan_frontend::{lexer, parser, typechecker::TypeChecker};
     use incan_lang::lang::trait_bounds;
 
+    mod default_named_consts;
     mod dependency_call_arguments;
     mod method_partial_forwarding;
     mod stdlib_const_defaults;

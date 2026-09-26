@@ -1,0 +1,9 @@
+[project]
+name = "refused_imported_partial_without_carried_default"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+shapes = { path = "deps/shapes" }

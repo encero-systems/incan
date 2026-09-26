@@ -71,6 +71,7 @@ mod narrowing_and_matching;
 mod numerics_const_and_static;
 mod partials_and_callable_aliases;
 mod pub_imports_namespaces_and_fields;
+mod pub_imports_partial_defaults;
 mod pub_imports_symbols_and_identity;
 mod pub_imports_trait_adoptions;
 mod rust_constructors_and_fields;

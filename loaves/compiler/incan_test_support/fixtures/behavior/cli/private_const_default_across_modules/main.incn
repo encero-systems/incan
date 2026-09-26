@@ -1,0 +1,13 @@
+# behavior: a function whose defaults name private consts of its module takes those consts' values when another module of the project omits the arguments
+# expect-stdout:
+#   4
+#   8
+#   chunk 4
+
+from helpers import describe, read
+
+
+def main() -> None:
+    println(read())
+    println(read(8))
+    println(describe())

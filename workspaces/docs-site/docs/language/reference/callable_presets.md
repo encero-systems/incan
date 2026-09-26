@@ -59,7 +59,7 @@ Top-level partial declarations support statically known callable targets:
 - class constructors;
 - newtype constructors.
 
-Method partial declarations are same-type only. They may target another method declared on the same model, class, trait, or newtype, named directly or through a same-type method alias (`display = label`).
+Method partial declarations are same-type only. They may target another method declared on the same model, class, trait, or newtype, including a generic owner's method and a `mut self` method, named directly or through a same-type method alias (`display = label`).
 
 Local partial expressions support callable targets whose surface can be resolved at the expression site.
 
@@ -68,7 +68,7 @@ Local partial expressions support callable targets whose surface can be resolved
 A partial projects the target callable signature:
 
 - unfilled required parameters remain required;
-- unfilled defaulted parameters remain defaulted, with the default value the target declares, including when the partial is imported from another package;
+- unfilled defaulted parameters remain defaulted and take the default the target declares; a call through the partial may omit one exactly when a direct call to the target may omit it, including when the partial is imported from another package;
 - preset parameters become defaulted parameters on the projected callable;
 - the return type is the target return type;
 - async status follows the target callable;

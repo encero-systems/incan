@@ -193,65 +193,122 @@ def nested_partial() -> str:
     Ok(())
 }
 
-/// #1743: `describe(Some("plain"))` passes `Some(member)` where `pub::modulelib`'s `describe` takes
-/// `Option[Kind | str]`. The constructor is instantiated at that union, and the union is the one the dependency
-/// declares, so the constructor's parameter carries the dependency as its owner rather than a consumer-local union.
+/// The instantiation of every `Some(...)` call a function body holds, in the order the body holds them.
+#[derive(Default)]
+struct SomeInstantiations(Vec<(IrType, IrType)>);
+
+impl crate::visit::Visitor for SomeInstantiations {
+    fn expr(&mut self, expr: &mut TypedExpr) {
+        if let IrExprKind::Call {
+            func,
+            callable_signature,
+            ..
+        } = &expr.kind
+            && matches!(&func.kind, IrExprKind::Var { name, .. } if name == "Some")
+        {
+            let payload = callable_signature
+                .as_ref()
+                .and_then(|signature| signature.params.first())
+                .map_or(IrType::Unknown, |param| param.ty.clone());
+            self.0.push((payload, expr.ty.clone()));
+        }
+        crate::visit::walk_expr(expr, self);
+    }
+}
+
+/// Return the instantiation of every `Some(...)` call the named function's body holds.
+fn some_instantiations(ir: &IrProgram, function_name: &str) -> Result<Vec<(IrType, IrType)>, String> {
+    let mut function = ir
+        .declarations
+        .iter()
+        .find_map(|decl| match &decl.kind {
+            IrDeclKind::Function(function) if function.name == function_name => Some(function.clone()),
+            _ => None,
+        })
+        .ok_or_else(|| format!("missing function `{function_name}`"))?;
+    let mut found = SomeInstantiations::default();
+    for stmt in &mut function.body {
+        crate::visit::Visitor::stmt(&mut found, stmt);
+    }
+    Ok(found.0)
+}
+
+/// #1743: a `Some(member)` whose destination is a `pub::` dependency's `Option[Kind | str]` is instantiated at the
+/// union the dependency declares, never at a consumer-local copy of it: as a call argument, as an element of a list
+/// argument, as a field of the dependency's model, as the value of an annotated binding and as a returned value.
 #[test]
-fn some_member_argument_takes_the_dependency_owned_union_issue1743() -> Result<(), String> {
+fn some_member_takes_the_dependency_owned_union_at_every_destination_issue1743() -> Result<(), String> {
     let index = provider_index(&[(
         &["lib"],
         r#"
 @derive(Clone)
 pub type Kind = newtype str
+pub type Choice = Kind | str
+
+
+pub model Holder:
+    pub value: Option[Kind | str]
 
 
 pub def describe(value: Option[Kind | str]) -> str:
     return "described"
+
+
+pub def count_all(values: List[Option[Kind | str]]) -> int:
+    return len(values)
 "#,
     )])?;
     let ir = lower_consumer(
         r#"
-from pub::modulelib import Kind, describe
+from pub::modulelib import Choice, Holder, Kind, count_all, describe
 
 
-def plain() -> str:
-    return describe(Some("plain"))
-
-
-def kind() -> str:
+def argument() -> str:
     return describe(Some(Kind("k")))
+
+
+def list_element() -> int:
+    return count_all([Some("a"), Some(Kind("k"))])
+
+
+def model_field() -> Holder:
+    return Holder(value=Some("a"))
+
+
+def annotated_binding() -> str:
+    choice: Option[Choice] = Some("a")
+    return describe(choice)
+
+
+def returned() -> Option[Choice]:
+    return Some("a")
 "#,
         index,
     )?;
 
-    for function_name in ["plain", "kind"] {
-        let (args, _) = returned_call(&ir, function_name)?;
-        let [argument] = args else {
-            return Err(format!("`{function_name}` passes one argument, got {args:?}"));
-        };
-        let IrExprKind::Call {
-            callable_signature: Some(constructor),
-            ..
-        } = &argument.expr.kind
-        else {
-            return Err(format!(
-                "`{function_name}` passes a `Some` call carrying its instantiation, got {:?}",
-                argument.expr
-            ));
-        };
-        let [payload] = constructor.params.as_slice() else {
-            return Err(format!("`Some` takes one payload: {constructor:?}"));
-        };
-        assert!(
-            matches!(&payload.ty, IrType::ExternalUnion { library, .. } if library == LIBRARY),
-            "`{function_name}`: the payload is injected into the dependency's union, got {:?}",
-            payload.ty
+    for (function_name, expected) in [
+        ("argument", 1),
+        ("list_element", 2),
+        ("model_field", 1),
+        ("annotated_binding", 1),
+        ("returned", 1),
+    ] {
+        let instantiations = some_instantiations(&ir, function_name)?;
+        assert_eq!(
+            instantiations.len(),
+            expected,
+            "`{function_name}` holds {expected} `Some` call(s): {instantiations:?}"
         );
-        assert!(
-            matches!(&argument.expr.ty, IrType::Option(inner) if matches!(inner.as_ref(), IrType::ExternalUnion { .. })),
-            "`{function_name}`: the argument is an option of the dependency's union, got {:?}",
-            argument.expr.ty
-        );
+        for (payload, value) in instantiations {
+            assert!(
+                matches!(&payload, IrType::ExternalUnion { library, .. } if library == LIBRARY),
+                "`{function_name}`: the payload is injected into the dependency's union, got {payload:?}"
+            );
+            assert!(
+                matches!(&value, IrType::Option(inner) if matches!(inner.as_ref(), IrType::ExternalUnion { .. })),
+                "`{function_name}`: the value is an option of the dependency's union, got {value:?}"
+            );
+        }
     }
     Ok(())
 }

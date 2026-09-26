@@ -817,18 +817,6 @@ impl AstLowering {
         api: &incan_frontend::api_metadata::CheckedApiMetadataPackage,
         target_path: &[String],
     ) -> Option<FunctionExport> {
-        Self::api_function_export_for_target_path_within(api, target_path, 0)
-    }
-
-    /// Resolve one checked API function from a module-qualified path, `hops` partial targets below the call.
-    ///
-    /// Aliases without a projected callable are followed to their target. A partial is completed with its target's
-    /// residual defaults, which counts one hop toward the bound on partial-over-partial chains.
-    pub(in crate::lower::expr) fn api_function_export_for_target_path_within(
-        api: &incan_frontend::api_metadata::CheckedApiMetadataPackage,
-        target_path: &[String],
-        hops: usize,
-    ) -> Option<FunctionExport> {
         let function_name = target_path.last()?;
         let path = if target_path
             .first()
@@ -849,21 +837,16 @@ impl AstLowering {
         if let ApiDeclaration::Alias(alias) = declaration
             && alias.projected_function.is_none()
         {
-            return Self::api_function_export_for_target_path_within(api, &alias.target_path, hops);
+            return Self::api_function_export_for_target_path(api, &alias.target_path);
         }
-        if let ApiDeclaration::Partial(partial) = declaration {
-            return Some(Self::api_partial_function_export(
-                api,
-                &module.module_path,
-                partial,
-                hops,
-            ));
-        }
-        Self::api_function_export_for_declaration(declaration, function_name)
+        Self::api_function_export_for_declaration(api, declaration, function_name)
     }
 
     /// Convert one checked API declaration into the function export requested by backend call planning.
+    ///
+    /// A partial is completed from its target in `api`, so the parameters it leaves open carry their defaults (#1760).
     fn api_function_export_for_declaration(
+        api: &incan_frontend::api_metadata::CheckedApiMetadataPackage,
         declaration: &ApiDeclaration,
         function_name: &str,
     ) -> Option<FunctionExport> {
@@ -876,7 +859,7 @@ impl AstLowering {
                 .as_ref()
                 .map(function_export_from_api_projected),
             ApiDeclaration::Partial(partial) if partial.name == function_name => {
-                let partial = incan_frontend::api_metadata::partial_export_from_api(partial);
+                let partial = incan_frontend::api_metadata::partial_export_with_target_defaults(api, partial);
                 Some(FunctionExport {
                     name: partial.name,
                     emitted_name: None,
@@ -1947,12 +1930,10 @@ impl AstLowering {
                 .modules
                 .iter()
                 .find(|module| module.module_path == provider_module_path)
-                && let Some(function) = module.declarations.iter().find_map(|declaration| match declaration {
-                    ApiDeclaration::Partial(partial) if partial.name == *function_name => {
-                        Some(Self::api_partial_function_export(api, &module.module_path, partial, 0))
-                    }
-                    _ => Self::api_function_export_for_declaration(declaration, function_name),
-                })
+                && let Some(function) = module
+                    .declarations
+                    .iter()
+                    .find_map(|declaration| Self::api_function_export_for_declaration(api, declaration, function_name))
             {
                 let signature =
                     self.callable_signature_from_compiled_provider_function_export(&provider_crate, &function);
@@ -4134,6 +4115,12 @@ impl AstLowering {
                 }
             })
             .collect::<Result<Vec<_>, LoweringError>>()?;
+        let mut fields = fields;
+        let owner_ty = match &struct_ty {
+            IrType::Unknown => IrType::Struct(struct_name.clone()),
+            known => known.clone(),
+        };
+        self.retain_constructor_field_union_owners(&owner_ty, &mut fields);
         let (argument_stmts, fields) = self.sequence_reordered_constructor_arguments(call_span, fields);
         let construction = IrExprKind::Struct {
             name: name.to_string(),

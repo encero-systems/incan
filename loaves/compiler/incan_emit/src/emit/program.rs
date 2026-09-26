@@ -290,20 +290,21 @@ impl<'program> GeneratedUseAnalyzer<'program> {
     /// Record one method a reachable body calls, revisiting its owner's impls when they were already scanned.
     ///
     /// An impl is scanned when its owner becomes reachable, and only the methods known to be used by then have their
-    /// bodies scanned. A call found later, in a function scanned after the owner, used to retain the called method
-    /// without ever scanning its body, so a method it calls in turn was dropped from the impl. Queuing the owner
-    /// again scans the newly used body; a method is recorded once, so the revisits end.
+    /// bodies scanned. A use found later, in a function scanned after the owner, used to retain the called method
+    /// without ever scanning its body, so a method it calls in turn was dropped from the impl. Queuing the owner again
+    /// scans the newly used body. A use found while the owner's own impls are being scanned needs no queuing: that
+    /// scan repeats until no new method of the owner is used. A method is recorded once, so the revisits end.
     ///
     /// Migration note (rust_source_backend_deprecation.md):
     /// - Compatibility issue: #1765 -- `pub def use_it(user: User) -> str: return user.short()` retained `User.short`
     ///   but not the method its body calls (`label`, or any method a method calls), because `User`'s impl was scanned
     ///   before `use_it`'s body recorded the call (E0599).
-    /// - Behavior evidence: behavior fixture `cli/method_partial_over_model_method.incn`, the emitter test
+    /// - Behavior evidence: behavior fixtures `cli/method_partial_over_model_method.incn` and
+    ///   `cli/method_called_through_a_helper_keeps_its_callees.incn`, and the emitter test
     ///   `method_called_only_from_a_later_scanned_function_keeps_its_callees_issue1765` in
-    ///   `tests/method_reachability_codegen_tests.rs`, and the lowering test
-    ///   `method_partial_forwards_on_a_receiver_typed_by_its_model_issue1765`.
-    /// - Semantic owner: the checked call graph (which methods a reachable body calls); retention of generated Rust
-    ///   items is the Rust-source backend's own concern and has no middle-end fact to carry.
+    ///   `tests/method_reachability_codegen_tests.rs`.
+    /// - Semantic owner: the checked call graph, which records every method a reachable body calls; retention of
+    ///   generated Rust items is then a plain reachability query over it.
     /// - Retirement condition: the Rust-source backend is deleted (#654); the replacement route does not prune
     ///   generated Rust items.
     fn mark_used_method(&mut self, type_name: String, method: &str) {
@@ -312,6 +313,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             .used_methods
             .insert((type_name.clone(), method.to_string()));
         if newly_used
+            && self.current_impl_target.as_deref() != Some(type_name.as_str())
             && self.analysis.reachable_items.contains(&type_name)
             && self.impls_by_target.contains_key(&type_name)
         {
@@ -687,13 +689,9 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 function_name,
             } => {
                 self.mark_reachable_item(type_name);
-                self.analysis
-                    .used_methods
-                    .insert((type_name.clone(), function_name.clone()));
+                self.mark_used_method(type_name.clone(), function_name);
                 if let Some(original_name) = function_name.strip_suffix("_adapter") {
-                    self.analysis
-                        .used_methods
-                        .insert((type_name.clone(), original_name.to_string()));
+                    self.mark_used_method(type_name.clone(), original_name);
                 }
             }
             IrExprKind::FunctionItem { name, type_args } => {

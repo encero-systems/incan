@@ -124,8 +124,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/program.rs",
-      "sha256": "60974b7ae5e72bfa53db1fa277ff630fa0cb6960fcf61ad324f6291ad1967a33",
-      "lines": 4666
+      "sha256": "cffa582cbdb732751b80b7e13835b858bbe4e75acf8ba3e4fcbc09dffd7a53b6",
+      "lines": 4664
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
@@ -156,7 +156,7 @@
     },
     {
       "kind": "change",
-      "pr": null,
+      "pr": 1808,
       "policy": "frozen",
       "files": [
         {
@@ -166,7 +166,7 @@
       ],
       "compatibility_issue": "#1765",
       "behavior_evidence": "behavior fixtures cli/method_called_through_a_helper_keeps_its_callees.incn and cli/method_partial_over_model_method.incn, emitter test method_called_only_from_a_later_scanned_function_keeps_its_callees_issue1765 (tests/method_reachability_codegen_tests.rs)",
-      "semantic_owner": "1561",
+      "semantic_owner": "#1561: the checked call graph, which records every method a reachable body calls, so retaining a generated method is a reachability query over recorded calls rather than a scan-order walk",
       "retirement_condition": "the Rust-source backend is deleted (#654); the replacement route does not prune generated Rust items"
     }
   ]

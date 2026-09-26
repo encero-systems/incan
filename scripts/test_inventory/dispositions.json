@@ -2129,6 +2129,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/pub_imports_partial_defaults.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "typechecker facts for calls through a public partial imported from a dependency: a leftover parameter may be omitted exactly when the target's default can be filled in (#1760); no emit/driver dependency."
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/pub_imports_symbols_and_identity.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -2494,6 +2502,20 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_ir/src/lower/tests/default_named_consts.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "tests": {
+        "private_const_a_default_names_is_published_for_its_callers": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/private_const_default_from_dependency",
+          "notes": "Asserts the recorded shape on the legacy IR (a private const a parameter default names is lowered as a published item); retires with `incan_ir`. The behavior, a consumer omitting a dependency's argument whose default names a private const, directly and through a partial, is carried by the named fixture; the same-project case by `cli/private_const_default_across_modules`."
+        }
+      }
+    },
     "loaves/compiler/incan_ir/src/lower/tests/dependency_call_arguments.rs": {
       "disposition": "retire",
       "owner": 1561,
@@ -2506,9 +2528,9 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/imported_partial_keeps_target_defaults",
           "notes": "Asserts the recorded shape on the legacy IR (a call through an imported partial carries its target's default for each parameter the partial leaves open, at the package root and through a nested namespace); retires with `incan_ir`. The behavior is carried by the named fixture (#1760)."
         },
-        "some_member_argument_takes_the_dependency_owned_union_issue1743": {
+        "some_member_takes_the_dependency_owned_union_at_every_destination_issue1743": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/some_member_into_dependency_option_union",
-          "notes": "Asserts the recorded shape on the legacy IR (a `Some(member)` argument to a dependency's `Option[union]` parameter is instantiated at the dependency-owned union); retires with `incan_ir`. The behavior is carried by the named fixture (#1743)."
+          "notes": "Asserts the recorded shape on the legacy IR (a `Some(member)` whose destination is a dependency's `Option[union]` is instantiated at the dependency-owned union as a call argument, a list element, a model field, an annotated binding and a returned value); retires with `incan_ir`. The behavior is carried by the named fixture (#1743)."
         }
       }
     },

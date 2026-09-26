@@ -1,0 +1,10 @@
+const CHUNK: int = 4
+const PREFIX: str = "chunk"
+
+
+pub def read(n: int = CHUNK) -> int:
+    return n
+
+
+pub def describe(n: int = CHUNK, prefix: str = PREFIX) -> str:
+    return f"{prefix} {n}"
