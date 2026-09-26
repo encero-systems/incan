@@ -941,38 +941,13 @@ impl TypeChecker {
         valid
     }
 
-    /// Validate `dict.contains_key(key)` (#1668): exactly one positional probe whose type is compatible with the key
-    /// type, so a mistyped probe fails here instead of as a rustc `Borrow` error in the generated `contains_key`. The
-    /// probe has no parameter name, so a named or unpacked argument is refused with the ordinary call diagnostics.
-    fn validate_dict_contains_key_call(
-        &mut self,
-        key_ty: &ResolvedType,
-        args: &[CallArg],
-        arg_types: &[ResolvedType],
-        span: Span,
-    ) {
+    /// Validate the probe of `dict.contains_key(key)` (#1668): its type must be compatible with the key type, so a
+    /// mistyped probe fails here instead of as a rustc `Borrow` error in the generated `contains_key`. The argument
+    /// count and kinds are checked against the registry arity with every builtin collection method's.
+    fn validate_dict_contains_key_call(&mut self, key_ty: &ResolvedType, args: &[CallArg], arg_types: &[ResolvedType]) {
         const CALLEE: &str = "Dict.contains_key";
-        let [arg] = args else {
-            self.errors.push(errors::builtin_arity(CALLEE, 1, args.len(), span));
+        let [CallArg::Positional(expr)] = args else {
             return;
-        };
-        let expr = match arg {
-            CallArg::Positional(expr) => expr,
-            CallArg::Named(name, _) => {
-                self.errors
-                    .push(errors::unknown_keyword_argument(CALLEE, &name.node, name.span));
-                return;
-            }
-            CallArg::PositionalUnpack(expr) => {
-                self.errors
-                    .push(errors::call_unpack_without_rest(CALLEE, "*", expr.span));
-                return;
-            }
-            CallArg::KeywordUnpack(expr) => {
-                self.errors
-                    .push(errors::call_unpack_without_rest(CALLEE, "**", expr.span));
-                return;
-            }
         };
         if let Some(actual) = arg_types.first()
             && !matches!(key_ty, ResolvedType::Unknown)
@@ -5901,7 +5876,7 @@ impl TypeChecker {
                         M::Get => return option_ty(ResolvedType::Ref(Box::new(val.clone()))),
                         M::Insert => return ResolvedType::Unit,
                         M::ContainsKey => {
-                            self.validate_dict_contains_key_call(&key, args, &arg_types, span);
+                            self.validate_dict_contains_key_call(&key, args, &arg_types);
                             return ResolvedType::Bool;
                         }
                     }

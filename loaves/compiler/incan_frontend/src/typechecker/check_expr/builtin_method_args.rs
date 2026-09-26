@@ -1,15 +1,14 @@
 //! Argument checks for the builtin list, dict and set methods (frozen or not).
 //!
-//! The checker types these methods from the method registry rather than from a declared signature, so nothing else
-//! checks their arguments: an extra argument, as in `counts.get(name, 0)`, was dropped from the generated call, a
-//! missing one, as in `items.remove()`, reached it, and a keyword argument was taken for a positional one (#1783).
+//! These methods are typed from the method registry rather than from a declared signature. Every argument is
+//! positional, and their number is the arity `method_arity` states; a keyword or unpacked argument, or another count,
+//! is refused (#1783).
 
 use crate::ast::{CallArg, Span};
 use crate::diagnostics::errors;
 use crate::symbols::ResolvedType;
 use crate::typechecker::TypeChecker;
 use crate::typechecker::helpers::collection_type_id;
-use incan_lang::lang::surface::dict_methods::{self, DictMethodId};
 use incan_lang::lang::surface::method_arity::builtin_collection_method_arity;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
@@ -17,9 +16,8 @@ impl TypeChecker {
     /// Refuse a call of a builtin collection method whose arguments the method does not take.
     ///
     /// Every argument of these methods is positional, and their number is the arity
-    /// [`builtin_collection_method_arity`] states. `dict.contains_key` is left to its own validation, which checks the
-    /// probe's type as well. A receiver that is not a builtin collection, or a method the registry does not name, is
-    /// not checked here.
+    /// [`builtin_collection_method_arity`] states. A receiver that is not a builtin collection, or a method the
+    /// registry does not name, is not checked here.
     pub(in crate::typechecker::check_expr) fn check_builtin_collection_method_args(
         &mut self,
         receiver: &ResolvedType,
@@ -37,9 +35,6 @@ impl TypeChecker {
         let Some(collection) = collection else {
             return;
         };
-        if collection == CollectionTypeId::Dict && dict_methods::from_str(method) == Some(DictMethodId::ContainsKey) {
-            return;
-        }
         let Some(arity) = builtin_collection_method_arity(collection, method) else {
             return;
         };
