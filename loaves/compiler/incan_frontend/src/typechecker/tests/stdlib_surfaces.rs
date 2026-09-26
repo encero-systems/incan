@@ -161,7 +161,7 @@ async def wrapped() -> Wrapped:
     assert_eq!(
         messages_with_code(&errors, "INCAN-T0107"),
         vec![
-            "Route handler 'pair' returns '(int, int)', which is not a response type",
+            "Route handler 'pair' returns 'Tuple[int, int]', which is not a response type",
             "Route handler 'many' returns 'List[str]', which is not a response type",
             "Route handler 'plain' returns 'Reply', which is not a response type",
             "Route handler 'flag' returns 'bool', which is not a response type",

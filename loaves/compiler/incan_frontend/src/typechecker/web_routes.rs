@@ -6,7 +6,7 @@
 //! either by a `{name}` segment of the route path or by a typed extractor. A program that broke either rule checked
 //! and then failed in the build, at the registration. This module makes both rules checker diagnostics.
 //!
-//! What crosses this boundary: the checker recognises the route decorator the same way lowering does (a stdlib
+//! What crosses this boundary: the checker recognizes the route decorator the same way lowering does (a stdlib
 //! `@rust.extern` function bound to the web macros crate, [`stdlib::STDLIB_WEB_MACROS_CRATE`]), reads the path
 //! literal the same way the macro does ([`route_capture_names`]), and classifies the declared types by what it can
 //! prove. A type it cannot classify, such as a Rust-origin type, is left to the build: the diagnostics here refuse only
@@ -71,7 +71,7 @@ fn route_path_literal(decorator: &Decorator) -> Option<&str> {
 
 /// Return whether a surface web type plays `role` in a handler signature.
 ///
-/// `Json` is both: a `Json[T]` parameter reads the body and a `Json[T]` return serialises the response. The other
+/// `Json` is both: a `Json[T]` parameter reads the body and a `Json[T]` return serializes the response. The other
 /// wrappers are one or the other, and the remaining surface types (`App`, the async primitives) are neither.
 fn surface_web_type_shape(id: SurfaceTypeId, role: RouteRole) -> RouteTypeShape {
     match (role, id) {
@@ -125,7 +125,7 @@ fn combine_part_shapes(parts: impl Iterator<Item = RouteTypeShape>, all_fit_mean
 impl TypeChecker {
     /// Return the function's `@route` decorator when it carries one.
     ///
-    /// The decorator is recognised by what it resolves to, not by how it was imported: a stdlib function named
+    /// The decorator is recognized by what it resolves to, not by how it was imported: a stdlib function named
     /// [`stdlib::STDLIB_WEB_ROUTE_DECORATOR`] that is `@rust.extern` and bound to
     /// [`stdlib::STDLIB_WEB_MACROS_CRATE`]. That is the same test lowering applies before emitting the passthrough
     /// attribute, so the checker and the emitter agree on which functions are route handlers.

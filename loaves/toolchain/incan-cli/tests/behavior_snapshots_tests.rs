@@ -1,5 +1,5 @@
-//! The `snapshots_*` areas of the behaviour-fixture family: twins of the retire-class codegen snapshot tests in
-//! `loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs`, and the behaviour proofs of the pattern fixes
+//! The `snapshots_*` areas of the behavior-fixture family: twins of the retire-class codegen snapshot tests in
+//! `loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs`, and the behavior proofs of the pattern fixes
 //! those twins surfaced (#1707, #1708, #1714).
 //!
 //! Every fixture under `loaves/compiler/incan_test_support/fixtures/behavior/snapshots_<topic>/` is a program with

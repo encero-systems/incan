@@ -138,6 +138,10 @@ Seeded catalog codes:
 - `INCAN-P0001`: Syntax error.
 - `INCAN-T0001`: Type checking error.
 - `INCAN-T0101`: Unreachable code — statements that follow a `return` in the same block. Reported as a warning, so the program still compiles.
+- `INCAN-T0102`: A method assigns to a field, or calls a method that changes one, while its receiver is a plain `self`; declare `mut self`.
+- `INCAN-T0103`: A `print` or `println` argument is a tuple, which has no printed form; print its elements.
+- `INCAN-T0104`: A `Tuple` or `tuple` annotation names no element types; write `tuple[int, str]`.
+- `INCAN-T0105`: A Rust associated call such as `HashMap.new()` leaves the owner's type arguments open and nothing later fixes them; write `HashMap.new[str, int]()` or annotate the binding.
 - `INCAN-T0106`: An `Fn`, `FnMut` or `FnOnce` marker from `std.rust` names more than two parameters, or bounds a nominal declaration; write at most two, or use `Callable1[int, R]` from `std.traits.callable`.
 - `INCAN-T0107`: A `@route` handler's declared return type is not a response type (`str`, `Json[...]`, `Html`, `Response`, or a wrapper deriving `IntoResponse`); return the value as text or JSON.
 - `INCAN-T0108`: A `@route` handler parameter that no `{segment}` of the path binds and no `Json[...]`/`Query[...]`/`Path[...]` extractor supplies; add the segment or read the value from the request.

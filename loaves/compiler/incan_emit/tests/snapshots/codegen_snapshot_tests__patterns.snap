@@ -123,10 +123,10 @@ fn test_pattern_tuple() {
         (0, _) => {
             let _ = println!("{}", "first is zero");
         }
-        (_, __incan_match_str_0) if incan_std_core::strings::str_eq(
-            &__incan_match_str_0,
-            &"answer",
-        ) => {
+        (
+            _,
+            __incan_match_str_0,
+        ) if incan_std_core::strings::str_eq(&__incan_match_str_0, &"answer") => {
             let _ = println!("{}", "second is answer");
         }
         _ => {
