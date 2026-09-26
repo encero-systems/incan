@@ -44,12 +44,19 @@ impl TypeChecker {
     ///
     /// Every statement block in the language routes through here — function, method, and property bodies, `if` /
     /// `elif` / `else` arms, loop bodies, `unsafe` bodies, and match-arm blocks — so the reachability rule applies
-    /// uniformly and nested blocks are covered without a separate traversal.
+    /// uniformly and nested blocks are covered without a separate traversal. The same boundary gives each block an
+    /// identity for the bindings it declares, so a binding nothing reads can be reported when its own block ends
+    /// (#1720): a block is where a local's readers stop being possible.
     pub fn check_statement_block(&mut self, body: &[Spanned<Statement>]) {
+        let enclosing_block = self.current_statement_block;
+        self.statement_block_serial += 1;
+        self.current_statement_block = self.statement_block_serial;
         self.report_unreachable_after_return(body);
         for stmt in body {
             self.check_statement(stmt);
         }
+        self.reject_unread_open_rust_generic_bindings_of_block(self.current_statement_block);
+        self.current_statement_block = enclosing_block;
     }
 
     /// Warn about the block's unreachable tail without checking its statements.

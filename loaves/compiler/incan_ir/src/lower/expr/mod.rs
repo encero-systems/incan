@@ -81,6 +81,46 @@ fn can_use_source_method_projection(receiver: &TypedExpr, dispatch: Option<&IrMe
             )))
 }
 
+/// Group an operator-shaped operand of `not`, unary `-` and `~` so the operator applies to the whole expression.
+///
+/// `not (a == b)` negates the comparison. The Rust-emission backend spells a prefix operator directly in front of the
+/// operand's own tokens, and a Rust prefix operator binds tighter than every infix operator, cast and range: an
+/// operator expression handed over bare re-associates as `!a == b`, which compiles and prints the wrong answer
+/// (#1763), and a cast re-associates as `-x as i64`. The IR's grouping form is a block with no statements and a value
+/// -- one operand wherever the emitter places it, in the operand's own type. The grouped shapes are the ones the
+/// emitter may render as an infix, cast, conditional or range expression: an operator expression, the numeric
+/// adapters and interop coercions (a cast, or the operand's own tokens unchanged), the value conversions `int`,
+/// `float` and `bool` (a cast or a comparison), an `if` or `match` expression, and a range. Every other shape (a name,
+/// a literal, a call, a method chain, a field, an index, a nested prefix operator) is already one operand and is left
+/// as written, so its emission does not change; the `Ref`/`RefMut` operators parenthesize their own operand in the
+/// emitter, and the `not in` desugarings negate a method call. Sibling of `grouped_conversion_operand`
+/// (`lower/expr/calls.rs`, #1746), which groups the argument of `str(...)` for the same reason; unify the two once both
+/// have landed.
+fn grouped_unary_operand(operand: TypedExpr) -> TypedExpr {
+    let operator_shaped = match &operand.kind {
+        IrExprKind::BinOp { .. }
+        | IrExprKind::Cast { .. }
+        | IrExprKind::NumericResize { .. }
+        | IrExprKind::InteropCoerce { .. }
+        | IrExprKind::If { .. }
+        | IrExprKind::Match { .. }
+        | IrExprKind::Range { .. } => true,
+        IrExprKind::BuiltinCall { func, .. } => matches!(func, BuiltinFn::Int | BuiltinFn::Float | BuiltinFn::Bool),
+        _ => false,
+    };
+    if !operator_shaped {
+        return operand;
+    }
+    let ty = operand.ty.clone();
+    TypedExpr::new(
+        IrExprKind::Block {
+            stmts: Vec::new(),
+            value: Some(Box::new(operand)),
+        },
+        ty,
+    )
+}
+
 impl AstLowering {
     /// Select the physical method target while retaining any checked trait evidence needed after lowering.
     pub fn project_resolved_method_target(
@@ -795,6 +835,31 @@ impl AstLowering {
         }
     }
 
+    /// Type a field read on a public dependency's nominal so a provider-owned union stays owned by the provider.
+    ///
+    /// The checker records the field's type with the provider's union alias expanded to its members, which a
+    /// consumer would otherwise lower as a structural, consumer-local union: a `match` on the field then narrows
+    /// through bare constructor patterns and the consumer emits an unused wrapper of its own (#1697). The provider's
+    /// field metadata names the owning crate, so its declared type is lowered in the provider's context and every
+    /// union position of the checked type is replaced by that carrier; other positions keep the checked inference. A
+    /// receiver that is not a public dependency's nominal, or a field the provider does not declare, leaves the type
+    /// unknown for the ordinary checked-type merge in `lower_expr_spanned`.
+    fn pub_dependency_field_read_type(&self, receiver: &TypedExpr, field: &str, span: ast::Span) -> IrType {
+        let Some(declared) = self
+            .public_library_for_method_receiver(receiver)
+            .and_then(|library| self.declared_field_type_for_imported_pub_type(&library, &receiver.ty, field))
+        else {
+            return IrType::Unknown;
+        };
+        let inferred = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(span))
+            .map(|ty| self.lower_resolved_type(ty))
+            .unwrap_or(IrType::Unknown);
+        Self::retain_provider_owned_union_representation(inferred, &declared)
+    }
+
     /// Return the library key from a canonical `pub::<library>::...` path.
     fn public_library_from_canonical_path(path: &[String]) -> Option<String> {
         if path.first().map(String::as_str) == Some("pub") {
@@ -900,7 +965,7 @@ impl AstLowering {
 
         let mut arms = Vec::with_capacity(race.arms.len());
         for arm in &race.arms {
-            let awaitable = self.lower_awaitable_operand(&arm.awaitable)?;
+            let awaitable = self.lower_expr_spanned(&arm.awaitable)?;
             let binding_ty = Self::race_binding_type_for_awaitable(&awaitable);
 
             self.push_scope();
@@ -929,44 +994,6 @@ impl AstLowering {
             ast::RaceForBody::Expr(expr) => self.lower_expr_spanned(expr),
             ast::RaceForBody::Block(stmts) => self.lower_race_arm_block_body(stmts),
         }
-    }
-
-    /// Lower an await operand, applying typechecker-proven wrapper delegation when a concrete `Awaitable[T]` wrapper
-    /// delegates to one awaitable field.
-    fn lower_awaitable_operand(&mut self, operand: &Spanned<ast::Expr>) -> Result<TypedExpr, LoweringError> {
-        let lowered = self.lower_expr_spanned(operand)?;
-        let Some(field) = self.awaitable_delegation_field_for_span(operand.span) else {
-            return Ok(lowered);
-        };
-        Ok(TypedExpr::new(
-            IrExprKind::Field {
-                object: Box::new(lowered),
-                field,
-            },
-            IrType::Unknown,
-        ))
-    }
-
-    /// Return the delegated field name for an expression whose resolved type is a wrapper `Awaitable[T]`.
-    fn awaitable_delegation_field_for_span(&self, span: ast::Span) -> Option<String> {
-        let type_info = self.type_info.as_ref()?;
-        let expr_ty = type_info.expr_type(span)?;
-        let type_name = match expr_ty {
-            incan_frontend::symbols::ResolvedType::Named(name)
-            | incan_frontend::symbols::ResolvedType::Generic(name, _) => name,
-            incan_frontend::symbols::ResolvedType::Ref(inner)
-            | incan_frontend::symbols::ResolvedType::RefMut(inner) => match inner.as_ref() {
-                incan_frontend::symbols::ResolvedType::Named(name)
-                | incan_frontend::symbols::ResolvedType::Generic(name, _) => name,
-                _ => return None,
-            },
-            _ => return None,
-        };
-        type_info
-            .expressions
-            .awaitable_delegation_fields
-            .get(type_name)
-            .cloned()
     }
 
     /// Lower a block race arm, treating a trailing expression statement as the arm value.
@@ -1732,7 +1759,7 @@ impl AstLowering {
                                 ast::UnaryOp::Not => UnaryOp::Not,
                                 ast::UnaryOp::Invert => UnaryOp::Not,
                             },
-                            operand: Box::new(operand),
+                            operand: Box::new(grouped_unary_operand(operand)),
                         },
                         ty,
                     )
@@ -2172,12 +2199,13 @@ impl AstLowering {
                         Some(struct_name) => self.resolve_field_alias(struct_name, f),
                         None => f.clone(),
                     };
+                    let field_ty = self.pub_dependency_field_read_type(&obj, f, expr_span);
                     (
                         IrExprKind::Field {
                             object: Box::new(obj),
                             field,
                         },
-                        IrType::Unknown,
+                        field_ty,
                     )
                 }
             }
@@ -2201,7 +2229,7 @@ impl AstLowering {
                         // Preserve explicit grouping: `await (x?)` should keep the grouped `Try` operand shape
                         // instead of applying await/try normalization for the unparenthesized `await x()?` case.
                         let parenthesized_operand = matches!(&inner.node, ast::Expr::Paren(_));
-                        let lowered_inner = self.lower_awaitable_operand(inner)?;
+                        let lowered_inner = self.lower_expr_spanned(inner)?;
                         if parenthesized_operand {
                             let ty = lowered_inner.ty.clone();
                             (IrExprKind::Await(Box::new(lowered_inner)), ty)

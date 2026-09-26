@@ -144,14 +144,16 @@ impl AstLowering {
                             methods_known: import.methods_known,
                         }
                     });
+                let canonical = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.resolved_import_identity(binding_name))
+                    .cloned();
+                let (name, alias) = self.projected_import_spelling(item, canonical.as_ref());
                 vec![super::super::super::decl::IrImportItem {
-                    name: item.name.clone(),
-                    alias: item.alias.clone(),
-                    canonical: self
-                        .type_info
-                        .as_ref()
-                        .and_then(|info| info.resolved_import_identity(binding_name))
-                        .cloned(),
+                    name,
+                    alias,
+                    canonical,
                     is_static: self
                         .type_info
                         .as_ref()
@@ -230,6 +232,39 @@ impl AstLowering {
             || matches!(declaring_module.as_slice(), [root] if root.as_str() == stdlib::STDLIB_ROOT)
     }
 
+    /// Spell a projected source import by the name its declaring module binds the declaration under.
+    ///
+    /// A projected symbol (function, partial, static) is spelled by its identity projection in every module; the
+    /// written item name never reaches the Rust. What the item's `name` still decides is whether this module binds
+    /// the projection itself: an item whose name is the declaration's own spelling does, while an `alias` declaration
+    /// (`pub scale_alias = alias scale`) is a second public name over a projection the declaration's own import binds.
+    /// A facade re-export under a new name (`pub from provider import calculate as facade_calculate`) is neither: a
+    /// consumer of `facade_calculate` binds the projection exactly as a direct import of `calculate` would, so the
+    /// item is spelled `calculate` and the written name becomes the alias this module exposes it under, the shape a
+    /// single-level `pub from … import … as …` already lowers to (#1710). Types and traits keep the written spelling:
+    /// their Rust name is the spelling, and a renamed facade type must stay reachable under its facade name.
+    fn projected_import_spelling(
+        &self,
+        item: &ast::ImportItem,
+        canonical: Option<&incan_semantics_core::CanonicalSymbolId>,
+    ) -> (String, Option<String>) {
+        let written = (item.name.clone(), item.alias.clone());
+        if !canonical.is_some_and(crate::decl::is_projected_source_symbol) {
+            return written;
+        }
+        let binding_name = item.alias.as_deref().unwrap_or(&item.name);
+        let Some(declared_name) = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.resolved_import_declared_name(binding_name))
+            .filter(|declared_name| *declared_name != item.name)
+        else {
+            return written;
+        };
+        let exposed_as = item.alias.clone().unwrap_or_else(|| item.name.clone());
+        (declared_name.to_string(), Some(exposed_as))
+    }
+
     /// Return concrete Rust function names needed to import one overload binding.
     fn emitted_overload_import_names(&self, binding_name: &str) -> Option<Vec<String>> {
         let info = self.type_info.as_ref()?;
@@ -257,5 +292,150 @@ impl AstLowering {
             .find(|overload| overload.info.emitted_name.as_deref() == Some(emitted_name))?
             .identity
             .clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::decl::IrImportItem;
+    use incan_frontend::ast::Program;
+    use incan_frontend::{lexer, parser, typechecker::TypeChecker};
+
+    /// Parse one module and keep fixture failures as ordinary test errors.
+    fn parse(source: &str, context: &str) -> Result<Program, String> {
+        let tokens = lexer::lex(source).map_err(|errors| format!("{context} lex failed: {errors:?}"))?;
+        parser::parse(&tokens).map_err(|errors| format!("{context} parse failed: {errors:?}"))
+    }
+
+    /// Check `module` against its dependencies and return the import items its lowering records.
+    fn lowered_import_items(
+        module_name: &str,
+        module: &Program,
+        dependencies: &[(&str, &Program)],
+    ) -> Result<Vec<IrImportItem>, String> {
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec![module_name.to_string()]));
+        checker
+            .check_with_imports(module, dependencies)
+            .map_err(|errors| format!("{module_name} should typecheck: {errors:?}"))?;
+        let mut lowering = AstLowering::new_with_type_info(checker.type_info().clone());
+        let ir = lowering
+            .lower_program(module)
+            .map_err(|errors| format!("{module_name} lowering failed: {errors:?}"))?;
+        Ok(ir
+            .declarations
+            .into_iter()
+            .filter_map(|decl| match decl.kind {
+                IrDeclKind::Import { items, .. } => Some(items),
+                _ => None,
+            })
+            .flatten()
+            .collect())
+    }
+
+    /// Return the one import item a module lowers, by the local name it binds.
+    fn item_bound_as(items: &[IrImportItem], local_name: &str) -> Result<IrImportItem, String> {
+        items
+            .iter()
+            .find(|item| item.source_binding_name() == local_name)
+            .cloned()
+            .ok_or_else(|| format!("no import item binds `{local_name}`: {items:?}"))
+    }
+
+    /// The second hop of a renamed re-export chain lowers exactly like the first hop (#1710).
+    ///
+    /// `public_api` imports `facade_calculate`, the facade's rename of `provider.calculate`. Spelled as written, the
+    /// item read as an `alias` declaration and the module bound only the alias name, never the projection the next
+    /// module imports. Spelled by the declaring module's name with the written name as the alias, it is the shape a
+    /// single-level `pub from provider import calculate as facade_calculate` lowers to.
+    #[test]
+    fn renamed_reexport_hop_is_spelled_by_its_declaring_module_issue1710() -> Result<(), String> {
+        let provider = parse(
+            "pub def calculate(value: int) -> int:\n  return value + 1\n",
+            "provider",
+        )?;
+        let facade = parse("pub from provider import calculate as facade_calculate\n", "facade")?;
+        let public_api = parse(
+            "pub from facade import facade_calculate as exported_calculate\n",
+            "public_api",
+        )?;
+
+        let facade_items = lowered_import_items("facade", &facade, &[("provider", &provider)])?;
+        let first_hop = item_bound_as(&facade_items, "facade_calculate")?;
+        assert_eq!(first_hop.name, "calculate");
+        assert_eq!(first_hop.alias.as_deref(), Some("facade_calculate"));
+
+        let public_api_items = lowered_import_items(
+            "public_api",
+            &public_api,
+            &[("provider", &provider), ("facade", &facade)],
+        )?;
+        let second_hop = item_bound_as(&public_api_items, "exported_calculate")?;
+        assert_eq!(
+            second_hop.name, "calculate",
+            "the hop is spelled by the name the provider binds the declaration under"
+        );
+        assert_eq!(second_hop.alias.as_deref(), Some("exported_calculate"));
+        assert_eq!(
+            second_hop
+                .canonical
+                .as_ref()
+                .map(|identity| identity.declaration_name.as_str()),
+            Some("calculate"),
+            "the identity stays the provider's"
+        );
+        assert_eq!(
+            second_hop.emitted_name(),
+            first_hop.emitted_name(),
+            "both hops bind one projection"
+        );
+
+        let consumer = parse(
+            "from public_api import exported_calculate\n\ndef run() -> int:\n  return exported_calculate(41)\n",
+            "consumer",
+        )?;
+        let consumer_items = lowered_import_items(
+            "consumer",
+            &consumer,
+            &[
+                ("provider", &provider),
+                ("facade", &facade),
+                ("public_api", &public_api),
+            ],
+        )?;
+        let unaliased = item_bound_as(&consumer_items, "exported_calculate")?;
+        assert_eq!(unaliased.name, "calculate");
+        assert_eq!(
+            unaliased.alias.as_deref(),
+            Some("exported_calculate"),
+            "an import written without an alias still exposes the written name, never the declaring one"
+        );
+        Ok(())
+    }
+
+    /// An imported `alias` declaration keeps its own spelling: the declaring module binds it under that name.
+    #[test]
+    fn imported_alias_declaration_keeps_its_spelling_issue1710() -> Result<(), String> {
+        let provider = parse(
+            "pub def scale(value: int) -> int:\n  return value * 2\n\npub scale_alias = alias scale\n",
+            "provider",
+        )?;
+        let consumer = parse(
+            "from provider import scale, scale_alias\n\ndef run() -> int:\n  return scale(1) + scale_alias(2)\n",
+            "consumer",
+        )?;
+        let items = lowered_import_items("consumer", &consumer, &[("provider", &provider)])?;
+        let alias = item_bound_as(&items, "scale_alias")?;
+        assert_eq!(alias.name, "scale_alias");
+        assert_eq!(alias.alias, None);
+        assert_eq!(
+            alias
+                .canonical
+                .as_ref()
+                .map(|identity| identity.declaration_name.as_str()),
+            Some("scale")
+        );
+        Ok(())
     }
 }

@@ -1,0 +1,19 @@
+# behavior: not and unary minus over an operator expression apply to the whole expression rather than to its first operand
+# retires: loaves/compiler/incan_ir/src/lower/tests/unary_operand_grouping.rs::prefix_operator_over_an_operator_expression_lowers_a_grouped_operand_issue1763
+# expect-stdout:
+#   true
+#   true
+#   -5
+#   true
+#   false
+#   false
+#   -4
+
+def main() -> None:
+    println(not (1 == 2))
+    println(not 1 == 2)
+    println(-(2 + 3))
+    println(not (true and false))
+    println(not (1 < 2 or false))
+    println(not bool(5))
+    println(~(1 | 2))

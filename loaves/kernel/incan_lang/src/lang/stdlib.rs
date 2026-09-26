@@ -17,6 +17,25 @@ pub const INCAN_STD_NAMESPACE: &str = "__incan_std";
 /// `std.web` module name.
 pub const STDLIB_WEB: &str = "web";
 
+/// `std.web.routing.route`, the decorator that registers a function as an HTTP route handler.
+///
+/// The checker recognizes the decorator by this name together with its backing crate
+/// ([`STDLIB_WEB_MACROS_CRATE`]) rather than by import spelling, so `@route`, `@web.route` and
+/// `@std.web.routing.route` are one decorator once the import resolves.
+pub const STDLIB_WEB_ROUTE_DECORATOR: &str = "route";
+
+/// The proc-macro crate that backs `std.web.routing.route`.
+///
+/// A `@rust.extern` stdlib function bound to this crate is emitted as a passthrough Rust attribute; the checker uses
+/// the same binding to know which decorated functions are route handlers and to check their signatures.
+pub const STDLIB_WEB_MACROS_CRATE: &str = "incan_web_macros";
+
+/// `std.web.macros.IntoResponse`, the derive that makes a wrapper type usable as a route handler's return type.
+pub const STDLIB_WEB_INTO_RESPONSE_TRAIT: &str = "IntoResponse";
+
+/// `std.web.macros.FromRequestParts`, the derive that makes a wrapper type usable as a route handler parameter.
+pub const STDLIB_WEB_FROM_REQUEST_PARTS_TRAIT: &str = "FromRequestParts";
+
 /// `std.reflection` module name.
 pub const STDLIB_REFLECTION: &str = "reflection";
 
@@ -414,7 +433,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         facet: Some(facets::WEB),
         extra_crate_deps: &[
             StdlibExtraCrateDep {
-                crate_name: "incan_web_macros",
+                crate_name: STDLIB_WEB_MACROS_CRATE,
                 source: StdlibExtraCrateSource::Path("crates/incan_web_macros"),
                 features: &[],
             },

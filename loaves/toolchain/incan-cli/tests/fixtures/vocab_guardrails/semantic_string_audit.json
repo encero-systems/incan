@@ -394,7 +394,7 @@
       "path": "loaves/compiler/incan_frontend/src/typechecker/check_decl.rs",
       "category": "declaration-level stdlib, derive, and checked registry compatibility",
       "expected_count": 24,
-      "expected_fingerprint": "0xb3c5a0a6bf8d7881"
+      "expected_fingerprint": "0x5a9c355d946356f6"
     },
     {
       "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/access.rs",
@@ -440,9 +440,9 @@
     },
     {
       "path": "loaves/compiler/incan_frontend/src/typechecker/check_stmt.rs",
-      "category": "statement-level runtime exception compatibility",
-      "expected_count": 1,
-      "expected_fingerprint": "0xe98b9ff171b2c549"
+      "category": "statement-level runtime exception compatibility and the discard binding `_`",
+      "expected_count": 2,
+      "expected_fingerprint": "0x1a35fc711e742043"
     },
     {
       "path": "loaves/compiler/incan_frontend/src/typechecker/collect.rs",

@@ -256,7 +256,7 @@ impl Drawable for Square {
     }
 }
 pub trait Resizable {
-    fn resize(&self, factor: f64);
+    fn resize(&mut self, factor: f64);
 }
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Carton {
@@ -300,7 +300,7 @@ impl incan_std_core::reflection::HasFieldValueReflection for Carton {
     }
 }
 impl Carton {
-    pub fn resize(&self, factor: f64) {
+    pub fn resize(&mut self, factor: f64) {
         self.width = self.width * factor;
         self.height = self.height * factor;
         self.depth = self.depth * factor;
@@ -310,7 +310,7 @@ impl Carton {
     }
 }
 impl Resizable for Carton {
-    fn resize(&self, factor: f64) {
+    fn resize(&mut self, factor: f64) {
         self.width = self.width * factor;
         self.height = self.height * factor;
         self.depth = self.depth * factor;

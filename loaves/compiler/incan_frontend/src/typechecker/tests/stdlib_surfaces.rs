@@ -64,6 +64,277 @@ def bad_query() -> None:
     );
 }
 
+// ---- #1721: a route handler returns a response type ----
+
+/// Collect the messages of the diagnostics carrying `code`, in report order.
+fn messages_with_code(errors: &[CompileError], code: &str) -> Vec<String> {
+    errors
+        .iter()
+        .filter(|error| error.stable_code() == Some(code))
+        .map(|error| error.message.clone())
+        .collect()
+}
+
+#[test]
+fn route_handler_returning_int_is_refused_with_the_response_types_named_issue1721() {
+    // The program from #1721: both handlers compute a number and declare it as the response.
+    let source = r#"
+import std.async
+from std.web import route, GET, POST
+
+@route("/posts/{year}/{month}", methods=[GET])
+async def get_posts(year: int, month: int) -> int:
+    return year + month
+
+@route("/users/{id}", methods=[POST])
+async def create_user(id: int) -> int:
+    return id
+
+async def main() -> None:
+    println(await create_user(7))
+"#;
+    let errors = check_str_err(source, "a route handler returning int must be refused");
+    assert_eq!(
+        messages_with_code(&errors, "INCAN-T0107"),
+        vec![
+            "Route handler 'get_posts' returns 'int', which is not a response type",
+            "Route handler 'create_user' returns 'int', which is not a response type",
+        ],
+        "one report per handler, in source order; got {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+    let Some(refused) = errors.iter().find(|error| error.stable_code() == Some("INCAN-T0107")) else {
+        panic!("the refusal must carry its stable code");
+    };
+    assert!(
+        refused
+            .hints
+            .iter()
+            .any(|hint| hint.contains("'str'") && hint.contains("'Json[...]'") && hint.contains("str(value)")),
+        "the hint names the response types and the text form, got {:?}",
+        refused.hints
+    );
+}
+
+#[test]
+fn route_handler_non_response_return_shapes_are_refused_issue1721() {
+    // A tuple of numbers, a list, a plain model and a bool have no response form either; each is refused once,
+    // through the canonical decorator path as through the prelude re-export, and the `Result` whose sides are
+    // responses is not. A wrapper that derives `IntoResponse` counts as a response.
+    let source = r#"
+import std.async
+from std.web import route, Json, IntoResponse
+from std.serde import json
+
+@derive(json)
+model Reply:
+  value: str
+
+@derive(IntoResponse)
+type Wrapped = newtype str
+
+@route("/pair")
+async def pair() -> tuple[int, int]:
+    return (1, 2)
+
+@route("/many")
+async def many() -> list[str]:
+    return ["a"]
+
+@route("/plain")
+async def plain() -> Reply:
+    return Reply(value="a")
+
+@std.web.routing.route("/flag")
+async def flag() -> bool:
+    return True
+
+@route("/either")
+async def either() -> Result[Json[Reply], str]:
+    return Ok(Json(Reply(value="a")))
+
+@route("/wrapped")
+async def wrapped() -> Wrapped:
+    return Wrapped("a")
+"#;
+    let errors = check_str_err(source, "non-response return shapes must be refused");
+    assert_eq!(
+        messages_with_code(&errors, "INCAN-T0107"),
+        vec![
+            "Route handler 'pair' returns 'Tuple[int, int]', which is not a response type",
+            "Route handler 'many' returns 'List[str]', which is not a response type",
+            "Route handler 'plain' returns 'Reply', which is not a response type",
+            "Route handler 'flag' returns 'bool', which is not a response type",
+        ],
+        "got {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn route_handlers_returning_response_types_are_accepted_issue1721() {
+    // The corrected program from #1721 beside every documented response type, through the prelude re-export and
+    // the canonical decorator path alike.
+    assert_check_ok(
+        r#"
+import std.async
+from std.web import route, GET, POST, Json, Html, Response
+from std.serde import json
+
+@derive(json)
+model Reply:
+  value: str
+
+@route("/posts/{year}/{month}", methods=[GET])
+async def get_posts(year: int, month: int) -> str:
+    total = year + month
+    return str(total)
+
+@route("/users/{id}", methods=[POST])
+async def create_user(id: int) -> str:
+    return str(id)
+
+@std.web.routing.route("/reply/{id}")
+async def reply(id: int) -> Json[Reply]:
+    return Json(Reply(value=str(id)))
+
+@route("/page")
+async def page() -> Html:
+    return Html("<p>hi</p>")
+
+@route("/health")
+async def health() -> Response:
+    return Response.ok()
+
+@route("/nothing")
+async def nothing() -> None:
+    pass
+
+async def main() -> None:
+    println(await create_user(7))
+"#,
+    );
+}
+
+// ---- #1722: a route handler parameter is bound by the path or read from the request ----
+
+#[test]
+fn route_handler_parameter_without_a_segment_is_refused_with_the_bound_path_issue1722() {
+    // The program from #1722: `id` is neither a `{segment}` of `/things` nor an extractor.
+    let source = r#"
+import std.async
+from std.web import route, POST
+
+@route("/things", methods=[POST])
+async def create(id: int) -> str:
+    return str(id)
+
+async def main() -> None:
+    println(await create(7))
+"#;
+    let errors = check_str_err(source, "an unbound route parameter must be refused");
+    assert_eq!(
+        messages_with_code(&errors, "INCAN-T0108"),
+        vec!["Route handler 'create' has a parameter 'id' that no segment of the path '/things' binds"],
+        "got {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+    let Some(refused) = errors.iter().find(|error| error.stable_code() == Some("INCAN-T0108")) else {
+        panic!("the refusal must carry its stable code");
+    };
+    assert!(
+        refused.hints.iter().any(|hint| hint.contains("'/things/{id}'")),
+        "the hint spells the path with the segment added, got {:?}",
+        refused.hints
+    );
+    assert!(
+        !refused.notes.iter().any(|note| note.starts_with("The path binds")),
+        "a path with no captures lists none, got {:?}",
+        refused.notes
+    );
+}
+
+#[test]
+fn route_handler_parameter_misspelled_against_the_captures_lists_them_issue1722() {
+    // `month` is captured but the handler spells `mon`; the report names what the path does bind. The `Query`
+    // parameter and the extractor-derived wrapper need no segment.
+    let source = r#"
+import std.async
+from std.web import route, Query, FromRequestParts
+from std.serde import json
+
+@derive(json)
+model Filter:
+  q: str
+
+@derive(FromRequestParts)
+type Token = newtype str
+
+@route("/posts/{year}/{month}")
+async def get_posts(year: int, mon: int, query: Query[Filter], token: Token) -> str:
+    return str(year)
+"#;
+    let errors = check_str_err(source, "a parameter the captures do not spell must be refused");
+    assert_eq!(
+        messages_with_code(&errors, "INCAN-T0108"),
+        vec![
+            "Route handler 'get_posts' has a parameter 'mon' that no segment of the path '/posts/{year}/{month}' binds"
+        ],
+        "got {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+    let Some(refused) = errors.iter().find(|error| error.stable_code() == Some("INCAN-T0108")) else {
+        panic!("the refusal must carry its stable code");
+    };
+    assert!(
+        refused
+            .notes
+            .iter()
+            .any(|note| note == "The path binds 'year', 'month'"),
+        "got {:?}",
+        refused.notes
+    );
+}
+
+#[test]
+fn route_handler_parameters_bound_by_segments_or_extractors_are_accepted_issue1722() {
+    // The corrected program from #1722, a wildcard capture, an unused typed `Path`, and the extractor wrappers.
+    assert_check_ok(
+        r#"
+import std.async
+from std.web import route, POST, Json, Query, Path
+from std.serde import json
+
+@derive(json)
+model Search:
+  q: str
+
+@derive(json)
+model Update:
+  name: str
+
+@route("/things/{id}", methods=[POST])
+async def create(id: int) -> str:
+    return str(id)
+
+@route("/files/{*path}")
+async def file(path: str) -> str:
+    return path
+
+@route("/typed/{id}")
+async def typed(_: Path[int]) -> str:
+    return "typed"
+
+@route("/mixed/{id}", methods=[POST])
+async def mixed(id: int, query: Query[Search], body: Json[Update]) -> Json[Update]:
+    return Json(Update(name=f"{id} {query.q} {body.name}"))
+
+async def main() -> None:
+    println(await create(3))
+"#,
+    );
+}
+
 fn provider_plan_for_sdk_module(
     module: &[&str],
     enabled: bool,
