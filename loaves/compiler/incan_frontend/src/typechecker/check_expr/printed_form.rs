@@ -22,8 +22,8 @@ impl TypeChecker {
     /// Refuse one displayed operand whose checked type has no printed form.
     ///
     /// `position` is where the source displays it and words the message; `operand` names the value in the message
-    /// when the source spells it as a plain name. Every value with a printed form, and every type the checker cannot
-    /// classify (a type parameter, a Rust type, an unknown), is left alone.
+    /// when the source spells it as a plain name or as `self`. Every value with a printed form, and every type the
+    /// checker cannot classify (a type parameter, a Rust type, an unknown), is left alone.
     pub(in crate::typechecker::check_expr) fn check_display_operand(
         &mut self,
         position: DisplayPosition<'_>,
@@ -36,6 +36,7 @@ impl TypeChecker {
         };
         let name = match &operand.node {
             Expr::Ident(name) => Some(name.as_str()),
+            Expr::SelfExpr => Some("self"),
             _ => None,
         };
         let error = errors::value_has_no_printed_form(position, name, value, operand.span);

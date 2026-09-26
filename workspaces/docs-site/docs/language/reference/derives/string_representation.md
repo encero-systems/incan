@@ -29,7 +29,7 @@ def main() -> None:
 ## Display (Automatic, customizable with `__str__`)
 
 - **Format**: `{value}`
-- **Without `__str__`**: a model or class has no display text; displaying it with `print`, `println`, `str` or an f-string `{value}` is refused at check time with `INCAN-T0103` (see [Display](../strings.md#display))
+- **Without `__str__`**: a model or class whose type defines no `__str__` and adopts neither `Display` nor `Error` has no display text; displaying it with `print`, `println`, `str` or an f-string `{value}` is refused at check time with `INCAN-T0103` (see [Display](../strings.md#display))
 - **Custom behavior**: define `__str__(self) -> str`
 - **Conflict rule**: if you define `__str__`, do not also `@derive(Display)`
 

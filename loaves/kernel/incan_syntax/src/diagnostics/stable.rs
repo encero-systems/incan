@@ -446,7 +446,7 @@ const RESERVED_COMPILER_NAME: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     severity: "error",
     phase: "typecheck",
     summary: "A declaration, binding, parameter or import alias is named with the `__incan_` prefix, which is reserved for the names the compiler generates.",
-    explanation: "The compiler names the items and locals it generates with the `__incan_` prefix, such as the original function a decorator wraps. A source name with the same prefix could collide with one of them and stop the build on a duplicate definition, so every name a program declares or binds must start with something else: functions, statics, constants, types, fields, methods, parameters, type parameters, local and pattern bindings, and import aliases. The one exception is `__incan_new`, the constructor hook the standard library declares on its own types, which the compiler looks up by that name.",
+    explanation: "The compiler names the items and locals it generates with the `__incan_` prefix, such as the original function a decorator wraps. A source name with the same prefix could collide with one of them and stop the build on a duplicate definition, so every name a program declares or binds must start with something else: functions, statics, constants, types, fields, methods, parameters, type parameters, local and pattern bindings, and import aliases. A method named `__incan_new` is exempt on any type: it is the type's constructor hook, which the compiler looks up by that name.",
     examples: &[
         "@preserve()\npub def target() -> int:\n    return 40\n\npub def __incan_original_target() -> int:\n    return 2",
     ],

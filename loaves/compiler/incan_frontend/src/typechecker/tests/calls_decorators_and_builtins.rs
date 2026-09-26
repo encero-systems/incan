@@ -1295,9 +1295,39 @@ def main() -> None:
         refused[3].1
     );
     assert!(
+        refused[9]
+            .1
+            .iter()
+            .any(|hint| hint.contains(":? format spec") && !hint.contains("{value")),
+        "an unnamed operand's remedy names no binding the program lacks, got: {:?}",
+        refused[9].1
+    );
+    assert!(
         refused[0].1.iter().any(|hint| hint.contains("match or isinstance")),
         "a union value's remedy narrows it first, got: {:?}",
         refused[0].1
+    );
+    Ok(())
+}
+
+#[test]
+fn a_model_printing_itself_is_named_self_in_the_refusal_issue1748() -> Result<(), Box<dyn std::error::Error>> {
+    let refused = printed_form_refusals(
+        r#"
+model Point:
+    x: int
+
+    def show(self) -> None:
+        println(self)
+"#,
+    )?;
+    let [(message, hints)] = refused.as_slice() else {
+        return Err(format!("expected one refusal, got {refused:?}").into());
+    };
+    assert_eq!(message, "'println' cannot print the Point value 'self'");
+    assert!(
+        hints.iter().any(|hint| hint.contains("f\"{self:?}\"")),
+        "the structure form is spelled with `self`, got: {hints:?}"
     );
     Ok(())
 }

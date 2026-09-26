@@ -4477,9 +4477,9 @@
           "twin": "dies",
           "dies": "fail-closed guard of the retiring crate: the test hand-strips or omits the checker's facts (no type info at all for a class) and asserts lowering refuses to guess; no checked program reaches lowering without them, so there is nothing a program can show."
         },
-        "decorated_function_original_name_collision_uses_distinct_registry_keys": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/decorated_function_beside_original_named_function.incn",
-          "notes": "The registry keys die with the crate; the fixture declares `__incan_original_target` beside a decorated `target` and calls both."
+        "decorated_function_original_uses_a_generated_registry_key": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/refused_function_named_like_a_decorated_original.incn",
+          "notes": "Asserts that a decorated function's generated original registers under a generated key and never as a source declaration; the registry keys die with the crate. The collision those keys guarded can no longer be written: a source name with the `__incan_` prefix is refused (INCAN-T0111), which the fixture proves on the colliding program."
         },
         "decorator_declared_result_type_follows_the_resolved_declaration_issue1453": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/decorator_declared_surface_issue1453.incn",

@@ -2636,9 +2636,10 @@ impl UnprintableValue<'_> {
 ///
 /// `print`/`println` arguments, the argument of `str(...)` and f-string `{value}` parts share one display rule, so the
 /// same value is refused in all three; `position` words the message for the position the source used. `name` is the
-/// operand when the source spells it as a plain name, `None` for any other expression. The hint names what does
-/// display: a narrowed union member, a collected generator's list, a called function's result, decoded bytes, or a
-/// type's `__str__` (and its `{value:?}` structure meanwhile). `INCAN-T0103` is its stable code.
+/// operand when the source spells it as a plain name (or `self`), `None` for any other expression. The hint names what
+/// does display: a narrowed union member, a collected generator's list, a called function's result, decoded bytes, or
+/// a type's `__str__` (and its `{value:?}` structure, spelled with the operand's own name when it has one).
+/// `INCAN-T0103` is its stable code.
 pub fn value_has_no_printed_form(
     position: DisplayPosition<'_>,
     name: Option<&str>,
@@ -2663,9 +2664,14 @@ pub fn value_has_no_printed_form(
             "Decode it to text first with decode(), or display its length with len(...)".to_string()
         }
         UnprintableValue::Nominal { type_name } => {
-            let structure = format!("f\"{{{}:?}}\"", name.unwrap_or("value"));
+            // Spell the structure form with the operand's own name; any other expression gets the format spec alone,
+            // so the hint never names a binding the program does not have.
+            let structure = match name {
+                Some(name) => format!("with f\"{{{name}:?}}\""),
+                None => "by adding the :? format spec to its f-string part".to_string(),
+            };
             format!(
-                "Define __str__(self) -> str on '{type_name}' to give it a printed form, or interpolate its structure with {structure}"
+                "Define __str__(self) -> str on '{type_name}' to give it a printed form, or interpolate its structure {structure}"
             )
         }
     };

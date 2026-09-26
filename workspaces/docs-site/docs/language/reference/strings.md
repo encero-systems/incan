@@ -81,10 +81,11 @@ See [String representation](./derives/string_representation.md) for how a type p
 
 | Value | Displayed text |
 | --- | --- |
-| `str` | The text itself, unquoted |
+| `str`, `FrozenStr` | The text itself, unquoted |
 | `int` and the exact-width integers | Decimal digits |
 | `bool` | `true` or `false` |
-| `float` | Python's spelling, below |
+| `float` | Decimal digits with a decimal point or an exponent, below |
+| `f32`, `f64` | The shortest digits that round-trip, below |
 | A type that defines `__str__` | What `__str__` returns |
 | A value enum | The variant's value |
 | Tuple | `(10, 20)` |
@@ -93,10 +94,14 @@ See [String representation](./derives/string_representation.md) for how a type p
 | `set` | `{1, 2}` |
 | `Option` | `Some(1)` or `None` |
 | `Result` | `Ok(2)` or `Err("bad")` |
+| `FrozenList`, `FrozenSet`, `FrozenDict` | Each element's own display text, unquoted: `[a, b]`, `{1, 2}`, `{a: 1}` |
+| `FrozenBytes` | A byte literal, `b"abc"`, with `\\`, `\"` and every byte outside printable ASCII escaped (`\x00`) |
 
-Inside a tuple, list, dict, set, `Option` or `Result`, a `str` element or payload is quoted (`["a", "b"]`), and the entry order of a set or a dict is unspecified.
+Inside a tuple, list, dict, set, `Option` or `Result`, every element or payload displays as its structure, the `{value:?}` form, whatever its own display text: a `str` is quoted (`["a", "b"]`), a `float` keeps its decimal point and uses an unsigned exponent from `1e16` up and below `1e-4` (`[100.0, 1e16]`), a model or class shows its fields even when its type defines `__str__` (`[Point { x: 1, y: 2 }]`), and an enum value shows its variant (`[Red]`). The entry order of a set or a dict is unspecified.
 
-A `float` renders as Python spells it: always visibly a float. An integral value keeps its decimal point (`100.0`, never `100`), the shortest digits that round-trip are used (`1.5`, `0.30000000000000004`), positional notation holds while the magnitude is at least `1e-4` and below `1e16` (`10000000000.0`) and switches to an exponent with an explicit sign and at least two digits outside that range (`1e+16`, `1.5e-07`), and the non-finite values are `inf`, `-inf`, and `nan`. The exact `f32`/`f64` carriers keep Rust's own `Display`.
+Inside a `FrozenList`, `FrozenSet` or `FrozenDict`, a `float` element prints its shortest round-trip digits with no forced decimal point (`[100, 1.5]`).
+
+A `float` always shows a decimal point or an exponent. An integral value keeps its decimal point (`100.0`), the shortest digits that round-trip are used (`1.5`, `0.30000000000000004`), positional notation holds while the magnitude is at least `1e-4` and below `1e16` (`10000000000.0`), outside that range the value uses an exponent with an explicit sign and at least two digits (`1e+16`, `1.5e-07`), and the non-finite values are `inf`, `-inf` and `nan`. An `f32` or `f64` prints the shortest digits that round-trip in positional notation, with no forced decimal point (`100`, `1.5`, `0.0000001`), and its non-finite values are `inf`, `-inf` and `NaN`.
 
 A value with no printed form is refused at check time with `INCAN-T0103`, in every display position: a union value (`int | str`), a `Generator`, a function, `bytes`, and a model or class whose type defines no `__str__` and adopts neither `Display` nor `Error`. A member bound by narrowing a union displays as its own type (see [Union types](./union_types.md)).
 

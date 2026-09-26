@@ -1,0 +1,20 @@
+# behavior: a private function spelled like a decorated function's generated original is refused at check time, so the two can never collide
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::decorated_function_original_uses_a_generated_registry_key
+# expect-diagnostic: INCAN-T0111
+
+def preserve[F]() -> ((F) -> F):
+    return (func) => func
+
+
+def __incan_original_target() -> int:
+    return 1
+
+
+@preserve()
+def target() -> int:
+    return 2
+
+
+def main() -> None:
+    println(__incan_original_target())
+    println(target())
