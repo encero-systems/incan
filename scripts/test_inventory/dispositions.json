@@ -2497,6 +2497,10 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/model_field_of_newtype_over_str.incn",
           "notes": "Asserts the derive list lowering gives a newtype (Clone when the underlying type implements it, Debug unless it lacks it, Copy for Copy types). The behavior, a model holding a newtype over str building and reading it back, is carried by the named fixture (#1754)."
         },
+        "rust_derive_path_of_an_automatic_derive_is_emitted_once_issue1754": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/newtype_with_rust_derived_clone_path.incn",
+          "notes": "Asserts that a `@rust.derive` path to a derive a newtype already carries (`std::clone::Clone`) joins the derive list once. The behavior, such a newtype building and a model holding it, is carried by the named fixture (#1754)."
+        },
         "ord_derive_adds_its_prerequisites_in_table_order": {
           "twin": "dies",
           "dies": "asserts the textual order of the lowered derive list (`Ord`, `PartialOrd`, `Eq`, `PartialEq`), a generated-Rust spelling that dies with the Rust-source backend (#654); the implication itself is the incan_lang registry table, tested there (keep)."

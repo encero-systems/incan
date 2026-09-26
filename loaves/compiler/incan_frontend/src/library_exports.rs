@@ -1175,6 +1175,9 @@ fn checked_preset_path(expr: &Expr) -> Vec<String> {
 }
 
 /// Build checked export metadata for a function or callable-valued decorated function binding.
+///
+/// A type parameter exports its declared bounds as spelled in source, then the `Eq` and `Hash` bounds the checker
+/// inferred for it because the body hashes it (#1758).
 fn checked_function_export(
     function: &FunctionDecl,
     checker: &TypeChecker,
@@ -1213,7 +1216,15 @@ fn checked_function_export(
     Some(CheckedFunctionExport {
         name: function.name.clone(),
         emitted_name,
-        type_params: checked_type_params(&function.type_params, checker),
+        type_params: checked_type_params(&function.type_params, checker)
+            .into_iter()
+            .map(|mut type_param| {
+                type_param.bounds.extend(map_type_bound_infos(
+                    checker.inferred_type_param_bounds(&function.name, &type_param.name),
+                ));
+                type_param
+            })
+            .collect(),
         param_defaults: function
             .params
             .iter()

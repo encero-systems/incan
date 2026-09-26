@@ -271,7 +271,7 @@ impl TypeChecker {
         if !self.annotation_reports_unhashable_member(hinted_key_ty.as_ref())
             && let Some(span) = first_key_span
         {
-            self.require_hashable_collection_value(HashedCollectionRole::DictKey, &key_ty, span);
+            self.refuse_unhashable_collection_member(HashedCollectionRole::DictKey, &key_ty, span);
         }
 
         dict_ty(key_ty, val_ty)
@@ -303,7 +303,7 @@ impl TypeChecker {
         let elem_ty = if let Some(first) = elems.first() {
             let elem_ty = self.check_expr(first);
             if !annotation_reported {
-                self.require_hashable_collection_value(HashedCollectionRole::SetElement, &elem_ty, first.span);
+                self.refuse_unhashable_collection_member(HashedCollectionRole::SetElement, &elem_ty, first.span);
             }
             elem_ty
         } else {

@@ -4,7 +4,7 @@
 
 All APIs that accept a future require the future to produce the declared result type. Public spawned tasks and race arms also require transferable, runtime-owned values through the `Send` and `Static` bounds shown in the signatures.
 
-A parameter bounded by `RuntimeFuture[T]` (`task` of `spawn`, `timeout`, `timeout_ms` and `race_timeout`, `awaitable` of `arm`) takes a task: the result of calling an `async def`, a `JoinHandle[T]`, or another awaitable value. Any other argument, including a function value and a value of a type that is not awaitable, is refused at check time with `INCAN-T0115`.
+A parameter bounded by `RuntimeFuture[T]` (`task` of `spawn`, `timeout`, `timeout_ms` and `race_timeout`, `awaitable` of `arm`) takes a task: a direct call of an `async def` written as the argument, a `JoinHandle[T]`, or another awaitable value. Any other argument is refused at check time with `INCAN-T0115`: a function value, a value of a type that is not awaitable, and a name bound to the result of an `async def` call, which has the call's result type.
 
 ```incan
 import std.async
@@ -17,10 +17,12 @@ def compute() -> int:
     return 41
 
 async def main() -> None:
-    first = spawn(work())   # accepted: work() is a task
+    first = spawn(work())   # accepted: work() is a direct call of an async def
     second = spawn(work)    # refused: INCAN-T0115, 'work' is a function, not a task
     third = spawn(compute)  # refused: INCAN-T0115, 'compute' is a function that is not `async def`
-    fourth = spawn(41)      # refused: INCAN-T0115, type 'int' is not a task
+    fourth = spawn(41)      # refused: INCAN-T0115, this argument has type 'int', which is not a task
+    pending = work()
+    fifth = spawn(pending)  # refused: INCAN-T0115, this argument has type 'int', which is not a task
 ```
 
 ## Cancellation terms

@@ -848,7 +848,7 @@ impl TypeChecker {
                             _ => ResolvedType::Unknown,
                         };
                         // `set(source)` hashes every item of its source (#1758).
-                        self.require_hashable_collection_value(
+                        self.refuse_unhashable_collection_member(
                             HashedCollectionRole::SetElement,
                             &source_elem_ty,
                             arg_expr.span,

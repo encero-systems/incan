@@ -148,7 +148,7 @@ Seeded catalog codes:
 - `INCAN-T0109`: `/`, `//`, `%` or `**` applied to values of a type parameter, which no bound can support; write the function for `int` or `float`, or bound the parameter by a trait defining the operator's hook.
 - `INCAN-T0113`: A `model` or `class` field, or an `enum` variant payload, whose type does not implement `Clone` and `Debug`, the derives those declarations carry automatically (for example a `JoinHandle[T]` field); keep the value in a local variable or pass it as a parameter.
 - `INCAN-T0114`: A `set` element type or `dict` key type that does not implement `Eq` and `Hash`, in an annotation, a literal, a comprehension, a `set(...)` call, or a generic call whose callee hashes its type parameter; add `@derive(Eq, Hash)` to the declaration it names.
-- `INCAN-T0115`: An argument that is not a task where one is required (`spawn`, `timeout`, `timeout_ms`, `race_timeout`, `arm`), such as `spawn(work)`; pass the result of calling an `async def`, `spawn(work())`.
+- `INCAN-T0115`: An argument that is not a task where one is required (`spawn`, `timeout`, `timeout_ms`, `race_timeout`, `arm`), such as `spawn(work)`, or a name bound to a call's result, `fut = work()` then `spawn(fut)`; write a direct call of the `async def` as the argument, `spawn(work())`.
 - `INCAN-I0001`: Import or module resolution error.
 - `INCAN-I0101`: A known SDK provider module belongs to a component disabled by the project.
 - `INCAN-I0102`: The project enabled an SDK component that is unavailable in the active installation.

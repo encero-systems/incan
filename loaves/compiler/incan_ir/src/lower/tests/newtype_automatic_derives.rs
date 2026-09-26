@@ -35,6 +35,25 @@ type Handle = newtype JoinHandle[int]
     Ok(())
 }
 
+/// #1754: a `@rust.derive` path to a derive the newtype already carries automatically is the same derive, so it is
+/// emitted once; naming it twice fails the build with E0119.
+#[test]
+fn rust_derive_path_of_an_automatic_derive_is_emitted_once_issue1754() -> Result<(), String> {
+    let ir = lower_source(
+        r#"
+@rust.derive("std::clone::Clone")
+type Name = newtype str
+
+@rust.derive("::core::fmt::Debug", "std::hash::Hash")
+type Label = newtype str
+"#,
+    )
+    .map_err(|errors| format!("lowering failed: {errors:?}"))?;
+    assert_eq!(struct_derives(&ir, "Name")?, vec!["Debug", "Clone"]);
+    assert_eq!(struct_derives(&ir, "Label")?, vec!["Debug", "Clone", "std::hash::Hash"]);
+    Ok(())
+}
+
 /// `@derive(Ord)` brings `PartialOrd`, `Eq` and `PartialEq` right after it, in the implication table's order, exactly
 /// as the hand-written rules did before the table.
 #[test]

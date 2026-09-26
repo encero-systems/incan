@@ -411,7 +411,7 @@ const HASHED_MEMBER_LACKS_EQ_HASH: DiagnosticCatalogEntry = DiagnosticCatalogEnt
     severity: "error",
     phase: "typecheck",
     summary: "A `set` element type or `dict` key type does not implement `Eq` and `Hash`.",
-    explanation: "A set's elements and a dict's keys are compared and hashed. A declared `model`, `class`, `enum` or `newtype` implements `Eq` through `@derive(Eq)` or `@derive(Ord)` and `Hash` through `@derive(Hash)`; `float`, a `set`, a `dict` and a frozen collection do not implement `Hash`. The type is refused in an annotation, a set or dict literal, a dict comprehension, a `set(...)` call, and as the type argument of a generic function, declared in the same module, whose body uses its parameter as a set element or dict key.",
+    explanation: "A set's elements and a dict's keys are compared and hashed. A declared `model`, `class`, `enum` or `newtype` implements `Eq` through `@derive(Eq)` or `@derive(Ord)` and `Hash` through `@derive(Hash)`; `float`, a `set`, a `dict` and a frozen collection do not implement `Hash`. The type is refused in an annotation, a set or dict literal, a dict comprehension, a `set(...)` call, and as the type argument of a generic function or method whose body uses its parameter as a set element or dict key, in this module or a source module it imports; a compiled library carries that requirement as `Eq` and `Hash` bounds on its exported signature.",
     examples: &["enum Tag:\n    A\n\ndef main() -> None:\n    tags: set[Tag] = {Tag.A}"],
     common_causes: &[
         "An enum or model used as a set element or dict key without `@derive(Eq, Hash)`.",
@@ -430,7 +430,7 @@ const ARGUMENT_IS_NOT_A_TASK: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     severity: "error",
     phase: "typecheck",
     summary: "A function value, or a value of a type that is not awaitable, is passed where a task is required.",
-    explanation: "`spawn`, `timeout`, `timeout_ms`, `race_timeout` and `arm` take a task: what calling an `async def` returns, a `JoinHandle[T]`, or another awaitable value. An `async def` named without being called is the function, not the task; a function that is not `async def`, or a value such as an `int`, is not awaitable at all.",
+    explanation: "`spawn`, `timeout`, `timeout_ms`, `race_timeout` and `arm` take a task: a direct call of an `async def` written as the argument, a `JoinHandle[T]`, or another awaitable value. An `async def` named without being called is the function, not the task; a name bound to a call's result is typed as that result, not as a task; a function that is not `async def`, or a value such as an `int`, is not awaitable at all.",
     examples: &[
         "import std.async\nfrom std.async.task import spawn\n\nasync def work() -> int:\n    return 41\n\nasync def main() -> None:\n    handle = spawn(work)",
     ],

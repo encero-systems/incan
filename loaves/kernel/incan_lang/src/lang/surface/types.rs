@@ -424,7 +424,8 @@ pub enum SurfaceDeriveSupport {
 ///
 /// Answers are recorded for `Clone`, `Debug`, `Eq` and `Hash`; every other derive is
 /// [`SurfaceDeriveSupport::NotRecorded`]. The match is exhaustive over the closed enum, so a new surface type states
-/// its answers when it is added.
+/// its answers when it is added. The `Clone` answers of the stdlib newtypes restate their `@derive(Clone)`
+/// declarations, and a test reads those declarations and fails when the two disagree.
 #[must_use]
 pub fn derive_support(id: SurfaceTypeId, derive: DeriveId) -> SurfaceDeriveSupport {
     use SurfaceDeriveSupport::{FollowsTypeArguments, Implements, Missing, NotRecorded};
@@ -659,6 +660,86 @@ mod tests {
                 SurfaceDeriveSupport::FollowsTypeArguments
             );
         }
+    }
+
+    /// Return whether `source` declares `name` as a `pub type ... = newtype`, and if so whether an `@derive(...)`
+    /// naming `Clone` decorates it.
+    fn stdlib_newtype_derives_clone(source: &str, name: &str) -> Option<bool> {
+        let lines = source.lines().collect::<Vec<_>>();
+        let index = lines.iter().position(|line| {
+            line.strip_prefix("pub type ")
+                .and_then(|rest| rest.strip_prefix(name))
+                .is_some_and(|rest| rest.starts_with(['[', ' ']) && rest.contains("= newtype "))
+        })?;
+        let decorators = lines.get(..index)?;
+        Some(
+            decorators
+                .iter()
+                .rev()
+                .take_while(|line| line.trim_start().starts_with('@'))
+                .filter_map(|line| line.trim().strip_prefix("@derive("))
+                .any(|args| args.trim_end_matches(')').split(',').any(|arg| arg.trim() == "Clone")),
+        )
+    }
+
+    /// The `Clone` answers for stdlib newtypes are copied from their `@derive(Clone)` declarations; this fails when a
+    /// declaration and the registry disagree, or when a declaration the registry describes can no longer be found.
+    #[test]
+    fn clone_answers_match_the_stdlib_newtype_declarations() -> Result<(), String> {
+        let stdlib_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../stdlib");
+        let mut checked = Vec::new();
+        for info in SURFACE_TYPES {
+            let Some(segments) = info
+                .ownership
+                .stdlib_module_path
+                .and_then(|module| module.strip_prefix("std."))
+                .map(|module| module.split('.').collect::<Vec<_>>())
+            else {
+                continue;
+            };
+            let Some(facet) = segments.first() else {
+                continue;
+            };
+            let path = stdlib_root
+                .join(facet)
+                .join("src")
+                .join(format!("{}.incn", segments.join("/")));
+            let Ok(source) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let name = as_str(info.item.id);
+            let Some(declared) = stdlib_newtype_derives_clone(&source, name) else {
+                continue;
+            };
+            let recorded = matches!(
+                derive_support(info.item.id, DeriveId::Clone),
+                SurfaceDeriveSupport::Implements | SurfaceDeriveSupport::FollowsTypeArguments
+            );
+            if declared != recorded {
+                return Err(format!(
+                    "{name}: {} declares @derive(Clone) = {declared}, but derive_support records Clone = {recorded}",
+                    path.display()
+                ));
+            }
+            checked.push(name);
+        }
+        for expected in [
+            "Mutex",
+            "RwLock",
+            "Semaphore",
+            "Barrier",
+            "Sender",
+            "Receiver",
+            "OneshotSender",
+            "OneshotReceiver",
+        ] {
+            if !checked.contains(&expected) {
+                return Err(format!(
+                    "the stdlib newtype declaration of {expected} was not found; checked: {checked:?}"
+                ));
+            }
+        }
+        Ok(())
     }
 
     #[test]

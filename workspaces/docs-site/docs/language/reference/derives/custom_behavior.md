@@ -13,12 +13,13 @@ See also:
 
 ## Dunder hooks
 
-| Hook       | Purpose                        |
-| ---------- | ------------------------------ |
-| `__str__`  | Display formatting (`{value}`) |
-| `__eq__`   | Equality (`==`, `!=`)          |
-| `__lt__`   | Ordering (`<`, sorting)        |
-| `__hash__` | Hashing (`Set` / `Dict` keys)  |
+| Hook      | Purpose                        |
+| --------- | ------------------------------ |
+| `__str__` | Display formatting (`{value}`) |
+| `__eq__`  | Equality (`==`, `!=`)          |
+| `__lt__`  | Ordering (`<`, sorting)        |
+
+Hashing has no hook: a method named `__hash__` is an ordinary method, and `Hash` comes only from `@derive(Hash)` or `Hash` in `@rust.derive(...)` ([Comparison → Hash](comparison.md#hash)).
 
 Rule:
 

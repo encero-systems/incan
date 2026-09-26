@@ -121,7 +121,7 @@ impl TypeChecker {
         let key_ty = self.check_expr(&comp.key);
         let val_ty = self.check_expr(&comp.value);
         self.symbols.exit_scope();
-        self.require_hashable_collection_value(HashedCollectionRole::DictKey, &key_ty, comp.key.span);
+        self.refuse_unhashable_collection_member(HashedCollectionRole::DictKey, &key_ty, comp.key.span);
 
         dict_ty(key_ty, val_ty)
     }

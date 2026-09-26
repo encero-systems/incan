@@ -9,14 +9,15 @@
 //!
 //! - a `model` or `class` field, or an `enum` payload, whose type cannot carry the automatic `Clone` and `Debug`
 //!   derives (`INCAN-T0113`, #1754);
-//! - a set element or dict key type without `Eq` and `Hash`, including the type argument of a generic function whose
-//!   body hashes its parameter (`INCAN-T0114`, #1758).
+//! - a set element or dict key type without `Eq` and `Hash`, including the type argument of a generic function or
+//!   method whose body hashes its parameter, a requirement inferred into its signature by `hash_key_inference`
+//!   (`INCAN-T0114`, #1758).
 //!
 //! The relation answers [`DeriveSupport::Unknown`] rather than guess: for a type parameter, a Rust-origin type, a
 //! `rusttype`, a runtime type the registry records nothing for, and the `Eq` / `Hash` of a type declared in another
 //! module, whose manifest may not list every derive. The refusals never refuse on an unknown answer.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 
 use super::TypeChecker;
 use crate::ast::{CallArg, DictEntry, Expr, ListEntry, ParamKind, Span, Spanned, Type};
@@ -53,24 +54,6 @@ pub(in crate::typechecker) struct LocalDeriveFacts {
     pub rust_builtin_derives: Vec<DeriveId>,
     /// Whether `@rust.derive(...)` names a derive macro the compiler cannot classify, which may implement anything.
     pub has_unclassified_rust_derive: bool,
-}
-
-/// A generic call whose type arguments are checked, once the whole module has been checked, against the callee's type
-/// parameters that its body uses as a set element or dict key (#1758).
-///
-/// The check is deferred because a call can be checked before the callee's body is.
-#[derive(Debug, Clone)]
-pub(in crate::typechecker) struct PendingHashKeyInstantiation {
-    /// Declaration identity of the called generic function.
-    pub callee: CanonicalSymbolId,
-    /// The callee as the call spelled it, for the diagnostic.
-    pub callee_name: String,
-    /// The generic function the call is made from, with its type parameters, so a requirement can pass to it.
-    pub caller: Option<(CanonicalSymbolId, Vec<String>)>,
-    /// The callee's type parameters bound at this call.
-    pub bindings: HashMap<String, ResolvedType>,
-    /// The call's span.
-    pub span: Span,
 }
 
 /// Whether `derive` is one the relation answers for.
@@ -347,6 +330,9 @@ impl TypeChecker {
     }
 
     /// Whether a non-`rusttype` newtype implements `derive`: its explicit derives first, then what lowering adds.
+    ///
+    /// A missing `Clone` or `Debug` is known only for a newtype declared in this module without an unclassified
+    /// `@rust.derive(...)`; elsewhere the answer is unknown.
     fn newtype_derive(
         &self,
         name: &str,
@@ -358,7 +344,18 @@ impl TypeChecker {
             return Some(true);
         }
         match derive {
-            DeriveId::Clone | DeriveId::Debug => Some(self.newtype_automatic_derive(name, info, derive, visiting)),
+            DeriveId::Clone | DeriveId::Debug => {
+                if self.newtype_automatic_derive(name, info, derive, visiting) {
+                    return Some(true);
+                }
+                // A newtype declared elsewhere may carry the derive through `@rust.derive(...)`, which its manifest
+                // does not record; only a local declaration's derive list is complete.
+                let complete = self
+                    .local_derive_facts
+                    .get(name)
+                    .is_some_and(|facts| !facts.has_unclassified_rust_derive);
+                complete.then_some(false)
+            }
             _ => self.declared_derive(name, &info.derives, &info.traits, derive),
         }
     }
@@ -522,29 +519,12 @@ impl TypeChecker {
         }
     }
 
-    /// Require a value stored into a hashed collection by an expression (a literal, a comprehension, `set(...)`) to
-    /// implement `Eq` and `Hash`, and record the generic parameters it hashes (#1758).
-    ///
-    /// Inside a generic function the element may be a type parameter; the requirement then falls on the type argument
-    /// each call binds it to, which [`Self::check_pending_hash_key_instantiations`] checks.
-    pub(in crate::typechecker) fn require_hashable_collection_value(
-        &mut self,
-        role: HashedCollectionRole,
-        member_ty: &ResolvedType,
-        span: Span,
-    ) {
-        if let Some((callable, type_params)) = self.current_generic_callable.clone() {
-            let mut used = Vec::new();
-            Self::collect_named_type_params(member_ty, &type_params, &mut used);
-            if !used.is_empty() {
-                self.hash_key_type_params.entry(callable).or_default().extend(used);
-            }
-        }
-        self.refuse_unhashable_collection_member(role, member_ty, span);
-    }
-
     /// Collect the names of `type_params` that appear in `ty`.
-    fn collect_named_type_params(ty: &ResolvedType, type_params: &[String], out: &mut Vec<String>) {
+    pub(in crate::typechecker) fn collect_named_type_params(
+        ty: &ResolvedType,
+        type_params: &[String],
+        out: &mut Vec<String>,
+    ) {
         match ty {
             ResolvedType::Named(name) | ResolvedType::TypeVar(name) => {
                 if type_params.contains(name) && !out.contains(name) {
@@ -603,61 +583,91 @@ impl TypeChecker {
         })
     }
 
-    /// Record a generic call for the deferred set-element and dict-key check (#1758).
+    /// Refuse a generic call whose type argument lacks `Eq` or `Hash` where the callee hashes that type parameter
+    /// (#1758).
     ///
-    /// Only a call to a function this module declares is recorded: its body is checked here, which is where the
-    /// callee's hashed parameters are learned. An overload set is left out, since its bindings belong to one overload.
-    /// A literal argument checked against a parameter type that names the type parameter takes that placeholder as its
-    /// own type (`[Tag.A]` against `list[T]` is a `list[T]`), so such a binding is recovered from the literal's
-    /// elements.
-    pub(in crate::typechecker) fn record_generic_hash_key_instantiation(
+    /// The callee's hashed parameters are part of its signature, inferred when it was collected
+    /// ([`Self::infer_hash_key_type_params`]), so this runs at the call whatever the declaration order, for functions
+    /// and methods of this module and of source modules it imports; a compiled library's callee carries them as `Eq`
+    /// and `Hash` bounds instead, which the ordinary bound check applies. `bindings` are the call's bindings closed by
+    /// its literal arguments ([`Self::bindings_closed_by_literal_arguments`]). A binding to the caller's own type
+    /// parameter is not refused: the caller's signature carries the requirement on to its callers.
+    pub(in crate::typechecker) fn refuse_unhashable_type_arguments(
         &mut self,
         callee_name: &str,
+        callee: Option<&CanonicalSymbolId>,
+        type_params: &[String],
+        bindings: &HashMap<String, ResolvedType>,
+        span: Span,
+    ) {
+        let Some(required) = callee
+            .and_then(|identity| self.hash_key_type_params.get(identity))
+            .cloned()
+        else {
+            return;
+        };
+        for type_param in required.iter().filter(|type_param| type_params.contains(type_param)) {
+            let Some(bound) = bindings
+                .get(type_param)
+                .filter(|bound| !Self::is_open_binding(bound, type_params))
+            else {
+                continue;
+            };
+            let Some((holder, missing)) = self.first_missing_derives(bound, &[DeriveId::Eq, DeriveId::Hash]) else {
+                continue;
+            };
+            let error = errors::type_argument_lacks_hash_derives(
+                callee_name,
+                type_param,
+                &bound.to_string(),
+                &holder.to_string(),
+                &missing,
+                self.hash_remedy(&holder),
+                span,
+            );
+            self.push_error_once(error);
+        }
+    }
+
+    /// Return a generic call's type-parameter bindings with each open one closed from a literal argument, for the
+    /// checks of what the call instantiates its callee with.
+    ///
+    /// A literal argument checked against a parameter type that names a type parameter takes that placeholder as its
+    /// own type (`[Tag.A]` against `list[T]` is a `list[T]`), so the binding stays open; the literal's elements say
+    /// what the call instantiates the parameter with (`Tag`). A binding that is already closed is kept.
+    pub(in crate::typechecker) fn bindings_closed_by_literal_arguments(
+        &self,
         type_params: &[String],
         params: &[CallableParam],
         args: &[CallArg],
         bindings: &HashMap<String, ResolvedType>,
-        span: Span,
-    ) {
-        if type_params.is_empty() {
-            return;
-        }
-        let Some(symbol_id) = self.symbols.lookup(callee_name) else {
-            return;
-        };
-        if !matches!(
-            self.symbols.get(symbol_id).map(|symbol| &symbol.kind),
-            Some(SymbolKind::Function(_))
-        ) {
-            return;
-        }
-        let Some(callee) = self.symbols.identity_of(symbol_id).cloned() else {
-            return;
-        };
+    ) -> HashMap<String, ResolvedType> {
         let mut literal_bindings = HashMap::new();
         for (expr, param) in Self::arguments_with_parameters(params, args) {
             if let Some(param) = param {
                 self.literal_argument_bindings(&param.ty, expr, type_params, &mut literal_bindings);
             }
         }
-        let bindings = type_params
-            .iter()
-            .filter_map(|param| {
-                let bound = bindings
-                    .get(param)
-                    .filter(|bound| !Self::is_open_binding(bound, type_params));
-                bound
-                    .or_else(|| literal_bindings.get(param))
-                    .map(|bound| (param.clone(), bound.clone()))
-            })
-            .collect();
-        self.pending_hash_key_instantiations.push(PendingHashKeyInstantiation {
-            callee,
-            callee_name: callee_name.to_string(),
-            caller: self.current_generic_callable.clone(),
-            bindings,
-            span,
-        });
+        let mut closed = bindings.clone();
+        for (type_param, ty) in literal_bindings {
+            let open = closed
+                .get(&type_param)
+                .is_none_or(|bound| Self::is_open_binding(bound, type_params));
+            if open {
+                closed.insert(type_param, ty);
+            }
+        }
+        closed
+    }
+
+    /// Return the declaration identity of the function a call by name reaches, unless it is an overload set, whose
+    /// bindings belong to one overload.
+    pub(in crate::typechecker) fn called_function_identity(&self, callee_name: &str) -> Option<CanonicalSymbolId> {
+        let symbol_id = self.symbols.lookup(callee_name)?;
+        match &self.symbols.get(symbol_id)?.kind {
+            SymbolKind::Function(_) => self.symbols.identity_of(symbol_id).cloned(),
+            _ => None,
+        }
     }
 
     /// Whether a binding is still open: unresolved, or one of the callee's own type parameters.
@@ -694,6 +704,8 @@ impl TypeChecker {
     }
 
     /// Recover type-parameter bindings from a literal argument's elements, following the parameter type's shape.
+    ///
+    /// Only a collection or tuple literal is read: any other argument's type is already what inference bound.
     fn literal_argument_bindings(
         &self,
         param_ty: &ResolvedType,
@@ -703,94 +715,55 @@ impl TypeChecker {
     ) {
         match (param_ty, &expr.node) {
             (_, Expr::Paren(inner)) => self.literal_argument_bindings(param_ty, inner, type_params, out),
-            (ResolvedType::TypeVar(name) | ResolvedType::Named(name), _) if type_params.contains(name) => {
-                if let Some(ty) = self.type_info.expr_type(expr.span)
-                    && !Self::is_open_binding(ty, type_params)
-                {
-                    out.entry(name.clone()).or_insert_with(|| ty.clone());
-                }
-            }
             (ResolvedType::Generic(name, args), Expr::List(entries))
                 if collection_type_id(name) == Some(CollectionTypeId::List) =>
             {
                 if let (Some(element_ty), Some(ListEntry::Element(first))) = (args.first(), entries.first()) {
-                    self.literal_argument_bindings(element_ty, first, type_params, out);
+                    self.literal_element_bindings(element_ty, first, type_params, out);
                 }
             }
             (ResolvedType::Generic(name, args), Expr::Set(elements))
                 if collection_type_id(name) == Some(CollectionTypeId::Set) =>
             {
                 if let (Some(element_ty), Some(first)) = (args.first(), elements.first()) {
-                    self.literal_argument_bindings(element_ty, first, type_params, out);
+                    self.literal_element_bindings(element_ty, first, type_params, out);
                 }
             }
             (ResolvedType::Generic(name, args), Expr::Dict(entries))
                 if collection_type_id(name) == Some(CollectionTypeId::Dict) =>
             {
                 if let ([key_ty, value_ty], Some(DictEntry::Pair(key, value))) = (args.as_slice(), entries.first()) {
-                    self.literal_argument_bindings(key_ty, key, type_params, out);
-                    self.literal_argument_bindings(value_ty, value, type_params, out);
+                    self.literal_element_bindings(key_ty, key, type_params, out);
+                    self.literal_element_bindings(value_ty, value, type_params, out);
                 }
             }
             (ResolvedType::Tuple(items), Expr::Tuple(elements)) if items.len() == elements.len() => {
                 for (item_ty, element) in items.iter().zip(elements) {
-                    self.literal_argument_bindings(item_ty, element, type_params, out);
+                    self.literal_element_bindings(item_ty, element, type_params, out);
                 }
             }
             _ => {}
         }
     }
 
-    /// Check every recorded generic call against the parameters its callee hashes, once the whole module is checked.
-    ///
-    /// A call made from another generic function with one of that function's own parameters passes the requirement
-    /// to the caller, until nothing changes; then each call whose type argument lacks `Eq` or `Hash` is refused.
-    pub(in crate::typechecker) fn check_pending_hash_key_instantiations(&mut self) {
-        let pending = std::mem::take(&mut self.pending_hash_key_instantiations);
-        loop {
-            let mut changed = false;
-            for call in &pending {
-                let Some((caller, caller_params)) = &call.caller else {
-                    continue;
-                };
-                let Some(required) = self.hash_key_type_params.get(&call.callee).cloned() else {
-                    continue;
-                };
-                let mut passed = Vec::new();
-                for type_param in &required {
-                    if let Some(bound) = call.bindings.get(type_param) {
-                        Self::collect_named_type_params(bound, caller_params, &mut passed);
-                    }
-                }
-                let caller_required = self.hash_key_type_params.entry(caller.clone()).or_default();
-                for type_param in passed {
-                    changed |= caller_required.insert(type_param);
+    /// Recover a binding from one element of a literal: its own type where the element type is a type parameter, or
+    /// the bindings of a nested literal.
+    fn literal_element_bindings(
+        &self,
+        element_ty: &ResolvedType,
+        element: &Spanned<Expr>,
+        type_params: &[String],
+        out: &mut HashMap<String, ResolvedType>,
+    ) {
+        match element_ty {
+            ResolvedType::TypeVar(name) | ResolvedType::Named(name) if type_params.contains(name) => {
+                if let Some(ty) = self.type_info.expr_type(element.span)
+                    && !Self::is_open_binding(ty, type_params)
+                {
+                    out.entry(name.clone()).or_insert_with(|| ty.clone());
                 }
             }
-            if !changed {
-                break;
-            }
-        }
-        for call in &pending {
-            let required: BTreeSet<String> = self.hash_key_type_params.get(&call.callee).cloned().unwrap_or_default();
-            for type_param in &required {
-                let Some(bound) = call.bindings.get(type_param) else {
-                    continue;
-                };
-                let Some((holder, missing)) = self.first_missing_derives(bound, &[DeriveId::Eq, DeriveId::Hash]) else {
-                    continue;
-                };
-                let error = errors::type_argument_lacks_hash_derives(
-                    &call.callee_name,
-                    type_param,
-                    &bound.to_string(),
-                    &holder.to_string(),
-                    &missing,
-                    self.hash_remedy(&holder),
-                    call.span,
-                );
-                self.push_error_once(error);
-            }
+            _ => self.literal_argument_bindings(element_ty, element, type_params, out),
         }
     }
 

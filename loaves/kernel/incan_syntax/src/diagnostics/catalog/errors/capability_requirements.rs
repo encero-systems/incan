@@ -193,8 +193,8 @@ pub enum TaskArgument<'a> {
 
 /// Report an argument that is not a task where a task is required, such as `spawn(work)` (#1772).
 ///
-/// `callee` is the called function. A task is what calling an `async def` returns, a `JoinHandle[T]`, or another
-/// awaitable value; the hint rewrites only the offending argument.
+/// `callee` is the called function. A task is a direct call of an `async def` written as the argument, a
+/// `JoinHandle[T]`, or another awaitable value; the hint rewrites only the offending argument.
 pub fn argument_is_not_a_task(callee: &str, argument: TaskArgument<'_>, span: Span) -> CompileError {
     let (message, hint) = match argument {
         TaskArgument::AsyncFunction(value) => (
@@ -207,17 +207,20 @@ pub fn argument_is_not_a_task(callee: &str, argument: TaskArgument<'_>, span: Sp
         ),
         TaskArgument::FunctionValue => (
             format!("'{callee}' needs a task to run, but this argument is a function, not a task"),
-            "Pass the result of calling an `async def` in place of the function".to_string(),
+            "Write a direct call of an `async def` in place of the function".to_string(),
         ),
         TaskArgument::Value(ty) => (
             format!("'{callee}' needs a task to run, but this argument has type '{ty}', which is not a task"),
-            "Pass the result of calling an `async def`, such as 'work()', or a JoinHandle".to_string(),
+            format!(
+                "Write the call of the `async def` directly as the argument, such as '{callee}(work())', or pass a \
+                 JoinHandle; a name bound to the call's result is not a task"
+            ),
         ),
     };
     CompileError::type_error(message, span)
         .with_stable_code(TASK_ARGUMENT_CODE)
         .with_hint(hint)
         .with_note(
-            "Calling an `async def` creates the task; the function itself, or a value of another type, is not one",
+            "A task is a direct call of an `async def` written as the argument, a JoinHandle, or another awaitable value",
         )
 }

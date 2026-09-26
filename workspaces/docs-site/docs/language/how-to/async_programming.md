@@ -200,7 +200,7 @@ println(f"Background task returned: {result}")
 
 Spawned tasks are durable once spawned. Dropping `handle` detaches the task and loses the result; it does not cancel the task. Use `handle.abort()` when an async task should be cancelled.
 
-Pass `spawn` the task that calling the async function creates, `spawn(background_work())`. The function itself, `spawn(background_work)`, is refused with `INCAN-T0115`; so is a function that is not `async def`, which you either declare `async def` or run with `spawn_blocking`. `timeout`, `timeout_ms` and `race_timeout` take their task the same way.
+Write the call of the async function directly as the argument, `spawn(background_work())`. The function itself, `spawn(background_work)`, is refused with `INCAN-T0115`, and so is a name bound to the call first (`pending = background_work()` then `spawn(pending)`): the name has the call's result type, not a task. A function that is not `async def` is refused too; either declare it `async def` or run it with `spawn_blocking`. `timeout`, `timeout_ms` and `race_timeout` take their task the same way.
 
 Keep each handle in its own local variable, or pass it as a parameter, and await it there:
 

@@ -48,6 +48,7 @@ mod check_stmt;
 mod collect;
 mod const_eval;
 mod derive_requirements;
+mod hash_key_inference;
 mod helpers;
 mod reachability;
 pub mod stdlib_loader;
@@ -654,12 +655,16 @@ pub struct TypeChecker {
     /// The derive relation reads it for builtin derives spelled through `@rust.derive`, and an entry's presence marks
     /// the declaration as local, whose derive list is complete.
     pub(in crate::typechecker) local_derive_facts: HashMap<String, derive_requirements::LocalDeriveFacts>,
-    /// The generic function whose body is being checked, with its type parameters, while one is.
-    pub(in crate::typechecker) current_generic_callable: Option<(CanonicalSymbolId, Vec<String>)>,
-    /// Type parameters each local generic function's body uses as a set element or dict key (#1758).
+    /// Type parameters each generic function or method hashes, by declaration identity, inferred when it is collected
+    /// for this module and for every imported source module (#1758).
     pub(in crate::typechecker) hash_key_type_params: HashMap<CanonicalSymbolId, BTreeSet<String>>,
-    /// Generic calls whose type arguments are checked against `hash_key_type_params` once the module is checked.
-    pub(in crate::typechecker) pending_hash_key_instantiations: Vec<derive_requirements::PendingHashKeyInstantiation>,
+    /// This module's inferred hashed type parameters by callable name, written into its exported signatures once it is
+    /// checked.
+    pub(in crate::typechecker) local_hash_key_requirements:
+        Vec<(hash_key_inference::HashKeyCallable, BTreeSet<String>)>,
+    /// The bounds that writing `local_hash_key_requirements` added to each module-level function, by function and type
+    /// parameter; a function's export reads its declared bounds from source, so these are exported beside them.
+    pub(in crate::typechecker) inferred_function_bounds: HashMap<String, HashMap<String, Vec<TypeBoundInfo>>>,
     /// Shared provider and feature projection for ordinary dependencies and SDK-supplied libraries.
     pub provider_plan: Arc<ProviderPlan>,
     /// Internal semantic type cache for dependency exports referenced transitively by imported signatures.
@@ -862,9 +867,9 @@ impl TypeChecker {
             dependency_trait_rust_derive_paths: HashMap::new(),
             local_rust_derive_paths: HashMap::new(),
             local_derive_facts: HashMap::new(),
-            current_generic_callable: None,
             hash_key_type_params: HashMap::new(),
-            pending_hash_key_instantiations: Vec::new(),
+            local_hash_key_requirements: Vec::new(),
+            inferred_function_bounds: HashMap::new(),
             provider_plan: Arc::new(ProviderPlan::default()),
             transitive_pub_types: HashMap::new(),
             public_library_type_identities: HashMap::new(),
@@ -6533,13 +6538,13 @@ impl TypeChecker {
         self.testing_marker_semantics = None;
         self.local_rust_derive_paths.clear();
         self.local_derive_facts.clear();
-        self.current_generic_callable = None;
-        self.hash_key_type_params.clear();
-        self.pending_hash_key_instantiations.clear();
+        self.local_hash_key_requirements.clear();
+        self.inferred_function_bounds.clear();
         self.source_import_targets.clear();
         self.surface_context = SurfaceContext::from_program(program);
         self.supertrait_closure.clear();
         if !preserve_dependency_semantics {
+            self.hash_key_type_params.clear();
             self.transitive_pub_types.clear();
             self.public_library_type_identities.clear();
             self.transitive_pub_traits.clear();
@@ -6557,6 +6562,9 @@ impl TypeChecker {
         // First pass: collect concrete declarations, then aliases and partials after their possible targets are
         // available.
         self.collect_declarations_for_check(&program.declarations);
+        // Every declaration is collected, so the signatures' hashed type parameters can be inferred before any body
+        // or call is checked (#1758).
+        self.infer_hash_key_type_params(&program.declarations, true);
 
         self.resolve_pending_trait_supertraits();
         self.finalize_supertrait_graph();
@@ -6576,9 +6584,6 @@ impl TypeChecker {
                 self.check_declaration(decl);
             }
         }
-        // Every local generic body has now been checked, so the calls recorded along the way can be checked against
-        // the parameters those bodies hash (#1758).
-        self.check_pending_hash_key_instantiations();
 
         self.type_info
             .c_abi
@@ -6591,6 +6596,8 @@ impl TypeChecker {
         // ---- RFC 023: validate rust.module() and @rust.extern rules ----
         self.validate_rust_module_and_extern(program);
         self.validate_source_type_names = false;
+        // The module is checked; its inferred hashed type parameters now join its exported signatures (#1758).
+        self.export_inferred_hash_key_bounds();
 
         // ---- RFC 120: export the minted declaration identities for later stages ----
         self.export_declaration_identities();
@@ -6766,6 +6773,7 @@ impl TypeChecker {
             }
         }
         self.resolve_pending_trait_supertraits();
+        self.infer_hash_key_type_params(&module_ast.declarations, false);
         self.register_dependency_derivable_metadata(module_name, module_ast);
         self.cache_dependency_direct_member_symbols(module_name, module_ast, true);
         self.cache_dependency_registry_definitions(module_name, module_ast, true);
@@ -6848,6 +6856,7 @@ impl TypeChecker {
             }
         }
         self.resolve_pending_trait_supertraits();
+        self.infer_hash_key_type_params(&module_ast.declarations, false);
         self.register_dependency_derivable_metadata(module_name, module_ast);
         self.cache_dependency_direct_member_symbols(module_name, module_ast, false);
         self.cache_dependency_registry_definitions(module_name, module_ast, false);
@@ -7989,6 +7998,7 @@ impl TypeChecker {
         dependencies: &[(&str, &Program)],
     ) -> Result<(), Vec<CompileError>> {
         self.dependency_semantics_pending = false;
+        self.hash_key_type_params.clear();
         self.transitive_pub_types.clear();
         self.public_library_type_identities.clear();
         self.transitive_pub_traits.clear();
@@ -8039,6 +8049,7 @@ impl TypeChecker {
         dependencies: &[(&str, &Program)],
     ) -> Result<(), Vec<CompileError>> {
         self.dependency_semantics_pending = false;
+        self.hash_key_type_params.clear();
         self.transitive_pub_types.clear();
         self.public_library_type_identities.clear();
         self.transitive_pub_traits.clear();
