@@ -12,10 +12,12 @@
 //! | `modules`     | Module/import resolution errors                          |
 //! | `const_eval`  | Const-expression evaluation & builtin calls              |
 //! | `rust_module` | `rust.module()` / `@rust.extern` diagnostics (RFC 023)   |
+//! | `patterns_and_bounds` | Match-pattern literals, list-method forms, bounds owed to bounded nominals |
 
 mod c_abi;
 mod const_eval;
 mod modules;
+mod patterns_and_bounds;
 mod rust_module;
 mod syntax;
 mod types;
@@ -23,6 +25,7 @@ mod types;
 pub use c_abi::*;
 pub use const_eval::*;
 pub use modules::*;
+pub use patterns_and_bounds::*;
 pub use rust_module::*;
 pub use syntax::*;
 pub use types::*;

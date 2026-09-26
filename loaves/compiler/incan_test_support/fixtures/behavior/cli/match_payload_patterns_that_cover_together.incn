@@ -1,0 +1,31 @@
+# behavior: arms whose payload patterns each match only some values but together cover every payload make an exhaustive match
+# expect-stdout:
+#   zero
+#   7
+#   empty
+#   failed: boom
+#   on
+#   off
+
+def describe(value: Result[Option[int], str]) -> str:
+    match value:
+        Ok(Some(0)) => return "zero"
+        Ok(Some(n)) => return f"{n}"
+        Ok(None) => return "empty"
+        Err(message) => return f"failed: {message}"
+
+
+def switch(value: Option[bool]) -> str:
+    match value:
+        Some(true) => return "on"
+        Some(false) => return "off"
+        None => return "unset"
+
+
+def main() -> None:
+    println(describe(Ok(Some(0))))
+    println(describe(Ok(Some(7))))
+    println(describe(Ok(None)))
+    println(describe(Err("boom")))
+    println(switch(Some(true)))
+    println(switch(Some(false)))

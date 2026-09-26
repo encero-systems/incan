@@ -50,6 +50,7 @@ mod const_eval;
 mod decorated_method_receivers;
 mod helpers;
 mod mut_marker;
+mod nominal_type_param_bounds;
 mod reachability;
 pub mod stdlib_loader;
 mod trait_bound_relations;
@@ -533,6 +534,9 @@ pub struct TypeChecker {
     pub warned_public_c_abi_raw_call_owners: HashSet<(String, usize, usize)>,
     /// In-scope generic type-parameter trait bounds, preserving generic arguments for RFC 025 dispatch.
     pub current_type_param_bound_details: Vec<HashMap<String, Vec<TypeBoundInfo>>>,
+    /// Declared plain trait bounds of the bounded nominals visible to the checked module, keyed by the declaring
+    /// module and declaration name: `(type parameter, bounds)` in declaration order (#1280).
+    pub(in crate::typechecker) nominal_type_param_bounds: nominal_type_param_bounds::NominalBoundTable,
     /// Deduplicate missing-`@requires` diagnostics within a single trait default method body.
     pub current_trait_missing_requires_emitted: Option<HashSet<String>>,
     /// Collected module-level const declarations (for rich const-eval + cycle detection).
@@ -822,6 +826,7 @@ impl TypeChecker {
             current_c_abi_raw_call_owner: None,
             warned_public_c_abi_raw_call_owners: HashSet::new(),
             current_type_param_bound_details: Vec::new(),
+            nominal_type_param_bounds: HashMap::new(),
             current_trait_missing_requires_emitted: None,
             const_decls: HashMap::new(),
             static_decls: Vec::new(),
@@ -2517,6 +2522,7 @@ impl TypeChecker {
                 .expression_type_identities
                 .insert((span.start, span.end), identities);
         }
+        self.refuse_unbounded_nominal_expression_type(&ty, span);
         self.type_info.expressions.expr_types.insert((span.start, span.end), ty);
     }
 
@@ -6541,8 +6547,10 @@ impl TypeChecker {
         }
 
         // First pass: collect concrete declarations, then aliases and partials after their possible targets are
-        // available.
+        // available. Signatures that named a type declared further down the module now resolve to it (#1780).
         self.collect_declarations_for_check(&program.declarations);
+        self.resolve_forward_type_references(&program.declarations);
+        self.record_local_nominal_type_param_bounds(&program.declarations);
 
         self.resolve_pending_trait_supertraits();
         self.finalize_supertrait_graph();
@@ -6749,6 +6757,8 @@ impl TypeChecker {
                 self.collect_declaration(decl);
             }
         }
+        self.resolve_forward_type_references(&module_ast.declarations);
+        self.record_local_nominal_type_param_bounds(&module_ast.declarations);
         self.resolve_pending_trait_supertraits();
         self.register_dependency_derivable_metadata(module_name, module_ast);
         self.cache_dependency_direct_member_symbols(module_name, module_ast, true);
@@ -6831,6 +6841,8 @@ impl TypeChecker {
                 self.collect_declaration(decl);
             }
         }
+        self.resolve_forward_type_references(&module_ast.declarations);
+        self.record_local_nominal_type_param_bounds(&module_ast.declarations);
         self.resolve_pending_trait_supertraits();
         self.register_dependency_derivable_metadata(module_name, module_ast);
         self.cache_dependency_direct_member_symbols(module_name, module_ast, false);

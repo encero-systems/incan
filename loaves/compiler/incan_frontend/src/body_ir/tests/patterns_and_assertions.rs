@@ -164,10 +164,10 @@ fn lowers_a_nested_tuple_pattern_with_field_projected_bindings() -> Result<(), B
 }
 
 #[test]
-fn byte_string_literal_pattern_lowers_to_an_explicit_placeholder() -> Result<(), Box<dyn std::error::Error>> {
-    // `bir::Constant::Bytes` represents a byte value, but the closed `bir::Pattern` vocabulary does not yet model
-    // byte-pattern matching semantics. Refuse before lowering the scrutinee rather than silently mis-rendering
-    // the pattern as a catch-all wildcard the existing Rust-emission backend's own `lower_pattern` would emit.
+fn byte_string_literal_pattern_is_refused_before_body_ir_issue1741() -> Result<(), Box<dyn std::error::Error>> {
+    // `bir::Constant::Bytes` represents a byte value, but the closed `bir::Pattern` vocabulary does not model
+    // byte-pattern matching semantics, and the build has no pattern form for a bytes literal either. The checker
+    // refuses the pattern (#1741), so checked source never reaches Body IR's own placeholder for it.
     let source = concat!(
         "def check(data: bytes) -> str:\n",
         "  match data:\n",
@@ -176,14 +176,21 @@ fn byte_string_literal_pattern_lowers_to_an_explicit_placeholder() -> Result<(),
         "    case _:\n",
         "      return \"other\"\n",
     );
-    let module = build(source, &["m", "match_bytes"])?;
-    let snapshot = module.render_snapshot();
-
-    assert!(
-        snapshot.contains("unsupported(match arm with a byte-string literal pattern)"),
-        "should record an explicit placeholder rather than mis-rendering the pattern: {snapshot}"
-    );
-    Ok(())
+    match build(source, &["m", "match_bytes"]) {
+        Ok(module) => Err(format!(
+            "a bytes literal pattern must be refused before Body IR: {}",
+            module.render_snapshot()
+        )
+        .into()),
+        Err(error)
+            if error
+                .to_string()
+                .contains("bytes literal cannot be used as a match pattern") =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(format!("expected the bytes-pattern refusal, got: {error}").into()),
+    }
 }
 
 #[test]

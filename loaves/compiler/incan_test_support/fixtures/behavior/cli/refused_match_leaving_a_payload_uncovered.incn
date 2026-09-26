@@ -1,0 +1,11 @@
+# behavior: a match whose only Some arm matches one payload value leaves Some(_) uncovered and is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+def describe(value: Option[int]) -> str:
+    match value:
+        Some(0) => return "zero"
+        None => return "none"
+
+
+def main() -> None:
+    println(describe(Some(0)))

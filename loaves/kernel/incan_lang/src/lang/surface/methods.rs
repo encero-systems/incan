@@ -458,7 +458,7 @@ pub mod list_methods {
             ListMethodId::Count,
             "count",
             &[],
-            "Count occurrences of a value.",
+            "`items.count(value)` returns how many items equal `value`; `items.count()` with no argument is the iterator terminal and returns the number of items. Any other argument count is refused (`INCAN-T0001`).",
             RFC::_009,
             Since(0, 1),
         ),

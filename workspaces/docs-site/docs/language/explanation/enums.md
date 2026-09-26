@@ -474,6 +474,23 @@ def describe(temp: Temperature) -> str:
         Fahrenheit(_) => return "Moderate (Fahrenheit)"
 ```
 
+A guarded arm never counts toward exhaustiveness, which is why each variant above ends with an unguarded arm.
+
+### Payload patterns
+
+A variant counts as handled only when the arms that name it cover every value its payload can hold. `Some(0)` handles one `Some` value, so a match with only `Some(0)` and `None` is missing `Some(_)` and is refused; arms that cover the payload between them handle the variant:
+
+```incan
+def describe(value: Result[Option[int], str]) -> str:
+    match value:
+        Ok(Some(0)) => return "zero"
+        Ok(Some(n)) => return f"{n}"
+        Ok(None) => return "empty"
+        Err(message) => return f"failed: {message}"
+```
+
+A literal in a pattern must have the type of the value it matches: `(0, "a")` against a `tuple[int, int]` value is refused, because `"a"` can never match an `int`. [Match patterns](../reference/match_patterns.md) specifies the literal and coverage rules.
+
 ---
 
 ## Common patterns

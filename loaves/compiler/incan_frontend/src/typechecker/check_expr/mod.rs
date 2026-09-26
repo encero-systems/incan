@@ -24,7 +24,9 @@ mod calls;
 mod collections;
 mod comps;
 mod control_flow;
+mod list_methods;
 mod match_;
+mod match_coverage;
 mod ops;
 
 impl TypeChecker {

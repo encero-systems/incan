@@ -273,6 +273,7 @@ def f(a: Account) -> str:
   match a:
     Account(type="premium") => return "premium"
     Account(type="basic") => return "basic"
+    _ => return "other"
 "#;
     assert!(check_str(source).is_ok());
 }

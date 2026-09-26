@@ -1190,7 +1190,7 @@ impl TypeChecker {
     /// The frontend treats these protocol methods as a typed surface even when the receiver is a builtin collection
     /// whose methods are not represented as ordinary user-declared methods. Backend lowering and emission classify the
     /// same method family as known iterator calls.
-    fn resolve_iterator_protocol_method_call(
+    pub(super) fn resolve_iterator_protocol_method_call(
         &mut self,
         base_ty: &ResolvedType,
         method: &str,
@@ -5458,6 +5458,9 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
 
+        if let Some(ret) = self.resolve_list_method_by_argument_count(&base_ty, method, args, &arg_types, span) {
+            return ret;
+        }
         if let Some(ret) = self.resolve_iterator_protocol_method_call(&base_ty, method, args, &arg_types, span) {
             self.mark_direct_iterator_binding_consumed(base, method, span);
             return ret;
