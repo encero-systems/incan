@@ -8,6 +8,7 @@
 
 mod calls;
 mod comprehensions;
+mod error_display;
 mod helpers;
 mod patterns;
 
@@ -130,17 +131,38 @@ impl AstLowering {
         receiver: &TypedExpr,
         dispatch: Option<IrMethodDispatch>,
     ) -> (String, Option<IrMethodDispatch>) {
+        let identity = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.resolved_identity(call_span));
+        self.project_method_target_for_identity(identity, source_method, receiver, dispatch)
+    }
+
+    /// Select the physical target of a method whose checked declaration identity is already known.
+    ///
+    /// [`Self::project_resolved_method_target`] reads the identity the checker recorded at a written call; a call
+    /// lowering synthesizes, such as the `message()` an `Error` adopter displays through (#1778), passes the identity
+    /// the checker selected for it instead, so both spell the method the same way.
+    pub(in crate::lower) fn project_method_target_for_identity(
+        &self,
+        identity: Option<&incan_semantics_core::CanonicalSymbolId>,
+        source_method: &str,
+        receiver: &TypedExpr,
+        dispatch: Option<IrMethodDispatch>,
+    ) -> (String, Option<IrMethodDispatch>) {
         if !can_use_source_method_projection(receiver, dispatch.as_ref())
-            || self.method_belongs_to_an_imported_type(call_span)
+            || self.method_belongs_to_an_imported_type(identity)
             || !self.receiver_adopts_the_dispatched_trait(receiver, dispatch.as_ref())
         {
             return (source_method.to_string(), dispatch);
         }
         let rebase_source_stdlib = !matches!(dispatch, Some(IrMethodDispatch::Trait(_)));
-        let Some(projection) = self
-            .compiled_provider_method_reference_name(call_span, &receiver.ty, source_method)
-            .or_else(|| self.emitted_method_reference_name(call_span, source_method, rebase_source_stdlib))
-        else {
+        let Some(projection) = identity.and_then(|identity| {
+            self.compiled_provider_method_reference_name_for_identity(identity, &receiver.ty, source_method)
+                .or_else(|| {
+                    self.emitted_method_reference_name_for_identity(identity, source_method, rebase_source_stdlib)
+                })
+        }) else {
             return (source_method.to_string(), dispatch);
         };
         let dispatch = match dispatch {
@@ -185,7 +207,8 @@ impl AstLowering {
         adopted.contains(trait_declaration_name(trait_dispatch))
     }
 
-    /// Whether this call reaches an inherent method declared by a package rather than by this compilation.
+    /// Whether the checked method identity a call reaches names an inherent method declared by a package rather than
+    /// by this compilation.
     ///
     /// A recoverable projection is a wrapper emitted beside a declaration, and only the compilation that declares the
     /// type emits one. A package's inherent method therefore has no wrapper this compilation can name -- and when the
@@ -203,16 +226,11 @@ impl AstLowering {
     /// A package origin names *which library declares the method*, not that the method is foreign to this build. When
     /// that library is the one this compilation is producing, the wrapper is emitted right here, and suppressing the
     /// projection would decline to name a slot that does exist. Only another library's method has no wrapper this
-    /// compilation can name.
-    fn method_belongs_to_an_imported_type(&self, call_span: ast::Span) -> bool {
-        let Some(identity) = self
-            .type_info
-            .as_ref()
-            .and_then(|info| info.resolved_identity(call_span))
+    /// compilation can name. A call with no checked identity reaches no package method.
+    fn method_belongs_to_an_imported_type(&self, identity: Option<&incan_semantics_core::CanonicalSymbolId>) -> bool {
+        let Some(incan_semantics_core::SymbolOrigin::Package { library, .. }) =
+            identity.map(|identity| &identity.origin)
         else {
-            return false;
-        };
-        let incan_semantics_core::SymbolOrigin::Package { library, .. } = &identity.origin else {
             return false;
         };
         self.produced_library_identity() != Some(library.as_str())
@@ -2200,6 +2218,10 @@ impl AstLowering {
                         None => f.clone(),
                     };
                     let field_ty = self.pub_dependency_field_read_type(&obj, f, expr_span);
+                    // `Json[T].value` / `Query[T].value` is the Axum extractor's tuple field `0` (#1768).
+                    let (field, field_ty) = self
+                        .web_extractor_payload_field(&obj.ty, f)
+                        .unwrap_or((field, field_ty));
                     (
                         IrExprKind::Field {
                             object: Box::new(obj),
@@ -2530,6 +2552,7 @@ impl AstLowering {
                         ast::FStringPart::Literal(s) => Ok(super::super::expr::FormatPart::Literal(s.clone())),
                         ast::FStringPart::Expr { expr, format } => {
                             let lowered = self.lower_expr_spanned(expr)?;
+                            let lowered = self.display_operand_through_error_message(lowered, expr.span);
                             let style = match format {
                                 ast::FStringFormat::Display => super::super::expr::FormatStyle::Display,
                                 ast::FStringFormat::Debug => super::super::expr::FormatStyle::Debug,
@@ -2867,6 +2890,17 @@ mod tests {
         lowering
     }
 
+    /// Return the method identity the checker recorded at `call_span` in this lowering's facts.
+    fn recorded_method_identity(
+        lowering: &AstLowering,
+        call_span: ast::Span,
+    ) -> Option<&incan_semantics_core::CanonicalSymbolId> {
+        lowering
+            .type_info
+            .as_ref()
+            .and_then(|info| info.resolved_identity(call_span))
+    }
+
     /// A package's own inherent method keeps its projection while that package is the one being compiled.
     ///
     /// Regression for #1174: the suppression rule matched any `SymbolOrigin::Package`, so once a package's modules
@@ -2879,7 +2913,7 @@ mod tests {
         let lowering = lowering_resolving_a_package_method("incan_stdlib_core", Some("incan_stdlib_core"), call_span);
 
         assert!(
-            !lowering.method_belongs_to_an_imported_type(call_span),
+            !lowering.method_belongs_to_an_imported_type(recorded_method_identity(&lowering, call_span)),
             "a package's own declaration is emitted by this build, so its wrapper can be named"
         );
     }
@@ -2894,14 +2928,14 @@ mod tests {
         let call_span = ast::Span { start: 10, end: 20 };
         let consumer = lowering_resolving_a_package_method("incan_stdlib_core", Some("my_app"), call_span);
         assert!(
-            consumer.method_belongs_to_an_imported_type(call_span),
+            consumer.method_belongs_to_an_imported_type(recorded_method_identity(&consumer, call_span)),
             "a dependency's inherent method has no wrapper in the consumer's compilation"
         );
 
         // No project owns an ad-hoc single-file build, and every package identity is then genuinely foreign.
         let unowned = lowering_resolving_a_package_method("incan_stdlib_core", None, call_span);
         assert!(
-            unowned.method_belongs_to_an_imported_type(call_span),
+            unowned.method_belongs_to_an_imported_type(recorded_method_identity(&unowned, call_span)),
             "without a produced library every package identity stays foreign"
         );
     }
@@ -2918,7 +2952,7 @@ mod tests {
         let lowering = lowering_resolving_a_package_method("incan_stdlib_core", Some("my_app"), call_span);
 
         assert!(
-            lowering.method_belongs_to_an_imported_type(call_span),
+            lowering.method_belongs_to_an_imported_type(recorded_method_identity(&lowering, call_span)),
             "a dependency's method has no wrapper here, dispatched or not"
         );
     }

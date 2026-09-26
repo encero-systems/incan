@@ -1,9 +1,9 @@
 # Strings and bytes
 
-| Type | Holds | Generated Rust |
-| --- | --- | --- |
-| `str` | Unicode text | `String` |
-| `bytes` | A sequence of bytes | `Vec<u8>` |
+| Type | Holds |
+| --- | --- |
+| `str` | Unicode text |
+| `bytes` | A sequence of bytes |
 
 Both have frozen forms for constants, `FrozenStr` and `FrozenBytes`. `FrozenStr` has every `str` method and also `is_empty() -> bool`; `FrozenBytes` has `decode` and also `len() -> int` and `is_empty() -> bool`.
 
@@ -32,7 +32,7 @@ Escape sequences in `bytes` literals:
 | Form | Result |
 | --- | --- |
 | `s[i]` | The Unicode scalar at position `i`; negative `i` counts from the end. Out of range raises `IndexError: string index out of range`. |
-| `s[start:end:step]` | A new `str` of the scalars selected by the Python slice rules; each part is optional and `step` defaults to `1`. A negative `step` walks backwards (`s[::-1]` reverses). `step == 0` raises `ValueError: slice step cannot be zero`. |
+| `s[start:end:step]` | A new `str` of the scalars from `start` up to but not including `end`, taking every `step`-th; a negative index counts from the end, each part is optional, and `step` defaults to `1`. A negative `step` walks backwards (`s[::-1]` reverses). `step == 0` fails with `ValueError`. |
 
 Positions and lengths count Unicode scalars, not bytes. The same forms apply to `list[T]`.
 
@@ -44,7 +44,7 @@ Positions and lengths count Unicode scalars, not bytes. The same forms apply to 
 | `lower() -> str` | Lowercase copy. |
 | `strip() -> str` | Copy without leading and trailing whitespace. There is no `lstrip` or `rstrip`. |
 | `replace(old: str, new: str) -> str` | Copy with every occurrence of `old` replaced by `new`. |
-| `split(separator: str) -> list[str]` | Pieces between occurrences of `separator`, in order. The separator may be omitted, in which case the result is a one-item list holding the receiver; use `split_whitespace()` for Python's `split()` with no argument. |
+| `split(separator: str) -> list[str]` | Pieces between occurrences of `separator`, in order. Without a separator, the result is a one-item list holding the receiver. |
 | `split_whitespace() -> list[str]` | Pieces separated by runs of Unicode whitespace; no empty pieces. |
 | `join(parts: list[str]) -> str` | `parts` concatenated with the receiver between each pair: `", ".join(names)`. |
 | `contains(needle: str) -> bool` | Whether `needle` occurs in the receiver. |
@@ -73,7 +73,9 @@ An f-string interpolates any expression between `{` and `}`; the value is format
 | `{value}` | `Display` |
 | `{value:?}` | `Debug`: the value's structure, for example `Point { x: 10, y: 20 }` |
 
-A `float` in a `Display` position — an f-string `{value}`, `str(value)`, or `print`/`println` — renders as Python spells it: always visibly a float. An integral value keeps its decimal point (`100.0`, never `100`), the shortest digits that round-trip are used (`1.5`, `0.30000000000000004`), positional notation holds while the magnitude is at least `1e-4` and below `1e16` (`10000000000.0`) and switches to an exponent with an explicit sign and at least two digits outside that range (`1e+16`, `1.5e-07`), and the non-finite values are `inf`, `-inf`, and `nan`. The exact `f32`/`f64` carriers keep Rust's own `Display`.
+A `float` in a `Display` position — an f-string `{value}`, `str(value)`, or `print`/`println` — always renders as a float. An integral value keeps its decimal point (`100.0`, never `100`), the shortest digits that round-trip are used (`1.5`, `0.30000000000000004`), positional notation holds while the magnitude is at least `1e-4` and below `1e16` (`10000000000.0`) and switches to an exponent with an explicit sign and at least two digits outside that range (`1e+16`, `1.5e-07`), and the non-finite values are `inf`, `-inf`, and `nan`. An `f32` or `f64` renders the shortest digits that round-trip in positional notation, with no forced decimal point (`100`, `1.5`); the non-finite values are `inf`, `-inf`, and `NaN`.
+
+A value whose type adopts `Error` and has no `Display` of its own renders its `message()` in a `Display` position: an f-string `{value}`, `str(value)`, and `print`/`println`. `{value:?}` keeps `Debug`. See [Error trait](./stdlib_traits/error.md#displaying-an-error).
 
 See [String representation](./derives/string_representation.md) for how a type provides `Display` and `Debug`.
 

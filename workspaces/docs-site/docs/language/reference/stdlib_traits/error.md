@@ -1,11 +1,6 @@
 # Error trait
 
-The `Error` trait is the standard interface for custom error types used with `Result[T, E]`.
-
-Implement it when you want:
-
-- a human-readable message (`message()`)
-- optional error chaining (`source()`)
+`Error` is the trait for error types used as the `E` of `Result[T, E]`. An adopter defines `message()`. `source()` returns `None` unless the adopter defines it.
 
 ## Definition
 
@@ -48,4 +43,36 @@ model DatabaseError with Error:
 
     def source(self) -> Option[str]:
         return self.cause
+```
+
+## Displaying an error
+
+A value whose type adopts `Error` renders its `message()` in an f-string `{value}` part, in `str(value)`, and as a `print` or `println` argument. This holds for a value of a type parameter bounded by `Error` and for `self` in a default method of a trait that extends `Error`. A type with a `Display` of its own (a `__str__`, or a `Display` it adopts) renders that instead. `{value:?}` renders `Debug`.
+
+```incan
+from std.traits.error import Error
+
+model ParseFailure with Error:
+    field: str
+    reason: str
+
+    def message(self) -> str:
+        return f"cannot parse {self.field}: {self.reason}"
+
+def main() -> None:
+    failure = ParseFailure(field="age", reason="not a number")
+    println(f"error {failure}")  # error cannot parse age: not a number
+    println(str(failure))        # cannot parse age: not a number
+    println(failure)             # cannot parse age: not a number
+```
+
+```incan
+from std.traits.error import Error
+
+def describe[E with Error](error: E) -> str:
+    return f"failed: {error}"  # "failed: " followed by error.message()
+
+trait Reported with Error:
+    def report(self) -> str:
+        return f"reported: {self}"  # the adopter's __str__ if it has one, else self.message()
 ```

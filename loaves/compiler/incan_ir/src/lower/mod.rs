@@ -31,6 +31,7 @@ mod expr;
 mod receiver_plan;
 mod stmt;
 mod types;
+mod web_surface;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -425,9 +426,19 @@ impl AstLowering {
         resolved_method_name: &str,
         rebase_source_stdlib: bool,
     ) -> Option<String> {
-        self.type_info
-            .as_ref()?
-            .resolved_identity(span)
+        let identity = self.type_info.as_ref()?.resolved_identity(span)?;
+        self.emitted_method_reference_name_for_identity(identity, resolved_method_name, rebase_source_stdlib)
+    }
+
+    /// Project one checked source member identity the way [`Self::emitted_method_reference_name`] projects the
+    /// identity recorded at a call span.
+    pub(in crate::lower) fn emitted_method_reference_name_for_identity(
+        &self,
+        identity: &CanonicalSymbolId,
+        resolved_method_name: &str,
+        rebase_source_stdlib: bool,
+    ) -> Option<String> {
+        Some(identity)
             .filter(|identity| {
                 matches!(
                     identity.kind,
@@ -4133,8 +4144,10 @@ mod tests {
 
     mod builtin_str_arguments;
     mod derive_vocabulary_imports;
+    mod error_message_display;
     mod method_decorator_receivers;
     mod unary_operand_grouping;
+    mod web_surface;
 
     fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {
         match result {

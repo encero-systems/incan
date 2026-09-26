@@ -1,0 +1,22 @@
+# behavior: a route handler whose Query and Json payload model does not derive json is refused at check time
+# expect-diagnostic: INCAN-T0112
+
+import std.async
+from std.web import App, Json, Html, Response, Query, Path, route, GET
+
+
+model Search:
+    q: str
+
+
+@route("/snapshot/{id}", method=GET)
+async def snapshot(id: Path[int], query: Query[Search]) -> Json[Search]:
+    return Json(query.value)
+
+
+def render_html(value: str) -> Html:
+    return Html(value)
+
+
+def main() -> None:
+    println("ok")

@@ -104,19 +104,34 @@ fn grouped_conversion_operand(expr: TypedExpr) -> TypedExpr {
 impl AstLowering {
     /// Lower the arguments of a builtin call as bare expressions, in call order.
     ///
-    /// The value-to-text conversion (`str`) groups an operator-shaped argument first; see
-    /// [`grouped_conversion_operand`]. Every other builtin takes its arguments as lowered.
+    /// The display builtins (`str` and `print`) show an operand whose type adopts `Error` and defines no `__str__`
+    /// through its `message()`, where the typechecker recorded it; see
+    /// [`AstLowering::display_operand_through_error_message`]. The value-to-text conversion (`str`) then groups an
+    /// operator-shaped argument; see [`grouped_conversion_operand`]. Every other builtin takes its arguments as
+    /// lowered.
     pub(in crate::lower::expr) fn lower_builtin_call_args(
         &mut self,
         builtin: BuiltinFn,
         args: &[ast::CallArg],
     ) -> Result<Vec<TypedExpr>, LoweringError> {
-        let lowered = self.lower_call_args(args)?.into_iter().map(|arg| arg.expr);
-        Ok(if builtin == BuiltinFn::Str {
-            lowered.map(grouped_conversion_operand).collect()
-        } else {
-            lowered.collect()
-        })
+        let lowered = self.lower_call_args(args)?;
+        let displays_operands = matches!(builtin, BuiltinFn::Str | BuiltinFn::Print);
+        Ok(lowered
+            .into_iter()
+            .zip(args)
+            .map(|(arg, source)| {
+                let operand = if displays_operands {
+                    self.display_operand_through_error_message(arg.expr, Self::call_arg_expr(source).span)
+                } else {
+                    arg.expr
+                };
+                if builtin == BuiltinFn::Str {
+                    grouped_conversion_operand(operand)
+                } else {
+                    operand
+                }
+            })
+            .collect())
     }
 
     /// Preserve the frontend type of builtins whose result participates in later type-directed lowering.
@@ -1378,6 +1393,17 @@ impl AstLowering {
         method_name: &str,
     ) -> Option<String> {
         let source_identity = self.type_info.as_ref()?.resolved_identity(call_span)?;
+        self.compiled_provider_method_reference_name_for_identity(source_identity, receiver_ty, method_name)
+    }
+
+    /// Resolve one checked source-stub method identity to the symbol its compiled SDK provider exports; see
+    /// [`Self::compiled_provider_method_reference_name`].
+    pub(in crate::lower) fn compiled_provider_method_reference_name_for_identity(
+        &self,
+        source_identity: &CanonicalSymbolId,
+        receiver_ty: &IrType,
+        method_name: &str,
+    ) -> Option<String> {
         let SymbolOrigin::Module(module_path) = &source_identity.origin else {
             return None;
         };
@@ -3043,7 +3069,7 @@ impl AstLowering {
     }
 
     /// Return the expression carried by a call argument.
-    fn call_arg_expr(arg: &ast::CallArg) -> &ast::Spanned<ast::Expr> {
+    pub(in crate::lower) fn call_arg_expr(arg: &ast::CallArg) -> &ast::Spanned<ast::Expr> {
         match arg {
             ast::CallArg::Positional(e)
             | ast::CallArg::Named(_, e)

@@ -11,11 +11,16 @@
 //! literal the same way the macro does ([`route_capture_names`]), and classifies the declared types by what it can
 //! prove. A type it cannot classify, such as a Rust-origin type, is left to the build: the diagnostics here refuse only
 //! shapes that are certainly wrong, never shapes that are merely unknown.
+//!
+//! The same rule covers the payload of the JSON-carrying wrappers (#1768): a `Json[T]`, `Query[T]` or `Path[T]`
+//! parameter decodes the request into `T`, and a `Json[T]` return encodes `T`, so a declared `T` with no JSON form of
+//! its own is refused rather than left to fail the registration.
 
 use crate::ast::{Decorator, DecoratorArg, Expr, FunctionDecl, Literal, ParamKind, Spanned};
 use crate::diagnostics::errors;
 use crate::symbols::{ResolvedType, TypeInfo};
-use incan_lang::lang::stdlib;
+use incan_lang::lang::derives;
+use incan_lang::lang::stdlib::{self, StdlibJsonTraitId};
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 
@@ -41,6 +46,25 @@ enum RouteRole {
     Response,
     /// A handler parameter the request must supply through a typed extractor.
     Extractor,
+}
+
+/// Which way a route's JSON payload crosses the handler boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum JsonPayloadDirection {
+    /// The request is decoded into the payload: a `Json[T]`, `Query[T]` or `Path[T]` parameter.
+    Decode,
+    /// The payload is encoded as the response body: a `Json[T]` return.
+    Encode,
+}
+
+impl JsonPayloadDirection {
+    /// The `std.serde.json` protocol a payload needs to cross in this direction.
+    fn protocol(self) -> StdlibJsonTraitId {
+        match self {
+            Self::Decode => StdlibJsonTraitId::Deserialize,
+            Self::Encode => StdlibJsonTraitId::Serialize,
+        }
+    }
 }
 
 /// Extract the ordered capture names from a route path, spelled as the route macro reads them.
@@ -171,6 +195,30 @@ impl TypeChecker {
             ));
         }
 
+        // ---- JSON payloads: what the wrappers decode from the request and encode as the response (#1768) ----
+        if let Some((wrapper, payload)) =
+            self.route_payload_without_json_form(return_type, JsonPayloadDirection::Encode)
+        {
+            self.errors.push(errors::route_payload_without_json_form(
+                &func.name,
+                &wrapper,
+                &payload,
+                func.return_type.span,
+            ));
+        }
+        for (param, param_ty) in func.params.iter().zip(param_types) {
+            if param.node.kind != ParamKind::Normal {
+                continue;
+            }
+            if let Some((wrapper, payload)) =
+                self.route_payload_without_json_form(param_ty, JsonPayloadDirection::Decode)
+            {
+                self.errors.push(errors::route_payload_without_json_form(
+                    &func.name, &wrapper, &payload, param.span,
+                ));
+            }
+        }
+
         // ---- Parameters: what the request supplies ----
         let Some(path) = route_path_literal(&decorator.node) else {
             return;
@@ -297,6 +345,113 @@ impl TypeChecker {
             Some(id) if self.lookup_symbol(name).is_some() => surface_web_type_shape(id, role),
             _ => RouteTypeShape::Unknown,
         }
+    }
+
+    /// Return the wrapper and offending type spellings when a declared route type carries a JSON payload that
+    /// certainly has no JSON form for `direction`, or `None` otherwise.
+    ///
+    /// The JSON-carrying wrappers are the web surface types the program brought into scope: `Json[T]` in both
+    /// directions, and `Query[T]` and `Path[T]` as decoded parameters. A `Result` or `Option` return is judged by the
+    /// responses it carries. The payload is searched through the types it is built from (`Json[list[Search]]` needs
+    /// `Search` to have a JSON form); see [`Self::type_without_json_form`].
+    fn route_payload_without_json_form(
+        &self,
+        ty: &ResolvedType,
+        direction: JsonPayloadDirection,
+    ) -> Option<(String, String)> {
+        let ResolvedType::Generic(name, args) = ty else {
+            return None;
+        };
+        if direction == JsonPayloadDirection::Encode
+            && matches!(
+                collection_type_id(name),
+                Some(CollectionTypeId::Result | CollectionTypeId::Option)
+            )
+        {
+            return args
+                .iter()
+                .find_map(|arg| self.route_payload_without_json_form(arg, direction));
+        }
+        let carries_json_payload = match surface_types::from_str(name) {
+            Some(SurfaceTypeId::Json) => true,
+            Some(SurfaceTypeId::Query | SurfaceTypeId::Path) => direction == JsonPayloadDirection::Decode,
+            _ => false,
+        };
+        let is_web_surface_binding = matches!(
+            self.lookup_type_info(name),
+            Some(TypeInfo::Builtin | TypeInfo::TypeAlias) | None
+        ) && self.lookup_symbol(name).is_some();
+        let [payload] = args.as_slice() else {
+            return None;
+        };
+        if !carries_json_payload || !is_web_surface_binding {
+            return None;
+        }
+        self.type_without_json_form(payload, direction)
+            .map(|offending| (ty.to_string(), offending))
+    }
+
+    /// Return the spelling of the first type inside `ty` that certainly cannot cross as JSON in `direction`, or `None`
+    /// when every part of it has, or may have, a JSON form.
+    ///
+    /// Collections, `Option`, `Result`, tuples and the frozen collections cross as JSON exactly when their elements
+    /// do, so the search descends into them; a generic model or class that has a JSON form still needs its type
+    /// arguments to have one. The misfits are decided by [`Self::nominal_certainly_lacks_json_form`]; every other leaf
+    /// -- a scalar, an enum, a newtype, a Rust-origin or unresolved type -- is left to the build.
+    fn type_without_json_form(&self, ty: &ResolvedType, direction: JsonPayloadDirection) -> Option<String> {
+        match ty {
+            ResolvedType::Named(name) => self
+                .nominal_certainly_lacks_json_form(name, direction)
+                .then(|| name.clone()),
+            ResolvedType::Generic(name, args) => {
+                if collection_type_id(name).is_none() && self.nominal_certainly_lacks_json_form(name, direction) {
+                    return Some(name.clone());
+                }
+                args.iter().find_map(|arg| self.type_without_json_form(arg, direction))
+            }
+            ResolvedType::Tuple(items) => items
+                .iter()
+                .find_map(|item| self.type_without_json_form(item, direction)),
+            ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => {
+                self.type_without_json_form(inner, direction)
+            }
+            ResolvedType::FrozenDict(key, value) => self
+                .type_without_json_form(key, direction)
+                .or_else(|| self.type_without_json_form(value, direction)),
+            _ => None,
+        }
+    }
+
+    /// Return whether a nominal type is a local model or class that certainly cannot cross as JSON in `direction`.
+    ///
+    /// A model or class has a JSON form through `@derive(json)` (which adopts both `std.serde.json` traits), through
+    /// adopting the needed `Serialize` or `Deserialize` trait, or through a Rust derive. The type is refused only
+    /// when every one of its derives is a builtin derive the compiler knows supplies no JSON, it has no Rust derive,
+    /// and none of its adopted traits comes from `std.serde.json` or is spelled as the needed protocol. Every other
+    /// nominal type -- a subclass, an enum, a newtype, a Rust-origin or unresolved type -- is left to the build.
+    fn nominal_certainly_lacks_json_form(&self, name: &str, direction: JsonPayloadDirection) -> bool {
+        let (declared_derives, trait_adoptions) = match self.lookup_type_info(name) {
+            Some(TypeInfo::Model(model)) => (&model.derives, &model.trait_adoptions),
+            Some(TypeInfo::Class(class)) if class.extends.is_none() => (&class.derives, &class.trait_adoptions),
+            _ => return false,
+        };
+        if declared_derives
+            .iter()
+            .any(|derive| derives::from_str(derive).is_none())
+            || self.local_rust_derive_paths.contains_key(name)
+        {
+            return false;
+        }
+        let needed = direction.protocol();
+        !trait_adoptions.iter().any(|adoption| {
+            adoption
+                .module_path
+                .as_deref()
+                .is_some_and(stdlib::is_stdlib_json_trait_module_path)
+                || std::iter::once(adoption.name.as_str())
+                    .chain(adoption.source_name.as_deref())
+                    .any(|spelling| stdlib::stdlib_json_trait_id(spelling) == Some(needed))
+        })
     }
 }
 

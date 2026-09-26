@@ -62,6 +62,7 @@ mod canonical_identity;
 mod capabilities;
 mod checked_facts_and_registries;
 mod collections_strings_and_bytes;
+mod error_display;
 mod extern_and_c_bindings;
 mod fields_and_members;
 mod generics_and_type_tokens;
@@ -85,6 +86,7 @@ mod statements_and_bindings;
 mod stdlib_surfaces;
 mod trait_instantiation_and_operators;
 mod traits;
+mod web_route_payloads;
 
 use helpers::{
     assert_check_ok, check_str, check_str_err, check_str_warnings, check_str_with_library_index,
