@@ -2573,15 +2573,20 @@ fn format_params(params: &[ParamExport]) -> String {
     params.iter().map(format_param).collect::<Vec<_>>().join(", ")
 }
 
-/// Format one checked API parameter.
+/// Format one checked API parameter, spelling its `mut` marker when the function type carries one.
 fn format_param(param: &ParamExport) -> String {
     let prefix = match param.kind {
         ParamKindExport::Normal => "",
         ParamKindExport::RestPositional => "*",
         ParamKindExport::RestKeyword => "**",
     };
+    let marker = if param.is_mut { "mut " } else { "" };
     let default = if param.has_default { " = ..." } else { "" };
-    format!("{prefix}{}: {}{default}", param.name, format_type_ref(&param.ty))
+    format!(
+        "{prefix}{marker}{}: {}{default}",
+        param.name,
+        format_type_ref(&param.ty)
+    )
 }
 
 /// Format a manifest-level type reference for concise hover display.

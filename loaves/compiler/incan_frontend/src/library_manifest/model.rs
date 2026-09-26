@@ -1484,6 +1484,10 @@ pub struct ParamExport {
     pub kind: ParamKindExport,
     #[serde(default)]
     pub has_default: bool,
+    /// Whether the function's type marks the parameter `mut`: a `mut` parameter whose changes the caller sees
+    /// (#1790). A `mut` parameter of type `int`, `float` or `bool`, or of a Rust type, is not marked.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_mut: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<ParamDefaultExport>,
 }
@@ -2405,6 +2409,7 @@ pub fn params_from_checked(params: &[CallableParam], defaults: &[Option<CheckedP
                 ty: type_ref_from_resolved(&param.ty),
                 kind: param_kind_from_ast(param.kind),
                 has_default,
+                is_mut: param.is_mut,
                 default,
             })
         })

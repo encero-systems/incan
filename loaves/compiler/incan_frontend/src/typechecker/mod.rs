@@ -47,7 +47,9 @@ mod check_expr;
 mod check_stmt;
 mod collect;
 mod const_eval;
+mod decorated_method_receivers;
 mod helpers;
+mod mut_marker;
 mod reachability;
 pub mod stdlib_loader;
 mod trait_bound_relations;
@@ -450,15 +452,6 @@ struct AnnotationOwner {
     declared_type_params: Vec<String>,
 }
 
-/// One value a module-level function returns, as the method-decorator receiver planning reads it (#1790).
-#[derive(Debug, Clone)]
-pub(crate) struct ReturnedValue {
-    /// Span of the returned expression, or of the name inside any parentheses around it.
-    pub(crate) span: Span,
-    /// The returned name, when the value is a bare name.
-    pub(crate) name: Option<String>,
-}
-
 pub struct TypeChecker {
     /// Symbol table populated during the first pass.
     pub symbols: SymbolTable,
@@ -548,14 +541,8 @@ pub struct TypeChecker {
     pub static_decls: Vec<(StaticDecl, Span)>,
     /// Collected module-level function declarations for static dependency analysis.
     pub local_function_decls: HashMap<String, FunctionDecl>,
-    /// Declaration span of the module-level function whose body is being checked; `None` inside methods and outside
-    /// bodies.
-    pub(crate) current_function_declaration_span: Option<(usize, usize)>,
-    /// Every value a module-level function returns, keyed by the function's declaration span.
-    ///
-    /// Method-decorator receiver planning (#1790) reads it once every body is checked, to learn which functions a
-    /// decorator returns in a method's place.
-    pub(crate) returned_values: HashMap<(usize, usize), Vec<ReturnedValue>>,
+    /// What method-decorator receiver planning (#1790) gathers while bodies are checked.
+    receiver_plan_inputs: decorated_method_receivers::ReceiverPlanInputs,
     /// Function symbols collected in the current module pass, keyed by source name.
     ///
     /// The checker imports dependency modules into one ambient symbol table. Same-name overload grouping is
@@ -839,8 +826,7 @@ impl TypeChecker {
             const_decls: HashMap::new(),
             static_decls: Vec::new(),
             local_function_decls: HashMap::new(),
-            current_function_declaration_span: None,
-            returned_values: HashMap::new(),
+            receiver_plan_inputs: Default::default(),
             current_module_function_symbols: HashMap::new(),
             type_aliases: HashMap::new(),
             rejected_member_bindings: HashSet::new(),
@@ -5125,6 +5111,7 @@ impl TypeChecker {
             self.record_type_reference_identities(ty);
         }
         self.validate_stdlib_type_usage(ty);
+        self.refuse_marked_copied_scalars(ty);
         if let Type::Simple(name) = &ty.node
             && Self::reserved_numeric_type_name(name)
         {
@@ -6519,8 +6506,7 @@ impl TypeChecker {
         self.const_decls.clear();
         self.static_decls.clear();
         self.local_function_decls.clear();
-        self.current_function_declaration_span = None;
-        self.returned_values.clear();
+        self.receiver_plan_inputs = Default::default();
         self.current_module_function_symbols.clear();
         self.rejected_member_bindings.clear();
         self.warned_public_c_abi_raw_call_owners.clear();
@@ -8597,8 +8583,7 @@ impl TypeChecker {
                     && a1.iter().zip(a2.iter()).all(|(t1, t2)| self.types_compatible(t1, t2))
             }
             (ResolvedType::Function(p1, r1), ResolvedType::Function(p2, r2)) => {
-                // The `mut` marker decides how the argument is passed, so it must agree exactly, like `&` and `&mut`
-                // in `callable_param_types_compatible` (#1790).
+                // The `mut` marker decides how the argument is passed, so it must agree exactly (#1790).
                 p1.len() == p2.len()
                     && p1.iter().zip(p2.iter()).all(|(t1, t2)| {
                         t1.kind == t2.kind

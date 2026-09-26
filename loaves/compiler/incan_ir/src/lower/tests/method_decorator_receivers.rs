@@ -1,8 +1,9 @@
 //! Method-decorator receivers (#1790): the declarations of a `self` method's decorator chain take the receiver the way
 //! the method's wrapper passes it, a direct call of a planned replacement passes it the same way, and a `mut`-marked
-//! callable-type parameter is passed so the caller sees the changes.
+//! parameter, local or imported from a library, is passed so the caller sees the changes.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use super::*;
 use crate::visit::{self, Visitor};
@@ -245,5 +246,62 @@ def main() -> None:
         Some(&IrType::RefMut(Box::new(IrType::Struct("Counter".to_string()))))
     );
     assert_eq!(params.get(1), Some(&IrType::Int));
+    Ok(())
+}
+
+/// Issue #1790: a direct call of a library function whose parameter is `mut` passes that argument the way a local
+/// `mut` parameter is passed, because the marker travels through the library manifest.
+#[test]
+fn imported_mut_parameter_is_passed_mut_across_the_library_boundary() -> Result<(), String> {
+    use incan_frontend::library_manifest::LibraryManifest;
+    use incan_frontend::library_manifest_index::{
+        LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
+    };
+    use incan_frontend::provider::ProviderPlan;
+
+    let producer = r#"
+pub class Counter:
+  pub value: int
+
+pub def grow(mut counter: Counter, by: int) -> int:
+  counter.value += by
+  return counter.value
+"#;
+    let tokens = lexer::lex(producer).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+    let program = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["lib".to_string()]));
+    checker.set_current_package_identity(Some("counters".to_string()));
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("typechecker failed: {errors:?}"))?;
+    let exports = incan_frontend::library_exports::collect_checked_public_exports(&program, &checker);
+    let json = LibraryManifest::from_checked_exports("counters", "0.1.0", &exports)
+        .to_json_string()
+        .map_err(|error| error.to_string())?;
+    let manifest = LibraryManifest::from_json_str(&json).map_err(|error| error.to_string())?;
+    let index = LibraryManifestIndex::from_entries(HashMap::from([(
+        "counters".to_string(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root(
+                "counters",
+                "counters",
+                std::env::temp_dir().join("incan_issue1790_counters"),
+            ),
+        },
+    )]));
+    let mut lowering = AstLowering::new();
+    lowering.set_provider_plan(Some(Arc::new(ProviderPlan::for_library_index(index))));
+    let signature = lowering
+        .callable_signature_for_imported_pub_path(
+            &["pub".to_string(), "counters".to_string(), "grow".to_string()],
+            None,
+            ast::Span::default(),
+        )
+        .map_err(|error| error.to_string())?
+        .ok_or("expected the manifest to resolve `grow`")?;
+    let mutabilities: Vec<_> = signature.params.iter().map(|param| param.mutability).collect();
+    assert_eq!(mutabilities, vec![Mutability::Mutable, Mutability::Immutable]);
     Ok(())
 }

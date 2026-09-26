@@ -1315,6 +1315,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/mut_marker_publication.rs": {
+      "disposition": "retire",
+      "notes": "asserts the emitter's native-union projection of a published function type whose parameter carries the `mut` marker (#1790); retires with the Rust-source backend (#654), whose publication path it pins.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/trait_bound_inference.rs": {
       "disposition": "retire",
       "notes": "infers Rust trait bounds for generated generics; Rust-shape concern.",
@@ -3667,6 +3675,10 @@
         "closure_checked_against_a_mut_marked_shape_takes_the_argument_mut": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/mut_marked_callable_value_changes_the_argument.incn",
           "notes": "asserts that a closure checked against a `(mut T, ...)` shape lowers that parameter the way a `mut` parameter is passed (#1790); the twin calls a value of that shape and prints the caller's changed argument."
+        },
+        "imported_mut_parameter_is_passed_mut_across_the_library_boundary": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/mut_parameter_across_package_boundary",
+          "notes": "asserts that a direct call of a library function with a `mut` parameter lowers that argument as `mut` (#1790); the twin calls the dependency's function directly and through a marked function type and prints the consumer's changed argument."
         }
       }
     },

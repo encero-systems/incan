@@ -67,7 +67,7 @@ A factory that changes the signature spells both shapes in its result, such as `
 
 1. Write the receiver in the decorator's shapes the way the method writes it: `(Box, int) -> str` for `def label(self, value: int) -> str`, and `(mut Counter, int) -> int` for `def bump(mut self, by: int) -> int`.
 2. Declare a function the decorator returns in the method's place with the receiver as its first parameter: `box: Box` for a `self` method, `mut counter: Counter` for a `mut self` method.
-3. For a `self` method, keep the decorator and the functions it returns private to the module that declares the method's type, write their shapes as callable types, and return functions by name. Use a function returned in the method's place only by returning it or by calling it directly in that module.
+3. For a `self` method, keep the decorator and the functions it returns private to the module that declares the method's type, write their shapes as callable types, return functions by name, and use the callable the decorator accepts only to return it. Use a function returned in the method's place only by returning it or by calling it directly in that module.
 
 ```incan
 class Box:
@@ -89,6 +89,7 @@ If the compiler refuses the chain with `INCAN-T0116`, the message names the rule
 - an imported decorator: move the decorator into the module that declares the method's type;
 - a shape written through a type alias: write the callable type out;
 - a returned closure or local variable: return a function declared in the module, by name;
+- the decorated callable called, stored or passed on inside the decorator: return it unchanged, or make the decorator generic over the whole callable, `(F) -> F`;
 - a `pub` function in the chain: make it private and give other modules a separate function;
 - a function of the chain used elsewhere, such as passed as a value: give that use its own function.
 

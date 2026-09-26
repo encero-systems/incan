@@ -21,6 +21,7 @@ fn manifest_io_round_trip_preserves_recursive_types_and_bounds() -> Result<(), B
             }],
         }],
         params: vec![ParamExport {
+            is_mut: false,
             name: "value".to_string(),
             ty: TypeRef::Applied {
                 origin: None,
@@ -65,6 +66,74 @@ fn manifest_io_round_trip_preserves_recursive_types_and_bounds() -> Result<(), B
     let loaded = LibraryManifest::read_from_path(&path)?;
 
     assert_eq!(loaded, manifest);
+    Ok(())
+}
+
+/// Issue #1790: a `mut`-marked parameter and a function type whose parameter carries the marker survive the manifest
+/// round trip under format 5, an unmarked parameter writes no marker, and the decoded function type is marked.
+#[test]
+fn manifest_io_round_trip_preserves_the_mut_marker_issue1790() -> Result<(), Box<dyn std::error::Error>> {
+    let counter = || TypeRef::Named {
+        origin: None,
+        name: "Counter".to_string(),
+    };
+    let int = || TypeRef::Named {
+        origin: None,
+        name: "int".to_string(),
+    };
+    let mut manifest = legacy_manifest_fixture("mylib", "0.1.0");
+    manifest.exports.functions.push(FunctionExport {
+        name: "apply".to_string(),
+        emitted_name: None,
+        type_params: Vec::new(),
+        params: vec![
+            ParamExport {
+                name: "step".to_string(),
+                ty: TypeRef::Function {
+                    params: vec![TypeRef::MutParam {
+                        inner: Box::new(counter()),
+                    }],
+                    return_type: Box::new(int()),
+                },
+                kind: ParamKindExport::Normal,
+                has_default: false,
+                is_mut: false,
+                default: None,
+            },
+            ParamExport {
+                name: "counter".to_string(),
+                ty: counter(),
+                kind: ParamKindExport::Normal,
+                has_default: false,
+                is_mut: true,
+                default: None,
+            },
+        ],
+        return_type: int(),
+        is_async: false,
+    });
+
+    assert_eq!(
+        manifest.manifest_format, 5,
+        "`TypeRef::MutParam` is part of manifest format 5"
+    );
+    let json = manifest.to_json_string()?;
+    assert_eq!(
+        json.matches("\"is_mut\"").count(),
+        1,
+        "only the marked parameter writes the marker: {json}"
+    );
+    let loaded = LibraryManifest::from_json_str(&json)?;
+    assert_eq!(loaded, manifest);
+
+    let step = &loaded.exports.functions[0].params[0].ty;
+    let crate::symbols::ResolvedType::Function(params, _) = resolved_type_from_manifest_type_ref(step) else {
+        return Err(format!("`step` must decode to a function type, got {step:?}").into());
+    };
+    assert!(
+        params.first().is_some_and(|param| param.is_mut),
+        "the decoded function type keeps the marker, got {params:?}"
+    );
     Ok(())
 }
 
@@ -367,6 +436,7 @@ fn manifest_io_round_trip_preserves_partial_exports() -> Result<(), Box<dyn std:
         type_params: Vec::new(),
         params: vec![
             ParamExport {
+                is_mut: false,
                 name: "method".to_string(),
                 ty: TypeRef::Named {
                     origin: None,
@@ -377,6 +447,7 @@ fn manifest_io_round_trip_preserves_partial_exports() -> Result<(), Box<dyn std:
                 default: None,
             },
             ParamExport {
+                is_mut: false,
                 name: "path".to_string(),
                 ty: TypeRef::Named {
                     origin: None,
@@ -411,6 +482,7 @@ fn manifest_io_round_trip_preserves_parameter_defaults() -> Result<(), Box<dyn s
         emitted_name: None,
         type_params: Vec::new(),
         params: vec![ParamExport {
+            is_mut: false,
             name: "value".to_string(),
             ty: TypeRef::Named {
                 origin: None,
@@ -564,6 +636,7 @@ fn manifest_io_round_trip_preserves_rest_parameter_metadata() -> Result<(), Box<
         type_params: Vec::new(),
         params: vec![
             ParamExport {
+                is_mut: false,
                 name: "items".to_string(),
                 ty: TypeRef::Named {
                     origin: None,
@@ -574,6 +647,7 @@ fn manifest_io_round_trip_preserves_rest_parameter_metadata() -> Result<(), Box<
                 default: None,
             },
             ParamExport {
+                is_mut: false,
                 name: "labels".to_string(),
                 ty: TypeRef::Named {
                     origin: None,
@@ -606,6 +680,7 @@ fn manifest_io_round_trip_preserves_rest_parameter_metadata() -> Result<(), Box<
             type_params: Vec::new(),
             receiver: Some(ReceiverExport::Immutable),
             params: vec![ParamExport {
+                is_mut: false,
                 name: "items".to_string(),
                 ty: TypeRef::Named {
                     origin: None,
@@ -642,6 +717,7 @@ fn manifest_validation_rejects_invalid_rest_parameter_metadata() -> Result<(), B
         type_params: Vec::new(),
         params: vec![
             ParamExport {
+                is_mut: false,
                 name: "labels".to_string(),
                 ty: TypeRef::Named {
                     origin: None,
@@ -652,6 +728,7 @@ fn manifest_validation_rejects_invalid_rest_parameter_metadata() -> Result<(), B
                 default: None,
             },
             ParamExport {
+                is_mut: false,
                 name: "value".to_string(),
                 ty: TypeRef::Named {
                     origin: None,
@@ -941,6 +1018,7 @@ fn manifest_io_round_trip_preserves_generic_method_type_params() -> Result<(), B
             }],
             receiver: Some(ReceiverExport::Immutable),
             params: vec![ParamExport {
+                is_mut: false,
                 name: "value".to_string(),
                 ty: TypeRef::TypeParam { name: "T".to_string() },
                 kind: ParamKindExport::Normal,

@@ -41,14 +41,15 @@ fn shared(role: MethodDecoratorReceiverRole) -> Option<MethodDecoratorReceiverSl
     Some(MethodDecoratorReceiverSlot { mutable: false, role })
 }
 
-/// Assert that `source` is refused with `code` and a message containing `expected`.
+/// Assert that `source` is refused with `code` and a message containing `expected`, with a hint that says what to
+/// write instead.
 fn assert_refused(source: &str, code: &str, expected: &str) {
     let errors = check_str_err(source, "the program must be refused");
     assert!(
         errors
             .iter()
-            .any(|err| err.stable_code() == Some(code) && err.message.contains(expected)),
-        "expected {code} containing `{expected}`, got {errors:?}"
+            .any(|err| err.stable_code() == Some(code) && err.message.contains(expected) && !err.hints.is_empty()),
+        "expected {code} containing `{expected}` with a hint, got {errors:?}"
     );
 }
 
@@ -456,15 +457,15 @@ def as_int(func: (Box, int) -> str) -> (Box, int) -> int:
     let cases = [
         (
             "\ndef apply(f: (Box, int) -> int, box: Box) -> int:\n  return f(box, 1)\n\ndef main(box: Box) -> int:\n  return apply(parse, box)\n",
-            "'parse' takes the receiver in the decorator chain of '@as_int', so it is only returned in the method's place or called directly",
+            "'parse' cannot be used here: it takes the place of `self` method 'label' through '@as_int', so it is only returned there or called directly",
         ),
         (
             "\n@as_int\ndef free(box: Box, value: int) -> str:\n  return \"free\"\n",
-            "'as_int' takes the receiver in its shapes, so it is only applied as a decorator to `self` methods",
+            "Decorator '@as_int' cannot decorate function 'free': its shapes name the receiver of a `self` method",
         ),
         (
             "\ndef other(box: Box, value: int) -> str:\n  return \"other\"\n\ndef main() -> (Box, int) -> int:\n  return as_int(other)\n",
-            "'as_int' takes the receiver in its shapes, so it is only applied as a decorator to `self` methods",
+            "'as_int' cannot be used here: its shapes name the receiver of `self` method 'label', so it is only applied as a decorator of `self` methods",
         ),
     ];
     for (rest, expected) in cases {
@@ -609,5 +610,176 @@ def preserve[F]() -> ((F) -> F):
 "#;
     let (ast, checker) = checked(source)?;
     assert_eq!(receiver_slot_of(&ast, &checker, "preserve"), None);
+    Ok(())
+}
+
+/// Issue #1790: inside a decorator of a `self` method whose shapes name the receiver, the callable it accepts is only
+/// returned; calling it or passing it on is refused with `INCAN-T0116`.
+#[test]
+fn the_decorated_callable_is_only_returned() {
+    for (body, what) in [
+        ("  remember(func)\n  return func\n", "passed on"),
+        ("  println(func(Box(value=0), 0))\n  return func\n", "called"),
+        ("  kept = func\n  return kept\n", "stored"),
+    ] {
+        let source = format!(
+            r#"
+class Box:
+  pub value: int
+
+  @traced
+  def label(self, value: int) -> str:
+    return "value"
+
+def remember(func: (Box, int) -> str) -> None:
+  pass
+
+def traced(func: (Box, int) -> str) -> (Box, int) -> str:
+{body}"#
+        );
+        let errors = check_str_err(
+            &source,
+            "a use of the decorated callable other than returning it must be refused",
+        );
+        assert!(
+            errors.iter().any(|err| err.stable_code() == Some("INCAN-T0116")
+                && err.message.contains("'func' cannot be used here")
+                && err.hints.iter().any(|hint| hint.contains("Return 'func' unchanged"))),
+            "expected INCAN-T0116 for the decorated callable {what}, got {errors:?}"
+        );
+    }
+    assert_check_ok(
+        r#"
+class Box:
+  pub value: int
+
+  @traced
+  def label(self, value: int) -> str:
+    return "value"
+
+def traced(func: (Box, int) -> str) -> (Box, int) -> str:
+  if true:
+    return (func)
+  return func
+"#,
+    );
+}
+
+/// Issue #1790: an `int`, `float` or `bool` parameter is the function's own copy, so a function type cannot mark one
+/// `mut`, also through a type alias; the marker on any other parameter stays valid.
+#[test]
+fn mut_marker_on_a_copied_scalar_is_refused() {
+    for (annotation, scalar) in [
+        ("(mut int) -> int", "int"),
+        ("(str, mut float) -> None", "float"),
+        ("(mut Count) -> int", "Count"),
+        ("list[(mut bool) -> bool]", "bool"),
+    ] {
+        let source = format!("type Count = int\n\ndef run(step: {annotation}) -> None:\n  pass\n");
+        let errors = check_str_err(&source, "a mut marker on a copied scalar must be refused");
+        assert!(
+            errors.iter().any(|err| err.message.contains(&format!(
+                "`mut` cannot mark the `{scalar}` parameter of a function type"
+            )) && err.hints.iter().any(|hint| hint.contains("without `mut`"))),
+            "expected the copied-scalar refusal for `{annotation}`, got {errors:?}"
+        );
+    }
+    assert_check_ok(
+        r#"
+class Counter:
+  pub value: int
+
+def run(step: (mut Counter, int) -> int, mut counter: Counter) -> int:
+  return step(counter, 1)
+"#,
+    );
+}
+
+/// Issue #1790: the `mut` marker of a library function's parameter survives the `.incnlib` round trip, so a consumer
+/// sees the same function type the producer checked.
+#[test]
+fn mut_marker_survives_the_library_manifest_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+    let producer = parse_program(
+        r#"
+pub class Counter:
+  pub value: int
+
+pub def grow(mut counter: Counter) -> int:
+  counter.value += 1
+  return counter.value
+
+pub def bump(mut n: int) -> int:
+  return n + 1
+"#,
+        "issue1790 marker producer",
+    );
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["lib".to_string()]));
+    checker.set_current_package_identity(Some("counters".to_string()));
+    checker
+        .check_program(&producer)
+        .map_err(|errs| format!("producer check failed: {errs:?}"))?;
+    let exports = crate::library_exports::collect_checked_public_exports(&producer, &checker);
+    let json = LibraryManifest::from_checked_exports("counters", "0.1.0", &exports).to_json_string()?;
+    let manifest = LibraryManifest::from_json_str(&json)?;
+    let marked = |name: &str| {
+        manifest
+            .exports
+            .functions
+            .iter()
+            .find(|function| function.name == name)
+            .and_then(|function| function.params.first())
+            .map(|param| param.is_mut)
+    };
+    assert_eq!(marked("grow"), Some(true), "`mut counter: Counter` is marked");
+    assert_eq!(marked("bump"), Some(false), "`mut n: int` is the function's own copy");
+
+    let index = || {
+        LibraryManifestIndex::from_entries(HashMap::from([(
+            "counters".to_string(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(manifest.clone()),
+                metadata: LibraryArtifactMetadata::from_crate_root(
+                    "counters",
+                    "counters",
+                    synthetic_artifact_root("issue1790_counters"),
+                ),
+            },
+        )]))
+    };
+    check_str_with_library_index(
+        r#"
+from pub::counters import Counter, grow, bump
+
+def apply(step: (mut Counter) -> int, mut counter: Counter) -> int:
+  return step(counter)
+
+def twice(step: (int) -> int) -> int:
+  return step(step(1))
+
+def main() -> int:
+  mut counter = Counter(value=1)
+  return apply(grow, counter) + twice(bump)
+"#,
+        index(),
+    )
+    .map_err(|errs| format!("the marked shape must accept the imported function: {errs:?}"))?;
+    let errors = check_str_with_library_index_err(
+        r#"
+from pub::counters import Counter, grow
+
+def apply(step: (Counter) -> int, counter: Counter) -> int:
+  return step(counter)
+
+def main() -> int:
+  return apply(grow, Counter(value=1))
+"#,
+        index(),
+        "an unmarked shape must refuse the imported marked function",
+    )?;
+    assert!(
+        errors.iter().any(|err| err.message.contains("(mut Counter) -> int")),
+        "expected a mismatch naming `(mut Counter) -> int`, got {errors:?}"
+    );
     Ok(())
 }

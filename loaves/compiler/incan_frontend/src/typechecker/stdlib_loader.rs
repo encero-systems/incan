@@ -1428,12 +1428,10 @@ fn method_info_from_ast_method(
         .params
         .iter()
         .map(|p| {
-            CallableParam::named_with_default(
-                p.node.name.clone(),
-                ast_type_to_resolved_with_rust_imports(&p.node.ty.node, &all_type_params, rust_imports),
-                p.node.kind,
-                p.node.default.is_some(),
-            )
+            let ty = ast_type_to_resolved_with_rust_imports(&p.node.ty.node, &all_type_params, rust_imports);
+            let is_mut = super::mut_marker::def_param_is_marked(&p.node, &ty);
+            CallableParam::named_with_default(p.node.name.clone(), ty, p.node.kind, p.node.default.is_some())
+                .with_mut(is_mut)
         })
         .collect();
     let return_type =
@@ -1519,12 +1517,10 @@ fn function_decl_to_info(
         .params
         .iter()
         .map(|p| {
-            CallableParam::named_with_default(
-                p.node.name.clone(),
-                ast_type_to_resolved(&p.node.ty.node, &tp_names),
-                p.node.kind,
-                p.node.default.is_some(),
-            )
+            let ty = ast_type_to_resolved(&p.node.ty.node, &tp_names);
+            let is_mut = super::mut_marker::def_param_is_marked(&p.node, &ty);
+            CallableParam::named_with_default(p.node.name.clone(), ty, p.node.kind, p.node.default.is_some())
+                .with_mut(is_mut)
         })
         .collect();
 

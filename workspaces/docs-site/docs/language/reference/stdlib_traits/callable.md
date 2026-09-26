@@ -30,7 +30,9 @@ def main() -> None:
 
 ## `mut` parameters in function types
 
-A parameter of an arrow-form function type can carry the `mut` marker, `(mut T, ...) -> R`. It means what `mut` means on a `def` parameter: the callable's changes to that argument are visible to the caller.
+`mut` on a parameter lets the function change the value. Changes to a collection, model or class object reach the caller. An `int`, `float` or `bool` parameter is the function's own copy, so its changes stay in the function.
+
+A parameter of an arrow-form function type can carry the `mut` marker, `(mut T, ...) -> R`: the callable's changes to that argument reach the caller.
 
 ```incan
 class Counter:
@@ -46,6 +48,9 @@ def apply(step: (mut Counter, int) -> int, mut counter: Counter) -> int:
 def pick() -> (Counter, int) -> int:
     return grow                           # refused: INCAN-T0001, found '(mut Counter, int) -> int'
 
+def twice(step: (mut int) -> int) -> int:  # refused: INCAN-T0001, `mut` cannot mark the `int` parameter
+    return step(step(1))
+
 def main() -> None:
     mut counter = Counter(value=1)
     println(apply(grow, counter))         # 3
@@ -55,8 +60,10 @@ def main() -> None:
 | Rule                | Contract                                                                                                                                                                  |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Where it is written | On a parameter of an arrow-form function type. In a tuple type, a parenthesized type, or the parameter list of `Callable[...]` it is a syntax error.                      |
+| Copied scalars      | On an `int`, `float` or `bool` parameter, also through a type alias, the marker is refused with `INCAN-T0001`.                                                            |
 | Type identity       | The marker is part of the function type. Two function types match only when they mark the same parameters; a mismatch in either direction is refused with `INCAN-T0001`.  |
 | `def` parameters    | A `def` parameter declared `mut` is marked in the function's type, except a parameter of type `int`, `float` or `bool`, a parameter of a Rust type, and `*args` or `**kwargs`. |
+| Libraries           | A published function keeps its marked parameters: a consumer sees the function type the producer checked.                                                               |
 | Closures            | A closure checked against a function type has each parameter that type marks marked in its own type.                                                                      |
 | Display             | Diagnostics and hovers spell the marker, as in `(mut Counter, int) -> int`.                                                                                               |
 
