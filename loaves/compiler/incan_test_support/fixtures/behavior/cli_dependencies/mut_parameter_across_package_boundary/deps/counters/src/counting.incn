@@ -1,0 +1,11 @@
+pub class Counter:
+    pub value: int
+
+
+pub def new_counter(value: int) -> Counter:
+    return Counter(value=value)
+
+
+pub def grow(mut counter: Counter, by: int) -> int:
+    counter.value += by
+    return counter.value

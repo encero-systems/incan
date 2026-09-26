@@ -1,0 +1,17 @@
+# behavior: a decorator on a `self` method that returns a closure in the method's place is refused at check time
+# expect-diagnostic: INCAN-T0116
+
+class Box:
+    value: int
+
+    @as_int
+    def label(self, value: int) -> str:
+        return f"{value}"
+
+
+def as_int(func: (Box, int) -> str) -> (Box, int) -> int:
+    return (box, value) => value + 1
+
+
+def main() -> None:
+    println(Box(value=1).label(2))

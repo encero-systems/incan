@@ -1,0 +1,24 @@
+# behavior: const FrozenDict and FrozenList values nest string and bytes elements that read back by length, by index and by iteration (RFC 008)
+# retires: loaves/compiler/incan_ir/src/lower/types.rs::lower_resolved_frozen_collections_freeze_nested_strings
+# expect-stdout:
+#   2
+#   beta
+#   alpha
+#   beta
+#   2
+#   1
+#   2
+
+const TABLE: FrozenDict[str, FrozenList[str]] = {"names": ["alpha", "beta"], "empty": []}
+const NAMES: FrozenList[str] = ["alpha", "beta"]
+const CHUNKS: FrozenList[FrozenBytes] = [b"ab", b"c"]
+
+
+def main() -> None:
+    println(len(TABLE))
+    println(NAMES[1])
+    for name in NAMES:
+        println(name)
+    for chunk in CHUNKS:
+        println(len(chunk))
+    println(len(CHUNKS[0]))

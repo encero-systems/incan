@@ -1,0 +1,13 @@
+# behavior: a str newtype adopting std.serde.json Serialize serializes as its JSON payload
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_newtype_with_serialize_trait_forwards_rust_derive
+# expect-stdout:
+#   "wrapped"
+
+from std.serde.json import Serialize
+
+
+type Wrapped = newtype str with Serialize
+
+
+def main() -> None:
+    println(Wrapped("wrapped").to_json())

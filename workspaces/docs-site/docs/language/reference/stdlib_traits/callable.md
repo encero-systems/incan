@@ -1,58 +1,41 @@
 # Callable objects (Reference)
 
-This page documents callable types in Incan.
+`std.traits.callable` declares one trait per arity for values that are called like functions. Function types, the `Callable[Params, R]` sugar and `mut` parameters are in [Functions and calls](../functions.md#function-types).
 
-## `Callable[Params, R]` type sugar
+| Trait                | Hook                                  | Call form     |
+| -------------------- | ------------------------------------- | ------------- |
+| `Callable0[R]`       | `def __call__(self) -> R`             | `value()`     |
+| `Callable1[A, R]`    | `def __call__(self, arg: A) -> R`     | `value(x)`    |
+| `Callable2[A, B, R]` | `def __call__(self, a: A, b: B) -> R` | `value(x, y)` |
 
-`Callable[Params, R]` is syntactic sugar for function types. The parser desugars it to the arrow form at parse time:
+## `CallableN` bounds
 
-| Sugar                 | Arrow form    |
-| --------------------- | ------------- |
-| `Callable[(), R]`     | `() -> R`     |
-| `Callable[A, R]`      | `(A) -> R`    |
-| `Callable[(A, B), R]` | `(A, B) -> R` |
+A type parameter bounded by `CallableN[...]` accepts:
 
-Both forms are interchangeable in type annotations. Named `def` functions and closures are both accepted wherever a function type is expected.
+- a named function or a closure with exactly N parameters, whose parameter types match the bound's leading type arguments and whose return type matches its last one; a closure's parameters take their types from the bound;
+- a value of a model or class that adopts the same `CallableN[...]` with `with` and defines `__call__`.
 
-## Rest-Aware Function Values
-
-Function values preserve source-declared rest parameters. A function declared with `*args: T` accepts additional positional arguments and `*list_value` unpacking through the function value. A function declared with `**kwargs: T` accepts additional keyword arguments and `**dict_value` unpacking through the function value.
-
-```incan
-def collect(prefix: str, *items: int, **labels: str) -> int:
-    return len(items) + len(labels)
-
-def main() -> int:
-    f = collect
-    xs = [1, 2]
-    labels = {"kind": "demo"}
-    return f("event", 0, *xs, **labels)
-```
-
-The rest bindings still have explicit container types inside the callable: `List[T]` for `*args` and `Dict[str, T]` for `**kwargs`. A plain fixed-arity function type with a trailing list or dictionary parameter does not imply rest-call behavior by itself.
-
-See [Functions and calls](../functions.md) for the complete rest parameter and call binding rules.
-
-## Callable0 / Callable1 / Callable2
-
-These stdlib traits model "objects that can be called" like `obj()`, `obj(x)`, `obj(x, y)`:
-
-- **Callable0[R]**
-    - Hook: `__call__(self) -> R`
-- **Callable1[A, R]**
-    - Hook: `__call__(self, arg: A) -> R`
-- **Callable2[A, B, R]**
-    - Hook: `__call__(self, a: A, b: B) -> R`
-
-The `__call__` method is the implementation hook. A generic `CallableN` bound accepts named functions, capturing closures, and models that explicitly adopt the matching trait, so one API can accept both native function values and domain-owned callable objects:
+Inside the function, the call form calls the value: a function or closure runs, and an adopting type runs its `__call__`. A worked program: [Accept a function, a closure or a callable object](../../how-to/decorators.md#task-accept-a-function-a-closure-or-a-callable-object).
 
 ```incan
-from std.traits.callable import Callable1
-
-def apply[Mapper with Callable1[int, str]](mapper: Mapper, value: int) -> str:
+def apply[M with Callable1[int, str]](mapper: M, value: int) -> str:
     return mapper(value)
 ```
 
-Use explicit `CallableN` adoption when a model owns callable behavior. Function-typed fields and parameters that do not need a nominal generic capability should continue to use arrow types or the `Callable[Params, R]` sugar above.
+| Call                                                                            | Result                 |
+| ------------------------------------------------------------------------------- | ---------------------- |
+| `apply((v) => f"item:{v}", 3)`                                                  | `"item:3"`             |
+| `apply(Prefixer(prefix="model"), 4)`, `Prefixer` adopting `Callable1[int, str]` | its `__call__(4)`      |
+| `apply(shout, 5)`, `shout` of type `(str) -> str`                               | refused: `INCAN-T0001` |
+
+## Refusals
+
+| Refused                                                                                                                                                                    | Code          |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| A function or closure whose parameter count, parameter types or return type differ from the bound                                                                         | `INCAN-T0001` |
+| A value of a type that does not adopt the bound's `CallableN[...]`                                                                                                         | `INCAN-T0001` |
+| An `Fn`, `FnMut` or `FnOnce` marker from `std.rust` naming more than two parameters, or bounding a type parameter of a type alias, model, class, trait, enum or newtype | `INCAN-T0106` |
+
+The refusal message names the bound and the type passed, as in `type parameter 'M' requires 'Callable1[int, str]' but got '(str) -> str'`. An `Fn`, `FnMut` or `FnOnce` marker with N parameters is checked as the `CallableN` bound with those parameter types and the return type of the value passed. No `CallableN` trait exists for more than two parameters.
 
 --8<-- "_snippets/rfcs_refs.md"

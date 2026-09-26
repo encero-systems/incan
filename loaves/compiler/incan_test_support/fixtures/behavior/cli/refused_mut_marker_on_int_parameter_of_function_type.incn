@@ -1,0 +1,13 @@
+# behavior: a function type that marks an `int` parameter `mut` is refused at check time, since an `int` parameter is the function's own copy
+# expect-diagnostic: INCAN-T0001
+
+def apply(step: (mut int) -> int, value: int) -> int:
+    return step(value)
+
+
+def double(value: int) -> int:
+    return value * 2
+
+
+def main() -> None:
+    println(apply(double, 2))

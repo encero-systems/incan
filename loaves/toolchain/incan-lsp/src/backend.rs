@@ -1715,6 +1715,7 @@ fn format_type(ty: &Type) -> String {
         }
         Type::Ref(inner) => format!("&{}", format_type(&inner.node)),
         Type::RefMut(inner) => format!("&mut {}", format_type(&inner.node)),
+        Type::MutParam(inner) => format!("mut {}", format_type(&inner.node)),
         Type::IntLiteral(value) => value.repr.clone(),
         Type::Unit => "()".to_string(),
         Type::SelfType => "Self".to_string(),
@@ -2572,15 +2573,20 @@ fn format_params(params: &[ParamExport]) -> String {
     params.iter().map(format_param).collect::<Vec<_>>().join(", ")
 }
 
-/// Format one checked API parameter.
+/// Format one checked API parameter, spelling its `mut` marker when the function type carries one.
 fn format_param(param: &ParamExport) -> String {
     let prefix = match param.kind {
         ParamKindExport::Normal => "",
         ParamKindExport::RestPositional => "*",
         ParamKindExport::RestKeyword => "**",
     };
+    let marker = if param.is_mut { "mut " } else { "" };
     let default = if param.has_default { " = ..." } else { "" };
-    format!("{prefix}{}: {}{default}", param.name, format_type_ref(&param.ty))
+    format!(
+        "{prefix}{marker}{}: {}{default}",
+        param.name,
+        format_type_ref(&param.ty)
+    )
 }
 
 /// Format a manifest-level type reference for concise hover display.
@@ -2610,6 +2616,7 @@ fn format_type_ref(ty: &TypeRef) -> String {
         TypeRef::TypeParam { name } => name.clone(),
         TypeRef::SelfType => "Self".to_string(),
         TypeRef::Ref { inner } => format!("ref {}", format_type_ref(inner)),
+        TypeRef::MutParam { inner } => format!("mut {}", format_type_ref(inner)),
         TypeRef::RustPath { path } => format!("rust::{path}"),
         TypeRef::NativeUnion(native) => native
             .members

@@ -1,0 +1,23 @@
+# behavior: a method partial declared on a model forwards to a mut self method with its preset applied, so the receiver is mutated
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::synthetic_method_partial_wrapper_has_no_source_receiver_binding
+# expect-stdout:
+#   false
+#   true
+#   false
+
+model Cell:
+    alive: bool
+    set_alive = partial set_state(state=true)
+    set_dead = partial set_state(state=false)
+
+    def set_state(mut self, state: bool) -> None:
+        self.alive = state
+
+
+def main() -> None:
+    mut cell = Cell(alive=false)
+    println(cell.alive)
+    cell.set_alive()
+    println(cell.alive)
+    cell.set_dead()
+    println(cell.alive)

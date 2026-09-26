@@ -1,0 +1,60 @@
+# behavior: dict membership through contains_key, in and not in, and inserts through mut dict parameters, are visible to the caller (#1668)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1668_dict_contains_key_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue1668_mut_dict_param_codegen
+# expect-stdout:
+#   true
+#   false
+#   true
+#   false
+#   true
+#   1
+#   true
+#   alpha
+
+def has_manifest(files: Dict[str, str]) -> bool:
+    return files.contains_key("loaf.toml")
+
+
+def has_id(mut counts: Dict[int, int], id: int) -> bool:
+    return counts.contains_key(id)
+
+
+def record(mut files: Dict[str, str], key: str, value: str) -> None:
+    files[key] = value
+
+
+def seen(mut files: Dict[str, int], key: str) -> bool:
+    if key in files:
+        return true
+    files[key] = 1
+    return false
+
+
+def lookup(mut files: Dict[str, int], key: str) -> int:
+    return files.get(key).copied().unwrap_or(0)
+
+
+def tally(mut counts: Dict[int, int], id: int) -> bool:
+    if id not in counts:
+        counts[id] = 0
+    return id in counts
+
+
+def main() -> None:
+    mut files: Dict[str, str] = {}
+    files["loaf.toml"] = "[project]"
+    key = "README.md"
+    println(has_manifest(files))
+    println(files.contains_key(key))
+    mut counts: Dict[int, int] = {}
+    counts[7] = 1
+    println(has_id(counts, 7))
+    mut recorded: Dict[str, str] = {}
+    record(recorded, "a.incn", "alpha")
+    mut hits: Dict[str, int] = {}
+    println(seen(hits, "a.incn"))
+    println(seen(hits, "a.incn"))
+    println(lookup(hits, "a.incn"))
+    mut tallies: Dict[int, int] = {}
+    println(tally(tallies, 3))
+    println(recorded["a.incn"])

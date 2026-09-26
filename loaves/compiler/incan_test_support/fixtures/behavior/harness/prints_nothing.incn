@@ -4,6 +4,6 @@
 def main() -> None:
     mut total = 0
     for value in [1, 2, 3]:
-        total = total + value
+        total += value
     if total < 0:
         println("never printed")

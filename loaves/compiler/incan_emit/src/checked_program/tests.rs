@@ -310,6 +310,7 @@ def f(encoded: bytes) -> None:
             kind: ParamKind::Normal,
             has_default: false,
             is_partial_preset: false,
+            is_mut: false,
         }],
         "expected exact call-span decode parameter shape when receiver metadata lacks the trait edge"
     );
@@ -428,6 +429,7 @@ def f(encoded: bytes) -> None:
             kind: ParamKind::Normal,
             has_default: false,
             is_partial_preset: false,
+            is_mut: false,
         }],
         "expected exact call-span decode parameter shape"
     );

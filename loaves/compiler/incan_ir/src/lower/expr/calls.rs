@@ -45,6 +45,18 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOr
 const TYPE_CONSTRUCTOR_HOOK: &str = "__incan_new";
 const API_CRATE_ROOT_SEGMENT: &str = "crate";
 
+/// Return how a parameter rebuilt from library-manifest metadata is passed (#1790).
+///
+/// A parameter the manifest marks `mut` is one whose changes the caller sees, so the call passes it the way a local
+/// `mut` parameter is passed; every other parameter is passed as a value.
+fn manifest_param_mutability(param: &ParamExport) -> Mutability {
+    if param.is_mut {
+        Mutability::Mutable
+    } else {
+        Mutability::Immutable
+    }
+}
+
 /// Name the concrete overload a call selected in its canonical callee path.
 ///
 /// An overload set has no single declaration, so a provider exports only its concrete overloads -- each under its own
@@ -59,7 +71,54 @@ fn canonical_path_naming_selected_overload(mut path: Vec<String>, selected: Opti
     path
 }
 
+/// Group an operator-shaped operand of `str(...)` so the conversion applies to the whole expression.
+///
+/// `str(a + b)` renders the value of its whole argument. The Rust-emission backend spells the conversion as a postfix
+/// method on the argument's own tokens, and a method call binds tighter than every infix, prefix and cast operator: an
+/// operator expression handed over bare re-associates as `a + b.to_string()` (E0277), and a cast is refused outright
+/// (`x as f64.to_string()` is not Rust). The IR's grouping form is a block with no statements and a value -- one
+/// operand wherever the emitter places it, in the argument's own type, so the float rendering rule and the exact-float
+/// validation the conversion applies still read the argument's type. Every other shape (a name, a literal, a call, a
+/// field, an index, a method chain) is already one operand and is left as written. (#1726)
+fn grouped_conversion_operand(expr: TypedExpr) -> TypedExpr {
+    if !matches!(
+        expr.kind,
+        IrExprKind::BinOp { .. }
+            | IrExprKind::UnaryOp { .. }
+            | IrExprKind::Cast { .. }
+            | IrExprKind::NumericResize { .. }
+            | IrExprKind::InteropCoerce { .. }
+    ) {
+        return expr;
+    }
+    let ty = expr.ty.clone();
+    TypedExpr::new(
+        IrExprKind::Block {
+            stmts: Vec::new(),
+            value: Some(Box::new(expr)),
+        },
+        ty,
+    )
+}
+
 impl AstLowering {
+    /// Lower the arguments of a builtin call as bare expressions, in call order.
+    ///
+    /// The value-to-text conversion (`str`) groups an operator-shaped argument first; see
+    /// [`grouped_conversion_operand`]. Every other builtin takes its arguments as lowered.
+    pub(in crate::lower::expr) fn lower_builtin_call_args(
+        &mut self,
+        builtin: BuiltinFn,
+        args: &[ast::CallArg],
+    ) -> Result<Vec<TypedExpr>, LoweringError> {
+        let lowered = self.lower_call_args(args)?.into_iter().map(|arg| arg.expr);
+        Ok(if builtin == BuiltinFn::Str {
+            lowered.map(grouped_conversion_operand).collect()
+        } else {
+            lowered.collect()
+        })
+    }
+
     /// Preserve the frontend type of builtins whose result participates in later type-directed lowering.
     pub(in crate::lower::expr) fn lowered_builtin_call_type(&self, builtin: BuiltinFn, call_span: ast::Span) -> IrType {
         if !matches!(builtin, BuiltinFn::Zip) {
@@ -366,7 +425,7 @@ impl AstLowering {
     /// The physical Rust projection is deliberately excluded: it names the emitted call target, not the public
     /// binding that owns typed signatures and defaults. An admitted overload set cannot fall back to its first
     /// member or a structurally reconstructed call-site signature.
-    fn callable_signature_for_imported_pub_path(
+    pub(in crate::lower) fn callable_signature_for_imported_pub_path(
         &mut self,
         path: &[String],
         selected: Option<&incan_semantics_core::CanonicalSymbolId>,
@@ -870,7 +929,7 @@ impl AstLowering {
                     FunctionParam {
                         name: param.name.clone(),
                         ty: Self::lower_param_container_type(kind, base_ty),
-                        mutability: Mutability::Immutable,
+                        mutability: manifest_param_mutability(param),
                         is_self: false,
                         kind,
                         default: self
@@ -1045,7 +1104,7 @@ impl AstLowering {
                     FunctionParam {
                         name: param.name.clone(),
                         ty: Self::lower_param_container_type(kind, base_ty),
-                        mutability: Mutability::Immutable,
+                        mutability: manifest_param_mutability(param),
                         is_self: false,
                         kind,
                         default: self
@@ -1620,7 +1679,7 @@ impl AstLowering {
                     FunctionParam {
                         name: param.name.clone(),
                         ty: Self::lower_param_container_type(kind, base_ty),
-                        mutability: Mutability::Immutable,
+                        mutability: manifest_param_mutability(param),
                         is_self: false,
                         kind,
                         default: self
@@ -1653,7 +1712,7 @@ impl AstLowering {
                                 &incan_frontend::library_manifest::resolved_type_from_manifest_type_ref(&param.ty),
                             ),
                         ),
-                        mutability: Mutability::Immutable,
+                        mutability: manifest_param_mutability(param),
                         is_self: false,
                         kind,
                         default: self
@@ -1688,7 +1747,7 @@ impl AstLowering {
                                 &incan_frontend::library_manifest::resolved_type_from_manifest_type_ref(&param.ty),
                             ),
                         ),
-                        mutability: Mutability::Immutable,
+                        mutability: manifest_param_mutability(param),
                         is_self: false,
                         kind,
                         default: self
@@ -1824,7 +1883,7 @@ impl AstLowering {
                                     &incan_frontend::library_manifest::resolved_type_from_manifest_type_ref(&param.ty),
                                 ),
                             ),
-                            mutability: Mutability::Immutable,
+                            mutability: manifest_param_mutability(param),
                             is_self: false,
                             kind,
                             default: self
@@ -3325,7 +3384,7 @@ impl AstLowering {
         if let Some(name) = Self::explicit_builtin_member_name(f)
             && let Some(builtin) = BuiltinFn::from_name(name)
         {
-            let args_ir = self.lower_call_args(args)?.into_iter().map(|a| a.expr).collect();
+            let args_ir = self.lower_builtin_call_args(builtin, args)?;
             let result_ty = self.lowered_builtin_call_type(builtin, call_span);
             return Ok(self.builtin_call_with_display_operands(builtin, args_ir, result_ty));
         }
@@ -3557,7 +3616,7 @@ impl AstLowering {
             && self.callable_signature_for_call_span(call_span).is_none()
             && !matches!(func.ty, IrType::Function { .. })
         {
-            let args_ir = self.lower_call_args(args)?.into_iter().map(|a| a.expr).collect();
+            let args_ir = self.lower_builtin_call_args(builtin, args)?;
             let result_ty = self.lowered_builtin_call_type(builtin, call_span);
             return Ok(self.builtin_call_with_display_operands(builtin, args_ir, result_ty));
         }
@@ -4461,6 +4520,7 @@ mod tests {
             emitted_name: None,
             type_params: Vec::new(),
             params: vec![ParamExport {
+                is_mut: false,
                 name: "value".to_string(),
                 ty: TypeRef::Named {
                     origin: None,
@@ -4868,6 +4928,7 @@ mod tests {
                     decorators: Vec::new(),
                     type_params: Vec::new(),
                     params: vec![ParamExport {
+                        is_mut: false,
                         name: "value".to_string(),
                         ty: TypeRef::Applied {
                             origin: None,

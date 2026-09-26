@@ -1,0 +1,15 @@
+# behavior: a function taking an aliased Rust generic over `tuple[&mut int, &mut int]` is accepted and called with a fresh handle
+# retires: loaves/toolchain/incan-cli/tests/integration_tests.rs::build_explicit_mutable_rust_generic_reaches_codegen_through_normal_cli_path
+# expect-stdout:
+#   explicit mutable Rust generic CLI path
+
+from rust::std::vec import Vec as ProviderHandle
+
+
+def replace_items(mut items: ProviderHandle[tuple[&mut int, &mut int]]) -> None:
+    pass
+
+
+def main() -> None:
+    replace_items(ProviderHandle.new())
+    println("explicit mutable Rust generic CLI path")

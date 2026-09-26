@@ -1,0 +1,14 @@
+import std.async
+from std.web import route, Json
+from std.serde import json
+
+
+@derive(json)
+model User:
+    id: int
+    name: str
+
+
+@route("/users/{id}")
+async def list_user(id: int) -> Json[User]:
+    return Json(User(id=id, name="Ada"))

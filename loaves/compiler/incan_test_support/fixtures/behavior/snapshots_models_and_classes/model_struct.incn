@@ -1,0 +1,13 @@
+# behavior: a model built with named arguments exposes its str field
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_model_struct_codegen
+# expect-stdout:
+#   Alice
+
+model User:
+    name: str
+    age: int
+
+
+def main() -> None:
+    user = User(name="Alice", age=30)
+    println(user.name)

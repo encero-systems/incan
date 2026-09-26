@@ -345,6 +345,94 @@ pub fn decorator_result_not_callable(path: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("decorator '{path}' must return a callable"), span)
 }
 
+/// Report a method decorator, or a function it returns in the method's place, that spells the decorated method's
+/// receiver as `&Owner` or `&mut Owner` (#1790).
+///
+/// Incan source spells a method decorator's receiver the way the method spells it: `(Box, int) -> str` for a `self`
+/// method and `(mut Box, int) -> int` for a `mut self` method, and the compiler decides how the receiver is passed.
+/// `subject` names what spells it (`Method decorator '@as_int'`), `method` is the decorated method, `written` the
+/// refused receiver spelling (`&Box`) and `replacement` the spelling to write instead, a callable shape or a parameter.
+/// `INCAN-T0110` is its stable code.
+pub fn method_decorator_receiver_spelling(
+    subject: &str,
+    method: &str,
+    written: &str,
+    replacement: &str,
+    mutable_receiver: bool,
+    span: Span,
+) -> CompileError {
+    let receiver = if mutable_receiver { "mut self" } else { "self" };
+    CompileError::type_error(
+        format!("{subject} spells the receiver of '{method}' as `{written}`"),
+        span,
+    )
+    .with_stable_code("INCAN-T0110")
+    .with_hint(format!(
+        "Write `{replacement}` for a `{receiver}` method; the compiler decides how the receiver is passed"
+    ))
+    .with_note(
+        "A method decorator spells the receiver the way the method does: the owner type for `self`, and the owner \
+         type marked `mut` for `mut self`",
+    )
+}
+
+/// Report a method-decorator shape or replacement whose receiver `mut` marker disagrees with the method (#1790).
+///
+/// A `mut self` method's changes to its receiver are visible to its caller, so every shape in its decorator chain and
+/// every function a decorator returns in its place must take the receiver marked `mut`; a `self` method's must not.
+/// `subject` names what carries the wrong marker (the decorator's accepted shape, its returned shape, or a replacement
+/// function) and `fix` is the spelling to write instead.
+pub fn method_decorator_receiver_mut_mismatch(
+    subject: &str,
+    method: &str,
+    mutable_receiver: bool,
+    fix: &str,
+    span: Span,
+) -> CompileError {
+    let message = if mutable_receiver {
+        format!("{subject} takes the receiver of '{method}' without `mut`, but '{method}' is a `mut self` method")
+    } else {
+        format!("{subject} marks the receiver of '{method}' `mut`, but '{method}' is a `self` method")
+    };
+    CompileError::type_error(message, span).with_hint(fix.to_string())
+}
+
+/// Report a `self`-method decorator chain the compiler cannot pass the receiver through (#1790).
+///
+/// A decorator whose shapes name a `self` method's receiver takes that receiver the way the method's generated wrapper
+/// passes it, and so does every function it returns in the method's place. The compiler arranges that for private
+/// functions of the method's module that are only used in the chain, and a decorator that only returns the callable it
+/// accepts. `refused` says what is refused (`'parse' cannot be used here`), `reason` which rule that breaks, and `hint`
+/// what to write instead. `INCAN-T0116` is its stable code.
+pub fn method_decorator_receiver_not_planned(refused: &str, reason: &str, hint: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("{refused}: {reason}"), span)
+        .with_stable_code("INCAN-T0116")
+        .with_hint(hint.to_string())
+        .with_note(
+            "A decorator whose shapes name the receiver of a `self` method is a private function of the module that \
+             declares the method's type, writes those shapes as callable types, returns the callable it accepts or a \
+             private function of that module by name, and uses the callable it accepts only to return it; those \
+             functions are used only in the decorator chain, and a returned function can also be called directly in \
+             its module",
+        )
+}
+
+/// Report a `mut` marker on an `int`, `float` or `bool` parameter of a function type (#1790).
+///
+/// Such a parameter is the function's own copy of the argument, so its changes never reach the caller and no `def` has
+/// a type that marks it. `ty` is the parameter type as written.
+pub fn mut_marker_on_copied_scalar(ty: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("`mut` cannot mark the `{ty}` parameter of a function type"),
+        span,
+    )
+    .with_hint(format!("Write `{ty}` without `mut`"))
+    .with_note(
+        "An `int`, `float` or `bool` parameter is the function's own copy: `mut` lets the function change it, and the \
+         change stays in the function, so its type does not mark the parameter",
+    )
+}
+
 /// Report a type-valued decorator argument on a user-defined decorator factory.
 pub fn decorator_type_argument_not_supported(path: &str, span: Span) -> CompileError {
     CompileError::type_error(

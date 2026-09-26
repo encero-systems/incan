@@ -1,0 +1,28 @@
+# behavior: a method binding alias and a method partial with a bound keyword argument both call the target method on the receiver
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::method_alias_calls_the_target_projection_without_a_second_definition
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::method_partial_uses_an_explicit_generated_wrapper_and_preserves_the_target_projection
+# expect-stdout:
+#   Ada
+#   1:Ada
+
+model User:
+    name: str
+    short = label
+
+    def label(self) -> str:
+        return self.name
+
+
+model Tagged:
+    name: str
+    short = partial label(prefix=1)
+
+    def label(self, prefix: int) -> str:
+        return f"{prefix}:{self.name}"
+
+
+def main() -> None:
+    user = User(name="Ada")
+    println(user.short())
+    tagged = Tagged(name="Ada")
+    println(tagged.short())

@@ -759,12 +759,17 @@ pub fn ir_type_from_projected_manifest(
             ret: Box::new(child(return_type)),
         },
         TypeRef::Ref { inner } => IrType::Ref(Box::new(child(inner))),
+        // A `mut`-marked function-type parameter is passed so the caller sees the callee's changes (#1790).
+        TypeRef::MutParam { inner } => IrType::RefMut(Box::new(child(inner))),
         TypeRef::TypeToken { inner } => IrType::TypeToken(Box::new(child(inner))),
         _ => ordinary(ty),
     }
 }
 
 /// Convert an IR type used by implementation metadata into its checked manifest representation.
+///
+/// A `RefMut` parameter of a function type is a `mut`-marked parameter and is published as the marker (#1790); any
+/// other shared or mutable reference is published as `Ref`, the one reference form manifests spell.
 pub fn manifest_type_ref_from_ir(ty: &IrType) -> Result<TypeRef, String> {
     let named = |name: &str| TypeRef::Named {
         origin: None,
@@ -813,7 +818,13 @@ pub fn manifest_type_ref_from_ir(ty: &IrType) -> Result<TypeRef, String> {
         IrType::Function { params, ret } => Ok(TypeRef::Function {
             params: params
                 .iter()
-                .map(manifest_type_ref_from_ir)
+                .map(|param| match param {
+                    // A `mut`-marked callable parameter lowers to `RefMut`; publish the marker, not a shared `&`.
+                    IrType::RefMut(inner) => Ok(TypeRef::MutParam {
+                        inner: Box::new(manifest_type_ref_from_ir(inner)?),
+                    }),
+                    other => manifest_type_ref_from_ir(other),
+                })
                 .collect::<Result<Vec<_>, _>>()?,
             return_type: Box::new(manifest_type_ref_from_ir(ret)?),
         }),

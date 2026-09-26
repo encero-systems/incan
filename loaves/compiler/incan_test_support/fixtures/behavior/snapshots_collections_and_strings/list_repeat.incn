@@ -1,0 +1,13 @@
+# behavior: list.repeat builds a list of the given value repeated count times, for scalars, strings, nested lists, zero and named arguments
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_list_repeat_codegen
+# expect-stdout:
+#   -1 seed 0 1 7
+
+def main() -> None:
+    ints: List[int] = list.repeat(-1, 4)
+    words: list[str] = list.repeat("seed", 2)
+    empty: List[int] = list.repeat(0, 0)
+    nested: list[list[int]] = list.repeat([1], 2)
+    named: list[int] = list.repeat(count=3, value=7)
+
+    println(f"{ints[0]} {words[1]} {len(empty)} {nested[1][0]} {named[2]}")

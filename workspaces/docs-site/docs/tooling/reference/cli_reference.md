@@ -146,7 +146,9 @@ Seeded catalog codes:
 - `INCAN-T0107`: A `@route` handler's declared return type is not a response type (`str`, `Json[...]`, `Html`, `Response`, or a wrapper deriving `IntoResponse`); return the value as text or JSON.
 - `INCAN-T0108`: A `@route` handler parameter that no `{segment}` of the path binds and no `Json[...]`/`Query[...]`/`Path[...]` extractor supplies; add the segment or read the value from the request.
 - `INCAN-T0109`: `/`, `//`, `%` or `**` applied to values of a type parameter, which no bound can support; write the function for `int` or `float`, or bound the parameter by a trait defining the operator's hook.
+- `INCAN-T0110`: A method decorator's shape, or a function a decorator returns in the method's place, writes the receiver as `&Owner` or `&mut Owner`; the diagnostic names the method's spelling of it, `(Box, int) -> str` for a `self` method and `(mut Box, int) -> int` for a `mut self` method.
 - `INCAN-T0111`: A declaration, binding, parameter or import alias name starts with `__incan_`, the prefix reserved for the compiler.
+- `INCAN-T0116`: A decorator chain of a `self` method whose shapes name the receiver is one the compiler cannot pass the receiver through: the decorator is imported or reached through a value or a method, a shape that names the receiver is written through a type alias, a `return` gives something other than the accepted callable or a function of the module named directly, the decorator calls, stores or passes on the callable it accepts, a function of the chain is `pub`, or a function of the chain is used outside it; see [Decorators](../../language/reference/language.md#decorators).
 - `INCAN-I0001`: Import or module resolution error.
 - `INCAN-I0101`: A known SDK provider module belongs to a component disabled by the project.
 - `INCAN-I0102`: The project enabled an SDK component that is unavailable in the active installation.
