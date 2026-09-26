@@ -30,6 +30,7 @@ Arguments bind to normal parameters in this order:
 4. Required parameters that remain unbound are reported as missing.
 5. Unknown named arguments are rejected unless the callee declares `**kwargs`.
 6. Extra positional arguments are rejected unless the callee declares `*args`.
+7. A defaulted parameter that remains unbound takes its declared default. Names in a default expression resolve in the module that declares the callable, so a default that names a const visible in that module takes the const's value at every call site, including a call from another module or package.
 
 ```incan
 def connect(host: str, port: int) -> str:
@@ -39,6 +40,16 @@ def main() -> str:
     a = connect("localhost", 5432)
     b = connect(host="localhost", port=5432)
     return a + " " + b
+```
+
+`std.hash.reader_digest` declares `chunk_size: int = DEFAULT_CHUNK_SIZE`; the caller below does not import `DEFAULT_CHUNK_SIZE`:
+
+```incan
+from std.hash import HashError, reader_digest
+from std.io import BytesIO
+
+def digest() -> Result[bytes, HashError]:
+    return reader_digest(BytesIO(b"abc"), "sha256")  # chunk_size is DEFAULT_CHUNK_SIZE (65536)
 ```
 
 ## Rest Parameter Mental Model

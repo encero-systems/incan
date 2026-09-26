@@ -1,0 +1,19 @@
+# behavior: a stdlib call that omits a parameter whose default is a stdlib const runs with that const, and matches the same call with the argument passed
+# retires: loaves/compiler/incan_ir/src/lower/tests/stdlib_const_defaults.rs::omitted_stdlib_default_names_the_const_through_its_declaring_module_issue1771
+# expect-stdout:
+#   ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+#   true
+
+from std.encoding import hex
+from std.hash import reader_digest
+from std.io import BytesIO
+
+
+def main() -> None:
+    match reader_digest(BytesIO(b"abc"), "sha256"):
+        Ok(digest) =>
+            println(hex.hexlify(digest))
+            match reader_digest(BytesIO(b"abc"), "sha256", chunk_size=1):
+                Ok(chunked) => println(digest == chunked)
+                Err(error) => println(error.message())
+        Err(error) => println(error.message())

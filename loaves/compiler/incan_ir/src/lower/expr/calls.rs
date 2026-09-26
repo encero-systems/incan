@@ -27,6 +27,7 @@ use incan_frontend::library_manifest_index::LibraryManifestIndexEntry;
 use incan_frontend::partial_projection::{PartialPresetRef, merge_named_partial_args};
 use incan_frontend::provider::{ProviderModuleResolution, ProviderRecord};
 use incan_frontend::symbols::{CallableParam, NewtypePrimitiveConstraint, ResolvedType};
+use incan_frontend::typechecker::stdlib_loader::StdlibSourceDeclaration;
 use incan_frontend::typechecker::{
     FixedUnpackPlan, IdentKind, ResolvedOperatorKind, RustArgCoercionKind, ValidatedNewtypeCoercionMode,
     ValidatedNewtypeCoercionStep,
@@ -297,10 +298,14 @@ impl AstLowering {
 
     /// Rebuild a callable signature directly from a stdlib method declaration so default expressions survive import
     /// metadata boundaries.
+    ///
+    /// A default naming a const of the declaring module is spelled through that const's canonical path, because it is
+    /// expanded at the caller rather than in the declaring module (#1771).
     fn callable_signature_from_stdlib_method_decl(
         &mut self,
-        method: &ast::MethodDecl,
+        source: &StdlibSourceDeclaration<ast::MethodDecl>,
     ) -> Result<FunctionSignature, LoweringError> {
+        let method = &source.declaration;
         Ok(FunctionSignature {
             params: method
                 .params
@@ -319,7 +324,7 @@ impl AstLowering {
                         is_self: false,
                         kind: param.node.kind,
                         default: self
-                            .lower_param_default_expr(param.node.default.as_ref())?
+                            .lower_stdlib_param_default(param.node.default.as_ref(), &source.default_const_paths)?
                             .map(FunctionParamDefault::source),
                     })
                 })
@@ -330,10 +335,14 @@ impl AstLowering {
 
     /// Rebuild a callable signature directly from a stdlib function declaration so default expressions survive import
     /// metadata boundaries.
+    ///
+    /// A default naming a const of the declaring module is spelled through that const's canonical path, because it is
+    /// expanded at the caller rather than in the declaring module (#1771).
     fn callable_signature_from_stdlib_function_decl(
         &mut self,
-        func: &ast::FunctionDecl,
+        source: &StdlibSourceDeclaration<ast::FunctionDecl>,
     ) -> Result<FunctionSignature, LoweringError> {
+        let func = &source.declaration;
         Ok(FunctionSignature {
             params: func
                 .params
@@ -352,7 +361,7 @@ impl AstLowering {
                         is_self: false,
                         kind: param.node.kind,
                         default: self
-                            .lower_param_default_expr(param.node.default.as_ref())?
+                            .lower_stdlib_param_default(param.node.default.as_ref(), &source.default_const_paths)?
                             .map(FunctionParamDefault::source),
                     })
                 })
@@ -782,23 +791,43 @@ impl AstLowering {
     }
 
     /// Resolve public callable aliases through the manifest identity graph before falling back to public-name scans.
+    ///
+    /// A public partial resolves to its own checked declaration, whose parameters are the partial's surface with the
+    /// residual defaults of its target filled in (#1760); its target is the fallback for a partial the checked API does
+    /// not declare where the identity graph says it lives.
     fn api_function_export_for_public_name(
         manifest: &incan_frontend::library_manifest::LibraryManifest,
         function_name: &str,
     ) -> Option<FunctionExport> {
-        let target_path = manifest
+        let entry = manifest
             .contract_metadata
             .identity_graph
-            .entry_for_public_name(function_name)
-            .and_then(|entry| entry.target_path())?;
+            .entry_for_public_name(function_name)?;
         let api = manifest.contract_metadata.api.as_ref()?;
-        Self::api_function_export_for_target_path(api, target_path)
+        if entry.kind == incan_frontend::library_manifest::ExportIdentityKind::Partial
+            && let Some(partial) = Self::api_function_export_for_target_path(api, &entry.source_path)
+        {
+            return Some(partial);
+        }
+        Self::api_function_export_for_target_path(api, entry.target_path()?)
     }
 
     /// Resolve one checked API function from a module-qualified public callable target path.
     fn api_function_export_for_target_path(
         api: &incan_frontend::api_metadata::CheckedApiMetadataPackage,
         target_path: &[String],
+    ) -> Option<FunctionExport> {
+        Self::api_function_export_for_target_path_within(api, target_path, 0)
+    }
+
+    /// Resolve one checked API function from a module-qualified path, `hops` partial targets below the call.
+    ///
+    /// Aliases without a projected callable are followed to their target. A partial is completed with its target's
+    /// residual defaults, which counts one hop toward the bound on partial-over-partial chains.
+    pub(in crate::lower::expr) fn api_function_export_for_target_path_within(
+        api: &incan_frontend::api_metadata::CheckedApiMetadataPackage,
+        target_path: &[String],
+        hops: usize,
     ) -> Option<FunctionExport> {
         let function_name = target_path.last()?;
         let path = if target_path
@@ -820,7 +849,15 @@ impl AstLowering {
         if let ApiDeclaration::Alias(alias) = declaration
             && alias.projected_function.is_none()
         {
-            return Self::api_function_export_for_target_path(api, &alias.target_path);
+            return Self::api_function_export_for_target_path_within(api, &alias.target_path, hops);
+        }
+        if let ApiDeclaration::Partial(partial) = declaration {
+            return Some(Self::api_partial_function_export(
+                api,
+                &module.module_path,
+                partial,
+                hops,
+            ));
         }
         Self::api_function_export_for_declaration(declaration, function_name)
     }
@@ -1105,7 +1142,7 @@ impl AstLowering {
         }
         if let Some(method) = self
             .stdlib_cache
-            .lookup_type_method_decl(module_path, type_name, method_name)
+            .lookup_type_method_source(module_path, type_name, method_name)
         {
             return self.callable_signature_from_stdlib_method_decl(&method).map(Some);
         }
@@ -1122,7 +1159,7 @@ impl AstLowering {
     }
 
     /// Return the generated Rust crate that owns one compiled SDK module's nominal artifact types.
-    fn sdk_provider_crate_for_module(&self, module_path: &[String]) -> Option<String> {
+    pub(in crate::lower) fn sdk_provider_crate_for_module(&self, module_path: &[String]) -> Option<String> {
         let provider = self
             .provider_plan
             .as_deref()?
@@ -1772,7 +1809,11 @@ impl AstLowering {
     }
 
     /// Build an artifact-qualified value path such as `provider::__incan_std::logging::Level::WARN`.
-    fn compiled_provider_path_expr(&self, provider_crate: &str, path: &[String]) -> Option<TypedExpr> {
+    pub(in crate::lower) fn compiled_provider_path_expr(
+        &self,
+        provider_crate: &str,
+        path: &[String],
+    ) -> Option<TypedExpr> {
         if path.is_empty() {
             return None;
         }
@@ -1906,10 +1947,12 @@ impl AstLowering {
                 .modules
                 .iter()
                 .find(|module| module.module_path == provider_module_path)
-                && let Some(function) = module
-                    .declarations
-                    .iter()
-                    .find_map(|declaration| Self::api_function_export_for_declaration(declaration, function_name))
+                && let Some(function) = module.declarations.iter().find_map(|declaration| match declaration {
+                    ApiDeclaration::Partial(partial) if partial.name == *function_name => {
+                        Some(Self::api_partial_function_export(api, &module.module_path, partial, 0))
+                    }
+                    _ => Self::api_function_export_for_declaration(declaration, function_name),
+                })
             {
                 let signature =
                     self.callable_signature_from_compiled_provider_function_export(&provider_crate, &function);
@@ -1918,7 +1961,7 @@ impl AstLowering {
                 ));
             }
         }
-        let Some(func) = self.stdlib_cache.lookup_function_decl(module_path, function_name) else {
+        let Some(func) = self.stdlib_cache.lookup_function_source(module_path, function_name) else {
             return Ok(None);
         };
         self.callable_signature_from_stdlib_function_decl(&func).map(Some)
@@ -3761,6 +3804,7 @@ impl AstLowering {
         } else {
             IrType::Unknown
         };
+        Self::retain_argument_union_owners(&mut args_ir, callable_signature.as_ref());
         Ok((
             IrExprKind::Call {
                 func: Box::new(func),

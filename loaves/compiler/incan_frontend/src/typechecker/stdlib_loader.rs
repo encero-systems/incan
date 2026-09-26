@@ -49,6 +49,8 @@ use incan_lang::lang::types::numerics::{self as numeric_types, NumericTypeId};
 use incan_lang::lang::types::stringlike::{self as string_types, StringLikeId};
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind};
 
+mod default_const_paths;
+
 #[derive(Debug, Clone, Default)]
 struct StdlibModuleData {
     functions: Vec<StdlibFunctionEntry>,
@@ -62,6 +64,9 @@ struct StdlibModuleData {
     /// Lowering needs the original default expressions, not only the compact `MethodInfo`. Keeping them beside the
     /// other parsed module metadata prevents every method call from reparsing the same stdlib source tree.
     type_method_declarations: HashMap<(String, String), ast::MethodDecl>,
+    /// Canonical paths of the consts each method declaration's parameter defaults name, keyed like
+    /// `type_method_declarations`.
+    type_method_default_const_paths: HashMap<(String, String), HashMap<String, Vec<String>>>,
     type_docstrings: HashMap<String, String>,
     constants: Vec<(String, VariableInfo)>,
     statics: Vec<(String, StaticInfo)>,
@@ -78,6 +83,20 @@ struct StdlibFunctionEntry {
     name: String,
     info: FunctionInfo,
     declaration: Option<ast::FunctionDecl>,
+    /// Canonical paths of the consts the declaration's parameter defaults name, keyed by their declaring spelling.
+    default_const_paths: HashMap<String, Vec<String>>,
+}
+
+/// A stdlib source declaration paired with the canonical paths of the consts its parameter defaults name.
+///
+/// A default is expanded at the call site that omits its argument, outside the declaring module, so a default
+/// spelled as a bare const name must be emitted through the path recorded here rather than as written.
+#[derive(Debug, Clone)]
+pub struct StdlibSourceDeclaration<T> {
+    /// The source declaration, its defaults as the declaring module writes them.
+    pub declaration: T,
+    /// Canonical `std.*` path of each const a parameter default names, keyed by the declaring module's spelling.
+    pub default_const_paths: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -219,6 +238,55 @@ impl StdlibAstCache {
         self.lookup_function_decls(module_path, function_name)
             .into_iter()
             .next()
+    }
+
+    /// Look up the first stdlib function declaration with the canonical paths of the consts its defaults name.
+    ///
+    /// This is [`Self::lookup_function_decl`] for callers that expand omitted arguments at a call site: the declaring
+    /// module's const spellings are not in scope there (#1771).
+    pub fn lookup_function_source(
+        &mut self,
+        module_path: &[String],
+        function_name: &str,
+    ) -> Option<StdlibSourceDeclaration<ast::FunctionDecl>> {
+        self.ensure_loaded(module_path);
+        let key = module_path.join(".");
+        self.cache
+            .get(&key)?
+            .functions
+            .iter()
+            .filter(|entry| entry.name == function_name)
+            .find_map(|entry| {
+                entry.declaration.clone().map(|declaration| StdlibSourceDeclaration {
+                    declaration,
+                    default_const_paths: entry.default_const_paths.clone(),
+                })
+            })
+    }
+
+    /// Look up a stdlib type method declaration with the canonical paths of the consts its defaults name.
+    ///
+    /// This is [`Self::lookup_type_method_decl`] for callers that expand omitted arguments at a call site, following
+    /// prelude re-exports the same way.
+    pub fn lookup_type_method_source(
+        &mut self,
+        module_path: &[String],
+        type_name: &str,
+        method_name: &str,
+    ) -> Option<StdlibSourceDeclaration<ast::MethodDecl>> {
+        self.ensure_loaded(module_path);
+        let key = module_path.join(".");
+        let data = self.cache.get(&key)?;
+        let member = (type_name.to_string(), method_name.to_string());
+        let declaration = data.type_method_declarations.get(&member)?.clone();
+        Some(StdlibSourceDeclaration {
+            declaration,
+            default_const_paths: data
+                .type_method_default_const_paths
+                .get(&member)
+                .cloned()
+                .unwrap_or_default(),
+        })
     }
 
     /// Look up a stdlib trait declaration, following prelude re-exports.
@@ -445,6 +513,17 @@ fn load_stdlib_module_data_unguarded(
 
     let mut functions = extract_function_entries(&program);
     assign_function_overload_emitted_names(&mut functions);
+    for entry in &mut functions {
+        if let Some(declaration) = &entry.declaration {
+            entry.default_const_paths = default_const_paths::param_default_const_paths(
+                &declaration.params,
+                module_path,
+                &program,
+                loading,
+                loaded,
+            );
+        }
+    }
     let mut traits = extract_trait_signatures(&program, module_path);
     let mut trait_declarations = extract_trait_declarations(&program);
     let imported_type_paths = extract_stdlib_imported_type_paths(&program, loading, loaded);
@@ -454,6 +533,22 @@ fn load_stdlib_module_data_unguarded(
         .collect();
     let mut types = extract_type_signatures(&program, module_path);
     let mut type_method_declarations = extract_type_method_declarations(&program);
+    let mut type_method_default_const_paths = type_method_declarations
+        .iter()
+        .map(|(member, declaration)| {
+            (
+                member.clone(),
+                default_const_paths::param_default_const_paths(
+                    &declaration.params,
+                    module_path,
+                    &program,
+                    loading,
+                    loaded,
+                ),
+            )
+        })
+        .filter(|(_, paths)| !paths.is_empty())
+        .collect::<HashMap<_, _>>();
     let mut type_docstrings = extract_type_docstrings(&program);
     let mut constants = extract_const_signatures(&program);
     let mut statics = extract_static_signatures(&program);
@@ -473,6 +568,7 @@ fn load_stdlib_module_data_unguarded(
         trait_type_import_paths: &mut trait_type_import_paths,
         types: &mut types,
         type_method_declarations: &mut type_method_declarations,
+        type_method_default_const_paths: &mut type_method_default_const_paths,
         type_docstrings: &mut type_docstrings,
         constants: &mut constants,
         statics: &mut statics,
@@ -489,6 +585,7 @@ fn load_stdlib_module_data_unguarded(
         trait_type_import_paths,
         types,
         type_method_declarations,
+        type_method_default_const_paths,
         type_docstrings,
         constants,
         statics,
@@ -506,6 +603,7 @@ struct ReexportMetadataTargets<'a> {
     trait_type_import_paths: &'a mut HashMap<String, HashMap<String, Vec<String>>>,
     types: &'a mut Vec<(String, TypeInfo)>,
     type_method_declarations: &'a mut HashMap<(String, String), ast::MethodDecl>,
+    type_method_default_const_paths: &'a mut HashMap<(String, String), HashMap<String, Vec<String>>>,
     type_docstrings: &'a mut HashMap<String, String>,
     constants: &'a mut Vec<(String, VariableInfo)>,
     statics: &'a mut Vec<(String, StaticInfo)>,
@@ -607,6 +705,16 @@ fn merge_reexported_metadata(
                     .type_method_declarations
                     .entry((effective_name.to_string(), method_name.clone()))
                     .or_insert_with(|| declaration.clone());
+            }
+            for ((_owner, method_name), paths) in sub_data
+                .type_method_default_const_paths
+                .iter()
+                .filter(|((owner, _), _)| owner == &item.name)
+            {
+                targets
+                    .type_method_default_const_paths
+                    .entry((effective_name.to_string(), method_name.clone()))
+                    .or_insert_with(|| paths.clone());
             }
             if let Some(docstring) = sub_data.type_docstrings.get(&item.name) {
                 targets
@@ -718,6 +826,7 @@ fn extract_function_entries(program: &ast::Program) -> Vec<StdlibFunctionEntry> 
                 name: func.name.clone(),
                 info,
                 declaration: Some(func.clone()),
+                default_const_paths: HashMap::new(),
             });
             continue;
         }
@@ -735,6 +844,7 @@ fn extract_function_entries(program: &ast::Program) -> Vec<StdlibFunctionEntry> 
                         name: local_name.to_string(),
                         info,
                         declaration: None,
+                        default_const_paths: HashMap::new(),
                     });
                 }
             }
@@ -2634,6 +2744,7 @@ pub type File = rusttype RustFile:
             trait_type_import_paths: HashMap::new(),
             types: extract_type_signatures(&program, &["std".to_string(), "fs".to_string()]),
             type_method_declarations: extract_type_method_declarations(&program),
+            type_method_default_const_paths: HashMap::new(),
             type_docstrings: extract_type_docstrings(&program),
             constants: extract_const_signatures(&program),
             statics: extract_static_signatures(&program),

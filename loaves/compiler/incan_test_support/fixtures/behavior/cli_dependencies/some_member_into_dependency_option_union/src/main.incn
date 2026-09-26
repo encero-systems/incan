@@ -1,0 +1,14 @@
+# behavior: Some(member) passed where a dependency's function takes Option[union] is wrapped into the union the dependency declares, for a str member and for the dependency's own newtype
+# retires: loaves/compiler/incan_ir/src/lower/tests/dependency_call_arguments.rs::some_member_argument_takes_the_dependency_owned_union_issue1743
+# expect-stdout:
+#   PLAIN
+#   kind k
+#   missing
+
+from pub::unionlib import Kind, describe
+
+
+def main() -> None:
+    println(describe(Some("plain")))
+    println(describe(Some(Kind("k"))))
+    println(describe(None))

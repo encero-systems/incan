@@ -59,7 +59,7 @@ Top-level partial declarations support statically known callable targets:
 - class constructors;
 - newtype constructors.
 
-Method partial declarations are same-type only. They may target another method declared on the same model, class, trait, or newtype.
+Method partial declarations are same-type only. They may target another method declared on the same model, class, trait, or newtype, named directly or through a same-type method alias (`display = label`).
 
 Local partial expressions support callable targets whose surface can be resolved at the expression site.
 
@@ -68,7 +68,7 @@ Local partial expressions support callable targets whose surface can be resolved
 A partial projects the target callable signature:
 
 - unfilled required parameters remain required;
-- unfilled defaulted parameters remain defaulted;
+- unfilled defaulted parameters remain defaulted, with the default value the target declares, including when the partial is imported from another package;
 - preset parameters become defaulted parameters on the projected callable;
 - the return type is the target return type;
 - async status follows the target callable;
@@ -114,7 +114,22 @@ Local partial expressions are different: their preset expressions evaluate under
 
 ## Method and trait presets
 
-A method partial creates another method on the same type surface. The generated method keeps the target receiver and return type.
+A method partial creates another method on the same type surface. The generated method keeps the target receiver and return type, and calls the target method with the preset keyword values applied:
+
+```incan
+model User:
+    name: str
+
+    def label(self, prefix: str) -> str:
+        return prefix
+
+    display = label
+    short = partial display(prefix="name")
+
+def main() -> None:
+    println(User(name="Ada").short())                # name
+    println(User(name="Ada").short(prefix="other"))  # other
+```
 
 Trait method partials behave like generated trait default methods. They forward to another same-trait method with the preset keyword values applied, and concrete adopters receive the default through the ordinary trait-default expansion path.
 

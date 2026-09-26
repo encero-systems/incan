@@ -10,6 +10,7 @@ mod enums;
 mod functions;
 mod helpers;
 mod imports;
+mod method_partials;
 mod methods;
 mod models;
 mod newtypes;

@@ -1,0 +1,14 @@
+# behavior: an imported partial called without its target's defaulted residual argument uses that declaration default, from the package root and from a nested namespace alike, and an explicit argument still overrides it
+# retires: loaves/compiler/incan_ir/src/lower/tests/dependency_call_arguments.rs::imported_partial_call_fills_its_targets_residual_default_issue1760
+# expect-stdout:
+#   flat of size 3
+#   idx of size 4
+#   tall of size 3
+
+from pub::modulelib import default_build, hyperquant
+
+
+def main() -> None:
+    println(default_build())
+    println(hyperquant.default_index())
+    println(default_build(label="tall"))

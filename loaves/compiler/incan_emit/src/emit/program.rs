@@ -287,6 +287,38 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         }
     }
 
+    /// Record one method a reachable body calls, revisiting its owner's impls when they were already scanned.
+    ///
+    /// An impl is scanned when its owner becomes reachable, and only the methods known to be used by then have their
+    /// bodies scanned. A call found later, in a function scanned after the owner, used to retain the called method
+    /// without ever scanning its body, so a method it calls in turn was dropped from the impl. Queuing the owner
+    /// again scans the newly used body; a method is recorded once, so the revisits end.
+    ///
+    /// Migration note (rust_source_backend_deprecation.md):
+    /// - Compatibility issue: #1765 -- `pub def use_it(user: User) -> str: return user.short()` retained `User.short`
+    ///   but not the method its body calls (`label`, or any method a method calls), because `User`'s impl was scanned
+    ///   before `use_it`'s body recorded the call (E0599).
+    /// - Behavior evidence: behavior fixture `cli/method_partial_over_model_method.incn`, the emitter test
+    ///   `method_called_only_from_a_later_scanned_function_keeps_its_callees_issue1765` in
+    ///   `tests/method_reachability_codegen_tests.rs`, and the lowering test
+    ///   `method_partial_forwards_on_a_receiver_typed_by_its_model_issue1765`.
+    /// - Semantic owner: the checked call graph (which methods a reachable body calls); retention of generated Rust
+    ///   items is the Rust-source backend's own concern and has no middle-end fact to carry.
+    /// - Retirement condition: the Rust-source backend is deleted (#654); the replacement route does not prune
+    ///   generated Rust items.
+    fn mark_used_method(&mut self, type_name: String, method: &str) {
+        let newly_used = self
+            .analysis
+            .used_methods
+            .insert((type_name.clone(), method.to_string()));
+        if newly_used
+            && self.analysis.reachable_items.contains(&type_name)
+            && self.impls_by_target.contains_key(&type_name)
+        {
+            self.pending.push(type_name);
+        }
+    }
+
     /// Mark a top-level generated type declaration as semantically reachable without retaining a Rust `use` binding.
     ///
     /// Type annotations keep local declarations alive. Imported type names still need their Rust `use` binding because
@@ -731,14 +763,14 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 self.scan_expr(receiver);
                 self.mark_rust_extension_trait_imports(receiver, method, dispatch.as_ref());
                 if let Some(type_name) = self.object_nominal_type_name(receiver) {
-                    self.analysis.used_methods.insert((type_name, method.clone()));
+                    self.mark_used_method(type_name, method);
                 } else if let IrExprKind::Var {
                     name,
                     ref_kind: VarRefKind::TypeName,
                     ..
                 } = &receiver.kind
                 {
-                    self.analysis.used_methods.insert((name.clone(), method.clone()));
+                    self.mark_used_method(name.clone(), method);
                 }
                 for ty in type_args {
                     self.scan_type(ty);

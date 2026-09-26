@@ -124,8 +124,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/program.rs",
-      "sha256": "f1f7b8df3a2ade4d4f1dd9a920de1d99fc1ad911113686763caaf9b192d965a8",
-      "lines": 4634
+      "sha256": "60974b7ae5e72bfa53db1fa277ff630fa0cb6960fcf61ad324f6291ad1967a33",
+      "lines": 4666
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
@@ -153,6 +153,21 @@
       "behavior_evidence": "behavior fixture snapshots_stdlib/result_inspect_named_observer_copy_payload.incn (Oven Linux replay), emitter unit test copy_payload_named_observer_is_borrowed_through_a_closure_issue1718 in emit/expressions/methods.rs, and the unchanged non-Copy adapter test test_rfc070_result_inspect_non_copy_observer_borrows_payload",
       "semantic_owner": "the RFC 070 combinator callable fact: the observer takes the payload by borrow (Body IR passes the observer in the borrow shape the std.result helper declares, fn(&T) for every T)",
       "retirement_condition": "the Rust-source backend is deleted (#654); the replacement route emits the helper call from the recorded borrow shape and needs no Copy special case"
+    },
+    {
+      "kind": "change",
+      "pr": null,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/program.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1765",
+      "behavior_evidence": "behavior fixtures cli/method_called_through_a_helper_keeps_its_callees.incn and cli/method_partial_over_model_method.incn, emitter test method_called_only_from_a_later_scanned_function_keeps_its_callees_issue1765 (tests/method_reachability_codegen_tests.rs)",
+      "semantic_owner": "1561",
+      "retirement_condition": "the Rust-source backend is deleted (#654); the replacement route does not prune generated Rust items"
     }
   ]
 }

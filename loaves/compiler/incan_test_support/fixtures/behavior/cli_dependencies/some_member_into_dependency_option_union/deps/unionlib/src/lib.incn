@@ -1,0 +1,11 @@
+@derive(Clone)
+pub type Kind = newtype str
+
+
+pub def describe(value: Option[Kind | str]) -> str:
+    if value is not None:
+        if isinstance(value, str):
+            return value.upper()
+        if isinstance(value, Kind):
+            return f"kind {value.0}"
+    return "missing"

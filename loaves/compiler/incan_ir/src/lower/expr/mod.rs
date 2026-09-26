@@ -9,7 +9,10 @@
 mod calls;
 mod comprehensions;
 mod helpers;
+mod partial_exports;
 mod patterns;
+mod stdlib_defaults;
+mod union_owner;
 
 use std::collections::HashMap;
 
@@ -2027,6 +2030,7 @@ impl AstLowering {
                     // Rust ABI slot because no inherent owner is statically nameable there.
                     let (emitted_method_name, dispatch) =
                         self.project_resolved_method_target(expr_span, &method_name, &receiver, dispatch);
+                    Self::retain_argument_union_owners(&mut args_ir, callable_signature.as_ref());
                     (
                         IrExprKind::MethodCall {
                             receiver: Box::new(receiver),

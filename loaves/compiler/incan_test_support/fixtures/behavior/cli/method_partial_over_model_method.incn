@@ -1,0 +1,26 @@
+# behavior: a model's method partial calls its target method with the preset argument, whether it names the method directly or through a method alias, and a call can override the preset
+# retires: loaves/compiler/incan_ir/src/lower/tests/method_partial_forwarding.rs::method_partial_forwards_on_a_receiver_typed_by_its_model_issue1765
+# expect-stdout:
+#   name
+#   name
+#   other
+
+model User:
+    name: str
+
+    def label(self, prefix: str) -> str:
+        return prefix
+
+    display = label
+    short = partial display(prefix="name")
+    brief = partial label(prefix="name")
+
+
+pub def use_it(user: User) -> str:
+    return user.short()
+
+
+def main() -> None:
+    println(use_it(User(name="Ada")))
+    println(User(name="Ada").brief())
+    println(User(name="Ada").short(prefix="other"))
