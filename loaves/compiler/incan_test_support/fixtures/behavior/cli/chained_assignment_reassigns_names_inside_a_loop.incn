@@ -1,10 +1,12 @@
-# behavior: a chained assignment gives its value to every target from left to right, each in its own type: bound names are reassigned (x = y = x + 1 inside a loop advances the loop's x), new names are declared, a str or list value reaches every target, an Option or union target wraps the value, None takes the Option targets' type, and a module static target gets the value too
+# behavior: a chained assignment gives its value to every target from left to right, each in its own type: bound names are reassigned (x = y = x + 1 inside a loop advances the loop's x), new names are declared, a str or list value reaches every target, an Option or union target wraps the value, None takes the Option targets' type, None, [] and {} reach targets of different types, and a module static target gets the value too
 # retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_assignment_into_bound_names_reassigns_them_inside_a_loop_issue1806
 # retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_assignment_gives_every_target_the_value_issue1806
 # retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_assignment_in_a_loop_assigns_the_bound_name_issue1806
 # retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_assignment_gives_every_target_the_value_issue1806
 # retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_assignment_types_its_value_by_the_targets_and_copies_for_a_static_issue1806
 # retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_assignment_types_its_value_and_copies_for_a_static_issue1806
+# retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_literal_over_disagreeing_targets_is_written_per_target_issue1806
+# retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_literal_over_disagreeing_targets_is_written_per_target_issue1806
 # expect-stdout:
 #   5
 #   10 10
@@ -16,6 +18,9 @@
 #   7 true
 #   0 0
 #   1 1
+#   0 none
+#   0 0
+#   0 0
 
 static names: list[str] = []
 
@@ -58,3 +63,16 @@ def main() -> None:
     println(f"{p.unwrap_or(0)} {q.unwrap_or(0)}")
     names = local = ["a"]
     println(f"{len(names)} {len(local)}")
+    mut c: Option[int] = Some(1)
+    mut d: Option[str] = Some("s")
+    c = d = None
+    missing = "none"
+    println(f"{c.unwrap_or(0)} {d.unwrap_or(missing)}")
+    mut ints: list[int] = [1]
+    mut strs: list[str] = ["s"]
+    ints = strs = []
+    println(f"{len(ints)} {len(strs)}")
+    mut by_name: dict[str, int] = {"a": 1}
+    mut by_id: dict[int, str] = {1: "a"}
+    by_name = by_id = {}
+    println(f"{len(by_name)} {len(by_id)}")

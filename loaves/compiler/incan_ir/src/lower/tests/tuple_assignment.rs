@@ -320,23 +320,23 @@ def both(n: int) -> int:
     Ok(())
 }
 
-/// #1806: a target never reads another target. `count = maybe = 5` gives `5` to the `int` and to the `Option[int]`, and
-/// `n = u = 7` to the `int` and to the `int | str`, each converted by its own target; a value that is not `Copy` is
-/// cloned for every target but the last, which takes the temporary itself.
+/// #1806: a target never reads another target. `count = maybe = seed` gives `seed` to the `int` and to the
+/// `Option[int]`, and `n = u = seed` to the `int` and to the `int | str`, each converted by its own target; a value
+/// that is not `Copy` is cloned for every target but the last, which takes the temporary itself.
 #[test]
 fn chained_assignment_gives_every_target_the_value_issue1806() -> Result<(), String> {
     let ir = lower_checked_source(
         r#"
-def option_target() -> int:
+def option_target(seed: int) -> int:
     mut maybe: Option[int] = None
     mut count = 0
-    count = maybe = 5
+    count = maybe = seed
     return count
 
-def union_target() -> int:
+def union_target(seed: int) -> int:
     mut u: int | str = "s"
     mut n = 0
-    n = u = 7
+    n = u = seed
     return n
 
 def strings() -> str:
@@ -425,10 +425,10 @@ def reset() -> int:
     a = b = None
     return a.unwrap_or(0) + b.unwrap_or(0)
 
-def mixed() -> int:
+def mixed(seed: int) -> int:
     mut maybe: Option[int] = None
     mut count = 0
-    count = maybe = 5
+    count = maybe = seed
     return count
 
 def fill() -> int:
@@ -472,5 +472,74 @@ def fill() -> int:
         vec![("local".to_string(), VarAccess::Move)],
         "the last target takes the value itself"
     );
+    Ok(())
+}
+
+/// #1806: a literal over bound targets that disagree on a type is written once per target, left to right, as a single
+/// `target = literal` writes it: `a = b = None` over an `Option[int]` and an `Option[str]`, and `[]` or `{}` over two
+/// list or dict types, have no one type to share, so no temporary is read.
+#[test]
+fn chained_literal_over_disagreeing_targets_is_written_per_target_issue1806() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+def options() -> None:
+    mut a: Option[int] = Some(1)
+    mut b: Option[str] = Some("s")
+    a = b = None
+
+def lists() -> None:
+    mut ints: list[int] = [1]
+    mut strs: list[str] = ["s"]
+    ints = strs = []
+
+def dicts() -> None:
+    mut by_name: dict[str, int] = {"a": 1}
+    mut by_id: dict[int, str] = {1: "a"}
+    by_name = by_id = {}
+
+def numbers() -> None:
+    mut maybe: Option[int] = None
+    mut count = 0
+    count = maybe = 5
+"#,
+    )?;
+
+    for (name, targets) in [
+        ("options", ["a", "b"]),
+        ("lists", ["ints", "strs"]),
+        ("dicts", ["by_name", "by_id"]),
+        ("numbers", ["count", "maybe"]),
+    ] {
+        let stmts = all_statements(&ir, name)?;
+        assert!(
+            !stmts
+                .iter()
+                .any(|stmt| matches!(&stmt.kind, IrStmtKind::Let { name, .. } if name == CHAIN_VALUE)),
+            "`{name}` has no one type to share, so it reads no temporary: {stmts:?}"
+        );
+        let assigned = stmts
+            .iter()
+            .filter_map(|stmt| match &stmt.kind {
+                IrStmtKind::Assign {
+                    target: AssignTarget::Var { name, ty },
+                    value,
+                } => Some((name.clone(), ty.clone(), value.ty.clone())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            assigned
+                .iter()
+                .map(|(target, _, _)| target.as_str())
+                .collect::<Vec<_>>(),
+            targets,
+            "`{name}` writes each target, left to right"
+        );
+        if name != "numbers" {
+            for (target, target_ty, value_ty) in &assigned {
+                assert_eq!(value_ty, target_ty, "`{target}` gets the literal in its own type");
+            }
+        }
+    }
     Ok(())
 }

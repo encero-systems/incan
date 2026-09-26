@@ -137,10 +137,10 @@ def main() -> None:
 fn chained_assignment_gives_every_target_the_value_issue1806() -> Result<(), String> {
     let code = generate_collapsed(
         r#"
-def option_target() -> int:
+def option_target(seed: int) -> int:
     mut maybe: Option[int] = None
     mut count = 0
-    count = maybe = 5
+    count = maybe = seed
     return count + maybe.unwrap_or(0)
 
 
@@ -152,7 +152,7 @@ def strings() -> str:
 
 
 def main() -> None:
-    println(option_target())
+    println(option_target(5))
     println(strings())
 "#,
     )?;
@@ -212,6 +212,41 @@ def main() -> None:
     assert!(
         compact.contains("letlocal=__incan_chain_value;"),
         "the last target takes the value itself:\n{code}"
+    );
+    Ok(())
+}
+
+/// A literal over targets that disagree on a type is written once per target, in that target's type: no `None` of
+/// nothing and no temporary for `None`, `[]` or `{}`.
+#[test]
+fn chained_literal_over_disagreeing_targets_is_written_per_target_issue1806() -> Result<(), String> {
+    let code = generate_collapsed(
+        r#"
+def reset() -> int:
+    mut a: Option[int] = Some(1)
+    mut b: Option[str] = Some("s")
+    a = b = None
+    mut ints: list[int] = [1]
+    mut strs: list[str] = ["s"]
+    ints = strs = []
+    mut by_name: dict[str, int] = {"a": 1}
+    mut by_id: dict[int, str] = {1: "a"}
+    by_name = by_id = {}
+    return a.unwrap_or(0) + len(ints) + len(strs) + len(by_name) + len(by_id)
+
+
+def main() -> None:
+    println(reset())
+"#,
+    )?;
+    let compact: String = code.split_whitespace().collect();
+    for target in ["a=None", "b=None", "ints=", "strs=", "by_name=", "by_id="] {
+        assert!(compact.contains(target), "missing `{target}` in:\n{code}");
+    }
+    assert!(!compact.contains("None::<()>"), "no `None` of nothing:\n{code}");
+    assert!(
+        !compact.contains("__incan_chain_value"),
+        "a literal over disagreeing targets reads no temporary:\n{code}"
     );
     Ok(())
 }
