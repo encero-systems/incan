@@ -440,7 +440,9 @@ impl TypeChecker {
             })
             .collect::<Vec<_>>();
 
+        self.enter_mut_param_closure();
         let return_ty = self.check_expr_with_expected(body, Some(&signature.return_ty));
+        self.exit_mut_param_closure();
         if !matches!(return_ty, ResolvedType::Unknown) && !self.types_compatible(&return_ty, &signature.return_ty) {
             self.errors.push(errors::type_mismatch(
                 &signature.return_ty.to_string(),

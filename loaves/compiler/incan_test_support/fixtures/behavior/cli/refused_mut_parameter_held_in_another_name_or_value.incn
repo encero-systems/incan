@@ -1,0 +1,49 @@
+# behavior: a mut list parameter bound to another name, held in a tuple, list, dict or field, produced as a match, if or break value, bound by a match arm, or changed in a closure is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+model Holder:
+    items: list[int]
+
+
+def bound(mut items: list[int]) -> int:
+    mut other = items
+    let copy = items
+    mut annotated: list[int] = items
+    annotated = items
+    return len(other) + len(copy) + len(annotated)
+
+
+def held(mut items: list[int]) -> int:
+    pair = (items, 1)
+    table = {"k": items}
+    mut holder = Holder(items=[])
+    holder.items = items
+    for xs in [items]:
+        xs.append(3)
+    return pair[1] + len(table) + len(holder.items)
+
+
+def produced(mut items: list[int]) -> int:
+    chosen = match len(items):
+        0 => items
+        _ => []
+    picked = if len(items) > 0:
+        items
+    else:
+        []
+    looped = loop:
+        break items
+    return len(chosen) + len(picked) + len(looped)
+
+
+def matched(mut items: list[int]) -> int:
+    match items:
+        xs => xs.append(3)
+    add = () => items.append(1)
+    add()
+    return len(items)
+
+
+def main() -> None:
+    mut items: list[int] = [1]
+    println(bound(items) + held(items) + produced(items) + matched(items))

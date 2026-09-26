@@ -8,9 +8,11 @@
 //!
 //! - each declared parameter's marker, recorded at collection for lowering by parameter span and name, so the Rust
 //!   shape of the declaration and of every call agrees ([`TypeCheckInfo`](super::TypeCheckInfo) declarations);
-//! - which caller-visible parameters a callable's body changes, directly, by binding a local to the parameter, or by
-//!   passing them on to another callee that changes them; a method reached by trait dispatch and a callee known only by
-//!   its callable type are taken to change every marked parameter;
+//! - which caller-visible parameters a callable's body changes, directly or by passing them on to another callee that
+//!   changes them; a method reached by trait dispatch and a callee known only by its callable type are taken to change
+//!   every marked parameter;
+//! - where a caller-visible parameter would be held by another name or value (a new binding, a collection, a field, a
+//!   `match`, `if` or `break` value, a `match` arm binding, a closure that changes it), which is refused;
 //! - which call arguments are refused (`INCAN-T0117`): an immutable binding or a field of one, an element of a
 //!   collection, or a static, passed to a caller-visible parameter the callee changes, where the change would fail to
 //!   build or be lost;
@@ -22,8 +24,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{CallArg, Expr, Param, ParamKind, Span, Spanned};
-use crate::diagnostics::errors::{self, MutArgumentPlace, MutParameterChange, MutParameterLabel};
+use crate::ast::{
+    CallArg, DictEntry, Expr, ListEntry, MatchBody, Param, ParamKind, Pattern, PatternArg, Span, Spanned, Statement,
+};
+use crate::diagnostics::errors::{self, MutArgumentPlace, MutParameterChange, MutParameterCopy, MutParameterLabel};
 use crate::symbols::{CallableParam, ResolvedType, SymbolKind, TypeInfo};
 use incan_lang::lang::keywords::{self, KeywordId};
 use incan_lang::lang::surface::{dict_methods, list_methods, set_methods};
@@ -104,6 +108,8 @@ struct MutParamForward {
 struct MutParamBody {
     identity: CanonicalSymbolId,
     params: HashMap<String, Span>,
+    /// How many closures inside this body are being checked; a closure that changes a parameter holds it.
+    closure_depth: usize,
 }
 
 /// Checker state for caller-visible `mut` parameters across one module's check.
@@ -197,6 +203,7 @@ impl TypeChecker {
         let next = MutParamBody {
             identity,
             params: caller_visible,
+            closure_depth: 0,
         };
         MutParamBodyState(self.mut_params.current.replace(next))
     }
@@ -230,6 +237,8 @@ impl TypeChecker {
     }
 
     /// Record that the current body changes the caller-visible parameter a place is rooted at, if it is rooted at one.
+    ///
+    /// A change made inside a closure is a closure holding the parameter, which is refused.
     fn note_place_change(&mut self, place: &Spanned<Expr>) {
         let Some(root) = place_root_name(place) else {
             return;
@@ -237,6 +246,14 @@ impl TypeChecker {
         let Some(param) = self.current_caller_visible_param(root) else {
             return;
         };
+        let in_closure = self
+            .mut_params
+            .current
+            .as_ref()
+            .is_some_and(|body| body.closure_depth > 0);
+        if in_closure {
+            self.refuse_held_mut_param(&param, place.span);
+        }
         if let Some(body) = &self.mut_params.current {
             self.mut_params
                 .changed
@@ -246,21 +263,136 @@ impl TypeChecker {
         }
     }
 
-    /// Record an assignment whose value is a caller-visible parameter itself (`mut other = items`, `other = items`,
-    /// or an element of a tuple value such as `a, b = items, 1`).
-    ///
-    /// The new binding holds the parameter's value, so a change through it is a change to the parameter. The check
-    /// does not follow the binding, so the parameter counts as changed.
-    pub(in crate::typechecker) fn note_mut_param_alias(&mut self, value: &Spanned<Expr>) {
+    // ========================================================================
+    // Holding a caller-visible parameter
+    // ========================================================================
+
+    /// Refuse `value` when it is a caller-visible `mut` parameter itself, in a position that holds it in a new binding
+    /// or another value: an assignment's value, a field or element stored, or a `break` value.
+    pub(in crate::typechecker) fn refuse_mut_param_held_by(&mut self, value: &Spanned<Expr>) {
         match &value.node {
-            Expr::Ident(_) => self.note_place_change(value),
-            Expr::Paren(inner) => self.note_mut_param_alias(inner),
-            Expr::Tuple(items) => {
-                for item in items {
-                    self.note_mut_param_alias(item);
+            Expr::Paren(inner) => self.refuse_mut_param_held_by(inner),
+            Expr::Ident(name) => {
+                if let Some(param) = self.current_caller_visible_param(name) {
+                    self.refuse_held_mut_param(&param, value.span);
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Refuse each caller-visible `mut` parameter an expression holds directly in a new value: an element of a tuple,
+    /// list, set or dict literal or of a comprehension, the value of a `match` arm or of an `if` branch, and the
+    /// scrutinee of a `match` whose arm binds the whole value to a name.
+    ///
+    /// A value is only refused where it is the parameter itself; a name the arm's pattern or the branch rebinds in its
+    /// own scope is not the parameter.
+    pub(in crate::typechecker) fn refuse_mut_params_held_in(&mut self, expr: &Spanned<Expr>) {
+        if self.mut_params.current.is_none() {
+            return;
+        }
+        match &expr.node {
+            Expr::Tuple(items) | Expr::Set(items) => {
+                for item in items {
+                    self.refuse_mut_param_held_by(item);
+                }
+            }
+            Expr::List(entries) => {
+                for entry in entries {
+                    if let ListEntry::Element(item) = entry {
+                        self.refuse_mut_param_held_by(item);
+                    }
+                }
+            }
+            Expr::Dict(entries) => {
+                for entry in entries {
+                    if let DictEntry::Pair(key, value) = entry {
+                        self.refuse_mut_param_held_by(key);
+                        self.refuse_mut_param_held_by(value);
+                    }
+                }
+            }
+            Expr::ListComp(comp) => self.refuse_mut_param_held_by(&comp.expr),
+            Expr::DictComp(comp) => {
+                self.refuse_mut_param_held_by(&comp.key);
+                self.refuse_mut_param_held_by(&comp.value);
+            }
+            Expr::Generator(generator) => self.refuse_mut_param_held_by(&generator.expr),
+            Expr::Match(scrutinee, arms) => {
+                if arms.iter().any(|arm| pattern_binds_whole_value(&arm.node.pattern.node)) {
+                    self.refuse_mut_param_held_by(scrutinee);
+                }
+                for arm in arms {
+                    let value = match &arm.node.body {
+                        MatchBody::Expr(value) => Some(value),
+                        MatchBody::Block(body) => trailing_value(body),
+                    };
+                    if let Some(value) = value
+                        && !value_is_rebound_by_pattern(value, &arm.node.pattern.node)
+                    {
+                        self.refuse_mut_param_held_by(value);
+                    }
+                }
+            }
+            Expr::If(if_expr) => {
+                for body in std::iter::once(&if_expr.then_body).chain(if_expr.else_body.as_ref()) {
+                    if let Some(value) = trailing_value(body)
+                        && !value_is_rebound_in(value, body)
+                    {
+                        self.refuse_mut_param_held_by(value);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Enter a closure checked inside the current body; a caller-visible parameter it changes is refused as held.
+    pub(in crate::typechecker) fn enter_mut_param_closure(&mut self) {
+        if let Some(body) = &mut self.mut_params.current {
+            body.closure_depth += 1;
+        }
+    }
+
+    /// Leave a closure entered with [`Self::enter_mut_param_closure`].
+    pub(in crate::typechecker) fn exit_mut_param_closure(&mut self) {
+        if let Some(body) = &mut self.mut_params.current {
+            body.closure_depth = body.closure_depth.saturating_sub(1);
+        }
+    }
+
+    /// Report the caller-visible parameter `param` held at `span`, once per span.
+    fn refuse_held_mut_param(&mut self, param: &str, span: Span) {
+        let copy = self.mut_param_copy_route(param);
+        let error = errors::caller_visible_mut_parameter_held(param, &copy, span);
+        let already_reported = self
+            .errors
+            .iter()
+            .any(|existing| existing.span == error.span && existing.message == error.message);
+        if !already_reported {
+            self.errors.push(error);
+        }
+    }
+
+    /// Return how an independent copy of the caller-visible parameter `param` is written: `list(items)`,
+    /// `dict(items)`, `set(items)` or `str(items)` for those types, and a new value built from it otherwise.
+    fn mut_param_copy_route(&self, param: &str) -> MutParameterCopy {
+        let Some(SymbolKind::Variable(info)) = self.lookup_symbol(param).map(|symbol| &symbol.kind) else {
+            return MutParameterCopy::NewValue;
+        };
+        let constructor = match &info.ty {
+            ResolvedType::Str => Some("str"),
+            ResolvedType::Generic(name, _) => match collection_type_id(name) {
+                Some(CollectionTypeId::List) => Some("list"),
+                Some(CollectionTypeId::Dict) => Some("dict"),
+                Some(CollectionTypeId::Set) => Some("set"),
+                _ => None,
+            },
+            _ => None,
+        };
+        match constructor {
+            Some(constructor) => MutParameterCopy::Expression(format!("{constructor}({param})")),
+            None => MutParameterCopy::NewValue,
         }
     }
 
@@ -522,6 +654,18 @@ impl TypeChecker {
             if let ArgumentPlace::Mutable {
                 forwarded_param: Some(param),
             } = &place
+                && self
+                    .mut_params
+                    .current
+                    .as_ref()
+                    .is_some_and(|body| body.closure_depth > 0)
+            {
+                // A closure that passes the parameter on to a parameter that may change it holds the parameter.
+                self.refuse_held_mut_param(param, value.span);
+            }
+            if let ArgumentPlace::Mutable {
+                forwarded_param: Some(param),
+            } = &place
                 && let Some(body) = &self.mut_params.current
             {
                 match &identity {
@@ -709,7 +853,7 @@ impl TypeChecker {
     /// Decide every recorded argument once the module's bodies have been checked.
     ///
     /// A callee changes a caller-visible parameter when its body writes through it, calls a method that may change it,
-    /// binds a local to it, or passes it on to a parameter another callee changes; a callee whose body this
+    /// or passes it on to a parameter another callee changes; a callee whose body this
     /// check did not read (an imported declaration, a trait method without a default, a method reached by trait
     /// dispatch, a callable known only by its type) is taken to change it. An immutable binding or field, an element or
     /// a static passed to a changed parameter is refused with `INCAN-T0117`; an immutable binding or field passed to an
@@ -828,6 +972,68 @@ fn callable_param_is_marked(param: &CallableParam) -> bool {
 /// Opaque saved state of the enclosing body, restored by [`TypeChecker::exit_mut_param_body`].
 #[derive(Debug)]
 pub(crate) struct MutParamBodyState(Option<MutParamBody>);
+
+/// Return whether a `match` arm pattern binds the whole matched value to a name (`xs => ...`).
+fn pattern_binds_whole_value(pattern: &Pattern) -> bool {
+    match pattern {
+        Pattern::Binding(_) => true,
+        Pattern::Group(inner) => pattern_binds_whole_value(&inner.node),
+        Pattern::Or(alternatives) => alternatives
+            .iter()
+            .any(|alternative| pattern_binds_whole_value(&alternative.node)),
+        _ => false,
+    }
+}
+
+/// Return the value a block produces: its last statement when that is an expression.
+fn trailing_value(body: &[Spanned<Statement>]) -> Option<&Spanned<Expr>> {
+    match &body.last()?.node {
+        Statement::Expr(value) => Some(value),
+        _ => None,
+    }
+}
+
+/// Return whether `value` names a binding the arm's pattern introduces, which shadows any parameter of that name.
+fn value_is_rebound_by_pattern(value: &Spanned<Expr>, pattern: &Pattern) -> bool {
+    let Some(name) = bare_name(value) else {
+        return false;
+    };
+    pattern_binds_name(pattern, name)
+}
+
+/// Return whether `value` names a binding the block itself introduces before producing it.
+fn value_is_rebound_in(value: &Spanned<Expr>, body: &[Spanned<Statement>]) -> bool {
+    let Some(name) = bare_name(value) else {
+        return false;
+    };
+    body.iter().any(|statement| match &statement.node {
+        Statement::Assignment(assign) => assign.name == name,
+        Statement::TupleUnpack(unpack) => unpack.names.iter().any(|bound| bound == name),
+        _ => false,
+    })
+}
+
+/// Return the name a (possibly parenthesized) identifier expression spells.
+fn bare_name(value: &Spanned<Expr>) -> Option<&str> {
+    match &value.node {
+        Expr::Ident(name) => Some(name.as_str()),
+        Expr::Paren(inner) => bare_name(inner),
+        _ => None,
+    }
+}
+
+/// Return whether a pattern binds `name` anywhere inside it.
+fn pattern_binds_name(pattern: &Pattern, name: &str) -> bool {
+    match pattern {
+        Pattern::Binding(bound) => bound == name,
+        Pattern::Constructor(_, args) => args.iter().any(|arg| match arg {
+            PatternArg::Positional(inner) | PatternArg::Named(_, inner) => pattern_binds_name(&inner.node, name),
+        }),
+        Pattern::Tuple(items) | Pattern::Or(items) => items.iter().any(|item| pattern_binds_name(&item.node, name)),
+        Pattern::Group(inner) => pattern_binds_name(&inner.node, name),
+        Pattern::Wildcard | Pattern::Literal(_) => false,
+    }
+}
 
 /// Return the binding name a place expression is rooted at, following fields, elements and parentheses.
 fn place_root_name(expr: &Spanned<Expr>) -> Option<&str> {

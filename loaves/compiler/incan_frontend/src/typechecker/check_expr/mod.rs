@@ -239,6 +239,7 @@ impl TypeChecker {
     /// resolved its callee, its arguments for `mut` parameters whose changes reach the caller are recorded for the
     /// module-level `INCAN-T0117` decision.
     pub fn check_expr(&mut self, expr: &Spanned<Expr>) -> ResolvedType {
+        self.refuse_mut_params_held_in(expr);
         let ty = match &expr.node {
             Expr::Ident(name) => self.check_ident(name, expr.span),
             Expr::Literal(lit) => self.check_literal(lit),
@@ -367,6 +368,7 @@ impl TypeChecker {
     /// This is intentionally narrow: only expression forms that benefit from contextual typing without broad inference
     /// changes should use the hint. Calls record their `mut` arguments as [`Self::check_expr`] does.
     pub fn check_expr_with_expected(&mut self, expr: &Spanned<Expr>, expected: Option<&ResolvedType>) -> ResolvedType {
+        self.refuse_mut_params_held_in(expr);
         let ty = match (&expr.node, expected) {
             (_, Some(ResolvedType::TypeVar(_))) => return self.check_expr(expr),
             (Expr::Paren(inner), Some(expected_ty)) => self.check_expr_with_expected(inner, Some(expected_ty)),

@@ -186,7 +186,12 @@ impl TypeChecker {
                 ));
             }
             Statement::Pass => {}
-            Statement::Break(value) => self.check_break_stmt(value.as_ref(), stmt.span),
+            Statement::Break(value) => {
+                if let Some(value) = value {
+                    self.refuse_mut_param_held_by(value);
+                }
+                self.check_break_stmt(value.as_ref(), stmt.span)
+            }
             Statement::Continue => self.check_continue_stmt(stmt.span),
             Statement::CompoundAssignment(compound) => {
                 self.record_write_target_identity(compound.name_span, &compound.name);
@@ -383,7 +388,7 @@ impl TypeChecker {
             Statement::TupleUnpack(unpack) => {
                 // Check the value expression and get its type
                 let value_ty = self.check_expr(&unpack.value);
-                self.note_mut_param_alias(&unpack.value);
+                self.refuse_mut_param_held_by(&unpack.value);
 
                 let element_types = self.destructured_element_types(&value_ty, unpack.names.len(), stmt.span);
 
@@ -398,7 +403,7 @@ impl TypeChecker {
             Statement::TupleAssign(assign) => {
                 // Check the value expression (should be a tuple)
                 let value_ty = self.check_expr(&assign.value);
-                self.note_mut_param_alias(&assign.value);
+                self.refuse_mut_param_held_by(&assign.value);
 
                 let element_types = self.destructured_element_types(&value_ty, assign.targets.len(), stmt.span);
 
@@ -455,7 +460,7 @@ impl TypeChecker {
             Statement::ChainedAssignment(ca) => {
                 // Check the value expression
                 let value_ty = self.check_expr(&ca.value);
-                self.note_mut_param_alias(&ca.value);
+                self.refuse_mut_param_held_by(&ca.value);
 
                 // Chained source assignment has the same declaration/reassignment distinction as a single target.
                 for (index, target) in ca.targets.iter().enumerate() {
@@ -517,6 +522,7 @@ impl TypeChecker {
         // Check the object expression
         let obj_ty = self.check_expr(&field_assign.object);
         self.note_mut_param_write(&field_assign.object);
+        self.refuse_mut_param_held_by(&field_assign.value);
         let field = &field_assign.field;
         if let Some(place) = Self::self_rooted_place(&field_assign.object) {
             self.reject_write_through_immutable_self(
@@ -625,6 +631,7 @@ impl TypeChecker {
         // Check the object expression (should be a collection)
         let obj_ty = self.check_expr(&index_assign.object);
         self.note_mut_param_write(&index_assign.object);
+        self.refuse_mut_param_held_by(&index_assign.value);
         if let Some(place) = Self::self_rooted_place(&index_assign.object) {
             self.reject_write_through_immutable_self(&format!("{place}[...]"), SelfMutation::Assignment, span);
         }
@@ -749,7 +756,7 @@ impl TypeChecker {
         } else {
             self.check_expr_with_expected(&assign.value, annotated_ty.as_ref())
         };
-        self.note_mut_param_alias(&assign.value);
+        self.refuse_mut_param_held_by(&assign.value);
 
         // A `const` is registered as a module-scope variable, so the scope-chain walk below finds it. Answer the
         // more specific question first: reassigning a const is not a mutability mistake to be fixed with `mut`, it

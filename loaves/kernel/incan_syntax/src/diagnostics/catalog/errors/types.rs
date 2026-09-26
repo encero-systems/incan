@@ -1119,6 +1119,38 @@ pub fn caller_visible_mut_parameter_rebinding(name: &str, span: Span) -> Compile
     .with_note("The caller sees changes made to the value it passed, not a new value bound to the parameter's name")
 }
 
+/// How the hint of a refused hold on a caller-visible `mut` parameter spells an independent copy of its value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MutParameterCopy {
+    /// A copy written as one expression, such as `list(items)`.
+    Expression(String),
+    /// No single expression copies a value of the parameter's type; the copy is a new value built from it.
+    NewValue,
+}
+
+/// Refuse holding a `mut` parameter whose changes reach the caller in a new binding or another value (#1773).
+///
+/// `other = items`, a collection or field holding `items`, a `match`, `if` or `break` value that is `items`, a
+/// `match items:` arm that binds it and a closure that changes it would each hold the parameter's value under
+/// another name. Whether such a holder shares the caller's value or copies it is not defined, so the parameter is
+/// used only directly. `copy` spells the independent copy the hint offers.
+pub fn caller_visible_mut_parameter_held(name: &str, copy: &MutParameterCopy, span: Span) -> CompileError {
+    let copy = match copy {
+        MutParameterCopy::Expression(expression) => format!("write {expression}"),
+        MutParameterCopy::NewValue => format!("build a new value from '{name}'"),
+    };
+    CompileError::type_error(
+        format!("The 'mut' parameter '{name}' cannot be bound to another name or held in another value"),
+        span,
+    )
+    .with_hint(format!(
+        "Change '{name}' directly, or pass it to a function that takes a 'mut' parameter; for an independent copy, {copy}"
+    ))
+    .with_note(format!(
+        "'{name}' shows its changes to the caller; whether another name or value holding it shares the caller's value or copies it is not defined, so it is used only directly"
+    ))
+}
+
 /// A Rust interop parameter requires an exclusive borrow of an immutable Incan binding.
 pub fn mutable_rust_borrow_requires_mut(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Rust parameter requires a mutable borrow of '{name}'"), span).with_hint(format!(

@@ -359,33 +359,68 @@ def main() -> None:
     Ok(())
 }
 
-/// #1773: a local bound to a caller-visible `mut` parameter (`mut other = items`) holds the parameter's value, so a
-/// change through the local counts as a change to the parameter and an immutable binding passed for it is refused.
+/// #1773: a caller-visible `mut` parameter is used only directly. Binding it to another name (`mut`, annotated,
+/// reassigned or `let`), holding it in a tuple, list or dict literal or a field, producing it as a `match`, `if` or
+/// `break` value, binding it in a `match` arm, iterating a literal that holds it, or changing it in a closure is
+/// refused, and the hint names the copy for its type. Returning it, reading it, iterating it, calling methods on it and
+/// passing it on are accepted, and a scalar `mut` parameter is the function's own copy, which any binding may hold.
 #[test]
-fn mut_parameter_changed_through_a_local_alias_counts_as_changed_issue1773() -> Result<(), String> {
-    let prelude = r#"
-def sneaky(mut items: list[int]) -> int:
-    mut other = items
-    other.append(3)
-    return len(other)
-
-def relabeled(mut items: list[int]) -> int:
-    mut other: list[int] = []
-    other = (items)
-    other.append(4)
-    return len(other)
-"#;
-    let refused = mut_argument_refusals(&format!(
-        "{prelude}\ndef main() -> None:\n    fixed: list[int] = [1]\n    println(sneaky(fixed))\n    println(relabeled(fixed))\n"
-    ));
-    assert_eq!(
-        refusals_by_callee(&refused),
-        ["sneaky", "relabeled"],
-        "a new `mut` binding and a reassignment of one both hold the parameter, got {refused:?}"
+fn holding_a_mut_parameter_in_another_name_or_value_is_refused_issue1773() -> Result<(), String> {
+    let spellings = [
+        "    mut other = items\n    return len(other)\n",
+        "    mut other: list[int] = items\n    return len(other)\n",
+        "    mut other: list[int] = []\n    other = items\n    return len(other)\n",
+        "    let other = items\n    return len(other)\n",
+        "    other = match len(items):\n        0 => items\n        _ => []\n    return len(other)\n",
+        "    other = if len(items) > 0:\n        items\n    else:\n        []\n    return len(other)\n",
+        "    other = loop:\n        break items\n    return len(other)\n",
+        "    match items:\n        xs => xs.append(3)\n    return len(items)\n",
+        "    for xs in [items]:\n        xs.append(3)\n    return len(items)\n",
+        "    pair = (items, 1)\n    return pair[1]\n",
+        "    table = {\"k\": items}\n    return len(table)\n",
+        "    mut holder = Holder(items=[])\n    holder.items = items\n    return len(holder.items)\n",
+        "    add = () => items.append(1)\n    add()\n    return len(items)\n",
+    ];
+    for body in spellings {
+        let source = format!("model Holder:\n    items: list[int]\n\ndef f(mut items: list[int]) -> int:\n{body}");
+        let errors = check_errors(&source);
+        let held = errors
+            .iter()
+            .filter(|error| {
+                error.message == "The 'mut' parameter 'items' cannot be bound to another name or held in another value"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(held.len(), 1, "one refusal for\n{body}got {errors:?}");
+        assert!(
+            held[0].hints.iter().any(|hint| hint.contains("write list(items)")),
+            "the hint names the list copy, got {:?}",
+            held[0].hints
+        );
+    }
+    let model =
+        check_errors("model Box:\n    n: int\n\ndef f(mut box: Box) -> int:\n    other = box\n    return other.n\n");
+    assert!(
+        model.iter().any(|error| error
+            .hints
+            .iter()
+            .any(|hint| hint.contains("build a new value from 'box'"))),
+        "a model has no single copy expression, got {model:?}"
     );
-    checked(&format!(
-        "{prelude}\ndef main() -> None:\n    mut items: list[int] = [1]\n    println(sneaky(items))\n    println(relabeled(items))\n"
-    ))?;
+    checked(
+        r#"
+def reads(mut items: list[int], mut n: int) -> list[int]:
+    for x in items:
+        n += x
+    total = len(items)
+    m = n
+    items.append(total + m)
+    extend(items)
+    return items
+
+def extend(mut items: list[int]) -> None:
+    items.append(1)
+"#,
+    )?;
     Ok(())
 }
 
