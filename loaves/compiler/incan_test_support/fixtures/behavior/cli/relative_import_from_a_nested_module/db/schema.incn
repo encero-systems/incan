@@ -1,0 +1,2 @@
+pub model Database:
+    pub id: int

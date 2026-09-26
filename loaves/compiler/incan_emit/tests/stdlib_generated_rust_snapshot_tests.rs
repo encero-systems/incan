@@ -129,10 +129,11 @@ fn issue_1592_child_output() -> Option<PathBuf> {
     std::env::var_os("INCAN_TEST_1592_OUTPUT").map(PathBuf::from)
 }
 
+/// #1767: the std root exports only its submodules, so importing a prelude trait from it is refused before any Rust is
+/// generated, and each refusal names the trait it could not import.
 #[test]
-fn std_root_prelude_import_snapshot() -> TestResult {
-    assert_import_snapshot(
-        "std_root_prelude_import",
+fn std_root_prelude_trait_import_is_refused() -> TestResult {
+    let Err(error) = generate_rust(
         r#"
 from std import Debug, Eq, Clone, From, Add, Error, Index, Callable1
 
@@ -160,7 +161,18 @@ def touch_index(value: Index[int, str]) -> None:
 def touch_callable(value: Callable1[int, str]) -> None:
     return
 "#,
-    )
+        "std_root_prelude_import",
+    ) else {
+        return Err(err_box("importing prelude traits from the std root must be refused"));
+    };
+    let message = error.to_string();
+    for name in ["Debug", "Eq", "Clone", "From", "Add", "Error", "Index", "Callable1"] {
+        assert!(
+            message.contains(&format!("Cannot import `{name}` from `std`")),
+            "the refusal must name `{name}`: {message}"
+        );
+    }
+    Ok(())
 }
 
 #[test]

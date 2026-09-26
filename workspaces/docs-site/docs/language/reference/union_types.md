@@ -20,6 +20,20 @@ int | str | None    # Option[Union[int, str]]
 
 Concrete member values are assignable to a union that contains that member. A source union is assignable to a target union when every source member is accepted by some target member.
 
+Across a package boundary, a union without `None` that a dependency's function or a method on a dependency's type returns is assignable to the consumer's own union with the same members.
+
+```incan
+from pub::querykit import Box    # pub model Box: def answer(self) -> int | str
+
+def show(value: int | str) -> str:
+    match value:
+        int(number) => return f"number {number}"
+        str(text) => return f"text {text}"
+
+def main() -> None:
+    println(show(Box(value=3).answer()))    # number 3
+```
+
 Union values do not expose member-specific methods or operators until narrowed. Use `isinstance(value, T)` or a type pattern in `match`:
 
 ```incan

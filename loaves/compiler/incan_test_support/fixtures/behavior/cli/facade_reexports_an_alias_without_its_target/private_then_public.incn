@@ -1,0 +1,6 @@
+from provider import scale
+pub from provider import scale_alias
+
+
+pub def doubled(value: int) -> int:
+    return scale(value)

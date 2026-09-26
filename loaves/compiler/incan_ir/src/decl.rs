@@ -169,6 +169,11 @@ pub enum IrImportQualifier {
     /// Prefix with `crate::` (absolute import in the current crate).
     Crate,
     /// Prefix with `super::` repeated N times (relative import).
+    ///
+    /// Lowering resolves a relative source import to the crate-absolute path of the module the checker bound and
+    /// hands it on as [`Self::Crate`], because an Incan `..` climbs from the importing file's directory while Rust's
+    /// `super` climbs from the importing module (#1766). `Super` remains the fallback for a relative path lowering
+    /// cannot place, such as one in a module with no logical path.
     Super(usize),
 }
 

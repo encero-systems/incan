@@ -66,6 +66,28 @@ pub fn stdlib_import_not_exported(name: &str, module: &str, span: Span) -> Compi
     .with_hint("To import from the Rust standard library, use: `from rust::std::... import ...`")
 }
 
+/// An item of `from std import …` names something other than a standard-library submodule.
+///
+/// The standard-library root binds its submodules (`from std import toml`) and nothing else. The traits the root's own
+/// source imports (`Debug`, `Eq`, `Clone`, `From`, `Add`, `Error`, `Index`, `Callable1`, …) are not members of the
+/// root: each is declared in a `std.*` module, which `declaring_module` names when the compiler knows it. Without one,
+/// the hint lists the modules the root does bind.
+pub fn std_root_member_not_exported(name: &str, declaring_module: Option<&str>, span: Span) -> CompileError {
+    let error = CompileError::new(
+        format!("Cannot import `{name}` from `std`: the standard-library root exports only its submodules"),
+        span,
+    );
+    match declaring_module {
+        Some(module) => error.with_hint(format!(
+            "`{name}` is declared in `{module}`: `from {module} import {name}`"
+        )),
+        None => error.with_hint(format!(
+            "Known stdlib modules: {}",
+            stdlib::known_stdlib_modules_for_hint().join(", ")
+        )),
+    }
+}
+
 /// A module-qualified type annotation (`mod.Type`) named a member the module does not declare as a type.
 ///
 /// The root resolved to a module binding, so the spelling was a real module walk; it is the tail that fails. Naming

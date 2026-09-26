@@ -2987,6 +2987,8 @@ pub modulo = alias mod
         assert!(code.contains(&format!("pub use {modulo} as modulo;")), "{code}");
     }
 
+    /// #1764: an alias of a module member is an import of that member, so the module binds the projection every call
+    /// through the alias names, beside the alias's own name.
     #[test]
     fn top_level_qualified_alias_preserves_target_path() {
         let code = generate_with_sdk_provider_modules(
@@ -2999,7 +3001,14 @@ pub root = math.sqrt
         );
         assert!(code.contains("pub use crate::__incan_std::math as math;"), "{code}");
         let sqrt = projected_name(&code, "sqrt", SemanticSourceTargetKind::Function);
-        assert!(code.contains(&format!("pub use math::{sqrt} as root;")), "{code}");
+        assert!(
+            code.contains(&format!("pub use crate::__incan_std::math::{sqrt};")),
+            "{code}"
+        );
+        assert!(
+            code.contains(&format!("pub use crate::__incan_std::math::{sqrt} as root;")),
+            "{code}"
+        );
     }
 
     #[test]
@@ -5382,6 +5391,8 @@ pub def touch(value: Serialize) -> None:
         assert!(!code.contains("use crate::serde::Serialize;"));
     }
 
+    /// #1766: `..` climbs from the importing file's directory, so `store/json_store.incn` reaches the root's
+    /// `db.schema`, and the import names that module by its crate-absolute path.
     #[test]
     fn test_relative_from_import_uses_super_prefix() {
         let store_code = generate_nested_store_code(
@@ -5392,8 +5403,8 @@ pub def touch(db: Database) -> None:
   return
 "#,
         );
-        assert!(store_code.contains("use super::db::schema::Database;"));
-        assert!(!store_code.contains("use crate::db::schema::Database;"));
+        assert!(store_code.contains("use crate::db::schema::Database;"), "{store_code}");
+        assert!(!store_code.contains("use super::db::schema::Database;"), "{store_code}");
     }
 
     #[test]

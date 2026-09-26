@@ -410,6 +410,9 @@ impl TypeChecker {
             if self.materialize_stdlib_submodule_import(module, item, span) {
                 continue;
             }
+            if !context.is_unknown_stdlib_module() && self.refuse_std_root_member_import(module, item, span) {
+                continue;
+            }
             if self.materialize_stdlib_from_import(&context, item, testing_semantics.as_ref(), span) {
                 continue;
             }

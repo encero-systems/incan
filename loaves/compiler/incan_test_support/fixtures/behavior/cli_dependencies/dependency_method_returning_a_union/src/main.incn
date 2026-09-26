@@ -1,0 +1,31 @@
+# behavior: a dependency model's methods returning `int | str`, a list of it and an option of it hand the consumer unions it passes to its own `int | str` positions and matches by member (#1797)
+# retires: loaves/compiler/incan_emit/src/emit/native_unions.rs::publication_captures_nominal_method_return_unions
+# retires: loaves/compiler/incan_emit/src/tests/dependency_method_unions.rs::dependency_method_union_results_convert_into_the_consumers_unions_issue1797
+# retires: loaves/compiler/incan_ir/src/lower/tests/pub_method_results.rs::pub_dependency_method_results_keep_the_providers_union_issue1797
+# expect-stdout:
+#   answer 3
+#   answer empty
+#   first 5
+#   maybe 7
+
+from pub::querykit import Box
+
+
+def show(value: int | str, label: str) -> str:
+    match value:
+        int(number) => return f"{label} {number}"
+        str(text) => return f"{label} {text}"
+
+
+def show_first(values: list[int | str]) -> str:
+    return show(values[0], "first")
+
+
+def main() -> None:
+    println(show(Box(value=3).answer(), "answer"))
+    println(show(Box(value=0).answer(), "answer"))
+    println(show_first(Box(value=5).answers()))
+    match Box(value=7).maybe():
+        int(number) => println(f"maybe {number}")
+        str(text) => println(f"maybe {text}")
+        None => println("none")

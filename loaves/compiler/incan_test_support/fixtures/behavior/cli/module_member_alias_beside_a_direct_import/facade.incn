@@ -1,0 +1,8 @@
+from helpers import double
+import helpers as h
+
+pub twice = h.double
+
+
+pub def quadruple(value: int) -> int:
+    return double(double(value))

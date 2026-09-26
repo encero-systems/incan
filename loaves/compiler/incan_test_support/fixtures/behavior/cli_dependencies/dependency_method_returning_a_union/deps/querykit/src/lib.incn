@@ -1,0 +1,15 @@
+pub model Box:
+    pub value: int
+
+    def answer(self) -> int | str:
+        if self.value > 0:
+            return self.value
+        return "empty"
+
+    def answers(self) -> list[int | str]:
+        return [self.answer()]
+
+    def maybe(self) -> Option[int | str]:
+        if self.value > 0:
+            return Some(self.answer())
+        return None
