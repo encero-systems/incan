@@ -12,16 +12,16 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3154 | 198 | 7 |
+| keep | 3154 | 209 | 7 |
 | re-point | 496 | 50 | 424 |
 | retire | 1126 | 77 | 0 |
 | unaffected | 1437 | 134 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **6213** | **459** | **436** |
+| **Total** | **6213** | **470** | **436** |
 
 - Retire-class tests: 1126, of which twinned 57, dies 115, open 954 (neither yet).
 - Retire-class files with open rows: 62 (a file whose retire tests are all twinned or recorded `dies` is done).
-- Files whose test region exceeds the split threshold of 1500 lines: 20, of which 8 in the durable corpus (keep or re-point).
+- Files whose test region exceeds the split threshold of 1500 lines: 18, of which 6 in the durable corpus (keep or re-point).
 - Unreviewed files: 0.
 
 ## Dispositions
@@ -403,13 +403,17 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 | `nested_list_empty_holes_retain_checked_string_types` | retire | - | - | checker, parser, legacy_ir | legacy IR shape; the checked-type assertions (`List[List[str]]` on the empty holes) are the keep-class content the twin must carry. |
 | `nested_list_loop_emits_owned_strings_without_caller_annotation` | retire | `loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs::nested_empty_first_list_runs_without_a_caller_annotation_issue1471` | - | codegen, parser | asserts generated Rust text |
 
-### `loaves/compiler/incan_format` (191 tests in 5 files: keep 191)
+### `loaves/compiler/incan_format` (191 tests in 9 files: keep 191)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/compiler/incan_format/src/config.rs` | 24 | 275 | 206 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/formatter/tests.rs` | 11 | 327 | 327 | keep | - | - | - | #1561 | parser 7, formatter 11 | formatter; no emit/driver dependency. Reviewed at crate level. |
-| `loaves/compiler/incan_format/src/lib.rs` | 112 | 2852 | 2623 | keep | - | - | required | #1561 | checker 1, parser 110, formatter 110 | formatter; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/incan_format/src/tests/comments_and_blank_lines.rs` | 20 | 488 | 488 | keep | - | - | - | #1561 | formatter 18 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/incan_format/src/tests/declarations.rs` | 28 | 755 | 755 | keep | - | - | - | #1561 | formatter 28 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/incan_format/src/tests/entry_points_imports_and_spacing.rs` | 27 | 455 | 455 | keep | - | - | - | #1561 | checker 1, parser 1, formatter 21 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/incan_format/src/tests/expressions_and_calls.rs` | 23 | 631 | 631 | keep | - | - | - | #1561 | parser 1, formatter 23 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/incan_format/src/tests/statements_and_patterns.rs` | 14 | 281 | 281 | keep | - | - | - | #1561 | formatter 14 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
@@ -894,11 +898,18 @@ Per-test overrides in `loaves/toolchain/incan-cli/tests/rfc031_pub_import_integr
 | `consumer_check_desugared_generic_method_call_uses_expected_return_type_issue735` | keep | - | - | checker, parser | `incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust. |
 | `fmt_activates_clean_source_dependency_vocab_before_parsing_issue756` | keep | - | - | - | `incan fmt` only; formatter surface, no generated Rust. |
 
-### `loaves/toolchain/incan-lsp` (93 tests in 6 files: keep 92, retire 1)
+### `loaves/toolchain/incan-lsp` (93 tests in 13 files: keep 92, retire 1)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
-| `loaves/toolchain/incan-lsp/src/backend.rs` | 56 | 9413 | 2077 | keep | - | - | required | #1561 | checker 21, parser 33, lsp 3 | language server over the checker; no codegen. Reviewed at crate level. |
+| `loaves/toolchain/incan-lsp/src/backend/tests/completions.rs` | 20 | 648 | 648 | keep | - | - | - | #1561 | checker 6, parser 7 | split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level. |
+| `loaves/toolchain/incan-lsp/src/backend/tests/contract_model_command.rs` | 2 | 81 | 81 | keep | - | - | - | #1561 | - | split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level. |
+| `loaves/toolchain/incan-lsp/src/backend/tests/hover_previews.rs` | 14 | 511 | 511 | keep | - | - | - | #1561 | checker 9, parser 12, lsp 1 | split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level. |
+| `loaves/toolchain/incan-lsp/src/backend/tests/identity_navigation.rs` | 4 | 369 | 369 | keep | - | - | - | #1561 | checker 4, parser 4, lsp 2 | split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level. |
+| `loaves/toolchain/incan-lsp/src/backend/tests/parse_context_and_receivers.rs` | 3 | 88 | 88 | keep | - | - | - | #1561 | parser 3 | split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level. |
+| `loaves/toolchain/incan-lsp/src/backend/tests/rust_inspect_workspace.rs` | 3 | 149 | 149 | keep | - | - | - | #1561 | checker 1, parser 1 | split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level. |
+| `loaves/toolchain/incan-lsp/src/backend/tests/signature_help.rs` | 3 | 104 | 104 | keep | - | - | - | #1561 | parser 3 | split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level. |
+| `loaves/toolchain/incan-lsp/src/backend/tests/vocab_surfaces.rs` | 7 | 237 | 237 | keep | - | - | - | #1561 | parser 3 | split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level. |
 | `loaves/toolchain/incan-lsp/src/call_site_type_args.rs` | 4 | 747 | 48 | keep | - | - | - | #1561 | parser 1 | language server over the checker; no codegen. Reviewed at crate level. |
 | `loaves/toolchain/incan-lsp/src/diagnostics.rs` | 7 | 395 | 168 | keep | - | - | - | #1561 | checker 3 | language server over the checker; no codegen. Reviewed at crate level. |
 | `loaves/toolchain/incan-lsp/src/main.rs` | 3 | 98 | 30 | keep | - | - | - | #1561 | - | language server over the checker; no codegen. Reviewed at crate level. |
