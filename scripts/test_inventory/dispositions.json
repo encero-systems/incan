@@ -1456,6 +1456,14 @@
         "public_construction_default_reaches_a_consumer_through_the_dependency_issue1771": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/public_construction_default_from_dependency",
           "notes": "Asserts the emitted construction a consumer receives for a dependency default that constructs a public model or class, spelled through the dependency's path and otherwise equal to the consumer's own construction; the behavior is carried by the named fixture (#1771)."
+        },
+        "default_constructing_another_modules_type_reaches_its_fields_within_the_crate_issue1771": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/private_default_items_across_modules",
+          "notes": "Asserts the emitted literal through `crate::a::Card` for a default and a method-partial preset in another module, and the `pub(crate)` field it reaches; the behavior is carried by the named fixture's `card_area()` (#1771)."
+        },
+        "defaults_of_uncalled_functions_keep_nothing_issue1771": {
+          "twin": "",
+          "notes": "Asserts generated-item pruning: a const only an unexpanded default names is not kept. Pruning generated Rust items belongs to the Rust-source backend alone, so the test dies with it (#1771)."
         }
       }
     },

@@ -1,4 +1,5 @@
-# behavior: defaults and method-partial presets that name private consts, a private function, a private model and a private enum of their module take those items' values when another module of the project omits the arguments
+# behavior: defaults and method-partial presets that name private consts, a private function, a private model and a private enum of their module, or construct a model another module declares with a private field, take those values when another module of the project omits the arguments
+# retires: loaves/compiler/incan_emit/tests/default_argument_codegen_tests.rs::default_constructing_another_modules_type_reaches_its_fields_within_the_crate_issue1771
 # expect-stdout:
 #   4
 #   8
@@ -6,8 +7,9 @@
 #   16
 #   fast
 #   hello Ada
+#   4
 
-from helpers import Greeter, describe, limit, read, speed
+from helpers import Greeter, card_area, describe, limit, read, speed
 
 
 def main() -> None:
@@ -17,3 +19,4 @@ def main() -> None:
     println(limit())
     println(speed())
     println(Greeter(name="Ada").hello())
+    println(card_area())

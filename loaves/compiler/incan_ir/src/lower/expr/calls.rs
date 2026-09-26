@@ -3910,7 +3910,14 @@ impl AstLowering {
     }
 
     /// Lower one checked provider preset without reinterpreting its canonical references as consumer-local fields.
-    fn lower_external_partial_preset(&mut self, library: &str, value: &CheckedPresetValue) -> Option<TypedExpr> {
+    ///
+    /// A model literal of one of the dependency's models or classes lowers as a construction through the dependency's
+    /// public path (#1771).
+    pub(in crate::lower) fn lower_external_partial_preset(
+        &mut self,
+        library: &str,
+        value: &CheckedPresetValue,
+    ) -> Option<TypedExpr> {
         match value {
             CheckedPresetValue::Int(value) => Some(TypedExpr::new(IrExprKind::Int(*value), IrType::Int)),
             CheckedPresetValue::Float(value) => Some(TypedExpr::new(IrExprKind::Float(*value), IrType::Float)),
@@ -3951,6 +3958,9 @@ impl AstLowering {
             }
             CheckedPresetValue::ConstRef(path) => self.lower_pub_default_const_ref(library, path),
             CheckedPresetValue::ModelLiteral { name, fields } => {
+                if let Some(construction) = self.lower_pub_preset_construction(library, name, fields) {
+                    return Some(construction);
+                }
                 let fields = fields
                     .iter()
                     .map(|(field, value)| Some((field.clone(), self.lower_external_partial_preset(library, value)?)))

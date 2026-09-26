@@ -1,3 +1,6 @@
+from cards import Card
+
+
 const CHUNK: int = 4
 const PREFIX: str = "chunk"
 const GREETING: str = "hello"
@@ -41,3 +44,7 @@ pub model Greeter:
         return f"{greeting} {self.name}"
 
     hello = partial greet(greeting=GREETING)
+
+
+pub def card_area(card: Card = Card(label="y")) -> int:
+    return card.area()

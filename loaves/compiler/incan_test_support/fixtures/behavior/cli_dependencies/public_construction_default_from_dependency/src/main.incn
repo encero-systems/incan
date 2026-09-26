@@ -1,15 +1,17 @@
-# behavior: a consumer that imports neither a dependency's public model nor its public class omits the arguments whose defaults construct them, directly and through a partial, and each call takes the constructed value, including the private field the model's declaration defaults
+# behavior: a consumer that imports neither a dependency's public model nor its public class omits the arguments whose defaults construct them, directly and through a partial, and calls a partial whose preset constructs the model; each call takes the constructed value, including the private field the model's declaration defaults and a field argument naming a private const
 # retires: loaves/compiler/incan_emit/tests/default_argument_codegen_tests.rs::public_construction_default_reaches_a_consumer_through_the_dependency_issue1771
 # retires: loaves/compiler/incan_ir/src/lower/tests/dependency_call_arguments.rs::dependency_default_constructing_a_public_model_calls_the_type_issue1771
 # expect-stdout:
 #   note of size 4
 #   3
 #   6
+#   t: ace of size 4
 
-from pub::shapes import count, show, stacked_twice
+from pub::shapes import count, show, stacked_twice, tag_ace
 
 
 def main() -> None:
     println(show())
     println(count())
     println(stacked_twice())
+    println(tag_ace(tag="t:"))

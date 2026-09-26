@@ -241,8 +241,11 @@ pub struct AstLowering {
     /// sites outside the module.
     pub default_named_items: HashSet<String>,
     /// Module models and classes that a parameter default or method-partial preset constructs; their fields are
-    /// published because the construction is spelled at call sites outside the module.
+    /// reachable within the crate because the construction is spelled at call sites outside the module.
     pub default_constructed_types: HashSet<String>,
+    /// Models and classes of other modules in the crate that a parameter default or method-partial preset of the
+    /// module constructs, each as its declaring module's Rust path and its name.
+    pub default_constructed_foreign_types: HashSet<(Vec<String>, String)>,
     /// Module-level symbol aliases mapped from alias name to canonical target name.
     pub symbol_aliases: HashMap<String, String>,
     /// Imported overload bindings that must be reexported because a public alias projects them.
@@ -725,6 +728,7 @@ impl AstLowering {
             callable_return_types: Vec::new(),
             default_named_items: HashSet::new(),
             default_constructed_types: HashSet::new(),
+            default_constructed_foreign_types: HashSet::new(),
             symbol_aliases: HashMap::new(),
             overload_alias_reexport_targets: HashSet::new(),
             source_type_alias_targets: HashMap::new(),

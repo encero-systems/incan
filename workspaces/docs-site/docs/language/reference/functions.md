@@ -30,7 +30,15 @@ Arguments bind to normal parameters in this order:
 4. Required parameters that remain unbound are reported as missing.
 5. Unknown named arguments are rejected unless the callee declares `**kwargs`.
 6. Extra positional arguments are rejected unless the callee declares `*args`.
-7. A defaulted parameter that remains unbound takes its declared default. A name in a default resolves in the module that declares the callable, whichever module the call is written in: a name that module declares resolves to that declaration, private or public, and a name it imports resolves to the declaration the import names. The same holds for the presets of a method partial. A call from another package omits such an argument under the same rule, except where the default constructs a model or class private to its package: that argument is required in another package, and a call there that omits it is error `INCAN-T0001`.
+7. A defaulted parameter that remains unbound takes its declared default. A name in a default resolves in the module that declares the callable, whichever module the call is written in: a name that module declares resolves to that declaration, private or public, and a name it imports resolves to the declaration the import names. The same holds for the presets of a method partial.
+8. A call in a package other than the callable's may leave a defaulted parameter unbound only when its default is one of:
+    - a literal, or a negated number literal;
+    - a list or dict whose elements are such defaults;
+    - a const or an enum variant without a payload, such as `LIMIT` or `Mode.Fast`;
+    - a call of a function the package declares, whose arguments are such defaults;
+    - a construction of a model or class the package exports, whose field arguments are such defaults.
+
+    Any other default, such as `"fl" + "at"`, `Shape.Circle(4)` or a construction of a private model, and every preset of a method partial, leaves the parameter required in another package. A call there that leaves it unbound is error `INCAN-T0001`.
 
 ```incan
 def connect(host: str, port: int) -> str:

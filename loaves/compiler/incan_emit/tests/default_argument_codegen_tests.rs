@@ -160,6 +160,79 @@ fn default_consts_of_the_calling_module_and_a_dependency_stay_apart_issue1771() 
     Ok(())
 }
 
+/// #1771: a default in `b` constructs the public model `Card` that `a` declares with a private field, directly and
+/// through a method partial's preset. `main` imports neither `Card` nor `a`, so the construction is spelled there as a
+/// literal of every field through `a`'s path, and `a` makes the private field reachable within the crate, not beyond.
+#[test]
+fn default_constructing_another_modules_type_reaches_its_fields_within_the_crate_issue1771() -> TestResult {
+    let (main_code, modules) = generate(
+        "from b import Deck, show\n\ndef main() -> None:\n    println(show())\n    println(Deck().top())\n",
+        &[
+            (
+                "a",
+                "pub model Card:\n    size: int = 4\n    pub label: str = \"x\"\n\n    def area(self) -> int:\n        return self.size\n",
+            ),
+            (
+                "b",
+                r#"
+from a import Card
+
+
+pub def show(card: Card = Card(label="y")) -> int:
+    return card.area()
+
+
+pub model Deck:
+    pub n: int = 1
+
+    def deal(self, card: Card) -> int:
+        return card.area() + self.n
+
+    top = partial deal(card=Card(label="ace"))
+"#,
+            ),
+        ],
+    )?;
+    let code = compact(&main_code);
+    for literal in [
+        "crate::a::Card{size:4,label:\"y\".to_string()}",
+        "crate::a::Card{size:4,label:\"ace\".to_string()}",
+    ] {
+        assert!(
+            code.contains(literal),
+            "the construction is spelled through `a`:\n{main_code}"
+        );
+    }
+    let a_code = compact(module_code(&modules, "a")?);
+    assert!(
+        a_code.contains("pub(crate)size:i64") && a_code.contains("publabel:String"),
+        "the private field is reachable within the crate and the public one keeps its visibility:\n{a_code}"
+    );
+    Ok(())
+}
+
+/// #1771: consts that only the defaults of functions nothing calls or imports name are not kept, since those defaults
+/// are never expanded.
+#[test]
+fn defaults_of_uncalled_functions_keep_nothing_issue1771() -> TestResult {
+    let (_, modules) = generate(
+        "from a import used\n\ndef main() -> None:\n    println(used())\n",
+        &[(
+            "a",
+            "const SIZE: int = 1\nconst OTHER: int = 2\n\n\ndef unused_default(n: int = SIZE) -> int:\n    return n\n\n\n\
+             pub def unused_pub(n: int = OTHER) -> int:\n    return n\n\n\npub def used() -> int:\n    return 3\n",
+        )],
+    )?;
+    let a_code = compact(module_code(&modules, "a")?);
+    for name in ["SIZE", "OTHER"] {
+        assert!(
+            !a_code.contains(&format!("const{name}:")),
+            "`{name}` is named only by a default nothing expands:\n{a_code}"
+        );
+    }
+    Ok(())
+}
+
 /// The dependency's library name, as a consumer imports it through `pub::`.
 const LIBRARY: &str = "shapes";
 
@@ -213,8 +286,9 @@ fn printed_arguments(code: &str) -> Vec<String> {
 
 /// #1771: a dependency's default that constructs one of its public models or classes is carried to a consumer that
 /// omits the argument, directly and through a partial over the function, including a model whose private field only
-/// the dependency's constructor sets. The consumer imports neither type, so the construction reaches each through the
-/// dependency's path, and it is otherwise the construction the consumer would write itself.
+/// the dependency's constructor sets and a field argument naming a private `str` const. A partial's preset that
+/// constructs one is carried the same way. The consumer imports neither type, so each construction reaches its type
+/// through the dependency's path, and it is otherwise the construction the consumer would write itself.
 #[test]
 fn public_construction_default_reaches_a_consumer_through_the_dependency_issue1771() -> TestResult {
     let index = provider_index(
@@ -244,6 +318,20 @@ pub def stacked(count: int, b: Box = Box()) -> int:
 
 
 pub stacked_twice = partial stacked(count=2)
+
+
+const LABEL: str = "k"
+
+
+pub def labeled(card: Card = Card(label=LABEL)) -> int:
+    return card.area()
+
+
+pub def tagged(tag: str, card: Card) -> str:
+    return tag + card.label
+
+
+pub tag_ace = partial tagged(card=Card(label="ace"))
 "#,
     )?;
     let generate = |source: &str| -> Result<String, Box<dyn std::error::Error>> {
@@ -252,7 +340,7 @@ pub stacked_twice = partial stacked(count=2)
         Ok(codegen.try_generate(&parse(source)?)?)
     };
     let omitted = generate(
-        "from pub::shapes import show, side, stacked_twice\n\ndef main() -> None:\n    println(show())\n    println(side())\n    println(stacked_twice())\n",
+        "from pub::shapes import labeled, show, side, stacked_twice, tag_ace\n\ndef main() -> None:\n    println(show())\n    println(side())\n    println(stacked_twice())\n    println(labeled())\n    println(tag_ace(tag=\"t:\"))\n",
     )?;
     let written = generate(
         "from pub::shapes import Box, Card, show, side, stacked_twice\n\ndef main() -> None:\n    println(show(Card(label=\"y\")))\n    println(side(Box()))\n    println(stacked_twice(b=Box()))\n",
@@ -264,11 +352,14 @@ pub stacked_twice = partial stacked(count=2)
             "shapes::show(shapes::Card(Some(\"y\".to_string())))".to_string(),
             "shapes::side(shapes::Box{side:3})".to_string(),
             "shapes::stacked_twice(2,shapes::Box{side:3})".to_string(),
+            "shapes::labeled(shapes::Card(Some(shapes::LABEL.to_string())))".to_string(),
+            "shapes::tag_ace(\"t:\".to_string(),shapes::Card(Some(\"ace\".to_string())))".to_string(),
         ],
-        "each omitted default constructs its type through the dependency:\n{omitted}"
+        "each omitted default and preset constructs its type through the dependency:\n{omitted}"
     );
     let unqualified = omitted_arguments
         .iter()
+        .take(3)
         .map(|argument| {
             argument
                 .replace("(shapes::Card(", "(Card(")

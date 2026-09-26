@@ -6,9 +6,11 @@
 //! calls a method of or reads a variant of -- therefore reaches the caller as a path to that item. A private item is
 //! still a valid default for a public callable, so the generated item such a path names is published beyond its
 //! module: its Incan visibility is unchanged, and only the generated path a default takes becomes reachable. A model
-//! or class a default constructs is spelled at the caller as a literal of every field, so its fields are published
-//! too; a type a default only calls a method of keeps its fields private. A method partial's presets are defaults of
-//! the method it generates, so they count the same way.
+//! or class a default constructs can be spelled at a caller in the same crate as a literal of every field, so its
+//! fields are made reachable within the crate, never beyond it; a type a default only calls a method of keeps its
+//! fields private. A default can also construct a model or class another module declares; that module publishes the
+//! fields the same way once codegen hands it the fact (see [`AstLowering::default_constructed_foreign_types`]). A
+//! method partial's presets are defaults of the method it generates, so they count the same way.
 
 use std::collections::{HashMap, HashSet};
 
@@ -16,6 +18,7 @@ use super::super::super::decl::Visibility;
 use super::super::AstLowering;
 use incan_frontend::ast;
 use incan_frontend::ast_walk::any_expr_in_expr;
+use incan_semantics_core::SemanticSourceTargetKind;
 
 impl AstLowering {
     /// Record the module items that any parameter default or method-partial preset of this module names, and the
@@ -75,17 +78,48 @@ impl AstLowering {
                 _ => None,
             })
             .collect::<HashSet<_>>();
-        self.default_constructed_types = Self::default_constructions(program)
-            .into_iter()
-            .filter(|name| structs.contains(name.as_str()))
-            .collect();
+        let mut local = HashSet::new();
+        let mut foreign = HashSet::new();
+        for (name, span) in Self::default_constructions(program) {
+            if structs.contains(name.as_str()) {
+                local.insert(name);
+            } else if let Some(owner) = self.constructed_type_owner(span) {
+                foreign.insert(owner);
+            }
+        }
+        self.default_constructed_types = local;
+        self.default_constructed_foreign_types = foreign;
     }
 
-    /// Return the name of every callee a parameter default or method-partial preset of `program` calls by a bare name.
+    /// Return the Rust module path and name of the model or class another module declares that the callee at `span`
+    /// constructs, when that module is compiled into this crate.
+    fn constructed_type_owner(&self, span: ast::Span) -> Option<(Vec<String>, String)> {
+        let identity = self.type_info.as_ref()?.resolved_identity(span)?;
+        if !matches!(
+            identity.kind,
+            SemanticSourceTargetKind::Model | SemanticSourceTargetKind::Class
+        ) {
+            return None;
+        }
+        let module_path = self.source_module_rust_paths.get(&identity.origin)?;
+        Some((module_path.clone(), identity.declaration_name.clone()))
+    }
+
+    /// Return the models and classes of other modules in this crate that a default of this module constructs, each as
+    /// its declaring module's Rust path and its name.
+    ///
+    /// Such a construction is spelled at a caller as a literal of every field, so codegen publishes those fields within
+    /// the crate in the declaring module, which cannot see this module's defaults.
+    pub fn default_constructed_foreign_types(&self) -> &HashSet<(Vec<String>, String)> {
+        &self.default_constructed_foreign_types
+    }
+
+    /// Return the name and span of every callee a parameter default or method-partial preset of `program` calls by a
+    /// bare name.
     ///
     /// A call through a bare name is how a default constructs a model or class; a method call on a type, such as
     /// `Settings.standard()`, and a variant read, such as `Mode.Fast`, are not calls through a bare name.
-    fn default_constructions(program: &ast::Program) -> HashSet<String> {
+    fn default_constructions(program: &ast::Program) -> Vec<(String, ast::Span)> {
         let mut defaults: Vec<&ast::Expr> = Vec::new();
         for declaration in &program.declarations {
             match &declaration.node {
@@ -106,13 +140,13 @@ impl AstLowering {
                 _ => {}
             }
         }
-        let mut constructed = HashSet::new();
+        let mut constructed = Vec::new();
         for default in defaults {
             any_expr_in_expr(default, |expr| {
                 if let ast::Expr::Call(callee, _, _) = expr
                     && let ast::Expr::Ident(name) = &callee.node
                 {
-                    constructed.insert(name.clone());
+                    constructed.push((name.clone(), callee.span));
                 }
                 false
             });
@@ -152,18 +186,20 @@ impl AstLowering {
         }
     }
 
-    /// Return the generated visibility of a field of `owner`, published when a default constructs `owner`.
+    /// Return the generated visibility of a field of `owner`, reachable within the crate when a default constructs
+    /// `owner`.
     ///
-    /// A construction written in a default is spelled at the caller as a literal of every field, so each field of a
-    /// type a default constructs must be reachable there, whatever its Incan visibility. A default that only calls a
-    /// method of `owner` spells no field and publishes none.
+    /// A construction written in a default can be spelled at a caller in another module of the crate as a literal of
+    /// every field, so each private field of a type a default constructs must be reachable there. A caller in another
+    /// package constructs the type through its generated constructor instead, so the field stays out of the library's
+    /// public Rust surface. A default that only calls a method of `owner` spells no field and publishes none.
     pub(in crate::lower) fn default_reachable_field_visibility(
         &self,
         owner: &str,
         visibility: Visibility,
     ) -> Visibility {
-        if visibility != Visibility::Public && self.default_constructed_types.contains(owner) {
-            Visibility::Public
+        if visibility == Visibility::Private && self.default_constructed_types.contains(owner) {
+            Visibility::Crate
         } else {
             visibility
         }

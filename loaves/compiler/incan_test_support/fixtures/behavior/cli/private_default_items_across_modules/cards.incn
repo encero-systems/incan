@@ -1,0 +1,6 @@
+pub model Card:
+    size: int = 4
+    pub label: str = "x"
+
+    def area(self) -> int:
+        return self.size

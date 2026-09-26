@@ -8,7 +8,7 @@ use incan_frontend::module::{
     canonicalize_source_module_segments, declaration_package_identity, logical_source_import_candidates,
 };
 use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
-use incan_ir::decl::FunctionParamDefault;
+use incan_ir::decl::{FunctionParamDefault, Visibility};
 use incan_ir::expr::{BuiltinFn, IrDictEntry, IrGeneratorClause, IrListEntry, MethodKind, Pattern, VarRefKind};
 use incan_ir::{IrDecl, IrDeclKind, IrExpr, IrExprKind, IrFunction, IrProgram, IrStmt, IrStmtKind, IrType};
 use incan_lang::lang::{
@@ -167,8 +167,7 @@ fn record_generated_support_required_items(
 ///
 /// This deliberately runs on IR instead of source spelling. Domain APIs may legitimately define methods named
 /// `filter`, `map`, or `count`; only calls classified as an iterator method or builtin iterator constructor cause the
-/// emitter to name `__incan_std.derives.collection` directly. The module items that parameter defaults reach through
-/// crate paths are kept the same way.
+/// emitter to name `__incan_std.derives.collection` directly.
 pub fn record_direct_generated_path_support_items_from_ir(
     reachable: &mut HashMap<Vec<String>, HashSet<String>>,
     program: &IrProgram,
@@ -184,16 +183,23 @@ pub fn record_direct_generated_path_support_items_from_ir(
         }
     }
     record_result_helper_support_items_from_ir(reachable, program);
-    record_default_path_items_from_ir(reachable, program);
 }
 
-/// Keep the module items a parameter default reaches through a crate path.
+/// Keep the module items that the parameter defaults of one module's reachable callables reach through a crate path.
 ///
 /// Lowering spells a const that a default reads as a path to the const's declaring module (#1771), so the default's
-/// callers reach the const without a use of its name. The generated-use analysis retains a module's items from
-/// the names reachable code uses, which such a path does not carry, so each item a default spells is recorded as
-/// reachable in its module here. Stdlib paths are left to the stdlib support records.
-fn record_default_path_items_from_ir(reachable: &mut HashMap<Vec<String>, HashSet<String>>, program: &IrProgram) {
+/// callers reach the const without a use of its name. The generated-use analysis retains a module's items from the
+/// names reachable code uses, which such a path does not carry, so each item a default spells is recorded as reachable
+/// in its module here. Only the defaults of callables that can be called count: a function another module imports or
+/// that this module names anywhere, and every method, whose retention emission decides. The default of a function
+/// nothing names is never expanded, so it keeps nothing. Stdlib paths are left to the stdlib support records.
+pub fn record_default_path_items_from_ir(
+    reachable: &mut HashMap<Vec<String>, HashSet<String>>,
+    module_path: &[String],
+    program: &IrProgram,
+) {
+    let referenced = ir_program_referenced_names(program);
+    let imported = reachable.get(module_path).cloned().unwrap_or_default();
     let mut paths: HashSet<Vec<String>> = HashSet::new();
     let mut collect = |expr: &IrExpr| {
         if let Some(path) = crate_rooted_item_path(expr) {
@@ -203,19 +209,16 @@ fn record_default_path_items_from_ir(reachable: &mut HashMap<Vec<String>, HashSe
     };
     for decl in &program.declarations {
         let functions: Vec<&IrFunction> = match &decl.kind {
-            IrDeclKind::Function(function) => vec![function],
+            IrDeclKind::Function(function)
+                if referenced.contains(&function.name) || imported.contains(&function.name) =>
+            {
+                vec![function]
+            }
             IrDeclKind::Impl(impl_decl) => impl_decl.methods.iter().collect(),
             IrDeclKind::Trait(trait_decl) => trait_decl.methods.iter().collect(),
             _ => Vec::new(),
         };
-        for default in functions
-            .iter()
-            .flat_map(|function| &function.params)
-            .filter_map(|param| match &param.default {
-                Some(FunctionParamDefault::Source(default)) => Some(default.as_ref()),
-                _ => None,
-            })
-        {
+        for default in functions.iter().flat_map(|function| source_param_defaults(function)) {
             ir_expr_any_expr(default, &mut collect);
         }
     }
@@ -235,6 +238,96 @@ fn record_default_path_items_from_ir(reachable: &mut HashMap<Vec<String>, HashSe
             continue;
         }
         reachable.entry(module_path.to_vec()).or_default().insert(item.clone());
+    }
+}
+
+/// Return the source parameter defaults one callable declares.
+fn source_param_defaults(function: &IrFunction) -> impl Iterator<Item = &IrExpr> {
+    function.params.iter().filter_map(|param| match &param.default {
+        Some(FunctionParamDefault::Source(default)) => Some(default.as_ref()),
+        _ => None,
+    })
+}
+
+/// Return every name one lowered module refers to from a body, a const or static value, a parameter default or a
+/// field default.
+///
+/// Each name is kept both as written and as the declaration its emitted projection stands for, so a callable is found
+/// whichever spelling a reference carries.
+fn ir_program_referenced_names(program: &IrProgram) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let mut collect = |expr: &IrExpr| {
+        let name = match &expr.kind {
+            IrExprKind::Var { name, .. } | IrExprKind::FunctionItem { name, .. } => Some(name.as_str()),
+            IrExprKind::Call {
+                canonical_path: Some(path),
+                ..
+            } => path.last().map(String::as_str),
+            _ => None,
+        };
+        if let Some(name) = name {
+            names.insert(name.to_string());
+            names.insert(program.function_registry.registry_key(name).to_string());
+        }
+        false
+    };
+    ir_program_any_expr(program, &mut collect);
+    for decl in &program.declarations {
+        match &decl.kind {
+            IrDeclKind::Function(function) => {
+                for default in source_param_defaults(function) {
+                    ir_expr_any_expr(default, &mut collect);
+                }
+            }
+            IrDeclKind::Impl(impl_decl) => {
+                for default in impl_decl.methods.iter().flat_map(source_param_defaults) {
+                    ir_expr_any_expr(default, &mut collect);
+                }
+            }
+            IrDeclKind::Trait(trait_decl) => {
+                for default in trait_decl.methods.iter().flat_map(source_param_defaults) {
+                    ir_expr_any_expr(default, &mut collect);
+                }
+            }
+            IrDeclKind::Struct(declared) => {
+                for default in declared.fields.iter().filter_map(|field| field.default.as_ref()) {
+                    ir_expr_any_expr(default, &mut collect);
+                }
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+/// Make the private fields of each model and class that another module's parameter default constructs reachable
+/// within the crate.
+///
+/// Such a construction is spelled at a caller as a literal of every field, in a module that may not import the type.
+/// `constructed` holds each type as its declaring module's Rust path and its name, as lowering recorded them from the
+/// defaults' checked identities (#1771). The fields become `pub(crate)`, which reaches every caller in the crate and
+/// leaves the library's public Rust surface unchanged.
+pub fn publish_default_constructed_fields<'p>(
+    modules: impl IntoIterator<Item = (&'p [String], &'p mut IrProgram)>,
+    constructed: &HashSet<(Vec<String>, String)>,
+) {
+    if constructed.is_empty() {
+        return;
+    }
+    for (module_path, program) in modules {
+        for decl in &mut program.declarations {
+            let IrDeclKind::Struct(declared) = &mut decl.kind else {
+                continue;
+            };
+            if !constructed.contains(&(module_path.to_vec(), declared.name.clone())) {
+                continue;
+            }
+            for field in &mut declared.fields {
+                if field.visibility == Visibility::Private {
+                    field.visibility = Visibility::Crate;
+                }
+            }
+        }
     }
 }
 

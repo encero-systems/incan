@@ -65,8 +65,9 @@ mod string_try_from_bridge;
 
 use dependency_metadata::{
     DependencySymbolMetadata, collect_dependency_symbol_metadata, collect_externally_reachable_items_by_module,
-    collect_model_field_aliases, record_direct_generated_path_support_items_from_ir,
-    should_preserve_dependency_public_items, source_module_origins, source_module_rust_paths,
+    collect_model_field_aliases, publish_default_constructed_fields, record_default_path_items_from_ir,
+    record_direct_generated_path_support_items_from_ir, should_preserve_dependency_public_items, source_module_origins,
+    source_module_rust_paths,
 };
 use ordinal_bridge::{OrdinalBridgeConfig, compilation_imports_std_ordinal_contract, imports_std_ordinal_contract};
 use serde_activation::{add_serde_to_newtypes, collect_serde_derives};
@@ -2053,6 +2054,7 @@ impl<'a> IrCodegen<'a> {
 
         // Generate module files
         let mut lowered_modules = Vec::new();
+        let mut default_constructed_types = HashSet::new();
         for (name, ast, path_segments) in dependency_modules.clone() {
             if !module_names.contains(&name) {
                 continue;
@@ -2086,9 +2088,17 @@ impl<'a> IrCodegen<'a> {
             crate::trait_bound_inference::infer_trait_bounds(&mut ir);
             record_direct_generated_path_support_items_from_ir(&mut dependency_reachable_items, &ir);
             let module_path = path_segments.clone().unwrap_or_else(|| vec![name.to_string()]);
+            record_default_path_items_from_ir(&mut dependency_reachable_items, &module_path, &ir);
+            default_constructed_types.extend(lowering.default_constructed_foreign_types().iter().cloned());
             self.source_dependency_module_paths.push((ast, module_path.clone()));
             lowered_modules.push((name.to_string(), module_path, ir));
         }
+        publish_default_constructed_fields(
+            lowered_modules
+                .iter_mut()
+                .map(|(_, module_path, ir)| (module_path.as_slice(), ir)),
+            &default_constructed_types,
+        );
         for idx in 0..lowered_modules.len() {
             let (left, rest) = lowered_modules.split_at_mut(idx);
             let Some((_, current_ir, tail)) = rest
@@ -2345,6 +2355,7 @@ impl<'a> IrCodegen<'a> {
 
         // Generate module files by path
         let mut lowered_modules = Vec::new();
+        let mut default_constructed_types = HashSet::new();
         for (name, ast, stored_path_segments) in dependency_modules.clone() {
             let matching_path = if let Some(stored_path_segments) = &stored_path_segments {
                 module_paths.iter().find(|path| *path == stored_path_segments)
@@ -2392,10 +2403,16 @@ impl<'a> IrCodegen<'a> {
                 // mutate unrelated dependency newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
                 crate::trait_bound_inference::infer_trait_bounds(&mut ir);
                 record_direct_generated_path_support_items_from_ir(&mut dependency_reachable_items, &ir);
+                record_default_path_items_from_ir(&mut dependency_reachable_items, path, &ir);
+                default_constructed_types.extend(lowering.default_constructed_foreign_types().iter().cloned());
                 self.source_dependency_module_paths.push((ast, path.clone()));
                 lowered_modules.push((path.clone(), ir));
             }
         }
+        publish_default_constructed_fields(
+            lowered_modules.iter_mut().map(|(path, ir)| (path.as_slice(), ir)),
+            &default_constructed_types,
+        );
         for idx in 0..lowered_modules.len() {
             let (left, rest) = lowered_modules.split_at_mut(idx);
             let Some((_, current_ir, tail)) = rest

@@ -44,9 +44,10 @@ fn field_visibilities(ir: &IrProgram, name: &str) -> Result<Vec<Visibility>, Str
 /// default: `read()` from another module, or `build(3)` from another package, receives `CHUNK`, `LABEL`, `_suffix()`,
 /// `_Default()`, `_Mode.Fast` or `_Preset.standard()` through a path to the item. A method partial's preset is a
 /// default of the method it generates, so the private const it names counts too. The generated item is published for
-/// that path. The fields of `_Default`, which a default constructs, are published with it, since the construction is
-/// spelled at the caller as a literal of every field; `_Preset`, whose method a default only calls, keeps its fields
-/// private. A private item no default names keeps its private item.
+/// that path. The fields of `_Default`, which a default constructs, become reachable within the crate, since the
+/// construction is spelled at a caller in another module as a literal of every field, but not beyond it; `_Preset`,
+/// whose method a default only calls, keeps its fields private. A private item no default names keeps its private
+/// item.
 #[test]
 fn private_item_a_default_names_is_published_for_its_callers() -> Result<(), String> {
     let ir = lower_checked_source(
@@ -135,8 +136,8 @@ pub def unused() -> int:
     assert!(
         field_visibilities(&ir, "_Default")?
             .iter()
-            .all(|visibility| *visibility == Visibility::Public),
-        "the fields a default's construction spells are published"
+            .all(|visibility| *visibility == Visibility::Crate),
+        "the fields a default's construction spells are reachable within the crate, and no further"
     );
     assert!(
         field_visibilities(&ir, "_Preset")?
