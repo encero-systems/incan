@@ -215,10 +215,10 @@ impl AstLowering {
     ///
     /// Every reference to an alias lowers to the projection of the declaration it names, so the module must bind that
     /// projection. An imported target (`root = sqrt` after `from std.math import sqrt`) has its import to do that; a
-    /// member reached through a module binding had nothing, and the program called a projection no `use` brought into
-    /// scope (#1764). Such an alias says exactly what `from std.math import sqrt as root` says, with the alias's own
-    /// visibility, so it lowers to that import: the member's module path from the lowered import of the module
-    /// binding, the member as the item, the alias as its local name, and the target identity the checker proved.
+    /// member reached through a module binding has no import of its own (#1764). Such an alias says exactly what `from
+    /// std.math import sqrt as root` says, with the alias's own visibility, so it lowers to that import: the member's
+    /// module path from the lowered import of the module binding, the member as the item, the alias as its local name,
+    /// and the target identity the checker proved.
     ///
     /// Returns `None`, leaving the alias a [`IrDeclKind::SymbolAlias`], for a single-segment target, a target without a
     /// projected identity (types, traits, overload sets), and a leading segment that no import binds as a module.
@@ -232,7 +232,10 @@ impl AstLowering {
             return None;
         };
         let (member, intermediate) = rest.split_last()?;
-        let module = self.imported_module_bindings.get(module_binding)?;
+        let module = self
+            .imported_module_bindings
+            .get(module_binding)
+            .or_else(|| self.imported_alias_targets.get(module_binding))?;
         let mut path = module.path.clone();
         path.extend(intermediate.iter().cloned());
         let item = super::super::super::decl::IrImportItem {
@@ -259,12 +262,11 @@ impl AstLowering {
     /// Resolve a relative source import path to the crate-absolute module path the checker resolved it to.
     ///
     /// `..` and `super` climb from the importing file's directory (the language reference's "parent directory"), while
-    /// Rust's `super` climbs from the importing module, which for a file module is that directory itself. Spelling the
-    /// written levels as `super` hops therefore landed one level short: `from ..db.schema import Database` in
-    /// `store/relative.incn` became `use super::db::schema::Database`, a path under `store` (#1766). The checker binds
-    /// a relative import through [`logical_source_import_candidates`] against the importing module's logical path, and
-    /// this asks the same question, so the path lowering hands on names the module the checker bound. Returns `None`
-    /// for a path that is not relative, and when the importing module's own path is unknown or too short to climb.
+    /// Rust's `super` climbs from the importing module, which for a file module is that directory itself, so the
+    /// written levels as `super` hops land one level short (#1766). The checker binds a relative import through
+    /// [`logical_source_import_candidates`] against the importing module's logical path, and this asks the same
+    /// question, so the path lowering hands on names the module the checker bound. Returns `None` for a path that is
+    /// not relative, and when the importing module's own path is unknown or too short to climb.
     pub(in crate::lower) fn resolved_relative_import_module(&self, path: &ast::ImportPath) -> Option<Vec<String>> {
         if path.parent_levels == 0 || path.is_absolute {
             return None;

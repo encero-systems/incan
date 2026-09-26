@@ -245,8 +245,8 @@ pub struct AstLowering {
     pub source_type_alias_targets: HashMap<String, ast::Type>,
     /// Imported item bindings mapped to their original import paths for public alias re-export emission.
     pub imported_alias_targets: HashMap<String, ImportedAliasTarget>,
-    /// Module bindings (`import std.math as math`, `from std import math`) mapped to the lowered path of the module
-    /// they bind, so an alias of a module member (`root = math.sqrt`) can lower as an import of that member.
+    /// Whole-module bindings (`import std.math as math`) mapped to the lowered path of the module they bind, so an
+    /// alias of a module member (`root = math.sqrt`) can lower as an import of that member.
     pub imported_module_bindings: HashMap<String, ImportedAliasTarget>,
     /// Cached stdlib metadata used to resolve rust.module-backed decorators/derives.
     pub stdlib_cache: StdlibAstCache,
@@ -2146,8 +2146,7 @@ impl AstLowering {
         self.import_aliases = decorator_resolution::collect_import_aliases(program);
         self.rust_import_aliases = decorator_resolution::collect_rust_import_aliases(program);
         ir_program.function_reexports = self.collect_function_reexports(program);
-        self.imported_alias_targets = self.collect_imported_alias_targets(program);
-        self.imported_module_bindings = self.collect_imported_module_bindings(program);
+        (self.imported_alias_targets, self.imported_module_bindings) = self.collect_imported_bindings(program);
         self.seed_imported_stdlib_trait_decls(program)?;
         self.adopted_traits_by_type = program
             .declarations
@@ -3071,6 +3070,7 @@ impl AstLowering {
                 }
             }
         }
+        Self::bind_reexported_projections(&mut ir_program.declarations);
         // Propagate serde derives from structs to their field types (enums). This allows users to only annotate the
         // top-level model with @derive(json) and have it automatically apply to nested user-defined enums.
         Self::propagate_serde_derives(&mut ir_program);
@@ -3138,47 +3138,21 @@ impl AstLowering {
         }
     }
 
-    /// Collect imported item bindings that module-level symbol aliases may need to re-export directly.
-    fn collect_imported_alias_targets(&self, program: &ast::Program) -> HashMap<String, ImportedAliasTarget> {
-        let mut targets = HashMap::new();
-        for decl in &program.declarations {
-            let ast::Declaration::Import(import) = &decl.node else {
-                continue;
-            };
-            let Ok(IrDeclKind::Import {
-                origin,
-                qualifier,
-                path,
-                items,
-                ..
-            }) = self.lower_import(import, decl.span)
-            else {
-                continue;
-            };
-            for item in items {
-                let binding = item.alias.unwrap_or_else(|| item.name.clone());
-                let mut item_path = path.clone();
-                item_path.push(item.name);
-                targets.insert(
-                    binding,
-                    ImportedAliasTarget {
-                        origin: origin.clone(),
-                        qualifier,
-                        path: item_path,
-                    },
-                );
-            }
-        }
-        targets
-    }
-
-    /// Collect the module each import binds, keyed by the local binding, as the lowered import path of that module.
+    /// Collect the bindings this module's imports create, lowering each import once.
     ///
-    /// `import std.math as math` binds its whole path; an item of `from std import math` binds the module path plus
-    /// the item. An item import of a declaration lands here too and is never consulted: only the leading segment of a
-    /// qualified alias target looks this map up, and the checker admits such a target only through a module binding.
-    fn collect_imported_module_bindings(&self, program: &ast::Program) -> HashMap<String, ImportedAliasTarget> {
-        let mut bindings = HashMap::new();
+    /// The first map holds item bindings (`from provider import helper as run`) as the lowered path of the item;
+    /// module-level symbol aliases re-export those directly. The second holds whole-module bindings (`import std.math
+    /// as math`) as the lowered path of the module; an alias of a module member (`root = math.sqrt`) names the member
+    /// through one, or through an item binding of a module (`from std import math`) from the first map.
+    fn collect_imported_bindings(
+        &self,
+        program: &ast::Program,
+    ) -> (
+        HashMap<String, ImportedAliasTarget>,
+        HashMap<String, ImportedAliasTarget>,
+    ) {
+        let mut item_targets = HashMap::new();
+        let mut module_bindings = HashMap::new();
         for decl in &program.declarations {
             let ast::Declaration::Import(import) = &decl.node else {
                 continue;
@@ -3200,7 +3174,7 @@ impl AstLowering {
                     _ => None,
                 });
                 if let Some(binding) = binding {
-                    bindings.insert(
+                    module_bindings.insert(
                         binding,
                         ImportedAliasTarget {
                             origin,
@@ -3212,20 +3186,20 @@ impl AstLowering {
                 continue;
             }
             for item in items {
-                let binding = item.alias.clone().unwrap_or_else(|| item.name.clone());
-                let mut module_path = path.clone();
-                module_path.push(item.name);
-                bindings.insert(
+                let binding = item.alias.unwrap_or_else(|| item.name.clone());
+                let mut item_path = path.clone();
+                item_path.push(item.name);
+                item_targets.insert(
                     binding,
                     ImportedAliasTarget {
                         origin: origin.clone(),
                         qualifier,
-                        path: module_path,
+                        path: item_path,
                     },
                 );
             }
         }
-        bindings
+        (item_targets, module_bindings)
     }
 
     /// Return whether a source alias projects an overload set instead of one concrete Rust item.
@@ -4157,6 +4131,7 @@ mod tests {
 
     mod import_paths;
     mod pub_method_results;
+    mod reexported_projections;
     mod unary_operand_grouping;
 
     fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {

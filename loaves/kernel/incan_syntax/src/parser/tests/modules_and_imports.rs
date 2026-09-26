@@ -142,6 +142,34 @@ fn test_parse_import() -> Result<(), Vec<CompileError>> {
     Ok(())
 }
 
+/// Each relative spelling climbs the documented number of directories: `..` and `super::` one, `...` and
+/// `super::super::` two.
+#[test]
+fn test_parse_relative_import_levels() -> Result<(), Vec<CompileError>> {
+    for (source, levels, segments) in [
+        ("from ..common import Logger\n", 1, vec!["common"]),
+        ("from ...shared.utils import format_date\n", 2, vec!["shared", "utils"]),
+        ("from super::common import Logger\n", 1, vec!["common"]),
+        (
+            "from super::super::shared::utils import format_date\n",
+            2,
+            vec!["shared", "utils"],
+        ),
+    ] {
+        let program = parse_str(source)?;
+        let Some(Declaration::Import(import)) = program.declarations.first().map(|decl| &decl.node) else {
+            panic!("{source}: expected an import declaration");
+        };
+        let ImportKind::From { module, .. } = &import.kind else {
+            panic!("{source}: expected a from-import");
+        };
+        assert_eq!(module.parent_levels, levels, "{source}");
+        assert_eq!(module.segments, segments, "{source}");
+        assert!(!module.is_absolute, "{source}");
+    }
+    Ok(())
+}
+
 #[test]
 fn test_parse_pub_from_in_src_lib_is_public_reexport() -> Result<(), Vec<CompileError>> {
     let source = "pub from widgets import Widget, Layout as UiLayout\n";

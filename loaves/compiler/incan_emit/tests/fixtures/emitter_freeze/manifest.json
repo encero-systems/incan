@@ -19,8 +19,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/decls/mod.rs",
-      "sha256": "dcdda624ff2d5dcb21e18820556f3bbf4276d167c6b4301b2ae8ed5458e2e549",
-      "lines": 1394
+      "sha256": "08343b78edfaebc693bdd97e5887df601a3f393aa530a86b514bbd451ea46c26",
+      "lines": 1224
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/decls/mutation_scan.rs",
@@ -153,21 +153,6 @@
       "behavior_evidence": "behavior fixture snapshots_stdlib/result_inspect_named_observer_copy_payload.incn (Oven Linux replay), emitter unit test copy_payload_named_observer_is_borrowed_through_a_closure_issue1718 in emit/expressions/methods.rs, and the unchanged non-Copy adapter test test_rfc070_result_inspect_non_copy_observer_borrows_payload",
       "semantic_owner": "the RFC 070 combinator callable fact: the observer takes the payload by borrow (Body IR passes the observer in the borrow shape the std.result helper declares, fn(&T) for every T)",
       "retirement_condition": "the Rust-source backend is deleted (#654); the replacement route emits the helper call from the recorded borrow shape and needs no Copy special case"
-    },
-    {
-      "kind": "change",
-      "pr": null,
-      "policy": "frozen",
-      "files": [
-        {
-          "path": "loaves/compiler/incan_emit/src/emit/decls/mod.rs",
-          "change": "modified"
-        }
-      ],
-      "compatibility_issue": "#1750, #1751",
-      "behavior_evidence": "emitter unit tests alias_declaration_reexport_without_its_target_binds_the_projection_issue1750, alias_declaration_reexport_beside_its_target_binds_the_projection_once_issue1750 and renamed_package_reexport_binds_the_projection_issue1751 in emit/decls/mod.rs; behavior fixtures cli/facade_reexports_an_alias_without_its_target and cli_dependencies/dependency_renamed_export_reexported_under_a_new_name; codegen_snapshot_tests (289) and stdlib_generated_rust_snapshot_tests unchanged",
-      "semantic_owner": "#1561: the per-module import facts lowering already hands the emitter (canonical identity, source spelling, visibility); the replacement route binds a re-exported projection from them",
-      "retirement_condition": "the Rust-source backend is deleted (#654); the replacement route binds each re-exported projection from import facts and needs no emission-order binding ledger"
     }
   ]
 }

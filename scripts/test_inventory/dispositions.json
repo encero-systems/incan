@@ -1121,20 +1121,6 @@
       "owner": 1561,
       "split_required": false,
       "split_target": "",
-      "tests": {
-        "alias_declaration_reexport_beside_its_target_binds_the_projection_once_issue1750": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/facade_reexports_an_alias_without_its_target",
-          "notes": "Asserts the emitted `use` lines (a facade re-exporting an alias beside its target binds the projection once, in either order); dies with the emitter (#654). The behavior is carried by the named fixture's `both_names` facade, which lists the alias first (#1750)."
-        },
-        "alias_declaration_reexport_without_its_target_binds_the_projection_issue1750": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/facade_reexports_an_alias_without_its_target",
-          "notes": "Asserts the emitted `use` lines (a facade re-exporting only an `alias` declaration, and a renaming second hop, bind the projection beside the alias's name); dies with the emitter (#654). The behavior, consumers of both facades calling the alias, is carried by the named fixture (#1750)."
-        },
-        "renamed_package_reexport_binds_the_projection_issue1751": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_renamed_export_reexported_under_a_new_name",
-          "notes": "Asserts the emitted `use` lines (a `pub::` re-export of a dependency's renamed function under a further name binds the projection); dies with the emitter (#654). The behavior, a consumer calling the further name, is carried by the named fixture (#1751)."
-        }
-      },
       "twin": ""
     },
     "loaves/compiler/incan_emit/src/emit/decls/structures.rs": {
@@ -1335,12 +1321,52 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/dependency_method_unions.rs": {
+      "disposition": "retire",
+      "notes": "lowering through emission end to end.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "dependency_method_union_results_convert_into_the_consumers_unions_issue1797": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_method_returning_a_union",
+          "notes": "Asserts the emitted conversions from the provider's union wrapper into the consumer's, bare and element by element, and the option's member patterns through the provider's wrapper; dies with the emitter (#654). The behavior is carried by the named fixture (#1797)."
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/tests/lowering_through_emission.rs": {
       "disposition": "retire",
       "notes": "lowering through emission end to end.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_emit/src/tests/reexported_projections.rs": {
+      "disposition": "retire",
+      "notes": "lowering through emission end to end.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "alias_declaration_facades_bind_the_projection_they_reexport_issue1750": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/facade_reexports_an_alias_without_its_target",
+          "notes": "Asserts the emitted `use` lines of each facade (the projection bound publicly once, beside every public name); dies with the emitter (#654). The behavior, consumers calling every name, is carried by the named fixture (#1750)."
+        },
+        "module_member_alias_beside_a_direct_import_binds_publicly_issue1764": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/module_member_alias_beside_a_direct_import",
+          "notes": "Asserts the emitted `use` lines (the member's projection bound publicly under the alias's name, with no private binding beside it); dies with the emitter (#654). The behavior is carried by the named fixture (#1764)."
+        },
+        "module_reexport_of_a_package_renamed_export_binds_the_projection_issue1751": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_renamed_export_reexported_under_a_new_name",
+          "notes": "Asserts the emitted `use` lines (a module re-exporting a package's renamed export binds the projection publicly beside the further name); dies with the emitter (#654). The behavior, a sibling module calling the further name, is carried by the named fixture (#1751)."
+        },
+        "private_import_beside_a_public_reexport_binds_the_projection_publicly_issue1750": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/facade_reexports_an_alias_without_its_target",
+          "notes": "Asserts the emitted `use` lines (the projection bound publicly, with no private binding beside it); dies with the emitter (#654). The behavior is carried by the named fixture's `private_then_public` facade (#1750)."
+        }
+      },
       "twin": ""
     },
     "loaves/compiler/incan_emit/src/trait_bound_inference.rs": {
@@ -1580,9 +1606,9 @@
       "split_required": false,
       "split_target": "",
       "tests": {
-        "std_root_prelude_import_snapshot": {
+        "std_root_prelude_trait_import_is_refused": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/refused_prelude_trait_imported_from_the_std_root.incn",
-          "notes": "twinned by the snapshot's program as a refusal: the std root exports only its submodules, so `from std import Debug, Eq, Clone, …` is refused at check time (INCAN-I0001) instead of emitting `pub use crate::__incan_std::Debug;` and seven more re-exports no facade defines (E0432). The test now asserts that refusal (#1767)."
+          "notes": "twinned by the test's program as a refusal: the std root exports only its submodules, so `from std import Debug, Eq, Clone, …` is refused at check time (INCAN-I0001) rather than emitting re-exports no standard-library facade defines (E0432) (#1767)."
         }
       },
       "twin": ""
@@ -2519,6 +2545,10 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "grandparent_relative_import_lowers_to_the_root_module_issue1766": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/relative_import_from_a_nested_module",
+          "notes": "Asserts the lowered shape on the legacy IR for `...`, two directories up from `app/store/`; retires with `incan_ir`. The behavior is carried by the named fixture's `app/store/nested.incn` (#1766)."
+        },
         "module_member_alias_lowers_to_an_import_of_the_member_issue1764": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/module_member_alias_calls_the_member.incn",
           "notes": "Asserts the recorded shape on the legacy IR (an alias of a module member lowers to an import of that member under the alias's name and visibility); retires with `incan_ir`. The behavior, a public and a private alias of a `std.math` member calling it, is carried by the named fixture (#1764)."
@@ -2541,9 +2571,35 @@
       "split_required": false,
       "split_target": "",
       "tests": {
-        "pub_dependency_method_result_keeps_the_providers_union_issue1797": {
+        "pub_dependency_method_results_keep_the_providers_union_issue1797": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_method_returning_a_union",
-          "notes": "Asserts the recorded shape on the legacy IR (a `pub::` dependency method's union result takes the provider-owned carrier); retires with `incan_ir`. The behavior, the consumer passing `Box.answer()` to its own `int | str` parameter, is carried by the named fixture (#1797)."
+          "notes": "Asserts the lowered shape on the legacy IR (a `pub::` dependency method's result keeps the provider's `int | str` carrier, bare, in a list and in an option); retires with `incan_ir`. The behavior, the consumer passing each result to its own `int | str` positions and matching the option by member, is carried by the named fixture (#1797)."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/reexported_projections.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "alias_declaration_reexported_without_its_target_binds_the_projection_issue1750": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/facade_reexports_an_alias_without_its_target",
+          "notes": "Asserts the lowered import item (a re-exported `alias` declaration, and a renaming second hop, spelled by the target's name with the alias's name as its alias); retires with `incan_ir`. The behavior, consumers of both facades calling the alias, is carried by the named fixture (#1750)."
+        },
+        "module_member_alias_beside_a_direct_import_binds_publicly_issue1764": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/module_member_alias_beside_a_direct_import",
+          "notes": "Asserts the lowered import order (the public import an alias of a module member lowers to comes ahead of a private import of the same member); retires with `incan_ir`. The behavior, a consumer calling the alias, is carried by the named fixture (#1764)."
+        },
+        "private_import_before_a_public_reexport_stands_behind_it_issue1750": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/facade_reexports_an_alias_without_its_target",
+          "notes": "Asserts the lowered import order (a public re-export of an alias comes ahead of a private import of its target); retires with `incan_ir`. The behavior is carried by the named fixture's `private_then_public` facade (#1750)."
+        },
+        "target_reexported_beside_its_alias_binds_the_projection_first_issue1750": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/facade_reexports_an_alias_without_its_target",
+          "notes": "Asserts the lowered import order (a re-exported target comes ahead of its re-exported alias in either source order); retires with `incan_ir`. The behavior is carried by the named fixture's `both_names` facade, which lists the alias first (#1750)."
         }
       },
       "twin": ""

@@ -13,6 +13,7 @@ mod imports;
 mod methods;
 mod models;
 mod newtypes;
+mod projection_bindings;
 mod traits;
 
 pub(in crate::lower) use functions::callable_docstring;

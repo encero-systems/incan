@@ -2003,6 +2003,12 @@ impl AstLowering {
                                     param.default = imported_param.default.clone();
                                 }
                             }
+                            // The checker records a call site's parameters only, so its signature carries no result
+                            // type. A `pub::` dependency's method result is the declaration's, which names the
+                            // provider's union carriers (#1797).
+                            if public_receiver_library.is_some() && matches!(call_site.return_type, IrType::Unknown) {
+                                call_site.return_type = imported.return_type;
+                            }
                             Some(call_site)
                         }
                         (Some(call_site), None) => Some(call_site),

@@ -1,5 +1,5 @@
 # behavior: a prelude trait imported from the std root is refused at check time, because the root exports only its submodules (#1767)
-# retires: loaves/compiler/incan_emit/tests/stdlib_generated_rust_snapshot_tests.rs::std_root_prelude_import_snapshot
+# retires: loaves/compiler/incan_emit/tests/stdlib_generated_rust_snapshot_tests.rs::std_root_prelude_trait_import_is_refused
 # expect-diagnostic: INCAN-I0001
 
 from std import Debug, Eq, Clone, From, Add, Error, Index, Callable1

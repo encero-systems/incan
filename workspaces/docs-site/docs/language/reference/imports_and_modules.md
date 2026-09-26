@@ -201,6 +201,9 @@ A relative path climbs from the directory that contains the importing file, so t
 # store/relative.incn
 from ..db.schema import Database          # db/schema.incn, beside the store/ directory
 from super::db::schema import Database    # the same module
+
+# app/store/nested.incn
+from ...db.schema import Database         # db/schema.incn, two directories above app/store/
 ```
 
 ### Absolute imports (project root)

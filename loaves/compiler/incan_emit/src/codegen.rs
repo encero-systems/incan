@@ -5391,8 +5391,7 @@ pub def touch(value: Serialize) -> None:
     }
 
     /// #1766: `..` climbs from the importing file's directory, so `store/json_store.incn` reaches the root's
-    /// `db.schema`. The import names that module by its crate-absolute path; the `super::db` spelling this test once
-    /// pinned resolved under `store` and did not build.
+    /// `db.schema`, and the import names that module by its crate-absolute path.
     #[test]
     fn test_relative_from_import_uses_super_prefix() {
         let store_code = generate_nested_store_code(

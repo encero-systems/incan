@@ -6,13 +6,13 @@ use super::*;
 use crate::decl::{IrImportItem, IrImportQualifier, Visibility};
 
 /// Parse one module, keeping lexer and parser failures as test errors.
-fn parse_module(source: &str, context: &str) -> Result<ast::Program, String> {
+pub(super) fn parse_module(source: &str, context: &str) -> Result<ast::Program, String> {
     let tokens = lexer::lex(source).map_err(|errors| format!("{context} lex failed: {errors:?}"))?;
     parser::parse(&tokens).map_err(|errors| format!("{context} parse failed: {errors:?}"))
 }
 
 /// Check `module` at its logical path against its dependencies and lower it the way a multi-module build does.
-fn lower_module_at(
+pub(super) fn lower_module_at(
     module_path: &[&str],
     module: &ast::Program,
     dependencies: &[(&str, &ast::Program)],
@@ -33,8 +33,8 @@ fn lower_module_at(
         .map_err(|errors| format!("{} lowering failed: {errors:?}", module_path.join(".")))
 }
 
-/// Return every import declaration a program lowers, as its qualifier, path, visibility and items.
-fn lowered_imports(ir: &IrProgram) -> Vec<(IrImportQualifier, Vec<String>, Visibility, Vec<IrImportItem>)> {
+/// Return every import declaration a program lowers, in order, as its qualifier, path, visibility and items.
+pub(super) fn lowered_imports(ir: &IrProgram) -> Vec<(IrImportQualifier, Vec<String>, Visibility, Vec<IrImportItem>)> {
     ir.declarations
         .iter()
         .filter_map(|decl| match &decl.kind {
@@ -92,8 +92,29 @@ fn rust_style_parent_import_lowers_to_the_same_module_issue1766() -> Result<(), 
     Ok(())
 }
 
+/// #1766: `...` climbs two directories from the importing file's own, so `from ...db.schema import Database` in
+/// `app/store/relative.incn` names the root's `db.schema`.
+#[test]
+fn grandparent_relative_import_lowers_to_the_root_module_issue1766() -> Result<(), String> {
+    let schema = parse_module("pub model Database:\n    pub id: int\n", "db.schema")?;
+    let relative = parse_module(
+        "from ...db.schema import Database\n\n\npub def touch(db: Database) -> int:\n    return db.id\n",
+        "app.store.relative",
+    )?;
+    let ir = lower_module_at(&["app", "store", "relative"], &relative, &[("db_schema", &schema)])?;
+    let imports = lowered_imports(&ir);
+    assert!(
+        imports
+            .iter()
+            .any(|(qualifier, path, _, _)| *qualifier == IrImportQualifier::Crate
+                && path == &vec!["db".to_string(), "schema".to_string()]),
+        "{imports:?}"
+    );
+    Ok(())
+}
+
 /// Return the import item that binds `local_name`, with the import's path and visibility.
-fn import_binding<'a>(
+pub(super) fn import_binding<'a>(
     imports: &'a [(IrImportQualifier, Vec<String>, Visibility, Vec<IrImportItem>)],
     local_name: &str,
 ) -> Result<(&'a Vec<String>, &'a Visibility, &'a IrImportItem), String> {

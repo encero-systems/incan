@@ -113,7 +113,7 @@ from stats import mean as average_value
 
 `average_value` is an import-local name for the exported alias `mean`; `mean` remains an alias of `avg` in the exporting module metadata.
 
-A module can re-export an alias without its target, and a further module can re-export it again under another name. Every hop calls the aliased declaration:
+A module can re-export an alias without its target, and a further module can re-export it again under another name. Every hop calls the aliased declaration, whether or not the re-exporting module also imports the target for its own use:
 
 ```incan
 # facade.incn
