@@ -57,7 +57,7 @@ def swap(a: int, b: int, pair: tuple[int, int]) -> None:
         tuple_value(&func.body[1], "the parenthesized swap")?,
         "the parenthesized swap value",
     )?;
-    assert!(matches!(&bare[..], [first, second]
+    assert!(matches!(bare, [first, second]
         if matches!(&first.node, Expr::Ident(name) if name == "b")
             && matches!(&second.node, Expr::Ident(name) if name == "a")));
     assert!(
