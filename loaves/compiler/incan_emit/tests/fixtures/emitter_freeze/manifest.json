@@ -124,18 +124,18 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/program.rs",
-      "sha256": "f1f7b8df3a2ade4d4f1dd9a920de1d99fc1ad911113686763caaf9b192d965a8",
+      "sha256": "a830b01384e46ed88c9be6717930afd8036ee8919709866bb4b628b8512df537",
       "lines": 4634
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
-      "sha256": "e1c0d58bc1d113e2c1304d1d1cda9e0589d5c8aa4410eaf8e8b129f6f6f8594a",
-      "lines": 1941
+      "sha256": "1b4cbab62a25daf116f6507389d9c15f0afa4ef3a8ff08114e8c3f9b517a5eef",
+      "lines": 1942
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/types.rs",
-      "sha256": "c2077cdd45ad7ff502f6279482f189a92600c8379e80ef102f02a6a87d9ecf03",
-      "lines": 688
+      "sha256": "ea37083add98071e9717a5b56a985946632fd4c6feebb72024aee52d2422025f",
+      "lines": 694
     }
   ],
   "changes": [
@@ -168,6 +168,29 @@
       "behavior_evidence": "unit test marked_callable_parameter_publishes_its_marker_and_native_union in loaves/compiler/incan_emit/src/tests/mut_marker_publication.rs, which fails without the change (the union inside a mut-marked callable parameter stays unprojected)",
       "semantic_owner": "#1561: the checked callable-parameter marker (CallableParam.is_mut) published as TypeRef::MutParam; the replacement route reads the marker from checked facts",
       "retirement_condition": "the Rust-source backend is deleted (#654); native union projection for published types moves to the replacement route"
+    },
+    {
+      "kind": "change",
+      "pr": 1807,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/program.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/types.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1740",
+      "behavior_evidence": "lowering unit test partial_pattern_leaving_a_private_field_unnamed_ends_in_a_rest_marker_issue1740 in incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs, checker unit test partial_constructor_pattern_records_a_rest_holding_a_private_field_issue1740, generated-Rust test partial_pattern_leaving_a_private_field_unnamed_prints_a_rest_marker_issue1740, and behavior module fixture cli/partial_pattern_over_imported_private_field (a partial pattern over another module's model with a private field selects its arm). Printed output changes for every partial pattern whose unnamed fields include a private field matched outside the model's own methods, in the model's own module too: such a pattern prints `..` where it printed `_secret: _`. A partial pattern whose unnamed fields are all public, or one inside the model's own methods, prints its wildcards as before.",
+      "semantic_owner": "#1561: the checker's pattern-rest facts (pattern_rest_fields and pattern_rests_with_private_fields, keyed by the constructor name's span) decide the rest; the emitter only prints the rest marker lowering records on Pattern::Struct",
+      "retirement_condition": "the Rust-source backend is deleted (#654); Body IR's struct pattern matches only the fields a pattern names, so no rest marker is printed anywhere"
     }
   ]
 }

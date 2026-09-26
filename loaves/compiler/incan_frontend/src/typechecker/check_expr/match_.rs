@@ -290,9 +290,21 @@ impl TypeChecker {
     ///
     /// `field_order` is the nominal's complete field list in declaration order and `provided` the canonical names
     /// the pattern spelled (aliases already resolved). The difference is what a `..` would cover in Rust; lowering
-    /// spells it out per field because the pattern shape it hands the backend has no rest marker (#1708). A pattern
-    /// that names every field leaves no record, so a consumer reads absence as "nothing to add".
-    fn record_pattern_rest_fields(&mut self, span: Span, field_order: &[String], provided: &HashSet<String>) {
+    /// spells it out as one wildcard per field (#1708). A pattern that names every field leaves no record, so a
+    /// consumer reads absence as "nothing to add".
+    ///
+    /// When the rest includes a field this pattern may not name (a private field of `type_name` matched outside its
+    /// owner's methods, by the same rule that refuses naming it), the pattern is also recorded as one whose rest must
+    /// stay unspelled, and lowering covers it with a rest marker instead (#1740). A field missing from `fields`
+    /// counts as unnameable: a rest marker covers any field, while a spelled one must exist and be visible.
+    fn record_pattern_rest_fields(
+        &mut self,
+        span: Span,
+        type_name: &str,
+        fields: &HashMap<String, FieldInfo>,
+        field_order: &[String],
+        provided: &HashSet<String>,
+    ) {
         let rest: Vec<String> = field_order
             .iter()
             .filter(|field| !provided.contains(*field))
@@ -300,6 +312,17 @@ impl TypeChecker {
             .collect();
         if rest.is_empty() {
             return;
+        }
+        let rest_has_private_field = rest.iter().any(|field| {
+            fields
+                .get(field)
+                .is_none_or(|info| self.private_field_is_inaccessible(type_name, info))
+        });
+        if rest_has_private_field {
+            self.type_info
+                .expressions
+                .pattern_rests_with_private_fields
+                .insert((span.start, span.end));
         }
         self.type_info
             .expressions
@@ -548,7 +571,7 @@ impl TypeChecker {
                             }
                         }
                     }
-                    self.record_pattern_rest_fields(name.span, &field_order, &provided);
+                    self.record_pattern_rest_fields(name.span, type_name, &fields, &field_order, &provided);
                     return;
                 }
 

@@ -621,7 +621,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                     self.scan_pattern(item);
                 }
             }
-            Pattern::Struct { name, fields } => {
+            Pattern::Struct { name, fields, .. } => {
                 self.mark_reachable_item(name);
                 for (_, pattern) in fields {
                     self.scan_pattern(pattern);

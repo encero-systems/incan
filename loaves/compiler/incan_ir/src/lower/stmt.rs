@@ -1234,25 +1234,16 @@ impl AstLowering {
                                 IrType::Unit,
                             );
 
-                            let (pattern, guard) =
-                                Self::hoist_nested_string_literal_patterns(self.lower_pattern(&pattern.node));
-                            Ok(IrStmtKind::Match {
-                                scrutinee,
-                                arms: vec![
-                                    MatchArm {
-                                        pattern,
-                                        bindings: Vec::new(),
-                                        guard,
-                                        body: then_body,
-                                    },
-                                    MatchArm {
-                                        pattern: IrPattern::Wildcard,
-                                        bindings: Vec::new(),
-                                        guard: None,
-                                        body: fallback_body,
-                                    },
-                                ],
-                            })
+                            let alternatives =
+                                Self::plan_arm_alternatives(self.lower_pattern(&pattern.node), false, &scrutinee);
+                            let mut arms = Self::match_arms_for_alternatives(alternatives, None, then_body);
+                            arms.push(MatchArm {
+                                pattern: IrPattern::Wildcard,
+                                bindings: Vec::new(),
+                                guard: None,
+                                body: fallback_body,
+                            });
+                            Ok(IrStmtKind::Match { scrutinee, arms })
                         }
                     }
                 })();
@@ -1292,27 +1283,18 @@ impl AstLowering {
                                 IrType::Unit,
                             );
 
-                            let (pattern, guard) =
-                                Self::hoist_nested_string_literal_patterns(self.lower_pattern(&pattern.node));
+                            let alternatives =
+                                Self::plan_arm_alternatives(self.lower_pattern(&pattern.node), false, &scrutinee);
+                            let mut arms = Self::match_arms_for_alternatives(alternatives, None, body_expr);
+                            arms.push(MatchArm {
+                                pattern: IrPattern::Wildcard,
+                                bindings: Vec::new(),
+                                guard: None,
+                                body: break_expr,
+                            });
                             Ok(IrStmtKind::Loop {
                                 label: None,
-                                body: vec![IrStmt::new(IrStmtKind::Match {
-                                    scrutinee,
-                                    arms: vec![
-                                        MatchArm {
-                                            pattern,
-                                            bindings: Vec::new(),
-                                            guard,
-                                            body: body_expr,
-                                        },
-                                        MatchArm {
-                                            pattern: IrPattern::Wildcard,
-                                            bindings: Vec::new(),
-                                            guard: None,
-                                            body: break_expr,
-                                        },
-                                    ],
-                                })],
+                                body: vec![IrStmt::new(IrStmtKind::Match { scrutinee, arms })],
                             })
                         }
                     }

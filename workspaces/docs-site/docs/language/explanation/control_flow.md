@@ -97,6 +97,29 @@ match lookup_port(raw):
 
 Alternatives that bind names must bind the same names with the same types. `Cached(port) | Fresh(port)` is valid because both payloads have the same type; `Some(value) | None` is rejected because only one alternative binds `value`.
 
+An alternative is any pattern the arm could use on its own, so literals nest inside alternatives the same way they nest inside a single pattern, and an alternation can sit inside a larger pattern:
+
+```incan
+def classify(pair: tuple[int, str]) -> str:
+    match pair:
+        (0, "a") | (1, "b") => return "known"    # (0, "a") and (1, "b") only; (0, "b") is "other"
+        _ => return "other"
+
+def describe_tag(pair: tuple[int, Option[str]]) -> str:
+    match pair:
+        (n, Some("a") | None) => return f"{n}: a or nothing"
+        (n, _) => return f"{n}: something else"
+```
+
+Alternatives are tried in order, and the first one that matches binds the names. A guard after an alternation runs once, for that alternative: when it is false, the arm is skipped and matching continues with the next arm. Later alternatives of the same arm are not tried.
+
+```incan
+def first_match(pair: tuple[str, str]) -> str:
+    match pair:
+        (x, "a") | ("b", x) if x == "a" => return "a"   # ("b", "a"): the first alternative binds x = "b", the guard is false, the arm is skipped
+        _ => return "other"                             # ("b", "a") returns "other"
+```
+
 ### Guards, and the two ways to write an arm
 
 Add `if <condition>` after a pattern when the pattern alone does not decide the arm. The guard runs only if the pattern matched, and the arm is taken only if the guard is also true; when it is false, matching continues with the next arm.

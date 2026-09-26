@@ -733,6 +733,14 @@ pub struct ExpressionArtifacts {
     /// canonical field names in declaration order. Lowering consumes it to record the rest explicitly in the
     /// pattern shape it hands the backend (#1708). A pattern that names every field records nothing.
     pub pattern_rest_fields: HashMap<(usize, usize), Vec<String>>,
+    /// Destructuring patterns whose unnamed fields include one the pattern may not name, keyed by the constructor
+    /// name's span.
+    ///
+    /// A private field is nameable only in a pattern inside a method of its owning type; anywhere else the pattern
+    /// may not spell it, not even as a wildcard. When such a field is among a pattern's [`Self::pattern_rest_fields`],
+    /// lowering records the rest as a rest marker instead of one wildcard per field, because a model declared in
+    /// another module keeps that field out of reach of the matching code (#1740).
+    pub pattern_rests_with_private_fields: HashSet<(usize, usize)>,
 }
 
 /// Source-reference resolution facts keyed by source spans.
@@ -2067,6 +2075,17 @@ impl TypeCheckInfo {
             .pattern_rest_fields
             .get(&(span.start, span.end))
             .map(Vec::as_slice)
+    }
+
+    /// Return whether the unnamed fields of the destructuring pattern whose constructor name sits at `span` include a
+    /// private field the pattern may not name.
+    ///
+    /// `true` tells lowering to cover the rest with a rest marker rather than one wildcard per field (#1740); `false`
+    /// means every field in [`Self::pattern_rest_fields`] may be spelled, or the pattern leaves nothing unnamed.
+    pub fn pattern_rest_has_private_fields(&self, span: Span) -> bool {
+        self.expressions
+            .pattern_rests_with_private_fields
+            .contains(&(span.start, span.end))
     }
 
     /// Return exact Rust parameter displays recorded for a closure expression, if any.

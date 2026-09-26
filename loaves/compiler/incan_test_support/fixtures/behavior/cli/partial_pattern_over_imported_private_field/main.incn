@@ -1,0 +1,34 @@
+# behavior: a constructor pattern naming only public fields of a model imported from another module selects its arm while the model keeps its other field private
+# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::partial_pattern_leaving_a_private_field_unnamed_ends_in_a_rest_marker_issue1740
+# retires: loaves/compiler/incan_emit/tests/match_arm_ownership_codegen_tests.rs::partial_pattern_leaving_a_private_field_unnamed_prints_a_rest_marker_issue1740
+# expect-stdout:
+#   premium account
+#   basic account
+#   other account
+#   premium tier 3
+#   entry tier
+
+"""Issue #1740: a partial pattern over another module's model that keeps a field private."""
+
+from accounts import Account
+
+def describe(account: Account) -> str:
+    """The issue's program: a pattern naming the public `kind` field only."""
+    match account:
+        Account(kind="premium") => return "premium account"
+        Account(kind="basic") => return "basic account"
+        _ => return "other account"
+
+def summary(account: Account) -> str:
+    """A pattern binding both public fields under a guard; the private field stays unnamed."""
+    match account:
+        Account(kind=label, tier=level) if level > 1 => return f"{label} tier {level}"
+        _ => return "entry tier"
+
+def main() -> None:
+    """Print what each pattern selects."""
+    println(describe(Account.create("premium", 3, 42)))
+    println(describe(Account.create("basic", 1, 7)))
+    println(describe(Account.create("trial", 1, 0)))
+    println(summary(Account.create("premium", 3, 42)))
+    println(summary(Account.create("basic", 1, 7)))
