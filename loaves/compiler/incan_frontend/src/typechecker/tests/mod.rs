@@ -81,6 +81,7 @@ mod rust_supertraits;
 mod rust_trait_import_candidates;
 mod rust_trait_qualified_calls;
 mod statements_and_bindings;
+mod static_reads_and_frozen_payloads;
 mod stdlib_surfaces;
 mod trait_instantiation_and_operators;
 mod traits;

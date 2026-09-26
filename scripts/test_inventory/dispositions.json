@@ -1315,6 +1315,32 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs": {
+      "disposition": "retire",
+      "notes": "generated Rust for static collection reads and const string destinations, lowering through emission end to end.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "static_collection_arguments_stay_readable_issue1793": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/static_dict_get_with_a_reused_str_parameter.incn",
+          "notes": "Asserts the generated Rust of a static dict lookup, insert and membership test (the reused key is cloned into the storage temporary, a last-read key moved, a literal key stored as an owned string; `get` returns `Option<i64>`); retires with `incan_emit`. The behavior is carried by the named fixture (#1793)."
+        },
+        "str_const_is_wrapped_at_frozen_str_destinations_issue1794": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/str_const_returned_as_frozen_str.incn",
+          "notes": "Asserts the generated Rust of a `str` const at `FrozenStr` destinations (wrapped in `FrozenStr::new` as a return, a union member, a `Some` payload, an argument and a binding); retires with `incan_emit`. The behavior is carried by the named fixture (#1794)."
+        },
+        "frozen_str_const_is_converted_at_str_destinations_issue1794": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/str_const_returned_as_frozen_str.incn",
+          "notes": "Asserts the generated Rust of a `FrozenStr` const at `str` destinations (converted to an owned string as a return, a union member, a `Some` payload, an argument and a binding); retires with `incan_emit`. The behavior is carried by the named fixture (#1794)."
+        },
+        "planner_wraps_a_static_str_at_frozen_str_destinations_issue1794": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/str_const_returned_as_frozen_str.incn",
+          "notes": "Asserts the ownership planner's conversion of a `'static` string at a `FrozenStr` destination (wrapped in `FrozenStr::new` at every Incan destination, at no Rust-facing boundary); retires with `incan_emit`. The behavior is carried by the named fixture (#1794)."
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/trait_bound_inference.rs": {
       "disposition": "retire",
       "notes": "infers Rust trait bounds for generated generics; Rust-shape concern.",
@@ -2201,6 +2227,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/static_reads_and_frozen_payloads.rs": {
+      "disposition": "keep",
+      "notes": "checker facts for a static dict's `get` result and a `Some` payload's string instantiation (#1793, #1794); typechecker only, no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/stdlib_surfaces.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -2512,6 +2546,20 @@
         }
       }
     },
+    "loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "tests": {
+        "arguments_read_after_a_static_method_call_are_copied_in_issue1793": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/static_dict_get_with_a_reused_str_parameter.incn",
+          "notes": "Asserts the recorded argument shape on the legacy IR (an argument of a builtin method on static storage that is read after the call is handed over as a copy of itself, a value at its last read as it is, a string literal typed as a `'static` string); retires with `incan_ir`. The behavior, a `str` parameter still readable after `get`, `insert`, `in` and `append` on module statics, is carried by the named fixture (#1793)."
+        }
+      }
+    },
     "loaves/compiler/incan_ir/src/lower/tests/unary_operand_grouping.rs": {
       "disposition": "retire",
       "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
@@ -2540,7 +2588,13 @@
       "owner": 1561,
       "split_required": false,
       "split_target": "",
-      "twin": ""
+      "twin": "",
+      "tests": {
+        "frozen_str_union_member_admits_a_static_str_const_issue1794": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/str_const_returned_as_frozen_str.incn",
+          "notes": "Asserts the legacy IR union-member relation (a `FrozenStr` member admits the `'static` string a `const` declared `str` is stored as); retires with `incan_ir`. The behavior, such a const returned and passed where `FrozenStr | int` is expected and read by `isinstance` as a `str`, is carried by the named fixture (#1794)."
+        }
+      }
     },
     "loaves/compiler/incan_oven_facet/src/lib.rs": {
       "disposition": "unaffected",

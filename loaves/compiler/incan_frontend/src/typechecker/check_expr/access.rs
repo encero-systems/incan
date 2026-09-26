@@ -5903,7 +5903,9 @@ impl TypeChecker {
                         M::Values => return list_ty(val),
                         // `Dict.get(k)` is backed by Rust `HashMap::get`, which returns `Option<&V>`.
                         // Model this as an internal reference so chained Rust-idiom helpers (like `.copied()`)
-                        // typecheck consistently with codegen.
+                        // typecheck consistently with codegen. A static dict answers with an owned value: the lookup
+                        // runs inside the storage cell's access and copies the entry out of it.
+                        M::Get if self.expr_reads_static_storage(base) => return option_ty(val.clone()),
                         M::Get => return option_ty(ResolvedType::Ref(Box::new(val.clone()))),
                         M::Insert => return ResolvedType::Unit,
                         M::ContainsKey => {

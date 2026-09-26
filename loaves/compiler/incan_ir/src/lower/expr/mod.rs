@@ -10,6 +10,7 @@ mod calls;
 mod comprehensions;
 mod helpers;
 mod patterns;
+mod static_method_args;
 
 use std::collections::HashMap;
 
@@ -1657,11 +1658,7 @@ impl AstLowering {
                                     .then_some(MethodKind::Collection(CollectionMethodKind::Contains))
                             });
                             let contains_call = if let Some(kind) = contains_kind {
-                                IrExprKind::KnownMethodCall {
-                                    receiver: Box::new(collection),
-                                    kind,
-                                    args: contains_args,
-                                }
+                                Self::known_method_call(collection, kind, contains_args)
                             } else {
                                 let arg_policy = self.regular_method_call_arg_policy(
                                     r.span,
@@ -1958,14 +1955,7 @@ impl AstLowering {
                     })
                     .flatten()
                 {
-                    (
-                        IrExprKind::KnownMethodCall {
-                            receiver: Box::new(receiver),
-                            kind,
-                            args: args_ir,
-                        },
-                        expr_ty,
-                    )
+                    (Self::known_method_call(receiver, kind, args_ir), expr_ty)
                 } else {
                     let imported_type_method_signature = match &o.node {
                         ast::Expr::Ident(name) => match self.import_aliases.get(name).cloned() {

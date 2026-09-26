@@ -1,0 +1,45 @@
+# behavior: a str parameter handed to get, insert, a membership test and append on module statics is still readable after each call, a str literal inserted into a static dict is stored as its key, and get on a static dict returns the stored value
+# retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::static_collection_arguments_stay_readable_issue1793
+# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::arguments_read_after_a_static_method_call_are_copied_in_issue1793
+# expect-stdout:
+#   a=1
+#   b missing
+#   c recorded 2
+#   d listed
+#   2
+
+static counts: dict[str, int] = {}
+static names: list[str] = []
+
+
+def lookup(name: str) -> str:
+    match counts.get(name):
+        Some(value) => return f"{name}={value}"
+        None => return f"{name} missing"
+
+
+def record(name: str) -> str:
+    counts.insert(name, 2)
+    if name in counts:
+        return f"{name} recorded {len(counts)}"
+    return f"{name} lost"
+
+
+def listed(name: str) -> str:
+    names.append(name)
+    if name in names:
+        return f"{name} listed"
+    return f"{name} lost"
+
+
+def count_of(name: str) -> Option[int]:
+    return counts.get(name)
+
+
+def main() -> None:
+    counts.insert("a", 1)
+    println(lookup("a"))
+    println(lookup("b"))
+    println(record("c"))
+    println(listed("d"))
+    println(count_of("c").unwrap_or(0))

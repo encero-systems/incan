@@ -7,6 +7,33 @@
 
 Both have frozen forms for constants, `FrozenStr` and `FrozenBytes`. `FrozenStr` has every `str` method and also `is_empty() -> bool`; `FrozenBytes` has `decode` and also `len() -> int` and `is_empty() -> bool`.
 
+## `str` and `FrozenStr` destinations
+
+| Value | Accepted where this is expected | Value at the destination |
+| --- | --- | --- |
+| A `FrozenStr` | `str`, `FrozenStr` | The same text, as the destination's type. |
+| A `const` declared `str` | `str`, `FrozenStr` | The same text; the constant is a `FrozenStr`. |
+| A `str` that is not a `const` | `str` | Refused at a `FrozenStr` destination. |
+
+A destination is a return value, an argument, an annotated binding, a field, a collection element, the matching member of a union (`FrozenStr | int`, `str | int`), and the payload of `Some(...)` where an `Option` of the type is expected. `isinstance(value, str)` is `true` for a `str` and for a `FrozenStr`.
+
+```incan
+const NAME: str = "policy"
+const LABEL: FrozenStr = "label"
+
+def frozen_or_int() -> FrozenStr | int:
+    return NAME             # the FrozenStr member, holding "policy"
+
+def maybe_frozen() -> Option[FrozenStr]:
+    return Some(NAME)       # Some, holding "policy"
+
+def maybe_text() -> Option[str]:
+    return Some(LABEL)      # Some, holding "label"
+
+def frozen(value: str) -> FrozenStr:
+    return value            # refused: return type mismatch
+```
+
 ## Literals
 
 | Literal | Value |
