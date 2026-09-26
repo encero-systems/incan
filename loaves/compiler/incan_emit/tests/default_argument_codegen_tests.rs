@@ -211,6 +211,28 @@ pub model Deck:
     Ok(())
 }
 
+/// #1771: a function reached only through a symbol alias, or a chain of them, is called with its default, so the const
+/// that default reads is kept in its module.
+#[test]
+fn default_const_of_a_function_reached_through_an_alias_is_kept_issue1771() -> TestResult {
+    let (main_code, modules) = generate(
+        "from a import one, two\n\ndef main() -> None:\n    println(one())\n    println(two())\n",
+        &[(
+            "a",
+            "const SIZE: int = 6\n\n\npub def first(n: int = SIZE) -> int:\n    return n\n\n\npub one = first\npub two = one\n",
+        )],
+    )?;
+    assert!(
+        compact(&main_code).contains("(crate::a::SIZE)"),
+        "the aliased calls take `a`'s SIZE:\n{main_code}"
+    );
+    assert!(
+        compact(module_code(&modules, "a")?).contains("constSIZE:i64"),
+        "`a` keeps the SIZE an aliased function's default reaches"
+    );
+    Ok(())
+}
+
 /// #1771: consts that only the defaults of functions nothing calls or imports name are not kept, since those defaults
 /// are never expanded.
 #[test]

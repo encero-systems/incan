@@ -1464,6 +1464,10 @@
         "defaults_of_uncalled_functions_keep_nothing_issue1771": {
           "twin": "",
           "notes": "Asserts generated-item pruning: a const only an unexpanded default names is not kept. Pruning generated Rust items belongs to the Rust-source backend alone, so the test dies with it (#1771)."
+        },
+        "default_const_of_a_function_reached_through_an_alias_is_kept_issue1771": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/same_named_default_consts_across_modules",
+          "notes": "Asserts the emitted `crate::a::SIZE` path and the kept const for calls through a symbol alias and an alias chain; the behavior is carried by the named fixture's `five()` (#1771)."
         }
       }
     },

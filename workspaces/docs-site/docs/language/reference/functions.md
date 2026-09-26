@@ -35,10 +35,10 @@ Arguments bind to normal parameters in this order:
     - a literal, or a negated number literal;
     - a list or dict whose elements are such defaults;
     - a const or an enum variant without a payload, such as `LIMIT` or `Mode.Fast`;
-    - a call of a function the package declares, whose arguments are such defaults;
-    - a construction of a model or class the package exports, whose field arguments are such defaults.
+    - a call of a function or partial the package declares, named directly or through its module, whose arguments are such defaults;
+    - a construction of a newtype the package declares, or of a model or class the package exports, whose arguments are such defaults.
 
-    Any other default, such as `"fl" + "at"`, `Shape.Circle(4)` or a construction of a private model, and every preset of a method partial, leaves the parameter required in another package. A call there that leaves it unbound is error `INCAN-T0001`.
+    Any other default, such as `"fl" + "at"`, `abs(-3)`, `Some(3)`, `Shape.Circle(4)` or a construction of a private model, and every preset of a method partial, leaves the parameter required in another package. A call there that leaves it unbound is error `INCAN-T0001`.
 
 ```incan
 def connect(host: str, port: int) -> str:

@@ -144,3 +144,63 @@ pub def run(mode: _Mode = _Mode.Fast) -> int:
     }
     Ok(())
 }
+
+/// A dependency's default that calls a function or partial it declares, or constructs one of its newtypes, is carried
+/// across the package boundary. A default that calls a builtin such as `abs` or `len`, or builds `Some(3)`, is not:
+/// a consumer reaches only the package's own callables through the package's path, so a call omitting that argument
+/// is refused for the missing argument rather than accepted and left to fail in the build.
+#[test]
+fn dependency_default_calling_a_builtin_is_not_carried_issue1771() -> Result<(), String> {
+    let index = provider_index(
+        r#"
+pub type Meters = newtype int
+
+
+def _base(n: int) -> int:
+    return n * 2
+
+
+pub def helper(n: int = _base(2)) -> int:
+    return n
+
+
+pub def measure(m: Meters = Meters(3)) -> int:
+    return m.0
+
+
+pub def absolute(n: int = abs(-3)) -> int:
+    return n
+
+
+pub def length(n: int = len("abc")) -> int:
+    return n
+
+
+pub def wrapped(o: Option[int] = Some(3)) -> int:
+    match o:
+        Some(v) => return v
+        None => return 0
+"#,
+    )?;
+    for (callee, param) in [("absolute", "n"), ("length", "n"), ("wrapped", "o")] {
+        let errors = check_str_with_library_index_err(
+            &format!("from pub::modulelib import {callee}\n\ndef use() -> int:\n  return {callee}()\n"),
+            index.clone(),
+            "a default calling something other than a package callable is not carried",
+        )?;
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message == format!("Missing required argument '{param}' when calling '{callee}'")),
+            "`{callee}()` is refused for the missing `{param}`: {errors:?}"
+        );
+    }
+    for callee in ["helper", "measure"] {
+        check_str_with_library_index(
+            &format!("from pub::modulelib import {callee}\n\ndef use() -> int:\n  return {callee}()\n"),
+            index.clone(),
+        )
+        .map_err(|errors| format!("`{callee}()` takes its carried default: {errors:?}"))?;
+    }
+    Ok(())
+}

@@ -1,18 +1,21 @@
-# behavior: modules `a`, `b` and `main` each declare a const SIZE, and `d` imports the SIZE that `c` declares; a function defaulting to SIZE in each of `a`, `b`, `d` and `main` takes the SIZE that its own module means when a call omits the argument
+# behavior: modules `a`, `b`, `e` and `main` each declare a const SIZE, and `d` imports the SIZE that `c` declares; a function defaulting to SIZE in each of `a`, `b`, `d`, `e` and `main` takes the SIZE that its own module means when a call omits the argument, including a call through `e`'s symbol alias
 # retires: loaves/compiler/incan_emit/tests/default_argument_codegen_tests.rs::same_named_default_consts_resolve_in_their_callables_modules_issue1771
 # retires: loaves/compiler/incan_emit/tests/default_argument_codegen_tests.rs::imported_default_const_resolves_to_its_declaring_module_issue1771
 # retires: loaves/compiler/incan_emit/tests/default_argument_codegen_tests.rs::default_consts_of_the_calling_module_and_a_dependency_stay_apart_issue1771
 # retires: loaves/compiler/incan_ir/src/lower/tests/default_owner_paths.rs::module_items_a_default_names_are_spelled_through_their_module_issue1771
 # retires: loaves/compiler/incan_ir/src/lower/tests/default_owner_paths.rs::crate_root_and_unmapped_module_defaults_issue1771
+# retires: loaves/compiler/incan_emit/tests/default_argument_codegen_tests.rs::default_const_of_a_function_reached_through_an_alias_is_kept_issue1771
 # expect-stdout:
 #   1
 #   2
 #   3
 #   9
+#   5
 
 from a import first
 from b import second
 from d import third
+from e import five
 
 const SIZE: int = 9
 
@@ -26,3 +29,4 @@ def main() -> None:
     println(second())
     println(third())
     println(local())
+    println(five())

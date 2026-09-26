@@ -1,0 +1,8 @@
+# behavior: a consumer that omits an argument whose dependency default calls a builtin is refused at check time for the missing argument
+# expect-diagnostic: INCAN-T0001
+
+from pub::shapes import absolute
+
+
+def main() -> None:
+    println(absolute())

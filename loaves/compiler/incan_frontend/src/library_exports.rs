@@ -76,6 +76,60 @@ impl<'a> DefaultPathContext<'a> {
         }
     }
 
+    /// Return whether a default's call of `callee` can be carried to the package's consumers.
+    ///
+    /// A consumer calls a function, partial or newtype through the package's path to it: one this module declares, or
+    /// one it imports from another module of the package, named directly or, for a function or partial, through that
+    /// module (`helpers.scale`). A builtin such as `abs`, `len` or `Some`, and a callable of another package or of the
+    /// stdlib, have no such path. A member of a type, such as a static method or an enum variant with a payload, is
+    /// left to the consumer's check, which refuses what it cannot materialize.
+    fn call_is_carried(self, callee: &Spanned<Expr>) -> bool {
+        match &callee.node {
+            Expr::Ident(name) => {
+                let is_partial = self.checker.type_info().partial_projection(name).is_some();
+                let symbol_kind = self.checker.lookup_symbol(name).map(|symbol| &symbol.kind);
+                let is_function = matches!(
+                    symbol_kind,
+                    Some(SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_))
+                );
+                let is_newtype = matches!(symbol_kind, Some(SymbolKind::Type(TypeInfo::Newtype(_))));
+                if !is_function && !is_partial && !is_newtype {
+                    return false;
+                }
+                match self.checker.import_binding_path(name) {
+                    Some(path) => !path_is_already_absolute(path),
+                    None => self.checker.local_function_decls.contains_key(name) || is_partial || is_newtype,
+                }
+            }
+            Expr::Field(base, _) => {
+                let Expr::Ident(base_name) = &base.node else {
+                    return false;
+                };
+                let names_module = self
+                    .checker
+                    .lookup_symbol(base_name)
+                    .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Module(_)));
+                if !names_module {
+                    return true;
+                }
+                self.checker
+                    .import_binding_path(base_name)
+                    .is_some_and(|path| !path_is_already_absolute(path))
+                    && self
+                        .checker
+                        .type_info()
+                        .resolved_identity(callee.span)
+                        .is_some_and(|identity| {
+                            matches!(
+                                identity.kind,
+                                SemanticSourceTargetKind::Function | SemanticSourceTargetKind::Partial
+                            )
+                        })
+            }
+            _ => false,
+        }
+    }
+
     /// Resolve a default-expression value path to the module that owns it.
     fn canonical_value_path(self, path: Vec<String>) -> Vec<String> {
         let Some(first) = path.first() else {
@@ -1092,11 +1146,15 @@ fn checked_param_default(expr: &Spanned<Expr>, context: DefaultPathContext<'_>) 
                 .collect(),
         ),
         Expr::Call(callee, _type_args, args) => {
-            // A consumer constructs a model or class through the package's public path to it, so a default that
-            // constructs a type without such a path is not carried; the parameter stays required for such callers.
-            if context.names_model_or_class(&callee.node)
-                && !(context.carries_constructions && context.names_exported_type(&callee.node))
-            {
+            // A consumer constructs a model or class, or calls a function, through the package's public path to it, so
+            // a default that constructs or calls anything without such a path is not carried; the parameter stays
+            // required for such callers.
+            let carried = if context.names_model_or_class(&callee.node) {
+                context.carries_constructions && context.names_exported_type(&callee.node)
+            } else {
+                context.call_is_carried(callee)
+            };
+            if !carried {
                 return CheckedParamDefault::Unsupported;
             }
             let path = context.canonical_value_path(checked_preset_path(&callee.node));

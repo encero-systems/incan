@@ -191,15 +191,20 @@ pub fn record_direct_generated_path_support_items_from_ir(
 /// callers reach the const without a use of its name. The generated-use analysis retains a module's items from the
 /// names reachable code uses, which such a path does not carry, so each item a default spells is recorded as reachable
 /// in its module here. Only the defaults of callables that can be called count: a function another module imports or
-/// that this module names anywhere, and every method, whose retention emission decides. The default of a function
-/// nothing names is never expanded, so it keeps nothing. Stdlib paths are left to the stdlib support records.
+/// that this module names anywhere, directly or through a symbol alias, and every method, whose retention emission
+/// decides. The default of a function nothing names is never expanded, so it keeps nothing. Stdlib paths are left to
+/// the stdlib support records.
 pub fn record_default_path_items_from_ir(
     reachable: &mut HashMap<Vec<String>, HashSet<String>>,
     module_path: &[String],
     program: &IrProgram,
 ) {
-    let referenced = ir_program_referenced_names(program);
-    let imported = reachable.get(module_path).cloned().unwrap_or_default();
+    let mut callable = ir_program_referenced_names(program);
+    for name in reachable.get(module_path).into_iter().flatten() {
+        callable.insert(name.clone());
+        callable.insert(program.function_registry.registry_key(name).to_string());
+    }
+    follow_symbol_aliases(program, &mut callable);
     let mut paths: HashSet<Vec<String>> = HashSet::new();
     let mut collect = |expr: &IrExpr| {
         if let Some(path) = crate_rooted_item_path(expr) {
@@ -209,11 +214,7 @@ pub fn record_default_path_items_from_ir(
     };
     for decl in &program.declarations {
         let functions: Vec<&IrFunction> = match &decl.kind {
-            IrDeclKind::Function(function)
-                if referenced.contains(&function.name) || imported.contains(&function.name) =>
-            {
-                vec![function]
-            }
+            IrDeclKind::Function(function) if callable.contains(&function.name) => vec![function],
             IrDeclKind::Impl(impl_decl) => impl_decl.methods.iter().collect(),
             IrDeclKind::Trait(trait_decl) => trait_decl.methods.iter().collect(),
             _ => Vec::new(),
@@ -238,6 +239,34 @@ pub fn record_default_path_items_from_ir(
             continue;
         }
         reachable.entry(module_path.to_vec()).or_default().insert(item.clone());
+    }
+}
+
+/// Add to `names` the target of every symbol alias of `program` that `names` holds, through chains of aliases.
+///
+/// Calling `one` where `pub one = first` calls `first`, so a callable reached by an alias is reached by its target.
+fn follow_symbol_aliases(program: &IrProgram, names: &mut HashSet<String>) {
+    let targets = program
+        .declarations
+        .iter()
+        .filter_map(|decl| match &decl.kind {
+            IrDeclKind::SymbolAlias { name, target_path, .. } => Some((name.as_str(), target_path.last()?.as_str())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    loop {
+        let mut added = false;
+        for (alias, target) in &targets {
+            if (names.contains(*alias) || names.contains(program.function_registry.registry_key(alias)))
+                && names.insert((*target).to_string())
+            {
+                names.insert(program.function_registry.registry_key(target).to_string());
+                added = true;
+            }
+        }
+        if !added {
+            break;
+        }
     }
 }
 

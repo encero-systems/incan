@@ -1,0 +1,9 @@
+[project]
+name = "refused_dependency_default_calling_a_builtin"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+shapes = { path = "deps/shapes" }
