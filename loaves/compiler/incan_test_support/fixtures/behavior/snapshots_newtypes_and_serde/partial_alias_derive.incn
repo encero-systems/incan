@@ -1,5 +1,6 @@
-# behavior: std.serde.json Serialize imported under an alias derives and bounds like the direct import (RFC 024)
+# behavior: std.serde.json Serialize imported under an alias derives, bounds and dispatches like the direct import (RFC 024, #1712)
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc024_partial_alias_derive_codegen
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::aliased_stdlib_json_trait_dispatch_names_the_declaration_issue1712
 # expect-stdout:
 #   {"value":1}
 

@@ -236,6 +236,21 @@ pub fn builtin_expects_iterable(name: &str, found: &str, span: Span) -> CompileE
     )
 }
 
+/// Report a frozen collection type (`FrozenList`, `FrozenDict`, `FrozenSet`) called as a value constructor.
+///
+/// The language defines frozen collections as `const` values only: the compiler bakes the literal into `'static`
+/// backing data and wraps it, and no constructor call produces one at runtime. `name` is the spelling the call used,
+/// `canonical` the annotated type the hint shows (`FrozenList[T]`, `FrozenDict[K, V]`), and `literal` the literal
+/// shape a `const` of that type is written with (`[...]` or `{...}`). See #1719.
+pub fn frozen_collection_has_no_constructor(name: &str, canonical: &str, literal: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("{name}(...) is not a constructor; a frozen collection is declared as a const"),
+        span,
+    )
+    .with_hint(format!("Declare it as a const: `const NAME: {canonical} = {literal}`"))
+    .with_note("Frozen collections are baked into the program at compile time and have no runtime constructor")
+}
+
 /// Report a direct `zip(left, right)` operand that cannot be adapted to the source-owned iterator protocol.
 pub fn builtin_zip_argument_not_supported(position: usize, found: &str, span: Span) -> CompileError {
     CompileError::type_error(

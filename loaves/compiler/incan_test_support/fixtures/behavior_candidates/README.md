@@ -24,11 +24,7 @@ rows' `twin` at the new path, and running the area's root.
     Cargo* in `../behavior/README.md`).
   - project fixtures whose provider itself needs the compatibility publisher (`compiled_provider_fallible_stream/`,
     `pub_import_widgets/`) pass after a manual provider bake and wait for the same Cargo-free bake.
-  - programs `incan check` accepts but the generated Rust refuses (`awaitable_wrapper_delegation`,
-    `partial_alias_derive`, `reexport_chain/`, `same_spelling_type_owned_and_instance_methods`,
-    `std_registry_subjects`): route bugs, each named in its row; the candidate is admitted when the route compiles it.
-  - halves of a twinned program that the route refuses (`model_alias_constructor_pattern`,
-    `std_rust_fn_capability_bounds`): the rest of the program is twinned in an area; the row names the half held here.
+  - halves of a twinned program that the route refuses (`model_alias_constructor_pattern`): the rest of the program is twinned in an area; the row names the half held here.
   - `str_over_arithmetic_expression`: no retire row; it pins a route bug met while twinning. `str(a + b)` is accepted
     by `incan check` and the generated Rust fails to compile (E0277 `cannot add String to {integer}`: the conversion is
     applied to the right operand only). Admitted to an area when the route renders the whole expression.

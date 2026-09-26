@@ -174,6 +174,109 @@ def use_all() -> None:
     Ok(())
 }
 
+/// A re-export chain records the name the declaring module binds the declaration under, beside its identity.
+///
+/// Issue #1710: `facade` republishes `calculate` as `facade_calculate` and `public_api` republishes that as
+/// `exported_calculate`. The identity was already the provider's; what a second hop had lost was that the imported
+/// spelling `facade_calculate` is a re-export rename and not a second name the provider itself binds, so lowering
+/// read it as an `alias` declaration and the module never bound the projection it re-exported.
+#[test]
+fn reexport_chain_records_the_declaring_module_spelling_issue1710() -> Result<(), String> {
+    let provider = parse(
+        "pub def calculate(value: int) -> int:\n  return value + 1\n",
+        "chain provider",
+    )?;
+    let facade = parse(
+        "pub from provider import calculate as facade_calculate\n",
+        "chain facade",
+    )?;
+    let public_api = parse(
+        "pub from facade import facade_calculate as exported_calculate\n",
+        "chain public api",
+    )?;
+    let consumer = parse(
+        "from public_api import exported_calculate as compute\nfrom facade import facade_calculate\n\ndef run() -> int:\n  return compute(41) + facade_calculate(1)\n",
+        "chain consumer",
+    )?;
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["consumer".to_string()]));
+    checker
+        .check_with_imports(
+            &consumer,
+            &[
+                ("provider", &provider),
+                ("facade", &facade),
+                ("public_api", &public_api),
+            ],
+        )
+        .map_err(|errors| format!("chain consumer should typecheck: {errors:?}"))?;
+
+    for local_name in ["compute", "facade_calculate"] {
+        let identity = checker
+            .type_info()
+            .resolved_import_identity(local_name)
+            .ok_or_else(|| format!("`{local_name}` must prove the provider's identity"))?;
+        assert_eq!(identity.origin, SymbolOrigin::Module(vec!["provider".to_string()]));
+        assert_eq!(identity.declaration_name, "calculate");
+        assert_eq!(
+            checker.type_info().resolved_import_declared_name(local_name),
+            Some("calculate"),
+            "`{local_name}` reaches the declaration through renames only, so the provider binds it as `calculate`"
+        );
+    }
+
+    let facade_checker = {
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(vec!["public_api".to_string()]));
+        checker
+            .check_with_imports(&public_api, &[("provider", &provider), ("facade", &facade)])
+            .map_err(|errors| format!("chain public api should typecheck: {errors:?}"))?;
+        checker
+    };
+    assert_eq!(
+        facade_checker
+            .type_info()
+            .resolved_import_declared_name("exported_calculate"),
+        Some("calculate"),
+        "the second hop records the declaring module's spelling, not the facade's rename"
+    );
+    Ok(())
+}
+
+/// An imported `alias` declaration records its own spelling as the declared name, because the declaring module
+/// binds the target's identity under that second name itself.
+#[test]
+fn imported_public_alias_records_its_own_spelling_as_the_declared_name_issue1710() -> Result<(), String> {
+    let provider = parse(
+        "pub def scale(value: int) -> int:\n  return value * 2\n\npub scale_alias = alias scale\n",
+        "alias provider",
+    )?;
+    let facade = parse("pub from provider import scale_alias\n", "alias facade")?;
+    let consumer = parse(
+        "from provider import scale_alias\nfrom facade import scale_alias as through_facade\n\ndef run() -> int:\n  return scale_alias(2) + through_facade(3)\n",
+        "alias consumer",
+    )?;
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["consumer".to_string()]));
+    checker
+        .check_with_imports(&consumer, &[("provider", &provider), ("facade", &facade)])
+        .map_err(|errors| format!("alias consumer should typecheck: {errors:?}"))?;
+
+    for local_name in ["scale_alias", "through_facade"] {
+        let identity = checker
+            .type_info()
+            .resolved_import_identity(local_name)
+            .ok_or_else(|| format!("`{local_name}` must prove the alias target's identity"))?;
+        assert_eq!(identity.declaration_name, "scale");
+        assert_eq!(
+            checker.type_info().resolved_import_declared_name(local_name),
+            Some("scale_alias"),
+            "`{local_name}` stops at the provider's own `scale_alias` binding"
+        );
+    }
+    Ok(())
+}
+
 /// A facade republishing a stdlib function no provider serves binds the declaration a direct import binds.
 ///
 /// Issue #1435: the re-export hop resolved `std.*` members from source metadata without carrying their identity,

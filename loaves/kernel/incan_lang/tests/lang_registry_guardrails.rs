@@ -292,6 +292,22 @@ fn derivable_source_owned_traits_have_rust_bound_mappings() {
     );
 }
 
+/// `Awaitable` is a builtin trait with no source module, so nothing else would route the bound to a Rust trait; the
+/// async runtime's `Awaitable<T>` is where `F with Awaitable[T]` must land for `await` inside such a function to
+/// compile (RFC 039, #1711).
+#[test]
+fn awaitable_bound_lowers_to_the_async_runtime_trait() {
+    assert_eq!(traits::source_module(traits::TraitId::Awaitable), None);
+    assert_eq!(
+        trait_bounds::incan_to_rust(traits::as_str(traits::TraitId::Awaitable)),
+        Some(trait_bounds::rust::AWAITABLE)
+    );
+    assert_eq!(
+        trait_bounds::rust_to_incan(trait_bounds::rust::AWAITABLE),
+        Some(traits::as_str(traits::TraitId::Awaitable))
+    );
+}
+
 #[test]
 fn traits_spellings_unique_and_resolvable() {
     assert_registry_round_trip(RegistryRoundTrip {

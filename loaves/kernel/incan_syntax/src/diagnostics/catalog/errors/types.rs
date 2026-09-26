@@ -327,6 +327,73 @@ pub fn decorator_type_argument_not_supported(path: &str, span: Span) -> CompileE
     .with_hint("Use expression arguments such as name=value for decorator factories")
 }
 
+// -- Web route handlers ------------------------------------------------------
+
+/// Report a `@route` handler whose declared return type has no response form (#1721).
+///
+/// A route handler's return value becomes the HTTP response, and only response types have that form: `str`, `None`,
+/// `Json[...]`, `Html`, `Response`, a `Result` of those, or a wrapper that derives `IntoResponse`. A handler declared
+/// `-> int` checked, but the route it registers had nothing to send and the build stopped on it. `handler` is the
+/// function's name and `return_type` its declared return type as the source spells it. The hint lists the response
+/// types and, for the common numeric case, the text form to return instead. `INCAN-T0107` is its stable code.
+pub fn route_handler_return_not_response(handler: &str, return_type: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Route handler '{handler}' returns '{return_type}', which is not a response type"),
+        span,
+    )
+    .with_stable_code("INCAN-T0107")
+    .with_hint(
+        "Return 'str', 'Json[...]', 'Html' or 'Response' from a route handler; to send a number or another value as \
+         text, return 'str(value)'",
+    )
+    .with_note("A route handler's return value is the HTTP response, so only a response type can be returned")
+}
+
+/// Report a `@route` handler parameter that nothing in the request supplies (#1722).
+///
+/// The route binds a handler parameter in one of two ways: a `{name}` segment of the path binds the parameter of that
+/// name, and a typed extractor (`Json[T]`, `Query[T]`, `Path[T]`, or a wrapper deriving `FromRequestParts`) reads the
+/// request itself. A parameter that is neither has no value to receive, and the route cannot be built. `handler` is
+/// the function's name, `parameter` the unbound parameter, `path` the route path as written, and `captures` the
+/// segment names the path does bind, so the hint can name a spelling that would bind the parameter and, when the path
+/// already captures other names, list them. `INCAN-T0108` is its stable code.
+pub fn route_handler_parameter_unbound(
+    handler: &str,
+    parameter: &str,
+    path: &str,
+    captures: &[String],
+    span: Span,
+) -> CompileError {
+    let bound_path = if path.ends_with('/') {
+        format!("{path}{{{parameter}}}")
+    } else {
+        format!("{path}/{{{parameter}}}")
+    };
+    let error = CompileError::type_error(
+        format!("Route handler '{handler}' has a parameter '{parameter}' that no segment of the path '{path}' binds"),
+        span,
+    )
+    .with_stable_code("INCAN-T0108")
+    .with_hint(format!(
+        "Add a '{{{parameter}}}' segment to the path, '{bound_path}', or read the value from the request with a \
+         'Query[...]' or 'Json[...]' parameter"
+    ))
+    .with_note(
+        "A route handler's parameters come from the request: a '{name}' path segment binds the parameter named \
+         'name', and a 'Json[T]', 'Query[T]' or 'Path[T]' parameter reads the body, the query string or the path",
+    );
+    if captures.is_empty() {
+        error
+    } else {
+        let bound = captures
+            .iter()
+            .map(|capture| format!("'{capture}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        error.with_note(format!("The path binds {bound}"))
+    }
+}
+
 /// Report a malformed `ValidationError(...)` constructor call.
 pub fn validation_error_constructor_shape(span: Span) -> CompileError {
     CompileError::type_error(
@@ -819,6 +886,43 @@ pub fn mutation_without_mut(name: &str, span: Span) -> CompileError {
         .with_note("This prevents accidental modifications and makes code easier to reason about")
 }
 
+/// How a method body changes the object its plain `self` receiver names (#1723).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelfMutation<'a> {
+    /// The body assigns to a place rooted at the receiver, `self.width *= factor` or `self.items[0] = value`.
+    Assignment,
+    /// The body calls a method that changes a place rooted at the receiver, `self.items.pop()`.
+    MutatingCall {
+        /// The method the body calls on the place.
+        callee: &'a str,
+    },
+}
+
+/// Report a method that changes the object it is called on while its receiver is a plain `self` (#1723).
+///
+/// The receiver spelling is a promise the generated code keeps literally: a plain `self` method reads the object
+/// only, so an assignment to `self.width` or a `self.items.pop()` inside it has no way to write. `method` is the
+/// method being checked, `target` the place it changes as the source spells it (`self.width`, `self.items[0]`), and
+/// `mutation` says whether the body assigns to that place or calls a method that changes it. The hint spells the
+/// receiver to declare; `INCAN-T0102` is its stable code.
+pub fn self_mutation_requires_mut_self(
+    method: &str,
+    target: &str,
+    mutation: SelfMutation<'_>,
+    span: Span,
+) -> CompileError {
+    let message = match mutation {
+        SelfMutation::Assignment => format!("Method '{method}' assigns to '{target}' but takes 'self'"),
+        SelfMutation::MutatingCall { callee } => {
+            format!("Method '{method}' calls '{target}.{callee}()', which changes '{target}', but takes 'self'")
+        }
+    };
+    CompileError::type_error(message, span)
+        .with_stable_code("INCAN-T0102")
+        .with_hint(format!("Declare the receiver as 'mut self': def {method}(mut self, ...)"))
+        .with_note("A method that changes the object it is called on says so in its receiver; a plain 'self' method only reads it")
+}
+
 /// A Rust interop parameter requires an exclusive borrow of an immutable Incan binding.
 pub fn mutable_rust_borrow_requires_mut(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Rust parameter requires a mutable borrow of '{name}'"), span).with_hint(format!(
@@ -1162,17 +1266,20 @@ pub fn missing_trait_method(trait_name: &str, method: &str, span: Span) -> Compi
     .with_note("All required trait methods must be implemented")
 }
 
-/// Report an `Awaitable[T]` adoption with no compiler-known await realization path.
-pub fn invalid_awaitable_adoption(type_name: &str, expected_output: &str, span: Span) -> CompileError {
+/// Report a model, class, enum or newtype adopting `Awaitable[T]`: the wrapper form of RFC 039 has no realization.
+///
+/// `Awaitable[T]` is realized only as a generic bound (`F with Awaitable[T]`), where every future-like value
+/// satisfies it. Nothing can build a declared type as an awaitable wrapper, and a model, class or enum always derives
+/// `Clone` and `Debug`, which an awaitable handle such as `JoinHandle[T]` cannot be.
+pub fn awaitable_adoption_not_realized(type_name: &str, expected_output: &str, span: Span) -> CompileError {
     CompileError::type_error(
-        format!(
-            "Type '{}' adopts Awaitable[{}] but has no valid await realization",
-            type_name, expected_output
-        ),
+        format!("Type '{type_name}' cannot adopt Awaitable[{expected_output}]: a declared type is never an awaitable wrapper"),
         span,
     )
-    .with_hint("Wrap a known awaitable field such as JoinHandle[T] or Awaitable[T], or use a Rust-backed future type")
-    .with_note("Awaitable adoption must map to a compiler-known await output type")
+    .with_hint("Await the JoinHandle[T] itself, or take the awaitable through a generic bound (`F with Awaitable[T]`)")
+    .with_note(
+        "Awaitable[T] is realized only as a bound over future-like values; a model, class or enum also always derives Clone and Debug, which an awaitable handle such as JoinHandle[T] cannot be",
+    )
 }
 
 /// Report a required Rust associated type that has no adopting-type declaration.
@@ -1384,6 +1491,70 @@ pub fn trait_not_implemented(type_name: &str, trait_name: &str, span: Span) -> C
     error
 }
 
+/// Why an `Fn`-family capability marker cannot stand where it was written (#1716).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallableMarkerRefusal<'a> {
+    /// The marker names more parameters than a marker can spell today.
+    ParameterCount {
+        /// How many parameters the marker names.
+        count: usize,
+        /// The most a marker can name.
+        limit: usize,
+    },
+    /// The marker bounds a type parameter of a nominal declaration rather than of a function or method.
+    NominalOwner {
+        /// The declaration kind as the source spells it (`model`, `class`, `enum`, `trait`, `newtype`, `type`).
+        owner_kind: &'a str,
+        /// The declaration's name.
+        owner_name: &'a str,
+    },
+}
+
+/// Report an `Fn`-family capability marker written where no generated code can spell it (#1716).
+///
+/// A marker names a callable's parameter list and leaves the return type to the call that passes the value.
+/// `marker` is the bound as the source spells it (`Fn[int, int, int]`), `type_param` the parameter it bounds, and
+/// `parameter_types` the marker's type arguments rendered one by one, which the hint reuses to spell the
+/// alternatives. A marker with more parameters than the limit has no bound to become; a marker on a nominal
+/// declaration's type parameter has no call to learn its return type from, so the hint names the bound that
+/// spells one. `INCAN-T0106` is its stable code.
+pub fn callable_marker_not_supported(
+    marker: &str,
+    type_param: &str,
+    parameter_types: &[String],
+    refusal: CallableMarkerRefusal<'_>,
+    span: Span,
+) -> CompileError {
+    let marker_name = marker.split('[').next().unwrap_or(marker);
+    let parameters = parameter_types.join(", ");
+    match refusal {
+        CallableMarkerRefusal::ParameterCount { count, limit } => CompileError::type_error(
+            format!("Callable marker '{marker}' on '{type_param}' names {count} parameters; a marker takes at most {limit}"),
+            span,
+        )
+        .with_stable_code("INCAN-T0106")
+        .with_hint(format!(
+            "Write at most {limit} parameters in the marker, or gather the parameters into one model and write \
+             '{marker_name}[ThatModel]'"
+        ))
+        .with_note("The marker's type arguments are the callable's parameter list; its return type comes from the value passed"),
+        CallableMarkerRefusal::NominalOwner { owner_kind, owner_name } => CompileError::type_error(
+            format!("Callable marker '{marker}' cannot bound type parameter '{type_param}' of {owner_kind} '{owner_name}'"),
+            span,
+        )
+        .with_stable_code("INCAN-T0106")
+        .with_hint(format!(
+            "Name the return type: bound '{type_param}' with 'Callable{}[{parameters}{}R]' from std.traits.callable, with \
+             'R' the return type, or give the field a function type '({parameters}) -> R'",
+            parameter_types.len(),
+            if parameter_types.is_empty() { "" } else { ", " }
+        ))
+        .with_note(format!(
+            "A callable marker leaves its return type to the call that passes the value; a {owner_kind} has no such call"
+        )),
+    }
+}
+
 /// What the name in a `with` bound resolved to, which decides the remedy a bound violation can offer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GenericBoundTarget {
@@ -1499,6 +1670,35 @@ pub fn not_hashable(type_name: &str, span: Span) -> CompileError {
     .with_note("Both Hash and Eq are required for Set membership and Dict keys")
 }
 
+/// Report `/`, `//`, `%` or `**` applied to values of a type parameter (#1715).
+///
+/// These four operators follow the language's numeric rules (true division yields `float`, floor division and modulo
+/// round toward negative infinity, power picks its result type from the exponent), which the concrete numeric types
+/// carry and no trait abstracts. `+`, `-` and `*` become inferred bounds on the type parameter; for these four there
+/// is no bound a type argument could satisfy, so the function could never be compiled for any argument. `operator`
+/// is the operator as written, `type_param` the parameter's name and `dunder` the RFC 028 hook (`__mod__`) that a
+/// bound trait could define to make the operator resolve through a trait instead. `INCAN-T0109` is its stable code.
+pub fn operator_has_no_type_parameter_bound(
+    operator: &str,
+    type_param: &str,
+    dunder: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!("Operator '{operator}' cannot be applied to values of type parameter '{type_param}'"),
+        span,
+    )
+    .with_stable_code("INCAN-T0109")
+    .with_hint(format!(
+        "Declare the operands as 'int' or 'float' instead of '{type_param}', or bound '{type_param}' by a trait that \
+         defines '{dunder}' so the operator resolves through that trait"
+    ))
+    .with_note(
+        "'/', '//', '%' and '**' follow the language's numeric rules, which only the concrete numeric types carry; \
+         unlike '+', '-' and '*', no bound on a type parameter stands for them",
+    )
+}
+
 // -- Validate derive ---------------------------------------------------------
 
 pub fn validate_derive_missing_validate_method(type_name: &str, span: Span) -> CompileError {
@@ -1591,6 +1791,47 @@ pub fn rust_receiver_const_generics_not_supported(path: &str, span: Span) -> Com
     )
     .with_hint("Use a Rust or Incan wrapper whose public receiver has type parameters only")
     .with_note("Incan v0.5 does not accept const values in call-site type-argument syntax")
+}
+
+/// Report a Rust associated call whose owner type arguments nothing in the program fixes (#1720).
+///
+/// `HashMap.new()` leaves `K` and `V` open; Rust would fill them from a later insert, a typed return, or an
+/// annotation on the binding, but a binding that is never read again gives it nothing to work with, and the build
+/// stops on it. `owner` is the receiver as the source spells it (`HashMap`), `method` the associated function,
+/// `type_params` the owner's open parameters, and `binding` the local the result was bound to, or `None` when the
+/// value was discarded. The hint shows both spellings that close the parameters, with example types sized to the
+/// parameter count. `INCAN-T0105` is its stable code.
+pub fn rust_owner_type_args_not_inferred(
+    owner: &str,
+    method: &str,
+    type_params: &[String],
+    binding: Option<&str>,
+    span: Span,
+) -> CompileError {
+    const EXAMPLE_TYPES: [&str; 4] = ["str", "int", "float", "bool"];
+    let params = type_params.join(", ");
+    let examples = EXAMPLE_TYPES
+        .iter()
+        .cycle()
+        .take(type_params.len())
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
+    let error = CompileError::type_error(
+        format!("Cannot infer the type arguments '{params}' of '{owner}.{method}()'"),
+        span,
+    )
+    .with_stable_code("INCAN-T0105");
+    match binding {
+        Some(name) => error
+            .with_note(format!("'{name}' is never read after this binding, so nothing later fixes them"))
+            .with_hint(format!(
+                "Write them in the call, '{owner}.{method}[{examples}]()', or annotate the binding, '{name}: {owner}[{examples}] = {owner}.{method}()'"
+            )),
+        None => error
+            .with_note("The value is not bound to a name, so nothing later fixes them")
+            .with_hint(format!("Write them in the call: '{owner}.{method}[{examples}]()'")),
+    }
 }
 
 /// A trait-qualified call `Trait.method(receiver, ...)` names an imported Rust trait whose method signature is not
@@ -2166,6 +2407,41 @@ pub fn mutable_tuple(span: Span) -> CompileError {
         span,
     )
     .with_hint("Remove 'mut' - tuples cannot be modified after creation")
+}
+
+/// Report a tuple annotation written without its element types (#1717).
+///
+/// `Tuple` names a family of types, one per element list, so a bare spelling names no type at all and the build
+/// has nothing to emit for it. `spelling` is the word the source used (`Tuple` or `tuple`) so the hint keeps the
+/// author's casing. `INCAN-T0104` is its stable code.
+pub fn tuple_annotation_requires_element_types(spelling: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Tuple annotation '{spelling}' is missing its element types"),
+        span,
+    )
+    .with_stable_code("INCAN-T0104")
+    .with_hint(format!(
+        "Write one type per element, for example '{spelling}[int, str]' for a pair of an int and a str"
+    ))
+}
+
+/// Report a `print`/`println` argument that is a tuple (#1725).
+///
+/// A tuple has no printed form in the language, so the call would print nothing the reader can rely on. `builtin`
+/// is the spelling the call used (`print` or `println`), `value` the argument as the source spells it when it is a
+/// plain name (`coords`) or a placeholder otherwise, and `arity` the tuple's length, which shapes the hint's
+/// element-by-element spelling. `INCAN-T0103` is its stable code.
+pub fn print_argument_is_tuple(builtin: &str, value: &str, arity: usize, span: Span) -> CompileError {
+    let elements = (0..arity.max(1))
+        .map(|index| format!("{value}[{index}]"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    CompileError::type_error(format!("'{builtin}' cannot print the tuple '{value}'"), span)
+        .with_stable_code("INCAN-T0103")
+        .with_hint(format!(
+            "Print the elements instead: {builtin}({elements}), or unpack them first and print the names"
+        ))
+        .with_note("Tuples have no printed form; each element prints on its own")
 }
 
 pub fn tuple_field_assignment(span: Span) -> CompileError {
