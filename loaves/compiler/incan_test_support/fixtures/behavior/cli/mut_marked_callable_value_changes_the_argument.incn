@@ -1,0 +1,30 @@
+# behavior: a function and a closure are passed as values of a function type whose parameter is marked `mut`, each call through the value receives the caller's argument, and the function's changes to it are visible to the caller
+# retires: loaves/compiler/incan_ir/src/lower/tests/method_decorator_receivers.rs::closure_checked_against_a_mut_marked_shape_takes_the_argument_mut
+# expect-stdout:
+#   3
+#   6
+#   6
+#   8
+#   9
+#   6
+
+class Counter:
+    pub value: int
+
+
+def grow(mut counter: Counter, by: int) -> int:
+    counter.value += by
+    return counter.value
+
+
+def apply(step: (mut Counter, int) -> int, mut counter: Counter) -> int:
+    println(step(counter, 2))
+    return step(counter, 3)
+
+
+def main() -> None:
+    mut counter = Counter(value=1)
+    println(apply(grow, counter))
+    println(counter.value)
+    println(apply((c, by) => c.value + by, counter))
+    println(counter.value)

@@ -5,15 +5,20 @@ use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use incan_frontend::ast;
 use incan_frontend::module::{canonicalize_source_module_segments, logical_source_import_candidates};
+use incan_lang::lang::stdlib;
 use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin};
 
 impl AstLowering {
     /// Lower an import declaration.
+    ///
+    /// Returns `None` for an item import whose every item is derive vocabulary (see
+    /// [`Self::is_derive_vocabulary_trait_import`]): such a declaration binds nothing in generated Rust, and lowering
+    /// it as an item-less import would re-export the stdlib module instead.
     pub(in crate::lower) fn lower_import(
         &self,
         i: &ast::ImportDecl,
         span: ast::Span,
-    ) -> Result<IrDeclKind, LoweringError> {
+    ) -> Result<Option<IrDeclKind>, LoweringError> {
         // The frontend resolves `import module::item` before lowering. Once it proves an item identity, use the
         // same item import route as `from module import item`, including canonical names and alias projections.
         // A genuine module identity must retain module binding semantics even when its path has multiple segments.
@@ -120,6 +125,7 @@ impl AstLowering {
         // Convert AST import items to IR import items
         let ir_items: Vec<super::super::super::decl::IrImportItem> = ast_items
             .iter()
+            .filter(|item| !self.is_derive_vocabulary_trait_import(item.alias.as_ref().unwrap_or(&item.name)))
             .flat_map(|item| {
                 let binding_name = item.alias.as_ref().unwrap_or(&item.name);
                 let force_reexport = self.overload_alias_reexport_targets.contains(binding_name);
@@ -200,14 +206,42 @@ impl AstLowering {
             });
         }
 
-        Ok(IrDeclKind::Import {
+        if ir_items.is_empty() && !ast_items.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(IrDeclKind::Import {
             visibility: Self::map_visibility(i.visibility),
             origin,
             qualifier,
             path,
             alias: i.alias.clone(),
             items: ir_items,
-        })
+        }))
+    }
+
+    /// Whether an imported binding names the stdlib declaration stub of a derivable trait.
+    ///
+    /// `Clone`, `Copy`, `Default`, `Debug`, `Display`, `Eq`, `Ord`, `Hash` and their partial forms are declared as
+    /// Incan traits under `std.derives.*` so that `@derive(...)`, `with` clauses and bounds can spell them, but the
+    /// implementation every generated program carries is the Rust trait the derive implements: a `Clone` bound lowers
+    /// to Rust's `Clone` (`incan_lang::lang::trait_bounds`), never to the stub (#1374). Importing the stub into a
+    /// module therefore binds nothing that generated Rust may use. Lowering it as a `use` would bind the stub under the
+    /// Rust trait's own name and shadow the prelude for the whole module, so every bare `Clone` in it -- a written
+    /// bound, an inferred one, or the stdlib trait defaults expanded into an adopter's impl -- would name a trait no
+    /// derived type implements (#1727). The identity is the checked declaring module (a facade re-export and a
+    /// stdlib-provider spelling both resolve to it), matched against the registry of derive-tree stub modules; the
+    /// `std` root, whose import binds the builtin trait itself, is the same vocabulary. A same-named local or
+    /// third-party trait keeps its import.
+    fn is_derive_vocabulary_trait_import(&self, binding_name: &str) -> bool {
+        let (Some(declaring_module), Some(source_name)) = self.canonical_trait_identity(binding_name) else {
+            return false;
+        };
+        let Some(stub_module) = stdlib::trait_method_module_segments(&source_name) else {
+            return false;
+        };
+        stub_module == declaring_module
+            || matches!(declaring_module.as_slice(), [root] if root.as_str() == stdlib::STDLIB_ROOT)
     }
 
     /// Lower an alias of a module member (`root = math.sqrt` after `import std.math as math`) as an import of that

@@ -82,10 +82,6 @@ Reservation describes how a spelling is reserved: `Hard` keywords are always res
 | In | `in` |  | Hard | - | Operator | Operator | RFC 000 | 0.1 | Stable |
 | Is | `is` |  | Hard | - | Operator | Operator | RFC 000 | 0.1 | Stable |
 
-### Examples
-
-Only keywords with examples are listed here.
-
 ## Soft keywords
 
 Soft keywords are only reserved when their activating `std.*` namespace is imported.
@@ -138,10 +134,10 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | AssertionError | `AssertionError` |  | Raised when a language assertion or std.testing assertion helper fails. | RFC 018 | 0.3 | Stable |
 | ValueError | `ValueError` |  | Raised when an operation receives a value of the right type but an invalid value. | RFC 000 | 0.1 | Stable |
 | TypeError | `TypeError` |  | Raised when an operation receives a value of an inappropriate type. | RFC 000 | 0.1 | Stable |
-| ZeroDivisionError | `ZeroDivisionError` |  | Raised when dividing or taking modulo by zero (Python-like numeric semantics). | RFC 000 | 0.1 | Stable |
+| ZeroDivisionError | `ZeroDivisionError` |  | Raised when dividing or taking modulo by zero. | RFC 000 | 0.1 | Stable |
 | IndexError | `IndexError` |  | Raised when an index is out of bounds (e.g. string/list indexing) or when calling `list.pop()` on an empty list. | RFC 000 | 0.1 | Stable |
 | KeyError | `KeyError` |  | Raised when a dict key is missing. | RFC 000 | 0.1 | Stable |
-| JsonDecodeError | `JSONDecodeError` |  | Raised when parsing JSON fails (Python-like). | RFC 000 | 0.1 | Stable |
+| JsonDecodeError | `JSONDecodeError` |  | Raised when parsing JSON fails. | RFC 000 | 0.1 | Stable |
 
 ### Examples
 
@@ -194,7 +190,6 @@ Numeric strings accept `_` only between digits. Invalid placement raises the can
 
 ```incan
 def main() -> None:
-    # range step cannot be zero (Python-like)
     for i in range(0, 5, 0):
         print(i)
 
@@ -206,7 +201,6 @@ Panics at runtime with `ValueError: range() arg 3 must not be zero`.
 
 ```incan
 def main() -> None:
-    # Example: JSON serialization failures (e.g. NaN/Inf) raise TypeError
     _ = json_stringify(nan)
 
 ```
@@ -306,7 +300,7 @@ def main() -> None:
 
 ## Decorators
 
-User-defined decorators are valid on top-level `def` / `async def` declarations and instance methods. A decorator is an ordinary callable value that receives the decorated function or method callable and returns the callable that should replace it:
+User-defined decorators are accepted on top-level `def` and `async def` declarations and on instance methods. A decorator is a callable value: it receives the decorated callable, and the declared name binds the callable it returns.
 
 ```incan
 def parse(value: int) -> int:
@@ -320,53 +314,57 @@ def label(value: int) -> str:
     return "value"
 
 def main() -> None:
-    result = label(1)  # int
+    result = label(1)  # result: int
 ```
 
-Stacked decorators apply bottom-up, matching Python's declaration model: the decorator closest to `def` receives the original function value first, and the outer decorators receive each previous result. Decorator factories such as `@logged("name")` are checked by first evaluating the factory expression as a callable-producing expression and then applying the produced decorator to the function value.
-
-!!! tip "Coming from Python?"
-    Python decorators can replace a function with any object. Incan user-defined function decorators are stricter: the decorator input is the decorated callable, and the result must also be callable. Python's `Callable[[A, B], R]` corresponds to Incan's `(A, B) -> R`; `=>` is only for closure expressions, not callable types. Use `(F) -> F` when a decorator preserves the original callable signature, and spell the source and replacement callable types separately when it intentionally changes the signature, such as `((str) -> R) -> ((str, str) -> R)`.
-
-Decorator factories can be generic over the decorated function type. This is the usual shape for registry, catalog, routing, telemetry, and validation decorators that record metadata but return the original function unchanged:
+| Rule | Contract |
+| --- | --- |
+| Order | Stacked decorators apply bottom-up: the decorator nearest `def` receives the declared function, and each decorator above it receives the result of the one below. |
+| Factories | `@name(args)` calls `name(args)` and applies the callable that call returns as the decorator. |
+| Binding type | The declared name has the type the decorator returns for the decorated callable. Checked API metadata and imports see that type. |
+| Generic decorators | A decorator or factory generic over the whole callable, `(F) -> F`, has `F` inferred from the decorated function, so the binding keeps the decorated function's signature. A factory call accepts explicit type arguments: `@registered[(str) -> ColumnExpr]("incql.functions.col")`. |
+| `__name__` | The callable a decorator receives has `__name__: str`, the decorated declaration's source name. |
+| Refusals | `INCAN-T0001`: a decorator that is not callable, a factory call that does not return a callable, a decorator result that is not callable, a decorated callable of a type the decorator does not accept, a type-valued factory argument such as `@name(int)`, and a user-defined decorator on a class, model, trait, enum, newtype, field, alias or module declaration. |
 
 ```incan
 def registered[F](function_ref: str) -> ((F) -> F):
     return (func) => func
 
 @registered("incql.functions.col")
-pub def col(name: str) -> ColumnExpr:
+pub def col(name: str) -> ColumnExpr:  # col: (str) -> ColumnExpr
     return ColumnExpr(name=name)
 ```
 
-The compiler infers `F` from the decorated function when the factory result is applied. If inference needs help, pass the decorated function type explicitly on the decorator factory call:
+### Method decorators
 
-```incan
-@registered[(str) -> ColumnExpr]("incql.functions.col")
-pub def col(name: str) -> ColumnExpr:
-    return ColumnExpr(name=name)
-```
+A method decorator receives the method as a callable with the receiver first, spelled the way the method spells it. A function a decorator returns in the method's place declares the receiver the same way:
 
-The post-decoration binding keeps the concrete callable signature of the decorated function unless the decorator deliberately returns a different callable shape. Checked API metadata and imports observe that concrete signature, not the generic helper's `F`.
+| Method                                  | Decorator shape         | Function returned in the method's place     |
+| --------------------------------------- | ----------------------- | ------------------------------------------- |
+| `def label(self, value: int) -> str`    | `(Box, int) -> str`     | `def parse(box: Box, value: int) -> int`    |
+| `def bump(mut self, value: int) -> int` | `(mut Box, int) -> int` | `def grow(mut box: Box, value: int) -> int` |
 
-The callable value passed into a decorator exposes `__name__` as the source callable name. Registry and catalog decorators can use this from concrete decorator helpers and from generic `(F) -> F` helpers, so a decorator can record `func.__name__` without requiring the decorated declaration to repeat its own public name in a string argument.
+- `mut` in a function type marks a parameter whose changes reach the caller: a collection, model or class object passed to a `mut` parameter. An `int`, `float` or `bool` parameter is the function's own copy and is not marked. See [`mut` parameters](functions.md#mut-parameters).
+- The receiver's marker matches the method in every shape of the decorator chain and on the function returned in the method's place; a mismatch is refused with `INCAN-T0001`.
+- A receiver written `&Box` or `&mut Box` in those positions is refused with `INCAN-T0110`.
+- The compiler decides how the receiver is passed to the decorator's shapes and to the function returned in the method's place.
 
-```incan
-def capture[F](func: F) -> F:
-    registry_names.append(func.__name__)
-    return func
+A decorator of a `self` method whose shapes name the receiver is refused with `INCAN-T0116` unless all of these hold:
 
-def registered[F]() -> ((F) -> F):
-    return (func) => capture[F](func)
+- the decorator, or the factory that produces it, is a function declared in the method's module and applied by name;
+- the shapes that name the receiver are written as callable types, not through a type alias;
+- each `return` of a factory returns a decorator declared in the module, by name, and each `return` of a decorator returns the callable it accepts or a function declared in the module, by name;
+- a decorator uses the callable it accepts only to return it: it does not call it, store it or pass it on;
+- none of those functions is declared `pub`, and none serves as more than one of factory, decorator and returned function;
+- the decorator and the factory are used only as decorators of `self` methods, and a function returned in the method's place is used only by being returned there or called directly in its module.
 
-@registered()
-pub def sample(value: int) -> int:
-    return value + 1
-```
+A decorator generic over the whole callable, such as `(F) -> F`, and the decorator chain of a `mut self` method are not subject to these conditions.
 
-Method decorators receive an unbound callable shape with the receiver first. A decorator on `def label(self, value: int) -> str` sees `(&Box, int) -> str`; a decorator on `def bump(mut self, value: int) -> int` sees `(&mut Box, int) -> int`. The wrapper passes the actual receiver borrow through to the decorated callable, so method decorators do not require cloning the receiver.
+Tasks: [Write decorators](../how-to/decorators.md). Rationale for the receiver spelling: [Decorated methods](../explanation/rust_shaped_confidence.md#decorated-methods).
 
-Class, model, trait, enum, newtype, field, alias, and module decorators remain limited to compiler-owned decorators. Compiler-owned decorators such as `@derive`, `@route`, `@rust.extern`, `@rust.allow`, `@staticmethod`, `@classmethod`, and `@requires` keep their existing special behavior.
+### Compiler-owned decorators
+
+Class, model, trait, enum, newtype, field, alias and module declarations accept only the compiler-owned decorators below. Each has the behavior its row describes.
 
 | Id | Canonical | Aliases | Description | RFC | Since | Stability |
 |---|---|---|---|---|---|---|
@@ -386,7 +384,7 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 
 | Id | Canonical | Aliases | Description | RFC | Since | Stability |
 |---|---|---|---|---|---|---|
-| Debug | `Debug` |  | Derive Rust-style debug formatting. | RFC 000 | 0.1 | Stable |
+| Debug | `Debug` |  | Derive debug formatting. | RFC 000 | 0.1 | Stable |
 | Display | `Display` |  | Derive user-facing string formatting. | RFC 000 | 0.1 | Stable |
 | Eq | `Eq` |  | Derive equality comparisons. | RFC 000 | 0.1 | Stable |
 | PartialEq | `PartialEq` |  | Derive partial equality comparisons. | RFC 000 | 0.1 | Stable |
@@ -427,7 +425,7 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 
 ### Notes
 
-- **Precedence**: Higher binds tighter (e.g. `*` > `+`). Values are relative and must be consistent with the parser.
+- **Precedence**: Higher binds tighter (e.g. `*` > `+`). Values are relative: only their order is significant.
 - **Associativity**: How operators of the same precedence group (left-to-right vs right-to-left).
 - **Fixity**: Whether the operator is used as a prefix unary operator or an infix binary operator.
 - **KeywordSpelling**: Whether the operator token is spelled as a reserved word (e.g. `and`, `not`).
@@ -656,7 +654,7 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 | Append | `append` |  | Append an element to the end of the list. | RFC 009 | 0.1 | Stable |
 | Extend | `extend` |  | Append all elements from another list. | RFC 009 | 0.2 | Stable |
 | Clone | `clone` |  | Clone the list container and each element. | RFC 009 | 0.3 | Stable |
-| Pop | `pop` |  | Remove and return the last element. On an empty list, panics with `IndexError: pop from empty list` (Python-compatible). | RFC 009 | 0.1 | Stable |
+| Pop | `pop` |  | Remove and return the last element. On an empty list, panics with `IndexError: pop from empty list`. | RFC 009 | 0.1 | Stable |
 | Contains | `contains` |  | Return true if the list contains a value. | RFC 009 | 0.1 | Stable |
 | Swap | `swap` |  | Swap two elements by index. | RFC 009 | 0.1 | Stable |
 | Reserve | `reserve` |  | Reserve capacity for at least N more elements. | RFC 009 | 0.1 | Stable |
@@ -702,8 +700,8 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 | MapErr | `map_err` |  | Transform an Err payload while preserving Ok. | RFC 070 | 0.3 | Stable |
 | AndThen | `and_then` |  | Chain a Result-returning operation from an Ok payload. | RFC 070 | 0.3 | Stable |
 | OrElse | `or_else` |  | Recover or remap through a Result-returning operation from an Err payload. | RFC 070 | 0.3 | Stable |
-| Inspect | `inspect` |  | Observe an Ok payload by implicit borrow while preserving the original Result. | RFC 070 | 0.3 | Stable |
-| InspectErr | `inspect_err` |  | Observe an Err payload by implicit borrow while preserving the original Result. | RFC 070 | 0.3 | Stable |
+| Inspect | `inspect` |  | Pass the Ok payload to a callback and return the original Result unchanged. | RFC 070 | 0.3 | Stable |
+| InspectErr | `inspect_err` |  | Pass the Err payload to a callback and return the original Result unchanged. | RFC 070 | 0.3 | Stable |
 | Unwrap | `unwrap` |  | Return the Ok payload or panic. | RFC 000 | 0.1 | Stable |
 | UnwrapOr | `unwrap_or` |  | Return the Ok payload or a default value. | RFC 000 | 0.1 | Stable |
 

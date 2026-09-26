@@ -595,6 +595,7 @@ fn manifest_writer_accepts_a_helper_binding_to_a_public_partial() -> Result<(), 
         }],
         type_params: Vec::new(),
         params: vec![ParamExport {
+            is_mut: false,
             name: "status".to_string(),
             ty: TypeRef::Named {
                 origin: None,

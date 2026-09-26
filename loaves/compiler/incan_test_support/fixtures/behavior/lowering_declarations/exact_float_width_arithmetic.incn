@@ -1,0 +1,37 @@
+# behavior: arithmetic between two f32 values stays f32 for every binary operator, so 0.1 + 0.2 rounds as single precision while the same f64 sum shows the double-precision residue
+# retires: loaves/compiler/incan_ir/src/lower/types.rs::exact_binary_float_arithmetic_keeps_its_native_ir_width
+# expect-stdout:
+#   f32 add 0.3
+#   f64 add 0.30000000000000004
+#   f32 sub 1.1
+#   f32 mul 0.3
+#   f32 div 0.33333334
+#   f64 div 0.3333333333333333
+#   f32 floordiv 3
+#   f32 mod 0.20000005
+#   f32 pow 1.21
+
+def main() -> None:
+    a: f32 = 0.1
+    b: f32 = 0.2
+    c: f64 = 0.1
+    d: f64 = 0.2
+    println(f"f32 add {a + b}")
+    println(f"f64 add {c + d}")
+    x: f32 = 1.2
+    y: f32 = 0.1
+    println(f"f32 sub {x - y}")
+    scale: f32 = 2.5
+    println(f"f32 mul {x * y * scale}")
+    one: f32 = 1.0
+    three: f32 = 3.0
+    println(f"f32 div {one / three}")
+    wide_one: f64 = 1.0
+    wide_three: f64 = 3.0
+    println(f"f64 div {wide_one / wide_three}")
+    ten: f32 = 10.0
+    println(f"f32 floordiv {ten // three}")
+    println(f"f32 mod {x % one}")
+    base: f32 = 1.1
+    two: f32 = 2.0
+    println(f"f32 pow {base ** two}")

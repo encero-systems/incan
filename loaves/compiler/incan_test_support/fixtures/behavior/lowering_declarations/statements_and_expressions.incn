@@ -1,0 +1,57 @@
+# behavior: an if/elif/else chain, a range for loop, chained binary arithmetic, a list literal return and a reassigned mut binding each produce their values
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_lower_if_statement
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_lower_for_loop
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_lower_binary_expressions
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_lower_list_literal
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_inferred_reassign_mutable
+# expect-stdout:
+#   positive
+#   negative
+#   zero
+#   0
+#   1
+#   2
+#   12
+#   3 6
+#   2
+
+def check(x: int) -> str:
+    if x > 0:
+        return "positive"
+    elif x < 0:
+        return "negative"
+    else:
+        return "zero"
+
+
+def count() -> None:
+    for i in range(3):
+        println(i)
+
+
+def math(a: int, b: int) -> int:
+    x = a + b
+    y = a * b
+    z = a - b
+    return x + y + z
+
+
+def get_list() -> list[int]:
+    return [1, 2, 3]
+
+
+def reassign() -> int:
+    mut x = 1
+    x = 2
+    return x
+
+
+def main() -> None:
+    println(check(5))
+    println(check(-5))
+    println(check(0))
+    count()
+    println(math(3, 2))
+    items = get_list()
+    println(f"{len(items)} {items[0] + items[1] + items[2]}")
+    println(reassign())

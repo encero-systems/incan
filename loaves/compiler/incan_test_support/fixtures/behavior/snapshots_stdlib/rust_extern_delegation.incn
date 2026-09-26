@@ -1,0 +1,25 @@
+# behavior: an extern function bound to a stdlib Rust module is callable from a source wrapper, and calling it with a failing assertion aborts the run
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rust_extern_delegation_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::rust_extern_wrapper_is_projected_but_delegated_rust_symbol_is_not
+# expect-stdout:
+#   before
+# expect-exit: 101
+
+rust.module("incan_std_testing")
+
+
+@rust.extern
+def fail_t(msg: str) -> None:
+    ...
+
+
+def assert_true(value: bool) -> None:
+    if not value:
+        fail_t("assertion failed: expected true")
+
+
+def main() -> None:
+    assert_true(true)
+    println("before")
+    assert_true(false)
+    println("after")

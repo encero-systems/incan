@@ -13,21 +13,27 @@
 
 from std.traits.callable import Callable1
 
+
 def observe_int(value: int) -> None:
     println(f"saw {value}")
 
+
 def observe_code(code: int) -> None:
     println(f"code {code}")
+
 
 model Observer with Callable1[int, None]:
     def __call__(self, value: int) -> None:
         println(f"observer {value}")
 
+
 model Payload:
     name: str
 
+
 def observe_payload(payload: Payload) -> None:
     println(f"payload {payload.name}")
+
 
 def main() -> None:
     result: Result[int, str] = Ok(3)

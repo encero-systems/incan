@@ -13,23 +13,30 @@ def numbers(limit: int) -> Generator[int]:
     for value in range(limit):
         yield value
 
+
 def double(value: int) -> int:
     return value * 2
+
 
 def is_even(value: int) -> bool:
     return value % 2 == 0
 
+
 def materialized(source: Generator[int]) -> list[int]:
     return list(source)
+
 
 def doubled(source: Generator[int]) -> list[int]:
     return [value * 2 for value in source]
 
+
 def evens(source: Generator[int]) -> list[int]:
     return [value for value in source if value % 2 == 0]
 
+
 def joined(values: list[int]) -> str:
     return " ".join([str(value) for value in values])
+
 
 def main() -> None:
     println(len(materialized(numbers(3))))

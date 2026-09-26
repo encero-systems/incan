@@ -13,6 +13,7 @@
 
 """Issue #1707: a str literal below the top of a pattern matches an owned str value."""
 
+
 def tuple_literal() -> None:
     """The issue's program: a str literal as the second item of a tuple pattern."""
     pair: tuple[int, str] = (42, "answer")
@@ -21,11 +22,13 @@ def tuple_literal() -> None:
         (_, "answer") => println("second is answer")
         _ => println("something else")
 
+
 def classify(pair: tuple[int, str]) -> str:
     """A nested alternation of str literals under a guard on the other item."""
     match pair:
         (n, "yes" | "no") if n > 0 => return "answered"
         _ => return "open"
+
 
 def option_literal(name: Option[str]) -> None:
     """A str literal as an Option payload, beside a binding arm and None."""
@@ -34,11 +37,13 @@ def option_literal(name: Option[str]) -> None:
         Some(other) => println(f"no {other}")
         None => println("nobody")
 
+
 def if_let_literal() -> None:
     """A str literal nested in an if-let pattern."""
     pair: tuple[int, str] = (1, "match")
     if let (_, "match") = pair:
         println("pair is a match")
+
 
 def main() -> None:
     """Run every form once and print what each selected."""

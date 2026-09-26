@@ -1,0 +1,42 @@
+# behavior: a generic model adopting a subtrait is accepted where the supertrait or the subtrait is required and answers both traits' methods (RFC 042)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_trait_supertraits_codegen
+# expect-stdout:
+#   1
+#   2
+#   3
+#   4
+
+"""RFC 042: trait supertraits and generic trait annotations"""
+
+
+trait Collection[T]:
+    def first(self) -> T: ...
+
+
+trait OrderedCollection[T] with Collection[T]:
+    def sorted(self) -> Self: ...
+
+
+model BoxedValue[T] with OrderedCollection:
+    value: T
+
+    def first(self) -> T:
+        return self.value
+
+    def sorted(self) -> Self:
+        return self
+
+
+def take_first(values: Collection[int]) -> int:
+    return values.first()
+
+
+def take_sorted(values: OrderedCollection[int]) -> OrderedCollection[int]:
+    return values.sorted()
+
+
+def main() -> None:
+    print(take_first(BoxedValue(value=1)))
+    print(take_sorted(BoxedValue(value=2)).first())
+    print(BoxedValue(value=3).first())
+    print(BoxedValue(value=4).sorted().first())

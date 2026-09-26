@@ -1,0 +1,14 @@
+# behavior: a variable spelled in TitleCase holding an imported Rust value is a value, so a method call on it renders the value
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_titlecase_var_not_type_codegen
+# expect-stdout:
+#   36
+
+from rust::uuid import Uuid
+
+
+def main() -> None:
+    # A runtime variable named `TitleCase` with Unknown type (external interop result).
+    # This should stay a *value* method call (`TitleCase.to_string()`), NOT be rewritten to `TitleCase::to_string()`.
+    mut TitleCase = Uuid.new_v4()
+    rendered = TitleCase.to_string()
+    println(len(rendered))

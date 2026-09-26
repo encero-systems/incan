@@ -1,0 +1,34 @@
+# behavior: a generic value passed to a method twice from a generic function comes back in both results, and a generic field of a wrapper passed to a generic function is still readable from the wrapper
+# retires: loaves/compiler/incan_emit/src/trait_bound_inference.rs::backend_clone_bounds_use_incan_policy_for_source_owned_methods
+# retires: loaves/compiler/incan_emit/src/ownership.rs::argument_plan_clone_bound_query_follows_shared_incan_arg_policy
+# expect-stdout:
+#   ["x", "x"]
+#   taken 4 kept 4
+
+model Client:
+    def send[T](self, value: T) -> list[T]:
+        return [value]
+
+
+model Wrapper[T]:
+    cursor: T
+
+
+def send_twice[T](client: Client, value: T) -> list[T]:
+    first = client.send(value)
+    second = client.send(value)
+    return first + second
+
+
+def take[T](value: T) -> str:
+    return f"taken {value}"
+
+
+def read_cursor[T](other: Wrapper[T]) -> str:
+    return take(other.cursor) + f" kept {other.cursor}"
+
+
+def main() -> None:
+    sent = send_twice(Client(), "x")
+    println(f"{sent:?}")
+    println(read_cursor(Wrapper(cursor=4)))

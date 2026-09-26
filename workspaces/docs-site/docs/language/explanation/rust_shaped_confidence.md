@@ -112,6 +112,14 @@ For user code, the rule of thumb is:
 
 Duckborrowing is not "clone until Rust accepts it". The compiler should preserve moves when it can prove a value is consumed, borrow at Rust interop boundaries where the Rust API expects references, and add `Clone` bounds only when backend-inserted cloning actually requires them.
 
+### Decorated methods
+
+A method decorator receives the method as a callable whose first parameter is the receiver, and a function the decorator returns takes the method's place. That receiver is spelled the way the method spells it: `(Box, int) -> str` for a `self` method, `(mut Box, int) -> int` for a `mut self` method. Through 0.5 these shapes had to say `&Box` and `&mut Box`, the one place ordinary Incan source had to spell how a value is passed. Everywhere else source says `self` or `mut self` and the compiler decides, and decorated methods follow the same rule.
+
+The `mut` marker states what the source means: the callable's changes to that argument are visible to the caller. `mut` on an `int`, `float` or `bool` parameter lets the function change its own copy, which the caller never sees, so such a parameter is never marked and a function type cannot mark one. The marker is part of the function type because it also decides how the argument is passed, so a callable written for one cannot stand in for the other, two function types match only when they mark the same parameters, and a library publishes the marker with the function.
+
+For a `self` method, the compiler passes the receiver to the decorator's shapes, and to the function returned in the method's place, the way the method's generated wrapper passes it, which those declarations' checked types do not say. That holds only while the compiler sees every use of them: they stay private to the method's module, their shapes are written as callable types, a decorator returns either the callable it accepts or a function of the module, by name, and does nothing else with the callable it accepts, and those functions are used only in the chain, or called directly in the module, where the compiler passes the receiver the same way. A `(F) -> F` decorator names no receiver, and a `mut self` chain's marker already says how its receiver is passed, so neither is limited. A chain outside those limits is refused (`INCAN-T0116`) rather than built to pass the receiver another way.
+
 ## What you gain
 
 You gain less signature noise in the layer where Rust's exact borrow spelling is not the point:
@@ -298,6 +306,7 @@ If the answer is yes, Incan is worth considering on its own terms.
 - [Models and classes](models_and_classes/index.md)
 - [Derives and traits](derives_and_traits.md)
 - [Duckborrowing](../../contributing/explanation/duckborrowing.md)
+- [Decorators and callable values (how-to)](../how-to/decorators.md)
 
 [^rust-ownership]: The Rust Book: [What Is Ownership?](https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html).
 [^rust-borrowing]: The Rust Book: [References and Borrowing](https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html).

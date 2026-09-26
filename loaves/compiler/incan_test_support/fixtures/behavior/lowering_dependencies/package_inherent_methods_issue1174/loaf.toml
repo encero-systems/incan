@@ -1,0 +1,9 @@
+[project]
+name = "package_inherent_methods_issue1174"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+pricing = { path = "deps/pricing" }

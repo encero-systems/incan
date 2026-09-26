@@ -216,7 +216,16 @@ impl AstLowering {
                     .insert(struct_ir.name.clone(), IrType::Struct(struct_ir.name.clone()));
                 IrDeclKind::Struct(struct_ir)
             }
-            ast::Declaration::Import(i) => self.lower_import(i, span)?,
+            ast::Declaration::Import(i) => {
+                let Some(import) = self.lower_import(i, span)? else {
+                    // The program loop skips such an import before reaching this arm, the way it skips a docstring.
+                    return Err(LoweringError {
+                        message: "an import that binds only derive vocabulary is not lowered to IR".to_string(),
+                        span: IrSpan::default(),
+                    });
+                };
+                import
+            }
             ast::Declaration::Trait(t) => IrDeclKind::Trait(self.lower_trait(t)?),
             ast::Declaration::TestModule(_) => {
                 return Err(LoweringError {

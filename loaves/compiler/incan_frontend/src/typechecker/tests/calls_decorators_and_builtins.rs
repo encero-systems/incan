@@ -1,6 +1,7 @@
 //! Callables at the call site: parameter lists and callable defaults, variadic rest parameters, fixed and variadic call
 //! unpacking, borrowed (`&`) parameter shapes, RFC 022 decorator resolution and user-defined decorators, builtin
-//! functions, and module or import shadowing of builtins (#1116).
+//! functions, and module or import shadowing of builtins (#1116). Method-decorator receivers (#1790) have their own
+//! module, `method_decorator_receivers.rs`.
 
 use super::*;
 
@@ -516,10 +517,10 @@ class Box:
   def label(self, value: int) -> str:
     return "value"
 
-def parse(box: &Box, value: int) -> int:
+def parse(box: Box, value: int) -> int:
   return value
 
-def as_int(func: (&Box, int) -> str) -> (&Box, int) -> int:
+def as_int(func: (Box, int) -> str) -> (Box, int) -> int:
   return parse
 
 def main(box: Box) -> int:
@@ -535,7 +536,7 @@ trait Service:
   @keep
   def read(self) -> int
 
-def keep(func: (&Service) -> int) -> (&Service) -> int:
+def keep(func: (Service) -> int) -> (Service) -> int:
   return func
 "#;
     assert_check_ok(source);
@@ -573,7 +574,7 @@ class Counter:
     self.value = self.value + 1
     return self.value
 
-def keep(func: (&mut Counter) -> int) -> (&mut Counter) -> int:
+def keep(func: (mut Counter) -> int) -> (mut Counter) -> int:
   return func
 "#;
     assert_check_ok(source);
