@@ -134,6 +134,83 @@ def main() -> None:
     Ok(())
 }
 
+/// A `dict.get` whose result is only read (a `match` or `if let` that reads its bindings with `len`, `println` or not
+/// at all) reads the entry in place with no copy, for a generic value, a list of models in a loop, and a Rust value
+/// that cannot be copied. A kept result is copied, and a generic value then carries the `Clone` bound it needs: on a
+/// generic function and on the `Cache[K, V]` shape, whose generic key also carries the bounds its lookup hashes with.
+#[test]
+fn dict_get_copies_only_a_kept_value() -> Result<(), Box<dyn std::error::Error>> {
+    let code = generated_rust_without_whitespace(
+        r#"
+from rust::std::sync import Mutex
+
+model Row:
+    id: int
+
+
+model Cache[K, V]:
+    items: Dict[K, V]
+
+    def __getitem__(self, key: K) -> Option[V]:
+        return self.items.get(key)
+
+
+def pick[V](table: dict[str, V], key: str) -> Option[V]:
+    return table.get(key)
+
+
+def size[V](table: dict[str, list[V]], key: str) -> int:
+    match table.get(key):
+        Some(items) => return len(items)
+        None => return 0
+
+
+def total(table: dict[str, list[Row]], keys: list[str]) -> int:
+    mut count = 0
+    for key in keys:
+        match table.get(key):
+            Some(rows) => count += len(rows)
+            None => count += 0
+    return count
+
+
+def locked(table: dict[str, Mutex[int]], key: str) -> bool:
+    match table.get(key):
+        Some(_) => return true
+        None => return false
+
+
+def main() -> None:
+    println(pick({"a": "x"}, "a").unwrap_or("none"))
+    println(size({"a": [1, 2]}, "a"))
+    println(total({"a": [Row(id=1)]}, ["a", "b"]))
+    empty: dict[str, Mutex[int]] = {}
+    println(locked(empty, "a"))
+    cache: Cache[str, int] = Cache(items={"a": 1})
+    println(cache["a"].unwrap_or(0))
+"#,
+    )?;
+    let in_place_lookups = code.matches("matchtable.get(<_asAsRef<str>>::as_ref(&key)){").count();
+    assert_eq!(
+        in_place_lookups, 3,
+        "`size`, `total` and `locked` read the entry in place: {code}"
+    );
+    assert!(
+        code.contains("V:Clone,>(table:std::collections::HashMap<String,V>,key:String)->Option<V>{returntable.get(<_asAsRef<str>>::as_ref(&key)).cloned();"),
+        "`pick` copies the kept value and bounds `V` by `Clone`: {code}"
+    );
+    assert!(
+        code.contains("V,>(table:std::collections::HashMap<String,Vec<V>>"),
+        "`size` needs no `Clone` bound: {code}"
+    );
+    assert!(
+        code.contains("impl<K:Eq+std::hash::Hash,V:Clone>Cache<K,V>{")
+            && code.contains("returnself.items.get(&key).cloned();"),
+        "`Cache.__getitem__` copies the kept value under the bounds its lookup needs: {code}"
+    );
+    Ok(())
+}
+
 /// #1794: a `const` declared `str` is a `'static` string that carries `FrozenStr`, so every `FrozenStr` destination
 /// wraps it: a plain return, a `FrozenStr | int` return and argument, a `Some(...)` in an `Option[FrozenStr]` return,
 /// argument and binding, an annotated binding, a model field, a list element and a dict value.

@@ -435,3 +435,179 @@ def seen(key: str) -> str:
     }
     Ok(())
 }
+
+/// Collect every expression node of a function body, in pre-order.
+fn body_exprs<'a>(ir: &'a IrProgram, function: &str) -> Result<Vec<&'a TypedExpr>, String> {
+    fn stmt<'a>(statement: &'a IrStmt, out: &mut Vec<&'a TypedExpr>) {
+        match &statement.kind {
+            IrStmtKind::Expr(value)
+            | IrStmtKind::Return(Some(value))
+            | IrStmtKind::Assign { value, .. }
+            | IrStmtKind::Let { value, .. } => expr(value, out),
+            IrStmtKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                expr(condition, out);
+                for inner in then_branch.iter().chain(else_branch.iter().flatten()) {
+                    stmt(inner, out);
+                }
+            }
+            IrStmtKind::Match { scrutinee, arms } => {
+                expr(scrutinee, out);
+                for arm in arms {
+                    expr(&arm.body, out);
+                }
+            }
+            IrStmtKind::For { iterable, body, .. } => {
+                expr(iterable, out);
+                for inner in body {
+                    stmt(inner, out);
+                }
+            }
+            IrStmtKind::Block(body) => {
+                for inner in body {
+                    stmt(inner, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    fn expr<'a>(node: &'a TypedExpr, out: &mut Vec<&'a TypedExpr>) {
+        out.push(node);
+        match &node.kind {
+            IrExprKind::MethodCall { receiver, args, .. } | IrExprKind::KnownMethodCall { receiver, args, .. } => {
+                expr(receiver, out);
+                for arg in args {
+                    expr(&arg.expr, out);
+                }
+            }
+            IrExprKind::BinOp { left, right, .. } => {
+                expr(left, out);
+                expr(right, out);
+            }
+            IrExprKind::UnaryOp { operand, .. } => expr(operand, out),
+            IrExprKind::Match { scrutinee, arms } => {
+                expr(scrutinee, out);
+                for arm in arms {
+                    expr(&arm.body, out);
+                }
+            }
+            IrExprKind::Block { stmts, value } => {
+                for inner in stmts {
+                    stmt(inner, out);
+                }
+                if let Some(value) = value {
+                    expr(value, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for statement in function_body(ir, function)? {
+        stmt(statement, &mut out);
+    }
+    Ok(out)
+}
+
+/// How each `dict.get` in a function reaches its use: `in place` with its IR type, or completed by `copied`/`cloned`.
+fn dict_lookup_shapes(ir: &IrProgram, function: &str) -> Result<Vec<String>, String> {
+    let nodes = body_exprs(ir, function)?;
+    let completion_of = |lookup: &TypedExpr| {
+        nodes.iter().find_map(|node| match &node.kind {
+            IrExprKind::MethodCall { receiver, method, .. } if std::ptr::eq(receiver.as_ref(), lookup) => {
+                Some(method.clone())
+            }
+            _ => None,
+        })
+    };
+    Ok(nodes
+        .iter()
+        .filter(|node| {
+            matches!(
+                node.kind,
+                IrExprKind::KnownMethodCall {
+                    kind: MethodKind::Collection(CollectionMethodKind::Get),
+                    ..
+                }
+            )
+        })
+        .map(|lookup| completion_of(lookup).unwrap_or_else(|| format!("in place: {:?}", lookup.ty)))
+        .collect())
+}
+
+/// A `dict.get` whose result only feeds a `match` or `if let` that reads its bindings (`len`, `println`, an f-string,
+/// or not at all) stays an in-place read with no copy, typed as the entry it finds; a kept result (returned, or a
+/// binding returned) is completed with `cloned`. This holds for a generic value, a list of models read in a loop, and
+/// a Rust value that cannot be copied.
+#[test]
+fn a_dict_get_whose_result_is_only_read_stays_in_place() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+from rust::std::sync import Mutex
+
+model Row:
+    id: int
+
+
+def size[V](table: dict[str, list[V]], key: str) -> int:
+    match table.get(key):
+        Some(items) => return len(items)
+        None => return 0
+
+
+def total(table: dict[str, list[Row]], keys: list[str]) -> int:
+    mut count = 0
+    for key in keys:
+        match table.get(key):
+            Some(rows) => count += len(rows)
+            None => count += 0
+    return count
+
+
+def locked(table: dict[str, Mutex[int]], key: str) -> bool:
+    match table.get(key):
+        Some(_) => return true
+        None => return false
+
+
+def shown(table: dict[str, str], key: str) -> bool:
+    if let Some(text) = table.get(key):
+        println(text)
+        return true
+    return false
+
+
+def pick[V](table: dict[str, V], key: str) -> Option[V]:
+    return table.get(key)
+
+
+def handed(table: dict[str, list[int]], key: str) -> list[int]:
+    match table.get(key):
+        Some(items) => return items
+        None => return []
+"#,
+    )?;
+    let in_place_list = |item: &str| format!("in place: Option(Ref(List({item})))");
+    for (function, expected) in [
+        ("size", vec![in_place_list("Generic(\"V\")")]),
+        ("total", vec![in_place_list("Struct(\"Row\")")]),
+        ("shown", vec!["in place: Option(Ref(String))".to_string()]),
+        ("pick", vec!["cloned".to_string()]),
+        ("handed", vec!["cloned".to_string()]),
+    ] {
+        assert_eq!(
+            dict_lookup_shapes(&ir, function)?,
+            expected,
+            "`{function}` reads its lookup this way"
+        );
+    }
+    let locked = dict_lookup_shapes(&ir, "locked")?;
+    assert!(
+        matches!(locked.as_slice(), [shape] if shape.starts_with("in place: Option(Ref(")),
+        "`locked` reads its lookup in place, got {locked:?}"
+    );
+    Ok(())
+}

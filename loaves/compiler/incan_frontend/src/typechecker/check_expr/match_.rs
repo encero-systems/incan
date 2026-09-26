@@ -189,6 +189,7 @@ impl TypeChecker {
                 self.remove_covered_union_members(remaining, &arm.node.pattern, &subject_ty);
             }
         }
+        self.note_dict_lookup_match(subject, arms);
 
         arm_types.first().cloned().unwrap_or(ResolvedType::Unit)
     }

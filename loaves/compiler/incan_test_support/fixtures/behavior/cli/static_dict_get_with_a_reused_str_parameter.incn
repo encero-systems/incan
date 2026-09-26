@@ -1,6 +1,8 @@
-# behavior: a str parameter handed to get, insert, a membership test and append on module statics is still readable after each call, also when the same name is the key of an index assignment or part of the receiver's path, a str literal inserted into a static dict is stored as its key, and get returns the stored value on a static dict, a local bound to one and a dict parameter
+# behavior: a str parameter handed to get, insert, a membership test and append on module statics is still readable after each call, also when the same name is the key of an index assignment or part of the receiver's path, a str literal inserted into a static dict is stored as its key, and get returns the stored value on a static dict, a local bound to one, a dict parameter and a generic dict, read in place when only read
+# retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::dict_get_copies_only_a_kept_value
 # retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::local_dict_get_answers_with_the_stored_value
 # retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::static_collection_arguments_stay_readable_issue1793
+# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::a_dict_get_whose_result_is_only_read_stays_in_place
 # retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::arguments_read_after_a_static_method_call_are_kept_readable_issue1793
 # retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::arguments_read_again_by_the_generated_code_are_kept_readable_issue1793
 # retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::dict_get_answers_with_the_stored_value
@@ -14,6 +16,8 @@
 #   true
 #   2
 #   4
+#   2
+#   x
 
 static counts: dict[str, int] = {}
 static names: list[str] = []
@@ -58,6 +62,16 @@ def aliased(name: str) -> int:
     return found.unwrap_or(0)
 
 
+def size[V](table: dict[str, list[V]], key: str) -> int:
+    match table.get(key):
+        Some(items) => return len(items)
+        None => return 0
+
+
+def pick[V](table: dict[str, V], key: str) -> Option[V]:
+    return table.get(key)
+
+
 def total(table: dict[str, int], keys: list[str]) -> int:
     mut sum = 0
     for key in keys:
@@ -80,3 +94,5 @@ def main() -> None:
     println(linked("a"))
     println(aliased("c"))
     println(total({"x": 1, "y": 3}, ["x", "y", "z"]))
+    println(size({"a": [1, 2]}, "a"))
+    println(pick({"a": "x"}, "a").unwrap_or("none"))

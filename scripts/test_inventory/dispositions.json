@@ -1322,6 +1322,10 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "dict_get_copies_only_a_kept_value": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/static_dict_get_with_a_reused_str_parameter.incn",
+          "notes": "Asserts the generated Rust of in-place lookups (a generic value, a list of models in a loop, a Rust value that cannot be copied) and of kept lookups with their inferred `Clone`/`Eq + Hash` bounds; retires with `incan_emit`. The behavior is carried by the named fixture (#1793)."
+        },
         "frozen_str_const_is_converted_at_str_destinations_issue1794": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/str_const_returned_as_frozen_str.incn",
           "notes": "Asserts the generated Rust of a `FrozenStr` const at `str` destinations (converted to an owned string as a return, a union member, a `Some` payload, an argument and a binding); retires with `incan_emit`. The behavior is carried by the named fixture (#1794)."
@@ -2558,6 +2562,10 @@
       "split_target": "",
       "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "tests": {
+        "a_dict_get_whose_result_is_only_read_stays_in_place": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/static_dict_get_with_a_reused_str_parameter.incn",
+          "notes": "Asserts the legacy IR shape of a `dict.get` whose result is only read (an in-place lookup, no copy) and of a kept result (completed with `cloned`); retires with `incan_ir`. The behavior, a generic dict read in a `match` and returned, is carried by the named fixture (#1793)."
+        },
         "arguments_read_after_a_static_method_call_are_kept_readable_issue1793": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/static_dict_get_with_a_reused_str_parameter.incn",
           "notes": "Asserts the recorded argument shape on the legacy IR (an argument of a builtin method on static storage that is read after the call is handed over as a view of itself when the method reads it in place and as a copy when the method stores it, a value at its last read as it is, a string literal typed as a `'static` string); retires with `incan_ir`. The behavior, a `str` parameter still readable after `get`, `insert`, `in` and `append` on module statics, is carried by the named fixture (#1793)."

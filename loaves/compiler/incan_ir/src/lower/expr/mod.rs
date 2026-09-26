@@ -1658,7 +1658,8 @@ impl AstLowering {
                                     .then_some(MethodKind::Collection(CollectionMethodKind::Contains))
                             });
                             let contains_call = if let Some(kind) = contains_kind {
-                                Self::known_method_call(collection, kind, contains_args)
+                                self.known_method_call(r.span, collection, kind, contains_args, IrType::Bool)
+                                    .0
                             } else {
                                 let arg_policy = self.regular_method_call_arg_policy(
                                     r.span,
@@ -1955,7 +1956,7 @@ impl AstLowering {
                     })
                     .flatten()
                 {
-                    (Self::known_method_call(receiver, kind, args_ir), expr_ty)
+                    self.known_method_call(expr_span, receiver, kind, args_ir, expr_ty)
                 } else {
                     let imported_type_method_signature = match &o.node {
                         ast::Expr::Ident(name) => match self.import_aliases.get(name).cloned() {

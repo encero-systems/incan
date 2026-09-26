@@ -2461,6 +2461,18 @@ fn scan_expr_for_bounds(
                     add_bound(bounds_map, tp_name, IrTraitBound::simple(tb::CLONE));
                 }
             }
+            // `.cloned()` over the entry an in-place lookup finds (`Option<&V>`) copies the `V`, so every type
+            // parameter in `V` must be `Clone`; lowering completes a `dict.get` whose result is kept this way.
+            if method == "cloned"
+                && let IrType::Option(found) = &receiver.ty
+                && let IrType::Ref(value) = found.as_ref()
+            {
+                let mut value_type_params = HashSet::new();
+                collect_generic_type_param_names(value, type_params, &mut value_type_params);
+                for tp_name in value_type_params {
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
+                }
+            }
             scan_expr_for_bounds(receiver, type_params, params, bounds_map);
             for arg in args {
                 scan_expr_for_bounds(&arg.expr, type_params, params, bounds_map);
@@ -2475,8 +2487,22 @@ fn scan_expr_for_bounds(
             }
         }
 
-        // ---- Known method calls: recurse ----
-        IrExprKind::KnownMethodCall { receiver, args, .. } => {
+        // ---- Known method calls: a keyed dict method hashes its key; recurse ----
+        IrExprKind::KnownMethodCall { receiver, kind, args } => {
+            if matches!(
+                kind,
+                MethodKind::Collection(
+                    CollectionMethodKind::Get | CollectionMethodKind::Contains | CollectionMethodKind::Insert
+                )
+            ) && let Some(key_ty) = dict_key_type(&receiver.ty)
+            {
+                let mut key_type_params = HashSet::new();
+                collect_generic_type_param_names(key_ty, type_params, &mut key_type_params);
+                for tp_name in key_type_params {
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::EQ));
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::HASH));
+                }
+            }
             scan_expr_for_bounds(receiver, type_params, params, bounds_map);
             for arg in args {
                 scan_expr_for_bounds(&arg.expr, type_params, params, bounds_map);
@@ -2927,6 +2953,15 @@ fn binop_to_trait_bound(op: &BinOp, tp_name: &str) -> Option<IrTraitBound> {
 }
 
 /// Add a trait bound to a type parameter, avoiding duplicates.
+/// Return the key type of a dict receiver, looking through the reference wrapper of a `mut` parameter.
+fn dict_key_type(ty: &IrType) -> Option<&IrType> {
+    match ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => dict_key_type(inner),
+        IrType::Dict(key, _) => Some(key.as_ref()),
+        _ => None,
+    }
+}
+
 fn add_bound(bounds_map: &mut HashMap<String, Vec<IrTraitBound>>, tp_name: &str, bound: IrTraitBound) {
     let bounds = bounds_map.entry(tp_name.to_string()).or_default();
     if !bounds.contains(&bound) {

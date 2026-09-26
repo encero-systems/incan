@@ -32,13 +32,13 @@ counts: HashMap[str, int] = HashMap.new()
 
 ## Method naming conventions you may see
 
-| Python habit | Incan | Generated Rust you may read | Notes |
-| --- | --- | --- | --- |
-| `dict.get(key)` | `d.get(key)` | `map.get(&key)` | Returns `Option` holding the stored value |
-| `dict[key]` | `d[key]` | `map[&key]` | Panics if missing |
-| `dict.get(key, default)` | `d.get(key).unwrap_or(default)` | `map.get(&key).copied().unwrap_or(default)` | The stored value or the default |
-| `str(x)` | `str(x)` | `x.to_string()` | Convert to string |
-| `len(x)` | `len(x)` | `x.len()` | Length |
+| Python habit | Incan | Notes |
+| --- | --- | --- |
+| `dict.get(key)` | `d.get(key)` | Returns `Option` holding the stored value |
+| `dict[key]` | `d[key]` | Panics if missing |
+| `dict.get(key, default)` | `d.get(key).unwrap_or(default)` | The stored value or the default |
+| `str(x)` | `str(x)` | Convert to string |
+| `len(x)` | `len(x)` | Length |
 
 ## Option and Result: unwrap-like patterns
 

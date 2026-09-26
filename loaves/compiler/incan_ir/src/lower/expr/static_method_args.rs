@@ -14,18 +14,22 @@ use incan_frontend::ast::{self, Spanned};
 use incan_frontend::typechecker::IdentKind;
 
 impl AstLowering {
-    /// Build a builtin-family method call.
+    /// Build a builtin-family method call at `call_span`, returning it with its IR type.
     ///
     /// On module static storage, each argument is prepared for the temporary emission binds it to before it enters
     /// the storage access (see [`Self::prepare_static_method_arg`]). A dict's `get` answers with the stored value
-    /// (`Option[V]`): on static storage the storage access copies the entry out, and on any other dict the lookup
-    /// reads the entry in place, so the call is completed with a copy of the entry it finds, `copied` for a `Copy`
-    /// value and `cloned` otherwise.
+    /// (`Option[V]`, `result_ty`): on static storage the storage access copies the entry out. On any other dict the
+    /// lookup reads the entry in place. When the checker recorded that the result is only read (a `match` or `if let`
+    /// whose bindings are only read), the call stays that in-place read and its IR type says so (`Option[&V]` in Rust);
+    /// otherwise it is completed with a copy of the entry it finds, `copied` for a `Copy` value and `cloned` otherwise.
     pub(in crate::lower) fn known_method_call(
+        &self,
+        call_span: ast::Span,
         receiver: TypedExpr,
         kind: MethodKind,
         mut args: Vec<IrCallArg>,
-    ) -> IrExprKind {
+        result_ty: IrType,
+    ) -> (IrExprKind, IrType) {
         let reads_static = Self::expr_reads_static_storage(&receiver);
         if reads_static {
             let mut receiver_reads = HashSet::new();
@@ -44,10 +48,20 @@ impl AstLowering {
             kind,
             args,
         };
+        let only_read = self
+            .type_info
+            .as_ref()
+            .is_some_and(|info| info.is_read_only_dict_lookup(call_span));
         match in_place_get_value {
-            Some(value_ty) => Self::copied_dict_entry(call, value_ty),
-            None => call,
+            Some(value_ty) if only_read => (call, Self::found_entry_type(value_ty)),
+            Some(value_ty) => (Self::copied_dict_entry(call, value_ty), result_ty),
+            None => (call, result_ty),
         }
+    }
+
+    /// The Rust shape of an in-place dict lookup's result: the entry it finds, read where it is stored.
+    fn found_entry_type(value_ty: IrType) -> IrType {
+        IrType::Option(Box::new(IrType::Ref(Box::new(value_ty))))
     }
 
     /// Keep the arguments of a Rust collection method on module static storage readable after the call.
@@ -84,9 +98,8 @@ impl AstLowering {
     /// Complete an in-place dict lookup with a copy of the entry it finds, so the call answers with `Option[V]`.
     fn copied_dict_entry(lookup: IrExprKind, value_ty: IrType) -> IrExprKind {
         let method = if value_ty.is_copy() { "copied" } else { "cloned" };
-        let found_entry = IrType::Option(Box::new(IrType::Ref(Box::new(value_ty))));
         IrExprKind::MethodCall {
-            receiver: Box::new(TypedExpr::new(lookup, found_entry)),
+            receiver: Box::new(TypedExpr::new(lookup, Self::found_entry_type(value_ty))),
             method: method.to_string(),
             dispatch: None,
             type_args: Vec::new(),

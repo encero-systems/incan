@@ -5909,9 +5909,12 @@ impl TypeChecker {
                     match id {
                         M::Keys => return list_ty(key),
                         M::Values => return list_ty(val),
-                        // `dict.get(k)` answers with the stored value, static or not; lowering completes the
-                        // lookup with a copy of the entry it finds.
-                        M::Get => return option_ty(val.clone()),
+                        // `dict.get(k)` answers with the stored value, static or not. Lowering reads the entry in
+                        // place when the result is only read and copies it otherwise (`check_expr/dict_lookups.rs`).
+                        M::Get => {
+                            self.note_dict_lookup_value(span, &val);
+                            return option_ty(val.clone());
+                        }
                         M::Insert => return ResolvedType::Unit,
                         M::ContainsKey => {
                             self.validate_dict_contains_key_call(&key, args, &arg_types, span);
