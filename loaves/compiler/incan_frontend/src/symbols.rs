@@ -1266,6 +1266,25 @@ impl SymbolTable {
         self.current_scope
     }
 
+    /// Whether a read from the current scope of a binding held by the scope `defining` crosses a callable's own scope
+    /// on the way out, so the read sits in a closure nested inside the callable that holds the binding and captures it.
+    pub fn read_crosses_callable_scope(&self, defining: usize) -> bool {
+        let mut scope_idx = self.current_scope;
+        while scope_idx != defining {
+            let Some(scope) = self.scopes.get(scope_idx) else {
+                return false;
+            };
+            if matches!(scope.kind, ScopeKind::Function | ScopeKind::Method { .. }) {
+                return true;
+            }
+            let Some(parent) = scope.parent else {
+                return false;
+            };
+            scope_idx = parent;
+        }
+        false
+    }
+
     /// Get the current scope kind
     pub fn current_scope_kind(&self) -> ScopeKind {
         self.scopes[self.current_scope].kind

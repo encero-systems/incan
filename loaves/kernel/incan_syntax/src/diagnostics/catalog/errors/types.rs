@@ -2485,33 +2485,38 @@ pub fn list_clone_requires_clone(elem_type: &str, span: Span) -> CompileError {
 
 /// Where a list whose items a `for` loop takes out is used again (#1844).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TakenListReuse {
+pub enum TakenListReuse<'a> {
     /// A read of the list after the loop.
     AfterLoop,
     /// A read of the list inside the body of the loop that takes its items.
     InsideLoop,
     /// An enclosing loop that runs the `for` loop again over the list it already emptied.
     RepeatedLoop,
+    /// A read, after the loop, of the named closure that captured the list before the loop.
+    ClosureAfterLoop(&'a str),
+    /// A read, inside the loop body, of the named closure that captured the list before the loop.
+    ClosureInsideLoop(&'a str),
 }
 
 /// Report a list used again after a `for` loop took its items out (#1844).
 ///
-/// The loop body hands each item on by value (it awaits, returns, assigns or passes the item) and `item_ty` can be
-/// neither copied nor cloned, so the loop takes the items out of `list`. For a read of the list inside or after the
-/// loop, `use_span` is the read and `related_span` the loop's iterable; when an enclosing loop repeats the loop,
-/// `use_span` is the loop's iterable and `related_span` the list's definition outside the enclosing loop.
-/// `INCAN-T0119` is its stable code.
+/// The loop body hands each item on by value and `item_ty` can be neither copied nor cloned, so the loop takes the
+/// items out of `list`. For a read of the list, or of a closure that captured it, inside or after the loop, `use_span`
+/// is the read and `related_span` the loop's iterable; when an enclosing loop repeats the loop, `use_span` is the
+/// loop's iterable and `related_span` the list's definition outside the enclosing loop. `INCAN-T0119` is its stable
+/// code.
 pub fn taken_list_used_again(
     list: &str,
     item_ty: &str,
-    reuse: TakenListReuse,
+    reuse: TakenListReuse<'_>,
     use_span: Span,
     related_span: Span,
 ) -> CompileError {
+    let loop_label = format!("the `for` loop takes the items of `{list}` here");
     let (message, related_label, hint) = match reuse {
         TakenListReuse::AfterLoop => (
             format!("`{list}` is used after the `for` loop that took its items"),
-            format!("the `for` loop takes the items of `{list}` here"),
+            loop_label,
             format!(
                 "Read what the later code needs from `{list}` before the loop, or collect the results in a new list \
                  inside it"
@@ -2519,7 +2524,7 @@ pub fn taken_list_used_again(
         ),
         TakenListReuse::InsideLoop => (
             format!("`{list}` is used inside the `for` loop that takes its items"),
-            format!("the `for` loop takes the items of `{list}` here"),
+            loop_label,
             format!("Read what the loop needs from `{list}` before the loop starts"),
         ),
         TakenListReuse::RepeatedLoop => (
@@ -2527,13 +2532,23 @@ pub fn taken_list_used_again(
             format!("`{list}` is defined outside the enclosing loop"),
             format!("Build `{list}` inside the enclosing loop, so each pass iterates a list of its own"),
         ),
+        TakenListReuse::ClosureAfterLoop(closure) => (
+            format!("`{closure}` captures `{list}` and is used after the `for` loop that took the items of `{list}`"),
+            loop_label,
+            format!("Call `{closure}` before the loop, or have it read values taken from `{list}` before the loop"),
+        ),
+        TakenListReuse::ClosureInsideLoop(closure) => (
+            format!("`{closure}` captures `{list}` and is used inside the `for` loop that takes the items of `{list}`"),
+            loop_label,
+            format!("Call `{closure}` before the loop, or have it read values taken from `{list}` before the loop"),
+        ),
     };
     CompileError::type_error(message, use_span)
         .with_stable_code("INCAN-T0119")
         .with_related_span(related_span, related_label)
         .with_note(format!(
-            "The loop body hands each `{item_ty}` item on by value (it awaits, returns, assigns or passes it), and \
-             `{item_ty}` can be neither copied nor cloned, so the loop takes the items out of `{list}`"
+            "The loop body hands each `{item_ty}` item on by value, and a `{item_ty}` can be neither copied nor \
+             cloned, so the loop takes the items out of `{list}`"
         ))
         .with_hint(hint)
 }

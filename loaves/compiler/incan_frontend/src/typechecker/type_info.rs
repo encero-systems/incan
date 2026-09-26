@@ -1445,8 +1445,10 @@ pub struct ProtocolArtifacts {
     /// `for` loops that take the items out of the list binding they iterate, keyed by iterable expression span
     /// (#1844).
     ///
-    /// The loop body hands each item on by value and the item type can be neither copied nor cloned, so lowering
-    /// iterates the list by value; the checker refused every later use of the list.
+    /// The loop body hands on by value items that can be neither copied nor cloned, so lowering iterates the list by
+    /// value and owns each item. The checker refuses every read of the list, and of a closure bound to a name that
+    /// captured it, inside the loop or after it, until an assignment that runs on every path after the loop gives the
+    /// binding a new list.
     pub item_taking_iterations: HashSet<(usize, usize)>,
 }
 

@@ -733,11 +733,13 @@ impl TypeChecker {
                     .map(|var_info| var_info.ty.clone())
             })
             .flatten();
+        let enclosing_closure_binding = self.begin_closure_binding(&assign.name, &assign.value);
         let value_ty = if let Some(var_ty) = reassignment_ty.as_ref() {
             self.check_expr_with_expected(&assign.value, Some(var_ty))
         } else {
             self.check_expr_with_expected(&assign.value, annotated_ty.as_ref())
         };
+        self.finish_closure_binding(enclosing_closure_binding);
 
         // A `const` is registered as a module-scope variable, so the scope-chain walk below finds it. Answer the
         // more specific question first: reassigning a const is not a mutability mistake to be fixed with `mut`, it
@@ -771,7 +773,7 @@ impl TypeChecker {
             }
             self.consumed_iterator_bindings.remove(&assign.name);
             self.transferred_c_resource_bindings.remove(&assign.name);
-            self.forget_taken_list(&assign.name);
+            self.note_list_reassignment(&assign.name);
             self.mark_open_rust_generic_binding_read(&assign.name);
             return;
         }
@@ -918,7 +920,7 @@ impl TypeChecker {
                 }
                 self.consumed_iterator_bindings.remove(name);
                 self.transferred_c_resource_bindings.remove(name);
-                self.forget_taken_list(name);
+                self.note_list_reassignment(name);
                 self.mark_open_rust_generic_binding_read(name);
                 return;
             }
@@ -1589,7 +1591,7 @@ impl TypeChecker {
                 self.infer_iterator_element_type_from_expr(&for_stmt.iter, &iter_ty)
             }
         };
-        self.plan_for_item_taking(for_stmt, &elem_ty);
+        let takes_items = self.plan_for_item_taking(for_stmt, &elem_ty);
 
         self.symbols.enter_scope(ScopeKind::Block);
         // Record the resolved element type at the pattern's own span. Body IR's `lower_for` already reads the loop
@@ -1598,7 +1600,7 @@ impl TypeChecker {
         // bindings would carry `Unknown` even though the element type is fully resolved right here.
         self.record_expr_type(for_stmt.pattern.span, elem_ty.clone());
         self.define_for_pattern_bindings(&for_stmt.pattern, &elem_ty);
-        self.remember_for_pattern_bindings(&for_stmt.pattern.node);
+        self.remember_for_pattern_bindings(&for_stmt.pattern.node, takes_items);
         self.push_loop_context(LoopContextKind::Statement, None);
 
         self.check_statement_block(&for_stmt.body);

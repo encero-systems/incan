@@ -86,7 +86,16 @@ from std.async.task import JoinHandle, TaskJoinError, spawn, spawn_blocking, yie
 
 Awaiting a handle produces `Result[T, TaskJoinError]`. Dropping it detaches the task. `handle.abort() -> None` requests cancellation of async work; for `spawn_blocking`, abort can only prevent work that is still queued.
 
-A handle can be neither copied nor cloned. A `for` loop over a list of handles held by a local binding or by a parameter not marked `mut`, whose body awaits each handle, returns it, assigns it to another name, passes it to a call or places it in a new value, takes the handles out of the list. Reading the list inside the loop or after it, or running the loop again from an enclosing loop over a list built outside that loop, is refused with `INCAN-T0119`.
+A handle can be neither copied nor cloned. A `for` loop over a list of handles takes the handles out of the list when:
+
+- the list is a local binding, the binding of an enclosing loop that takes its own items, or a parameter not marked `mut`; and
+- the loop body awaits a handle, returns or yields it, breaks with it, assigns it to another name, passes it to a call, places it in a new tuple, list, set or dict, or, for a list of lists of handles, iterates it in a nested `for` loop that takes its handles.
+
+After such a loop these are refused with `INCAN-T0119`:
+
+- a read of the list inside the loop or after it, until an assignment that runs on every path after the loop gives the name a new list;
+- a read, inside the loop or after it, of a closure bound to a name that captured the list before the loop;
+- running the loop again from an enclosing loop over a list built outside that loop, unless each pass assigns the list a new one before the loop.
 
 ```incan
 handles = [spawn(work()), spawn(work())]

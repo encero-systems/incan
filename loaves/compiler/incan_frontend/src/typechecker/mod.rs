@@ -151,6 +151,9 @@ pub struct LoopContext {
     pub break_types: Vec<(ResolvedType, Span)>,
     /// Symbol-table scope of the loop body: a binding held by an outer scope outlives each pass of the loop.
     pub scope: usize,
+    /// How many statement blocks surround the loop; its body is the next one, so an assignment in a block deeper than
+    /// this runs in every pass of the loop that reaches it.
+    pub block_depth: usize,
 }
 
 /// Resolved target for a source-level `type Alias = Target` declaration.
@@ -917,6 +920,7 @@ impl TypeChecker {
             expected_break_ty,
             break_types: Vec::new(),
             scope: self.symbols.current_scope_index(),
+            block_depth: self.item_taking_block_depth(),
         });
     }
 

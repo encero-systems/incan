@@ -94,6 +94,13 @@ pub struct SurfaceTypeInfo {
     pub kind: SurfaceTypeKind,
     pub ownership: SurfaceTypeOwnership,
     pub item: LangItemInfo<SurfaceTypeId>,
+    /// Whether a value of this type can be neither copied nor cloned, so a use that takes it by value moves the one
+    /// value out of the place that holds it.
+    ///
+    /// Set only where the runtime type is known to implement neither `Copy` nor `Clone` and the checker relies on it:
+    /// a `for` loop whose body hands such an item on by value takes the items out of the list it iterates (#1844).
+    /// An unset flag does not claim that the type can be cloned.
+    pub not_cloneable: bool,
 }
 
 const RUNTIME_ASYNC_SYNC: SurfaceTypeOwnership = runtime(
@@ -176,7 +183,7 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
         Since(0, 1),
     ),
     // Task handles
-    info(
+    not_cloneable(info(
         SurfaceTypeId::JoinHandle,
         "JoinHandle",
         SurfaceTypeKind::Generic,
@@ -184,7 +191,7 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
         "Handle to a spawned task.",
         RFC::_000,
         Since(0, 1),
-    ),
+    )),
     info(
         SurfaceTypeId::TaskJoinError,
         "TaskJoinError",
@@ -401,6 +408,12 @@ pub fn category(id: SurfaceTypeId) -> SurfaceTypeCategory {
     info_for(id).ownership.category
 }
 
+/// Whether a value of this surface type can be neither copied nor cloned; see [`SurfaceTypeInfo::not_cloneable`].
+#[must_use]
+pub fn is_not_cloneable(id: SurfaceTypeId) -> bool {
+    info_for(id).not_cloneable
+}
+
 /// Iterate over all surface types with the given implementation owner.
 pub fn types_for_owner(owner: SurfaceTypeOwner) -> impl Iterator<Item = &'static SurfaceTypeInfo> {
     SURFACE_TYPES.iter().filter(move |t| t.ownership.owner == owner)
@@ -483,6 +496,15 @@ const fn info(
             stability: Stability::Stable,
             examples: &[],
         },
+        not_cloneable: false,
+    }
+}
+
+/// Mark a surface type entry whose values can be neither copied nor cloned.
+const fn not_cloneable(entry: SurfaceTypeInfo) -> SurfaceTypeInfo {
+    SurfaceTypeInfo {
+        not_cloneable: true,
+        ..entry
     }
 }
 

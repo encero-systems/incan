@@ -433,8 +433,8 @@ const TAKEN_LIST_USED_AGAIN: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     title: "List used again after a `for` loop took its items",
     severity: "error",
     phase: "typecheck",
-    summary: "A `for` loop takes the items out of a list whose item type can be neither copied nor cloned, and the list is used after the loop, inside it, or by a repeat of the loop.",
-    explanation: "A `for` loop over a list reads each item where it stays, so the list keeps its items. When the loop body hands the item on by value, by awaiting it, returning it, assigning it to another name or passing it to a call, a copyable or cloneable item is copied, and an item that can be neither, such as a `JoinHandle[T]`, is taken out of the list instead. The loop then takes every item out of the list, which is only possible when nothing reads the list again: a read of the list after the loop or inside its body, or an enclosing loop that runs the `for` loop again, is refused. A list the loop takes from is a local binding or a parameter not marked `mut`.",
+    summary: "A `for` loop takes the task handles out of a list, and the list is used inside or after the loop, through a closure that captured it, or by a repeat of the loop.",
+    explanation: "A `for` loop over a list reads each item where it stays, so the list keeps its items, and an item the loop body hands on by value is copied out of it. A `JoinHandle[T]` can be neither copied nor cloned, so when the body hands a handle on by value, by awaiting it, returning or yielding it, breaking with it, assigning it to another name, passing it to a call, placing it in a new tuple, list, set or dict, or iterating it (a list of handles) in a nested `for` loop that takes its items, the loop takes every handle out of the list instead. That is only possible when nothing reads the list again, so these are refused: a read of the list inside the loop or after it, a read inside or after the loop of a closure bound to a name that captured the list before it, and an enclosing loop that runs the `for` loop again over a list built outside it, unless each pass assigns the list a new one first. An assignment of a new list that runs on every path after the loop makes the name readable again. A list the loop takes from is a local binding, the binding of an enclosing loop that takes its own items, or a parameter not marked `mut`.",
     examples: &[
         "from std.async import spawn\n\nasync def work() -> int:\n    return 1\n\nasync def main() -> None:\n    handles = [spawn(work()), spawn(work())]\n    for handle in handles:\n        match await handle:\n            Ok(value) => println(value)\n            Err(_) => println(\"join failed\")\n    println(len(handles))",
     ],
@@ -446,6 +446,7 @@ const TAKEN_LIST_USED_AGAIN: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
         "Read what the later code needs from the list before the loop, such as `count = len(handles)`.",
         "Collect the results in a new list inside the loop and use that list afterwards.",
         "Build the list inside the enclosing loop, so each pass iterates a list of its own.",
+        "Call a closure that reads the list before the loop.",
     ],
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/stdlib/async/"),
 };

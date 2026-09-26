@@ -314,23 +314,29 @@ impl TypeChecker {
     }
 
     /// Type-check a block race arm, using a trailing expression statement as the arm value.
+    ///
+    /// The arm is a statement block of its own for `for` loop planning: only the winning arm runs, so an assignment in
+    /// it does not run on every path.
     fn check_race_arm_block_body(&mut self, stmts: &[Spanned<Statement>]) -> ResolvedType {
         let Some((last, prefix)) = stmts.split_last() else {
             return ResolvedType::Unit;
         };
 
         self.report_unreachable_after_return(stmts);
+        self.enter_item_taking_block();
         for stmt in prefix {
             self.check_statement(stmt);
         }
 
-        match &last.node {
+        let arm_ty = match &last.node {
             Statement::Expr(expr) => self.check_expr(expr),
             _ => {
                 self.check_statement(last);
                 ResolvedType::Unit
             }
-        }
+        };
+        self.exit_item_taking_block();
+        arm_ty
     }
 
     /// Validate the `?` (try) operator.

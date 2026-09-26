@@ -220,7 +220,17 @@ async def main() -> None:
     println(len(results))
 ```
 
-Awaiting a handle uses it up, so the loop takes the handles out of `handles`, and the compiler refuses any later read of `handles` with `INCAN-T0119`. Keep what the rest of the function needs in a list of its own, like `results` above, or read it before the loop, such as `count = len(handles)`. Build the list inside an enclosing `while` or `loop:` when that loop awaits a fresh set of tasks on each pass.
+Awaiting a handle uses it up, so the loop takes the handles out of `handles`. The compiler refuses, with `INCAN-T0119`, a read of `handles` inside or after the loop, and a use inside or after the loop of a named closure that read `handles` before it. Keep what the rest of the function needs in a list of its own, like `results` above, or read it before the loop, such as `count = len(handles)`. To reuse the name, assign it a new list after the loop, outside any branch. When an enclosing `while` or `loop:` awaits a fresh set of tasks on each pass, build the list inside that loop.
+
+A list of lists of handles works the same way, one group at a time:
+
+```incan
+for group in groups:
+    for handle in group:
+        match await handle:
+            Ok(value) => results.append(value)
+            Err(error) => println(f"task failed: {error.message()}")
+```
 
 ### spawn_blocking
 

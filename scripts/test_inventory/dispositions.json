@@ -3841,7 +3841,7 @@
     },
     "loaves/compiler/incan_frontend/src/typechecker/tests/for_item_taking.rs": {
       "disposition": "keep",
-      "notes": "typechecker unit tests for #1844: which `for` loops take the items out of their list, the fact recorded for lowering, and the `INCAN-T0119` refusal of the list read after the loop, inside it, or by an enclosing loop that repeats it; typechecker only, no emit/driver dependency. `list_read_inside_the_loop_that_takes_its_items_is_refused_issue1844` and `enclosing_loop_repeating_a_taking_loop_is_refused_issue1844` are the proofs of those two cases: the refusal fixture reads the list after the loop.",
+      "notes": "typechecker unit tests for #1844: which `for` loops take the items out of their list (only `JoinHandle[T]` items; channel ends and locks stay in place), the fact recorded for lowering, and the `INCAN-T0119` refusal of the list read inside or after the loop, of a capturing closure used after it, and of an enclosing loop that repeats it; typechecker only, no emit/driver dependency. The inside-the-loop, repeated-loop, closure and branch-or-body reassignment refusals are proved here only: the refusal fixture reads the list after the loop.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -4643,6 +4643,10 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "channel_ends_and_locks_keep_their_list_issue1844": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/passing_channel_senders_and_locks_on.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (loops passing senders and locks on keep iterating their list in place; a parenthesized list of handles iterates by value); retires with `incan_ir`. The behavior, senders and locks passed on with both lists read afterwards, is carried by the named fixture; the parenthesized list by `cli/awaiting_task_handles_of_nested_and_parenthesized_lists.incn` (#1844)."
+        },
         "copyable_and_cloneable_items_keep_their_list_issue1844": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/passing_each_task_handle_of_a_list_on.incn",
           "notes": "Asserts the recorded shape on the legacy IR (a loop over strings, integers, models, or handles it does not hand on keeps iterating its list in place); retires with `incan_ir`. The behavior, strings and models passed on in a loop with their lists read afterwards, is carried by the named fixture (#1844)."
@@ -4654,6 +4658,10 @@
         "loop_awaiting_each_handle_iterates_the_list_by_value_issue1844": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/awaiting_each_task_handle_of_a_list.incn",
           "notes": "Asserts the recorded shape on the legacy IR (a loop awaiting each handle iterates the list through `into_iter()` and awaits the owned handle); retires with `incan_ir`. The behavior, each spawned task's result printed, is carried by the named fixture (#1844)."
+        },
+        "nested_loop_over_an_owned_loop_binding_iterates_it_by_value_issue1844": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/awaiting_task_handles_of_nested_and_parenthesized_lists.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (both loops over a list of lists of handles iterate by value and each handle is awaited owned); retires with `incan_ir`. The behavior, each group's handles awaited in order, is carried by the named fixture (#1844)."
         }
       },
       "twin": ""

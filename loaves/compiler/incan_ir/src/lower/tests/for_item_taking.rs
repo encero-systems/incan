@@ -196,3 +196,93 @@ async def main() -> None:
     }
     Ok(())
 }
+
+/// #1844: channel ends and locks can be cloned at runtime, so loops that pass each one on keep iterating their list in
+/// place and the generated Rust stays what it was; a parenthesized list of handles is taken like the bare name.
+#[test]
+fn channel_ends_and_locks_keep_their_list_issue1844() -> Result<(), String> {
+    let mut ir = lower_checked_source(
+        r#"
+from std.async import channel, spawn, Sender, Mutex
+
+async def work() -> int:
+    return 1
+
+def forward(tx: Sender[int]) -> None:
+    pass
+
+def hold(lock: Mutex[int]) -> None:
+    pass
+
+async def main() -> None:
+    tx, rx = channel(4)
+    senders: list[Sender[int]] = [tx]
+    for sender in senders:
+        forward(sender)
+    locks: list[Mutex[int]] = [Mutex.new(1)]
+    for lock in locks:
+        hold(lock)
+    println(len(senders) + len(locks))
+    handles = [spawn(work())]
+    for handle in (handles):
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
+"#,
+    )?;
+    let shapes = loop_shapes(&mut ir, "main")?;
+    let [senders, locks, handles] = shapes.iterables.as_slice() else {
+        return Err(format!("expected three loops, got {:?}", shapes.iterables));
+    };
+    for (iterable, list) in [(senders, "senders"), (locks, "locks")] {
+        assert!(
+            matches!(&iterable.kind, IrExprKind::Var { name, .. } if name == list),
+            "the loop over `{list}` must keep iterating the list in place, got {iterable:?}"
+        );
+    }
+    assert!(
+        matches!(&handles.kind, IrExprKind::MethodCall { method, .. } if method == "into_iter"),
+        "the loop over the parenthesized handles must iterate the list by value, got {handles:?}"
+    );
+    Ok(())
+}
+
+/// #1844: a loop over the binding of an enclosing loop that takes its items iterates that binding by value, so each
+/// handle of a list of lists is awaited owned.
+#[test]
+fn nested_loop_over_an_owned_loop_binding_iterates_it_by_value_issue1844() -> Result<(), String> {
+    let mut ir = lower_checked_source(
+        r#"
+from std.async import spawn
+
+async def work() -> int:
+    return 1
+
+async def main() -> None:
+    groups = [[spawn(work())], [spawn(work()), spawn(work())]]
+    for group in groups:
+        for handle in group:
+            match await handle:
+                Ok(value) => println(value)
+                Err(_) => println("join failed")
+"#,
+    )?;
+    let shapes = loop_shapes(&mut ir, "main")?;
+    let [outer, inner] = shapes.iterables.as_slice() else {
+        return Err(format!("expected two loops, got {:?}", shapes.iterables));
+    };
+    for (iterable, list) in [(outer, "groups"), (inner, "group")] {
+        let IrExprKind::MethodCall { receiver, method, .. } = &iterable.kind else {
+            return Err(format!(
+                "the loop over `{list}` must iterate it by value, got {iterable:?}"
+            ));
+        };
+        assert_eq!(method, "into_iter");
+        assert_eq!(var_read(receiver), Some((list, VarAccess::Move)), "{receiver:?}");
+    }
+    let [awaited] = shapes.awaited.as_slice() else {
+        return Err(format!("expected one await, got {:?}", shapes.awaited));
+    };
+    assert_eq!(var_read(awaited), Some(("handle", VarAccess::Move)), "{awaited:?}");
+    Ok(())
+}
