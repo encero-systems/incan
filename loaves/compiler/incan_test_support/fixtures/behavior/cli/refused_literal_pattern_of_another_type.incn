@@ -1,0 +1,11 @@
+# behavior: a match arm whose literal sub-pattern is a str where its tuple position holds an int is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+def classify(pair: tuple[int, int]) -> str:
+    match pair:
+        (0, "a") => return "zero and a"
+        _ => return "other"
+
+
+def main() -> None:
+    println(classify((0, 1)))

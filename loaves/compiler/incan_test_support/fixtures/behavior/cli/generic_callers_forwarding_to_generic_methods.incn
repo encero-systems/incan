@@ -1,0 +1,39 @@
+# behavior: generic functions forwarding their values to generic methods that format or compare them run for the values they are given, as does one forwarding to a generic function that formats its value
+# retires: loaves/compiler/incan_emit/src/tests/generic_caller_bounds.rs::method_body_bounds_reach_a_forwarding_caller_issue1779
+# expect-stdout:
+#   sent x
+#   sent 3
+#   true
+#   false
+#   shown 4
+
+model Client:
+    def send[T](self, value: T) -> None:
+        println(f"sent {value}")
+
+    def same[T](self, a: T, b: T) -> bool:
+        return a == b
+
+
+def send_once[T](client: Client, value: T) -> None:
+    client.send(value)
+
+
+def check[T](client: Client, a: T, b: T) -> bool:
+    return client.same(a, b)
+
+
+def show[T](value: T) -> str:
+    return f"shown {value}"
+
+
+def forward[T](value: T) -> str:
+    return show(value)
+
+
+def main() -> None:
+    send_once(Client(), "x")
+    send_once(Client(), 3)
+    println(check(Client(), 1, 1))
+    println(check(Client(), "a", "b"))
+    println(forward(4))

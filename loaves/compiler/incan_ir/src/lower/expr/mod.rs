@@ -1958,14 +1958,18 @@ impl AstLowering {
                     })
                     .flatten()
                 {
-                    (
-                        IrExprKind::KnownMethodCall {
-                            receiver: Box::new(receiver),
-                            kind,
-                            args: args_ir,
-                        },
-                        expr_ty,
-                    )
+                    if kind == MethodKind::Collection(CollectionMethodKind::Count) && args_ir.is_empty() {
+                        (Self::lower_list_item_count(receiver), expr_ty)
+                    } else {
+                        (
+                            IrExprKind::KnownMethodCall {
+                                receiver: Box::new(receiver),
+                                kind,
+                                args: args_ir,
+                            },
+                            expr_ty,
+                        )
+                    }
                 } else {
                     let imported_type_method_signature = match &o.node {
                         ast::Expr::Ident(name) => match self.import_aliases.get(name).cloned() {

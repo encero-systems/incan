@@ -2602,6 +2602,8 @@ impl TypeChecker {
         let previous_validation_state = self.validate_source_type_names;
         self.validate_source_type_names = false;
         self.collect_declarations_for_check(&test_module.body);
+        self.resolve_forward_type_references(&test_module.body);
+        self.record_local_nominal_type_param_bounds(&test_module.body);
         self.validate_source_type_names = previous_validation_state;
         if let Some(semantics) = self.testing_marker_semantics.clone() {
             self.collect_testing_fixture_names_from_decls(&test_module.body, &semantics);
@@ -3336,6 +3338,7 @@ impl TypeChecker {
     /// Validate a model declaration after collection, including decorators, trait conformance, fields, and methods.
     fn check_model(&mut self, model: &ModelDecl) {
         self.symbols.enter_scope(ScopeKind::Model);
+        self.refuse_unbounded_model_members(model);
 
         self.validate_decorators_rejecting_user_defined(&model.decorators, "model");
         self.reject_registry_description_decorators(&model.decorators, "model");
@@ -3765,6 +3768,7 @@ impl TypeChecker {
     /// Validate a class declaration after collection, including inheritance, field metadata, traits, and methods.
     fn check_class(&mut self, class: &ClassDecl) {
         self.symbols.enter_scope(ScopeKind::Class);
+        self.refuse_unbounded_class_members(class);
 
         // Define type parameters before resolving class fields, trait adoptions, and method signatures.
         for param in &class.type_params {
@@ -4311,6 +4315,7 @@ impl TypeChecker {
     /// checked construction hooks, and member bodies.
     fn check_newtype(&mut self, nt: &NewtypeDecl) {
         self.symbols.enter_scope(ScopeKind::Block);
+        self.refuse_unbounded_newtype_members(nt);
 
         for param in &nt.type_params {
             self.symbols.define_with_target_kind(
@@ -4659,6 +4664,7 @@ impl TypeChecker {
     /// Validate enum decorators, value-enum rules, and variant payload field types.
     fn check_enum(&mut self, en: &EnumDecl) {
         self.symbols.enter_scope(ScopeKind::Block);
+        self.refuse_unbounded_enum_members(en);
 
         self.validate_decorators_rejecting_user_defined(&en.decorators, "enum");
         self.reject_registry_description_decorators(&en.decorators, "enum");
@@ -5835,6 +5841,7 @@ impl TypeChecker {
 
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&func.params);
         let return_type = self.resolve_type_checked(&func.return_type);
+        self.refuse_unbounded_nominal_type_arguments(&return_type, func.return_type.span);
         self.check_route_handler_signature(func, &return_type, &resolved_param_types);
 
         // Define parameters after checking defaults so a declaration-owned default cannot resolve a callable-frame
@@ -5928,6 +5935,7 @@ impl TypeChecker {
             .iter()
             .map(|param| {
                 let param_ty = self.resolve_type_checked(&param.node.ty);
+                self.refuse_unbounded_nominal_type_arguments(&param_ty, param.node.ty.span);
                 if param.node.kind != ParamKind::Normal {
                     return param_ty;
                 }
@@ -6288,6 +6296,7 @@ impl TypeChecker {
         }
 
         let return_type = self.resolve_type_checked(&method.return_type);
+        self.refuse_unbounded_nominal_type_arguments(&return_type, method.return_type.span);
         self.type_info.declarations.method_bindings_by_span.insert(
             (method_span.start, method_span.end),
             FunctionBindingInfo {

@@ -2395,6 +2395,32 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/generic_caller_bounds.rs": {
+      "disposition": "retire",
+      "notes": "bound inference of the Rust-source backend over lowered programs: the bounds a generic caller receives from the source methods it calls (#1779, #1280). Retires with the backend under #654; each test is twinned by a program that runs only when the caller carries the bound.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "external_impl_bounds_reach_a_generic_caller_issue1280": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/external_impl_bound_reaches_a_generic_caller",
+          "notes": "Asserts the header of a generic model's method declared in another module reaches a generic caller of this module; the named module fixture runs that call for an int and a str payload."
+        },
+        "impl_header_bounds_reach_a_caller_of_a_sibling_method_issue1779": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/generic_caller_of_a_model_method_formatting_its_payload.incn",
+          "notes": "Asserts a caller of one method of a generic model receives the whole impl header (`Display` from a sibling that formats the payload, `Clone` from returning it); the named fixture runs `first(Holder(value=7))`."
+        },
+        "method_body_bounds_reach_a_forwarding_caller_issue1779": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/generic_callers_forwarding_to_generic_methods.incn",
+          "notes": "Asserts callers forwarding a type parameter to generic methods receive the methods' inferred `Display` and `PartialEq`; the named fixture runs both calls."
+        },
+        "trait_method_bounds_reach_a_caller_through_the_receiver_issue1280": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/generic_caller_of_a_model_method_formatting_its_payload.incn",
+          "notes": "Asserts a caller holding `Stream[T]` receives the `Display` the trait method formatting the stream's item needs; the named fixture runs `consume` for an int and a str payload."
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/tests/lowering_through_emission.rs": {
       "disposition": "retire",
       "notes": "lowering through emission end to end.",
@@ -2453,8 +2479,8 @@
           "notes": "twinned by a module program whose own non-generic `timeout` runs beside a helper module declaring a generic `timeout`. The helper module's generic `timeout` is compiled with the program; the local one keeps its plain signature."
         },
         "external_implementation_bounds_propagate_through_checked_trait_dispatch": {
-          "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/fallible_iteration_over_reader_chunks_from_a_bare_generic.incn` (`count_chunks[R](chunks: ReaderChunks[R])`, no bound of its own, iterates the stdlib's `FallibleIterator` adoption of `ReaderChunks[R with BinaryReader]`); the retired test asserts the implementation's bound reaches the bare generic caller, and a caller that writes the bound itself runs whether or not it does. Waits for #1280 (a generic caller inheriting the implementation's bound); if the checker is made to refuse the bare parameter instead, the candidate becomes an `expect-diagnostic` fixture."
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/external_impl_bound_reaches_a_generic_caller",
+          "notes": "Asserts that the bound an implementation in another module carries reaches the bare generic caller that selects it. The named module fixture's `describe[U](held: Holder[U])` calls a trait method that `shapes.Holder[V]` implements by formatting its payload, and runs for an int and a str payload because the implementation's inferred `Display` reaches `describe` (#1280)."
         },
         "generic_value_field_reflection_methods_infer_field_value_bound": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_numerics_and_bounds/reflection_over_a_generic_value.incn",
@@ -2465,8 +2491,8 @@
           "notes": "twinned by a program whose generic model method interpolates the type parameter for int, str and float payloads. Where the bound is written (impl header or method) is a Rust spelling and dies with #654; the program proves the bound is inferred at all."
         },
         "implementation_bound_matching_is_canonical_and_instantiation_exact": {
-          "twin": "",
-          "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/bounds_from_a_generic_model_implementation.incn` passes `incan check` and fails to compile (a declared model bound `R with Clone` and the impl-inferred Display bound are not carried to the generic caller `consume[T](stream: Stream[T])`, E0277/E0599). Waits for #1280. The negative half (a different module or instantiation inherits nothing) has no observable."
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/generic_caller_of_a_model_method_formatting_its_payload.incn",
+          "notes": "Asserts that an implementation's bounds reach the generic caller that selects it. The named fixture's `consume[T with Clone](stream: Stream[T])` calls a trait method of `Stream[R with Clone]` that formats the stream's item, and runs for an int and a str payload because the method's inferred `Display` bound reaches `consume` (#1280); a caller without `T with Clone` is refused at check time (`refused_generic_model_without_its_declared_bound.incn`)."
         },
         "nominally_encoded_generic_clone_binds_only_the_matching_parameter": {
           "twin": "dies",
@@ -2487,6 +2513,20 @@
         "self_clone_binds_no_callable_own_parameters": {
           "twin": "",
           "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/generic_functions_over_a_non_clone_rust_value.incn` (`Codec.duplicate[T]` returns self, the receiver is read afterwards, and `T` is instantiated with a `Stdin`; a bound on the method's own `T` would refuse the program at the Rust build, #1489). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_emit/src/trait_bound_inference/inherent_method_calls.rs": {
+      "disposition": "retire",
+      "notes": "bound inference helpers of the Rust-source backend for calls to source methods (#1779); retires with the backend under #654.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "nominal_names_match_compares_the_declaration_not_the_arity_issue1779": {
+          "twin": "dies",
+          "dies": "asserts how the backend pairs a callee's and a caller's generic type spellings when it maps type parameters; a Rust-spelling concern of bound inference with no source observable of its own, which dies with #654. The behavior it protects is carried by the generic-caller fixtures."
         }
       },
       "twin": ""
@@ -4665,6 +4705,22 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/forward_declared_types.rs": {
+      "disposition": "keep",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/generic_model_bounds.rs": {
+      "disposition": "keep",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/generics_and_type_tokens.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -4674,6 +4730,22 @@
       "twin": ""
     },
     "loaves/compiler/incan_frontend/src/typechecker/tests/imports_and_stdlib_modules.rs": {
+      "disposition": "keep",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/list_method_forms.rs": {
+      "disposition": "keep",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/match_literals_and_payload_coverage.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
       "owner": 1561,
@@ -5450,6 +5522,20 @@
         "derive_vocabulary_imports_lower_to_no_ir_import_issue1727": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters_with_imported_clone.incn",
           "notes": "Asserts the recorded import fact on the legacy IR (an import of a derivable trait's stdlib stub lowers to no IR import; the source-owned protocol and callable imports stay; the expanded adapter default and an aliased `Eq` bound spell the derive-owned Rust traits); retires with `incan_ir`. The behavior, the FallibleIterator adapters driven with derived callables beside `from std.derives.copying import Clone`, is carried by the named fixture (#1727)."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/list_count_forms.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "list_count_forms_lower_by_argument_count_issue1776": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/list_count_and_index_forms.incn",
+          "notes": "Asserts the legacy IR shape of the two `count` forms on a list (`count()` as the iterator terminal over the list's iterator, `count(value)` as the list method); retires with `incan_ir`. The behavior, `count()` printing 4 and `count(9)` printing 2 for `[4, 9, 2, 9]`, is carried by the named fixture (#1776)."
         }
       },
       "twin": ""
@@ -6913,11 +6999,11 @@
     },
     "loaves/toolchain/incan-cli/tests/behavior_lowering_tests.rs": {
       "disposition": "re-point",
+      "notes": "runs every behavior fixture of the three lowering_* areas as a program (one libtest case per leaf area), baking a project fixture's in-fixture providers first with no Cargo authority, and compares its observables, which stay the same when the Rust-source backend is removed (#654).",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "runs every behavior fixture of the three lowering_* areas as a program (one libtest case per leaf area), baking a project fixture's in-fixture providers first with no Cargo authority, and compares its observables, which stay the same when the Rust-source backend is removed (#654)."
+      "twin": ""
     },
     "loaves/toolchain/incan-cli/tests/behavior_ownership_tests.rs": {
       "disposition": "re-point",
@@ -8061,22 +8147,22 @@
       "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations": {
-      "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
+      "notes": "behavior fixtures twinning incan_ir retire tests about declarations: models, enums, generics, frozen collections, exact float widths, RFC 018 assertions, serde derive propagation, module-scoped traits (module fixtures) and two check-time refusals; run by behavior_lowering_tests.rs. Each names the retire tests it twins in `# retires:` lines.",
       "owner": 1561,
-      "notes": "behavior fixtures twinning incan_ir retire tests about declarations: models, enums, generics, frozen collections, exact float widths, RFC 018 assertions, serde derive propagation, module-scoped traits (module fixtures) and two check-time refusals; run by behavior_lowering_tests.rs. Each names the retire tests it twins in `# retires:` lines."
+      "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies": {
-      "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
+      "notes": "behavior fixtures twinning incan_ir retire tests whose observable crosses a package boundary: projects with in-fixture providers (`[dependencies] <name> = { path = \"deps/<name>\" }`) that the runner bakes first with no Cargo authority; run by behavior_lowering_tests.rs. Each names the retire tests it twins in `# retires:` lines.",
       "owner": 1561,
-      "notes": "behavior fixtures twinning incan_ir retire tests whose observable crosses a package boundary: projects with in-fixture providers (`[dependencies] <name> = { path = \"deps/<name>\" }`) that the runner bakes first with no Cargo authority; run by behavior_lowering_tests.rs. Each names the retire tests it twins in `# retires:` lines."
+      "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions": {
-      "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
+      "notes": "behavior fixtures twinning incan_ir retire tests about expressions: call shapes, method-kind classification, iterator and Result surfaces, trait dispatch by receiver shape, decorators, partials and the std JSON protocol; run by behavior_lowering_tests.rs. Each names the retire tests it twins in `# retires:` lines.",
       "owner": 1561,
-      "notes": "behavior fixtures twinning incan_ir retire tests about expressions: call shapes, method-kind classification, iterator and Result surfaces, trait dispatch by receiver shape, decorators, partials and the std JSON protocol; run by behavior_lowering_tests.rs. Each names the retire tests it twins in `# retires:` lines."
+      "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/ownership_numerics_and_bounds": {
       "pattern": "<name>.incn or <name>/",

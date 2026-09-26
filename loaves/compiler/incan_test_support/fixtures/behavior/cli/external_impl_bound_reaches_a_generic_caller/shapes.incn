@@ -1,0 +1,9 @@
+pub trait Show:
+    def show(self) -> str: ...
+
+
+pub model Holder[V] with Show:
+    pub value: V
+
+    def show(self) -> str:
+        return f"held {self.value}"

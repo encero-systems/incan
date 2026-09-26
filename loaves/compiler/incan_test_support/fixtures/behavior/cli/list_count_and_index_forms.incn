@@ -1,0 +1,21 @@
+# behavior: on a list, count() counts the items, for any element type, count(value) counts the items equal to the value, and index(value) finds its first position
+# retires: loaves/compiler/incan_ir/src/lower/tests/list_count_forms.rs::list_count_forms_lower_by_argument_count_issue1776
+# expect-stdout:
+#   4
+#   2
+#   2
+#   4
+#   2
+
+
+def size[T](items: list[T]) -> int:
+    return items.count()
+
+
+def main() -> None:
+    items: list[int] = [4, 9, 2, 9]
+    println(items.count())
+    println(items.count(9))
+    println(items.index(2))
+    println(len(items))
+    println(size(["a", "b"]))

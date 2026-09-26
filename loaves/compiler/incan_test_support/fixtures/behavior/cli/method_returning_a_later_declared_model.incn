@@ -1,0 +1,15 @@
+# behavior: a method returning a model declared later in the file gives the call site that model's fields
+# expect-stdout:
+#   1
+
+model Maker:
+    def make(self) -> Made:
+        return Made(x=1)
+
+
+model Made:
+    x: int
+
+
+def main() -> None:
+    println(Maker().make().x)

@@ -75,6 +75,7 @@ Rules:
     - A field **without** a default is required at construction time.
     - A field **with** a default may be omitted (the default is used).
 - **Type checking**: default expressions must be compatible with the field type.
+- **Declaration order**: a field type or a method signature may name a model, class, enum, trait or type alias declared further down the same module; a method returning a model declared after its owner gives callers that model's fields like any other.
 
 ### Field visibility on a public model
 

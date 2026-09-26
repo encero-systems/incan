@@ -102,9 +102,45 @@ enum Maybe[U]:
         return value
 ```
 
+### Bounds you write and bounds the compiler infers
+
+A bound you write on a type's parameter, such as `model Stream[R with Clone]`, is part of that type's contract, so every generic declaration that uses the type with its own type parameter repeats it. A bound that only a body needs is different. Formatting a value in an f-string needs `Display`, comparing with `==` needs `PartialEq`, and returning a field of a generic model needs `Clone`. The compiler infers these from the body, so a generic caller never spells them.
+
+Inference reaches through method calls. A method's requirements include those of every other method of the same model, because they share one implementation block:
+
+```incan
+model Holder[V]:
+    value: V
+
+    def show(self) -> str:
+        return f"{self.value}"
+
+    def get(self) -> V:
+        return self.value
+
+def first[U](held: Holder[U]) -> U:
+    return held.get()
+```
+
+`first` writes no bound on `U`, yet it needs `Display` (from `show`) and `Clone` (from `get`), and the compiler supplies both.
+
 For the rationale behind explicit call-site generics (`f[T](...)` / `obj.m[T](...)`), see:
 
 - [Why call-site type arguments exist](call_site_type_arguments.md)
+
+## Trait dispatch is not overloading
+
+A type may adopt one generic trait several times, `with Convert[int], Convert[float]`, and then declare two methods named `convert`. That looks like overloading, but it is not: each method satisfies a different trait instantiation, and a call picks the instantiation from its argument types or, when those do not decide, from the type the result is expected to have. Two ordinary methods with the same name stay an error, because nothing ties them to distinct instantiations. When two unrelated traits happen to require the same method name, the `for TraitName` target on each method says which adoption it belongs to.
+
+When an operation should be available only for values with a capability, state that capability as a generic bound (`T with OrderedCollection[int]`) rather than hiding inherited trait methods. The bound is checked at every call, including through supertraits.
+
+## Why `@requires` is for models and classes
+
+`@requires(...)` lets a trait's default methods read fields of the adopter. Models and classes have fields shared by every value, so the requirement is meaningful for them. An enum's data lives in its variants' payloads, which differ from variant to variant, so an enum adopter provides behavior through methods instead.
+
+## Where derived behavior comes from
+
+The derive traits under `std.derives.*` (`Clone`, `Default`, `Debug`, `Eq`, `Ord`, `Hash`) are declared in the standard library's Incan source as capability contracts. The behavior of a derived implementation is produced when the program is compiled, from the type's own fields; it is not a runtime helper the program calls into. That is why a derive's requirements are about field types: `Copy` needs every field to be `Copy`, and derived equality compares every field.
 
 ## Debug vs Display: two string representations
 
