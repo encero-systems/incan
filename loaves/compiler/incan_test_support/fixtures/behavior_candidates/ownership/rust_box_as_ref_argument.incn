@@ -1,0 +1,26 @@
+# behavior: a value viewed through a Rust Box's as_ref is handed to a function taking the value itself, twice, and the box is still usable afterwards
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_call_clones_borrowed_as_ref_result_for_owned_nominal_target
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_call_clones_borrowed_as_ref_result_when_target_is_unknown
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_call_clones_erased_receiver_as_ref_result_when_target_is_unknown
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_call_clones_erased_receiver_as_ref_result_for_owned_nominal_target
+# expect-stdout:
+#   node leaf
+#   node leaf
+#   leaf
+
+from rust::std::boxed import Box
+
+
+model Node:
+    label: str
+
+
+def describe(node: Node) -> str:
+    return "node " + node.label
+
+
+def main() -> None:
+    child = Box.new(Node(label="leaf"))
+    println(describe(child.as_ref()))
+    println(describe(child.as_ref()))
+    println(child.as_ref().label)

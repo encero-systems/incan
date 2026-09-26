@@ -1,0 +1,9 @@
+[project]
+name = "rust_trait_object_view_to_a_reference_parameter"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[rust-dependencies]
+tiny_arrow = { path = "rust/tiny_arrow" }

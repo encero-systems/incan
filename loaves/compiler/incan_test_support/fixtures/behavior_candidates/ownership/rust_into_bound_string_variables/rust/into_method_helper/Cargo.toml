@@ -1,0 +1,8 @@
+[package]
+name = "into_method_helper"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Not a workspace member: the Rust crate of a behavior-fixture candidate.
+[workspace]
