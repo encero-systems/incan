@@ -1,0 +1,32 @@
+# behavior: dependency types construct through their published surface: a class with a private required field and a defaulted public field is built under an import alias from all its fields, a same-named class from another dependency stays its own, a model with a private defaulted field is built from its public fields alone, a model with a phantom type parameter is built with explicit type arguments, and a model and a defaulted class reached through a published module namespace construct by named field and by default
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::alternate_type_name_call_uses_exact_private_library_constructor_bridge_issue883
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::qualified_public_module_model_call_emits_struct_and_constant_paths_issue948
+# retires: loaves/compiler/incan_emit/src/emit/mod.rs::manifest_constructor_metadata_exports_only_public_fields_for_private_defaults
+# retires: loaves/compiler/incan_emit/src/emit/mod.rs::manifest_constructor_metadata_recognises_phantom_type_parameters_issue1370
+# expect-stdout:
+#   sealed:42
+#   named:7
+#   decoy true
+#   public true
+#   q1 sample
+#   12
+#   3
+#   3
+
+from pub::sealed import Vault as PublicVault, Envelope, Columns
+from pub::decoy import Vault as DecoyVault
+from pub::modulelib import hyperquant
+
+
+def main() -> None:
+    println(PublicVault(secret=42).reveal())
+    println(PublicVault(secret=7, label="named").reveal())
+    println(DecoyVault(unrelated=true).reveal())
+    println(Envelope(label="public").describe())
+    columns = Columns[int, str](sql="q1", sample="sample")
+    println(columns.describe())
+    index = hyperquant.HyperquantIndex(size=hyperquant.DEFAULT_SIZE)
+    println(index.size)
+    builder = hyperquant.IndexBuilder()
+    println(builder.size)
+    println(builder.build().size)

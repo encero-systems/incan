@@ -1,0 +1,56 @@
+# behavior: the map, filter, enumerate, zip, take, skip, take_while, skip_while, chain, flat_map and batch adapters over a list iterator each yield the expected items
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::known_iterator_adapter_methods_emit_incan_stdlib_models
+# expect-stdout:
+#   2 4 6
+#   2
+#   0:1 1:2 2:3
+#   1-10 2-20
+#   1 2
+#   3
+#   1 2
+#   3
+#   1 2 3 10 20
+#   1 1 2 2
+#   2 1
+
+def double(n: int) -> int:
+    return n * 2
+
+
+def is_even(n: int) -> bool:
+    return n % 2 == 0
+
+
+def small(n: int) -> bool:
+    return n < 3
+
+
+def twice(n: int) -> list[int]:
+    return [n, n]
+
+
+def render(items: list[int]) -> str:
+    return " ".join([str(item) for item in items])
+
+
+def main() -> None:
+    xs: list[int] = [1, 2, 3]
+    others: list[int] = [10, 20]
+    println(render(xs.iter().map(double).collect()))
+    println(render(xs.iter().filter(is_even).collect()))
+    mut indexed: list[str] = []
+    for index, item in xs.iter().enumerate():
+        indexed.append(f"{index}:{item}")
+    println(" ".join(indexed))
+    mut zipped: list[str] = []
+    for left, right in xs.iter().zip(others.iter()):
+        zipped.append(f"{left}-{right}")
+    println(" ".join(zipped))
+    println(render(xs.iter().take(2).collect()))
+    println(render(xs.iter().skip(2).collect()))
+    println(render(xs.iter().take_while(small).collect()))
+    println(render(xs.iter().skip_while(small).collect()))
+    println(render(xs.iter().chain(others.iter()).collect()))
+    println(render(xs.iter().take(2).flat_map(twice).collect()))
+    batches: list[list[int]] = xs.iter().batch(2).collect()
+    println(f"{len(batches)} {len(batches[1])}")

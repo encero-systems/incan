@@ -1,0 +1,27 @@
+# behavior: a dict[str, int] answers get with a str parameter, a loop binding and a str literal, and indexing with a str literal reads the stored value
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::dict_get_with_borrowed_key_does_not_double_borrow
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::known_dict_get_with_string_literal_uses_str_lookup_shape
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::dict_index_with_string_literal_uses_str_lookup_shape
+# expect-stdout:
+#   the=2
+#   cat=1
+#   dog missing
+#   literal 2
+#   indexed 2
+
+def lookup(counts: dict[str, int], word: str) -> str:
+    match counts.get(word):
+        Some(count) => return f"{word}={count}"
+        None => return f"{word} missing"
+
+
+def main() -> None:
+    counts: dict[str, int] = {"the": 2, "cat": 1}
+    println(lookup(counts, "the"))
+    words: list[str] = ["cat", "dog"]
+    for word in words:
+        println(lookup(counts, word))
+    match counts.get("the"):
+        Some(count) => println(f"literal {count}")
+        None => println("literal missing")
+    println(f"indexed {counts["the"]}")

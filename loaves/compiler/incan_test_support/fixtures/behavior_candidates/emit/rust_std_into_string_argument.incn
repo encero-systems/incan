@@ -1,0 +1,14 @@
+# behavior: a str literal passed to a Rust standard-library constructor whose parameter is generic over Into converts into the owned message the error later displays
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_nominal_method_call_keeps_external_string_conversion
+# expect-stdout:
+#   logs
+#   custom message
+
+from rust::std::io import Error as RustIoError, ErrorKind
+
+
+def main() -> None:
+    error = RustIoError.new(ErrorKind.Other, "logs")
+    println(error.to_string())
+    text = "custom message"
+    println(RustIoError.new(ErrorKind.Other, text).to_string())

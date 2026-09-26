@@ -1,0 +1,5 @@
+pub model Session:
+    pub name: str
+
+    def read_csv[T](self, table: str, input_uri: str) -> str:
+        return f"{self.name}:{table}@{input_uri}"

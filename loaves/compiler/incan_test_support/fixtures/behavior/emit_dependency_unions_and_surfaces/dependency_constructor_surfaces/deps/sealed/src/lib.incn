@@ -1,0 +1,22 @@
+pub class Vault:
+    secret: int
+    pub label: str = "sealed"
+
+    def reveal(self) -> str:
+        return f"{self.label}:{self.secret}"
+
+
+pub model Envelope:
+    secret: bool = true
+    pub label: str
+
+    def describe(self) -> str:
+        return f"{self.label} {self.secret}"
+
+
+pub model Columns[T, Stored]:
+    pub sql: str
+    pub sample: Stored
+
+    def describe(self) -> str:
+        return f"{self.sql} {self.sample}"

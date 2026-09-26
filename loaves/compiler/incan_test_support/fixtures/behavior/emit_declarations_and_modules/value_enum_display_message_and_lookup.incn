@@ -1,0 +1,54 @@
+# behavior: a str value enum displays as its value, exposes value() and from_value(), and message() on a value enum and on a private plain enum is the variant name; an int value enum exposes value() and from_value() the same way
+# retires: loaves/compiler/incan_emit/src/emit/decls/structures.rs::string_value_enum_emits_value_lookup_and_display
+# retires: loaves/compiler/incan_emit/src/emit/decls/structures.rs::integer_value_enum_emits_value_lookup_and_from_str
+# retires: loaves/compiler/incan_emit/src/emit/decls/structures.rs::private_enum_keeps_used_message_helper
+# expect-stdout:
+#   development
+#   production
+#   Dev
+#   development
+#   parsed Prod
+#   unknown
+#   200
+#   404
+#   parsed NotFound
+#   unknown
+#   Ready
+#   Busy
+
+pub enum Env(str):
+    Dev = "development"
+    Prod = "production"
+
+
+pub enum HttpStatus(int):
+    Ok = 200
+    NotFound = 404
+
+
+enum PrivateState:
+    Ready
+    Busy
+
+
+def main() -> None:
+    println(str(Env.Dev))
+    println(f"{Env.Prod}")
+    println(Env.Dev.message())
+    println(Env.Dev.value())
+    match Env.from_value("production"):
+        Some(env) => println(f"parsed {env.message()}")
+        None => println("unknown")
+    match Env.from_value("staging"):
+        Some(env) => println(f"parsed {env.message()}")
+        None => println("unknown")
+    println(HttpStatus.Ok.value())
+    println(str(HttpStatus.NotFound))
+    match HttpStatus.from_value(404):
+        Some(status) => println(f"parsed {status.message()}")
+        None => println("unknown")
+    match HttpStatus.from_value(500):
+        Some(status) => println(f"parsed {status.message()}")
+        None => println("unknown")
+    println(PrivateState.Ready.message())
+    println(PrivateState.Busy.message())

@@ -1,0 +1,18 @@
+# behavior: __fields__() on a public model lists its pub fields only; a private defaulted field is absent from runtime reflection
+# retires: loaves/compiler/incan_emit/src/emit/mod.rs::runtime_reflection_omits_type_private_fields_issue884
+# expect-stdout:
+#   label
+#   1
+#   public
+
+pub model Vault:
+    secret: str = "sealed"
+    pub label: str
+
+
+def main() -> None:
+    vault = Vault(label="public")
+    for info in vault.__fields__():
+        println(info.name)
+    println(len(vault.__fields__()))
+    println(vault.label)

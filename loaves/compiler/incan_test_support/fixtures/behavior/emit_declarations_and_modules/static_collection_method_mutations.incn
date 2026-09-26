@@ -1,0 +1,81 @@
+# behavior: each mutating collection method reaches a module static from a function and later readers of the same static see the change: extend, swap, pop and remove on a static list, insert on a static dict beside a get that only reads it, and add on a static set
+# retires: loaves/compiler/incan_emit/src/emit/statements.rs::storage_binding_analysis_matches_method_mutability_policy
+# expect-stdout:
+#   3
+#   9 5 1
+#   1
+#   1
+#   5
+#   a=2
+#   b=1
+#   c missing
+#   2
+#   2
+#   true
+#   false
+
+static items: list[int] = [1]
+static counts: dict[str, int] = {}
+static seen: set[int] = Set()
+
+
+def render() -> str:
+    return f"{items[0]} {items[1]} {items[2]}"
+
+
+def grow() -> None:
+    items.extend([5, 9])
+
+
+def flip() -> None:
+    items.swap(0, 2)
+
+
+def shrink() -> int:
+    return items.pop()
+
+
+def drop_first() -> None:
+    items.remove(0)
+
+
+def record(name: str, value: int) -> None:
+    counts.insert(name, value)
+
+
+def lookup(name: str) -> Option[int]:
+    return counts.get(name)
+
+
+def describe(name: str) -> str:
+    match lookup(name):
+        Some(value) => return f"{name}={value}"
+        None => return f"{name} missing"
+
+
+def mark(value: int) -> None:
+    seen.add(value)
+
+
+def main() -> None:
+    grow()
+    println(len(items))
+    flip()
+    println(render())
+    println(shrink())
+    drop_first()
+    println(len(items))
+    println(items[0])
+    record("a", 1)
+    record("a", 2)
+    record("b", 1)
+    println(describe("a"))
+    println(describe("b"))
+    println(describe("c"))
+    println(len(counts))
+    mark(4)
+    mark(4)
+    mark(6)
+    println(len(seen))
+    println(seen.contains(4))
+    println(seen.contains(5))

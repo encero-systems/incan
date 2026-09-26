@@ -1,0 +1,17 @@
+pub enum Shape:
+    Circle
+    Square
+
+
+pub def describe(value: int | str, shape: Shape, maybe: Option[int]) -> str:
+    mut parts: list[str] = []
+    match value:
+        int(number) => parts.append(f"int {number}")
+        str(text) => parts.append(f"str {text}")
+    match shape:
+        Shape.Circle => parts.append("circle")
+        Shape.Square => parts.append("square")
+    match maybe:
+        Some(inner) => parts.append(f"some {inner}")
+        None => parts.append("none")
+    return " ".join(parts)

@@ -1,0 +1,40 @@
+# behavior: the std.result functions map, map_err and and_then apply their callback to the matching side of a Result and leave the other side untouched
+# retires: loaves/compiler/incan_emit/src/emit/mod.rs::compiled_sdk_manifest_seeds_exact_stdlib_function_identity
+# expect-stdout:
+#   14
+#   bad x!
+#   7
+#   bad y
+
+from std.result import map, map_err, and_then
+
+
+def parse(text: str) -> Result[int, str]:
+    if text == "7":
+        return Ok(7)
+    return Err(f"bad {text}")
+
+
+def double(value: int) -> int:
+    return value * 2
+
+
+def shout(error: str) -> str:
+    return f"{error}!"
+
+
+def reparse(value: int) -> Result[int, str]:
+    return parse(str(value))
+
+
+def show(result: Result[int, str]) -> None:
+    match result:
+        Ok(value) => println(value)
+        Err(error) => println(error)
+
+
+def main() -> None:
+    show(map(parse("7"), double))
+    show(map_err(parse("x"), shout))
+    show(and_then(parse("7"), reparse))
+    show(map(parse("y"), double))

@@ -1,0 +1,24 @@
+# behavior: a user trait named Callable1 with its own apply method is an ordinary trait: a class adopts it and dispatches through it, unrelated to the stdlib callable of the same name
+# retires: loaves/compiler/incan_emit/src/emit/decls/functions.rs::same_named_user_callable_trait_does_not_emit_native_blanket_impl
+# expect-stdout:
+#   7
+#   12
+
+trait Callable1[A, R]:
+    def apply(self, arg: A) -> R
+
+
+class Adder with Callable1[int, int]:
+    amount: int
+
+    def apply(self, arg: int) -> int:
+        return arg + self.amount
+
+
+def run[C with Callable1[int, int]](callable: C, value: int) -> int:
+    return callable.apply(value)
+
+
+def main() -> None:
+    println(Adder(amount=3).apply(4))
+    println(run(Adder(amount=10), 2))

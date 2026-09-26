@@ -1,0 +1,22 @@
+# behavior: a model's static method called through the type name takes a str local and a str literal as owned arguments and builds the model from them
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::type_name_associated_call_does_not_borrow_string_arguments
+# expect-stdout:
+#   <p>hello</p> 12
+#   <p>literal</p> 14
+
+model Page:
+    body: str
+    length: int
+
+    @staticmethod
+    def html(html: str) -> Page:
+        wrapped = f"<p>{html}</p>"
+        return Page(body=wrapped, length=len(wrapped))
+
+
+def main() -> None:
+    html = "hello"
+    page = Page.html(html)
+    println(f"{page.body} {page.length}")
+    literal = Page.html("literal")
+    println(f"{literal.body} {literal.length}")

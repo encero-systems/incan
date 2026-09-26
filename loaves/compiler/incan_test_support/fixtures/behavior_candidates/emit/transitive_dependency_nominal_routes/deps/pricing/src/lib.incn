@@ -1,0 +1,13 @@
+from pub::catalog import Product, Column, column_name
+
+
+pub model Basket:
+    pub product: Product
+    pub quantity: int
+
+    def total(self) -> int:
+        return self.product.cents * self.quantity
+
+
+pub def column_names(columns: list[Column]) -> str:
+    return " ".join([column_name(column) for column in columns])

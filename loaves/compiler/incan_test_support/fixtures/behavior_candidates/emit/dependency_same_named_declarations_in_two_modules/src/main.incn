@@ -1,0 +1,23 @@
+# behavior: two modules of one dependency declare a model and a union alias with the same names at the same source positions; imported under aliases, each module's union accepts its own model and the consumer keeps the two apart
+# retires: loaves/compiler/incan_emit/src/emit/native_unions.rs::emitted_union_publication_is_scoped_to_module_and_span
+# retires: loaves/compiler/incan_emit/src/emit/native_unions.rs::native_union_local_nominals_keep_module_identity_through_forwarding
+# expect-stdout:
+#   first product 1
+#   first number 2
+#   second product two
+#   second number 3
+
+# ROUTE BUG CANDIDATE: baking the provider stops at an emission invariant ("emitted union ... binds Product to two
+# canonical identities"): its `first` and `second` modules declare `Product` and `Answer = Product | int` at the same
+# source positions. Found when `emit_dependency_unions_and_surfaces` first ran, where this project was a fixture.
+# Lands there again when the provider bakes.
+
+from pub::producer.first import Product as FirstProduct, label as first_label
+from pub::producer.second import Product as SecondProduct, label as second_label
+
+
+def main() -> None:
+    println(first_label(FirstProduct(value=1)))
+    println(first_label(2))
+    println(second_label(SecondProduct(value="two")))
+    println(second_label(3))

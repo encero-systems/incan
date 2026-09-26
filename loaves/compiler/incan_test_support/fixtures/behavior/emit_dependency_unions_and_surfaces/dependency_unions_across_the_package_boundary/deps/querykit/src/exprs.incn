@@ -1,0 +1,96 @@
+pub model BoolColumnExpr:
+    pub name: str
+
+
+pub model NumberColumnExpr:
+    pub name: str
+
+
+pub model BoolLiteralExpr:
+    pub value: bool
+
+
+pub model StringLiteralExpr:
+    pub value: str
+
+
+pub type ColumnExpr = Union[BoolColumnExpr, NumberColumnExpr, BoolLiteralExpr, StringLiteralExpr]
+
+
+pub model IntExpr:
+    pub value: int
+
+
+pub model Surcharge:
+    pub value: int
+
+
+pub type Charges = Surcharge | int
+
+pub type Answer = int | str
+
+
+pub def describe(expr: ColumnExpr) -> str:
+    match expr:
+        BoolColumnExpr(column) => return f"bool column {column.name}"
+        NumberColumnExpr(column) => return f"number column {column.name}"
+        BoolLiteralExpr(literal) => return f"bool literal {literal.value}"
+        StringLiteralExpr(literal) => return f"str literal {literal.value}"
+
+
+pub def describe_pair(exprs: tuple[ColumnExpr, ColumnExpr]) -> str:
+    return f"{describe(exprs[0])} / {describe(exprs[1])}"
+
+
+pub def column(name: str) -> ColumnExpr:
+    return NumberColumnExpr(name=name)
+
+
+pub def literal(value: bool) -> ColumnExpr:
+    return BoolLiteralExpr(value=value)
+
+
+pub def accept_optional(value: Option[Answer] = None) -> str:
+    match value:
+        int(number) => return f"int {number}"
+        str(text) => return f"text {text}"
+        None => return "nothing"
+
+
+pub def accept_expr(value: Option[IntExpr | str] = None) -> str:
+    match value:
+        IntExpr(expr) => return f"int expr {expr.value}"
+        str(text) => return f"text {text}"
+        None => return "nothing"
+
+
+pub def lit(value: int) -> Answer:
+    if value > 9:
+        return "big"
+    return value
+
+
+pub def first(value: int) -> int | str:
+    if value == 0:
+        return "zero"
+    return value
+
+
+pub second = alias first
+
+
+pub def select(value: int) -> Answer:
+    return value
+
+
+pub def select(value: str) -> bool:
+    return value == "yes"
+
+
+pub pick = alias select
+
+
+pub def charge_total(charge: Charges) -> int:
+    match charge:
+        Surcharge(extra) => return 100 + extra.value
+        int(amount) => return amount

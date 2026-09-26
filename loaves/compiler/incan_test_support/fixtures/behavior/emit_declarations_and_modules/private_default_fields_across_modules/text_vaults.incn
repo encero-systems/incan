@@ -1,0 +1,7 @@
+pub class Vault:
+    secret: str
+    pub label: str
+    revision: int = 7
+
+    def describe(self) -> str:
+        return f"{self.label} r{self.revision} {len(self.secret)}"
