@@ -21,6 +21,19 @@ pub const UNIT_TYPE_NAME: &str = "Unit";
 /// Type name alias for None (treated as Unit in type position).
 pub const NONE_TYPE_NAME: &str = "None";
 
+/// Prefix reserved for the names the compiler generates (#1769).
+///
+/// Generated items and locals (the original a decorator wraps, lowering temporaries, projected symbol names) are
+/// spelled with this prefix, so the checker refuses it on every name a source program declares or binds; a source name
+/// spelled the same way could collide with a generated one in the build.
+pub const RESERVED_COMPILER_NAME_PREFIX: &str = "__incan_";
+
+/// Static method the compiler reads as a type's source-defined constructor hook.
+///
+/// `Type(args)` on a type that declares it calls the hook instead of building the fields. It is the one source
+/// declaration that may use [`RESERVED_COMPILER_NAME_PREFIX`], because the compiler looks it up by this exact name.
+pub const TYPE_CONSTRUCTOR_HOOK: &str = "__incan_new";
+
 /// Validate one RFC 114 package-feature identifier.
 ///
 /// Package features deliberately use a smaller, backend-neutral spelling contract than arbitrary manifest strings:

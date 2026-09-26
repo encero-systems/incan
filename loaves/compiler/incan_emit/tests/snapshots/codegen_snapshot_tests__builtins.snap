@@ -78,7 +78,11 @@ fn test_sorted_builtin() {
         __v.sort();
         __v
     };
-    let _ = println!("{}", sorted_items);
+    let _ = println!(
+        "{}", { let __parts : [& str; 2usize] = ["", ""]; let __args : Vec < String > =
+        vec![format!("{:?}", sorted_items)]; incan_std_core::strings::fstring(& __parts,
+        & __args) }
+    );
 }
 fn main() {
     std::panic::set_hook(

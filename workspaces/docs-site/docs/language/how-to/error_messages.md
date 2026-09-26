@@ -226,6 +226,77 @@ while let Some(user) = current:
     current = next_user(user)
 ```
 
+### Printing a Collection
+
+**Error:**
+
+```bash
+'println' cannot print the list 'items'
+```
+
+**Problem:** `print` and `println` write each argument's display form, and a tuple, list, dict, set, `Option`, `Result` or union value has none (`INCAN-T0103`).
+
+**Solution:**
+
+```incan
+items: list[int] = [1, 2, 3]
+
+# Wrong
+println(items)  # ❌ a list has no printed form
+
+# Right - an f-string renders the structure
+println(f"{items}")  # ✅ [1, 2, 3]
+
+# Or print what you need from it
+println(len(items))
+```
+
+A union value (`int | str`) prints in neither position until you narrow it with `match` or `isinstance`; see [Union types](../reference/union_types.md).
+
+### Collection Annotation Without Type Arguments
+
+**Error:**
+
+```bash
+List annotation 'List' is missing its element type
+```
+
+**Problem:** `list`, `dict`, `set`, `tuple`, `Option` and `Result` (and the frozen collections and `Generator`) each name a family of types, so the bare word names no type (`INCAN-T0104`). The refusal also applies to a bare word inside another annotation, such as `Option[List]`.
+
+**Solution:**
+
+```incan
+# Wrong
+items: List = [1, 2]  # ❌
+
+# Right
+items: list[int] = [1, 2]  # ✅
+counts: dict[str, int] = {"a": 1}
+maybe: Option[int] = None
+```
+
+### Reserved `__incan_` Names
+
+**Error:**
+
+```bash
+The function '__incan_original_target' starts with '__incan_', a prefix reserved for names the compiler generates
+```
+
+**Problem:** A name the program declares or binds starts with `__incan_`, which is reserved for the compiler (`INCAN-T0111`; see [Reserved name prefix](../reference/imports_and_modules.md#reserved-name-prefix)).
+
+**Solution:** Rename it without the prefix.
+
+```incan
+# Wrong
+pub def __incan_original_target() -> int:  # ❌
+    return 2
+
+# Right
+pub def original_target() -> int:  # ✅
+    return 2
+```
+
 ## Philosophy: Explicit is Better
 
 Incan intentionally requires explicit handling of:

@@ -73,6 +73,20 @@ An f-string interpolates any expression between `{` and `}`; the value is format
 | `{value}` | `Display` |
 | `{value:?}` | `Debug`: the value's structure, for example `Point { x: 10, y: 20 }` |
 
+A `{value}` interpolation of a tuple, list, dict, set, `Option` or `Result` renders the value's structure: `(10, 20)` for a tuple, `[1, 2, 3]` for a list, `{1, 2}` for a set, `{"a": 1}` for a dict, `Some(1)` or `None` for an `Option`, and `Ok(2)` or `Err("bad")` for a `Result`. A `str` element or payload is quoted. The order of a set's or a dict's entries is unspecified. A `{value}` interpolation of a union value (`int | str`) is refused at check time with `INCAN-T0103`; a member bound by narrowing interpolates as that member's type (see [Union types](./union_types.md)).
+
+`print` and `println` write the display form of each argument. An argument whose type is a tuple, list, dict, set, `Option`, `Result` or union is refused at check time with `INCAN-T0103`.
+
+```incan
+items: list[int] = [1, 2, 3]
+maybe: Option[int] = Some(1)
+println(f"{items} {maybe}")  # [1, 2, 3] Some(1)
+println(len(items))          # 3
+println(items)               # refused: INCAN-T0103
+```
+
+The how-to [Printing a collection](../how-to/error_messages.md#printing-a-collection) covers the refused cases.
+
 A `float` in a `Display` position — an f-string `{value}`, `str(value)`, or `print`/`println` — renders as Python spells it: always visibly a float. An integral value keeps its decimal point (`100.0`, never `100`), the shortest digits that round-trip are used (`1.5`, `0.30000000000000004`), positional notation holds while the magnitude is at least `1e-4` and below `1e16` (`10000000000.0`) and switches to an exponent with an explicit sign and at least two digits outside that range (`1e+16`, `1.5e-07`), and the non-finite values are `inf`, `-inf`, and `nan`. The exact `f32`/`f64` carriers keep Rust's own `Display`.
 
 See [String representation](./derives/string_representation.md) for how a type provides `Display` and `Debug`.

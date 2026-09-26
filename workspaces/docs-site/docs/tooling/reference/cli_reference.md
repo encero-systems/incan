@@ -139,13 +139,14 @@ Seeded catalog codes:
 - `INCAN-T0001`: Type checking error.
 - `INCAN-T0101`: Unreachable code — statements that follow a `return` in the same block. Reported as a warning, so the program still compiles.
 - `INCAN-T0102`: A method assigns to a field, or calls a method that changes one, while its receiver is a plain `self`; declare `mut self`.
-- `INCAN-T0103`: A `print` or `println` argument is a tuple, which has no printed form; print its elements.
-- `INCAN-T0104`: A `Tuple` or `tuple` annotation names no element types; write `tuple[int, str]`.
+- `INCAN-T0103`: A `print` or `println` argument is a tuple, list, dict, set, `Option`, `Result` or union value, or an f-string `{value}` interpolates a union value; the value has no printed form.
+- `INCAN-T0104`: A `list`, `dict`, `set`, `tuple`, `Option`, `Result`, frozen collection or `Generator` annotation names no type arguments, alone or nested in another annotation.
 - `INCAN-T0105`: A Rust associated call such as `HashMap.new()` leaves the owner's type arguments open and nothing later fixes them; write `HashMap.new[str, int]()` or annotate the binding.
 - `INCAN-T0106`: An `Fn`, `FnMut` or `FnOnce` marker from `std.rust` names more than two parameters, or bounds a nominal declaration; write at most two, or use `Callable1[int, R]` from `std.traits.callable`.
 - `INCAN-T0107`: A `@route` handler's declared return type is not a response type (`str`, `Json[...]`, `Html`, `Response`, or a wrapper deriving `IntoResponse`); return the value as text or JSON.
 - `INCAN-T0108`: A `@route` handler parameter that no `{segment}` of the path binds and no `Json[...]`/`Query[...]`/`Path[...]` extractor supplies; add the segment or read the value from the request.
 - `INCAN-T0109`: `/`, `//`, `%` or `**` applied to values of a type parameter, which no bound can support; write the function for `int` or `float`, or bound the parameter by a trait defining the operator's hook.
+- `INCAN-T0111`: A declaration, binding, parameter or import alias name starts with `__incan_`, the prefix reserved for the compiler.
 - `INCAN-I0001`: Import or module resolution error.
 - `INCAN-I0101`: A known SDK provider module belongs to a component disabled by the project.
 - `INCAN-I0102`: The project enabled an SDK component that is unavailable in the active installation.

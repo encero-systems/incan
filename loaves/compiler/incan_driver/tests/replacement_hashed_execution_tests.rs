@@ -203,8 +203,8 @@ fn hashed_non_membership_operations_remain_refused() -> Result<(), Box<dyn std::
         "def main() -> bool:\n  mut values = {1: 2}\n  values[1] = 3\n  return 1 in values\n",
         "def main() -> None:\n  values = {1, 2}\n  for value in values:\n    pass\n",
         "def main() -> None:\n  values = {1: 2}\n  for value in values:\n    pass\n",
-        "def main() -> None:\n  println({1})\n",
-        "def main() -> None:\n  println({1: 2})\n",
+        "def main() -> None:\n  values = {1}\n  println(f\"{values}\")\n",
+        "def main() -> None:\n  values = {1: 2}\n  println(f\"{values}\")\n",
     ] {
         let module = lower(source)?;
         let error = execute_free_function(&module, "main", &[])

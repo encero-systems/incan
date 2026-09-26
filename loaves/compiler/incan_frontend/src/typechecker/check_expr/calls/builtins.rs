@@ -26,33 +26,57 @@ impl TypeChecker {
         }
     }
 
-    /// Type-check the arguments of a `print`/`println` call and refuse any that is a tuple (#1725).
+    /// Type-check the arguments of a `print`/`println` call and refuse any that has no printed form (#1725, #1748).
     ///
-    /// Every argument is checked as usual so its own diagnostics still surface; a tuple argument is then refused
-    /// with the call's own spelling (`builtin`), because a tuple has no printed form and the program could not be
-    /// built. The tuple's arity shapes the element-by-element remedy in the hint. Any other argument type stays
-    /// as permissive as before.
+    /// Every argument is checked as usual so its own diagnostics still surface. `print` writes each argument's display
+    /// form, and a tuple, list, dict, set, `Option`, `Result` or union value has none, so such an argument is refused
+    /// with the call's own spelling (`builtin`): the program could not be built. The refusal names the argument when
+    /// the source spells it as a plain name, and its kind shapes the remedy (the elements of a tuple, an f-string for a
+    /// collection, `Option` or `Result`, narrowing for a union). Any other argument type stays as permissive as before.
     fn check_print_call_args(&mut self, builtin: &str, args: &[CallArg]) {
         for arg in args {
             let arg_expr = Self::call_arg_expr(arg);
             self.call_argument_depth += 1;
             let arg_ty = self.check_expr(arg_expr);
             self.call_argument_depth -= 1;
-            let arity = match &arg_ty {
-                ResolvedType::Tuple(elements) => elements.len(),
-                ResolvedType::Generic(name, elements)
-                    if collection_type_id(name.as_str()) == Some(CollectionTypeId::Tuple) =>
-                {
-                    elements.len()
-                }
-                _ => continue,
+            let Some(value) = Self::unprintable_value(&self.expand_type_aliases(arg_ty)) else {
+                continue;
             };
-            let value = match &arg_expr.node {
-                Expr::Ident(name) => name.as_str(),
-                _ => "value",
+            let name = match &arg_expr.node {
+                Expr::Ident(name) => Some(name.as_str()),
+                _ => None,
             };
-            self.errors
-                .push(errors::print_argument_is_tuple(builtin, value, arity, arg_expr.span));
+            self.errors.push(errors::print_argument_has_no_printed_form(
+                builtin,
+                name,
+                value,
+                arg_expr.span,
+            ));
+        }
+    }
+
+    /// Classify a value type that `print`/`println` has no printed form for, or return `None` when it prints.
+    ///
+    /// The set matches what the f-string path renders through its structure (a tuple, list, dict, set, `Option` or
+    /// `Result`) plus the anonymous union, which has a printed form in neither position. The frozen collections print
+    /// their elements, and nominal, scalar and type-parameter values keep their own printed form, so they stay out.
+    fn unprintable_value(ty: &ResolvedType) -> Option<errors::UnprintableValue> {
+        match ty {
+            ResolvedType::Tuple(elements) => Some(errors::UnprintableValue::Tuple { arity: elements.len() }),
+            ResolvedType::Generic(_, _) if ty.is_union() => Some(errors::UnprintableValue::Union),
+            ResolvedType::Generic(name, elements) => match collection_type_id(name.as_str())? {
+                CollectionTypeId::Tuple => Some(errors::UnprintableValue::Tuple { arity: elements.len() }),
+                CollectionTypeId::List => Some(errors::UnprintableValue::List),
+                CollectionTypeId::Dict => Some(errors::UnprintableValue::Dict),
+                CollectionTypeId::Set => Some(errors::UnprintableValue::Set),
+                CollectionTypeId::Option => Some(errors::UnprintableValue::Option),
+                CollectionTypeId::Result => Some(errors::UnprintableValue::Result),
+                CollectionTypeId::FrozenList
+                | CollectionTypeId::FrozenDict
+                | CollectionTypeId::FrozenSet
+                | CollectionTypeId::Generator => None,
+            },
+            _ => None,
         }
     }
 

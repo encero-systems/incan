@@ -37,10 +37,10 @@ def main() -> None:
     mut d: Dict[str, int] = {}
     d["b"] = 2
     d["a"] = 1
-    println(names(d))
+    println(f"{names(d)}")
     println(has(d, "a"))
     println(count_keys(d))
     println(total(d))
     println(len(collect_keys(d)))
-    println(doubled(d))
-    println(ordered_values(d))
+    println(f"{doubled(d)}")
+    println(f"{ordered_values(d)}")

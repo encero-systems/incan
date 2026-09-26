@@ -13,6 +13,16 @@ use crate::ast;
 const CURRENT_FIELD_SENTINEL_IDENT: &str = "__incan_vocab_current_row";
 const SYNTHETIC_SPAN_BASE: usize = 1usize << 48;
 
+/// Return whether `span` marks an AST node the compiler synthesized rather than one the source spelled.
+///
+/// Desugared vocabulary output carries spans from `SyntheticSpanAllocator`, which start at a base no source file
+/// reaches, and the hidden helper imports a desugarer receives carry the empty default span. A parsed node always
+/// covers at least one source byte below that base. Source-spelling checks, such as the reserved `__incan_` name
+/// prefix (#1769), use this to leave compiler-authored nodes alone.
+pub(crate) fn is_synthetic_span(span: ast::Span) -> bool {
+    span == ast::Span::default() || span.start >= SYNTHETIC_SPAN_BASE
+}
+
 /// Allocates unique spans for AST nodes synthesized from desugarer output.
 ///
 /// The public vocab AST intentionally does not assign source offsets to every helper-produced expression, but later

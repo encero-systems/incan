@@ -1,0 +1,12 @@
+# behavior: interpolating a union value in an f-string is refused at check time until the value is narrowed
+# expect-diagnostic: INCAN-T0103
+
+def parse(flag: bool) -> int | str:
+    if flag:
+        return 1
+    return "one"
+
+
+def main() -> None:
+    value = parse(true)
+    println(f"value={value}")

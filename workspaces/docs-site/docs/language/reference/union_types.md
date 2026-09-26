@@ -49,6 +49,16 @@ def classify(value: int | str | None) -> str:
 
 Do not reuse one binding name across alternatives that infer different types. `int(item) | str(item)` is rejected because `item` would be both `int` and `str` in the same branch.
 
+`print(value)`, `println(value)` and an f-string `{value}` over a union value are refused at check time with `INCAN-T0103`. A member bound by narrowing prints as its own type:
+
+```incan
+def show(value: int | str) -> None:
+    match value:
+        int(n) => println(n)  # prints the int
+        str(s) => println(s)  # prints the str
+    println(value)            # refused: INCAN-T0103
+```
+
 For unions that canonicalize through `Option[...]`, use `is None` or `is not None` to narrow the optional value:
 
 ```incan

@@ -1,0 +1,18 @@
+# behavior: an f-string renders a list, an Option and a Result through their structure, which print cannot
+# expect-stdout:
+#   [1, 2, 3]
+#   Some(1) None
+#   Ok(2) Err("bad")
+#   1
+
+def main() -> None:
+    items: list[int] = [1, 2, 3]
+    println(f"{items}")
+    present: Option[int] = Some(1)
+    absent: Option[int] = None
+    println(f"{present} {absent}")
+    good: Result[int, str] = Ok(2)
+    bad: Result[int, str] = Err("bad")
+    println(f"{good} {bad}")
+    counts: dict[str, int] = {"a": 1}
+    println(len(counts))

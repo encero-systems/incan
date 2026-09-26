@@ -476,12 +476,13 @@ def print(value: int) -> int:
 
 #[test]
 fn replacement_refuses_to_print_a_value_it_cannot_render_identically() -> Result<(), Box<dyn std::error::Error>> {
-    // Printing shares one rendering rule with f-string interpolation, so it inherits the same boundary: a value
-    // whose spelling this runtime and the Rust-emission backend do not provably agree on refuses instead of
-    // guessing.
+    // Printing a list directly is refused at check time (INCAN-T0103), so the value reaches the printer through
+    // the f-string that renders it, and that interpolation shares the same boundary: a value whose spelling this
+    // runtime and the Rust-emission backend do not provably agree on refuses instead of guessing.
     let source = r#"
 def main() -> None:
-  println([1, 2])
+  items = [1, 2]
+  println(f"{items}")
 "#;
     let module = lower_typed_body_ir(source)?;
     let Err(error) = execute_free_function(&module, "main", &[]) else {

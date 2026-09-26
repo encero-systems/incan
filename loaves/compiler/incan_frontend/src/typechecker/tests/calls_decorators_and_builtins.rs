@@ -1185,7 +1185,8 @@ def main() -> None:
         "the hint spells the element-by-element form, got: {:?}",
         refused[0].1
     );
-    assert_eq!(refused[1].0, "'println' cannot print the tuple 'value'");
+    // A call result has no name to spell, so the message names the kind of value instead.
+    assert_eq!(refused[1].0, "'println' cannot print a tuple");
 }
 
 #[test]
@@ -1203,4 +1204,125 @@ def main() -> None:
     println(f"{coords[0]},{coords[1]}")
 "#,
     );
+}
+
+// ---- #1748: `print` has no rendering for a collection, an Option, a Result or a union value ----
+
+/// One `INCAN-T0103` refusal: its message and its hints.
+type PrintedFormRefusal = (String, Vec<String>);
+
+/// Return the `INCAN-T0103` refusals of a program the checker must refuse, as message and hints.
+fn printed_form_refusals(source: &str) -> Result<Vec<PrintedFormRefusal>, Box<dyn std::error::Error>> {
+    let errors = check_str(source)
+        .err()
+        .ok_or("a value with no printed form must be refused")?;
+    Ok(errors
+        .into_iter()
+        .filter(|error| error.stable_code() == Some("INCAN-T0103"))
+        .map(|error| (error.message, error.hints))
+        .collect())
+}
+
+#[test]
+fn print_of_collections_options_results_and_unions_is_refused_issue1748() -> Result<(), Box<dyn std::error::Error>> {
+    // The program from #1748, widened to every kind with no printed form and to an unnamed argument.
+    let refused = printed_form_refusals(
+        r#"
+def parse(flag: bool) -> int | str:
+    if flag:
+        return 1
+    return "one"
+
+def main() -> None:
+    items: list[int] = [1, 2, 3]
+    print(items)
+    counts: dict[str, int] = {"a": 1}
+    println(counts)
+    seen: set[int] = {1}
+    println(seen)
+    maybe: Option[int] = Some(1)
+    println(maybe)
+    outcome: Result[int, str] = Ok(1)
+    println(outcome)
+    value = parse(true)
+    println(value)
+    println([1, 2])
+"#,
+    )?;
+    assert_eq!(
+        refused.iter().map(|(message, _)| message.as_str()).collect::<Vec<_>>(),
+        vec![
+            "'print' cannot print the list 'items'",
+            "'println' cannot print the dict 'counts'",
+            "'println' cannot print the set 'seen'",
+            "'println' cannot print the Option 'maybe'",
+            "'println' cannot print the Result 'outcome'",
+            "'println' cannot print the union value 'value'",
+            "'println' cannot print a list",
+        ],
+        "one refusal per argument with no printed form, in source order"
+    );
+    assert!(
+        refused[0].1.iter().any(|hint| hint.contains("print(f\"{items}\")")),
+        "a collection's remedy spells the f-string that renders it, got: {:?}",
+        refused[0].1
+    );
+    assert!(
+        refused[5].1.iter().any(|hint| hint.contains("match or isinstance")),
+        "a union value's remedy narrows it first, got: {:?}",
+        refused[5].1
+    );
+    Ok(())
+}
+
+#[test]
+fn interpolating_a_union_value_is_refused_issue1748() -> Result<(), Box<dyn std::error::Error>> {
+    // An f-string renders collections, Option and Result through their structure, but a union value has no printed
+    // form there either until it is narrowed.
+    let refused = printed_form_refusals(
+        r#"
+def parse(flag: bool) -> int | str:
+    if flag:
+        return 1
+    return "one"
+
+def main() -> None:
+    value = parse(true)
+    println(f"value={value}")
+"#,
+    )?;
+    assert_eq!(
+        refused.iter().map(|(message, _)| message.as_str()).collect::<Vec<_>>(),
+        vec!["f-string cannot interpolate the union value 'value'"],
+    );
+    Ok(())
+}
+
+#[test]
+fn interpolated_collections_and_narrowed_unions_print_issue1748() -> Result<(), Box<dyn std::error::Error>> {
+    check_str(
+        r#"
+def parse(flag: bool) -> int | str:
+    if flag:
+        return 1
+    return "one"
+
+def main() -> None:
+    items: list[int] = [1, 2, 3]
+    counts: dict[str, int] = {"a": 1}
+    maybe: Option[int] = Some(1)
+    outcome: Result[int, str] = Ok(1)
+    println(f"{items} {counts} {maybe} {outcome}")
+    println(len(items), items[0])
+    match maybe:
+        Some(n) => println(n)
+        None => println("none")
+    value = parse(true)
+    match value:
+        int(n) => println(n)
+        str(s) => println(s)
+"#,
+    )
+    .map_err(|errors| format!("interpolated and narrowed values must print, got: {errors:?}"))?;
+    Ok(())
 }

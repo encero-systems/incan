@@ -268,38 +268,50 @@ const SELF_MUTATION_REQUIRES_MUT_SELF: DiagnosticCatalogEntry = DiagnosticCatalo
     docs_url: Some("https://encero-systems.github.io/incan/language/explanation/models_and_classes/classes/"),
 };
 
-const PRINT_ARGUMENT_IS_TUPLE: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+const VALUE_WITHOUT_PRINTED_FORM: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-T0103",
-    title: "Tuple passed to `print`",
+    title: "Value with no printed form",
     severity: "error",
     phase: "typecheck",
-    summary: "A `print` or `println` argument is a tuple, which has no printed form.",
-    explanation: "Tuples have no printed form in the language, so a program that prints one has no output to promise and cannot be built. Each element prints on its own: index into the tuple or unpack it first.",
-    examples: &["coords: tuple[int, int] = (10, 20)\nprint(coords)"],
+    summary: "A `print` or `println` argument is a tuple, list, dict, set, `Option`, `Result` or union value, or an f-string interpolates a union value; none of these has a printed form.",
+    explanation: "`print` and `println` write each argument's display form. Tuples, lists, dicts, sets, `Option` and `Result` values have none, so a program that prints one directly has no output to promise and cannot be built. An f-string renders these values through their structure (`[1, 2, 3]`, `Some(1)`, `Ok(2)`), so interpolating the value prints it, and so does printing its elements or its length. A union value has no printed form in either position until it is narrowed to one of its members with `match` or `isinstance`.",
+    examples: &[
+        "coords: tuple[int, int] = (10, 20)\nprint(coords)",
+        "items: list[int] = [1, 2, 3]\nprintln(items)",
+        "def show(value: int | str) -> None:\n    println(f\"{value}\")",
+    ],
     common_causes: &[
-        "Printing a tuple-returning call's result directly.",
-        "Printing a tuple binding as a shortcut for printing its elements.",
+        "Printing a collection, an `Option` or a `Result` directly as a shortcut for printing its contents.",
+        "Printing or interpolating a union value before narrowing it.",
     ],
     fixes: &[
-        "Print the elements: `print(coords[0], coords[1])`.",
-        "Unpack first, then print the names: `x, y = coords` and `print(x, y)`.",
+        "Interpolate the value: `println(f\"{items}\")`.",
+        "Print the elements or the length: `print(coords[0], coords[1])`, `println(len(items))`.",
+        "Narrow a union value first: `match value:` with a type pattern per member, then print the member.",
     ],
-    docs_url: Some("https://encero-systems.github.io/incan/language/reference/language/"),
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/strings/"),
 };
 
-const TUPLE_ANNOTATION_REQUIRES_ELEMENT_TYPES: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+const COLLECTION_ANNOTATION_REQUIRES_TYPE_ARGUMENTS: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-T0104",
-    title: "Tuple annotation without element types",
+    title: "Collection annotation without type arguments",
     severity: "error",
     phase: "typecheck",
-    summary: "A `Tuple` (or `tuple`) annotation names no element types.",
-    explanation: "`Tuple` is a family of types, one per element list, so the bare word names no type: nothing can be emitted for it and the build stops. Every tuple annotation spells its element types in order.",
-    examples: &["multiple: Tuple = (\"a\", 1)"],
+    summary: "A `list`, `dict`, `set`, `tuple`, `Option` or `Result` annotation (or a frozen collection or `Generator`) names no type arguments.",
+    explanation: "Each builtin collection name is a family of types, one per argument list, so the bare word names no type: nothing can be emitted for it and the build stops. The refusal applies wherever the bare word stands, alone or inside another annotation (`list[Dict]`, `Option[List]`). A source type that takes one of these spellings for itself is an ordinary type and is not affected.",
+    examples: &[
+        "multiple: Tuple = (\"a\", 1)",
+        "items: List = [1, 2]",
+        "maybe: Option = None",
+    ],
     common_causes: &[
-        "A Python habit of annotating with the bare `Tuple` name.",
+        "An annotation written with the bare family name, such as `items: List`.",
         "An annotation left incomplete while the value's shape was still changing.",
     ],
-    fixes: &["Write one type per element: `tuple[str, int]` or `Tuple[str, int]`."],
+    fixes: &[
+        "Write the type arguments: `list[int]`, `dict[str, int]`, `Option[int]`, `Result[int, str]`.",
+        "Write one type per tuple element: `tuple[str, int]`.",
+    ],
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/language/"),
 };
 
@@ -382,6 +394,27 @@ const OPERATOR_HAS_NO_TYPE_PARAMETER_BOUND: DiagnosticCatalogEntry = DiagnosticC
         "Bound the parameter by a trait that defines the operator's hook, `def modulo[T with Remainder](a: T, b: T) -> T`, and implement `__mod__` on the trait.",
     ],
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/numeric_semantics/"),
+};
+
+const RESERVED_COMPILER_NAME: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0111",
+    title: "Name uses the compiler's reserved `__incan_` prefix",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A declaration, binding, parameter or import alias is named with the `__incan_` prefix, which is reserved for the names the compiler generates.",
+    explanation: "The compiler names the items and locals it generates with the `__incan_` prefix, such as the original function a decorator wraps. A source name with the same prefix could collide with one of them and stop the build on a duplicate definition, so every name a program declares or binds must start with something else: functions, statics, constants, types, fields, methods, parameters, type parameters, local and pattern bindings, and import aliases. The one exception is `__incan_new`, the constructor hook the standard library declares on its own types, which the compiler looks up by that name.",
+    examples: &[
+        "@preserve()\npub def target() -> int:\n    return 40\n\npub def __incan_original_target() -> int:\n    return 2",
+    ],
+    common_causes: &[
+        "A name copied from generated code or from an earlier error message.",
+        "A helper named to look internal.",
+    ],
+    fixes: &[
+        "Rename it without the prefix: `original_target`.",
+        "Use a single leading underscore for a module-private helper: `_original_target`.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/imports_and_modules/"),
 };
 
 const IMPORT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
@@ -499,13 +532,14 @@ const CATALOG: &[DiagnosticCatalogEntry] = &[
     TYPECHECK,
     UNREACHABLE_CODE,
     SELF_MUTATION_REQUIRES_MUT_SELF,
-    PRINT_ARGUMENT_IS_TUPLE,
-    TUPLE_ANNOTATION_REQUIRES_ELEMENT_TYPES,
+    VALUE_WITHOUT_PRINTED_FORM,
+    COLLECTION_ANNOTATION_REQUIRES_TYPE_ARGUMENTS,
     RUST_OWNER_TYPE_ARGS_NOT_INFERRED,
     CALLABLE_MARKER_NOT_SUPPORTED,
     ROUTE_HANDLER_RETURN_NOT_RESPONSE,
     ROUTE_HANDLER_PARAMETER_UNBOUND,
     OPERATOR_HAS_NO_TYPE_PARAMETER_BOUND,
+    RESERVED_COMPILER_NAME,
     IMPORT,
     SDK_COMPONENT_DISABLED,
     SDK_COMPONENT_UNAVAILABLE,
@@ -749,8 +783,21 @@ mod tests {
             errors::SelfMutation::MutatingCall { callee: "pop" },
             Span::default(),
         );
-        let print_tuple = errors::print_argument_is_tuple("print", "coords", 2, Span::default());
+        let print_tuple = errors::print_argument_has_no_printed_form(
+            "print",
+            Some("coords"),
+            errors::UnprintableValue::Tuple { arity: 2 },
+            Span::default(),
+        );
+        let print_list = errors::print_argument_has_no_printed_form(
+            "println",
+            None,
+            errors::UnprintableValue::List,
+            Span::default(),
+        );
+        let interpolated_union = errors::interpolated_union_has_no_printed_form(Some("value"), Span::default());
         let bare_tuple = errors::tuple_annotation_requires_element_types("Tuple", Span::default());
+        let bare_option = errors::collection_annotation_requires_type_arguments("Option", Span::default());
         let open_generics = errors::rust_owner_type_args_not_inferred(
             "HashMap",
             "new",
@@ -764,7 +811,13 @@ mod tests {
             "INCAN-T0102"
         );
         assert_eq!(code_for_error(&print_tuple, DiagnosticPhase::Typecheck), "INCAN-T0103");
+        assert_eq!(code_for_error(&print_list, DiagnosticPhase::Typecheck), "INCAN-T0103");
+        assert_eq!(
+            code_for_error(&interpolated_union, DiagnosticPhase::Typecheck),
+            "INCAN-T0103"
+        );
         assert_eq!(code_for_error(&bare_tuple, DiagnosticPhase::Typecheck), "INCAN-T0104");
+        assert_eq!(code_for_error(&bare_option, DiagnosticPhase::Typecheck), "INCAN-T0104");
         assert_eq!(
             code_for_error(&open_generics, DiagnosticPhase::Typecheck),
             "INCAN-T0105"
@@ -783,6 +836,43 @@ mod tests {
                 .any(|hint| hint.contains("HashMap.new[str, int]()") && hint.contains("untyped: HashMap[str, int]")),
             "the remedy must spell both the call and the binding form, got {:?}",
             open_generics.hints
+        );
+        assert_eq!(print_list.message, "'println' cannot print a list");
+        assert_eq!(
+            bare_option.message,
+            "Option annotation 'Option' is missing its value type"
+        );
+        assert!(
+            bare_option.hints.iter().any(|hint| hint.contains("'Option[int]'")),
+            "the remedy must spell the parameterized annotation, got {:?}",
+            bare_option.hints
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reserved_compiler_name_refusal_uses_its_own_stable_code() -> Result<(), Box<dyn std::error::Error>> {
+        let function = errors::reserved_compiler_name("__incan_original_target", "function", Span::default());
+        let bare_prefix = errors::reserved_compiler_name("__incan_", "binding", Span::default());
+
+        assert_eq!(code_for_error(&function, DiagnosticPhase::Typecheck), "INCAN-T0111");
+        let Some(entry) = explain("INCAN-T0111") else {
+            return Err("INCAN-T0111 must have a catalog explanation".into());
+        };
+        assert_eq!(entry.severity, "error");
+        assert_eq!(entry.phase, "typecheck");
+        assert!(
+            function
+                .hints
+                .iter()
+                .any(|hint| hint.contains("for example 'original_target'")),
+            "the remedy must suggest the name without the prefix, got {:?}",
+            function.hints
+        );
+        assert!(
+            bare_prefix.hints.iter().all(|hint| !hint.contains("for example")),
+            "a name that is only the prefix has nothing left to suggest, got {:?}",
+            bare_prefix.hints
         );
         Ok(())
     }

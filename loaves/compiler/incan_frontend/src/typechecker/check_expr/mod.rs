@@ -95,6 +95,29 @@ impl TypeChecker {
         ResolvedType::Function(Self::local_partial_params(projected, &partial.args), ret)
     }
 
+    /// Type-check every interpolated expression of an f-string and refuse a union value in display position (#1748).
+    ///
+    /// A `{value}` interpolation renders a tuple, list, dict, set, `Option` or `Result` through its structure, so
+    /// those stay accepted; a union value has no printed form until it is narrowed to one of its members, so the
+    /// program could not be built and the interpolation is refused. A `{value:?}` interpolation asks for the structure
+    /// explicitly and is left alone.
+    fn check_fstring_parts(&mut self, parts: &[FStringPart]) {
+        for part in parts {
+            let FStringPart::Expr { expr, format } = part else {
+                continue;
+            };
+            let ty = self.check_expr(expr);
+            if matches!(format, FStringFormat::Display) && self.expand_type_aliases(ty).is_union() {
+                let name = match &expr.node {
+                    Expr::Ident(name) => Some(name.as_str()),
+                    _ => None,
+                };
+                self.errors
+                    .push(errors::interpolated_union_has_no_printed_form(name, expr.span));
+            }
+        }
+    }
+
     /// Resolve a field by canonical name or alias, returning the canonical name and FieldInfo.
     ///
     /// - `allow_alias`: whether alias lookup is allowed (models only).
@@ -266,11 +289,7 @@ impl TypeChecker {
             Expr::Paren(inner) => self.check_expr(inner),
             Expr::Constructor(name, args) => self.check_constructor(name, args, expr.span),
             Expr::FString(parts) => {
-                for part in parts {
-                    if let FStringPart::Expr { expr, .. } = part {
-                        self.check_expr(expr);
-                    }
-                }
+                self.check_fstring_parts(parts);
                 ResolvedType::Str
             }
             Expr::Yield(inner) => {
