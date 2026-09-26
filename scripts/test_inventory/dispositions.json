@@ -1472,7 +1472,7 @@
         },
         "isinstance_alias_target_uses_the_typecheckers_resolved_target_in_native_lowering": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_enums_and_matching/isinstance_explicit_builtin_and_aliases.incn",
-          "notes": "twinned by the program calling every function with each member type, through helper functions that build the FrozenStr unions because the legacy route does not coerce a const into a union at a call. The `matches!`/`match value` lowering-shape assertions die with #654."
+          "notes": "twinned by the program calling every function with each member type, through helper functions that build the FrozenStr unions because the build does not coerce a const into a union at a call. The `matches!`/`match value` lowering-shape assertions die with #654."
         },
         "method_alias_calls_the_target_projection_without_a_second_definition": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_functions_and_projections/method_alias_and_partial.incn",
@@ -1556,7 +1556,7 @@
         },
         "test_classes_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_models_and_classes/classes.incn",
-          "notes": "twinned by the program run to completion, now also calling `Counter.reset`, `Stack.is_empty`, `Calculator.subtract`/`multiply` and reading `Calculator.name` and `Person.age` through methods. `Stack.pop` takes `mut self` in the twin: the route emitted `pub fn pop(&self)` around a mutation and rustc refused it, while the checker had accepted the mutation inside a non-`mut self` method (a checker bug; bug, issue pending). The retired snapshot (the program's whole generated Rust) dies with #654."
+          "notes": "twinned by the program run to completion, now also calling `Counter.reset`, `Stack.is_empty`, `Calculator.subtract`/`multiply` and reading `Calculator.name` and `Person.age` through methods. `Stack.pop` takes `mut self` in the twin: the build emitted `pub fn pop(&self)` around a mutation and rustc refused it, while the checker had accepted the mutation inside a non-`mut self` method (a checker bug; bug, issue pending). The retired snapshot (the program's whole generated Rust) dies with #654."
         },
         "test_collection_literal_spread_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings/collection_literal_spread.incn",
@@ -1564,7 +1564,7 @@
         },
         "test_collections_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings/collections.incn",
-          "notes": "twinned by the program printing every index, slice, concatenation and extension result. The bare `Tuple`-annotated literal is dropped: the legacy route emits a `Tuple` type that does not exist (E0425). The retired snapshot (the program's whole generated Rust) dies with #654."
+          "notes": "twinned by the program printing every index, slice, concatenation and extension result. The bare `Tuple`-annotated literal is dropped: the build emits a `Tuple` type that does not exist (E0425). The retired snapshot (the program's whole generated Rust) dies with #654."
         },
         "test_const_bytes_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_values_and_control_flow/const_str_chain_and_bytes.incn",
@@ -1716,7 +1716,7 @@
         },
         "test_issue1464_list_constructor_codegen": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/snapshots/list_constructor_sources.incn`: `list()` over dict views, lists, sets, a mutable parameter, a dict, a str, nothing, bytes, a range, frozen lists, an iterator, a reused source and the process arguments (`rust::std::env`), printing the lengths `2 2 2 3 2 2 3 0 2 3 1 1 4 2` and `1`. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (`no source-current project inspection authority` under the suite otherwise); the candidate passes standalone (`incan oven bake` + `incan run`). The `list(generator)` and `FrozenList([...])` cases are not in the candidate: the legacy route emits `.collect::<Vec<_>>()` on the runtime Generator and a `FrozenList(...)` tuple constructor that does not exist."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/snapshots/list_constructor_sources.incn`: `list()` over dict views, lists, sets, a mutable parameter, a dict, a str, nothing, bytes, a range, frozen lists, an iterator, a reused source and the process arguments (`rust::std::env`), printing the lengths `2 2 2 3 2 2 3 0 2 3 1 1 4 2` and `1`. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (`no source-current project inspection authority` under the suite otherwise); the candidate passes standalone (`incan oven bake` + `incan run`). The `list(generator)` and `FrozenList([...])` cases are not in the candidate: the build emits `.collect::<Vec<_>>()` on the runtime Generator and a `FrozenList(...)` tuple constructor that does not exist."
         },
         "test_issue1476_empty_list_equality_operands_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings/empty_list_equality.incn",
@@ -1864,7 +1864,7 @@
         },
         "test_issue501_option_union_isinstance_codegen_no_raw_call": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_enums_and_matching/newtype_union_isinstance.incn",
-          "notes": "twinned by one program for #501 and #502, building the optional union through helper functions because the legacy route does not coerce a literal into `Option[union]` at a call; the `isinstance(` and `=> {}` absence assertions die with #654."
+          "notes": "twinned by one program for #501 and #502, building the optional union through helper functions because the build does not coerce a literal into `Option[union]` at a call; the `isinstance(` and `=> {}` absence assertions die with #654."
         },
         "test_issue502_exhaustive_independent_isinstance_branches_codegen_has_no_unit_fallback": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_enums_and_matching/newtype_union_isinstance.incn",
@@ -1964,7 +1964,7 @@
         },
         "test_lowercase_types_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_models_and_classes/lowercase_types.incn",
-          "notes": "twinned by the program printing the annotated values; the tuple is read by index because the legacy route does not bind names in a tuple pattern over a `tuple[...]`-typed scrutinee. The retired snapshot (the program's whole generated Rust) dies with #654."
+          "notes": "twinned by the program printing the annotated values; the tuple is read by index because the build does not bind names in a tuple pattern over a `tuple[...]`-typed scrutinee. The retired snapshot (the program's whole generated Rust) dies with #654."
         },
         "test_match_arms_convert_to_the_match_result_type": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_enums_and_matching/trailing_match_expression.incn",
@@ -1980,7 +1980,7 @@
         },
         "test_model_alias_expressions_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_models_and_classes/model_alias_expressions.incn",
-          "notes": "twinned by the RFC 021 program printing alias construction, alias field access, self access and mixed access. The constructor-pattern half (`Account(type=\"premium\") =>`) is not in the twin: the legacy route emits a struct pattern without `..` and a str literal against String (E0027/E0308), so it cannot run today; the candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/snapshots/model_alias_constructor_pattern.incn` (three arms printing `Premium account`, `Basic account`, `Unknown`) merges back in when the route compiles constructor patterns. The retired snapshot (the program's whole generated Rust) dies with #654."
+          "notes": "twinned by the RFC 021 program printing alias construction, alias field access, self access and mixed access. The constructor-pattern half (`Account(type=\"premium\") =>`) is covered by `loaves/compiler/incan_test_support/fixtures/behavior/snapshots_models_and_classes/partial_constructor_pattern.incn` (#1707, #1708). The retired snapshot (the program's whole generated Rust) dies with #654."
         },
         "test_model_alias_self_access_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_models_and_classes/model_alias_expressions.incn",
@@ -2072,7 +2072,7 @@
         },
         "test_patterns_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_enums_and_matching/patterns.incn",
-          "notes": "twinned by the program run to completion. The tuple arm with a str literal element (`(_, \"answer\")` printing `second is answer`) is replaced by `(42, _)` printing `first is forty-two`: the legacy route emits `&str` against `String` in tuple patterns (E0308), a gap the tuple-pattern str-literal arm cannot cross today. The retired snapshot (the program's whole generated Rust) dies with #654."
+          "notes": "twinned by the program run to completion. The tuple arm with a str literal element (`(_, \"answer\")` printing `second is answer`) is replaced by `(42, _)` printing `first is forty-two`: the build emits `&str` against `String` in tuple patterns (E0308), a gap the tuple-pattern str-literal arm cannot cross today. The retired snapshot (the program's whole generated Rust) dies with #654."
         },
         "test_power_receiver_parenthesization_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_functions_and_projections/power_operator_receivers.incn",
@@ -2208,11 +2208,11 @@
         },
         "test_rfc070_result_combinators_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/result_combinators.incn",
-          "notes": "twinned by one RFC 070 program using map, and_then, inspect with a callable object and with a named function over a non-Copy payload, and unwrap inside `direct[E](result: Result[int, E]) -> int`, generic over an unbounded `E`. The Copy-payload named-observer inspect (`.inspect(observe_int)`) is not in the twin: the legacy route passes the fn item where the helper wants `fn(&T)` (E0308), so it never compiled. The `crate::__incan_std::result::*` helper assertions die with #654."
+          "notes": "twinned by one RFC 070 program using map, and_then, inspect with a callable object and with a named function over a non-Copy payload, and unwrap inside `direct[E](result: Result[int, E]) -> int`, generic over an unbounded `E`. The Copy-payload named-observer inspect (`.inspect(observe_int)`) is not in the twin: the build passes the fn item where the helper wants `fn(&T)` (E0308), so it never compiled. The `crate::__incan_std::result::*` helper assertions die with #654."
         },
         "test_rfc070_result_inspect_non_copy_observer_borrows_payload": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/result_combinators.incn",
-          "notes": "twinned by one RFC 070 program using map, and_then, inspect with a callable object and with a named function over a non-Copy payload, and unwrap inside `direct[E](result: Result[int, E]) -> int`, generic over an unbounded `E`. The Copy-payload named-observer inspect (`.inspect(observe_int)`) is not in the twin: the legacy route passes the fn item where the helper wants `fn(&T)` (E0308), so it never compiled. The `crate::__incan_std::result::*` helper assertions die with #654."
+          "notes": "twinned by one RFC 070 program using map, and_then, inspect with a callable object and with a named function over a non-Copy payload, and unwrap inside `direct[E](result: Result[int, E]) -> int`, generic over an unbounded `E`. The Copy-payload named-observer inspect (`.inspect(observe_int)`) is not in the twin: the build passes the fn item where the helper wants `fn(&T)` (E0308), so it never compiled. The `crate::__incan_std::result::*` helper assertions die with #654."
         },
         "test_rfc070_result_unwrap_codegen_does_not_require_debug_err": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/result_combinators.incn",
@@ -2240,7 +2240,7 @@
         },
         "test_rust_interop_associated_functions_codegen": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/snapshots/rust_interop_associated_functions.incn`: associated functions of imported Rust types are called (a random Uuid renders as 36 characters, a typed HashMap starts empty, `Instant.now()` is taken), printing `36` and `0`. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (`no source-current project inspection authority` under the suite otherwise); the candidate passes standalone (`incan oven bake` + `incan run`). The untyped `HashMap.new()` binding is not in the candidate (E0282 on the legacy route)."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/snapshots/rust_interop_associated_functions.incn`: associated functions of imported Rust types are called (a random Uuid renders as 36 characters, a typed HashMap starts empty, `Instant.now()` is taken), printing `36` and `0`. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (`no source-current project inspection authority` under the suite otherwise); the candidate passes standalone (`incan oven bake` + `incan run`). The untyped `HashMap.new()` binding is not in the candidate (E0282: fails to compile)."
         },
         "test_rust_interop_field_access_codegen": {
           "twin": "",
@@ -2412,7 +2412,7 @@
         },
         "test_std_web_routing_compiled_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/web_route_extractors.incn",
-          "notes": "twinned by the route fixture importing std.web routing; the `raise_runtime_misuse` helper is observable when it fires (a route fixture expecting it would declare `expect-exit: 101`), and its and the `panic!(\"decorator marker` absence assertions are generated shape that dies with #654."
+          "notes": "twinned by the web-route fixture importing std.web routing; the `raise_runtime_misuse` helper is observable when it fires (a route fixture expecting it would declare `expect-exit: 101`), and its and the `panic!(\"decorator marker` absence assertions are generated shape that dies with #654."
         },
         "test_string_operations_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings/string_operations.incn",
@@ -2440,11 +2440,11 @@
         },
         "test_trait_bound_inference_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/trait_bound_inference.incn",
-          "notes": "twinned by one program calling the inferred-bound functions for int, float and str. The inferred `/` and `%` cases are not in the twin: the legacy route lowers them through `py_div`/`py_mod`, whose sealed numeric bounds a type parameter cannot satisfy, so they never compiled. The retired snapshot (the program's whole generated Rust) dies with #654."
+          "notes": "twinned by one program calling the inferred-bound functions for int, float and str. The inferred `/` and `%` cases are not in the twin: the build lowers them through `py_div`/`py_mod`, whose sealed numeric bounds a type parameter cannot satisfy, so they never compiled. The retired snapshot (the program's whole generated Rust) dies with #654."
         },
         "test_trait_bound_inference_more_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/trait_bound_inference.incn",
-          "notes": "twinned by the merged inference program (f-string, dict key, +, -, *, clone, transitive and combined bounds). The inferred `/` and `%` cases are not in the twin: the legacy route lowers them through `py_div`/`py_mod`, whose sealed numeric bounds a type parameter cannot satisfy, so they never compiled. The retired snapshot (the program's whole generated Rust) dies with #654."
+          "notes": "twinned by the merged inference program (f-string, dict key, +, -, *, clone, transitive and combined bounds). The inferred `/` and `%` cases are not in the twin: the build lowers them through `py_div`/`py_mod`, whose sealed numeric bounds a type parameter cannot satisfy, so they never compiled. The retired snapshot (the program's whole generated Rust) dies with #654."
         },
         "test_trait_supertrait_assignability_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/trait_supertrait_assignability.incn",
@@ -2456,7 +2456,7 @@
         },
         "test_traits_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/traits.incn",
-          "notes": "twinned by the program run to completion. `Resizable.resize` takes `mut self` in the twin: the route emitted `fn resize(&self)` around a field assignment and rustc refused it, while the checker had accepted the assignment inside a non-`mut self` method (a checker bug; bug, issue pending). The retired snapshot (the program's whole generated Rust) dies with #654."
+          "notes": "twinned by the program run to completion. `Resizable.resize` takes `mut self` in the twin: the build emitted `fn resize(&self)` around a field assignment and rustc refused it, while the checker had accepted the assignment inside a non-`mut self` method (a checker bug; bug, issue pending). The retired snapshot (the program's whole generated Rust) dies with #654."
         },
         "test_type_annotations_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_values_and_control_flow/type_annotations.incn",
@@ -2508,11 +2508,11 @@
         },
         "test_web_route_codegen_no_framework_crate_leakage": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/web_route_extractors.incn",
-          "notes": "twinned by an async program awaiting both route handlers directly (they return str because the legacy route cannot return `int` from a handler); the framework-leakage and routing-module assertions die with #654."
+          "notes": "twinned by an async program awaiting both route handlers directly (they return str because the build cannot return `int` from a handler); the framework-leakage and routing-module assertions die with #654."
         },
         "test_web_route_extractors_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/web_route_extractors.incn",
-          "notes": "twinned by an async program awaiting both route handlers directly (they return str because the legacy route cannot return `int` from a handler); the framework-leakage and routing-module assertions die with #654."
+          "notes": "twinned by an async program awaiting both route handlers directly (they return str because the build cannot return `int` from a handler); the framework-leakage and routing-module assertions die with #654."
         },
         "test_web_route_extractors_nested_module_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/web_route_nested_module",
@@ -5430,7 +5430,7 @@
         "build_explicit_mutable_rust_generic_reaches_codegen_through_normal_cli_path": {
           "disposition": "retire",
           "twin": "",
-          "notes": "open (harness-deps): the build succeeds and the assertions are the projected ABI in `main.rs` (`ProviderHandle<(&mut i64, &mut i64)>`), generated text. A behavior twin exists and passes standalone and under a root admitted to the explicit bake: the same program run to completion, printing its marker line (this program's `rust::std::vec::Vec` import launched no Cargo itself, but the bake that records its authority is the same explicit bake). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; measured 2026-09-20, ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. The candidate fixture is in the harness-deps slice folder."
+          "notes": "open: the build succeeds and the assertions are the projected ABI in `main.rs` (`ProviderHandle<(&mut i64, &mut i64)>`), generated text. A behavior twin exists and passes standalone and under a root admitted to the explicit bake: the same program run to completion, printing its marker line (this program's `rust::std::vec::Vec` import launched no Cargo itself, but the bake that records its authority is the same explicit bake). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. Candidate: `loaves/compiler/incan_test_support/fixtures/behavior_candidates/cli/rust_generic_mutable_reference_args.incn`."
         },
         "build_lib_imported_static_decorator_receiver_materializes_string_arg_issue671": {
           "disposition": "retire",
@@ -5440,7 +5440,7 @@
         "decorated_method_explicit_mutable_rust_generic_keeps_static_and_wrapper_abi": {
           "disposition": "retire",
           "twin": "",
-          "notes": "open (harness-deps): the build succeeds and the assertions are the shared ABI spelling in `main.rs`, generated text. A behavior twin exists and passes standalone and under a root admitted to the explicit bake: the same program run to completion (`7`, then its marker line). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; measured 2026-09-20, ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. The candidate fixture is in the harness-deps slice folder."
+          "notes": "open: the build succeeds and the assertions are the shared ABI spelling in `main.rs`, generated text. A behavior twin exists and passes standalone and under a root admitted to the explicit bake: the same program run to completion (`7`, then its marker line). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. Candidate: `loaves/compiler/incan_test_support/fixtures/behavior_candidates/cli/decorated_rust_generic_mutable_reference_args.incn`."
         },
         "explicit_legacy_sdk_inventory_blocks_lock_preheat": {
           "disposition": "unaffected",
@@ -5591,7 +5591,7 @@
         "test_rfc041_rust_coercion_codegen_smoke": {
           "disposition": "retire",
           "twin": "",
-          "notes": "open (harness-deps): IrCodegen text only (`Duration::from_secs_f32`). A behavior twin exists and passes standalone and under a root admitted to the explicit bake: a program passing a float literal to `rust::std::time::Duration.from_secs_f32` and printing `as_millis()` (`1500`). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; measured 2026-09-20, ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. The candidate fixture is in the harness-deps slice folder."
+          "notes": "open: IrCodegen text only (`Duration::from_secs_f32`). A behavior twin exists and passes standalone and under a root admitted to the explicit bake: a program passing a float literal to `rust::std::time::Duration.from_secs_f32` and printing `as_millis()` (`1500`). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. Candidate: `loaves/compiler/incan_test_support/fixtures/behavior_candidates/cli/rust_f32_argument_coercion.incn`."
         },
         "test_rfc041_rusttype_interop_typechecks_end_to_end": {
           "disposition": "keep",

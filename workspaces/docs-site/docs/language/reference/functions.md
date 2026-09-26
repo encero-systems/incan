@@ -1,8 +1,8 @@
 # Functions and Calls
 
-This page defines function signatures, ordinary call binding, rest parameters, call-site unpacking, and collection literal spread.
+This page defines function signatures, function types, ordinary call binding, rest parameters, call-site unpacking, and collection literal spread.
 
-For a step-by-step introduction, see [Functions](../tutorials/book/03_functions.md). For callable traits and callable type sugar, see [Callable objects](stdlib_traits/callable.md).
+For a step-by-step introduction, see [Functions](../tutorials/book/03_functions.md). For the `Callable0`, `Callable1` and `Callable2` traits, see [Callable objects](stdlib_traits/callable.md).
 
 ## Function Signatures
 
@@ -18,6 +18,71 @@ Use `-> None` for a function that does not return a useful value:
 ```incan
 def log(message: str) -> None:
     println(message)
+```
+
+## Function Types
+
+`(A, B) -> R` is the type of a callable that takes an `A` and a `B` and returns an `R`; `() -> R` takes no arguments. A named `def` function and a closure are values of a function type. With `def double(x: int) -> int`:
+
+```incan
+f: (int) -> int = double          # accepted
+g: (int) -> int = (x) => x + 1    # accepted
+h: (str) -> int = double          # refused: INCAN-T0001
+```
+
+### `Callable[Params, R]`
+
+`Callable[Params, R]` is another spelling of a function type; the parser rewrites it to the arrow form, and the two spellings are the same type. `Callable[...]` with other than two type arguments is a syntax error.
+
+| Sugar                 | Arrow form    |
+| --------------------- | ------------- |
+| `Callable[(), R]`     | `() -> R`     |
+| `Callable[A, R]`      | `(A) -> R`    |
+| `Callable[(A, B), R]` | `(A, B) -> R` |
+
+### `mut` parameters
+
+`mut` on a parameter lets the function change the value. Changes to a collection, model or class object reach the caller, and such a parameter is marked in the function type, `(mut T, ...) -> R`. An `int`, `float` or `bool` parameter is the function's own copy, so its changes stay local, and such a parameter is not marked in the function type.
+
+| Declaration                                   | Function type                  |
+| --------------------------------------------- | ------------------------------ |
+| `def grow(mut counter: Counter) -> int`       | `(mut Counter) -> int`         |
+| `def append(mut xs: list[int], x: int) -> None` | `(mut list[int], int) -> None` |
+| `def bump(mut n: int) -> int`                 | `(int) -> int`                 |
+
+| Rule                | Contract                                                                                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Where it is written | On a parameter of an arrow-form function type. In a tuple type, a parenthesized type, or the parameter list of `Callable[...]` it is a syntax error.                      |
+| Copied scalars      | On an `int`, `float` or `bool` parameter, also through a type alias, the marker is refused with `INCAN-T0001`.                                                            |
+| Type identity       | The marker is part of the function type. Two function types match only when they mark the same parameters; a mismatch in either direction is refused with `INCAN-T0001`.  |
+| `def` parameters    | A `def` parameter declared `mut` is marked, except a parameter of type `int`, `float` or `bool`, a parameter of a Rust type, and `*args` or `**kwargs`.                   |
+| Libraries           | A published function keeps its marked parameters: a consumer sees the function type the producer checked.                                                               |
+| Closures            | A closure checked against a function type has each parameter that type marks marked in its own type.                                                                      |
+| Display             | Diagnostics and hovers spell the marker, as in `(mut Counter, int) -> int`.                                                                                               |
+
+```incan
+step: (mut Counter) -> int = grow   # accepted
+step: (Counter) -> int = grow       # refused: INCAN-T0001, found '(mut Counter) -> int'
+twice: (mut int) -> int = bump      # refused: INCAN-T0001, `mut` cannot mark the `int` parameter
+```
+
+A `mut self` method's decorators spell the receiver with this marker; see [Method decorators](language.md#method-decorators). A worked program: [Pass a function that changes its argument](../how-to/decorators.md#task-pass-a-function-that-changes-its-argument).
+
+### Rest-aware function values
+
+A function value keeps the rest parameters of the function it names.
+
+| Rule              | Contract                                                                                                                                                            |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `*args: T`        | Through the value, the call accepts extra positional arguments of type `T` and `*list_value` unpacking; inside the function, `args` is a `List[T]`.                  |
+| `**kwargs: T`     | Through the value, the call accepts extra keyword arguments of type `T` and `**dict_value` unpacking; inside the function, `kwargs` is a `Dict[str, T]`.             |
+| Fixed-arity types | A function type written with a trailing `List[T]` or `Dict[str, T]` parameter takes that container as one argument; it accepts no extra arguments and no unpacking. |
+| Errors            | A call through the value binds like a direct call and is refused in the cases [Type Errors](#type-errors) lists.                                                    |
+
+With `def collect(prefix: str, *items: int, **labels: str) -> int` returning `len(items) + len(labels)` and `f = collect`:
+
+```incan
+f("event", 0, *[1, 2], **{"kind": "demo"})   # 4
 ```
 
 ## Ordinary Call Binding
@@ -355,20 +420,7 @@ def main() -> int:
 
 ## Function Values
 
-Named functions are first-class values. When a function value originates from a rest-aware function, the callable metadata preserves the rest markers, so direct rest arguments and unpack arguments still work through the variable:
-
-```incan
-def collect(prefix: str, *items: int, **labels: str) -> int:
-    return len(items) + len(labels)
-
-def main() -> int:
-    f = collect
-    xs = [1, 2]
-    labels = {"kind": "demo"}
-    return f("event", 0, *xs, **labels)
-```
-
-A plain fixed-arity function type does not become rest-aware just because one of its parameters is a list or dictionary. Rest behavior comes from rest metadata, not from trailing container types alone.
+Named functions are first-class values of a [function type](#function-types); a value of a rest-aware function keeps its rest parameters ([Rest-aware function values](#rest-aware-function-values)).
 
 For module-level alternate names such as `mean = avg`, use a symbol alias instead of a function-local value binding. Symbol aliases are declarations, participate in imports/exports, and preserve alias identity in metadata. See [Symbol aliases](symbol_aliases.md).
 

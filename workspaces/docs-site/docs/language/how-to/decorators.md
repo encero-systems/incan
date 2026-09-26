@@ -1,8 +1,8 @@
-# Decorators (how-to)
+# Decorators and callable values (how-to)
 
-This guide shows how to write the common kinds of user-defined decorator and how to move a method decorator to the receiver spelling of the method it decorates.
+This guide shows how to write the common kinds of user-defined decorator, how to move a method decorator to the receiver spelling of the method it decorates, and how to pass functions and callable objects as values.
 
-For the exact rules, see [Decorators (reference)](../reference/language.md#decorators). For why a method decorator spells the receiver the way the method does, see [Decorated methods](../explanation/rust_shaped_confidence.md#decorated-methods).
+For the exact rules, see [Decorators (reference)](../reference/language.md#decorators), [Function types](../reference/functions.md#function-types) and [Callable objects](../reference/stdlib_traits/callable.md). For why a method decorator spells the receiver the way the method does, see [Decorated methods](../explanation/rust_shaped_confidence.md#decorated-methods).
 
 !!! tip "Coming from Python?"
     A Python decorator can replace a function with any object. An Incan decorator receives the decorated callable and must return a callable, and the declared name has the type of what it returns. Python's `Callable[[A, B], R]` is Incan's `(A, B) -> R`; `=>` is only for closure expressions, not for callable types. Stacked decorators apply bottom-up, as in Python.
@@ -153,3 +153,50 @@ def keep(func: (mut Box, int) -> int) -> (mut Box, int) -> int:
 ```
 
 The migrated program passes the receiver as the former spelling did.
+
+## Task: pass a function that changes its argument
+
+1. Declare the changed parameter `mut` in the function you pass: `def grow(mut counter: Counter, by: int) -> int`.
+2. Mark the same parameter in the function type that receives it: `step: (mut Counter, int) -> int`.
+3. Declare the receiving parameter and the caller's binding `mut` too, so the change travels back to the caller.
+
+```incan
+class Counter:
+    pub value: int
+
+def grow(mut counter: Counter, by: int) -> int:
+    counter.value += by
+    return counter.value
+
+def apply(step: (mut Counter, int) -> int, mut counter: Counter) -> int:
+    return step(counter, 2)
+
+def main() -> None:
+    mut counter = Counter(value=1)
+    println(apply(grow, counter))   # 3
+    println(counter.value)          # 3
+```
+
+An `int`, `float` or `bool` parameter is the function's own copy, so leave it unmarked: `(int) -> int`, never `(mut int) -> int`.
+
+## Task: accept a function, a closure or a callable object
+
+Bound a type parameter by `Callable1[A, R]` (or `Callable0`, `Callable2`) instead of writing a function type, and adopt the same trait on a model or class that should be accepted too:
+
+```incan
+from std.traits.callable import Callable1
+
+def apply[M with Callable1[int, str]](mapper: M, value: int) -> str:
+    return mapper(value)
+
+@derive(Clone)
+model Prefixer with Callable1[int, str]:
+    prefix: str
+
+    def __call__(self, value: int) -> str:
+        return f"{self.prefix}:{value}"
+
+def main() -> None:
+    println(apply((value) => f"item:{value}", 3))   # item:3
+    println(apply(Prefixer(prefix="model"), 4))     # model:4
+```

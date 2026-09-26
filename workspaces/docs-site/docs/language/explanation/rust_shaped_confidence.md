@@ -306,7 +306,7 @@ If the answer is yes, Incan is worth considering on its own terms.
 - [Models and classes](models_and_classes/index.md)
 - [Derives and traits](derives_and_traits.md)
 - [Duckborrowing](../../contributing/explanation/duckborrowing.md)
-- [Decorators (how-to)](../how-to/decorators.md)
+- [Decorators and callable values (how-to)](../how-to/decorators.md)
 
 [^rust-ownership]: The Rust Book: [What Is Ownership?](https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html).
 [^rust-borrowing]: The Rust Book: [References and Borrowing](https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html).
