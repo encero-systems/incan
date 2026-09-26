@@ -158,16 +158,42 @@ impl AstLowering {
     }
 
     /// Lower a single AST type parameter to its IR representation.
+    ///
+    /// A bound on a `std.serde.json` protocol trait also carries the Rust serde capability that trait forwards to its
+    /// adopters, through [`Self::json_protocol_capability_bound`].
     fn lower_type_param(&self, tp: &ast::TypeParam, type_param_names: &HashSet<&str>) -> IrTypeParam {
-        let bounds = tp
-            .bounds
-            .iter()
-            .map(|bound| self.lower_trait_bound(bound, type_param_names))
-            .collect();
+        let mut bounds = Vec::new();
+        for bound in &tp.bounds {
+            bounds.push(self.lower_trait_bound(bound, type_param_names));
+            if let Some(capability) = self.json_protocol_capability_bound(&bound.name)
+                && !bounds.contains(&capability)
+            {
+                bounds.push(capability);
+            }
+        }
         IrTypeParam {
             name: tp.name.clone(),
             bounds,
         }
+    }
+
+    /// Return the Rust serde capability that a bound on a `std.serde.json` protocol trait requires beside the trait.
+    ///
+    /// The protocol traits declare `to_json` and `from_json`, and a bound names the stdlib trait so those calls have a
+    /// bound that provides them (#1712). The serde capability (`serde::Serialize`, `serde::de::DeserializeOwned`) is
+    /// what everything else serde does with the value compiles against: `json_stringify(value)`, the derive on a
+    /// generic model or class holding the parameter, and the adopter's own default body. The stdlib traits do not
+    /// name it as a supertrait, so a bound under any spelling (the bare import, an alias, the module-qualified name)
+    /// lowers to both (#1820). The spelling is resolved by its checked identity, so a trait that merely shares the
+    /// name carries nothing extra. Every type the checker admits for the bound meets both, since adopting a protocol
+    /// trait forwards its serde derive.
+    fn json_protocol_capability_bound(&self, visible_name: &str) -> Option<IrTraitBound> {
+        let capability = match self.stdlib_json_protocol_for_adopted_trait(visible_name)? {
+            stdlib::StdlibJsonTraitId::Serialize => trait_bounds::TraitBoundId::Serialize,
+            stdlib::StdlibJsonTraitId::Deserialize => trait_bounds::TraitBoundId::Deserialize,
+        };
+        let path = trait_bounds::rust_path(capability)?;
+        Some(IrTraitBound::with_type_args_classified(path, Vec::new()))
     }
 
     /// Map an Incan trait bound to the corresponding Rust trait bound.
@@ -225,8 +251,8 @@ impl AstLowering {
     /// an alias (`JsonSerialize`) and the module-qualified name (`json.Serialize`) all lower as written and resolve
     /// through the import to the stdlib trait, which is the trait a checked `to_json()` or `from_json()` call
     /// dispatches through (#1712). The registry's `serde::Serialize` and `serde::de::DeserializeOwned` rows name the
-    /// Rust capability those traits forward to an adopter as a derive; a bound on that capability does not provide
-    /// the protocol's methods, so the bare spelling reaching the registry left the dispatch without a bound (#1820).
+    /// Rust capability those traits forward to an adopter as a derive; a type parameter's bound carries it beside the
+    /// stdlib trait through [`Self::json_protocol_capability_bound`], never in its place (#1820).
     pub(in crate::lower) fn rust_mapped_builtin_trait_path(&self, visible_name: &str) -> Option<&'static str> {
         let (module_path, source_name) = self.canonical_trait_identity(visible_name);
         let source_name = source_name?;
@@ -328,6 +354,9 @@ impl AstLowering {
     }
 
     /// Lower a callable parameter type, synthesizing a hidden Rust generic when the source annotation names a trait.
+    ///
+    /// The hidden generic is bounded exactly as a written `T with Trait` parameter would be, including the serde
+    /// capability of a `std.serde.json` protocol trait ([`Self::json_protocol_capability_bound`]).
     pub(in crate::lower) fn lower_callable_param_type(
         &self,
         ty: &ast::Type,
@@ -338,9 +367,17 @@ impl AstLowering {
         if let Some(bound) = self.lower_trait_annotation_bound(ty, type_param_names) {
             let hidden_name = format!("__IncanTrait{}", *hidden_counter);
             *hidden_counter += 1;
+            let annotated_trait = match ty {
+                ast::Type::Simple(name) | ast::Type::Generic(name, _) => Some(name.as_str()),
+                _ => None,
+            };
+            let mut bounds = vec![bound];
+            if let Some(capability) = annotated_trait.and_then(|name| self.json_protocol_capability_bound(name)) {
+                bounds.push(capability);
+            }
             hidden_type_params.push(IrTypeParam {
                 name: hidden_name.clone(),
-                bounds: vec![bound],
+                bounds,
             });
             return IrType::Generic(hidden_name);
         }

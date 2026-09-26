@@ -760,6 +760,7 @@ settings: Settings = make()
 
 - `json_stringify(value)` → `str`
 - `value.to_json()` → `str` when the type imports and adopts `std.serde.json.Serialize`
+- For `value: T` with `T with Serialize` under any spelling of the `std.serde.json` trait (`Serialize`, an alias, `json.Serialize`): `value.to_json()` → `str` and `json_stringify(value)` → `str`; see [Serialization: Generic bounds](derives/serialization.md#generic-bounds)
 
 ```incan
 from std.serde.json import Serialize
@@ -807,7 +808,7 @@ def encode[T with json.Serialize](value: T) -> str:
 
 **API**:
 
-- `T.from_json(input: str)` → `Result[T, str]`
+- `T.from_json(input: str)` → `Result[T, str]`, including for a type parameter `T with Deserialize` under any spelling of the `std.serde.json` trait; see [Serialization: Generic bounds](derives/serialization.md#generic-bounds)
 
 Note: explicit `with Deserialize` adoption still needs either an imported `@derive(Deserialize)` or a user-defined `from_json(input)` implementation.
 

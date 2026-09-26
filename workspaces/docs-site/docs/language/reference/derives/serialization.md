@@ -29,6 +29,43 @@ def encode[T with json.Serialize](value: T) -> str:
 
 ---
 
+## Generic bounds
+
+A type parameter bounded by `std.serde.json`'s `Serialize` or `Deserialize` accepts exactly the types that adopt that trait, through `@derive(json)`, `@derive(Serialize)` / `@derive(Deserialize)`, or `with Serialize` / `with Deserialize`. Any other type argument is refused at check time. The bound means the same under every spelling of the trait: the imported name (`Serialize`), an alias (`Serialize as JsonSerialize`), and the module-qualified name (`json.Serialize`).
+
+| Bound | Provides, for `value: T` |
+| --- | --- |
+| `T with Serialize` | `value.to_json() -> str` and `json_stringify(value) -> str` |
+| `T with Deserialize` | `T.from_json(input: str) -> Result[T, str]` |
+
+The bound holds wherever the type parameter is declared: on a function, a method, a model or a class. A model or class whose parameter carries the bound may derive or adopt the same trait, and `json_stringify` accepts a value that contains the parameter, such as a `list[T]` field.
+
+```incan
+from std.serde.json import Deserialize, Serialize
+
+@derive(Serialize, Deserialize)
+model Payload:
+    value: int
+
+@derive(Serialize)
+model Envelope[T with Serialize]:
+    payload: T
+
+def encode[T with Serialize](value: T) -> str:
+    return value.to_json()          # encode(Payload(value=1)) is {"value":1}
+
+def stringify[T with Serialize](value: T) -> str:
+    return json_stringify(value)    # stringify(Payload(value=1)) is {"value":1}
+
+def decode[T with Deserialize](text: str) -> Result[T, str]:
+    return T.from_json(text)        # decode[Payload]("{\"value\":2}") is Ok(Payload(value=2))
+
+# Envelope(payload=Payload(value=3)).to_json() is {"payload":{"value":3}}
+# encode(1) is refused: int does not adopt Serialize
+```
+
+---
+
 ## Serialize
 
 - **Derive**: `@derive(json)` for both JSON directions, or `@derive(Serialize)` after importing `Serialize` directly

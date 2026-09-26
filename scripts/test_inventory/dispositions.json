@@ -4649,13 +4649,17 @@
       "split_required": false,
       "split_target": "",
       "tests": {
-        "bare_deserialize_bound_names_the_stdlib_trait_issue1820": {
+        "deserialize_bound_carries_the_trait_and_its_serde_capability_issue1820": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/bare_json_protocol_bounds.incn",
-          "notes": "Asserts the recorded bound on the legacy IR (a bare `std.serde.json` `Deserialize` bound lowers as written, not to `serde::de::DeserializeOwned`); retires with `incan_ir`. The behavior, `from_json` through a bare `T with Deserialize` bound decoding a model, is carried by the named fixture (#1820)."
+          "notes": "Asserts the recorded bound on the legacy IR (a bare `std.serde.json` `Deserialize` bound lowers to the stdlib trait plus `serde::de::DeserializeOwned`); retires with `incan_ir`. The behavior, `from_json` through a `T with Deserialize` bound decoding a model, is carried by the named fixture (#1820)."
         },
-        "json_protocol_bounds_name_the_dispatched_trait_issue1820": {
+        "json_protocol_bounds_carry_the_serde_capability_on_owners_and_trait_parameters_issue1820": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/bare_json_protocol_bounds.incn",
-          "notes": "Asserts the recorded bound on the legacy IR (a `std.serde.json` `Serialize` bound lowers as written under the bare, aliased and module-qualified spellings, beside a `to_json` dispatch naming the stdlib trait); retires with `incan_ir`. The behavior, `to_json` through a bare `T with Serialize` bound printing the model's JSON, is carried by the named fixture (#1820)."
+          "notes": "Asserts the recorded bounds on the legacy IR (a generic model's, a generic class's and a trait-typed parameter's `std.serde.json` bounds carry the serde capability beside the stdlib trait); retires with `incan_ir`. The behavior, a generic model serializing through `to_json` and a generic class passing its `list[T]` field to `json_stringify`, is carried by the named fixture (#1820)."
+        },
+        "json_protocol_bounds_carry_the_trait_and_its_serde_capability_issue1820": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/bare_json_protocol_bounds.incn",
+          "notes": "Asserts the recorded bounds on the legacy IR (a `std.serde.json` `Serialize` bound lowers to the stdlib trait plus `serde::Serialize` under the bare, aliased and module-qualified spellings, beside a `to_json` dispatch naming the stdlib trait); retires with `incan_ir`. The behavior, `to_json` and `json_stringify` through bare and module-qualified bounds, is carried by the named fixture (#1820)."
         }
       },
       "twin": ""
