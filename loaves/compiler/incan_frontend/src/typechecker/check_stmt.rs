@@ -1622,8 +1622,10 @@ impl TypeChecker {
         self.record_expr_type(for_stmt.pattern.span, elem_ty.clone());
         self.define_for_pattern_bindings(&for_stmt.pattern, &elem_ty);
         self.push_loop_context(LoopContextKind::Statement, None);
+        let loop_elements = self.enter_for_over_mut_param(&for_stmt.pattern.node, &for_stmt.iter);
 
         self.check_statement_block(&for_stmt.body);
+        self.exit_for_over_mut_param(loop_elements);
         let _ = self.pop_loop_context();
         self.symbols.exit_scope();
     }

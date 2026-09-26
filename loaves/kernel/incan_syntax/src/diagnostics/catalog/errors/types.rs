@@ -1130,10 +1130,11 @@ pub enum MutParameterCopy {
 
 /// Refuse holding a `mut` parameter whose changes reach the caller in a new binding or another value (#1773).
 ///
-/// `other = items`, a collection or field holding `items`, a `match`, `if` or `break` value that is `items`, a
-/// `match items:` arm that binds it and a closure that changes it would each hold the parameter's value under
-/// another name. Whether such a holder shares the caller's value or copies it is not defined, so the parameter is
-/// used only directly. `copy` spells the independent copy the hint offers.
+/// `other = items`, a literal, comprehension, field store, construction or `partial` preset holding `items`, a
+/// `match`, `if`, `break` or `yield` value that is `items`, a `match items:` arm that binds it and a closure that
+/// returns, changes or passes it on would each hold the parameter's value under another name. Whether such a holder
+/// shares the caller's value or copies it is not defined, so the parameter is used only directly. `copy` spells the
+/// independent copy the hint offers.
 pub fn caller_visible_mut_parameter_held(name: &str, copy: &MutParameterCopy, span: Span) -> CompileError {
     let copy = match copy {
         MutParameterCopy::Expression(expression) => format!("write {expression}"),

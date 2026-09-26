@@ -360,10 +360,12 @@ def main() -> None:
 }
 
 /// #1773: a caller-visible `mut` parameter is used only directly. Binding it to another name (`mut`, annotated,
-/// reassigned or `let`), holding it in a tuple, list or dict literal or a field, producing it as a `match`, `if` or
-/// `break` value, binding it in a `match` arm, iterating a literal that holds it, or changing it in a closure is
-/// refused, and the hint names the copy for its type. Returning it, reading it, iterating it, calling methods on it and
-/// passing it on are accepted, and a scalar `mut` parameter is the function's own copy, which any binding may hold.
+/// reassigned or `let`), holding it in a tuple, list or dict literal, a comprehension, a field, a construction (a
+/// model, `Some`, an enum variant) or a `partial` preset, producing it as a `match`, `if`, `break` or `yield` value,
+/// binding it in a `match` arm, iterating a literal that holds it, or a closure that changes or returns it is refused,
+/// and the hint names the copy for its type. Returning it, reading it, iterating it, calling methods on it, passing it
+/// to a call and a comprehension variable of the same name are accepted, and a scalar `mut` parameter is the function's
+/// own copy, which any binding may hold.
 #[test]
 fn holding_a_mut_parameter_in_another_name_or_value_is_refused_issue1773() -> Result<(), String> {
     let spellings = [
@@ -380,9 +382,17 @@ fn holding_a_mut_parameter_in_another_name_or_value_is_refused_issue1773() -> Re
         "    table = {\"k\": items}\n    return len(table)\n",
         "    mut holder = Holder(items=[])\n    holder.items = items\n    return len(holder.items)\n",
         "    add = () => items.append(1)\n    add()\n    return len(items)\n",
+        "    get = () => items\n    return len(get())\n",
+        "    return apply(() => items)\n",
+        "    p = partial extend(items=items)\n    p()\n    return len(items)\n",
+        "    mut holder = Holder(items=items)\n    return len(holder.items)\n",
+        "    held = Some(items)\n    return len(held.unwrap())\n",
+        "    wrapped = Wrap.Held(items)\n    return len(items)\n",
+        "    rows: list[list[int]] = [[1]]\n    firsts = [items for _ in rows]\n    return len(firsts)\n",
     ];
+    let prelude = "model Holder:\n    items: list[int]\n\nenum Wrap:\n    Held(list[int])\n\ndef apply(f: () -> list[int]) -> int:\n    return len(f())\n\ndef extend(mut items: list[int]) -> None:\n    items.append(3)\n\n";
     for body in spellings {
-        let source = format!("model Holder:\n    items: list[int]\n\ndef f(mut items: list[int]) -> int:\n{body}");
+        let source = format!("{prelude}def f(mut items: list[int]) -> int:\n{body}");
         let errors = check_errors(&source);
         let held = errors
             .iter()
@@ -395,6 +405,28 @@ fn holding_a_mut_parameter_in_another_name_or_value_is_refused_issue1773() -> Re
             held[0].hints.iter().any(|hint| hint.contains("write list(items)")),
             "the hint names the list copy, got {:?}",
             held[0].hints
+        );
+    }
+    let yielded = check_errors("def gen(mut items: list[int]) -> Generator[list[int]]:\n    yield items\n");
+    assert!(
+        yielded
+            .iter()
+            .any(|error| error.message.starts_with("The 'mut' parameter 'items' cannot be bound")),
+        "a yielded parameter is held by the generator's consumer, got {yielded:?}"
+    );
+    for (ty, route) in [
+        ("dict[str, int]", "build a new value from 'value'"),
+        ("set[int]", "build a new value from 'value'"),
+        ("str", "write str(value)"),
+    ] {
+        let errors = check_errors(&format!(
+            "def f(mut value: {ty}) -> int:\n    other = value\n    return 1\n"
+        ));
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.hints.iter().any(|hint| hint.contains(route))),
+            "the hint for `{ty}` offers `{route}`, got {errors:?}"
         );
     }
     let model =
@@ -415,6 +447,11 @@ def reads(mut items: list[int], mut n: int) -> list[int]:
     m = n
     items.append(total + m)
     extend(items)
+    rows: list[list[int]] = [[1]]
+    firsts = [items for items in rows]
+    mut stored: list[list[int]] = []
+    stored.append(items)
+    println(len(firsts) + len(stored))
     return items
 
 def extend(mut items: list[int]) -> None:
@@ -562,6 +599,31 @@ def main() -> None:
         1,
         "a local that is never reassigned runs the function it was bound to, which only reads"
     );
+    Ok(())
+}
+
+/// #1773: a change made through a variable of a `for` loop over a caller-visible parameter, or over one of its
+/// elements' loops, is a change to the parameter, so an immutable binding passed for it is refused.
+#[test]
+fn change_through_a_loop_variable_counts_as_changing_issue1773() -> Result<(), String> {
+    let prelude = r#"
+def grow(mut items: list[list[int]]) -> int:
+    for row in items:
+        row.append(3)
+    return len(items[0])
+
+def indexed(mut items: list[list[int]]) -> int:
+    for i, row in enumerate(items):
+        row.append(i)
+    return len(items)
+"#;
+    let refused = mut_argument_refusals(&format!(
+        "{prelude}\ndef main() -> None:\n    live: list[list[int]] = [[1]]\n    println(grow(live))\n    println(indexed(live))\n"
+    ));
+    assert_eq!(refusals_by_callee(&refused), ["grow", "indexed"], "got {refused:?}");
+    checked(&format!(
+        "{prelude}\ndef main() -> None:\n    mut live: list[list[int]] = [[1]]\n    println(grow(live))\n    println(indexed(live))\n"
+    ))?;
     Ok(())
 }
 

@@ -1,0 +1,15 @@
+# behavior: a mut list-of-lists parameter changed through the variable of a for loop over it changes the caller's mut list
+# expect-stdout:
+#   2
+#   2
+
+def grow(mut items: list[list[int]]) -> int:
+    for row in items:
+        row.append(3)
+    return len(items[0])
+
+
+def main() -> None:
+    mut live: list[list[int]] = [[1]]
+    println(grow(live))
+    println(len(live[0]))
