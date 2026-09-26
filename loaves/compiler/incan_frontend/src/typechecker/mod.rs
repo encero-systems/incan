@@ -8233,6 +8233,10 @@ impl TypeChecker {
             return true;
         }
 
+        if let Some(matches) = helpers::decimal_types_compatible(actual, expected) {
+            return matches;
+        }
+
         if let Some(matches) = self.rust_type_identities_compatible(actual, expected) {
             return matches;
         }

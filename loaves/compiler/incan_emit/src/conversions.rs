@@ -483,8 +483,9 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
     let lhs_num = ir_type_to_numeric_ty(&left.ty);
     let rhs_num = ir_type_to_numeric_ty(&right.ty);
 
-    // Python modulo/floor-division helpers are i64/f64-only. Unsigned exact-width operands can use Rust's native
-    // operators because their domain has no negative remainder/flooring case to normalize.
+    // Unsigned exact-width `//` and `%` keep their type through the unsigned helpers, which refuse a zero divisor with
+    // `ZeroDivisionError` as every other division does; Rust's native operators would panic with their own message.
+    // The unsigned domain has no negative remainder or flooring case, so the helpers need no Python normalization.
     if matches!(num_op, NumericOp::FloorDiv | NumericOp::Mod)
         && (exact_unsigned_integer_type(&left.ty)
             && (matches!(right.ty, IrType::Int) || exact_unsigned_integer_type(&right.ty))
@@ -492,6 +493,11 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
                 && matches!(left.ty, IrType::Int)
                 && non_negative_integer_literal(left))
     {
+        let path = if matches!(num_op, NumericOp::FloorDiv) {
+            quote! { incan_std_core::num::py_floor_div_unsigned }
+        } else {
+            quote! { incan_std_core::num::py_mod_unsigned }
+        };
         return BinOpPlan {
             lhs_conv: NumericConversion::None,
             rhs_conv: NumericConversion::None,
@@ -500,8 +506,9 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
             } else {
                 right.ty.clone()
             },
-            emit: BinOpEmitKind::Infix {
-                token: emit_binop_token(op),
+            emit: BinOpEmitKind::StdlibCall {
+                path,
+                borrow_args: false,
             },
         };
     }
@@ -571,8 +578,12 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
             }
         }
         NumericOp::Div => {
+            // Both operands reach the helper widened to `f64`, so an all-integer division names its family through
+            // the helper it calls: its zero divisor raises `division by zero`, not `float division by zero`.
+            let integer_operands = matches!((lhs_num, rhs_num), (Some(NumericTy::Int), Some(NumericTy::Int)));
             let path = match &result_ty {
                 IrType::Numeric(NumericTypeId::F32) => quote! { incan_std_core::num::py_div_f32 },
+                _ if integer_operands => quote! { incan_std_core::num::py_div_int },
                 _ => quote! { incan_std_core::num::py_div },
             };
             BinOpEmitKind::StdlibCall {

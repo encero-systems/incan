@@ -12,7 +12,7 @@
 /// is declared independently of the compiler's own package version. `scripts/check_ring_versions.py` keeps it equal
 /// to the stdlib ring version in the manifests, `tests/generated_stdlib_version_tests.rs` asserts it against the
 /// facet this crate links for its tests, and a stdlib bump updates it in the same change.
-pub const GENERATED_FOR_STDLIB_VERSION: &str = "0.6.0-dev.5";
+pub const GENERATED_FOR_STDLIB_VERSION: &str = "0.6.0-dev.6";
 
 #[cfg(test)]
 mod checked_program;

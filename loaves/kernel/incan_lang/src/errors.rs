@@ -31,6 +31,39 @@ pub enum ErrorKind {
     JsonDecodeError,
 }
 
+/// The operator, and the family of its operands, that met a zero divisor.
+///
+/// Each selects the message body of the `ZeroDivisionError` it raises: one per operator and operand family, spelled as
+/// Python spells them. An operation is integer-family when both operands are integer-family (unsigned included) and
+/// float-family when either operand is a float.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ZeroDivisionOperation {
+    /// `/` over two integer-family operands: `division by zero`.
+    IntegerTrueDivision,
+    /// `//` or `%` over two integer-family operands: `integer division or modulo by zero`.
+    IntegerFloorDivisionOrModulo,
+    /// `/` with a float-family operand: `float division by zero`.
+    FloatTrueDivision,
+    /// `//` with a float-family operand: `float floor division by zero`.
+    FloatFloorDivision,
+    /// `%` with a float-family operand: `float modulo`.
+    FloatModulo,
+}
+
+impl ZeroDivisionOperation {
+    /// Return the message body, without the `ZeroDivisionError: ` prefix, that this operation raises.
+    #[inline]
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::IntegerTrueDivision => "division by zero",
+            Self::IntegerFloorDivisionOrModulo => "integer division or modulo by zero",
+            Self::FloatTrueDivision => "float division by zero",
+            Self::FloatFloorDivision => "float floor division by zero",
+            Self::FloatModulo => "float modulo",
+        }
+    }
+}
+
 /// Arguments used to format an [`IncanError`].
 ///
 /// All variants are allocation-free.
@@ -98,13 +131,10 @@ impl<'a> IncanError<'a> {
         Self::new(ErrorKind::ValueError, ErrorArgs::Static("slice step cannot be zero"))
     }
 
-    /// `ZeroDivisionError: float division by zero`
+    /// `ZeroDivisionError: <message>`, with the message for the operator and operand family that met the zero divisor.
     #[inline]
-    pub const fn zero_division() -> Self {
-        Self::new(
-            ErrorKind::ZeroDivisionError,
-            ErrorArgs::Static("float division by zero"),
-        )
+    pub const fn zero_division(operation: ZeroDivisionOperation) -> Self {
+        Self::new(ErrorKind::ZeroDivisionError, ErrorArgs::Static(operation.message()))
     }
 
     /// `ValueError: range() arg 3 must not be zero`
@@ -258,7 +288,7 @@ mod tests {
             "ValueError: slice step cannot be zero"
         );
         assert_eq!(
-            IncanError::zero_division().to_string(),
+            IncanError::zero_division(ZeroDivisionOperation::FloatTrueDivision).to_string(),
             "ZeroDivisionError: float division by zero"
         );
         assert_eq!(
@@ -305,6 +335,32 @@ mod tests {
             IncanError::non_finite_exact_float("f64").to_string(),
             "ValueError: non-finite float cannot initialize exact f64"
         );
+    }
+
+    /// Every zero divisor raises `ZeroDivisionError` with the message for its operator and operand family (#1813).
+    #[test]
+    fn zero_division_messages_follow_operator_and_operand_family_issue1813() {
+        for (operation, expected) in [
+            (
+                ZeroDivisionOperation::IntegerTrueDivision,
+                "ZeroDivisionError: division by zero",
+            ),
+            (
+                ZeroDivisionOperation::IntegerFloorDivisionOrModulo,
+                "ZeroDivisionError: integer division or modulo by zero",
+            ),
+            (
+                ZeroDivisionOperation::FloatTrueDivision,
+                "ZeroDivisionError: float division by zero",
+            ),
+            (
+                ZeroDivisionOperation::FloatFloorDivision,
+                "ZeroDivisionError: float floor division by zero",
+            ),
+            (ZeroDivisionOperation::FloatModulo, "ZeroDivisionError: float modulo"),
+        ] {
+            assert_eq!(IncanError::zero_division(operation).to_string(), expected);
+        }
     }
 
     #[test]

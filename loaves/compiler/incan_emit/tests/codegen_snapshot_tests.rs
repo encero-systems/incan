@@ -4025,11 +4025,11 @@ def main() -> None:
     let rust_code = generate_rust(source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("return(left+right).powf(0.5);"),
-        "compound power receiver must remain grouped; generated:\n{rust_code}"
+        compact.contains("return({left+right}asf64).powf(0.5);"),
+        "compound power receiver must remain grouped inside its result-type conversion (#1811); generated:\n{rust_code}"
     );
     assert!(
-        compact.contains("return((base)asf64).powf((exponent)asf64);"),
+        compact.contains("return(baseasf64).powf((exponent)asf64);"),
         "coerced power receiver must be parenthesized before the method call; generated:\n{rust_code}"
     );
 }
@@ -4234,7 +4234,7 @@ pub def with_int(left: f32, right: int) -> float:
         "incan_std_core::num::py_div((left)asf64,right)",
         "incan_std_core::num::py_floor_div_f64((left)asf64,right)",
         "incan_std_core::num::py_mod_f64((left)asf64,right)",
-        "((left)asf64).powf(right)",
+        "(leftasf64).powf(right)",
         "return(left)asf64+right;",
         "return(left)asf64+(right)asf64;",
     ] {

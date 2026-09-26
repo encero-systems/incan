@@ -1,7 +1,7 @@
 [package]
 name = "incan_std_async"
 description = "Task, timer, channel and synchronization runtime: the Rust facet of the `async` standard library component"
-version = "0.6.0-dev.5"
+version = "0.6.0-dev.6"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
