@@ -1,0 +1,16 @@
+# behavior: a spawned task's handle appended straight into a list moves into it, so a list of task handles needs no Clone (#1821)
+# retires: loaves/compiler/incan_emit/src/checked_program/fresh_list_append.rs::a_fresh_value_moves_into_the_list_issue1821
+# expect-stdout:
+#   1
+
+from std.async import spawn
+
+
+async def work() -> int:
+    return 1
+
+
+async def main() -> None:
+    mut handles = []
+    handles.append(spawn(work()))
+    println(len(handles))

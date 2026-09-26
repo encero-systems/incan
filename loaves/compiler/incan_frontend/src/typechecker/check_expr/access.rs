@@ -3282,6 +3282,21 @@ impl TypeChecker {
         })
     }
 
+    /// Return whether `expr` produces a new value rather than reading one out of an existing place.
+    ///
+    /// A call, a method call, a constructor and a literal hand their result to whatever stores it, and nothing else
+    /// refers to that result, so storing it moves it and needs no copy (#1821). A name, a field, an element, `self`
+    /// and every other shape may read a place the program uses again, which the stored copy must leave intact; the
+    /// checker does not decide whether a read is the place's last use, so those keep the copy requirement.
+    /// Parentheses and `?` are transparent: they yield the value of the expression they wrap.
+    fn is_fresh_value(expr: &Spanned<Expr>) -> bool {
+        match &expr.node {
+            Expr::Call(..) | Expr::MethodCall(..) | Expr::Constructor(..) | Expr::Literal(_) | Expr::FString(_) => true,
+            Expr::Paren(inner) | Expr::Try(inner) => Self::is_fresh_value(inner),
+            _ => false,
+        }
+    }
+
     /// [`ResolvedType::SelfType`] in a trait method signature means the receiver type for this call site.
     fn concrete_type_for_trait_self(&self, receiver: &ResolvedType) -> ResolvedType {
         match receiver {
@@ -5852,7 +5867,13 @@ impl TypeChecker {
                                 self.errors
                                     .push(errors::type_mismatch(&elem.to_string(), &arg0.to_string(), span));
                             }
-                            if !self.is_copy_type(clone_ty) && !self.is_clone_type(clone_ty) {
+                            // A fresh value moves into the list; only a value read out of a place is copied (#1821).
+                            let appends_fresh_value = matches!(
+                                args.first(),
+                                Some(CallArg::Positional(value) | CallArg::Named(_, value))
+                                    if Self::is_fresh_value(value)
+                            );
+                            if !appends_fresh_value && !self.is_copy_type(clone_ty) && !self.is_clone_type(clone_ty) {
                                 self.errors
                                     .push(errors::list_append_requires_clone(&clone_ty.to_string(), span));
                             }

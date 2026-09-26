@@ -1,0 +1,28 @@
+# behavior: std.serde.json Serialize and Deserialize imported under their own names bound generic parameters, and to_json and from_json through the bounds serialize and decode a model (#1820)
+# retires: loaves/compiler/incan_ir/src/lower/tests/json_protocol_bounds.rs::json_protocol_bounds_name_the_dispatched_trait_issue1820
+# retires: loaves/compiler/incan_ir/src/lower/tests/json_protocol_bounds.rs::bare_deserialize_bound_names_the_stdlib_trait_issue1820
+# expect-stdout:
+#   {"value":1}
+#   2
+
+from std.serde.json import Deserialize, Serialize
+
+
+@derive(Serialize, Deserialize)
+model Payload:
+    value: int
+
+
+def encode[T with Serialize](value: T) -> str:
+    return value.to_json()
+
+
+def decode[T with Deserialize](text: str) -> Result[T, str]:
+    return T.from_json(text)
+
+
+def main() -> None:
+    println(encode(Payload(value=1)))
+    match decode[Payload]("{\"value\":2}"):
+        Ok(payload) => println(payload.value)
+        Err(error) => println(error)

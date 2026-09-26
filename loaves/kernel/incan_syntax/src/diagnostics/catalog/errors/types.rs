@@ -2436,13 +2436,18 @@ pub fn index_value_type_mismatch(expected: &str, found: &str, span: Span) -> Com
     ))
 }
 
+/// Report that `list.append(value)` copies a value read from an existing place, which needs a cloneable element type.
+///
+/// A fresh value (a call result, a constructor, a literal) moves into the list and is never reported (#1821).
 pub fn list_append_requires_clone(elem_type: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("List.append requires element type '{}' to be Clone", elem_type),
         span,
     )
-    .with_note("List.append clones non-Copy values before pushing")
-    .with_hint("Add @derive(Clone) to the element type or append a Copy type")
+    .with_note("List.append copies a value read from a name, field or element, so the original stays usable")
+    .with_hint(
+        "Append a call result or constructor directly, add @derive(Clone) to the element type, or append a Copy type",
+    )
 }
 
 /// Report that `list.repeat(value, count)` requires cloneable element values.

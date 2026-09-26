@@ -221,10 +221,12 @@ impl AstLowering {
     /// no import or local declaration behind it. A user trait that merely shares the declaration name
     /// (`yaml.Serialize`, a local `trait Eq`) keeps its own path.
     ///
-    /// The `std.serde.json` protocol traits are the one identity still looked up by spelling: their bounds and
-    /// dispatches are shaped by the protocol machinery (#1431, #1712), where an alias such as `JsonSerialize` lowers
-    /// as written and resolves through its re-export, and the registry's `serde::Serialize` mapping is reached only
-    /// by the bare `Serialize` and `Deserialize` spellings, exactly as before.
+    /// The `std.serde.json` protocol traits map to no Rust trait under any spelling: the bare import (`Serialize`),
+    /// an alias (`JsonSerialize`) and the module-qualified name (`json.Serialize`) all lower as written and resolve
+    /// through the import to the stdlib trait, which is the trait a checked `to_json()` or `from_json()` call
+    /// dispatches through (#1712). The registry's `serde::Serialize` and `serde::de::DeserializeOwned` rows name the
+    /// Rust capability those traits forward to an adopter as a derive; a bound on that capability does not provide
+    /// the protocol's methods, so the bare spelling reaching the registry left the dispatch without a bound (#1820).
     pub(in crate::lower) fn rust_mapped_builtin_trait_path(&self, visible_name: &str) -> Option<&'static str> {
         let (module_path, source_name) = self.canonical_trait_identity(visible_name);
         let source_name = source_name?;
@@ -236,7 +238,7 @@ impl AstLowering {
             .as_deref()
             .is_some_and(|segments| stdlib::stdlib_json_trait_id_for_identity(segments, &source_name).is_some());
         if json_protocol {
-            return trait_bounds::incan_to_rust(visible_name);
+            return None;
         }
         trait_bounds::incan_to_rust(&source_name)
     }

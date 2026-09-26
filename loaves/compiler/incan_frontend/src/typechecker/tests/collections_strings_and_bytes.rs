@@ -391,6 +391,72 @@ def add_item[T with Clone](mut items: List[T], item: T) -> None:
     assert_check_ok(source);
 }
 
+/// Return whether `errors` holds the `List.append` refusal for an element type that is not `Clone`.
+fn has_list_append_clone_error(errors: &[CompileError]) -> bool {
+    errors
+        .iter()
+        .any(|error| error.message.contains("List.append requires element type"))
+}
+
+/// #1821: a fresh value moves into the list, so its type need not be `Clone`. A spawned task's handle is the common
+/// case: `JoinHandle[T]` is not `Clone`, and the call result is appended as it is, parenthesized or not.
+#[test]
+fn list_append_accepts_a_fresh_value_that_is_not_clone_issue1821() -> Result<(), String> {
+    let source = r#"
+from std.async import spawn
+
+async def work() -> int:
+  return 1
+
+async def main() -> None:
+  mut handles = []
+  handles.append(spawn(work()))
+  handles.append((spawn(work())))
+  println(len(handles))
+"#;
+    check_str(source).map_err(|errors| format!("a fresh task handle should append: {errors:?}"))
+}
+
+/// #1821: a value read from an existing place keeps the requirement, since the list receives a copy and the place
+/// stays usable: a task handle bound to a name first, and one read out of another list's element, are refused as
+/// before.
+#[test]
+fn list_append_of_a_value_read_from_a_place_still_requires_clone_issue1821() -> Result<(), String> {
+    let sources = [
+        r#"
+from std.async import spawn
+
+async def work() -> int:
+  return 1
+
+async def main() -> None:
+  mut handles = []
+  handle = spawn(work())
+  handles.append(handle)
+  println(len(handles))
+"#,
+        r#"
+from std.async.task import JoinHandle
+
+def keep_first(mut kept: list[JoinHandle[int]], handles: list[JoinHandle[int]]) -> None:
+  kept.append(handles[0])
+"#,
+    ];
+    for source in sources {
+        let Err(errors) = check_str(source) else {
+            return Err(format!(
+                "appending a value read from a place that is not Clone should be refused:\n{source}"
+            ));
+        };
+        if !has_list_append_clone_error(&errors) {
+            return Err(format!(
+                "expected the List.append Clone refusal, got {errors:?}\n{source}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn test_list_repeat_infers_list_element_type() {
     let source = r#"

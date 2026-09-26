@@ -990,6 +990,20 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/checked_program/fresh_list_append.rs": {
+      "disposition": "retire",
+      "notes": "asserts generated Rust text.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "a_fresh_value_moves_into_the_list_issue1821": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings/list_append_takes_a_fresh_task_handle.incn",
+          "notes": "Asserts the generated push of a call result carries no copy; the push shape dies with #654. The behavior, a spawned task's handle appended into a list and the list's length printed, is carried by the named fixture (#1821)."
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/checked_program/rust_supertrait_codegen.rs": {
       "disposition": "retire",
       "notes": "asserts generated Rust text.",
@@ -4624,6 +4638,24 @@
         "derive_vocabulary_imports_lower_to_no_ir_import_issue1727": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters_with_imported_clone.incn",
           "notes": "Asserts the recorded import fact on the legacy IR (an import of a derivable trait's stdlib stub lowers to no IR import; the source-owned protocol and callable imports stay; the expanded adapter default and an aliased `Eq` bound spell the derive-owned Rust traits); retires with `incan_ir`. The behavior, the FallibleIterator adapters driven with derived callables beside `from std.derives.copying import Clone`, is carried by the named fixture (#1727)."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/json_protocol_bounds.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "bare_deserialize_bound_names_the_stdlib_trait_issue1820": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/bare_json_protocol_bounds.incn",
+          "notes": "Asserts the recorded bound on the legacy IR (a bare `std.serde.json` `Deserialize` bound lowers as written, not to `serde::de::DeserializeOwned`); retires with `incan_ir`. The behavior, `from_json` through a bare `T with Deserialize` bound decoding a model, is carried by the named fixture (#1820)."
+        },
+        "json_protocol_bounds_name_the_dispatched_trait_issue1820": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/bare_json_protocol_bounds.incn",
+          "notes": "Asserts the recorded bound on the legacy IR (a `std.serde.json` `Serialize` bound lowers as written under the bare, aliased and module-qualified spellings, beside a `to_json` dispatch naming the stdlib trait); retires with `incan_ir`. The behavior, `to_json` through a bare `T with Serialize` bound printing the model's JSON, is carried by the named fixture (#1820)."
         }
       },
       "twin": ""
