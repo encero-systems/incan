@@ -270,6 +270,24 @@ class GateTests(unittest.TestCase):
         self.assertEqual(collect.effective_twin(dispositions["files"]["loaves/x/src/lib.rs"], "gated"), "")
         self.assertEqual(collect.retire_totals(corpus, dispositions), {"dies": 2})
 
+    def test_an_override_recording_no_twin_is_open_under_a_file_level_dies(self) -> None:
+        dispositions = {
+            "files": {
+                "loaves/x/src/lib.rs": {
+                    "disposition": "retire",
+                    "twin": "dies",
+                    "dies": "generated project shape",
+                    "tests": {"gated": {"twin": "", "notes": "open: waits for a provider bake"}},
+                }
+            }
+        }
+        corpus = self.corpus()
+        self.assertEqual(collect.check(corpus, dispositions, None), [])
+        entry = dispositions["files"]["loaves/x/src/lib.rs"]
+        self.assertEqual(collect.effective_twin(entry, "gated"), "")
+        self.assertEqual(collect.effective_dies(entry, "gated"), "")
+        self.assertEqual(collect.retire_totals(corpus, dispositions), {"dies": 2, "open": 1})
+
     def test_retire_totals_split_twinned_dies_and_open(self) -> None:
         dispositions = {
             "files": {

@@ -1,0 +1,58 @@
+# behavior: contains_key, keys and values classify on a dict and on a mut dict parameter, encode on str and FrozenStr, and decode on a bytes literal, a bytes value and a FrozenBytes const (#1668)
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::method_kind_for_receiver_issue1668_surfaces
+# expect-stdout:
+#   true
+#   false
+#   a,b
+#   1,2
+#   mut true
+#   mut a,b,c
+#   mut 1,2,3
+#   5
+#   6
+#   lit
+#   val
+#   raw
+
+const GREETING: FrozenStr = "héllo"
+const RAW: FrozenBytes = b"raw"
+
+
+def render_keys(keys: list[str]) -> str:
+    # A dict's iteration order is not part of its contract, so the rendering sorts.
+    return ",".join(sorted(keys))
+
+
+def render_values(values: list[int]) -> str:
+    return ",".join([str(value) for value in sorted(values)])
+
+
+def grow(mut table: dict[str, int]) -> None:
+    table["c"] = 3
+    println(f"mut {table.contains_key("c")}")
+    println(f"mut {render_keys(table.keys())}")
+    println(f"mut {render_values(table.values())}")
+
+
+def unwrap_text(decoded: Result[str, ValidationError]) -> str:
+    match decoded:
+        case Ok(text):
+            return text
+        case Err(_):
+            return "?"
+
+
+def main() -> None:
+    mut table = {"a": 1, "b": 2}
+    println(table.contains_key("a"))
+    println(table.contains_key("z"))
+    println(render_keys(table.keys()))
+    println(render_values(table.values()))
+    grow(table)
+    text = "hello"
+    println(len(text.encode()))
+    println(len(GREETING.encode()))
+    println(unwrap_text(b"lit".decode()))
+    value = "val".encode()
+    println(unwrap_text(value.decode()))
+    println(unwrap_text(RAW.decode()))

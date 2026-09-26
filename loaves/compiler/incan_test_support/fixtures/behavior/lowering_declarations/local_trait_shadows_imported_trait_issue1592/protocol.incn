@@ -1,0 +1,3 @@
+pub trait Same:
+    def value(self) -> Option[int]:
+        return None

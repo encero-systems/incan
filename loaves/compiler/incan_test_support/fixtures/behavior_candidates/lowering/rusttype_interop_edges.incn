@@ -1,0 +1,34 @@
+# behavior: a rusttype over the Rust String adapts into str through its declared into edge when passed where a str is expected, and a str adapts into it through its from edge
+# retires: loaves/compiler/incan_ir/src/lower/expr/calls.rs::lower_rusttype_interop_adapter_uses_into_edge_for_rusttype_argument
+# retires: loaves/compiler/incan_ir/src/lower/expr/calls.rs::lower_rusttype_interop_adapter_uses_from_edge_for_rusttype_target
+# expect-stdout:
+#   ADA
+#   BOB
+
+from rust::std::string import String as RustString
+
+
+type Name = rusttype RustString:
+    def from(raw: str) -> Name:
+        ...
+
+    def as_str(self) -> str:
+        ...
+
+    interop:
+        from str via Name.from
+        into str via Name.as_str
+
+
+def shout(text: str) -> str:
+    return text.upper()
+
+
+def label(name: Name) -> str:
+    return shout(name)
+
+
+def main() -> None:
+    name: Name = "ada"
+    println(shout(name))
+    println(label("bob"))

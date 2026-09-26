@@ -1,0 +1,27 @@
+# behavior: a generic model whose type parameter no field mentions is constructed with an explicit type argument, its operator method returns the same generic model, and its Debug rendering shows only the fields (#1370)
+# retires: loaves/compiler/incan_ir/src/lower/decl/helpers.rs::phantom_type_params_are_the_parameters_no_field_mentions
+# expect-stdout:
+#   (amount * 2)
+#   (label * x)
+#   Column { sql: "amount", note: "n" }
+
+@derive(Debug)
+model Column[T]:
+    sql: str
+    note: str = "n"
+
+    def __mul__(self, other: T) -> Column[T]:
+        return Column[T](sql=f"({self.sql} * {other})")
+
+
+def col[T](name: str) -> Column[T]:
+    return Column[T](sql=name)
+
+
+def main() -> None:
+    amount: Column[float] = col("amount")
+    total = amount * 2.0
+    println(total.sql)
+    label = Column[str](sql="label")
+    println((label * "x").sql)
+    println(f"{amount:?}")

@@ -1,0 +1,25 @@
+# behavior: a Box over a generic user class keeps the class's type argument, so as_ref on the boxed value hands the generic function a Node[T] whose value comes back typed
+# retires: loaves/compiler/incan_ir/src/lower/expr/calls.rs::lower_generic_box_as_ref_preserves_nominal_generic_receiver_args
+# expect-stdout:
+#   4
+#   leaf
+
+from rust::std::boxed import Box
+
+
+@derive(Clone)
+class Node[T]:
+    pub value: T
+
+
+def take[T](node: Node[T]) -> T:
+    return node.value
+
+
+def from_box[T](child: Box[Node[T]]) -> T:
+    return take(child.as_ref())
+
+
+def main() -> None:
+    println(from_box(Box.new(Node[int](value=4))))
+    println(from_box(Box.new(Node[str](value="leaf"))))

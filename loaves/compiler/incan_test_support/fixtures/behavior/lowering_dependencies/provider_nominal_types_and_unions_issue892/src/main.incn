@@ -1,0 +1,46 @@
+# behavior: a consumer constructs a provider's nominal and generic types, narrows each of two providers' unions by that provider's own members, and the providers' same-spelled Widget models are distinct members of distinct unions (#892)
+# retires: loaves/compiler/incan_ir/src/lower/types.rs::lower_resolved_type_qualifies_canonical_public_library_identity_issue892
+# retires: loaves/compiler/incan_ir/src/lower/types.rs::lower_resolved_type_qualifies_generic_public_library_identity_issue892
+# retires: loaves/compiler/incan_ir/src/lower/types.rs::pub_external_type_normalizes_canonical_union_members_issue892
+# retires: loaves/compiler/incan_ir/src/types.rs::external_union_member_matching_is_provider_aware_issue892
+# expect-stdout:
+#   widget gear
+#   fallback empty name
+#   wrapped gear
+#   envelope gear/local
+#   other widget 1
+#   right r
+#   widget local
+#   other widget 7
+
+from pub::widgets import Envelope, Fallback, Shape, Widget, make, wrap
+from pub::other import Choice, Right, Widget as OtherWidget, choose
+
+
+def describe(shape: Shape) -> str:
+    match shape:
+        case Widget(widget):
+            return f"widget {widget.name}"
+        case Fallback(fallback):
+            return f"fallback {fallback.reason}"
+
+
+def pick(choice: Choice) -> str:
+    match choice:
+        case OtherWidget(widget):
+            return f"other widget {widget.value}"
+        case Right(right):
+            return f"right {right.label}"
+
+
+def main() -> None:
+    println(describe(make("gear")))
+    println(describe(make("")))
+    wrapped = wrap("gear")
+    println(f"{wrapped.tag} {wrapped.inner.name}")
+    local = Envelope[Widget](inner=Widget(name="gear"), tag="local")
+    println(f"envelope {local.inner.name}/{local.tag}")
+    println(pick(choose(true)))
+    println(pick(choose(false)))
+    println(describe(Widget(name="local")))
+    println(pick(OtherWidget(value=7)))
