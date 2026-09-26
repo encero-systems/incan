@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3165 | 211 | 7 |
+| keep | 3168 | 212 | 7 |
 | re-point | 496 | 50 | 430 |
 | retire | 1131 | 80 | 0 |
 | unaffected | 1437 | 134 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **6229** | **475** | **442** |
+| **Total** | **6232** | **476** | **442** |
 
 - Retire-class tests: 1131, of which twinned 62, dies 115, open 954 (neither yet).
 - Retire-class files with open rows: 62 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -305,7 +305,7 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_ex
 | `loaves/compiler/incan_emit/src/replacement/source_profile.rs` | 4 | 272 | 128 | keep | - | - | - | #1561 | replacement 3, parser 3 | replacement route (executable resolution, provider preflight, source profile). |
 | `loaves/compiler/incan_emit/src/selection.rs` | 13 | 970 | 323 | keep | - | - | - | #1561 | replacement 13 | backend selection policy (replacement vs legacy); survives as the replacement route's own selection. |
 | `loaves/compiler/incan_emit/src/tests/lowering_through_emission.rs` | 2 | 331 | 331 | retire | 0/2 | 0 | - | #1561 | codegen 1, checker 2, parser 2, legacy_ir 2 | lowering through emission end to end. |
-| `loaves/compiler/incan_emit/src/tests/power_grouping_emission.rs` | 1 | 44 | 44 | retire (retire 1) | 1/1 | 0 | - | #1561 | codegen 1, parser 1 | asserts the generated Rust text of a prefix operator over a power (#1786); retires with the Rust-source backend. |
+| `loaves/compiler/incan_emit/src/tests/power_grouping_emission.rs` | 1 | 62 | 62 | retire (retire 1) | 1/1 | 0 | - | #1561 | codegen 1, parser 1 | asserts the generated Rust text of a prefix operator over a power (#1786); retires with the Rust-source backend. |
 | `loaves/compiler/incan_emit/src/trait_bound_inference.rs` | 15 | 4404 | 703 | retire | 0/15 | 0 | - | #1561 | codegen 5, legacy_ir 15 | infers Rust trait bounds for generated generics; Rust-shape concern. |
 | `loaves/compiler/incan_emit/tests/checked_empty_collection_constructor_tests.rs` | 14 | 675 | 675 | retire (keep 5, retire 9) | 1/9 | 0 | - | #1561 | codegen 9, snapshot 1, text 8, replacement 4, checker 14, parser 14 | empty-collection constructors: generated-text and snapshot assertions retire; the checked-type and Body IR aggregate assertions stay. |
 | `loaves/compiler/incan_emit/tests/closure_local_call_codegen_tests.rs` | 4 | 208 | 208 | retire | 0/4 | 0 | - | #1561 | codegen 4, text 1, checker 4, parser 4 | asserts generated Rust text. |
@@ -410,7 +410,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 | `nested_list_empty_holes_retain_checked_string_types` | retire | - | - | checker, parser, legacy_ir | legacy IR shape; the checked-type assertions (`List[List[str]]` on the empty holes) are the keep-class content the twin must carry. |
 | `nested_list_loop_emits_owned_strings_without_caller_annotation` | retire | `loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs::nested_empty_first_list_runs_without_a_caller_annotation_issue1471` | - | codegen, parser | asserts generated Rust text |
 
-### `loaves/compiler/incan_format` (192 tests in 9 files: keep 192)
+### `loaves/compiler/incan_format` (193 tests in 9 files: keep 193)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -419,7 +419,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 | `loaves/compiler/incan_format/src/tests/comments_and_blank_lines.rs` | 20 | 488 | 488 | keep | - | - | - | #1561 | formatter 18 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/tests/declarations.rs` | 28 | 755 | 755 | keep | - | - | - | #1561 | formatter 28 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/tests/entry_points_imports_and_spacing.rs` | 27 | 455 | 455 | keep | - | - | - | #1561 | checker 1, parser 1, formatter 21 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
-| `loaves/compiler/incan_format/src/tests/expressions_and_calls.rs` | 23 | 631 | 631 | keep | - | - | - | #1561 | parser 1, formatter 23 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/incan_format/src/tests/expressions_and_calls.rs` | 24 | 658 | 658 | keep | - | - | - | #1561 | parser 2, formatter 24 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/tests/statements_and_patterns.rs` | 15 | 306 | 306 | keep | - | - | - | #1561 | formatter 15 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
@@ -477,7 +477,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 | `loaves/compiler/incan_frontend/src/typechecker/tests/canonical_identity/references_calls_and_patterns.rs` | 18 | 758 | 758 | keep | - | - | - | #1561 | checker 9 | split of typechecker/canonical_identity_tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/capabilities.rs` | 20 | 553 | 553 | keep | - | - | - | #1561 | checker 20, parser 9 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/checked_facts_and_registries.rs` | 21 | 986 | 986 | keep | - | - | - | #1561 | checker 20, parser 2 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
-| `loaves/compiler/incan_frontend/src/typechecker/tests/collections_strings_and_bytes.rs` | 50 | 1126 | 1126 | keep | - | - | - | #1561 | checker 45, parser 4 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/collections_strings_and_bytes.rs` | 50 | 1131 | 1131 | keep | - | - | - | #1561 | checker 45, parser 4 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/extern_and_c_bindings.rs` | 22 | 825 | 825 | keep | - | - | - | #1561 | checker 16, parser 3 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/fields_and_members.rs` | 56 | 1198 | 1198 | keep | - | - | - | #1561 | checker 51, parser 5 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/generics_and_type_tokens.rs` | 38 | 1047 | 1047 | keep | - | - | - | #1561 | checker 23, parser 9 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
@@ -610,7 +610,7 @@ Per-test overrides in `loaves/compiler/incan_ir/src/lower/tests/unary_operand_gr
 | `loaves/compiler/incan_test_support/src/builtin_stdlib.rs` | 1 | 75 | 16 | unaffected | - | - | - | #1561 | - | test-support helper for the builtin stdlib inventory. |
 | `loaves/compiler/incan_test_support/src/emitted_symbol_artifact.rs` | 3 | 421 | 50 | retire | 0/3 | 0 | - | #1561 | - | helpers over emitted symbol projections (RFC 120 physical names). |
 
-### `loaves/kernel/incan_lang` (109 tests in 21 files: keep 109)
+### `loaves/kernel/incan_lang` (110 tests in 22 files: keep 110)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -626,6 +626,7 @@ Per-test overrides in `loaves/compiler/incan_ir/src/lower/tests/unary_operand_gr
 | `loaves/kernel/incan_lang/src/lang/highlighting.rs` | 4 | 217 | 56 | keep | - | - | - | #1561 | - | language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_lang/src/lang/keywords.rs` | 3 | 939 | 25 | keep | - | - | - | #1561 | - | language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_lang/src/lang/stdlib.rs` | 11 | 1464 | 472 | keep | - | - | - | #1561 | checker 1 | language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level. |
+| `loaves/kernel/incan_lang/src/lang/surface/method_arity.rs` | 1 | 142 | 58 | keep | - | - | - | #1561 | - | the method registry's argument counts for the builtin collection methods (#1783); a language fact below the emitter, cannot reach codegen. |
 | `loaves/kernel/incan_lang/src/lang/text_codecs.rs` | 2 | 95 | 36 | keep | - | - | - | #1561 | - | language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_lang/src/lang/traits.rs` | 1 | 373 | 24 | keep | - | - | - | #1561 | - | language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_lang/src/lang/types/numerics.rs` | 4 | 469 | 79 | keep | - | - | - | #1561 | - | language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level. |
@@ -654,7 +655,7 @@ Per-test overrides in `loaves/compiler/incan_ir/src/lower/tests/unary_operand_gr
 | `loaves/kernel/incan_semantics_core/src/stable_identity.rs` | 7 | 444 | 245 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/types.rs` | 7 | 435 | 95 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 
-### `loaves/kernel/incan_syntax` (317 tests in 17 files: keep 317)
+### `loaves/kernel/incan_syntax` (318 tests in 17 files: keep 318)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -667,7 +668,7 @@ Per-test overrides in `loaves/compiler/incan_ir/src/lower/tests/unary_operand_gr
 | `loaves/kernel/incan_syntax/src/parser/tests/fstrings.rs` | 7 | 365 | 365 | keep | - | - | - | #1561 | checker 7, parser 7 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/functions_decorators_and_bindings.rs` | 23 | 556 | 556 | keep | - | - | - | #1561 | checker 16, parser 23 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/modules_and_imports.rs` | 47 | 883 | 883 | keep | - | - | - | #1561 | checker 30, parser 47 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
-| `loaves/kernel/incan_syntax/src/parser/tests/operator_precedence.rs` | 5 | 238 | 238 | keep | - | - | - | #1561 | checker 5, parser 5 | parser grouping of mixed operators checked against the operator registry precedence (#1786); lexer, parser and registry, below the emitter, cannot reach codegen. |
+| `loaves/kernel/incan_syntax/src/parser/tests/operator_precedence.rs` | 6 | 301 | 301 | keep | - | - | - | #1561 | checker 6, parser 6 | parser grouping of mixed operators checked against the operator registry precedence (#1786); lexer, parser and registry, below the emitter, cannot reach codegen. |
 | `loaves/kernel/incan_syntax/src/parser/tests/patterns_and_matching.rs` | 16 | 555 | 555 | keep | - | - | - | #1561 | checker 12, parser 16 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/soft_keywords_and_vocab_blocks.rs` | 20 | 655 | 655 | keep | - | - | - | #1561 | checker 5, parser 20 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/statements_and_blocks.rs` | 19 | 426 | 426 | keep | - | - | - | #1561 | checker 17, parser 19 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |

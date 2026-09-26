@@ -20,6 +20,7 @@ use super::TypeChecker;
 
 mod access;
 mod basics;
+mod builtin_method_args;
 mod calls;
 mod collections;
 mod comps;

@@ -1092,8 +1092,9 @@ def drop_first(mut values: list[int]) -> int:
 
 #[test]
 fn builtin_collection_methods_refuse_a_wrong_argument_count_issue1783() -> Result<(), String> {
-    // Every builtin list, dict and set method is typed from the method registry, so each call is counted against the
-    // registry arity; without the check an extra argument was dropped from the generated call.
+    // Every builtin list, dict and set method is typed from the method registry, so each call is checked against the
+    // registry arity with positional arguments only; without the check an extra argument was dropped from the generated
+    // call and a keyword argument was taken for a positional one.
     let Err(errors) = check_str(
         r#"
 def misuse(mut values: list[int], mut counts: dict[str, int], mut seen: set[int]) -> None:
@@ -1103,6 +1104,8 @@ def misuse(mut values: list[int], mut counts: dict[str, int], mut seen: set[int]
     counts.insert("a")
     counts.keys(1)
     seen.add()
+    values.remove(banana=0)
+    counts.get(key="a")
 "#,
     ) else {
         return Err("every miscounted call must be refused".to_string());
@@ -1115,6 +1118,8 @@ def misuse(mut values: list[int], mut counts: dict[str, int], mut seen: set[int]
         "Dict.insert() expects 2 argument(s), got 1",
         "Dict.keys() expects 0 argument(s), got 1",
         "Set.add() expects 1 argument(s), got 0",
+        "Unexpected keyword argument 'banana' when calling 'List.remove'",
+        "Unexpected keyword argument 'key' when calling 'Dict.get'",
     ] {
         assert!(
             messages.iter().any(|message| message.contains(expected)),

@@ -1,5 +1,5 @@
-//! A prefix operator over a power emits over the whole power (#1786): `-x ** 2` is `-(x ** 2)`, while a parenthesized
-//! negated base stays the base.
+//! A prefix operator over a power emits over the whole power (#1786): `-x ** 2` is `-(x ** 2)` for an `int` or a
+//! `float` base and `~x ** 2` is `~(x ** 2)`, while a parenthesized negated base stays the base.
 
 use crate::codegen::IrCodegen;
 use incan_frontend::{lexer, parser};
@@ -26,9 +26,19 @@ def negated_base_square(x: int) -> int:
     return (-x) ** 2
 
 
+def negated_float_square(x: float) -> float:
+    return -x ** 2
+
+
+def inverted_square(x: int) -> int:
+    return ~x ** 2
+
+
 def main() -> None:
     println(negated_square(3))
     println(negated_base_square(3))
+    println(negated_float_square(1.5))
+    println(inverted_square(3))
 "#,
     )?;
     assert!(
@@ -38,6 +48,14 @@ def main() -> None:
     assert!(
         code.contains("(-x).pow(2asu32)"),
         "`(-x) ** 2` must raise the negated base:\n{code}"
+    );
+    assert!(
+        code.contains("-{(x).powf("),
+        "`-x ** 2` over a float must negate the grouped `powf`:\n{code}"
+    );
+    assert!(
+        code.contains("!{(x).pow(2asu32)}"),
+        "`~x ** 2` must invert the grouped power:\n{code}"
     );
     Ok(())
 }

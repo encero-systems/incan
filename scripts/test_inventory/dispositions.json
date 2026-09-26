@@ -2832,6 +2832,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/kernel/incan_lang/src/lang/surface/method_arity.rs": {
+      "disposition": "keep",
+      "notes": "the method registry's argument counts for the builtin collection methods (#1783); a language fact below the emitter, cannot reach codegen.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/kernel/incan_lang/src/lang/text_codecs.rs": {
       "disposition": "keep",
       "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level.",

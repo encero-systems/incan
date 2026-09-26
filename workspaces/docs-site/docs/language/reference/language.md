@@ -673,7 +673,7 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 |---|---|---|---|---|---|---|
 | Keys | `keys` |  | Return an iterable/list of keys. | RFC 009 | 0.1 | Stable |
 | Values | `values` |  | Return an iterable/list of values. | RFC 009 | 0.1 | Stable |
-| Get | `get` |  | `get(key) -> Option[V]`: `Some(value)` when the key is present, `None` when it is absent. Takes exactly one argument; `counts.get(name).unwrap_or(0)` supplies a fallback. | RFC 009 | 0.1 | Stable |
+| Get | `get` |  | `get(key) -> Option[V]`: `Some(value)` when the key is present, `None` when it is absent. Takes exactly one argument. | RFC 009 | 0.1 | Stable |
 | Insert | `insert` |  | Insert or overwrite a key/value pair. | RFC 009 | 0.1 | Stable |
 | ContainsKey | `contains_key` |  | Return true if the dict contains a key. | RFC 009 | 0.6 | Stable |
 

@@ -354,7 +354,7 @@ A zero divisor, integer or float (including `0.0` and `-0.0`), fails at runtime 
 
 `**` produces `int` only when the base is integer-family and the exponent is a non-negative integer literal. Two operands of the same exact float produce that type. Every other combination, including a negative literal exponent and any exponent held in a variable, produces `float`. `**` performs no zero check: with a `float` result, a zero base and a negative exponent produce infinity.
 
-`**` binds tighter than a unary operator on its left and looser than one on its right: `-x ** 2` is `-(x ** 2)`; `2 ** -1` is `2 ** (-1)`. The same holds for `~`. The [operator table](language.md#operators) lists the full precedence order.
+`**` binds tighter than a prefix `-` or `~` on its left and looser than one on its right: `-x ** 2` is `-(x ** 2)`, `~x ** 2` is `~(x ** 2)`, and `2 ** -1` is `2 ** (-1)`. The [operator table](language.md#operators) lists the full precedence order.
 
 ```incan
 base = 2

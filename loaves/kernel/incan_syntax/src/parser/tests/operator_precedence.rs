@@ -207,6 +207,69 @@ fn test_power_binds_tighter_than_a_prefix_operator_on_its_left_and_looser_on_its
     Ok(())
 }
 
+/// Return the operand of an `await` at the root of `expr`.
+fn awaited_operand(expr: &Expr) -> Option<&Expr> {
+    match expr {
+        Expr::Surface(surface) => match &surface.payload {
+            SurfaceExprPayload::PrefixUnary(operand) => Some(&operand.node),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+#[test]
+fn test_power_groups_with_await_and_a_prefix_exponent_issue1786() -> Result<(), Vec<CompileError>> {
+    // `await` binds tighter than `**`; a prefix operator after `await` reads a whole prefix expression, and so does a
+    // prefix operator in an exponent.
+    let source = r#"
+from std.async.time import sleep
+
+async def f(x: Any) -> None:
+  a = await x ** 2
+  b = await -x ** 2
+  c = 2 ** -x ** 2
+"#;
+    let program = parse_str(source)?;
+    let func = require_function_decl(&program.declarations[1])?;
+    let values = func
+        .body
+        .iter()
+        .map(|stmt| match &stmt.node {
+            Statement::Assignment(assignment) => Ok(&assignment.value.node),
+            other => Err(vec![CompileError::new(
+                format!("parser test internal error: expected an assignment, got {other:?}"),
+                stmt.span,
+            )]),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let [awaited_power, awaited_negation, negated_exponent] = values.as_slice() else {
+        return Err(vec![CompileError::new(
+            "parser test internal error: expected three assignments".to_string(),
+            Span::default(),
+        )]);
+    };
+
+    // `await x ** 2` is `(await x) ** 2`.
+    assert!(matches!(
+        awaited_power,
+        Expr::Binary(base, BinaryOp::Pow, _) if awaited_operand(&base.node).is_some()
+    ));
+    // `await -x ** 2` is `await (-(x ** 2))`.
+    assert!(matches!(
+        awaited_operand(awaited_negation),
+        Some(Expr::Unary(UnaryOp::Neg, operand)) if matches!(operand.node, Expr::Binary(_, BinaryOp::Pow, _))
+    ));
+    // `2 ** -x ** 2` is `2 ** (-(x ** 2))`.
+    assert!(matches!(
+        negated_exponent,
+        Expr::Binary(_, BinaryOp::Pow, exponent)
+            if matches!(&exponent.node, Expr::Unary(UnaryOp::Neg, operand)
+                if matches!(operand.node, Expr::Binary(_, BinaryOp::Pow, _)))
+    ));
+    Ok(())
+}
+
 #[test]
 fn test_prefix_operators_nest_to_the_right_issue1786() -> Result<(), Vec<CompileError>> {
     // `not not a` is `not (not a)`, the associativity the registry records for every prefix operator.
