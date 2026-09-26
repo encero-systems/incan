@@ -146,6 +146,7 @@ Seeded catalog codes:
 - `INCAN-T0107`: A `@route` handler's declared return type is not a response type (`str`, `Json[...]`, `Html`, `Response`, or a wrapper deriving `IntoResponse`); return the value as text or JSON.
 - `INCAN-T0108`: A `@route` handler parameter that no `{segment}` of the path binds and no `Json[...]`/`Query[...]`/`Path[...]` extractor supplies; add the segment or read the value from the request.
 - `INCAN-T0109`: `/`, `//`, `%` or `**` applied to values of a type parameter, which no bound can support; write the function for `int` or `float`, or bound the parameter by a trait defining the operator's hook.
+- `INCAN-T0117`: An immutable binding, a literal or another temporary passed to a `mut` parameter whose changes reach the caller (any type but `int`, `float`, `bool` or a Rust type, and not `*args`/`**kwargs`); pass a binding declared with `mut`.
 - `INCAN-I0001`: Import or module resolution error.
 - `INCAN-I0101`: A known SDK provider module belongs to a component disabled by the project.
 - `INCAN-I0102`: The project enabled an SDK component that is unavailable in the active installation.

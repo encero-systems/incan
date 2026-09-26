@@ -3770,7 +3770,8 @@ fn test_issue244_recursive_mut_list_codegen() {
     assert_codegen_snapshot!("issue244_recursive_mut_list", rust_code);
 }
 
-/// Issue #244 regression: mutable `str` params are passed by `&mut` and keep string conversions.
+/// Issue #244 regression: mutable `str` params are passed by `&mut` from the caller's `mut` binding, which keeps its
+/// string conversion at the binding (#1773 refuses a literal for a `mut` parameter).
 #[test]
 fn test_issue244_mut_str_param_codegen() {
     let source = load_test_file("issue244_mut_str_param");

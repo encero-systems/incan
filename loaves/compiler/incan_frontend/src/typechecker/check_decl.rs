@@ -5844,12 +5844,13 @@ impl TypeChecker {
         for (param, resolved_ty) in func.params.iter().zip(resolved_param_types) {
             let ty = local_type_for_param(param.node.kind, resolved_ty);
             self.validate_protected_builtin_binding(&param.node.name, param.span);
+            self.bind_mut_param_as_mutable(&param.node);
             self.symbols.define_with_target_kind(
                 Symbol {
                     name: param.node.name.clone(),
                     kind: SymbolKind::Variable(VariableInfo {
                         ty,
-                        is_mutable: false,
+                        is_mutable: param.node.is_mut,
                         is_used: false,
                     }),
                     span: param.span,
@@ -6269,12 +6270,13 @@ impl TypeChecker {
             ));
             let ty = local_type_for_param(param.node.kind, resolved_ty);
             self.validate_protected_builtin_binding(&param.node.name, param.span);
+            self.bind_mut_param_as_mutable(&param.node);
             self.symbols.define_with_target_kind(
                 Symbol {
                     name: param.node.name.clone(),
                     kind: SymbolKind::Variable(VariableInfo {
                         ty,
-                        is_mutable: false,
+                        is_mutable: param.node.is_mut,
                         is_used: false,
                     }),
                     span: param.span,

@@ -193,7 +193,8 @@ def main() -> None:
         println(key in values)
     println(",".join(sorted(key_list(values))))
     println(value_total(values))
-    println(",".join(appended(["z"])))
+    mut extra: list[str] = ["z"]
+    println(",".join(appended(extra)))
     println(",".join(sorted(list(values))))
     println(len(list("abc")))
     println(",".join(sorted(list(TEXTS))))

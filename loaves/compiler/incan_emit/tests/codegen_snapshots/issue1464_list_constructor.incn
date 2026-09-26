@@ -76,7 +76,8 @@ def main() -> None:
     println(len(value_list(values)))
     println(len(copied(["x", "y"])))
     println(len(from_set({1, 2, 3})))
-    println(len(from_mut_param(["q"])))
+    mut queued: list[str] = ["q"]
+    println(len(from_mut_param(queued)))
     println(len(keys_of(values)))
     println(len(characters("abc")))
     println(len(empty_names()))

@@ -779,14 +779,30 @@ def _digest_algorithm(data: bytes, algorithm: _Algorithm, length: int) -> Result
     `length` argument by design.
     """
     match algorithm:
-        _Algorithm.Sha224 => return _digest_from_hasher(sha224.new(), data)
-        _Algorithm.Sha256 => return _digest_from_hasher(sha256.new(), data)
-        _Algorithm.Sha384 => return _digest_from_hasher(sha384.new(), data)
-        _Algorithm.Sha512 => return _digest_from_hasher(sha512.new(), data)
-        _Algorithm.Sha3_224 => return _digest_from_hasher(sha3_224.new(), data)
-        _Algorithm.Sha3_256 => return _digest_from_hasher(sha3_256.new(), data)
-        _Algorithm.Sha3_384 => return _digest_from_hasher(sha3_384.new(), data)
-        _Algorithm.Sha3_512 => return _digest_from_hasher(sha3_512.new(), data)
+        _Algorithm.Sha224 =>
+            mut hasher = sha224.new()
+            return _digest_from_hasher(hasher, data)
+        _Algorithm.Sha256 =>
+            mut hasher = sha256.new()
+            return _digest_from_hasher(hasher, data)
+        _Algorithm.Sha384 =>
+            mut hasher = sha384.new()
+            return _digest_from_hasher(hasher, data)
+        _Algorithm.Sha512 =>
+            mut hasher = sha512.new()
+            return _digest_from_hasher(hasher, data)
+        _Algorithm.Sha3_224 =>
+            mut hasher = sha3_224.new()
+            return _digest_from_hasher(hasher, data)
+        _Algorithm.Sha3_256 =>
+            mut hasher = sha3_256.new()
+            return _digest_from_hasher(hasher, data)
+        _Algorithm.Sha3_384 =>
+            mut hasher = sha3_384.new()
+            return _digest_from_hasher(hasher, data)
+        _Algorithm.Sha3_512 =>
+            mut hasher = sha3_512.new()
+            return _digest_from_hasher(hasher, data)
         _Algorithm.Shake128 =>
             if length <= 0:
                 return Err(_invalid_error(algorithm.name(), "invalid_length", "SHAKE digest length must be positive"))
@@ -799,11 +815,19 @@ def _digest_algorithm(data: bytes, algorithm: _Algorithm, length: int) -> Result
             mut hasher = shake256.new()
             hasher.update(data)
             return hasher.finalize_bytes(length)
-        _Algorithm.Blake2b => return _digest_from_hasher(blake2b.new(), data)
-        _Algorithm.Blake2s => return _digest_from_hasher(blake2s.new(), data)
+        _Algorithm.Blake2b =>
+            mut hasher = blake2b.new()
+            return _digest_from_hasher(hasher, data)
+        _Algorithm.Blake2s =>
+            mut hasher = blake2s.new()
+            return _digest_from_hasher(hasher, data)
         _Algorithm.Blake3 => return Ok(blake3_hash(data.as_slice()).as_bytes().to_vec())
-        _Algorithm.Md5 => return _digest_from_hasher(md5.new(), data)
-        _Algorithm.Sha1 => return _digest_from_hasher(sha1.new(), data)
+        _Algorithm.Md5 =>
+            mut hasher = md5.new()
+            return _digest_from_hasher(hasher, data)
+        _Algorithm.Sha1 =>
+            mut hasher = sha1.new()
+            return _digest_from_hasher(hasher, data)
         _Algorithm.Xxh32 => return Ok(_u32_to_le_bytes(_xxh32_hash(data)))
         _Algorithm.Xxh64 => return Ok(_u64_to_le_bytes(_xxh64_hash(data)))
         _Algorithm.Xxh3_64 => return Ok(_u64_to_le_bytes(_xxh3_64_hash(data)))

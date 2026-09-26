@@ -1616,6 +1616,8 @@ impl AstLowering {
     }
 
     /// Lower one concrete impl method while preserving owner and method type parameters.
+    ///
+    /// A `mut` parameter is recorded as a mutable local, so the body may reassign it as a free function's body may.
     fn lower_impl_method_for_trait(
         &mut self,
         m: &ast::MethodDecl,
@@ -1693,6 +1695,10 @@ impl AstLowering {
                 lowered_param.ty.clone()
             };
             self.define_local_binding(source_param.node.name.clone(), binding_type, false);
+            // A `mut` parameter is reassignable in the body, as it is in a free function or an inherent method.
+            if source_param.node.is_mut {
+                self.mutable_vars.insert(source_param.node.name.clone(), true);
+            }
             if let ast::Type::Simple(type_name) = &source_param.node.ty.node
                 && let Some(signature) = nominal_callable_types.get(type_name)
             {

@@ -1,0 +1,22 @@
+# behavior: an immutable binding or a literal passed to a mut list parameter of a trait default method or a function is refused at check time
+# expect-diagnostic: INCAN-T0117
+
+trait Replacer:
+    def replace(self, mut items: list[int]) -> int:
+        items.append(9)
+        return len(items)
+
+
+model Widget with Replacer:
+    id: int
+
+
+def extend(mut items: list[int]) -> None:
+    items.append(7)
+
+
+def main() -> None:
+    items: list[int] = [1, 2]
+    println(Widget(id=1).replace(items))
+    println(len(items))
+    extend([3])

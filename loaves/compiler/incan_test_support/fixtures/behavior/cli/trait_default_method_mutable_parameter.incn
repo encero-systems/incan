@@ -1,20 +1,34 @@
-# behavior: a trait default method that appends to its mut list parameter changes the caller's list, as a free function with the same parameter does
+# behavior: a mut list parameter changed by a trait default method or a function changes the caller's mut list, and a mut int parameter is a local the method increments
 # retires: loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs::trait_method_mut_parameter_keeps_one_shape_across_slot_impl_and_wrapper_issue1773
+# retires: loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs::scalar_mut_parameter_is_a_mutable_local_in_every_body_issue1773
 # expect-stdout:
 #   3
 #   3
+#   4
+#   6
 
 trait Replacer:
     def replace(self, mut items: list[int]) -> int:
         items.append(9)
         return len(items)
 
+    def bumped(self, mut n: int) -> int:
+        n += 1
+        return n
+
 
 model Widget with Replacer:
     id: int
+
+
+def extend(mut items: list[int]) -> None:
+    items.append(7)
 
 
 def main() -> None:
     mut items: list[int] = [1, 2]
     println(Widget(id=1).replace(items))
     println(len(items))
+    extend(items)
+    println(len(items))
+    println(Widget(id=1).bumped(5))

@@ -923,6 +923,34 @@ pub fn self_mutation_requires_mut_self(
         .with_note("A method that changes the object it is called on says so in its receiver; a plain 'self' method only reads it")
 }
 
+/// Refuse an argument that is not a mutable place for a `mut` parameter whose changes reach the caller (#1773).
+///
+/// A `mut` parameter of any type but `int`, `float`, `bool`, a Rust type or a rest parameter shows the callee's changes
+/// to the caller, so the argument has to be a place the caller can see change: a `mut` binding or parameter, a static,
+/// `self` in a `mut self` method, or a field or element of one of those. `parameter` and `callee` name the declaration;
+/// `binding` is the name the argument spells when it is a plain binding, so the hint can say which declaration to
+/// change. `INCAN-T0117` is its stable code.
+pub fn immutable_argument_to_mut_parameter(
+    parameter: &str,
+    callee: &str,
+    binding: Option<&str>,
+    span: Span,
+) -> CompileError {
+    let hint = match binding {
+        Some(name) => format!("Declare '{name}' with 'mut' where it is bound: mut {name} = ..."),
+        None => format!("Bind the value to a 'mut' variable and pass the variable: mut {parameter} = ..."),
+    };
+    CompileError::type_error(
+        format!("Argument for the 'mut' parameter '{parameter}' of '{callee}' must be a mutable binding"),
+        span,
+    )
+    .with_stable_code("INCAN-T0117")
+    .with_hint(hint)
+    .with_note(format!(
+        "'{callee}' may change '{parameter}', and its changes are visible to the caller, so the caller passes a binding declared with 'mut'"
+    ))
+}
+
 /// A Rust interop parameter requires an exclusive borrow of an immutable Incan binding.
 pub fn mutable_rust_borrow_requires_mut(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Rust parameter requires a mutable borrow of '{name}'"), span).with_hint(format!(

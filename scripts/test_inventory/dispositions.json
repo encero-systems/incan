@@ -1326,6 +1326,10 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/generic_list_index_without_clone_bound.incn",
           "notes": "Asserts the inferred `Clone` bound an element read of a type-parameter list or dict value needs; retires with `incan_emit`. The behavior, `first[K]` returning `items[0]` for int and str elements, is carried by the named fixture (#1756)."
         },
+        "scalar_mut_parameter_is_a_mutable_local_in_every_body_issue1773": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/trait_default_method_mutable_parameter.incn",
+          "notes": "Asserts generated Rust text for a scalar `mut` parameter changed in a function, a method and a trait default; retires with the Rust-source backend. The behavior, a trait default incrementing its `mut int` parameter, is carried by the named fixture (#1773)."
+        },
         "trait_method_mut_parameter_keeps_one_shape_across_slot_impl_and_wrapper_issue1773": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/trait_default_method_mutable_parameter.incn",
           "notes": "Asserts generated Rust text for a trait method's `mut` parameters (slot, default, implementation, wrapper, call site); retires with the Rust-source backend. The behavior, a trait default appending to its `mut` list parameter and the caller seeing the change, is carried by the named fixture (#1773)."
@@ -2102,6 +2106,14 @@
     "loaves/compiler/incan_frontend/src/typechecker/tests/models_enums_and_newtypes.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/mut_parameters.rs": {
+      "disposition": "keep",
+      "notes": "typechecker: `mut` parameters as mutable bindings and the INCAN-T0117 refusal of immutable arguments; no emit/driver dependency.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",

@@ -160,3 +160,51 @@ def main() -> None:
     );
     Ok(())
 }
+
+/// #1773: a scalar `mut` parameter the body changes is a mutable local of that body in a function, an inherent method and
+/// an expanded trait default, while the trait slot and the wrapper keep taking the value.
+#[test]
+fn scalar_mut_parameter_is_a_mutable_local_in_every_body_issue1773() -> Result<(), Box<dyn std::error::Error>> {
+    let rust = compact_rust(
+        r#"
+def bumped(mut n: int) -> int:
+    n += 1
+    n = n * 2
+    return n
+
+class Counter:
+    step: int
+
+    def advanced(self, mut n: int) -> int:
+        n += self.step
+        return n
+
+trait Stepper:
+    def stepped(self, mut n: int) -> int:
+        n += 1
+        return n
+
+model Walker with Stepper:
+    id: int
+
+def main() -> None:
+    println(bumped(1))
+    println(Counter(step=2).advanced(1))
+    println(Walker(id=1).stepped(1))
+"#,
+    )?;
+    assert!(
+        rust.contains("mutn:i64,)->i64{n=n+1;n=n*2;returnn;}"),
+        "the function's `mut n` is a mutable local: {rust}"
+    );
+    assert!(
+        rust.contains("&self,mutn:i64,)->i64{n=n+self.step;returnn;}"),
+        "the method's `mut n` is a mutable local: {rust}"
+    );
+    assert!(
+        rust.contains("fnstepped(&self,n:i64)->i64;")
+            && rust.contains("fnstepped(&self,mutn:i64)->i64{n=n+1;returnn;}"),
+        "the trait slot takes the value and the expanded default binds it mutably: {rust}"
+    );
+    Ok(())
+}

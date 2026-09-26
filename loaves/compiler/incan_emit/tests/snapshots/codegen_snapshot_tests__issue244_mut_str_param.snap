@@ -22,5 +22,6 @@ fn main() {
             }
         }),
     );
-    let _ = bump(&mut "hello".to_string());
+    let mut greeting: String = "hello".to_string();
+    let _ = bump(&mut greeting);
 }

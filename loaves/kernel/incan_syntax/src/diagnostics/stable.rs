@@ -384,6 +384,28 @@ const OPERATOR_HAS_NO_TYPE_PARAMETER_BOUND: DiagnosticCatalogEntry = DiagnosticC
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/numeric_semantics/"),
 };
 
+const IMMUTABLE_ARGUMENT_TO_MUT_PARAMETER: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0117",
+    title: "Immutable argument for a `mut` parameter",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A `mut` parameter whose changes reach the caller receives an immutable binding, a literal or another temporary.",
+    explanation: "A parameter declared `mut` is a mutable binding inside its function. When its type is not `int`, `float`, `bool` or a Rust type, and it is not a `*args` or `**kwargs` parameter, the function's changes to it are also visible to the caller after the call. The argument therefore has to be a place the caller owns and may change: a binding or parameter declared `mut`, a static, `self` in a `mut self` method, or a field or element of one of those. An immutable binding, a literal, a call result or any other temporary is refused. The rule applies to functions, methods and trait methods alike.",
+    examples: &[
+        "def extend(mut items: list[int]) -> None:\n    items.append(9)\n\ndef main() -> None:\n    items: list[int] = [1, 2]\n    extend(items)",
+        "def extend(mut items: list[int]) -> None:\n    items.append(9)\n\ndef main() -> None:\n    extend([1, 2])",
+    ],
+    common_causes: &[
+        "A binding declared without `mut` passed to a function that changes it.",
+        "A literal or a call result passed directly to a `mut` parameter.",
+    ],
+    fixes: &[
+        "Declare the binding with `mut`: `mut items: list[int] = [1, 2]`.",
+        "Bind a literal or a call result to a `mut` variable first and pass the variable.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/derives_and_traits/"),
+};
+
 const IMPORT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-I0001",
     title: "Import or module resolution error",
@@ -506,6 +528,7 @@ const CATALOG: &[DiagnosticCatalogEntry] = &[
     ROUTE_HANDLER_RETURN_NOT_RESPONSE,
     ROUTE_HANDLER_PARAMETER_UNBOUND,
     OPERATOR_HAS_NO_TYPE_PARAMETER_BOUND,
+    IMMUTABLE_ARGUMENT_TO_MUT_PARAMETER,
     IMPORT,
     SDK_COMPONENT_DISABLED,
     SDK_COMPONENT_UNAVAILABLE,
@@ -783,6 +806,32 @@ mod tests {
                 .any(|hint| hint.contains("HashMap.new[str, int]()") && hint.contains("untyped: HashMap[str, int]")),
             "the remedy must spell both the call and the binding form, got {:?}",
             open_generics.hints
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn immutable_argument_to_mut_parameter_uses_its_stable_code_issue1773() -> Result<(), String> {
+        let binding = errors::immutable_argument_to_mut_parameter("items", "extend", Some("items"), Span::default());
+        let temporary = errors::immutable_argument_to_mut_parameter("items", "extend", None, Span::default());
+        for error in [&binding, &temporary] {
+            assert_eq!(code_for_error(error, DiagnosticPhase::Typecheck), "INCAN-T0117");
+        }
+        let entry = explain("INCAN-T0117").ok_or("INCAN-T0117 must have a catalog explanation")?;
+        assert_eq!(entry.severity, "error");
+        assert_eq!(entry.phase, "typecheck");
+        assert!(
+            binding.hints.iter().any(|hint| hint.contains("mut items = ...")),
+            "an immutable binding's remedy names the binding to declare 'mut', got {:?}",
+            binding.hints
+        );
+        assert!(
+            temporary
+                .hints
+                .iter()
+                .any(|hint| hint.contains("Bind the value to a 'mut' variable")),
+            "a temporary's remedy says to bind it to a 'mut' variable first, got {:?}",
+            temporary.hints
         );
         Ok(())
     }

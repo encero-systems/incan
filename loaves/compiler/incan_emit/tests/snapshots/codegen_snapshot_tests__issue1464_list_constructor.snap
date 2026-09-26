@@ -113,9 +113,9 @@ fn main() {
         "{}", ::std::convert::identity(from_set([1, 2, 3].into_iter().collect:: <
         std::collections::HashSet < _ >> ()).len() as i64)
     );
+    let mut queued: Vec<String> = vec!["q".to_string()];
     let _ = println!(
-        "{}", ::std::convert::identity(from_mut_param(& mut vec!["q".to_string()]).len()
-        as i64)
+        "{}", ::std::convert::identity(from_mut_param(& mut queued).len() as i64)
     );
     let _ = println!("{}", ::std::convert::identity(keys_of(values).len() as i64));
     let _ = println!(

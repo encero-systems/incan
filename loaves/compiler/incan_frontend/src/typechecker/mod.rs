@@ -48,6 +48,7 @@ mod check_stmt;
 mod collect;
 mod const_eval;
 mod helpers;
+mod mut_arguments;
 mod reachability;
 pub mod stdlib_loader;
 mod trait_bound_relations;
@@ -460,6 +461,10 @@ pub struct TypeChecker {
     pub warnings: Vec<CompileError>,
     /// Track which bindings are mutable for mutation checks.
     pub mutable_bindings: HashSet<String>,
+    /// Declared parameters of every source callable with a `mut` parameter whose changes reach the caller, keyed by
+    /// the callable's declaration identity; calls to those callables must pass a mutable place for such a parameter
+    /// (#1773, `INCAN-T0117`).
+    pub(crate) caller_visible_mut_params: HashMap<CanonicalSymbolId, Vec<mut_arguments::DeclaredParamSlot>>,
     /// The method whose body is being checked while its receiver is a plain `self`, so a write through `self`
     /// inside it can be refused with the declaration to change (#1723). `None` outside a method body, and inside a
     /// `mut self` method.
@@ -784,6 +789,7 @@ impl TypeChecker {
             errors: Vec::new(),
             warnings: Vec::new(),
             mutable_bindings: HashSet::new(),
+            caller_visible_mut_params: HashMap::new(),
             current_immutable_self_method: None,
             consumed_iterator_bindings: HashMap::new(),
             transferred_c_resource_bindings: HashMap::new(),

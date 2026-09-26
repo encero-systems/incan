@@ -234,7 +234,9 @@ impl TypeChecker {
     /// Validate an expression and return its resolved type.
     ///
     /// Dispatches to specialized helpers (`check_call`, `check_binary`, `check_match`, etc.) and accumulates errors.
-    /// Returns [`ResolvedType::Unknown`] when the expression is invalid so checking can continue.
+    /// Returns [`ResolvedType::Unknown`] when the expression is invalid so checking can continue. Once a call has
+    /// resolved its callee, each argument for a `mut` parameter whose changes reach the caller must be a mutable place
+    /// (`INCAN-T0117`).
     pub fn check_expr(&mut self, expr: &Spanned<Expr>) -> ResolvedType {
         let ty = match &expr.node {
             Expr::Ident(name) => self.check_ident(name, expr.span),
@@ -242,12 +244,18 @@ impl TypeChecker {
             Expr::SelfExpr => self.check_self(expr.span),
             Expr::Binary(left, op, right) => self.check_binary(left, *op, right, expr.span),
             Expr::Unary(op, operand) => self.check_unary(*op, operand, expr.span),
-            Expr::Call(callee, type_args, args) => self.check_call(callee, type_args, args, expr.span),
+            Expr::Call(callee, type_args, args) => {
+                let ty = self.check_call(callee, type_args, args, expr.span);
+                self.refuse_immutable_arguments_to_mut_params(callee.span, args);
+                ty
+            }
             Expr::Index(base, index) => self.check_index(base, index, expr.span),
             Expr::Slice(base, slice) => self.check_slice(base, slice, expr.span),
             Expr::Field(base, field) => self.check_field(base, field, expr.span),
             Expr::MethodCall(base, method, type_args, args) => {
-                self.check_method_call(base, method, type_args, args, expr.span)
+                let ty = self.check_method_call(base, method, type_args, args, expr.span);
+                self.refuse_immutable_arguments_to_mut_params(expr.span, args);
+                ty
             }
             Expr::Partial(partial) => self.check_partial_expr(partial, expr.span),
             Expr::Surface(surface_expr) => self.check_surface_expr(surface_expr, expr.span),
@@ -356,7 +364,7 @@ impl TypeChecker {
     /// Type-check an expression with an expected destination type when one is already known.
     ///
     /// This is intentionally narrow: only expression forms that benefit from contextual typing without broad inference
-    /// changes should use the hint.
+    /// changes should use the hint. Calls apply the same `mut` argument check as [`Self::check_expr`].
     pub fn check_expr_with_expected(&mut self, expr: &Spanned<Expr>, expected: Option<&ResolvedType>) -> ResolvedType {
         let ty = match (&expr.node, expected) {
             (_, Some(ResolvedType::TypeVar(_))) => return self.check_expr(expr),
@@ -417,10 +425,15 @@ impl TypeChecker {
             }
             (Expr::Try(inner), Some(expected_ty)) => self.check_try_with_expected(inner, expr.span, Some(expected_ty)),
             (Expr::Call(callee, type_args, args), Some(expected_ty)) => {
-                self.check_call_with_expected(callee, type_args, args, expr.span, Some(expected_ty))
+                let ty = self.check_call_with_expected(callee, type_args, args, expr.span, Some(expected_ty));
+                self.refuse_immutable_arguments_to_mut_params(callee.span, args);
+                ty
             }
             (Expr::MethodCall(base, method, type_args, args), Some(expected_ty)) => {
-                self.check_method_call_with_expected(base, method, type_args, args, expr.span, Some(expected_ty))
+                let ty =
+                    self.check_method_call_with_expected(base, method, type_args, args, expr.span, Some(expected_ty));
+                self.refuse_immutable_arguments_to_mut_params(expr.span, args);
+                ty
             }
             (Expr::Tuple(items), Some(ResolvedType::Unit)) if items.is_empty() => ResolvedType::Unit,
             (Expr::Closure(params, body), Some(ResolvedType::Function(expected_params, expected_ret))) => {
