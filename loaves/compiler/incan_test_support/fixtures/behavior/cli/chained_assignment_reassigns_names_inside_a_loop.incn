@@ -1,4 +1,4 @@
-# behavior: a chained assignment gives its value to every target from left to right, each in its own type: bound names are reassigned (x = y = x + 1 inside a loop advances the loop's x), new names are declared, a str or list value reaches every target, an Option or union target wraps the value, None takes the Option targets' type, None, (None), [None], [], {} and list() reach targets of different types in each one's type, 5 reaches an i8 and an int, and a module static target gets the value too
+# behavior: a chained assignment gives its value to every target from left to right, each in its own type: bound names are reassigned (x = y = x + 1 inside a loop advances the loop's x), new names are declared, a str or list value reaches every target, an Option or union target wraps the value, None takes the Option targets' type, None, (None), [None], [], {} and list() reach targets of different types in each one's type, 5 reaches an i8 and an int, a module static target gets the value too, a call to a user function, closure or parameter named Vec, set, list or dict is evaluated once for all targets, and targets of list[int] and list[i64], or list[float] and list[f64], share one generic value
 # retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_assignment_into_bound_names_reassigns_them_inside_a_loop_issue1806
 # retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_assignment_gives_every_target_the_value_issue1806
 # retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_assignment_in_a_loop_assigns_the_bound_name_issue1806
@@ -7,6 +7,10 @@
 # retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_assignment_types_its_value_and_copies_for_a_static_issue1806
 # retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_literal_over_disagreeing_targets_is_written_per_target_issue1806
 # retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_literal_over_disagreeing_targets_is_written_per_target_issue1806
+# retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_call_to_a_user_binding_named_like_a_constructor_is_evaluated_once_issue1806
+# retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_call_to_a_user_function_named_set_is_emitted_once_issue1806
+# retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_targets_of_equivalent_types_share_one_typed_temporary_issue1806
+# retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_targets_of_equivalent_types_share_one_temporary_issue1806
 # expect-stdout:
 #   5
 #   10 10
@@ -25,8 +29,68 @@
 #   1 1
 #   0 0
 #   5 5
+#   tick Vec
+#   1 1
+#   tick set
+#   1 1
+#   tick list
+#   2 2
+#   tick dict
+#   1 1
+#   0 0
+#   0 0
 
 static names: list[str] = []
+
+
+def Vec() -> list[int]:
+    println("tick Vec")
+    return [1]
+
+
+def set() -> set[int]:
+    println("tick set")
+    return {1}
+
+
+def ticking_list() -> list[int]:
+    println("tick list")
+    return [1, 2]
+
+
+def ticking_dict() -> dict[str, int]:
+    println("tick dict")
+    return {"k": 1}
+
+
+def empty[T]() -> list[T]:
+    return []
+
+
+def from_user_functions() -> None:
+    mut a: list[int] = []
+    mut b: Option[list[int]] = None
+    a = b = Vec()
+    println(f"{len(a)} {len(b.unwrap())}")
+    mut c: set[int] = {2}
+    mut d: Option[set[int]] = None
+    c = d = set()
+    println(f"{len(c)} {len(d.unwrap())}")
+
+
+def from_closure() -> None:
+    list = () => ticking_list()
+    mut a: list[int] = []
+    mut b: Option[list[int]] = None
+    a = b = list()
+    println(f"{len(a)} {len(b.unwrap())}")
+
+
+def from_parameter(dict: () -> dict[str, int]) -> None:
+    mut a: dict[str, int] = {}
+    mut b: Option[dict[str, int]] = None
+    a = b = dict()
+    println(f"{len(a)} {len(b.unwrap())}")
 
 
 def count_up(n: int) -> int:
@@ -96,3 +160,14 @@ def main() -> None:
     mut big = 2
     small = big = 5
     println(f"{small} {big}")
+    from_user_functions()
+    from_closure()
+    from_parameter(() => ticking_dict())
+    mut wide: list[int] = [1]
+    mut exact: list[i64] = [2]
+    wide = exact = empty()
+    println(f"{len(wide)} {len(exact)}")
+    mut real: list[float] = [1.0]
+    mut exact_real: list[f64] = [2.0]
+    real = exact_real = empty()
+    println(f"{len(real)} {len(exact_real)}")

@@ -35,16 +35,6 @@ const TUPLE_ASSIGN_TEMPORARY: &str = "__incan_tuple_assign";
 /// Name of the temporary a chained assignment reads its value into, reused the same way.
 const CHAIN_VALUE_TEMPORARY: &str = "__incan_chain_value";
 
-/// What a chained assignment's already-bound targets say about the type of its value.
-enum ChainTargetTypes {
-    /// Every bound target has this type.
-    Agree(IrType),
-    /// Two bound targets have different types.
-    Disagree,
-    /// No bound target, or one whose type is unknown: the value keeps its own type.
-    Unconstrained,
-}
-
 impl AstLowering {
     /// Lower `a, b = value` (or `let` / `mut a, b = value`).
     ///
@@ -73,9 +63,10 @@ impl AstLowering {
     ///
     /// The value is read into one temporary, then each target takes it from left to right: a copy of it for every
     /// target but the last, the temporary itself for the last. The temporary has the type the already-bound targets
-    /// agree on (so `a = b = None` over two `Option[int]` targets is an `Option[int]`), or the value's own type when
-    /// they disagree or none is bound, and each target converts it to its own type. A literal value over bound targets
-    /// that disagree is written once per target instead; see [`Self::lower_chained_literal`]. A plain spelling
+    /// agree on, as the checker decided it (so `a = b = None` over two `Option[int]` targets is an `Option[int]`, and
+    /// `a = b = empty()` over a `list[int]` and a `list[i64]` is a `list[int]`), or the value's own type when they
+    /// differ or none is bound, and each target converts it to its own type. A value the checker recorded as
+    /// written per target is evaluated once per target instead; see [`Self::lower_chained_literal`]. A plain spelling
     /// reassigns every target that is already bound and mutable (or a module static) and declares the others, the
     /// rule a single `x = value` follows; `let` and `mut` spellings declare every target.
     pub(super) fn lower_chained_assignment(
@@ -93,12 +84,19 @@ impl AstLowering {
             });
         };
 
-        let agreed_ty = match self.chain_target_types(chain) {
-            ChainTargetTypes::Agree(ty) => Some(ty),
-            ChainTargetTypes::Disagree if chain.value.node.is_literal_construction() => {
-                return self.lower_chained_literal(chain, mutability);
-            }
-            ChainTargetTypes::Disagree | ChainTargetTypes::Unconstrained => None,
+        let (written_per_target, targets_agree) = self.type_info.as_ref().map_or((false, false), |info| {
+            (
+                info.chained_value_is_written_per_target(chain.value.span),
+                info.chained_targets_agree(chain.value.span),
+            )
+        });
+        if written_per_target {
+            return self.lower_chained_literal(chain, mutability);
+        }
+        let agreed_ty = if targets_agree {
+            self.chain_first_bound_type(chain)
+        } else {
+            None
         };
         let value = self.lower_expr_spanned(&chain.value)?;
         let ty = agreed_ty.clone().unwrap_or_else(|| value.ty.clone());
@@ -121,13 +119,16 @@ impl AstLowering {
         Ok(Self::statement_block(stmts))
     }
 
-    /// Lower a chain whose bound targets disagree on a type and whose value is built only from literals (`None`, `[]`,
-    /// `{}`, `(None)`, `[None]`, `list()`, a number).
+    /// Lower a chain the checker recorded as written per target: its bound targets have incompatible types and its
+    /// value is built only from literals and builtin empty constructors (`None`, `[]`, `{}`, `(None)`, `[None]`,
+    /// `list()`, a number).
     ///
-    /// There is no one type to read the value in, so each target gets its own copy, left to right, written as a single
-    /// `target = value` writes it: `a = b = None` over an `Option[int]` and an `Option[str]` gives each its own `None`.
-    /// Such a value has no side effects, so writing it once per target is the chain's meaning. The checker checked the
-    /// value once per target, and records one type per source span, so each copy takes its own target's type here.
+    /// There is no one type to read the value in, so each target gets its own evaluation of it, left to right, written
+    /// as a single `target = value` writes it: `a = b = None` over an `Option[int]` and an `Option[str]` gives each its
+    /// own `None`. Every evaluation of such a value gives an equal value and does nothing else; the checker records the
+    /// fact only for such a value, so a call to a user function spelled `list` or `set` never comes here and is
+    /// evaluated once. The checker checked the value once per target, and records one type per source span, so each
+    /// evaluation takes its own target's type here.
     fn lower_chained_literal(
         &mut self,
         chain: &ast::ChainedAssignmentStmt,
@@ -207,24 +208,15 @@ impl AstLowering {
         }
     }
 
-    /// Classify the types of a chain's already-bound targets: one type they all have, two or more different types, or
-    /// no constraint (no bound target, or one whose type is unknown). New names take whatever the value's type is, so
-    /// they do not constrain it.
-    fn chain_target_types(&self, chain: &ast::ChainedAssignmentStmt) -> ChainTargetTypes {
-        let mut agreed: Option<IrType> = None;
-        for name in &chain.targets {
-            if self.bound_name_assign_target(chain.binding, name).is_none() {
-                continue;
-            }
-            let ty = self.lookup_var(name);
-            match &agreed {
-                _ if ty == IrType::Unknown => return ChainTargetTypes::Unconstrained,
-                None => agreed = Some(ty),
-                Some(existing) if *existing == ty => {}
-                Some(_) => return ChainTargetTypes::Disagree,
-            }
-        }
-        agreed.map_or(ChainTargetTypes::Unconstrained, ChainTargetTypes::Agree)
+    /// Return the type of a chain's first already-bound target whose type is known, the type the checker checked the
+    /// value against when the bound targets agree. New names take whatever the value's type is, so they are skipped.
+    fn chain_first_bound_type(&self, chain: &ast::ChainedAssignmentStmt) -> Option<IrType> {
+        chain
+            .targets
+            .iter()
+            .filter(|name| self.bound_name_assign_target(chain.binding, name).is_some())
+            .map(|name| self.lookup_var(name))
+            .find(|ty| *ty != IrType::Unknown)
     }
 
     /// Read the chain's value temporary for one target.

@@ -585,3 +585,118 @@ def constructed() -> None:
     );
     Ok(())
 }
+
+/// #1806: a call is evaluated once per target only when the checker resolved it to a builtin constructor. A user
+/// function, a local closure or a parameter spelled `Vec`, `list`, `dict` or `set` is an ordinary call: the chain
+/// evaluates it once into its temporary and gives the temporary to each target, even though the targets' types differ.
+#[test]
+fn chained_call_to_a_user_binding_named_like_a_constructor_is_evaluated_once_issue1806() -> Result<(), String> {
+    let cases = [
+        (
+            "user function `Vec`",
+            "main",
+            r#"
+def Vec() -> list[int]:
+    println("tick")
+    return [1]
+
+def main() -> None:
+    mut a: list[int] = []
+    mut b: Option[list[int]] = None
+    a = b = Vec()
+"#,
+        ),
+        (
+            "local closure `list`",
+            "main",
+            r#"
+def main() -> None:
+    list = () => [1, 2]
+    mut a: list[int] = []
+    mut b: Option[list[int]] = None
+    a = b = list()
+"#,
+        ),
+        (
+            "parameter `dict`",
+            "fill",
+            r#"
+def fill(dict: () -> dict[str, int]) -> None:
+    mut a: dict[str, int] = {}
+    mut b: Option[dict[str, int]] = None
+    a = b = dict()
+"#,
+        ),
+        (
+            "user function `set`",
+            "main",
+            r#"
+def set() -> set[int]:
+    println("tick")
+    return {1}
+
+def main() -> None:
+    mut a: set[int] = {2}
+    mut b: Option[set[int]] = None
+    a = b = set()
+"#,
+        ),
+    ];
+    for (label, function, source) in cases {
+        let ir = lower_checked_source(source)?;
+        let stmts = all_statements(&ir, function)?;
+        let temporaries = stmts
+            .iter()
+            .filter(|stmt| matches!(&stmt.kind, IrStmtKind::Let { name, .. } if name == CHAIN_VALUE))
+            .count();
+        assert_eq!(
+            temporaries, 1,
+            "the {label} call is evaluated once, into the temporary: {stmts:?}"
+        );
+        assert_eq!(
+            chain_value_reads(&stmts),
+            vec![("a".to_string(), VarAccess::Read), ("b".to_string(), VarAccess::Move)],
+            "every target of the {label} chain reads the temporary rather than calling again"
+        );
+    }
+    Ok(())
+}
+
+/// #1806: `list[int]` and `list[i64]`, and `list[float]` and `list[f64]`, are one type, so targets spelled either way
+/// agree and the chain's temporary takes their type; a generic value such as `empty()` is not refused.
+#[test]
+fn chained_targets_of_equivalent_types_share_one_typed_temporary_issue1806() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+def empty[T]() -> list[T]:
+    return []
+
+def ints() -> int:
+    mut a: list[int] = [1]
+    mut b: list[i64] = [2]
+    a = b = empty()
+    return len(a) + len(b)
+
+def floats() -> int:
+    mut a: list[float] = [1.0]
+    mut b: list[f64] = [2.0]
+    a = b = empty()
+    return len(a) + len(b)
+"#,
+    )?;
+    for (name, element) in [("ints", IrType::Int), ("floats", IrType::Float)] {
+        let stmts = all_statements(&ir, name)?;
+        let list = IrType::List(Box::new(element));
+        assert_eq!(
+            chain_value_type(&stmts)?,
+            (&list, Some(&list)),
+            "`{name}` reads `empty()` as the type its targets share"
+        );
+        assert_eq!(
+            chain_value_reads(&stmts),
+            vec![("a".to_string(), VarAccess::Read), ("b".to_string(), VarAccess::Move)],
+            "`{name}` gives the one value to each target"
+        );
+    }
+    Ok(())
+}

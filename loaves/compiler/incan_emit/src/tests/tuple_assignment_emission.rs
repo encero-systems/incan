@@ -272,3 +272,62 @@ def main() -> None:
     );
     Ok(())
 }
+
+/// A user function named `set` is called once, into the chain's temporary, and every target reads the temporary; only a
+/// builtin constructor is written once per target.
+#[test]
+fn chained_call_to_a_user_function_named_set_is_emitted_once_issue1806() -> Result<(), String> {
+    let code = generate_collapsed(
+        r#"
+def set() -> set[int]:
+    println("tick")
+    return {1}
+
+
+def main() -> None:
+    mut a: set[int] = {2}
+    mut b: Option[set[int]] = None
+    a = b = set()
+    println(f"{len(a)}")
+"#,
+    )?;
+    let compact: String = code.split_whitespace().collect();
+    assert!(
+        compact.contains("let__incan_chain_value"),
+        "the call goes into one temporary:\n{code}"
+    );
+    assert!(
+        compact.contains("a=__incan_chain_value.clone();") && compact.contains("b=Some(__incan_chain_value);"),
+        "every target reads the temporary:\n{code}"
+    );
+    Ok(())
+}
+
+/// Targets of `list[int]` and `list[i64]` share one type, so `empty()` is read once into a `Vec<i64>` temporary that
+/// both take.
+#[test]
+fn chained_targets_of_equivalent_types_share_one_temporary_issue1806() -> Result<(), String> {
+    let code = generate_collapsed(
+        r#"
+def empty[T]() -> list[T]:
+    return []
+
+
+def main() -> None:
+    mut a: list[int] = [1]
+    mut b: list[i64] = [2]
+    a = b = empty()
+    println(f"{len(a)} {len(b)}")
+"#,
+    )?;
+    let compact: String = code.split_whitespace().collect();
+    assert!(
+        compact.contains("let__incan_chain_value:Vec<i64>="),
+        "one typed temporary:\n{code}"
+    );
+    assert!(
+        compact.contains("a=__incan_chain_value.clone();") && compact.contains("b=__incan_chain_value;"),
+        "both targets read the temporary:\n{code}"
+    );
+    Ok(())
+}

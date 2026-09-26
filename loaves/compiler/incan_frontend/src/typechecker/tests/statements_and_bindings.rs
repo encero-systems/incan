@@ -1215,8 +1215,74 @@ def fill() -> None:
     assert!(
         errors.iter().any(|error| error
             .message
-            .contains("The targets of this chained assignment have different types")),
-        "expected the chained-assignment refusal, got {errors:?}"
+            .contains("The targets of this chained assignment have incompatible types ('List[int]' and 'List[str]')")),
+        "expected the chained-assignment refusal naming both target types, got {errors:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn chained_assignment_targets_of_equivalent_types_share_the_value_issue1806() -> Result<(), String> {
+    // `int` and `i64`, and `float` and `f64`, are one type to the checker, so targets spelled with either agree and a
+    // generic value takes their type, as it would for a single target.
+    check_str(
+        r#"
+def empty[T]() -> list[T]:
+    return []
+
+def ints() -> int:
+    mut a: list[int] = [1]
+    mut b: list[i64] = [2]
+    a = b = empty()
+    return len(a) + len(b)
+
+def floats() -> int:
+    mut a: list[float] = [1.0]
+    mut b: list[f64] = [2.0]
+    a = b = empty()
+    return len(a) + len(b)
+"#,
+    )
+    .map_err(|errors| format!("targets of equivalent types must share the value: {errors:?}"))
+}
+
+#[test]
+fn chained_assignment_evaluates_a_user_function_named_like_a_constructor_once_issue1806()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Only a call the checker resolved to a builtin constructor is evaluated once per target; a user function spelled
+    // `set` or `Vec` is an ordinary call, evaluated once and shared.
+    let source = r#"
+def set() -> set[int]:
+    return {1}
+
+def Vec() -> list[int]:
+    return [1]
+
+def user_set() -> None:
+    mut a: set[int] = {2}
+    mut b: Option[set[int]] = None
+    a = b = set()
+
+def user_vec() -> None:
+    mut a: list[int] = []
+    mut b: Option[list[int]] = None
+    a = b = Vec()
+
+def builtin_list() -> None:
+    mut ints: list[int] = [1]
+    mut strs: list[str] = ["s"]
+    ints = strs = list()
+"#;
+    let info = typecheck_info_for_module(source, vec!["chains".to_string()], "chained constructor calls")?;
+    for (call, per_target) in [("set()", false), ("Vec()", false), ("list()", true)] {
+        let start = source.rfind(call).ok_or("fixture must contain the chained call")?;
+        let span = Span::new(start, start + call.len());
+        assert_eq!(
+            info.chained_value_is_written_per_target(span),
+            per_target,
+            "`{call}` is evaluated {}",
+            if per_target { "once per target" } else { "once" }
+        );
+    }
     Ok(())
 }
