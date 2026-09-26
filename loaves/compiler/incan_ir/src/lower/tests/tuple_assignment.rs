@@ -475,9 +475,9 @@ def fill() -> int:
     Ok(())
 }
 
-/// #1806: a literal over bound targets that disagree on a type is written once per target, left to right, as a single
-/// `target = literal` writes it: `a = b = None` over an `Option[int]` and an `Option[str]`, and `[]` or `{}` over two
-/// list or dict types, have no one type to share, so no temporary is read.
+/// #1806: a value built only from literals over bound targets that disagree on a type is written once per target, left
+/// to right, as a single `target = value` writes it: `None`, `(None)`, `[None]`, `[]`, `{}` and `list()` over targets
+/// of different types have no one type to share, so no temporary is read, and each copy takes its target's type.
 #[test]
 fn chained_literal_over_disagreeing_targets_is_written_per_target_issue1806() -> Result<(), String> {
     let ir = lower_checked_source(
@@ -501,6 +501,21 @@ def numbers() -> None:
     mut maybe: Option[int] = None
     mut count = 0
     count = maybe = 5
+
+def parenthesized() -> None:
+    mut a: Option[int] = Some(1)
+    mut b: Option[str] = Some("s")
+    a = b = (None)
+
+def nested() -> None:
+    mut xs: list[Option[int]] = []
+    mut ys: list[Option[str]] = []
+    xs = ys = [None]
+
+def constructed() -> None:
+    mut ints: list[int] = [1]
+    mut strs: list[str] = ["s"]
+    ints = strs = list()
 "#,
     )?;
 
@@ -509,6 +524,9 @@ def numbers() -> None:
         ("lists", ["ints", "strs"]),
         ("dicts", ["by_name", "by_id"]),
         ("numbers", ["count", "maybe"]),
+        ("parenthesized", ["a", "b"]),
+        ("nested", ["xs", "ys"]),
+        ("constructed", ["ints", "strs"]),
     ] {
         let stmts = all_statements(&ir, name)?;
         assert!(
@@ -541,5 +559,29 @@ def numbers() -> None:
             }
         }
     }
+
+    // Each copy of `[None]` gives its `None` its own list's element type.
+    let stmts = all_statements(&ir, "nested")?;
+    let element_types = stmts
+        .iter()
+        .filter_map(|stmt| match &stmt.kind {
+            IrStmtKind::Assign { value, .. } => match &value.kind {
+                IrExprKind::List(entries) => entries.iter().find_map(|entry| match entry {
+                    crate::expr::IrListEntry::Element(item) => Some(item.ty.clone()),
+                    crate::expr::IrListEntry::Spread(_) => None,
+                }),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        element_types,
+        vec![
+            IrType::Option(Box::new(IrType::Int)),
+            IrType::Option(Box::new(IrType::String))
+        ],
+        "each list's `None` takes that list's element type"
+    );
     Ok(())
 }

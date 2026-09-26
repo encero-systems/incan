@@ -19,7 +19,7 @@
 //! The statement lowers to a block in statement position, whose statements the emitter spells inline so the names it
 //! declares stay visible to the statements that follow.
 
-use super::super::expr::{IrExprKind, MethodCallArgPolicy, VarAccess, VarRefKind};
+use super::super::expr::{IrDictEntry, IrExprKind, IrListEntry, MethodCallArgPolicy, VarAccess, VarRefKind};
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::IrType;
 use super::super::{IrSpan, Mutability, TypedExpr};
@@ -95,7 +95,7 @@ impl AstLowering {
 
         let agreed_ty = match self.chain_target_types(chain) {
             ChainTargetTypes::Agree(ty) => Some(ty),
-            ChainTargetTypes::Disagree if Self::is_destination_typed_literal(&chain.value.node) => {
+            ChainTargetTypes::Disagree if chain.value.node.is_literal_construction() => {
                 return self.lower_chained_literal(chain, mutability);
             }
             ChainTargetTypes::Disagree | ChainTargetTypes::Unconstrained => None,
@@ -121,13 +121,13 @@ impl AstLowering {
         Ok(Self::statement_block(stmts))
     }
 
-    /// Lower a chain whose bound targets disagree on a type and whose value is a literal, which takes its type from
-    /// where it is written (`None`, `[]`, `{}`, a number).
+    /// Lower a chain whose bound targets disagree on a type and whose value is built only from literals (`None`, `[]`,
+    /// `{}`, `(None)`, `[None]`, `list()`, a number).
     ///
-    /// There is no one type to read the literal in, so each target gets its own copy of the literal, left to right,
-    /// written as a single `target = literal` writes it: `a = b = None` over an `Option[int]` and an `Option[str]`
-    /// gives each its own `None`. A literal has no side effects, so writing it once per target is the chain's
-    /// meaning.
+    /// There is no one type to read the value in, so each target gets its own copy, left to right, written as a single
+    /// `target = value` writes it: `a = b = None` over an `Option[int]` and an `Option[str]` gives each its own `None`.
+    /// Such a value has no side effects, so writing it once per target is the chain's meaning. The checker checked the
+    /// value once per target, and records one type per source span, so each copy takes its own target's type here.
     fn lower_chained_literal(
         &mut self,
         chain: &ast::ChainedAssignmentStmt,
@@ -137,10 +137,10 @@ impl AstLowering {
         for name in &chain.targets {
             let mut value = self.lower_expr_spanned(&chain.value)?;
             let place = self.bound_name_assign_target(chain.binding, name);
-            if place.is_some() && Self::literal_has_open_type(&chain.value.node) {
+            if place.is_some() {
                 let target_ty = self.lookup_var(name);
                 if target_ty != IrType::Unknown {
-                    value.ty = target_ty;
+                    Self::retype_literal(&mut value, &target_ty);
                 }
             }
             stmts.push(match place {
@@ -154,17 +154,55 @@ impl AstLowering {
         Ok(Self::statement_block(stmts))
     }
 
-    /// Return whether `value` is a literal that has no side effects and takes its type from where it is written.
-    fn is_destination_typed_literal(value: &ast::Expr) -> bool {
-        matches!(value, ast::Expr::Literal(_)) || Self::literal_has_open_type(value)
+    /// Give one copy of a literal-built value its target's type, down through the elements of its literal containers.
+    ///
+    /// Only a node of the target's own container kind (a `None` for an `Option`, a list for a `list`, a dict, a set, a
+    /// tuple of the same length) or of unknown type takes the target's type; a scalar keeps its own, so the conversion
+    /// a single assignment applies (`5` into an `Option[int]` or an `int | str`) still applies.
+    fn retype_literal(value: &mut TypedExpr, target: &IrType) {
+        if value.ty != IrType::Unknown && !Self::same_container_kind(&value.ty, target) {
+            return;
+        }
+        value.ty = target.clone();
+        match (&mut value.kind, target) {
+            (IrExprKind::List(entries), IrType::List(inner)) => {
+                for entry in entries.iter_mut() {
+                    if let IrListEntry::Element(item) = entry {
+                        Self::retype_literal(item, inner);
+                    }
+                }
+            }
+            (IrExprKind::Set(items), IrType::Set(inner)) => {
+                for item in items.iter_mut() {
+                    Self::retype_literal(item, inner);
+                }
+            }
+            (IrExprKind::Tuple(items), IrType::Tuple(types)) => {
+                for (item, ty) in items.iter_mut().zip(types) {
+                    Self::retype_literal(item, ty);
+                }
+            }
+            (IrExprKind::Dict(entries), IrType::Dict(key_ty, value_ty)) => {
+                for entry in entries.iter_mut() {
+                    if let IrDictEntry::Pair(key, item) = entry {
+                        Self::retype_literal(key, key_ty);
+                        Self::retype_literal(item, value_ty);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
-    /// Return whether `value` is `None`, `[]` or `{}`: a literal whose type has a part only its destination fixes.
-    fn literal_has_open_type(value: &ast::Expr) -> bool {
-        match value {
-            ast::Expr::Literal(ast::Literal::None) => true,
-            ast::Expr::List(entries) => entries.is_empty(),
-            ast::Expr::Dict(entries) => entries.is_empty(),
+    /// Return whether two types are the same kind of container: both `Option`, `list`, `set`, `dict`, or tuples of one
+    /// length.
+    fn same_container_kind(left: &IrType, right: &IrType) -> bool {
+        match (left, right) {
+            (IrType::Option(_), IrType::Option(_))
+            | (IrType::List(_), IrType::List(_))
+            | (IrType::Set(_), IrType::Set(_))
+            | (IrType::Dict(_, _), IrType::Dict(_, _)) => true,
+            (IrType::Tuple(left_items), IrType::Tuple(right_items)) => left_items.len() == right_items.len(),
             _ => false,
         }
     }

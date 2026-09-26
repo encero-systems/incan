@@ -94,6 +94,34 @@ pub enum Expr {
     Embedded(Box<EmbeddedFragmentExpr>),
 }
 
+impl Expr {
+    /// Return whether this expression is built only from literals, empty collection constructors and parentheses,
+    /// such as `None`, `-1`, `[]`, `[None]`, `{}`, `(None)` or `list()`.
+    ///
+    /// Such an expression has no side effects, so evaluating it once per use is the same as evaluating it once. A
+    /// chained assignment relies on this to give each target its own copy when the targets disagree on a type (#1806).
+    pub fn is_literal_construction(&self) -> bool {
+        match self {
+            Expr::Literal(_) => true,
+            Expr::Paren(inner) | Expr::Unary(_, inner) => inner.node.is_literal_construction(),
+            Expr::Tuple(items) | Expr::Set(items) => items.iter().all(|item| item.node.is_literal_construction()),
+            Expr::List(entries) => entries
+                .iter()
+                .all(|entry| matches!(entry, ListEntry::Element(item) if item.node.is_literal_construction())),
+            Expr::Dict(entries) => entries.iter().all(|entry| {
+                matches!(entry, DictEntry::Pair(key, value)
+                    if key.node.is_literal_construction() && value.node.is_literal_construction())
+            }),
+            Expr::Call(callee, _, args) => {
+                args.is_empty()
+                    && matches!(&callee.node, Expr::Ident(name)
+                        if incan_lang::lang::types::collections::from_str(name).is_some())
+            }
+            _ => false,
+        }
+    }
+}
+
 /// One entry in a list literal.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ListEntry {

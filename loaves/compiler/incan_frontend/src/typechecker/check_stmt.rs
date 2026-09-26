@@ -15,6 +15,8 @@ use incan_semantics_core::SurfaceStmtTypeCheck;
 use incan_semantics_core::rust_tuple_arity;
 
 use super::{CAbiSpanLocal, CBindingType, COutputMode, LoopContextKind, TypeChecker};
+
+mod chained;
 use crate::typechecker::helpers::{collection_type_id, ensure_bool_condition, option_ty};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -444,22 +446,7 @@ impl TypeChecker {
                     }
                 }
             }
-            Statement::ChainedAssignment(ca) => {
-                // Check the value expression
-                let value_ty = self.check_expr(&ca.value);
-
-                // Chained source assignment has the same declaration/reassignment distinction as a single target.
-                for (index, target) in ca.targets.iter().enumerate() {
-                    let target_span = ca.target_spans.get(index).copied().unwrap_or(stmt.span);
-                    self.check_unannotated_assignment_target(
-                        target,
-                        ca.binding,
-                        value_ty.clone(),
-                        target_span,
-                        ca.value.span,
-                    );
-                }
-            }
+            Statement::ChainedAssignment(ca) => self.check_chained_assignment(ca, stmt.span),
         }
         self.reject_unbound_c_abi_span_constructors();
         // A call nested somewhere other than a direct binding or a bare statement may still be fixed by its

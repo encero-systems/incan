@@ -12,7 +12,9 @@
 //! | `modules`     | Module/import resolution errors                          |
 //! | `const_eval`  | Const-expression evaluation & builtin calls              |
 //! | `rust_module` | `rust.module()` / `@rust.extern` diagnostics (RFC 023)   |
+//! | `assignments` | Assignments with several targets                         |
 
+mod assignments;
 mod c_abi;
 mod const_eval;
 mod modules;
@@ -20,6 +22,7 @@ mod rust_module;
 mod syntax;
 mod types;
 
+pub use assignments::*;
 pub use c_abi::*;
 pub use const_eval::*;
 pub use modules::*;

@@ -1,4 +1,4 @@
-# behavior: a chained assignment gives its value to every target from left to right, each in its own type: bound names are reassigned (x = y = x + 1 inside a loop advances the loop's x), new names are declared, a str or list value reaches every target, an Option or union target wraps the value, None takes the Option targets' type, None, [] and {} reach targets of different types, and a module static target gets the value too
+# behavior: a chained assignment gives its value to every target from left to right, each in its own type: bound names are reassigned (x = y = x + 1 inside a loop advances the loop's x), new names are declared, a str or list value reaches every target, an Option or union target wraps the value, None takes the Option targets' type, None, (None), [None], [], {} and list() reach targets of different types in each one's type, 5 reaches an i8 and an int, and a module static target gets the value too
 # retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_assignment_into_bound_names_reassigns_them_inside_a_loop_issue1806
 # retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_assignment_gives_every_target_the_value_issue1806
 # retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_assignment_in_a_loop_assigns_the_bound_name_issue1806
@@ -21,6 +21,10 @@
 #   0 none
 #   0 0
 #   0 0
+#   0 none
+#   1 1
+#   0 0
+#   5 5
 
 static names: list[str] = []
 
@@ -76,3 +80,19 @@ def main() -> None:
     mut by_id: dict[int, str] = {1: "a"}
     by_name = by_id = {}
     println(f"{len(by_name)} {len(by_id)}")
+    mut left_opt: Option[int] = Some(1)
+    mut right_opt: Option[str] = Some("s")
+    left_opt = right_opt = (None)
+    println(f"{left_opt.unwrap_or(0)} {right_opt.unwrap_or(missing)}")
+    mut opt_ints: list[Option[int]] = [Some(1)]
+    mut opt_strs: list[Option[str]] = [Some("s")]
+    opt_ints = opt_strs = [None]
+    println(f"{len(opt_ints)} {len(opt_strs)}")
+    mut more_ints: list[int] = [1]
+    mut more_strs: list[str] = ["s"]
+    more_ints = more_strs = list()
+    println(f"{len(more_ints)} {len(more_strs)}")
+    mut small: i8 = 1
+    mut big = 2
+    small = big = 5
+    println(f"{small} {big}")

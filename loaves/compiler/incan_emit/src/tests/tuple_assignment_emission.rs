@@ -216,8 +216,8 @@ def main() -> None:
     Ok(())
 }
 
-/// A literal over targets that disagree on a type is written once per target, in that target's type: no `None` of
-/// nothing and no temporary for `None`, `[]` or `{}`.
+/// A value built only from literals over targets that disagree on a type is written once per target, in that target's
+/// type: no `None` of nothing and no temporary for `None`, `(None)`, `[None]`, `[]`, `{}` or `list()`.
 #[test]
 fn chained_literal_over_disagreeing_targets_is_written_per_target_issue1806() -> Result<(), String> {
     let code = generate_collapsed(
@@ -232,7 +232,16 @@ def reset() -> int:
     mut by_name: dict[str, int] = {"a": 1}
     mut by_id: dict[int, str] = {1: "a"}
     by_name = by_id = {}
-    return a.unwrap_or(0) + len(ints) + len(strs) + len(by_name) + len(by_id)
+    mut c: Option[int] = Some(1)
+    mut d: Option[str] = Some("s")
+    c = d = (None)
+    mut xs: list[Option[int]] = []
+    mut ys: list[Option[str]] = []
+    xs = ys = [None]
+    mut more_ints: list[int] = [1]
+    mut more_strs: list[str] = ["s"]
+    more_ints = more_strs = list()
+    return a.unwrap_or(0) + c.unwrap_or(0) + len(ints) + len(strs) + len(by_name) + len(by_id) + len(xs) + len(ys) + len(more_ints) + len(more_strs)
 
 
 def main() -> None:
@@ -240,7 +249,20 @@ def main() -> None:
 "#,
     )?;
     let compact: String = code.split_whitespace().collect();
-    for target in ["a=None", "b=None", "ints=", "strs=", "by_name=", "by_id="] {
+    for target in [
+        "a=None",
+        "b=None",
+        "ints=",
+        "strs=",
+        "by_name=",
+        "by_id=",
+        "c=None::<i64>",
+        "d=None::<String>",
+        "None::<i64>]",
+        "None::<String>]",
+        "more_ints=",
+        "more_strs=",
+    ] {
         assert!(compact.contains(target), "missing `{target}` in:\n{code}");
     }
     assert!(!compact.contains("None::<()>"), "no `None` of nothing:\n{code}");

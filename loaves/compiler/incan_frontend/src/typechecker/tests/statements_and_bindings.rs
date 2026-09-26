@@ -1172,3 +1172,51 @@ fn isinstance_retains_a_nominal_targets_canonical_declaration_identity() -> Resu
     );
     Ok(())
 }
+
+#[test]
+fn chained_assignment_checks_a_literal_against_each_target_issue1806() -> Result<(), String> {
+    // A value built only from literals adapts to each target the way `a = 5` adapts to `a`, even when the targets
+    // disagree on a type, because each target gets its own copy of it.
+    check_str(
+        r#"
+def literals() -> int:
+    mut a: i8 = 1
+    mut b: int = 2
+    a = b = 5
+    mut c: Option[int] = Some(1)
+    mut d: Option[str] = Some("s")
+    c = d = (None)
+    mut xs: list[Option[int]] = []
+    mut ys: list[Option[str]] = []
+    xs = ys = [None]
+    mut ints: list[int] = [1]
+    mut strs: list[str] = ["s"]
+    ints = strs = list()
+    return b
+"#,
+    )
+    .map_err(|errors| format!("the literal chains must check: {errors:?}"))?;
+
+    // Any other value has to take one type for every target; when the targets disagree and its type is not fully
+    // known, there is none, so the chain is refused.
+    let Err(errors) = check_str(
+        r#"
+def empty[T]() -> list[T]:
+    return []
+
+def fill() -> None:
+    mut ints: list[int] = [1]
+    mut strs: list[str] = ["s"]
+    ints = strs = empty()
+"#,
+    ) else {
+        return Err("a chain whose value has no one type must be refused".to_string());
+    };
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("The targets of this chained assignment have different types")),
+        "expected the chained-assignment refusal, got {errors:?}"
+    );
+    Ok(())
+}
