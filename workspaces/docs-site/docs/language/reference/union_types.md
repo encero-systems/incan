@@ -20,7 +20,7 @@ int | str | None    # Option[Union[int, str]]
 
 Concrete member values are assignable to a union that contains that member. A source union is assignable to a target union when every source member is accepted by some target member.
 
-The rule holds across a package boundary: a union returned by a dependency's function or by a method on a dependency's type is assignable to the consumer's own union with the same members.
+Across a package boundary, a union without `None` that a dependency's function or a method on a dependency's type returns is assignable to the consumer's own union with the same members.
 
 ```incan
 from pub::querykit import Box    # pub model Box: def answer(self) -> int | str

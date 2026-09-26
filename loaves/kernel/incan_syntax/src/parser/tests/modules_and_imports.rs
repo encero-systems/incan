@@ -142,13 +142,17 @@ fn test_parse_import() -> Result<(), Vec<CompileError>> {
     Ok(())
 }
 
-/// Each relative spelling climbs the documented number of directories: `..` and `super::` one, `...` and
-/// `super::super::` two.
+/// Each relative spelling climbs the documented number of directories: a run of `n` dots climbs `n - 1`, `super::`
+/// one each, and runs separated by whitespace each climb on their own.
 #[test]
 fn test_parse_relative_import_levels() -> Result<(), Vec<CompileError>> {
     for (source, levels, segments) in [
         ("from ..common import Logger\n", 1, vec!["common"]),
         ("from ...shared.utils import format_date\n", 2, vec!["shared", "utils"]),
+        ("from ....shared import format_date\n", 3, vec!["shared"]),
+        ("from .....shared import format_date\n", 4, vec!["shared"]),
+        ("from ......shared import format_date\n", 5, vec!["shared"]),
+        ("from .. .. shared import format_date\n", 2, vec!["shared"]),
         ("from super::common import Logger\n", 1, vec!["common"]),
         (
             "from super::super::shared::utils import format_date\n",

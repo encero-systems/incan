@@ -211,7 +211,8 @@ impl AstLowering {
     /// Plan the binding of one projection from its import items, in declaration order.
     ///
     /// Returns `None` when no public item re-exports the projection, when the binder already comes first and is
-    /// spelled by the declaration's own name, and for a static whose first item is private.
+    /// spelled by the declaration's own name, and for a static whose first item is private or is public and spelled by
+    /// the static's own name.
     fn projection_binding_plan(sites: &[ProjectionSite]) -> Option<BindingPlan> {
         let first = *sites.first()?;
         if first.is_static {

@@ -42,10 +42,10 @@ A top-level alias target must resolve to an existing declaration symbol supporte
 - newtype
 - type alias
 - imported public symbol with compatible export metadata
-- a member of an imported module, written through the module binding
+- a member of a `std.*` or project source module, written through a binding of that module (`math.sqrt` after `import std.math as math`)
 - another acyclic alias to one of the supported target kinds
 
-An alias of a module member binds that member under the alias name with the alias's visibility, exactly as importing the member under that name does:
+An alias of such a module member binds that member under the alias name with the alias's visibility, exactly as importing the member under that name does:
 
 ```incan
 import std.math as math

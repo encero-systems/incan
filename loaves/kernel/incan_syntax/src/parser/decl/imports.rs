@@ -201,6 +201,40 @@ impl<'a> Parser<'a> {
         Ok(items)
     }
 
+    /// Consume the leading dots of a relative import path and return how many directory levels they climb.
+    ///
+    /// A run of `n` adjacent dots climbs `n - 1` levels: `..` one, `...` two, `....` three. The lexer splits a longer
+    /// run into `...`, `..` and `.` tokens, so the dots are counted across tokens whose spans touch. A run starts with
+    /// `..` or `...`; a lone `.` is not consumed. Runs separated by whitespace (`.. ..`) each climb on their own.
+    fn relative_import_dot_levels(&mut self) -> usize {
+        let mut levels = 0;
+        let mut run: usize = 0;
+        let mut run_end = None;
+        loop {
+            let token = self.peek();
+            let dots = if token.kind.is_operator(OperatorId::DotDot) {
+                2
+            } else if token.kind.is_punctuation(PunctuationId::Ellipsis) {
+                3
+            } else if token.kind.is_punctuation(PunctuationId::Dot) {
+                1
+            } else {
+                break;
+            };
+            if run_end != Some(token.span.start) {
+                if dots < 2 {
+                    break;
+                }
+                levels += run.saturating_sub(1);
+                run = 0;
+            }
+            run += dots;
+            run_end = Some(token.span.end);
+            self.advance();
+        }
+        levels + run.saturating_sub(1)
+    }
+
     /// Parse an import path, supporting:
     /// - Simple: `models`, `utils::helpers`
     /// - Relative with dots: `..common`, `...shared.utils`
@@ -212,17 +246,8 @@ impl<'a> Parser<'a> {
         let mut is_absolute = false;
         let mut segments = Vec::new();
 
-        // Leading dots climb directories (Python-style parent navigation): `..` one level, `...` two. The lexer reads
-        // three dots as one ellipsis token, so each ellipsis counts two levels.
-        loop {
-            if self.match_op(OperatorId::DotDot) {
-                parent_levels += 1;
-            } else if self.match_punct(PunctuationId::Ellipsis) {
-                parent_levels += 2;
-            } else {
-                break;
-            }
-        }
+        // Leading dots climb directories (Python-style parent navigation).
+        parent_levels += self.relative_import_dot_levels();
 
         // Check for `crate` (absolute path)
         if parent_levels == 0 && self.match_keyword(KeywordId::Crate) {

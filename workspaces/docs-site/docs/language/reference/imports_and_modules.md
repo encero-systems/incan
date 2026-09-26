@@ -195,6 +195,8 @@ import super::super::shared::utils::format_date
 | `..` or `super::`         | Parent directory (one level up)       |
 | `...` or `super::super::` | Grandparent directory (two levels up) |
 
+A run of `n` dots climbs `n - 1` directories, so `....` climbs three.
+
 A relative path climbs from the directory that contains the importing file, so the same import names the same module from every file in that directory:
 
 ```incan
