@@ -78,7 +78,7 @@ mod identity_surface_tests;
 pub mod tests;
 
 use std::cell::Cell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 #[cfg(feature = "rust_inspect")]
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -649,6 +649,17 @@ pub struct TypeChecker {
     /// generic-bound projection. Keeping the canonical macro paths separately avoids pretending that a passthrough
     /// Rust derive is an Incan trait adoption.
     pub local_rust_derive_paths: HashMap<String, Vec<String>>,
+    /// `@rust.derive(...)` facts for every nominal type declared in the module being checked, keyed by type name.
+    ///
+    /// The derive relation reads it for builtin derives spelled through `@rust.derive`, and an entry's presence marks
+    /// the declaration as local, whose derive list is complete.
+    pub(in crate::typechecker) local_derive_facts: HashMap<String, derive_requirements::LocalDeriveFacts>,
+    /// The generic function whose body is being checked, with its type parameters, while one is.
+    pub(in crate::typechecker) current_generic_callable: Option<(CanonicalSymbolId, Vec<String>)>,
+    /// Type parameters each local generic function's body uses as a set element or dict key (#1758).
+    pub(in crate::typechecker) hash_key_type_params: HashMap<CanonicalSymbolId, BTreeSet<String>>,
+    /// Generic calls whose type arguments are checked against `hash_key_type_params` once the module is checked.
+    pub(in crate::typechecker) pending_hash_key_instantiations: Vec<derive_requirements::PendingHashKeyInstantiation>,
     /// Shared provider and feature projection for ordinary dependencies and SDK-supplied libraries.
     pub provider_plan: Arc<ProviderPlan>,
     /// Internal semantic type cache for dependency exports referenced transitively by imported signatures.
@@ -850,6 +861,10 @@ impl TypeChecker {
             dependency_module_traits: HashMap::new(),
             dependency_trait_rust_derive_paths: HashMap::new(),
             local_rust_derive_paths: HashMap::new(),
+            local_derive_facts: HashMap::new(),
+            current_generic_callable: None,
+            hash_key_type_params: HashMap::new(),
+            pending_hash_key_instantiations: Vec::new(),
             provider_plan: Arc::new(ProviderPlan::default()),
             transitive_pub_types: HashMap::new(),
             public_library_type_identities: HashMap::new(),
@@ -3304,9 +3319,11 @@ impl TypeChecker {
                 .as_deref()
                 .and_then(|constructor| info.methods.get(constructor))
                 .and_then(|method| method.identity.clone());
+            let automatic_derives = self.newtype_automatic_derive_names(&name, &info);
             self.type_info.declarations.newtype_construction.insert(
                 name.clone(),
                 crate::typechecker::type_info::NewtypeConstructionInfo {
+                    automatic_derives,
                     type_params: info.type_params.clone(),
                     underlying: info.underlying.clone(),
                     checked_constructor,
@@ -6515,6 +6532,10 @@ impl TypeChecker {
         self.testing_fixture_names.clear();
         self.testing_marker_semantics = None;
         self.local_rust_derive_paths.clear();
+        self.local_derive_facts.clear();
+        self.current_generic_callable = None;
+        self.hash_key_type_params.clear();
+        self.pending_hash_key_instantiations.clear();
         self.source_import_targets.clear();
         self.surface_context = SurfaceContext::from_program(program);
         self.supertrait_closure.clear();
@@ -6555,6 +6576,9 @@ impl TypeChecker {
                 self.check_declaration(decl);
             }
         }
+        // Every local generic body has now been checked, so the calls recorded along the way can be checked against
+        // the parameters those bodies hash (#1758).
+        self.check_pending_hash_key_instantiations();
 
         self.type_info
             .c_abi

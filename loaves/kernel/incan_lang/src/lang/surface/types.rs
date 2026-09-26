@@ -402,43 +402,85 @@ pub fn category(id: SurfaceTypeId) -> SurfaceTypeCategory {
     info_for(id).ownership.category
 }
 
-/// How a surface type's runtime realization answers the automatic `Clone` and `Debug` derives.
+/// What the compiler records about one surface type's implementation of a builtin derive.
 ///
-/// A `model`, `class` or `enum` always derives `Clone` and `Debug`, and a derive holds only when every field type
-/// supports it. The typechecker reads this to refuse a declaration whose field holds a type that cannot, naming the
-/// field, instead of leaving the refusal to the generated program's build (#1754).
+/// A surface type is realized by a runtime struct or by a stdlib newtype, and the answer mirrors that declaration: the
+/// struct's own trait implementations, or the newtype's derive list. The typechecker's derive relation reads it for
+/// every question it asks of a surface type (the automatic `Clone` and `Debug` of a field's type, #1754; `Eq` and
+/// `Hash` of a set element or dict key, #1758; a clone the checker requires).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AutomaticDeriveSupport {
-    /// A field of this type is not refused: the runtime type implements both derives for every type argument (a
-    /// handle over shared state, such as `Mutex[T]`), or its support is left to the build.
+pub enum SurfaceDeriveSupport {
+    /// The realization implements the derive for every type argument.
     Implements,
-    /// The runtime type implements a derive exactly when its type arguments do, as Rust's `Vec` and `HashMap` do.
+    /// The realization implements the derive exactly when its type arguments do, as Rust's `Vec` does.
     FollowsTypeArguments,
-    /// The runtime type implements none of these derives, whatever its type arguments.
-    Missing(&'static [DeriveId]),
+    /// The realization does not implement the derive, whatever its type arguments.
+    Missing,
+    /// Nothing is recorded: the compiler makes no claim, and each consumer keeps its own policy for an unknown type.
+    NotRecorded,
 }
 
-/// Return how this surface type's runtime realization answers the automatic `Clone` and `Debug` derives.
+/// Return what is recorded about this surface type's implementation of `derive`.
 ///
-/// The match is exhaustive over the closed enum, so a new surface type states its answer when it is added.
+/// Answers are recorded for `Clone`, `Debug`, `Eq` and `Hash`; every other derive is
+/// [`SurfaceDeriveSupport::NotRecorded`]. The match is exhaustive over the closed enum, so a new surface type states
+/// its answers when it is added.
 #[must_use]
-pub fn automatic_derive_support(id: SurfaceTypeId) -> AutomaticDeriveSupport {
+pub fn derive_support(id: SurfaceTypeId, derive: DeriveId) -> SurfaceDeriveSupport {
+    use SurfaceDeriveSupport::{FollowsTypeArguments, Implements, Missing, NotRecorded};
+    if !matches!(
+        derive,
+        DeriveId::Clone | DeriveId::Debug | DeriveId::Eq | DeriveId::Hash
+    ) {
+        return NotRecorded;
+    }
+    let is_eq_or_hash = matches!(derive, DeriveId::Eq | DeriveId::Hash);
     match id {
-        // A task handle owns its task and a race arm owns its pending future; neither can be duplicated or printed.
-        SurfaceTypeId::JoinHandle | SurfaceTypeId::RaceArm => {
-            AutomaticDeriveSupport::Missing(&[DeriveId::Clone, DeriveId::Debug])
+        // A task handle owns its task and a race arm its pending future: the runtime structs implement none of these.
+        SurfaceTypeId::JoinHandle | SurfaceTypeId::RaceArm => Missing,
+        // Generic `@derive(Clone)` stdlib newtypes over shared runtime state. A derive on a generic type bounds its
+        // parameter, so `Clone` and the automatic `Debug` hold exactly when the element type's do.
+        SurfaceTypeId::Mutex | SurfaceTypeId::RwLock | SurfaceTypeId::Sender => {
+            if is_eq_or_hash {
+                Missing
+            } else {
+                FollowsTypeArguments
+            }
         }
-        SurfaceTypeId::Vec | SurfaceTypeId::HashMap => AutomaticDeriveSupport::FollowsTypeArguments,
-        SurfaceTypeId::Mutex
-        | SurfaceTypeId::RwLock
-        | SurfaceTypeId::Semaphore
-        | SurfaceTypeId::Barrier
-        | SurfaceTypeId::TaskJoinError
-        | SurfaceTypeId::Sender
-        | SurfaceTypeId::Receiver
-        | SurfaceTypeId::OneshotSender
-        | SurfaceTypeId::OneshotReceiver
-        | SurfaceTypeId::App
+        // Non-generic `@derive(Clone)` stdlib newtypes; the runtime types they wrap implement `Debug`.
+        SurfaceTypeId::Semaphore | SurfaceTypeId::Barrier => {
+            if is_eq_or_hash {
+                Missing
+            } else {
+                Implements
+            }
+        }
+        // Generic stdlib newtypes without `@derive(Clone)`: they carry the automatic `Debug` only.
+        SurfaceTypeId::Receiver | SurfaceTypeId::OneshotSender | SurfaceTypeId::OneshotReceiver => {
+            if derive == DeriveId::Debug {
+                FollowsTypeArguments
+            } else {
+                Missing
+            }
+        }
+        // The runtime join error derives `Clone` and implements `Debug`, and nothing else.
+        SurfaceTypeId::TaskJoinError => {
+            if is_eq_or_hash {
+                Missing
+            } else {
+                Implements
+            }
+        }
+        SurfaceTypeId::Vec => FollowsTypeArguments,
+        // A hash map implements `Hash` for no arguments.
+        SurfaceTypeId::HashMap => {
+            if derive == DeriveId::Hash {
+                Missing
+            } else {
+                FollowsTypeArguments
+            }
+        }
+        SurfaceTypeId::App
         | SurfaceTypeId::Response
         | SurfaceTypeId::Html
         | SurfaceTypeId::Json
@@ -447,7 +489,7 @@ pub fn automatic_derive_support(id: SurfaceTypeId) -> AutomaticDeriveSupport {
         | SurfaceTypeId::Body
         | SurfaceTypeId::Request
         | SurfaceTypeId::FieldInfo
-        | SurfaceTypeId::ValidationError => AutomaticDeriveSupport::Implements,
+        | SurfaceTypeId::ValidationError => NotRecorded,
     }
 }
 
@@ -579,31 +621,67 @@ mod tests {
     use super::*;
 
     #[test]
-    fn task_handle_and_race_arm_lack_the_automatic_derives() {
+    fn task_handle_and_race_arm_lack_every_recorded_derive() {
         for id in [SurfaceTypeId::JoinHandle, SurfaceTypeId::RaceArm] {
+            for derive in [DeriveId::Clone, DeriveId::Debug, DeriveId::Eq, DeriveId::Hash] {
+                assert_eq!(
+                    derive_support(id, derive),
+                    SurfaceDeriveSupport::Missing,
+                    "{} must be recorded as lacking {}",
+                    as_str(id),
+                    crate::lang::derives::as_str(derive)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn channel_and_lock_handles_follow_their_stdlib_newtype_derives() {
+        for id in [SurfaceTypeId::Mutex, SurfaceTypeId::Sender] {
             assert_eq!(
-                automatic_derive_support(id),
-                AutomaticDeriveSupport::Missing(&[DeriveId::Clone, DeriveId::Debug]),
-                "{} must be recorded as lacking Clone and Debug",
-                as_str(id)
+                derive_support(id, DeriveId::Clone),
+                SurfaceDeriveSupport::FollowsTypeArguments
+            );
+            assert_eq!(derive_support(id, DeriveId::Hash), SurfaceDeriveSupport::Missing);
+        }
+        assert_eq!(
+            derive_support(SurfaceTypeId::Semaphore, DeriveId::Clone),
+            SurfaceDeriveSupport::Implements
+        );
+        for id in [
+            SurfaceTypeId::Receiver,
+            SurfaceTypeId::OneshotSender,
+            SurfaceTypeId::OneshotReceiver,
+        ] {
+            assert_eq!(derive_support(id, DeriveId::Clone), SurfaceDeriveSupport::Missing);
+            assert_eq!(
+                derive_support(id, DeriveId::Debug),
+                SurfaceDeriveSupport::FollowsTypeArguments
             );
         }
     }
 
     #[test]
-    fn shared_state_handles_implement_and_interop_collections_follow_their_arguments() {
-        for id in [
-            SurfaceTypeId::Mutex,
-            SurfaceTypeId::Sender,
-            SurfaceTypeId::TaskJoinError,
-        ] {
-            assert_eq!(automatic_derive_support(id), AutomaticDeriveSupport::Implements);
-        }
-        for id in [SurfaceTypeId::Vec, SurfaceTypeId::HashMap] {
-            assert_eq!(
-                automatic_derive_support(id),
-                AutomaticDeriveSupport::FollowsTypeArguments
-            );
-        }
+    fn interop_collections_follow_their_arguments_and_unverified_types_are_not_recorded() {
+        assert_eq!(
+            derive_support(SurfaceTypeId::Vec, DeriveId::Hash),
+            SurfaceDeriveSupport::FollowsTypeArguments
+        );
+        assert_eq!(
+            derive_support(SurfaceTypeId::HashMap, DeriveId::Clone),
+            SurfaceDeriveSupport::FollowsTypeArguments
+        );
+        assert_eq!(
+            derive_support(SurfaceTypeId::HashMap, DeriveId::Hash),
+            SurfaceDeriveSupport::Missing
+        );
+        assert_eq!(
+            derive_support(SurfaceTypeId::Response, DeriveId::Clone),
+            SurfaceDeriveSupport::NotRecorded
+        );
+        assert_eq!(
+            derive_support(SurfaceTypeId::Mutex, DeriveId::Default),
+            SurfaceDeriveSupport::NotRecorded
+        );
     }
 }

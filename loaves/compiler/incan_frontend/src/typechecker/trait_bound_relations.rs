@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::TypeChecker;
+use super::derive_requirements::DeriveSupport;
 use crate::ast::TypeParam;
 use crate::diagnostics::errors::{self, CallableMarkerRefusal, GenericBoundTarget};
 use crate::resolved_type_subst::substitute_resolved_type;
@@ -13,6 +14,7 @@ use incan_lang::interop::{
 };
 use incan_lang::lang::callables;
 use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::stdlib;
 use incan_lang::lang::trait_capabilities::{
     self, TraitCapabilityId, TraitCapabilityInfo, TraitCapabilityType, TraitCapabilityTypeArg,
 };
@@ -309,6 +311,15 @@ impl TypeChecker {
         if builtin_traits::from_str(bound).is_none() && self.lookup_semantic_trait_info(bound).is_some() {
             return self.type_satisfies_nominal_trait_bound(ty, bound);
         }
+        // `Clone`, `Debug`, `Eq` and `Hash` are answered by the derive relation wherever it knows the type; an unknown
+        // answer keeps the per-type fallback below.
+        if let Some(derive) = self.builtin_derive_bound(bound) {
+            match self.derive_support(ty, derive) {
+                DeriveSupport::Supported => return true,
+                DeriveSupport::Missing(_) => return false,
+                DeriveSupport::Unknown => {}
+            }
+        }
         match ty {
             ResolvedType::Never
             | ResolvedType::Unknown
@@ -356,6 +367,21 @@ impl TypeChecker {
             ResolvedType::Function(_, _) => bound == derives::as_str(DeriveId::Clone),
             ResolvedType::SelfType => false,
         }
+    }
+
+    /// Return the builtin derive a bound or trait adoption names, when its spelling reaches the builtin trait.
+    ///
+    /// An imported trait that merely shares a builtin's name (`from unrelated import Eq`) is not the builtin; an import
+    /// alias of the builtin (`from std.derives.comparison import Eq as Equality`) is.
+    pub(in crate::typechecker) fn builtin_derive_bound(&self, bound: &str) -> Option<DeriveId> {
+        let Some(path) = self.import_binding_path(bound) else {
+            return derives::from_str(bound).filter(|_| builtin_traits::from_str(bound).is_some());
+        };
+        let (trait_name, module_path) = path.split_last()?;
+        let derive = derives::from_str(trait_name).filter(|_| builtin_traits::from_str(trait_name).is_some())?;
+        stdlib::trait_method_module_segments(trait_name)
+            .is_some_and(|builtin_module| builtin_module == module_path)
+            .then_some(derive)
     }
 
     /// Keep imported Rust bounds at the native validation boundary rather than requiring an Incan trait adoption.

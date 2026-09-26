@@ -51,24 +51,31 @@ Rules that resolve “derive vs dunder” (these are intentional and strict):
 
 The compiler automatically adds these derives:
 
-| Construct | Auto-added derives                                             |
-| --------- | -------------------------------------------------------------- |
-| `model`   | `Debug`, `Display`, `Clone`                                    |
-| `class`   | `Debug`, `Display`, `Clone`                                    |
-| `enum`    | `Debug`, `Display`, `Clone`, `Eq`                              |
-| `newtype` | `Debug`, `Display`, `Clone` (and `Copy` if underlying is Copy) |
+| Construct | Auto-added derives |
+| --------- | ------------------ |
+| `model`   | `Debug`, `Display`, `Clone` |
+| `class`   | `Debug`, `Display`, `Clone` |
+| `enum`    | `Debug`, `Display`, `Clone`; `PartialEq` when every variant payload is a primitive or a builtin collection of primitives |
+| `newtype` | `Display`; `Debug` unless the underlying type lacks it; `Clone` when the underlying type implements it; `Copy` when the underlying type is `Copy` |
 
 Notes:
 
-- `Debug` and `Display` are always available for these constructs.
 - `Display` has a default representation (like Python’s default `__str__`) unless you define `__str__`.
-- An automatic derive holds only when every field type supports it. A `model` or `class` field, or an `enum` variant payload, whose type does not implement `Clone` and `Debug` is refused at the declaration with `INCAN-T0001`; the diagnostic names the field, its type and the derives it lacks. `JoinHandle[T]` and `RaceArm[R]` from `std.async` implement neither, and neither does a `list`, `dict`, `Option`, `Result` or tuple that contains one. Where to keep such a value instead: [Async programming](../how-to/async_programming.md#spawn).
+- `Eq`, `Ord` and `Hash` are never auto-added; `@derive(Eq)` also adds `PartialEq`, and `@derive(Ord)` adds `PartialOrd`, `Eq` and `PartialEq`.
+- A newtype's own type parameters count as implementing `Clone` and `Debug` when those derives are decided; the derived implementations then require them of the type arguments.
+- An automatic derive holds only when every field type supports it. A `model` or `class` field, or an `enum` variant payload, whose type does not implement `Clone` and `Debug` is refused at the declaration with `INCAN-T0113`; the diagnostic names the field, its type and the derives it lacks. Types that implement neither: `JoinHandle[T]` and `RaceArm[R]`; `Receiver[T]`, `OneshotSender[T]` and `OneshotReceiver[T]` lack `Clone`; a newtype lacks what its underlying type lacks; a `list`, `dict`, `set`, `Option`, `Result`, tuple or generic declaration lacks what a type argument lacks. See [Async programming](../how-to/async_programming.md#spawn) for keeping task handles.
 
 ```incan
+import std.async
 from std.async.task import JoinHandle
 
+type Handle = newtype JoinHandle[int]  # accepted: derives neither Clone nor Debug
+
 model Pending:
-    handle: JoinHandle[int]  # refused: INCAN-T0001, 'JoinHandle[int]' does not support Clone and Debug
+    handle: JoinHandle[int]  # refused: INCAN-T0113, 'JoinHandle[int]' does not support Clone and Debug
+
+model Wrapped:
+    handle: Handle           # refused: INCAN-T0113, 'Handle' does not support Clone and Debug
 ```
 
 ---
@@ -696,7 +703,7 @@ model Task:
 
 **Custom behavior**: define `__hash__(self) -> int`.
 
-**Requirement**: a `set` element type and a `dict` key type implement `Eq` and `Hash`; a declared type that does not is refused with `INCAN-T0001` where it is written. See [Comparison](derives/comparison.md#hash).
+**Requirement**: a `set` element type and a `dict` key type implement `Eq` and `Hash`, or the program is refused with `INCAN-T0114`. See [Comparison](derives/comparison.md#hash).
 
 > Conflict rule: if you define `__hash__`, you must not also `@derive(Hash)`.
 >

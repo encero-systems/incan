@@ -1,5 +1,5 @@
 # behavior: a set[Tag] field over an enum with no derives is refused at check time because a set element must derive Eq and Hash
-# expect-diagnostic: INCAN-T0001
+# expect-diagnostic: INCAN-T0114
 
 from std.serde.json import Serialize
 

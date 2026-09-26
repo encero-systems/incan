@@ -384,6 +384,67 @@ const OPERATOR_HAS_NO_TYPE_PARAMETER_BOUND: DiagnosticCatalogEntry = DiagnosticC
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/numeric_semantics/"),
 };
 
+const FIELD_LACKS_AUTOMATIC_DERIVES: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0113",
+    title: "Field type cannot carry the automatic derives",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A `model` or `class` field, or an `enum` variant payload, has a type that does not implement `Clone` and `Debug`.",
+    explanation: "A `model`, `class` or `enum` always derives `Clone` and `Debug`, and a derive holds only when every field type supports it. A field whose type implements neither, such as the task handle `JoinHandle[T]` or the race arm `RaceArm[R]`, or a `list`, `dict`, `Option`, `Result` or tuple holding one, leaves the declaration without a build. The diagnostic names the field, its type, and the derives the type lacks.",
+    examples: &[
+        "import std.async\nfrom std.async.task import JoinHandle\n\nmodel Pending:\n    handle: JoinHandle[int]",
+    ],
+    common_causes: &[
+        "Storing a spawned task's handle next to its bookkeeping in a model.",
+        "A newtype over a type without `Clone` used as a field type.",
+    ],
+    fixes: &[
+        "Keep the value in a local variable, or pass it as a parameter.",
+        "Store a value that supports both derives, such as the result the task produces.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/derives_and_traits/"),
+};
+
+const HASHED_MEMBER_LACKS_EQ_HASH: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0114",
+    title: "Set element or dict key without Eq and Hash",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A `set` element type or `dict` key type does not implement `Eq` and `Hash`.",
+    explanation: "A set's elements and a dict's keys are compared and hashed. A declared `model`, `class`, `enum` or `newtype` implements `Eq` through `@derive(Eq)` or `@derive(Ord)` and `Hash` through `@derive(Hash)`; `float`, a `set`, a `dict` and a frozen collection do not implement `Hash`. The type is refused in an annotation, a set or dict literal, a dict comprehension, a `set(...)` call, and as the type argument of a generic function, declared in the same module, whose body uses its parameter as a set element or dict key.",
+    examples: &["enum Tag:\n    A\n\ndef main() -> None:\n    tags: set[Tag] = {Tag.A}"],
+    common_causes: &[
+        "An enum or model used as a set element or dict key without `@derive(Eq, Hash)`.",
+        "A `float` or a collection used as a dict key.",
+    ],
+    fixes: &[
+        "Add `@derive(Eq, Hash)` to the declaration the diagnostic names.",
+        "Key by a hashable field of the value, such as an `int` or `str` identifier.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/derives/comparison/"),
+};
+
+const ARGUMENT_IS_NOT_A_TASK: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0115",
+    title: "Argument is not a task",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A function value, or a value of a type that is not awaitable, is passed where a task is required.",
+    explanation: "`spawn`, `timeout`, `timeout_ms`, `race_timeout` and `arm` take a task: what calling an `async def` returns, a `JoinHandle[T]`, or another awaitable value. An `async def` named without being called is the function, not the task; a function that is not `async def`, or a value such as an `int`, is not awaitable at all.",
+    examples: &[
+        "import std.async\nfrom std.async.task import spawn\n\nasync def work() -> int:\n    return 41\n\nasync def main() -> None:\n    handle = spawn(work)",
+    ],
+    common_causes: &[
+        "Passing an async function by name instead of calling it.",
+        "Passing the result of a function that is not `async def`.",
+    ],
+    fixes: &[
+        "Call the async function where it is passed: `spawn(work())`.",
+        "Declare the function with `async def`, or run blocking work with `spawn_blocking`.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/stdlib/async/"),
+};
+
 const IMPORT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-I0001",
     title: "Import or module resolution error",
@@ -506,6 +567,9 @@ const CATALOG: &[DiagnosticCatalogEntry] = &[
     ROUTE_HANDLER_RETURN_NOT_RESPONSE,
     ROUTE_HANDLER_PARAMETER_UNBOUND,
     OPERATOR_HAS_NO_TYPE_PARAMETER_BOUND,
+    FIELD_LACKS_AUTOMATIC_DERIVES,
+    HASHED_MEMBER_LACKS_EQ_HASH,
+    ARGUMENT_IS_NOT_A_TASK,
     IMPORT,
     SDK_COMPONENT_DISABLED,
     SDK_COMPONENT_UNAVAILABLE,
@@ -827,6 +891,66 @@ mod tests {
             "the remedy must name the operator's trait hook, got {:?}",
             operator.hints
         );
+    }
+
+    #[test]
+    fn capability_requirement_refusals_use_distinct_stable_codes() -> Result<(), Box<dyn std::error::Error>> {
+        let field = errors::member_type_lacks_automatic_derives(
+            "model",
+            "Pending",
+            errors::DerivedMember::Field("handle"),
+            "JoinHandle[int]",
+            "JoinHandle[int]",
+            &["Clone", "Debug"],
+            Span::default(),
+        );
+        let key = errors::collection_member_lacks_hash_derives(
+            errors::HashedCollectionRole::SetElement,
+            "Tag",
+            "Tag",
+            &["Eq", "Hash"],
+            errors::HashRemedy::AddDerives,
+            Span::default(),
+        );
+        let instantiation = errors::type_argument_lacks_hash_derives(
+            "unique",
+            "T",
+            "Tag",
+            "Tag",
+            &["Hash"],
+            errors::HashRemedy::AddDerives,
+            Span::default(),
+        );
+        let task =
+            errors::argument_is_not_a_task("spawn", errors::TaskArgument::AsyncFunction("work"), Span::default());
+
+        assert_eq!(code_for_error(&field, DiagnosticPhase::Typecheck), "INCAN-T0113");
+        assert_eq!(code_for_error(&key, DiagnosticPhase::Typecheck), "INCAN-T0114");
+        assert_eq!(
+            code_for_error(&instantiation, DiagnosticPhase::Typecheck),
+            "INCAN-T0114"
+        );
+        assert_eq!(code_for_error(&task, DiagnosticPhase::Typecheck), "INCAN-T0115");
+        for code in ["INCAN-T0113", "INCAN-T0114", "INCAN-T0115"] {
+            let Some(entry) = explain(code) else {
+                return Err(format!("{code} must have a catalog explanation").into());
+            };
+            assert_eq!(entry.severity, "error");
+            assert_eq!(entry.phase, "typecheck");
+        }
+        assert!(
+            key.hints.iter().any(|hint| hint.contains("@derive(Eq, Hash)")),
+            "the remedy must name the derives to add, got {:?}",
+            key.hints
+        );
+        assert!(
+            task.hints
+                .iter()
+                .any(|hint| hint.contains("'work()' in place of 'work'")),
+            "the remedy must rewrite only the offending argument, got {:?}",
+            task.hints
+        );
+        Ok(())
     }
 
     #[test]

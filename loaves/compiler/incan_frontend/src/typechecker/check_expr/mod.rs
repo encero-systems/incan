@@ -428,6 +428,7 @@ impl TypeChecker {
             }
             (Expr::List(elems), expected_ty) => self.check_list_with_expected(elems, expected_ty),
             (Expr::Dict(entries), expected_ty) => self.check_dict_with_expected(entries, expected_ty),
+            (Expr::Set(elems), expected_ty) => self.check_set_with_expected(elems, expected_ty),
             (Expr::Loop(loop_expr), expected_ty) => self.check_loop_expr(loop_expr, expected_ty, expr.span),
             _ => return self.check_expr(expr),
         };

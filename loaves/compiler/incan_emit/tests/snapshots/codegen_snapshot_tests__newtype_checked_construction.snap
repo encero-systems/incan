@@ -45,7 +45,7 @@ impl Attempts {
         return Ok::<Attempts, incan_std_core::validation::ValidationError>(Attempts(n));
     }
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Email(pub String);
 impl incan_std_core::reflection::HasTypeClassName for Email {
     fn __class_name__() -> &'static str {

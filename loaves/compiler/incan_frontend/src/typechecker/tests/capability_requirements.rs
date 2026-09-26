@@ -1,6 +1,6 @@
 //! Types that lack a capability the program needs of them: a field that cannot satisfy its declaration's automatic
-//! derives (#1754), a set element or dict key type without `Eq` and `Hash` (#1758), and a function value passed where
-//! a task belongs (#1772).
+//! derives (`INCAN-T0113`, #1754), a set element or dict key type without `Eq` and `Hash` (`INCAN-T0114`, #1758), and
+//! an argument that is not a task where a task is required (`INCAN-T0115`, #1772), all decided by one derive relation.
 
 use super::*;
 
@@ -12,17 +12,30 @@ fn refused(source: &str, context: &str) -> Result<Vec<CompileError>, String> {
     }
 }
 
-/// Return whether any diagnostic's message contains every fragment.
-fn has_message(errors: &[CompileError], fragments: &[&str]) -> bool {
+/// Return the diagnostics carrying `code`.
+fn with_code<'a>(errors: &'a [CompileError], code: &str) -> Vec<&'a CompileError> {
     errors
+        .iter()
+        .filter(|error| error.stable_code() == Some(code))
+        .collect()
+}
+
+/// Return whether any diagnostic with `code` has a message containing every fragment.
+fn has_refusal(errors: &[CompileError], code: &str, fragments: &[&str]) -> bool {
+    with_code(errors, code)
         .iter()
         .any(|error| fragments.iter().all(|fragment| error.message.contains(fragment)))
 }
 
-// ---- #1754: automatic Clone and Debug derives ----
+/// Require that the checker accepts `source`.
+fn accepted(source: &str, context: &str) -> Result<(), String> {
+    check_str(source).map_err(|errors| format!("{context}, got: {errors:?}"))
+}
+
+// ---- INCAN-T0113 (#1754): automatic Clone and Debug derives ----
 
 /// The issue's program: a model holding a `JoinHandle[int]` is refused at the field, naming the field, its type and
-/// the derives the handle lacks, instead of failing the generated program's build.
+/// the derives the handle lacks.
 #[test]
 fn model_field_holding_a_join_handle_is_refused_issue1754() -> Result<(), String> {
     let source = r#"
@@ -41,30 +54,32 @@ async def main() -> None:
     println(pending.label)
 "#;
     let errors = refused(source, "a model holding a JoinHandle must be refused")?;
-    if !has_message(
+    if !has_refusal(
         &errors,
+        "INCAN-T0113",
         &[
             "Field 'handle' of model 'Pending' has type 'JoinHandle[int]'",
             "does not support Clone and Debug",
         ],
     ) {
-        return Err(format!(
-            "expected the automatic-derive refusal for `handle`, got: {errors:?}"
-        ));
+        return Err(format!("expected the T0113 refusal for `handle`, got: {errors:?}"));
     }
-    if has_message(&errors, &["Field 'label'"]) {
+    if has_refusal(&errors, "INCAN-T0113", &["Field 'label'"]) {
         return Err(format!("the `str` field must not be refused, got: {errors:?}"));
     }
     Ok(())
 }
 
-/// A class field, an enum variant payload and a handle nested in a collection are refused the same way; the nested
-/// case names the handle inside the collection.
+/// A class field, an enum variant payload, a handle nested in a collection and a newtype over a handle are refused the
+/// same way; the nested case names the handle inside the collection.
 #[test]
-fn class_enum_and_nested_join_handles_are_refused_issue1754() -> Result<(), String> {
+fn class_enum_nested_and_newtype_handles_are_refused_issue1754() -> Result<(), String> {
     let source = r#"
 import std.async
 from std.async.task import JoinHandle
+from std.async.channel import Receiver
+
+type Handle = newtype JoinHandle[int]
 
 class Worker:
     handle: JoinHandle[int]
@@ -76,9 +91,14 @@ enum Job:
 model Batch:
     handles: list[JoinHandle[int]]
     by_name: dict[str, Option[JoinHandle[int]]]
+    wrapped: Handle
+    inbox: Receiver[int]
 "#;
-    let errors = refused(source, "handles in a class, an enum and a collection must be refused")?;
-    let expected: [&[&str]; 4] = [
+    let errors = refused(
+        source,
+        "handles in a class, an enum, a collection and a newtype must be refused",
+    )?;
+    let expected: [&[&str]; 6] = [
         &["Field 'handle' of class 'Worker' has type 'JoinHandle[int]'"],
         &["A payload of variant 'Running' of enum 'Job' has type 'JoinHandle[str]'"],
         &[
@@ -89,23 +109,41 @@ model Batch:
             "Field 'by_name' of model 'Batch'",
             "whose 'JoinHandle[int]' does not support",
         ],
+        &[
+            "Field 'wrapped' of model 'Batch' has type 'Handle'",
+            "does not support Clone and Debug",
+        ],
+        &[
+            "Field 'inbox' of model 'Batch' has type 'Receiver[int]'",
+            "does not support Clone,",
+        ],
     ];
     for fragments in expected {
-        if !has_message(&errors, fragments) {
-            return Err(format!("expected a refusal containing {fragments:?}, got: {errors:?}"));
+        if !has_refusal(&errors, "INCAN-T0113", fragments) {
+            return Err(format!(
+                "expected a T0113 refusal containing {fragments:?}, got: {errors:?}"
+            ));
         }
     }
     Ok(())
 }
 
-/// Runtime handles over shared state implement both derives whatever they hold, so a model may keep them; a handle
-/// passed as a parameter is not a field and is never refused.
+/// A newtype over a type without `Clone` is itself valid: it carries only the derives its underlying type supports.
+/// A newtype over `str` carries `Clone`, so a model may hold it; runtime handles over shared state clone whatever they
+/// hold; a handle passed as a parameter is never refused.
 #[test]
-fn shared_state_handles_and_handle_parameters_are_not_refused_issue1754() -> Result<(), String> {
-    let source = r#"
+fn valid_holders_of_newtypes_handles_and_parameters_are_accepted_issue1754() -> Result<(), String> {
+    accepted(
+        r#"
 import std.async
 from std.async.sync import Mutex
 from std.async.task import JoinHandle, TaskJoinError
+
+type Handle = newtype JoinHandle[int]
+type Email = newtype str
+
+model User:
+    email: Email
 
 model Shared:
     counter: Mutex[int]
@@ -113,18 +151,67 @@ model Shared:
 
 async def wait_for(handle: JoinHandle[int]) -> Result[int, TaskJoinError]:
     return await handle
-"#;
-    check_str(source)
-        .map_err(|errors| format!("a shared-state handle or a handle parameter must not be refused, got: {errors:?}"))
+
+def keep(handle: Handle) -> None:
+    pass
+"#,
+        "newtypes, shared-state handles and handle parameters must be accepted",
+    )
 }
 
-// ---- #1758: set elements and dict keys derive Eq and Hash ----
+/// One relation answers the generic bounds too: a model satisfies `Clone` through its automatic derive, a list of a
+/// shared-state handle accepts an append, and a task handle does not satisfy `Clone`.
+#[test]
+fn generic_bounds_and_clone_requirements_follow_the_derive_relation_issue1754() -> Result<(), String> {
+    accepted(
+        r#"
+import std.async
+from std.async.sync import Mutex
+
+model Point:
+    x: int
+
+def duplicate[T with Clone](value: T) -> T:
+    return value
+
+def main(lock: Mutex[int]) -> None:
+    point = duplicate(Point(x=1))
+    mut locks: list[Mutex[int]] = []
+    locks.append(lock)
+    println(point.x)
+"#,
+        "a model must satisfy Clone and a Mutex must be appendable",
+    )?;
+    let errors = refused(
+        r#"
+import std.async
+from std.async.task import JoinHandle
+
+def duplicate[T with Clone](value: T) -> T:
+    return value
+
+def main(handle: JoinHandle[int]) -> None:
+    _ = duplicate(handle)
+"#,
+        "a JoinHandle must not satisfy Clone",
+    )?;
+    if !errors
+        .iter()
+        .any(|error| error.message.contains("violates generic bound"))
+    {
+        return Err(format!("expected the Clone bound violation, got: {errors:?}"));
+    }
+    Ok(())
+}
+
+// ---- INCAN-T0114 (#1758): set elements and dict keys implement Eq and Hash ----
 
 /// The issue's program: a `set[Tag]` field over an enum with no derives is refused at the element type, naming the
-/// derives to add, and so is the set literal built from its variant.
+/// derives to add.
 #[test]
 fn set_of_an_underived_enum_is_refused_at_the_element_type_issue1758() -> Result<(), String> {
-    let source = r#"
+    let errors = refused(
+        r#"
 from std.serde.json import Serialize
 
 
@@ -144,35 +231,51 @@ type UserId = newtype int
 
 def main() -> None:
     println(Payload(tags={Tag.A}, id=UserId(7)).to_json())
-"#;
-    let errors = refused(source, "set[Tag] over an underived enum must be refused")?;
-    let refusals = errors
-        .iter()
-        .filter(|error| {
-            error
-                .message
-                .contains("'Tag' cannot be a set element: it does not derive Eq and Hash")
-        })
-        .collect::<Vec<_>>();
-    if refusals.len() != 2 {
-        return Err(format!(
-            "expected the annotation and the literal to be refused once each, got: {errors:?}"
-        ));
-    }
-    if !refusals
-        .iter()
-        .all(|error| error.hints.iter().any(|hint| hint.contains("@derive(Eq, Hash)")))
+"#,
+        "set[Tag] over an underived enum must be refused",
+    )?;
+    let refusals = with_code(&errors, "INCAN-T0114");
+    let Some(refusal) = refusals.first() else {
+        return Err(format!("expected a T0114 refusal, got: {errors:?}"));
+    };
+    if !refusal
+        .message
+        .contains("'Tag' cannot be a set element: it does not implement Eq and Hash")
+        || !refusal.hints.iter().any(|hint| hint.contains("@derive(Eq, Hash)"))
     {
-        return Err(format!("the remedy must name `@derive(Eq, Hash)`, got: {refusals:?}"));
+        return Err(format!("the refusal must name the derives to add, got: {refusal:?}"));
     }
     Ok(())
 }
 
-/// A dict key is refused the same way, inside a tuple too, and only the missing derive is named when `Ord` already
-/// supplies `Eq`; a dict value needs neither derive.
+/// An annotated binding over a set literal is refused once, at the annotation.
 #[test]
-fn dict_keys_and_nested_elements_name_the_missing_derives_issue1758() -> Result<(), String> {
-    let source = r#"
+fn annotated_set_literal_is_refused_once_issue1758() -> Result<(), String> {
+    let errors = refused(
+        r#"
+enum Tag:
+    A
+
+def main() -> None:
+    tags: set[Tag] = {Tag.A}
+    println(len(tags))
+"#,
+        "an annotated set of an underived enum must be refused",
+    )?;
+    let refusals = with_code(&errors, "INCAN-T0114");
+    if refusals.len() != 1 {
+        return Err(format!("expected exactly one T0114 refusal, got: {errors:?}"));
+    }
+    Ok(())
+}
+
+/// Every place a value is hashed is covered: dict keys in annotations and literals, nested tuple elements, `set(...)`,
+/// dict comprehensions, the interop `HashMap`, builtins that do not hash, a type with only `__eq__`, and `Ord`
+/// supplying `Eq`.
+#[test]
+fn every_hashed_position_refuses_a_type_without_eq_and_hash_issue1758() -> Result<(), String> {
+    let errors = refused(
+        r#"
 enum Tag:
     A
     B
@@ -182,8 +285,14 @@ enum Level:
     Low
     High
 
-def count(by_tag: dict[Tag, int], by_name: dict[str, Tag]) -> int:
-    return len(by_tag) + len(by_name)
+model Point:
+    x: int
+
+    def __eq__(self, other: Point) -> bool:
+        return self.x == other.x
+
+def by_tag(counts: dict[Tag, int]) -> int:
+    return len(counts)
 
 def pairs(items: set[tuple[Tag, int]]) -> int:
     return len(items)
@@ -191,42 +300,119 @@ def pairs(items: set[tuple[Tag, int]]) -> int:
 def levels(items: set[Level]) -> int:
     return len(items)
 
-def main() -> None:
+def floats(items: set[float]) -> int:
+    return len(items)
+
+def nested(items: set[set[int]], table: dict[dict[str, int], int]) -> int:
+    return len(items) + len(table)
+
+def interop(table: HashMap[Tag, int]) -> int:
+    return len(table)
+
+def points(items: set[Point]) -> int:
+    return len(items)
+
+def main(tags: list[Tag]) -> None:
     labels = {Tag.A: "a"}
-    println(len(labels))
-"#;
-    let errors = refused(source, "unhashable dict keys and set elements must be refused")?;
-    let expected: [&[&str]; 4] = [
-        &["'Tag' cannot be a dict key: it does not derive Eq and Hash"],
-        &["cannot be a set element: its 'Tag' does not derive Eq and Hash"],
-        &["'Level' cannot be a set element: it does not derive Hash"],
+    unique = set(tags)
+    counted = {tag: 1 for tag in tags}
+    println(len(labels) + len(unique) + len(counted))
+"#,
+        "unhashable element and key types must be refused",
+    )?;
+    let expected: [&[&str]; 11] = [
+        &["'Tag' cannot be a dict key: it does not implement Eq and Hash"],
+        &["cannot be a set element: its 'Tag' does not implement Eq and Hash"],
+        &["'Level' cannot be a set element: it does not implement Hash"],
+        &["'float' cannot be a set element: it does not implement Eq and Hash"],
+        &["'Set[int]' cannot be a set element: it does not implement Hash"],
+        &["cannot be a dict key: it does not implement Hash"],
+        &["'Point' cannot be a set element"],
+        &["'Tag' cannot be a set element"],
         &["'Tag' cannot be a dict key"],
+        &["'Tag' cannot be a dict key: it does not implement Eq and Hash"],
+        &["'Tag' cannot be a set element: it does not implement Eq and Hash"],
     ];
     for fragments in expected {
-        if !has_message(&errors, fragments) {
-            return Err(format!("expected a refusal containing {fragments:?}, got: {errors:?}"));
+        if !has_refusal(&errors, "INCAN-T0114", fragments) {
+            return Err(format!(
+                "expected a T0114 refusal containing {fragments:?}, got: {errors:?}"
+            ));
         }
     }
-    let dict_key_refusals = errors
-        .iter()
+    let point = with_code(&errors, "INCAN-T0114")
+        .into_iter()
+        .find(|error| error.message.contains("'Point'"))
+        .ok_or("missing the Point refusal")?;
+    if !point.hints.iter().any(|hint| hint.contains("defines __eq__")) {
+        return Err(format!(
+            "a type with __eq__ must be told to key by a field, got: {point:?}"
+        ));
+    }
+    let tag_key_refusals = with_code(&errors, "INCAN-T0114")
+        .into_iter()
         .filter(|error| error.message.contains("'Tag' cannot be a dict key"))
         .count();
-    if dict_key_refusals != 2 {
+    if tag_key_refusals < 3 {
         return Err(format!(
-            "expected the `dict[Tag, int]` annotation and the literal key refused once each, got: {errors:?}"
+            "the annotation, the literal and the comprehension must each refuse the Tag key, got: {errors:?}"
         ));
     }
     Ok(())
 }
 
-/// Derived enums, scalars, tuples of scalars and type parameters are accepted as set elements and dict keys.
+/// A generic function whose body hashes its type parameter refuses, at the call, a type argument without `Eq` and
+/// `Hash`, also through a second generic function that passes its own parameter on.
+#[test]
+fn generic_instantiation_with_an_unhashable_type_argument_is_refused_issue1758() -> Result<(), String> {
+    let errors = refused(
+        r#"
+enum Tag:
+    A
+
+def unique[T](items: list[T]) -> set[T]:
+    return set(items)
+
+def relay[U](items: list[U]) -> int:
+    return len(unique(items))
+
+def main() -> None:
+    println(len(unique([Tag.A])))
+    println(relay([Tag.A]))
+    println(len(unique([1, 2])))
+"#,
+        "a generic set over an underived enum must be refused at the call",
+    )?;
+    for callee in [
+        "'unique' uses its type parameter 'T'",
+        "'relay' uses its type parameter 'U'",
+    ] {
+        if !has_refusal(&errors, "INCAN-T0114", &[callee, "'Tag' cannot be its type argument"]) {
+            return Err(format!(
+                "expected a T0114 refusal containing {callee:?}, got: {errors:?}"
+            ));
+        }
+    }
+    if has_refusal(&errors, "INCAN-T0114", &["'int' cannot be its type argument"]) {
+        return Err(format!("an int type argument must be accepted, got: {errors:?}"));
+    }
+    Ok(())
+}
+
+/// Derived enums, `@rust.derive` builtins, scalars, tuples of scalars and type parameters are accepted as set elements
+/// and dict keys; a generic body over an unbounded parameter is accepted as written.
 #[test]
 fn hashable_set_elements_and_dict_keys_are_accepted_issue1758() -> Result<(), String> {
-    let source = r#"
+    accepted(
+        r#"
 @derive(Eq, Hash)
 enum Tag:
     A
     B
+
+@rust.derive(PartialEq, Eq, Hash)
+model Key:
+    id: int
 
 def unique[T](items: set[T]) -> int:
     return len(items)
@@ -236,19 +422,22 @@ def count(by_tag: dict[Tag, int], by_pair: dict[tuple[int, str], bool], names: s
 
 def main() -> None:
     tags = {Tag.A, Tag.B}
-    println(len(tags))
+    seen: set[Key] = {Key(id=1)}
+    println(len(tags) + len(seen))
     println(unique({1, 2, 3}))
-"#;
-    check_str(source).map_err(|errors| format!("hashable element and key types must be accepted, got: {errors:?}"))
+"#,
+        "hashable element and key types must be accepted",
+    )
 }
 
-// ---- #1772: a function value is not a task ----
+// ---- INCAN-T0115 (#1772): an argument that is not a task ----
 
 /// The issue's program: `spawn(work)` passes the async function instead of the task `work()` creates, and is refused
-/// with a message naming the call to make.
+/// with a remedy that rewrites only that argument.
 #[test]
 fn spawn_of_a_function_value_is_refused_naming_the_call_issue1772() -> Result<(), String> {
-    let source = r#"
+    let errors = refused(
+        r#"
 import std.async
 from std.async.task import spawn
 
@@ -260,46 +449,109 @@ async def main() -> None:
     match await handle:
         Ok(value) => println(value + 1)
         Err(error) => println(error.message())
-"#;
-    let errors = refused(source, "spawn(work) must be refused")?;
-    let refusal = errors
-        .iter()
+"#,
+        "spawn(work) must be refused",
+    )?;
+    let refusal = with_code(&errors, "INCAN-T0115")
+        .into_iter()
         .find(|error| {
             error
                 .message
                 .contains("'spawn' needs a task to run, but 'work' is a function")
         })
-        .ok_or_else(|| format!("expected the function-value refusal, got: {errors:?}"))?;
-    if !refusal.hints.iter().any(|hint| hint.contains("'spawn(work())'")) {
+        .ok_or_else(|| format!("expected the T0115 refusal, got: {errors:?}"))?;
+    if !refusal
+        .hints
+        .iter()
+        .any(|hint| hint.contains("write 'work()' in place of 'work'"))
+    {
         return Err(format!(
-            "the remedy must name `spawn(work())`, got: {:?}",
+            "the remedy must rewrite the argument, got: {:?}",
             refusal.hints
         ));
     }
     Ok(())
 }
 
-/// The task an `async def` call creates is what `spawn` takes.
+/// A deadline helper names only its task argument; a function that is not `async def` is told to become one; a value
+/// of another type is refused as not a task.
 #[test]
-fn spawn_of_an_async_call_is_accepted_issue1772() -> Result<(), String> {
-    let source = r#"
+fn non_task_arguments_name_the_right_remedy_issue1772() -> Result<(), String> {
+    let errors = refused(
+        r#"
+import std.async
+from std.async.task import spawn
+from std.async.time import timeout
+
+async def slow() -> int:
+    return 1
+
+def compute() -> int:
+    return 2
+
+async def main() -> None:
+    _ = await timeout(5.0, slow)
+    _ = spawn(compute)
+    _ = spawn(42)
+"#,
+        "non-task arguments must be refused",
+    )?;
+    let refusals = with_code(&errors, "INCAN-T0115");
+    let checks: [(&str, &str); 3] = [
+        (
+            "'timeout' needs a task to run, but 'slow' is a function",
+            "write 'slow()' in place of 'slow'",
+        ),
+        (
+            "'compute' is a function that is not `async def`",
+            "Declare 'compute' with `async def`",
+        ),
+        (
+            "this argument has type 'int', which is not a task",
+            "calling an `async def`",
+        ),
+    ];
+    for (message, hint) in checks {
+        let found = refusals.iter().any(|error| {
+            error.message.contains(message) && error.hints.iter().any(|candidate| candidate.contains(hint))
+        });
+        if !found {
+            return Err(format!(
+                "expected a T0115 refusal {message:?} with {hint:?}, got: {errors:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The task an `async def` call creates, and a task handle, are what `spawn` and `timeout` take.
+#[test]
+fn tasks_and_handles_are_accepted_issue1772() -> Result<(), String> {
+    accepted(
+        r#"
 import std.async
 from std.async.task import spawn, JoinHandle
+from std.async.time import timeout
 
 async def work() -> int:
     return 41
 
 def launch() -> JoinHandle[int]:
     return spawn(work())
-"#;
-    check_str(source).map_err(|errors| format!("spawn(work()) must be accepted, got: {errors:?}"))
+
+async def bounded() -> None:
+    _ = await timeout(1.0, work())
+"#,
+        "spawn(work()) and timeout(1.0, work()) must be accepted",
+    )
 }
 
 /// A function of the program's own with a `RuntimeFuture[T]` bound refuses a function value the same way, through the
 /// generic call path, and reports it once.
 #[test]
 fn runtime_future_bound_refuses_a_function_value_once_issue1772() -> Result<(), String> {
-    let source = r#"
+    let errors = refused(
+        r#"
 import std.async
 from std.rust import RuntimeFuture
 
@@ -311,29 +563,27 @@ async def work() -> int:
 
 def main() -> None:
     run_task(work)
-"#;
-    let errors = refused(source, "a function value must not satisfy RuntimeFuture[T]")?;
-    let refusals = errors
-        .iter()
-        .filter(|error| {
-            error
-                .message
-                .contains("'run_task' needs a task to run, but 'work' is a function")
-        })
+"#,
+        "a function value must not satisfy RuntimeFuture[T]",
+    )?;
+    let refusals = with_code(&errors, "INCAN-T0115")
+        .into_iter()
+        .filter(|error| error.message.contains("'run_task' needs a task to run, but 'work'"))
         .count();
-    if refusals != 1 {
-        return Err(format!("expected exactly one function-value refusal, got: {errors:?}"));
-    }
-    if has_message(&errors, &["violates generic bound"]) {
+    if refusals != 1
+        || errors
+            .iter()
+            .any(|error| error.message.contains("violates generic bound"))
+    {
         return Err(format!(
-            "the argument must not also be reported as a bound violation, got: {errors:?}"
+            "expected exactly one T0115 refusal and no bound violation, got: {errors:?}"
         ));
     }
     Ok(())
 }
 
 /// The bound relation itself: a function value never satisfies `RuntimeFuture[T]`, under a plain or a Rust-path
-/// spelling, while any other type is still admitted and left to the build.
+/// spelling, while any other type is still admitted and left to the argument check.
 #[test]
 fn runtime_future_bound_relation_refuses_only_function_values_issue1772() -> Result<(), String> {
     let checker = TypeChecker::new();

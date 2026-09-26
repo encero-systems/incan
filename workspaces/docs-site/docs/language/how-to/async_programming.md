@@ -200,9 +200,28 @@ println(f"Background task returned: {result}")
 
 Spawned tasks are durable once spawned. Dropping `handle` detaches the task and loses the result; it does not cancel the task. Use `handle.abort()` when an async task should be cancelled.
 
-Pass `spawn` the task that calling the async function creates, `spawn(background_work())`. The function itself, `spawn(background_work)`, is refused at check time, and the diagnostic names the call to write. `timeout`, `timeout_ms` and `race_timeout` take their task the same way.
+Pass `spawn` the task that calling the async function creates, `spawn(background_work())`. The function itself, `spawn(background_work)`, is refused with `INCAN-T0115`; so is a function that is not `async def`, which you either declare `async def` or run with `spawn_blocking`. `timeout`, `timeout_ms` and `race_timeout` take their task the same way.
 
-Keep a handle in a local variable, a local list, or a parameter. It cannot be a `model` or `class` field or an `enum` payload, because those derive `Clone` and `Debug` automatically and a handle supports neither ([Automatic derives](../reference/derives_and_traits.md#automatic-derives)).
+Keep each handle in its own local variable, or pass it as a parameter, and await it there:
+
+```incan
+from std.async.task import spawn, JoinHandle
+
+async def fetch(id: int) -> int:
+    return id * 10
+
+async def wait_for(handle: JoinHandle[int]) -> int:
+    match await handle:
+        Ok(value) => return value
+        Err(_) => return -1
+
+async def main() -> None:
+    first = spawn(fetch(1))
+    second = spawn(fetch(2))
+    println(await wait_for(first) + await wait_for(second))
+```
+
+A handle cannot be a `model` or `class` field or an `enum` payload (`INCAN-T0113`): those derive `Clone` and `Debug` automatically, and a handle supports neither ([Automatic derives](../reference/derives_and_traits.md#automatic-derives)). A `list[JoinHandle[T]]` cannot be grown with `append`, which requires an element type that implements `Clone`; spawn each task into its own variable instead.
 
 ### spawn_blocking
 

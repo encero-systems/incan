@@ -4,7 +4,7 @@
 //! and type-checking the generated element/value expressions in a nested scope.
 
 use crate::ast::*;
-use crate::diagnostics::errors;
+use crate::diagnostics::errors::{self, HashedCollectionRole};
 use crate::symbols::*;
 use crate::typechecker::helpers::{dict_ty, generator_ty, list_ty};
 
@@ -104,7 +104,7 @@ impl TypeChecker {
         list_ty(result_elem_ty)
     }
 
-    /// Type-check a dict comprehension and return `Dict[K, V]`.
+    /// Type-check a dict comprehension and return `Dict[K, V]`, refusing a key type without `Eq` and `Hash` (#1758).
     pub(in crate::typechecker::check_expr) fn check_dict_comp(&mut self, comp: &DictComp, _span: Span) -> ResolvedType {
         let iter_ty = self.check_expr(&comp.iter);
         let elem_ty = self.infer_iterator_element_type_from_expr(&comp.iter, &iter_ty);
@@ -121,6 +121,7 @@ impl TypeChecker {
         let key_ty = self.check_expr(&comp.key);
         let val_ty = self.check_expr(&comp.value);
         self.symbols.exit_scope();
+        self.require_hashable_collection_value(HashedCollectionRole::DictKey, &key_ty, comp.key.span);
 
         dict_ty(key_ty, val_ty)
     }

@@ -267,21 +267,44 @@ impl TypeChecker {
             }
         }
 
-        // A destination annotation has already had its key type checked where it is written (#1758).
-        if hinted_key_ty.is_none()
+        // A destination annotation whose key type lacks `Eq` or `Hash` was refused where it is written (#1758).
+        if !self.annotation_reports_unhashable_member(hinted_key_ty.as_ref())
             && let Some(span) = first_key_span
         {
-            self.refuse_unhashable_collection_member(HashedCollectionRole::DictKey, &key_ty, span);
+            self.require_hashable_collection_value(HashedCollectionRole::DictKey, &key_ty, span);
         }
 
         dict_ty(key_ty, val_ty)
     }
 
-    /// Type-check a set literal, refusing an element type that does not derive `Eq` and `Hash` (#1758).
+    /// Type-check a set literal.
     pub(in crate::typechecker::check_expr) fn check_set(&mut self, elems: &[Spanned<Expr>]) -> ResolvedType {
+        self.check_set_with_expected(elems, None)
+    }
+
+    /// Type-check a set literal, refusing an element type that does not implement `Eq` and `Hash` (#1758).
+    ///
+    /// A destination `set[T]` annotation whose element type lacks `Eq` or `Hash` was refused where it is written, so
+    /// the literal is not refused a second time for it. The element type still comes from the first element.
+    pub(in crate::typechecker::check_expr) fn check_set_with_expected(
+        &mut self,
+        elems: &[Spanned<Expr>],
+        expected: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        let expected_elem = match expected {
+            Some(ResolvedType::Generic(name, args))
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Set) && args.len() == 1 =>
+            {
+                args.first()
+            }
+            _ => None,
+        };
+        let annotation_reported = self.annotation_reports_unhashable_member(expected_elem);
         let elem_ty = if let Some(first) = elems.first() {
             let elem_ty = self.check_expr(first);
-            self.refuse_unhashable_collection_member(HashedCollectionRole::SetElement, &elem_ty, first.span);
+            if !annotation_reported {
+                self.require_hashable_collection_value(HashedCollectionRole::SetElement, &elem_ty, first.span);
+            }
             elem_ty
         } else {
             ResolvedType::Unknown

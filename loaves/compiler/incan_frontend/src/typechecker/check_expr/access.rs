@@ -10,6 +10,7 @@ use crate::diagnostics::errors::SelfMutation;
 use crate::diagnostics::{CompileError, errors};
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::*;
+use crate::typechecker::derive_requirements::DeriveSupport;
 use crate::typechecker::helpers::{
     collection_name, collection_type_id, generator_ty, is_frozen_bytes, is_frozen_str, is_intlike_for_index,
     is_str_like, list_ty, option_ty, render_resolved_type_as_rust_arg, runtime_string_method_identity_and_return,
@@ -23,6 +24,7 @@ use incan_lang::interop::{
     RustCollectionFamily, RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustTraitAssoc,
     RustTraitInfo, RustVisibility, metadata_free_method_signature,
 };
+use incan_lang::lang::derives::DeriveId;
 use incan_lang::lang::magic_methods;
 use incan_lang::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
 use incan_lang::lang::surface::result_methods::ResultMethodId;
@@ -3198,7 +3200,16 @@ impl TypeChecker {
     }
 
     /// Check if a type is cloneable.
+    ///
+    /// The derive relation answers wherever it knows the type, including every stdlib surface type the registry
+    /// records (so `Mutex[T]` clones and `JoinHandle[T]` does not). An unknown answer keeps this check's own policy:
+    /// a type parameter by its active bounds, a Rust-origin type refused, an unresolved type admitted.
     pub(in crate::typechecker) fn is_clone_type(&self, ty: &ResolvedType) -> bool {
+        match self.derive_support(ty, DeriveId::Clone) {
+            DeriveSupport::Supported => return true,
+            DeriveSupport::Missing(_) => return false,
+            DeriveSupport::Unknown => {}
+        }
         match ty {
             ResolvedType::Never
             | ResolvedType::Int

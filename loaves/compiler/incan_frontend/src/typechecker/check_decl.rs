@@ -5779,6 +5779,19 @@ impl TypeChecker {
     /// Typecheck one function body with its parameters, return type, decorators, and generic bounds in scope.
     fn check_function(&mut self, func: &FunctionDecl, decl_span: Span) {
         self.symbols.enter_scope(ScopeKind::Function);
+        // A generic function's body records the type parameters it hashes, keyed by its declaration identity, so calls
+        // can be checked against them once the module is checked (#1758).
+        let generic_callable = (!func.type_params.is_empty())
+            .then(|| self.symbols.lookup(&func.name))
+            .flatten()
+            .and_then(|symbol_id| self.symbols.identity_of(symbol_id).cloned())
+            .map(|identity| {
+                (
+                    identity,
+                    func.type_params.iter().map(|param| param.name.clone()).collect(),
+                )
+            });
+        let previous_generic_callable = std::mem::replace(&mut self.current_generic_callable, generic_callable);
 
         self.validate_decorators_allowing_user_defined(&func.decorators);
         self.check_registry_description_decorators(
@@ -5933,6 +5946,7 @@ impl TypeChecker {
         self.current_return_error_type = None;
         self.current_type_param_bound_details.pop();
         self.annotation_owner = previous_annotation_owner;
+        self.current_generic_callable = previous_generic_callable;
         self.symbols.exit_scope();
         self.apply_user_defined_function_decorators(func, decl_span);
     }

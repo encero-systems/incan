@@ -4102,6 +4102,7 @@ mod tests {
     use incan_frontend::{lexer, parser, typechecker::TypeChecker};
     use incan_lang::lang::trait_bounds;
 
+    mod newtype_automatic_derives;
     mod unary_operand_grouping;
 
     fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {

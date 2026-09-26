@@ -1,5 +1,5 @@
 # behavior: spawn given an async function instead of the task its call creates is refused at check time
-# expect-diagnostic: INCAN-T0001
+# expect-diagnostic: INCAN-T0115
 
 import std.async
 from std.async import spawn

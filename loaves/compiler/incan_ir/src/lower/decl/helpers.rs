@@ -450,29 +450,17 @@ impl AstLowering {
             }
         }
 
-        fn has(derives: &[String], name: &str) -> bool {
-            derives.iter().any(|d| d == name)
-        }
-
-        // Add prerequisite derives automatically
-        // Eq requires PartialEq
-        let eq = derives::as_str(DeriveId::Eq);
-        let partial_eq = derives::as_str(DeriveId::PartialEq);
-        if has(&derives, eq) && !has(&derives, partial_eq) {
-            derives.push(partial_eq.to_string());
-        }
-        // Ord requires PartialOrd and Eq (and thus PartialEq)
-        let ord = derives::as_str(DeriveId::Ord);
-        let partial_ord = derives::as_str(DeriveId::PartialOrd);
-        if has(&derives, ord) {
-            if !has(&derives, partial_ord) {
-                derives.push(partial_ord.to_string());
+        // Add prerequisite derives automatically, rule by rule in the registry's order (`Eq` brings `PartialEq`; `Ord`
+        // brings `PartialOrd`, `Eq` and `PartialEq`). The typechecker's derive relation reads the same table.
+        for (derive, implied) in derives::DERIVE_IMPLICATIONS {
+            if !derives.iter().any(|d| d == derives::as_str(*derive)) {
+                continue;
             }
-            if !has(&derives, eq) {
-                derives.push(eq.to_string());
-            }
-            if !has(&derives, partial_eq) {
-                derives.push(partial_eq.to_string());
+            for implied_derive in *implied {
+                let implied_name = derives::as_str(*implied_derive);
+                if !derives.iter().any(|d| d == implied_name) {
+                    derives.push(implied_name.to_string());
+                }
             }
         }
 

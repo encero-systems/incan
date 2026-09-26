@@ -1,12 +1,19 @@
 //! Values and declarations whose type lacks a capability the program needs of it.
 //!
 //! Each diagnostic here refuses at check time a program that the checker used to accept and the generated program's
-//! build then refused: a field whose type cannot satisfy its declaration's automatic derives (#1754), a set element or
-//! dict key whose type does not derive `Eq` and `Hash` (#1758), and a function value passed where a running task is
-//! required (#1772).
+//! build then refused: a field whose type cannot satisfy its declaration's automatic derives (`INCAN-T0113`, #1754), a
+//! set element or dict key whose type does not implement `Eq` and `Hash` (`INCAN-T0114`, #1758), and an argument that
+//! is not a task where a task is required (`INCAN-T0115`, #1772).
 
 use crate::ast::Span;
 use crate::diagnostics::CompileError;
+
+/// Stable code of [`member_type_lacks_automatic_derives`].
+pub const AUTOMATIC_DERIVE_FIELD_CODE: &str = "INCAN-T0113";
+/// Stable code of [`collection_member_lacks_hash_derives`] and [`type_argument_lacks_hash_derives`].
+pub const HASHED_COLLECTION_MEMBER_CODE: &str = "INCAN-T0114";
+/// Stable code of [`argument_is_not_a_task`].
+pub const TASK_ARGUMENT_CODE: &str = "INCAN-T0115";
 
 /// The member of a nominal declaration whose type must support the declaration's automatic derives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +68,7 @@ pub fn member_type_lacks_automatic_derives(
         ),
         span,
     )
+    .with_stable_code(AUTOMATIC_DERIVE_FIELD_CODE)
     .with_hint(format!(
         "Keep the '{holder_type}' in a local variable or pass it as a parameter instead of storing it in '{owner_name}'"
     ))
@@ -74,20 +82,49 @@ pub fn member_type_lacks_automatic_derives(
 pub enum HashedCollectionRole {
     /// An element of a `set`.
     SetElement,
-    /// A key of a `dict`.
+    /// A key of a `dict` or an interop `HashMap`.
     DictKey,
+}
+
+/// Which remedy a set-element or dict-key refusal can offer for the type that lacks `Eq` or `Hash`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HashRemedy {
+    /// A declared type: add the missing derives to its declaration.
+    AddDerives,
+    /// A declared type that defines `__eq__`: its custom equality provides neither `Eq` nor `Hash`, and cannot be
+    /// combined with `@derive(Eq)`.
+    CustomEquality,
+    /// A builtin such as `float` or `set[int]`, which cannot take derives.
+    Builtin,
+}
+
+/// Render the remedy for the type that lacks `Eq` or `Hash`.
+fn hash_remedy_hint(holder_type: &str, missing: &[&str], remedy: HashRemedy) -> String {
+    match remedy {
+        HashRemedy::AddDerives => format!(
+            "Add the derives to the declaration of '{holder_type}': @derive({})",
+            missing.join(", ")
+        ),
+        HashRemedy::CustomEquality => format!(
+            "'{holder_type}' defines __eq__, which provides neither Eq nor Hash; key by one of its fields instead"
+        ),
+        HashRemedy::Builtin => {
+            format!("'{holder_type}' cannot derive them; use a type that implements Eq and Hash, such as int or str")
+        }
+    }
 }
 
 /// Report a set element or dict key type that does not implement `Eq` and `Hash` (#1758).
 ///
-/// A set's elements and a dict's keys are compared and hashed, and a source-declared type implements both only through
-/// its derives. `member_type` is the element or key type as written and `holder_type` the type inside it that lacks
-/// the derives (the same type, or `Tag` inside `tuple[Tag, int]`); `missing` names the derives to add.
+/// A set's elements and a dict's keys are compared and hashed. `member_type` is the element or key type as written and
+/// `holder_type` the type inside it that lacks the derives (the same type, or `Tag` inside `tuple[Tag, int]`);
+/// `missing` names the derives it lacks, and `remedy` what can be done about it.
 pub fn collection_member_lacks_hash_derives(
     role: HashedCollectionRole,
     member_type: &str,
     holder_type: &str,
     missing: &[&str],
+    remedy: HashRemedy,
     span: Span,
 ) -> CompileError {
     let role_text = match role {
@@ -101,33 +138,86 @@ pub fn collection_member_lacks_hash_derives(
     };
     let missing_list = derive_list(missing);
     CompileError::type_error(
-        format!("'{member_type}' cannot be {role_text}: {subject} does not derive {missing_list}"),
+        format!("'{member_type}' cannot be {role_text}: {subject} does not implement {missing_list}"),
         span,
     )
-    .with_hint(format!(
-        "Add the derives to the declaration of '{holder_type}': @derive({})",
-        missing.join(", ")
-    ))
-    .with_note("A set's elements and a dict's keys are compared and hashed, so their type must derive Eq and Hash")
+    .with_stable_code(HASHED_COLLECTION_MEMBER_CODE)
+    .with_hint(hash_remedy_hint(holder_type, missing, remedy))
+    .with_note("A set's elements and a dict's keys are compared and hashed, so their type must implement Eq and Hash")
 }
 
-/// Report a function value passed where a running task is required, such as `spawn(work)` (#1772).
+/// Report a generic call whose type argument lacks `Eq` or `Hash` where the callee uses that type parameter as a set
+/// element or dict key (#1758).
 ///
-/// `callee` is the called function and `value` the argument as written when it is a name or a field path (`work`,
-/// `self.work`). An `async def` call's result is the task the runtime polls; the function itself is not one, so the
-/// remedy calls it.
-pub fn function_value_is_not_a_task(callee: &str, value: Option<&str>, span: Span) -> CompileError {
-    let (message, hint) = match value {
-        Some(value) => (
-            format!("'{callee}' needs a task to run, but '{value}' is a function, not a task"),
-            format!("Call the function to create the task: '{callee}({value}())'"),
+/// `callee` names the called function, `type_param` the parameter its body hashes, and `argument_type` what the call
+/// binds it to; `holder_type` and `missing` are as in [`collection_member_lacks_hash_derives`].
+pub fn type_argument_lacks_hash_derives(
+    callee: &str,
+    type_param: &str,
+    argument_type: &str,
+    holder_type: &str,
+    missing: &[&str],
+    remedy: HashRemedy,
+    span: Span,
+) -> CompileError {
+    let subject = if argument_type == holder_type {
+        "it".to_string()
+    } else {
+        format!("its '{holder_type}'")
+    };
+    let missing_list = derive_list(missing);
+    CompileError::type_error(
+        format!(
+            "'{callee}' uses its type parameter '{type_param}' as a set element or dict key, so '{argument_type}' \
+             cannot be its type argument: {subject} does not implement {missing_list}"
         ),
-        None => (
+        span,
+    )
+    .with_stable_code(HASHED_COLLECTION_MEMBER_CODE)
+    .with_hint(hash_remedy_hint(holder_type, missing, remedy))
+    .with_note("A set's elements and a dict's keys are compared and hashed, so their type must implement Eq and Hash")
+}
+
+/// What was passed where a task is required, for [`argument_is_not_a_task`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskArgument<'a> {
+    /// An `async def` named without being called, as the source wrote it (`work`, `self.work`).
+    AsyncFunction(&'a str),
+    /// A function that is not `async def`, named as the source wrote it.
+    SyncFunction(&'a str),
+    /// A function value the source spelled some other way, such as a closure.
+    FunctionValue,
+    /// A value of a type that is neither a task nor awaitable, rendered as a type.
+    Value(&'a str),
+}
+
+/// Report an argument that is not a task where a task is required, such as `spawn(work)` (#1772).
+///
+/// `callee` is the called function. A task is what calling an `async def` returns, a `JoinHandle[T]`, or another
+/// awaitable value; the hint rewrites only the offending argument.
+pub fn argument_is_not_a_task(callee: &str, argument: TaskArgument<'_>, span: Span) -> CompileError {
+    let (message, hint) = match argument {
+        TaskArgument::AsyncFunction(value) => (
+            format!("'{callee}' needs a task to run, but '{value}' is a function, not a task"),
+            format!("Call the function to create the task: write '{value}()' in place of '{value}'"),
+        ),
+        TaskArgument::SyncFunction(value) => (
+            format!("'{callee}' needs a task to run, but '{value}' is a function that is not `async def`"),
+            format!("Declare '{value}' with `async def` and write '{value}()' in place of '{value}'"),
+        ),
+        TaskArgument::FunctionValue => (
             format!("'{callee}' needs a task to run, but this argument is a function, not a task"),
-            format!("Pass the result of calling an async function, such as '{callee}(work())'"),
+            "Pass the result of calling an `async def` in place of the function".to_string(),
+        ),
+        TaskArgument::Value(ty) => (
+            format!("'{callee}' needs a task to run, but this argument has type '{ty}', which is not a task"),
+            "Pass the result of calling an `async def`, such as 'work()', or a JoinHandle".to_string(),
         ),
     };
     CompileError::type_error(message, span)
+        .with_stable_code(TASK_ARGUMENT_CODE)
         .with_hint(hint)
-        .with_note("Calling an async function creates the task; the function's name alone is the function itself")
+        .with_note(
+            "Calling an `async def` creates the task; the function itself, or a value of another type, is not one",
+        )
 }

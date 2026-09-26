@@ -1242,6 +1242,11 @@ pub enum ClassFieldDefaultInfo {
 /// One compiler-checked newtype construction plan shared by lowering and generated bridges.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NewtypeConstructionInfo {
+    /// Derives lowering adds automatically, beyond `Copy` for a `Copy` underlying type: `Debug` unless the underlying
+    /// type is known to lack it, and `Clone` when the underlying type implements it (#1754).
+    ///
+    /// The checker's derive relation decides both, so a newtype implements what the checker says it does.
+    pub automatic_derives: Vec<String>,
     /// Declared type parameters in source order.
     pub type_params: Vec<String>,
     /// Resolved wrapped value type, including references to the declared type parameters.

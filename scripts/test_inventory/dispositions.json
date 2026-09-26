@@ -2486,6 +2486,24 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_ir/src/lower/tests/newtype_automatic_derives.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, derive lists). Retire with `incan_ir` (#654); the typechecker's derive relation that decides a newtype's automatic derives stays covered by typechecker/tests/capability_requirements.rs (keep).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "newtype_automatic_derives_follow_the_underlying_type_issue1754": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/model_field_of_newtype_over_str.incn",
+          "notes": "Asserts the derive list lowering gives a newtype (Clone when the underlying type implements it, Debug unless it lacks it, Copy for Copy types). The behavior, a model holding a newtype over str building and reading it back, is carried by the named fixture (#1754)."
+        },
+        "ord_derive_adds_its_prerequisites_in_table_order": {
+          "twin": "dies",
+          "dies": "asserts the textual order of the lowered derive list (`Ord`, `PartialOrd`, `Eq`, `PartialEq`), a generated-Rust spelling that dies with the Rust-source backend (#654); the implication itself is the incan_lang registry table, tested there (keep)."
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_ir/src/lower/tests/unary_operand_grouping.rs": {
       "disposition": "retire",
       "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
@@ -2764,6 +2782,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/kernel/incan_lang/src/lang/derives.rs": {
+      "disposition": "keep",
+      "notes": "language registry (derive vocabulary and the implication table lowering and the typechecker share, #1754); below the emitter.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/kernel/incan_lang/src/lang/highlighting.rs": {
       "disposition": "keep",
       "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level.",
@@ -2790,7 +2816,7 @@
     },
     "loaves/kernel/incan_lang/src/lang/surface/types.rs": {
       "disposition": "keep",
-      "notes": "language registry (surface type automatic-derive support, #1754); below the emitter.",
+      "notes": "language registry (surface type derive support for Clone, Debug, Eq and Hash, #1754, #1758); below the emitter.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",

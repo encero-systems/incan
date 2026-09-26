@@ -1,5 +1,5 @@
 # behavior: a model field holding a JoinHandle is refused at check time because a model always derives Clone and Debug and a task handle supports neither
-# expect-diagnostic: INCAN-T0001
+# expect-diagnostic: INCAN-T0113
 
 import std.async
 from std.async.task import spawn, JoinHandle

@@ -1,106 +1,402 @@
-//! Derives a declaration's generated form requires of the types it holds.
+//! The compiler's one relation for the builtin derives `Clone`, `Debug`, `Eq` and `Hash`, and the refusals built on it.
 //!
-//! A `model`, `class` or `enum` always derives `Clone` and `Debug` (the language reference's *Automatic derives*), and
-//! a derive holds only when every field type supports it. A field holding a runtime type that implements neither, such
-//! as a `JoinHandle[T]`, therefore passed the checker and failed the generated program's build (#1754). The checker
-//! refuses that field at the declaration instead, naming the field, its type and the derives it lacks. Which runtime
-//! types lack the derives is registry data ([`surface_types::automatic_derive_support`]); a type the registry makes
-//! no claim about is left to the build rather than guessed at.
+//! [`TypeChecker::derive_support`] answers whether a checked type implements one of those derives in the generated
+//! program, reading the surface-type registry for runtime types ([`surface_types::derive_support`]), the derive
+//! implication table for declared types ([`derives::implied_derives`]), and the automatic derives lowering gives a
+//! `model`, `class`, `enum` or newtype. Generic bound checks (`type_satisfies_explicit_bound`) and the clone
+//! requirement of collection methods (`is_clone_type`) consult it before their own fallbacks, and the refusals below
+//! are built on it:
 //!
-//! A set's elements and a dict's keys are compared and hashed, so their type must implement `Eq` and `Hash`. A
-//! source-declared type implements them only through `@derive(Eq, Hash)` (or `Ord` for `Eq`), and an enum with no
-//! derives passed the checker as a set element or dict key and failed the build (#1758). The checker refuses the
-//! element or key type where it is written, naming the derives to add.
+//! - a `model` or `class` field, or an `enum` payload, whose type cannot carry the automatic `Clone` and `Debug`
+//!   derives (`INCAN-T0113`, #1754);
+//! - a set element or dict key type without `Eq` and `Hash`, including the type argument of a generic function whose
+//!   body hashes its parameter (`INCAN-T0114`, #1758).
+//!
+//! The relation answers [`DeriveSupport::Unknown`] rather than guess: for a type parameter, a Rust-origin type, a
+//! `rusttype`, a runtime type the registry records nothing for, and the `Eq` / `Hash` of a type declared in another
+//! module, whose manifest may not list every derive. The refusals never refuse on an unknown answer.
+
+use std::collections::{BTreeSet, HashMap};
 
 use super::TypeChecker;
-use crate::ast::{Span, Spanned, Type};
-use crate::diagnostics::errors::{self, DerivedMember, HashedCollectionRole};
-use crate::symbols::{ResolvedType, TypeInfo};
+use crate::ast::{CallArg, DictEntry, Expr, ListEntry, ParamKind, Span, Spanned, Type};
+use crate::diagnostics::CompileError;
+use crate::diagnostics::errors::{self, DerivedMember, HashRemedy, HashedCollectionRole};
+use crate::symbols::{CallableParam, NewtypeInfo, ResolvedType, SymbolKind, TypeInfo};
 use crate::typechecker::helpers::collection_type_id;
 use incan_lang::lang::derives::{self, DeriveId};
-use incan_lang::lang::surface::types::{self as surface_types, AutomaticDeriveSupport, SurfaceTypeId};
+use incan_lang::lang::surface::types::{self as surface_types, SurfaceDeriveSupport, SurfaceTypeId};
 use incan_lang::lang::types::collections::CollectionTypeId;
+use incan_lang::lang::types::numerics;
+use incan_semantics_core::CanonicalSymbolId;
+
+/// What the compiler knows about one type's implementation of a builtin derive.
+#[derive(Debug, Clone, PartialEq)]
+pub(in crate::typechecker) enum DeriveSupport {
+    /// The type implements the derive in the generated program.
+    Supported,
+    /// The type does not implement it; the payload is the type inside it that lacks the derive (the type itself, or
+    /// `JoinHandle[int]` inside `list[JoinHandle[int]]`).
+    Missing(ResolvedType),
+    /// The compiler cannot tell; each consumer applies its own policy for an unknown type.
+    Unknown,
+}
+
+/// `@rust.derive(...)` facts about one nominal type declared in the module being checked.
+///
+/// Recorded during collection for every local `model`, `class`, `enum` and newtype, so the presence of an entry is
+/// also what marks a declaration as local: the derive list of a local declaration is complete, while an imported one
+/// comes from a manifest that may omit derives.
+#[derive(Debug, Clone, Default)]
+pub(in crate::typechecker) struct LocalDeriveFacts {
+    /// Builtin derives spelled in `@rust.derive(...)`, by bare name (`Hash`) or by `std`/`core` path.
+    pub rust_builtin_derives: Vec<DeriveId>,
+    /// Whether `@rust.derive(...)` names a derive macro the compiler cannot classify, which may implement anything.
+    pub has_unclassified_rust_derive: bool,
+}
+
+/// A generic call whose type arguments are checked, once the whole module has been checked, against the callee's type
+/// parameters that its body uses as a set element or dict key (#1758).
+///
+/// The check is deferred because a call can be checked before the callee's body is.
+#[derive(Debug, Clone)]
+pub(in crate::typechecker) struct PendingHashKeyInstantiation {
+    /// Declaration identity of the called generic function.
+    pub callee: CanonicalSymbolId,
+    /// The callee as the call spelled it, for the diagnostic.
+    pub callee_name: String,
+    /// The generic function the call is made from, with its type parameters, so a requirement can pass to it.
+    pub caller: Option<(CanonicalSymbolId, Vec<String>)>,
+    /// The callee's type parameters bound at this call.
+    pub bindings: HashMap<String, ResolvedType>,
+    /// The call's span.
+    pub span: Span,
+}
+
+/// Whether `derive` is one the relation answers for.
+fn is_relation_derive(derive: DeriveId) -> bool {
+    matches!(
+        derive,
+        DeriveId::Clone | DeriveId::Debug | DeriveId::Eq | DeriveId::Hash
+    )
+}
 
 impl TypeChecker {
-    /// Refuse one member whose type cannot satisfy the automatic `Clone` and `Debug` derives its declaration carries.
+    // ========================================================================
+    // The relation
+    // ========================================================================
+
+    /// Return whether `ty` implements `derive` (`Clone`, `Debug`, `Eq` or `Hash`) in the generated program.
     ///
-    /// `owner_kind` is the declaration keyword (`model`, `class`, `enum`) and `owner_name` its name. The refusal names
-    /// the innermost type that lacks the derives, so `list[JoinHandle[int]]` points at `JoinHandle[int]`.
-    pub(in crate::typechecker) fn refuse_member_without_automatic_derives(
-        &mut self,
-        owner_kind: &str,
-        owner_name: &str,
-        member: DerivedMember<'_>,
-        member_ty: &ResolvedType,
-        span: Span,
-    ) {
-        let Some((holder, missing)) = self.type_missing_automatic_derives(member_ty) else {
-            return;
-        };
-        let missing = missing.iter().map(|id| derives::as_str(*id)).collect::<Vec<_>>();
-        self.errors.push(errors::member_type_lacks_automatic_derives(
-            owner_kind,
-            owner_name,
-            member,
-            &member_ty.to_string(),
-            &holder.to_string(),
-            &missing,
-            span,
-        ));
+    /// Any other derive is [`DeriveSupport::Unknown`].
+    pub(in crate::typechecker) fn derive_support(&self, ty: &ResolvedType, derive: DeriveId) -> DeriveSupport {
+        if !is_relation_derive(derive) {
+            return DeriveSupport::Unknown;
+        }
+        self.derive_support_assuming(ty, derive, &[], &mut Vec::new())
     }
 
-    /// Find the first type inside `ty` whose runtime realization lacks the automatic derives, with the derives it
-    /// lacks.
+    /// The relation with a set of type-parameter names assumed to implement `derive`, and the newtypes being visited.
     ///
-    /// Builtin collections, `Option`, `Result`, tuples and the interop `Vec` / `HashMap` implement a derive only when
-    /// their element types do, so the walk descends into them; a source-declared generic `model`, `class`, `enum` or
-    /// newtype derives with a bound on every type parameter, so it descends into those arguments too. It never
-    /// descends into a function type (a callable value's own capabilities do not depend on its signature), a frozen
-    /// collection, a Rust-origin type or a runtime handle the registry says implements the derives (`Mutex[T]` does
-    /// whatever `T` is): the registry is the only authority on a runtime type, and a type it makes no claim about is
-    /// left to the build.
-    fn type_missing_automatic_derives<'t>(
+    /// A derive on a generic declaration bounds each type parameter by the derived trait, so the automatic derives of
+    /// a generic newtype are decided with its own parameters assumed to implement them. `visiting` stops a newtype
+    /// whose underlying type names itself.
+    fn derive_support_assuming(
         &self,
-        ty: &'t ResolvedType,
-    ) -> Option<(&'t ResolvedType, &'static [DeriveId])> {
+        ty: &ResolvedType,
+        derive: DeriveId,
+        assumed: &[String],
+        visiting: &mut Vec<String>,
+    ) -> DeriveSupport {
+        let hashing = matches!(derive, DeriveId::Eq | DeriveId::Hash);
         match ty {
-            ResolvedType::Named(name) => match self
-                .surface_type_named(name)
-                .map(surface_types::automatic_derive_support)
-            {
-                Some(AutomaticDeriveSupport::Missing(missing)) => Some((ty, missing)),
-                _ => None,
-            },
-            ResolvedType::Generic(name, args) => {
-                if let Some(collection) = collection_type_id(name) {
-                    if collection == CollectionTypeId::Generator {
-                        return None;
-                    }
-                    return self.first_type_missing_automatic_derives(args);
+            ResolvedType::Int
+            | ResolvedType::Bool
+            | ResolvedType::Str
+            | ResolvedType::Bytes
+            | ResolvedType::FrozenStr
+            | ResolvedType::FrozenBytes
+            | ResolvedType::Unit => DeriveSupport::Supported,
+            ResolvedType::Float => {
+                if hashing {
+                    DeriveSupport::Missing(ty.clone())
+                } else {
+                    DeriveSupport::Supported
+                }
+            }
+            ResolvedType::Numeric(id) => {
+                if hashing && numerics::is_binary_float(*id) {
+                    DeriveSupport::Missing(ty.clone())
+                } else {
+                    DeriveSupport::Supported
+                }
+            }
+            ResolvedType::Tuple(items) => self.all_derive_support(items, derive, assumed, visiting),
+            // The frozen collections are baked slices: `Clone`, `Debug` and `Eq` follow their contents; none hashes.
+            ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => {
+                if derive == DeriveId::Hash {
+                    DeriveSupport::Missing(ty.clone())
+                } else {
+                    self.derive_support_assuming(inner, derive, assumed, visiting)
+                }
+            }
+            ResolvedType::FrozenDict(key, value) => {
+                if derive == DeriveId::Hash {
+                    DeriveSupport::Missing(ty.clone())
+                } else {
+                    let pair = [key.as_ref().clone(), value.as_ref().clone()];
+                    self.all_derive_support(&pair, derive, assumed, visiting)
+                }
+            }
+            ResolvedType::TypeVar(name) => {
+                if assumed.contains(name) {
+                    DeriveSupport::Supported
+                } else {
+                    DeriveSupport::Unknown
+                }
+            }
+            ResolvedType::Named(name) => {
+                if assumed.contains(name) {
+                    return DeriveSupport::Supported;
+                }
+                if self.generic_placeholder_name(ty).is_some() || collection_type_id(name).is_some() {
+                    return DeriveSupport::Unknown;
                 }
                 if let Some(surface_type) = self.surface_type_named(name) {
-                    return match surface_types::automatic_derive_support(surface_type) {
-                        AutomaticDeriveSupport::Missing(missing) => Some((ty, missing)),
-                        AutomaticDeriveSupport::FollowsTypeArguments => self.first_type_missing_automatic_derives(args),
-                        AutomaticDeriveSupport::Implements => None,
+                    return self.surface_derive_support(ty, surface_type, &[], derive, assumed, visiting);
+                }
+                self.declared_derive_support(ty, name, &[], derive, assumed, visiting)
+            }
+            ResolvedType::Generic(name, args) => {
+                if numerics::decimal_constructor_from_str(name).is_some() {
+                    return DeriveSupport::Supported;
+                }
+                if let Some(collection) = collection_type_id(name) {
+                    return match collection {
+                        CollectionTypeId::Generator => DeriveSupport::Unknown,
+                        CollectionTypeId::Set
+                        | CollectionTypeId::Dict
+                        | CollectionTypeId::FrozenList
+                        | CollectionTypeId::FrozenSet
+                        | CollectionTypeId::FrozenDict
+                            if derive == DeriveId::Hash =>
+                        {
+                            DeriveSupport::Missing(ty.clone())
+                        }
+                        _ => self.all_derive_support(args, derive, assumed, visiting),
                     };
                 }
-                if self.declared_type_derives_over_its_arguments(name) {
-                    return self.first_type_missing_automatic_derives(args);
+                if let Some(surface_type) = self.surface_type_named(name) {
+                    return self.surface_derive_support(ty, surface_type, args, derive, assumed, visiting);
                 }
-                None
+                self.declared_derive_support(ty, name, args, derive, assumed, visiting)
             }
-            ResolvedType::Tuple(items) => self.first_type_missing_automatic_derives(items),
+            ResolvedType::Never
+            | ResolvedType::Unknown
+            | ResolvedType::CallSiteInfer
+            | ResolvedType::RustPath(_)
+            | ResolvedType::Function(_, _)
+            | ResolvedType::Ref(_)
+            | ResolvedType::RefMut(_)
+            | ResolvedType::TypeToken(_)
+            | ResolvedType::SelfType => DeriveSupport::Unknown,
+        }
+    }
+
+    /// Combine the answers for types that must all implement `derive`: the first missing one wins, then any unknown.
+    fn all_derive_support(
+        &self,
+        types: &[ResolvedType],
+        derive: DeriveId,
+        assumed: &[String],
+        visiting: &mut Vec<String>,
+    ) -> DeriveSupport {
+        let mut unknown = false;
+        for ty in types {
+            match self.derive_support_assuming(ty, derive, assumed, visiting) {
+                DeriveSupport::Supported => {}
+                DeriveSupport::Missing(holder) => return DeriveSupport::Missing(holder),
+                DeriveSupport::Unknown => unknown = true,
+            }
+        }
+        if unknown {
+            DeriveSupport::Unknown
+        } else {
+            DeriveSupport::Supported
+        }
+    }
+
+    /// Answer for a stdlib surface type from the registry.
+    fn surface_derive_support(
+        &self,
+        ty: &ResolvedType,
+        surface_type: SurfaceTypeId,
+        args: &[ResolvedType],
+        derive: DeriveId,
+        assumed: &[String],
+        visiting: &mut Vec<String>,
+    ) -> DeriveSupport {
+        match surface_types::derive_support(surface_type, derive) {
+            SurfaceDeriveSupport::Implements => DeriveSupport::Supported,
+            SurfaceDeriveSupport::FollowsTypeArguments => self.all_derive_support(args, derive, assumed, visiting),
+            SurfaceDeriveSupport::Missing => DeriveSupport::Missing(ty.clone()),
+            SurfaceDeriveSupport::NotRecorded => DeriveSupport::Unknown,
+        }
+    }
+
+    /// Answer for a declared `model`, `class`, `enum` or newtype, then for its type arguments.
+    ///
+    /// A derive on a generic declaration bounds every type parameter, so a declaration that implements `derive` does so
+    /// for type arguments that implement it too.
+    fn declared_derive_support(
+        &self,
+        ty: &ResolvedType,
+        name: &str,
+        args: &[ResolvedType],
+        derive: DeriveId,
+        assumed: &[String],
+        visiting: &mut Vec<String>,
+    ) -> DeriveSupport {
+        let Some(info) = self.lookup_semantic_type_info(name) else {
+            return DeriveSupport::Unknown;
+        };
+        let own = match info {
+            TypeInfo::Model(model) => self.automatic_nominal_derive(name, &model.derives, &model.traits, derive, false),
+            TypeInfo::Class(class) => {
+                // Lowering drops the automatic `Debug` of a private adapter class holding direct Rust state.
+                let opaque_debug = name.starts_with('_') && derive == DeriveId::Debug;
+                self.automatic_nominal_derive(name, &class.derives, &class.traits, derive, opaque_debug)
+            }
+            TypeInfo::Enum(en) => self.automatic_nominal_derive(name, &en.derives, &en.traits, derive, false),
+            TypeInfo::Newtype(newtype) if newtype.is_rusttype => None,
+            TypeInfo::Newtype(newtype) => self.newtype_derive(name, newtype, derive, visiting),
+            TypeInfo::Builtin | TypeInfo::TypeAlias => None,
+        };
+        match own {
+            Some(true) => self.all_derive_support(args, derive, assumed, visiting),
+            Some(false) => DeriveSupport::Missing(ty.clone()),
+            None => DeriveSupport::Unknown,
+        }
+    }
+
+    /// Whether a `model`, `class` or `enum` implements `derive`: `Clone` and `Debug` always (`opaque_debug` marks the
+    /// one case lowering drops `Debug`), `Eq` and `Hash` only when declared.
+    fn automatic_nominal_derive(
+        &self,
+        name: &str,
+        derive_names: &[String],
+        trait_names: &[String],
+        derive: DeriveId,
+        opaque_debug: bool,
+    ) -> Option<bool> {
+        match derive {
+            DeriveId::Debug if opaque_debug => None,
+            DeriveId::Clone | DeriveId::Debug => Some(true),
+            _ => self.declared_derive(name, derive_names, trait_names, derive),
+        }
+    }
+
+    /// Whether a declared type provides `derive` through its own derive list, trait adoptions and `@rust.derive`.
+    ///
+    /// A derive counts together with what it implies (`Ord` implies `Eq`), under its own name or an import alias, and a
+    /// trait adoption counts when it names the builtin trait. A type declared in another module, or with a
+    /// `@rust.derive(...)` the compiler cannot classify, answers `None` when the derive is absent from what is known.
+    fn declared_derive(
+        &self,
+        name: &str,
+        derive_names: &[String],
+        trait_names: &[String],
+        derive: DeriveId,
+    ) -> Option<bool> {
+        let local = self.local_derive_facts.get(name);
+        let mut provided = derive_names
+            .iter()
+            .filter_map(|spelling| self.builtin_derive_named(spelling))
+            .chain(
+                trait_names
+                    .iter()
+                    .filter_map(|spelling| self.builtin_derive_bound(spelling)),
+            )
+            .collect::<Vec<_>>();
+        if let Some(facts) = local {
+            provided.extend(facts.rust_builtin_derives.iter().copied());
+        }
+        let implied = provided
+            .iter()
+            .flat_map(|id| derives::implied_derives(*id).iter().copied())
+            .collect::<Vec<_>>();
+        if provided.contains(&derive) || implied.contains(&derive) {
+            return Some(true);
+        }
+        match local {
+            Some(facts) if !facts.has_unclassified_rust_derive => Some(false),
             _ => None,
         }
     }
 
-    /// Return the first of `types` that holds a type lacking the automatic derives.
-    fn first_type_missing_automatic_derives<'t>(
+    /// Resolve an `@derive(...)` spelling, including an import alias, to the builtin derive it names.
+    ///
+    /// Lowering takes a builtin derive name as the builtin derive whatever else it could name, so the relation does
+    /// too; a trait adoption is resolved strictly instead ([`Self::builtin_derive_bound`]).
+    fn builtin_derive_named(&self, spelling: &str) -> Option<DeriveId> {
+        derives::from_str(spelling).or_else(|| {
+            self.import_binding_path(spelling)
+                .and_then(<[String]>::last)
+                .and_then(|leaf| derives::from_str(leaf))
+        })
+    }
+
+    /// Whether a non-`rusttype` newtype implements `derive`: its explicit derives first, then what lowering adds.
+    fn newtype_derive(
         &self,
-        types: &'t [ResolvedType],
-    ) -> Option<(&'t ResolvedType, &'static [DeriveId])> {
-        types.iter().find_map(|ty| self.type_missing_automatic_derives(ty))
+        name: &str,
+        info: &NewtypeInfo,
+        derive: DeriveId,
+        visiting: &mut Vec<String>,
+    ) -> Option<bool> {
+        if self.declared_derive(name, &info.derives, &info.traits, derive) == Some(true) {
+            return Some(true);
+        }
+        match derive {
+            DeriveId::Clone | DeriveId::Debug => Some(self.newtype_automatic_derive(name, info, derive, visiting)),
+            _ => self.declared_derive(name, &info.derives, &info.traits, derive),
+        }
+    }
+
+    /// Whether lowering gives a newtype `derive` automatically: `Clone` when its underlying type implements it (or is
+    /// `Copy`), and `Debug` unless its underlying type is known to lack it.
+    ///
+    /// The newtype's own type parameters count as implementing the derive, since the derive bounds them.
+    fn newtype_automatic_derive(
+        &self,
+        name: &str,
+        info: &NewtypeInfo,
+        derive: DeriveId,
+        visiting: &mut Vec<String>,
+    ) -> bool {
+        if visiting.iter().any(|visited| visited == name) {
+            return false;
+        }
+        visiting.push(name.to_string());
+        let support = self.derive_support_assuming(&info.underlying, derive, &info.type_params, visiting);
+        visiting.pop();
+        match derive {
+            DeriveId::Clone => support == DeriveSupport::Supported || self.is_copy_type(&info.underlying),
+            DeriveId::Debug => !matches!(support, DeriveSupport::Missing(_)),
+            _ => false,
+        }
+    }
+
+    /// Return the derive names lowering adds to a newtype automatically, in emission order (`Debug`, then `Clone`).
+    ///
+    /// Recorded for lowering with the newtype's construction facts, so lowering and this relation agree on what a
+    /// newtype implements.
+    pub(in crate::typechecker) fn newtype_automatic_derive_names(&self, name: &str, info: &NewtypeInfo) -> Vec<String> {
+        [DeriveId::Debug, DeriveId::Clone]
+            .into_iter()
+            .filter(|derive| self.newtype_automatic_derive(name, info, *derive, &mut Vec::new()))
+            .map(|derive| derives::as_str(derive).to_string())
+            .collect()
     }
 
     /// Return the stdlib surface type a type name refers to, unless a source declaration owns the spelling.
@@ -115,25 +411,65 @@ impl TypeChecker {
         })
     }
 
-    /// Return whether a source-declared generic type implements its derives only for type arguments that do.
+    // ========================================================================
+    // #1754: automatic derives of a field's type
+    // ========================================================================
+
+    /// Refuse one member whose type cannot satisfy the automatic `Clone` and `Debug` derives its declaration carries.
     ///
-    /// A derive on a generic `model`, `class`, `enum` or newtype bounds every type parameter by the derived trait, so
-    /// the walks above descend into such a type's arguments. A `rusttype` newtype is realized by its Rust type, whose
-    /// implementations the checker does not know, so it is not descended into.
-    fn declared_type_derives_over_its_arguments(&self, name: &str) -> bool {
-        match self.lookup_semantic_type_info(name) {
-            Some(TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Enum(_)) => true,
-            Some(TypeInfo::Newtype(info)) => !info.is_rusttype,
-            Some(TypeInfo::Builtin | TypeInfo::TypeAlias) | None => false,
-        }
+    /// `owner_kind` is the declaration keyword (`model`, `class`, `enum`) and `owner_name` its name. The refusal names
+    /// the innermost type that lacks the derives, so `list[JoinHandle[int]]` points at `JoinHandle[int]`.
+    pub(in crate::typechecker) fn refuse_member_without_automatic_derives(
+        &mut self,
+        owner_kind: &str,
+        owner_name: &str,
+        member: DerivedMember<'_>,
+        member_ty: &ResolvedType,
+        span: Span,
+    ) {
+        let Some((holder, missing)) = self.first_missing_derives(member_ty, &[DeriveId::Clone, DeriveId::Debug]) else {
+            return;
+        };
+        self.errors.push(errors::member_type_lacks_automatic_derives(
+            owner_kind,
+            owner_name,
+            member,
+            &member_ty.to_string(),
+            &holder.to_string(),
+            &missing,
+            span,
+        ));
     }
+
+    /// Find the first of `required` that `ty` is known to lack, and every one of `required` that type inside it lacks.
+    fn first_missing_derives(
+        &self,
+        ty: &ResolvedType,
+        required: &[DeriveId],
+    ) -> Option<(ResolvedType, Vec<&'static str>)> {
+        let holder = required
+            .iter()
+            .find_map(|derive| match self.derive_support(ty, *derive) {
+                DeriveSupport::Missing(holder) => Some(holder),
+                DeriveSupport::Supported | DeriveSupport::Unknown => None,
+            })?;
+        let missing = required
+            .iter()
+            .filter(|derive| matches!(self.derive_support(&holder, **derive), DeriveSupport::Missing(_)))
+            .map(|derive| derives::as_str(*derive))
+            .collect::<Vec<_>>();
+        Some((holder, missing))
+    }
+
+    // ========================================================================
+    // #1758: set elements and dict keys implement Eq and Hash
+    // ========================================================================
 
     /// Refuse the set element and dict key types an annotation names that lack `Eq` or `Hash` (#1758).
     ///
     /// The annotation and its resolved type are walked together so each refusal points at the element or key type as
-    /// written. A spelling that no longer lines up with its resolved type (a type alias) is not descended into: the
-    /// alias's own declaration is where its target is checked. `FrozenSet` and `FrozenDict` are baked slices rather
-    /// than hashed tables, so their element and key types are not refused.
+    /// written; the interop `HashMap[K, V]` keys like a dict. A spelling that no longer lines up with its resolved type
+    /// (a type alias) is not descended into: the alias's own declaration is where its target is checked.
     pub(in crate::typechecker) fn refuse_unhashable_collection_keys(
         &mut self,
         annotation: &Spanned<Type>,
@@ -146,6 +482,9 @@ impl TypeChecker {
                 let role = match collection_type_id(name) {
                     Some(CollectionTypeId::Set) => Some(HashedCollectionRole::SetElement),
                     Some(CollectionTypeId::Dict) => Some(HashedCollectionRole::DictKey),
+                    _ if self.surface_type_named(name) == Some(SurfaceTypeId::HashMap) => {
+                        Some(HashedCollectionRole::DictKey)
+                    }
                     _ => None,
                 };
                 if let (Some(role), Some(key), Some(key_ty)) = (role, args.first(), resolved_args.first()) {
@@ -155,7 +494,6 @@ impl TypeChecker {
                     self.refuse_unhashable_collection_keys(arg, resolved_arg);
                 }
             }
-            // A frozen collection is a baked slice with no hashing, so only its contents are walked.
             (Type::Generic(_, args), ResolvedType::FrozenList(element) | ResolvedType::FrozenSet(element)) => {
                 if let [arg] = args.as_slice() {
                     self.refuse_unhashable_collection_keys(arg, element);
@@ -184,27 +522,303 @@ impl TypeChecker {
         }
     }
 
-    /// Refuse one set element or dict key type that lacks `Eq` or `Hash`, once per source location (#1758).
+    /// Require a value stored into a hashed collection by an expression (a literal, a comprehension, `set(...)`) to
+    /// implement `Eq` and `Hash`, and record the generic parameters it hashes (#1758).
     ///
-    /// An annotation can be resolved more than once while its declaration is checked (a field and its default, for
-    /// example), so a refusal already recorded at the same span is not repeated.
+    /// Inside a generic function the element may be a type parameter; the requirement then falls on the type argument
+    /// each call binds it to, which [`Self::check_pending_hash_key_instantiations`] checks.
+    pub(in crate::typechecker) fn require_hashable_collection_value(
+        &mut self,
+        role: HashedCollectionRole,
+        member_ty: &ResolvedType,
+        span: Span,
+    ) {
+        if let Some((callable, type_params)) = self.current_generic_callable.clone() {
+            let mut used = Vec::new();
+            Self::collect_named_type_params(member_ty, &type_params, &mut used);
+            if !used.is_empty() {
+                self.hash_key_type_params.entry(callable).or_default().extend(used);
+            }
+        }
+        self.refuse_unhashable_collection_member(role, member_ty, span);
+    }
+
+    /// Collect the names of `type_params` that appear in `ty`.
+    fn collect_named_type_params(ty: &ResolvedType, type_params: &[String], out: &mut Vec<String>) {
+        match ty {
+            ResolvedType::Named(name) | ResolvedType::TypeVar(name) => {
+                if type_params.contains(name) && !out.contains(name) {
+                    out.push(name.clone());
+                }
+            }
+            ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
+                for arg in args {
+                    Self::collect_named_type_params(arg, type_params, out);
+                }
+            }
+            ResolvedType::FrozenList(inner)
+            | ResolvedType::FrozenSet(inner)
+            | ResolvedType::Ref(inner)
+            | ResolvedType::RefMut(inner) => Self::collect_named_type_params(inner, type_params, out),
+            ResolvedType::FrozenDict(key, value) => {
+                Self::collect_named_type_params(key, type_params, out);
+                Self::collect_named_type_params(value, type_params, out);
+            }
+            _ => {}
+        }
+    }
+
+    /// Refuse one set element or dict key type that lacks `Eq` or `Hash`, once per source location (#1758).
     pub(in crate::typechecker) fn refuse_unhashable_collection_member(
         &mut self,
         role: HashedCollectionRole,
         member_ty: &ResolvedType,
         span: Span,
     ) {
-        let Some((holder, missing)) = self.type_missing_hash_key_derives(member_ty) else {
+        let Some((holder, missing)) = self.first_missing_derives(member_ty, &[DeriveId::Eq, DeriveId::Hash]) else {
             return;
         };
-        let missing = missing.iter().map(|id| derives::as_str(*id)).collect::<Vec<_>>();
         let error = errors::collection_member_lacks_hash_derives(
             role,
             &member_ty.to_string(),
             &holder.to_string(),
             &missing,
+            self.hash_remedy(&holder),
             span,
         );
+        self.push_error_once(error);
+    }
+
+    /// Whether a destination annotation's element or key type lacks `Eq` or `Hash`, so its annotation was refused.
+    ///
+    /// A literal checked against such a destination is not refused again for the same element or key type; one
+    /// checked against a type parameter or a hashable type still is, for its own elements.
+    pub(in crate::typechecker) fn annotation_reports_unhashable_member(
+        &self,
+        expected_member: Option<&ResolvedType>,
+    ) -> bool {
+        expected_member.is_some_and(|ty| {
+            self.first_missing_derives(ty, &[DeriveId::Eq, DeriveId::Hash])
+                .is_some()
+        })
+    }
+
+    /// Record a generic call for the deferred set-element and dict-key check (#1758).
+    ///
+    /// Only a call to a function this module declares is recorded: its body is checked here, which is where the
+    /// callee's hashed parameters are learned. An overload set is left out, since its bindings belong to one overload.
+    /// A literal argument checked against a parameter type that names the type parameter takes that placeholder as its
+    /// own type (`[Tag.A]` against `list[T]` is a `list[T]`), so such a binding is recovered from the literal's
+    /// elements.
+    pub(in crate::typechecker) fn record_generic_hash_key_instantiation(
+        &mut self,
+        callee_name: &str,
+        type_params: &[String],
+        params: &[CallableParam],
+        args: &[CallArg],
+        bindings: &HashMap<String, ResolvedType>,
+        span: Span,
+    ) {
+        if type_params.is_empty() {
+            return;
+        }
+        let Some(symbol_id) = self.symbols.lookup(callee_name) else {
+            return;
+        };
+        if !matches!(
+            self.symbols.get(symbol_id).map(|symbol| &symbol.kind),
+            Some(SymbolKind::Function(_))
+        ) {
+            return;
+        }
+        let Some(callee) = self.symbols.identity_of(symbol_id).cloned() else {
+            return;
+        };
+        let mut literal_bindings = HashMap::new();
+        for (expr, param) in Self::arguments_with_parameters(params, args) {
+            if let Some(param) = param {
+                self.literal_argument_bindings(&param.ty, expr, type_params, &mut literal_bindings);
+            }
+        }
+        let bindings = type_params
+            .iter()
+            .filter_map(|param| {
+                let bound = bindings
+                    .get(param)
+                    .filter(|bound| !Self::is_open_binding(bound, type_params));
+                bound
+                    .or_else(|| literal_bindings.get(param))
+                    .map(|bound| (param.clone(), bound.clone()))
+            })
+            .collect();
+        self.pending_hash_key_instantiations.push(PendingHashKeyInstantiation {
+            callee,
+            callee_name: callee_name.to_string(),
+            caller: self.current_generic_callable.clone(),
+            bindings,
+            span,
+        });
+    }
+
+    /// Whether a binding is still open: unresolved, or one of the callee's own type parameters.
+    fn is_open_binding(bound: &ResolvedType, type_params: &[String]) -> bool {
+        match bound {
+            ResolvedType::Unknown | ResolvedType::CallSiteInfer => true,
+            ResolvedType::TypeVar(name) | ResolvedType::Named(name) => type_params.contains(name),
+            _ => false,
+        }
+    }
+
+    /// Pair each argument with the parameter it binds: positional arguments in order over the ordinary parameters a
+    /// call can bind positionally, named arguments by name. An unpacked argument ends the pairing, since it hides which
+    /// parameters the arguments after it bind.
+    pub(in crate::typechecker) fn arguments_with_parameters<'a, 'p>(
+        params: &'p [CallableParam],
+        args: &'a [CallArg],
+    ) -> Vec<(&'a Spanned<Expr>, Option<&'p CallableParam>)> {
+        let mut positional_params = params
+            .iter()
+            .filter(|param| param.kind == ParamKind::Normal && !param.is_partial_preset);
+        let mut paired = Vec::new();
+        for arg in args {
+            match arg {
+                CallArg::Positional(expr) => paired.push((expr, positional_params.next())),
+                CallArg::Named(name, expr) => paired.push((
+                    expr,
+                    params.iter().find(|param| param.name() == Some(name.node.as_str())),
+                )),
+                CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => break,
+            }
+        }
+        paired
+    }
+
+    /// Recover type-parameter bindings from a literal argument's elements, following the parameter type's shape.
+    fn literal_argument_bindings(
+        &self,
+        param_ty: &ResolvedType,
+        expr: &Spanned<Expr>,
+        type_params: &[String],
+        out: &mut HashMap<String, ResolvedType>,
+    ) {
+        match (param_ty, &expr.node) {
+            (_, Expr::Paren(inner)) => self.literal_argument_bindings(param_ty, inner, type_params, out),
+            (ResolvedType::TypeVar(name) | ResolvedType::Named(name), _) if type_params.contains(name) => {
+                if let Some(ty) = self.type_info.expr_type(expr.span)
+                    && !Self::is_open_binding(ty, type_params)
+                {
+                    out.entry(name.clone()).or_insert_with(|| ty.clone());
+                }
+            }
+            (ResolvedType::Generic(name, args), Expr::List(entries))
+                if collection_type_id(name) == Some(CollectionTypeId::List) =>
+            {
+                if let (Some(element_ty), Some(ListEntry::Element(first))) = (args.first(), entries.first()) {
+                    self.literal_argument_bindings(element_ty, first, type_params, out);
+                }
+            }
+            (ResolvedType::Generic(name, args), Expr::Set(elements))
+                if collection_type_id(name) == Some(CollectionTypeId::Set) =>
+            {
+                if let (Some(element_ty), Some(first)) = (args.first(), elements.first()) {
+                    self.literal_argument_bindings(element_ty, first, type_params, out);
+                }
+            }
+            (ResolvedType::Generic(name, args), Expr::Dict(entries))
+                if collection_type_id(name) == Some(CollectionTypeId::Dict) =>
+            {
+                if let ([key_ty, value_ty], Some(DictEntry::Pair(key, value))) = (args.as_slice(), entries.first()) {
+                    self.literal_argument_bindings(key_ty, key, type_params, out);
+                    self.literal_argument_bindings(value_ty, value, type_params, out);
+                }
+            }
+            (ResolvedType::Tuple(items), Expr::Tuple(elements)) if items.len() == elements.len() => {
+                for (item_ty, element) in items.iter().zip(elements) {
+                    self.literal_argument_bindings(item_ty, element, type_params, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Check every recorded generic call against the parameters its callee hashes, once the whole module is checked.
+    ///
+    /// A call made from another generic function with one of that function's own parameters passes the requirement
+    /// to the caller, until nothing changes; then each call whose type argument lacks `Eq` or `Hash` is refused.
+    pub(in crate::typechecker) fn check_pending_hash_key_instantiations(&mut self) {
+        let pending = std::mem::take(&mut self.pending_hash_key_instantiations);
+        loop {
+            let mut changed = false;
+            for call in &pending {
+                let Some((caller, caller_params)) = &call.caller else {
+                    continue;
+                };
+                let Some(required) = self.hash_key_type_params.get(&call.callee).cloned() else {
+                    continue;
+                };
+                let mut passed = Vec::new();
+                for type_param in &required {
+                    if let Some(bound) = call.bindings.get(type_param) {
+                        Self::collect_named_type_params(bound, caller_params, &mut passed);
+                    }
+                }
+                let caller_required = self.hash_key_type_params.entry(caller.clone()).or_default();
+                for type_param in passed {
+                    changed |= caller_required.insert(type_param);
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        for call in &pending {
+            let required: BTreeSet<String> = self.hash_key_type_params.get(&call.callee).cloned().unwrap_or_default();
+            for type_param in &required {
+                let Some(bound) = call.bindings.get(type_param) else {
+                    continue;
+                };
+                let Some((holder, missing)) = self.first_missing_derives(bound, &[DeriveId::Eq, DeriveId::Hash]) else {
+                    continue;
+                };
+                let error = errors::type_argument_lacks_hash_derives(
+                    &call.callee_name,
+                    type_param,
+                    &bound.to_string(),
+                    &holder.to_string(),
+                    &missing,
+                    self.hash_remedy(&holder),
+                    call.span,
+                );
+                self.push_error_once(error);
+            }
+        }
+    }
+
+    /// Choose the remedy for the type that lacks `Eq` or `Hash`: a declared type adds derives, unless it defines
+    /// `__eq__`, whose custom equality provides neither; a builtin cannot take derives.
+    fn hash_remedy(&self, ty: &ResolvedType) -> HashRemedy {
+        let (ResolvedType::Named(name) | ResolvedType::Generic(name, _)) = ty else {
+            return HashRemedy::Builtin;
+        };
+        let methods = match self.lookup_semantic_type_info(name) {
+            Some(TypeInfo::Model(info)) => &info.methods,
+            Some(TypeInfo::Class(info)) => &info.methods,
+            Some(TypeInfo::Enum(info)) => &info.methods,
+            Some(TypeInfo::Newtype(info)) => &info.methods,
+            Some(TypeInfo::Builtin | TypeInfo::TypeAlias) | None => return HashRemedy::Builtin,
+        };
+        if methods.contains_key("__eq__") {
+            HashRemedy::CustomEquality
+        } else {
+            HashRemedy::AddDerives
+        }
+    }
+
+    /// Push an error unless the same message was already reported at the same span.
+    ///
+    /// An annotation or expression can be checked more than once while its declaration is checked (a field and its
+    /// default, for example); the refusal belongs to the source location, not to each pass over it.
+    fn push_error_once(&mut self, error: CompileError) {
         if !self
             .errors
             .iter()
@@ -212,88 +826,5 @@ impl TypeChecker {
         {
             self.errors.push(error);
         }
-    }
-
-    /// Find the type inside a set element or dict key type that lacks `Eq` or `Hash`, with the derives it lacks.
-    ///
-    /// Tuples, `list`, `Option` and `Result` implement `Eq` and `Hash` exactly when their contents do, so the walk
-    /// descends into them, and into the arguments of a source-declared generic type that has both derives. Only a
-    /// source-declared `model`, `class`, `enum` or newtype is ever refused, because its derives are all the compiler
-    /// gives it; a builtin scalar, a type parameter, a Rust-origin type and a `rusttype` newtype are left to the build.
-    fn type_missing_hash_key_derives<'t>(&self, ty: &'t ResolvedType) -> Option<(&'t ResolvedType, Vec<DeriveId>)> {
-        match ty {
-            ResolvedType::Tuple(items) => items.iter().find_map(|item| self.type_missing_hash_key_derives(item)),
-            ResolvedType::Named(name) => self
-                .declared_type_missing_hash_key_derives(name)
-                .map(|missing| (ty, missing)),
-            ResolvedType::Generic(name, args) => {
-                if let Some(collection) = collection_type_id(name) {
-                    if !matches!(
-                        collection,
-                        CollectionTypeId::List
-                            | CollectionTypeId::Option
-                            | CollectionTypeId::Result
-                            | CollectionTypeId::Tuple
-                    ) {
-                        return None;
-                    }
-                    return args.iter().find_map(|arg| self.type_missing_hash_key_derives(arg));
-                }
-                if let Some(missing) = self.declared_type_missing_hash_key_derives(name) {
-                    return Some((ty, missing));
-                }
-                if self.declared_type_derives_over_its_arguments(name) {
-                    return args.iter().find_map(|arg| self.type_missing_hash_key_derives(arg));
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
-    /// Return the derives among `Eq` and `Hash` a source-declared nominal type lacks, or `None` when it lacks neither
-    /// or the compiler cannot tell.
-    ///
-    /// `Eq` is also satisfied by `Ord`, which implies it, and either derive by a `with Eq` / `with Hash` adoption,
-    /// under its own name or an import alias. A type with an `__eq__` or `__hash__` method, or with a
-    /// `@rust.derive(...)` list, is left to the build: its equality comes from a place the derive list does not
-    /// show.
-    fn declared_type_missing_hash_key_derives(&self, name: &str) -> Option<Vec<DeriveId>> {
-        if self.local_rust_derive_paths.contains_key(name) {
-            return None;
-        }
-        let (derive_names, trait_names, methods) = match self.lookup_semantic_type_info(name)? {
-            TypeInfo::Model(info) => (&info.derives, &info.traits, &info.methods),
-            TypeInfo::Class(info) => (&info.derives, &info.traits, &info.methods),
-            TypeInfo::Enum(info) => (&info.derives, &info.traits, &info.methods),
-            TypeInfo::Newtype(info) if !info.is_rusttype => (&info.derives, &info.traits, &info.methods),
-            TypeInfo::Newtype(_) | TypeInfo::Builtin | TypeInfo::TypeAlias => return None,
-        };
-        if methods.contains_key("__eq__") || methods.contains_key("__hash__") {
-            return None;
-        }
-        // A derive or trait imported under another name (`from std.derives.comparison import Hash as Hashed`) counts
-        // as the builtin it names.
-        let builtin_derive = |name: &String| {
-            derives::from_str(name).or_else(|| {
-                self.import_binding_path(name)
-                    .and_then(<[String]>::last)
-                    .and_then(|leaf| derives::from_str(leaf))
-            })
-        };
-        let provides = |satisfying: &[DeriveId]| {
-            derive_names
-                .iter()
-                .chain(trait_names)
-                .any(|name| builtin_derive(name).is_some_and(|id| satisfying.contains(&id)))
-        };
-        let mut missing = Vec::new();
-        if !provides(&[DeriveId::Eq, DeriveId::Ord]) {
-            missing.push(DeriveId::Eq);
-        }
-        if !provides(&[DeriveId::Hash]) {
-            missing.push(DeriveId::Hash);
-        }
-        (!missing.is_empty()).then_some(missing)
     }
 }
