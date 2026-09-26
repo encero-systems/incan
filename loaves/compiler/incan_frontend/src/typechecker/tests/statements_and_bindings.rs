@@ -1215,7 +1215,7 @@ def fill() -> None:
     assert!(
         errors.iter().any(|error| error
             .message
-            .contains("The targets of this chained assignment have incompatible types ('List[int]' and 'List[str]')")),
+            .contains("The targets of this chained assignment have different types ('List[int]' and 'List[str]')")),
         "expected the chained-assignment refusal naming both target types, got {errors:?}"
     );
     Ok(())
@@ -1282,6 +1282,50 @@ def builtin_list() -> None:
             per_target,
             "`{call}` is evaluated {}",
             if per_target { "once per target" } else { "once" }
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn chained_literal_reports_an_error_that_does_not_depend_on_the_target_once_issue1806() -> Result<(), String> {
+    // Each target checks its own evaluation of the literal, but an error in the value itself is reported once, as a
+    // single assignment reports it.
+    for (targets, value) in [
+        ("mut a: int = 1\n    mut b: i8 = 1", r#"-"s""#),
+        ("mut a: list[int] = []\n    mut b: list[str] = []", r#"[-"s"]"#),
+        ("mut a: Option[bool] = None\n    mut b: bool = False", r#"not "s""#),
+        (
+            "mut a: tuple[int, Option[int]] = (1, None)\n    mut b: tuple[i8, Option[str]] = (1, None)",
+            "(~1.5, None)",
+        ),
+    ] {
+        let source = format!("def main() -> None:\n    {targets}\n    a = b = {value}\n");
+        let Err(errors) = check_str(&source) else {
+            return Err(format!("`a = b = {value}` must be refused"));
+        };
+        let value_start = source.rfind(value).ok_or("the source must contain the value")?;
+        let in_value = errors.iter().filter(|error| error.span.start >= value_start).count();
+        assert_eq!(in_value, 1, "`a = b = {value}` reports its error once, got {errors:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn chained_value_that_failed_its_check_gets_no_second_refusal_issue1806() -> Result<(), String> {
+    // A value whose own check reported an error is not refused again for having no one type over targets of
+    // different types.
+    for value in ["[missing]", "missing()", "[FrozenList()]"] {
+        let source =
+            format!("def main() -> None:\n    mut a: list[int] = []\n    mut b: list[str] = []\n    a = b = {value}\n");
+        let Err(errors) = check_str(&source) else {
+            return Err(format!("`a = b = {value}` must be refused"));
+        };
+        assert!(
+            !errors
+                .iter()
+                .any(|error| error.message.contains("The targets of this chained assignment")),
+            "`a = b = {value}` reports only its own error, got {errors:?}"
         );
     }
     Ok(())

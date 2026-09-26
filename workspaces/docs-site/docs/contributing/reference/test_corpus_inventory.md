@@ -12,12 +12,12 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3158 | 209 | 7 |
+| keep | 3160 | 209 | 7 |
 | re-point | 496 | 50 | 428 |
 | retire | 1142 | 79 | 0 |
 | unaffected | 1437 | 134 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **6233** | **472** | **440** |
+| **Total** | **6235** | **472** | **440** |
 
 - Retire-class tests: 1142, of which twinned 73, dies 115, open 954 (neither yet).
 - Retire-class files with open rows: 62 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -431,7 +431,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (1748 tests in 84 files: keep 1748)
+### `loaves/compiler/incan_frontend` (1750 tests in 84 files: keep 1750)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -503,7 +503,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/nested_list_loop_tests.r
 | `loaves/compiler/incan_frontend/src/typechecker/tests/rust_supertraits.rs` | 7 | 164 | 164 | keep | - | - | - | #1561 | checker 5 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/rust_trait_import_candidates.rs` | 6 | 155 | 155 | keep | - | - | - | #1561 | checker 6, parser 6 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/rust_trait_qualified_calls.rs` | 9 | 325 | 325 | keep | - | - | - | #1561 | checker 8, parser 7 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route. |
-| `loaves/compiler/incan_frontend/src/typechecker/tests/statements_and_bindings.rs` | 72 | 1289 | 1289 | keep | - | - | - | #1561 | checker 69, parser 1 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/statements_and_bindings.rs` | 74 | 1333 | 1333 | keep | - | - | - | #1561 | checker 71, parser 1 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/stdlib_surfaces.rs` | 50 | 1439 | 1439 | keep | - | - | - | #1561 | checker 35, parser 12 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/trait_instantiation_and_operators.rs` | 42 | 1363 | 1363 | keep | - | - | - | #1561 | checker 41, parser 11 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/traits.rs` | 48 | 1137 | 1137 | keep | - | - | - | #1561 | checker 44, parser 22 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |

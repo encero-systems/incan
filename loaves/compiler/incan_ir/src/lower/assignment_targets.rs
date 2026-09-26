@@ -119,7 +119,7 @@ impl AstLowering {
         Ok(Self::statement_block(stmts))
     }
 
-    /// Lower a chain the checker recorded as written per target: its bound targets have incompatible types and its
+    /// Lower a chain the checker recorded as written per target: its bound targets have different types and its
     /// value is built only from literals and builtin empty constructors (`None`, `[]`, `{}`, `(None)`, `[None]`,
     /// `list()`, a number).
     ///
