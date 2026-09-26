@@ -96,7 +96,8 @@ fn test_each_precedence_level_groups_tighter_than_the_one_below_it_issue1786() -
         ("a << b + c", OperatorId::Shl, Side::Right, OperatorId::Plus),
         ("a + b * c", OperatorId::Plus, Side::Right, OperatorId::Star),
         ("a * b ** c", OperatorId::Star, Side::Right, OperatorId::StarStar),
-        ("~a ** b", OperatorId::StarStar, Side::Left, OperatorId::Tilde),
+        ("~a * b", OperatorId::Star, Side::Left, OperatorId::Tilde),
+        ("~a ** b", OperatorId::Tilde, Side::Operand, OperatorId::StarStar),
     ];
     for (expression, root, side, tighter) in cases {
         let value = parse_value(expression)?;
@@ -152,20 +153,71 @@ fn test_comparison_level_operators_share_one_precedence_and_group_left_issue1786
     Ok(())
 }
 
-#[test]
-fn test_prefix_minus_binds_tighter_than_power_issue1786() -> Result<(), Vec<CompileError>> {
-    // `-a ** b` is `(-a) ** b`, as `~a ** b` is `(~a) ** b`; the negated power is spelled `-(a ** b)`.
-    let value = parse_value("-a ** b")?;
-    let Expr::Binary(base, BinaryOp::Pow, _) = &value.node else {
-        return Err(vec![CompileError::new(
-            "parser test internal error: expected `-a ** b` to group under `**`".to_string(),
+/// Return the operand of a prefix `-` at the root of `value`.
+fn negated_operand<'e>(value: &'e Spanned<Expr>, what: &str) -> Result<&'e Expr, Vec<CompileError>> {
+    match &value.node {
+        Expr::Unary(UnaryOp::Neg, operand) => Ok(&operand.node),
+        _ => Err(vec![CompileError::new(
+            format!("parser test internal error: expected {what} to group under a prefix `-`"),
             value.span,
-        )]);
-    };
-    assert!(matches!(base.node, Expr::Unary(UnaryOp::Neg, _)));
+        )]),
+    }
+}
 
-    let negated_power = parse_value("-(a ** b)")?;
-    assert!(matches!(negated_power.node, Expr::Unary(UnaryOp::Neg, _)));
+#[test]
+fn test_power_binds_tighter_than_a_prefix_operator_on_its_left_and_looser_on_its_right_issue1786()
+-> Result<(), Vec<CompileError>> {
+    // `-a ** b` is `-(a ** b)` and `~a ** b` is `~(a ** b)`; the exponent is read at the prefix level, so
+    // `a ** -b` is `a ** (-b)`; `**` stays right-associative.
+    let negated = parse_value("-a ** b")?;
+    assert!(matches!(
+        negated_operand(&negated, "`-a ** b`")?,
+        Expr::Binary(_, BinaryOp::Pow, _)
+    ));
+
+    let inverted = parse_value("~a ** b")?;
+    assert!(matches!(
+        &inverted.node,
+        Expr::Unary(UnaryOp::Invert, operand) if matches!(operand.node, Expr::Binary(_, BinaryOp::Pow, _))
+    ));
+
+    let negative_exponent = parse_value("a ** -b")?;
+    assert!(matches!(
+        &negative_exponent.node,
+        Expr::Binary(_, BinaryOp::Pow, exponent) if matches!(exponent.node, Expr::Unary(UnaryOp::Neg, _))
+    ));
+
+    let right_associative = parse_value("a ** b ** c")?;
+    assert!(matches!(
+        &right_associative.node,
+        Expr::Binary(_, BinaryOp::Pow, exponent) if matches!(exponent.node, Expr::Binary(_, BinaryOp::Pow, _))
+    ));
+
+    // A prefix operator still binds tighter than `*`, and parentheses keep a negated base.
+    let product = parse_value("-a * b")?;
+    assert!(matches!(
+        &product.node,
+        Expr::Binary(left, BinaryOp::Mul, _) if matches!(left.node, Expr::Unary(UnaryOp::Neg, _))
+    ));
+    let negated_base = parse_value("(-a) ** b")?;
+    assert!(matches!(
+        &negated_base.node,
+        Expr::Binary(base, BinaryOp::Pow, _) if !matches!(base.node, Expr::Binary(..))
+    ));
+    Ok(())
+}
+
+#[test]
+fn test_prefix_operators_nest_to_the_right_issue1786() -> Result<(), Vec<CompileError>> {
+    // `not not a` is `not (not a)`, the associativity the registry records for every prefix operator.
+    let value = parse_value("not not a")?;
+    assert!(matches!(
+        &value.node,
+        Expr::Unary(UnaryOp::Not, operand) if matches!(operand.node, Expr::Unary(UnaryOp::Not, _))
+    ));
+    for id in [OperatorId::Not, OperatorId::Tilde] {
+        assert_eq!(operators::info_for(id).associativity, Associativity::Right);
+    }
     Ok(())
 }
 

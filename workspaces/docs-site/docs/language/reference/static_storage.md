@@ -87,11 +87,11 @@ static counts: dict[str, int] = {}
 
 def record(name: str) -> None:
     items.append(len(items))
-    current = counts.get(name).copied().unwrap_or(0)
+    current = counts.get(name).unwrap_or(0)
     counts[name] = current + 1
 ```
 
-`dict.get(key)` takes one key and returns an `Option` that is `None` when the key is absent, so the fallback count is applied to that `Option` with `unwrap_or`.
+`dict.get(key)` returns `Option[V]`, `None` when the key is absent; `unwrap_or(0)` gives the count `0` for an absent name.
 
 ### Bind a direct alias
 

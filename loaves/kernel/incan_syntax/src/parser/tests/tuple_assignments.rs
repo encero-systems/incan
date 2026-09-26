@@ -1,5 +1,6 @@
 //! Tuple assignments and tuple unpacking: the value side written as a bare comma-separated tuple (`a, b = b, a`)
-//! builds the same tuple as the parenthesized spelling, for plain names, index targets and field targets (#1789).
+//! builds the same tuple as the parenthesized spelling, for plain names, index targets and field targets, except in an
+//! item of a braced vocab body, where a comma separates items (#1789).
 
 use super::*;
 
@@ -149,5 +150,68 @@ class Grid:
             if matches!(&first.node, Expr::Field(_, name) if name == "height")
                 && matches!(&second.node, Expr::Field(_, name) if name == "width")));
     }
+    Ok(())
+}
+
+/// Return the items of a braced `query { ... }` assigned by `stmt` that come before its first clause.
+fn braced_leading_items(stmt: &Spanned<Statement>) -> Result<&[Spanned<Statement>], String> {
+    let Statement::Assignment(assign) = &stmt.node else {
+        return Err(format!("expected an assignment, got {:?}", stmt.node));
+    };
+    let Expr::VocabBlock(block) = &assign.value.node else {
+        return Err(format!("expected a braced vocab block, got {:?}", assign.value.node));
+    };
+    let clauses_start = block
+        .body
+        .iter()
+        .position(|item| matches!(item.node, Statement::VocabBlock(_)))
+        .unwrap_or(block.body.len());
+    Ok(&block.body[..clauses_start])
+}
+
+#[test]
+fn test_braced_body_item_takes_no_bare_tuple_value_issue1789() -> Result<(), Box<dyn std::error::Error>> {
+    // A comma separates the items of a braced body, so a tuple unpacking there ends at its first value expression:
+    // `a, b = pair, c = 3` is two items, and `a, b = x, y` is the unpacking `a, b = x` followed by the item `y`.
+    let source = "import pub::analytics\n\ndef configure() -> None:\n  first = query { a, b = pair, c = 3 FROM orders SELECT total }\n  second = query { a, b = x, y FROM orders SELECT total }\n";
+    let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+    let metadata = incan_vocab::VocabRegistration::new()
+        .with_surface(
+            incan_vocab::DslSurface::on_import("analytics.query").with_declaration(
+                incan_vocab::DeclarationSurface::named("query")
+                    .with_clause_body()
+                    .desugars_to_expression()
+                    .with_clauses([
+                        incan_vocab::ClauseSurface::expr("FROM").required(),
+                        incan_vocab::ClauseSurface::expr_list("SELECT").required(),
+                    ]),
+            ),
+        )
+        .metadata();
+    let mut keyword_map = std::collections::HashMap::new();
+    keyword_map.insert("analytics".to_string(), metadata.keyword_registrations);
+    let mut surface_map = std::collections::HashMap::new();
+    surface_map.insert("analytics".to_string(), metadata.dsl_surfaces);
+    let program = crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+        .map_err(|errs| format!("parse errors: {errs:?}"))?;
+    let func = require_function_decl(&program.declarations[1]).map_err(|errs| format!("{errs:?}"))?;
+
+    let first = braced_leading_items(&func.body[0])?;
+    assert!(
+        matches!(first, [unpack, assign]
+            if matches!(&unpack.node, Statement::TupleUnpack(tu)
+                if tu.names == ["a", "b"] && matches!(&tu.value.node, Expr::Ident(name) if name == "pair"))
+                && matches!(&assign.node, Statement::Assignment(a) if a.name == "c")),
+        "expected `a, b = pair` and `c = 3`, got {first:?}"
+    );
+
+    let second = braced_leading_items(&func.body[1])?;
+    assert!(
+        matches!(second, [unpack, item]
+            if matches!(&unpack.node, Statement::TupleUnpack(tu)
+                if matches!(&tu.value.node, Expr::Ident(name) if name == "x"))
+                && matches!(&item.node, Statement::Expr(expr) if matches!(&expr.node, Expr::Ident(name) if name == "y"))),
+        "expected `a, b = x` and the item `y`, got {second:?}"
+    );
     Ok(())
 }

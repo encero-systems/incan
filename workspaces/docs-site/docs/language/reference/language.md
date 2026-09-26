@@ -427,9 +427,9 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 
 ### Notes
 
-- **Precedence**: Higher binds tighter (e.g. `*` > `+`). Values are relative; they record how the parser groups operators, loosest first: `or`, `and`, `not`, the comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `not in`, `is`, `is not`, `|>`, `<|`), ranges, `|`, `^`, `&`, shifts, `+` and `-`, `*`, `/`, `//`, `%` and `@`, `**`, then the prefix operators `-` and `~`.
-- **Prefix operators**: `not` binds looser than the comparisons, so `not a == b` is `not (a == b)`. Prefix `-` and `~` bind tighter than `**`, so `-x ** 2` is `(-x) ** 2`, where Python reads `-(x ** 2)`; write `-(x ** 2)` for the negated power. Prefix `-` has no row of its own: `Minus` is its infix spelling.
-- **Associativity**: How operators of the same precedence group (left-to-right vs right-to-left). `None` means the operator does not chain: `a..b..c` is a syntax error.
+- **Precedence**: Higher binds tighter (e.g. `*` > `+`). Values are relative and record how the parser groups operators. From loosest to tightest, one level per `<`: `or` < `and` < `not` < comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `not in`, `is`, `is not`, `|>`, `<|`) < ranges (`..`, `..=`) < `|` < `^` < `&` < shifts (`<<`, `>>`) < `+`, `-` < `*`, `/`, `//`, `%`, `@` < prefix `-`, `~` < `**`.
+- **Prefix operators**: `not` binds looser than the comparisons: `not a == b` is `not (a == b)`. `**` binds tighter than a prefix `-` or `~` on its left and looser than one on its right: `-x ** 2` is `-(x ** 2)`, `~x ** 2` is `~(x ** 2)`, and `2 ** -1` is `2 ** (-1)`. Prefix `-` has no row of its own (`Minus` is its infix spelling) and binds like `~`.
+- **Associativity**: How operators of the same precedence group (left-to-right vs right-to-left). A prefix operator is `Right`: `not not a` is `not (not a)`. `None` means the operator does not chain: `a..b..c` is a syntax error.
 - **Fixity**: Whether the operator is used as a prefix unary operator or an infix binary operator.
 - **KeywordSpelling**: Whether the operator token is spelled as a reserved word (e.g. `and`, `not`).
 
@@ -450,7 +450,7 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 | Caret | `^` | 44 | Left | Infix | false | RFC 028 | 0.3 | Stable |
 | Shl | `<<` | 48 | Left | Infix | false | RFC 028 | 0.3 | Stable |
 | Shr | `>>` | 48 | Left | Infix | false | RFC 028 | 0.3 | Stable |
-| Tilde | `~` | 75 | Right | Prefix | false | RFC 028 | 0.3 | Stable |
+| Tilde | `~` | 65 | Right | Prefix | false | RFC 028 | 0.3 | Stable |
 | EqEq | `==` | 40 | Left | Infix | false | RFC 000 | 0.1 | Stable |
 | NotEq | `!=` | 40 | Left | Infix | false | RFC 000 | 0.1 | Stable |
 | Lt | `<` | 40 | Left | Infix | false | RFC 000 | 0.1 | Stable |
@@ -474,7 +474,7 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 | DotDotEq | `..=` | 42 | None | Infix | false | RFC 000 | 0.1 | Stable |
 | And | `and` | 25 | Left | Infix | true | RFC 000 | 0.1 | Stable |
 | Or | `or` | 20 | Left | Infix | true | RFC 000 | 0.1 | Stable |
-| Not | `not` | 30 | Left | Prefix | true | RFC 000 | 0.1 | Stable |
+| Not | `not` | 30 | Right | Prefix | true | RFC 000 | 0.1 | Stable |
 | In | `in` | 40 | Left | Infix | true | RFC 000 | 0.1 | Stable |
 | Is | `is` | 40 | Left | Infix | true | RFC 000 | 0.1 | Stable |
 
@@ -662,7 +662,7 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 | Swap | `swap` |  | Swap two elements by index. | RFC 009 | 0.1 | Stable |
 | Reserve | `reserve` |  | Reserve capacity for at least N more elements. | RFC 009 | 0.1 | Stable |
 | ReserveExact | `reserve_exact` |  | Reserve capacity for exactly N more elements. | RFC 009 | 0.1 | Stable |
-| Remove | `remove` |  | Remove the element at the given index. Returns `None`, not the removed element. | RFC 009 | 0.1 | Stable |
+| Remove | `remove` |  | `remove(index) -> None`: remove the element at the given index. Takes exactly one argument. | RFC 009 | 0.1 | Stable |
 | Count | `count` |  | Count occurrences of a value. | RFC 009 | 0.1 | Stable |
 | Index | `index` |  | Return the index of a value (or error if not found). | RFC 009 | 0.1 | Stable |
 
@@ -673,7 +673,7 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 |---|---|---|---|---|---|---|
 | Keys | `keys` |  | Return an iterable/list of keys. | RFC 009 | 0.1 | Stable |
 | Values | `values` |  | Return an iterable/list of values. | RFC 009 | 0.1 | Stable |
-| Get | `get` |  | Look up a key: `Some(value)` when present, `None` when absent. Takes no default; apply one to the `Option` (`unwrap_or`). | RFC 009 | 0.1 | Stable |
+| Get | `get` |  | `get(key) -> Option[V]`: `Some(value)` when the key is present, `None` when it is absent. Takes exactly one argument; `counts.get(name).unwrap_or(0)` supplies a fallback. | RFC 009 | 0.1 | Stable |
 | Insert | `insert` |  | Insert or overwrite a key/value pair. | RFC 009 | 0.1 | Stable |
 | ContainsKey | `contains_key` |  | Return true if the dict contains a key. | RFC 009 | 0.6 | Stable |
 

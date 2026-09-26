@@ -941,6 +941,30 @@ impl TypeChecker {
         valid
     }
 
+    /// Refuse a call of a builtin list, dict or set method (frozen or not) whose argument count differs from the
+    /// registry arity.
+    ///
+    /// These methods are typed from the method registry rather than from a declared signature, so nothing else counts
+    /// their arguments: an extra argument, as in `counts.get(name, 0)`, would be dropped from the generated call and a
+    /// missing one, as in `items.remove()`, would reach it.
+    fn check_builtin_collection_method_arity(
+        &mut self,
+        collection: CollectionTypeId,
+        method: &str,
+        expected: usize,
+        args: &[CallArg],
+        span: Span,
+    ) {
+        if args.len() != expected {
+            self.errors.push(errors::builtin_arity(
+                &format!("{}.{method}", incan_lang::lang::types::collections::as_str(collection)),
+                expected,
+                args.len(),
+                span,
+            ));
+        }
+    }
+
     /// Validate `dict.contains_key(key)` (#1668): exactly one positional probe whose type is compatible with the key
     /// type, so a mistyped probe fails here instead of as a rustc `Borrow` error in the generated `contains_key`. The
     /// probe has no parameter name, so a named or unpacked argument is refused with the ordinary call diagnostics.
@@ -5689,6 +5713,13 @@ impl TypeChecker {
             ResolvedType::FrozenList(_) => {
                 if let Some(id) = frozen_list_methods::from_str(method) {
                     use frozen_list_methods::FrozenListMethodId as M;
+                    self.check_builtin_collection_method_arity(
+                        CollectionTypeId::FrozenList,
+                        method,
+                        frozen_list_methods::arity(id),
+                        args,
+                        span,
+                    );
                     match id {
                         M::Len => return ResolvedType::Int,
                         M::IsEmpty => return ResolvedType::Bool,
@@ -5698,6 +5729,13 @@ impl TypeChecker {
             ResolvedType::FrozenSet(_) => {
                 if let Some(id) = frozen_set_methods::from_str(method) {
                     use frozen_set_methods::FrozenSetMethodId as M;
+                    self.check_builtin_collection_method_arity(
+                        CollectionTypeId::FrozenSet,
+                        method,
+                        frozen_set_methods::arity(id),
+                        args,
+                        span,
+                    );
                     match id {
                         M::Len => return ResolvedType::Int,
                         M::IsEmpty | M::Contains => return ResolvedType::Bool,
@@ -5707,6 +5745,13 @@ impl TypeChecker {
             ResolvedType::FrozenDict(_, _) => {
                 if let Some(id) = frozen_dict_methods::from_str(method) {
                     use frozen_dict_methods::FrozenDictMethodId as M;
+                    self.check_builtin_collection_method_arity(
+                        CollectionTypeId::FrozenDict,
+                        method,
+                        frozen_dict_methods::arity(id),
+                        args,
+                        span,
+                    );
                     match id {
                         M::Len => return ResolvedType::Int,
                         M::IsEmpty | M::ContainsKey => return ResolvedType::Bool,
@@ -5840,6 +5885,13 @@ impl TypeChecker {
                 let elem = type_args.first().cloned().unwrap_or(ResolvedType::Unknown);
                 if let Some(id) = list_methods::from_str(method) {
                     use list_methods::ListMethodId as M;
+                    self.check_builtin_collection_method_arity(
+                        CollectionTypeId::List,
+                        method,
+                        list_methods::arity(id),
+                        args,
+                        span,
+                    );
                     match id {
                         M::Append => {
                             let clone_ty = arg_types.first().unwrap_or(&elem);
@@ -5873,13 +5925,6 @@ impl TypeChecker {
                             return ResolvedType::Unit;
                         }
                         M::Clone => {
-                            if !args.is_empty() {
-                                self.errors.push(errors::type_mismatch(
-                                    "no arguments",
-                                    &format!("{} argument(s)", args.len()),
-                                    span,
-                                ));
-                            }
                             if !self.is_copy_type(&elem) && !self.is_clone_type(&elem) {
                                 self.errors
                                     .push(errors::list_clone_requires_clone(&elem.to_string(), span));
@@ -5898,6 +5943,16 @@ impl TypeChecker {
                 let val = type_args.get(1).cloned().unwrap_or(ResolvedType::Unknown);
                 if let Some(id) = dict_methods::from_str(method) {
                     use dict_methods::DictMethodId as M;
+                    // `contains_key` validates its own argument, count included.
+                    if id != M::ContainsKey {
+                        self.check_builtin_collection_method_arity(
+                            CollectionTypeId::Dict,
+                            method,
+                            dict_methods::arity(id),
+                            args,
+                            span,
+                        );
+                    }
                     match id {
                         M::Keys => return list_ty(key),
                         M::Values => return list_ty(val),
@@ -5917,6 +5972,13 @@ impl TypeChecker {
                 && let Some(id) = set_methods::from_str(method)
             {
                 use set_methods::SetMethodId as M;
+                self.check_builtin_collection_method_arity(
+                    CollectionTypeId::Set,
+                    method,
+                    set_methods::arity(id),
+                    args,
+                    span,
+                );
                 return match id {
                     M::Add => ResolvedType::Unit,
                     M::Contains => ResolvedType::Bool,

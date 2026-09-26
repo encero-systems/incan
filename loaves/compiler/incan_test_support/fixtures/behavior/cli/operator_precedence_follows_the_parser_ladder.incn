@@ -1,10 +1,14 @@
-# behavior: mixed operators group by the documented precedence: or is looser than and, and is looser than not, in sits at the comparison level, and a prefix minus or tilde binds tighter than a power
+# behavior: mixed operators group by the documented precedence: or is looser than and, and is looser than not, in sits at the comparison level, and a power binds tighter than a prefix minus or tilde on its left and looser than one on its right
+# retires: loaves/compiler/incan_ir/src/lower/tests/unary_operand_grouping.rs::prefix_operator_over_a_power_lowers_a_grouped_power_issue1786
+# retires: loaves/compiler/incan_emit/src/tests/power_grouping_emission.rs::prefix_operator_over_a_power_emits_over_the_whole_power_issue1786
 # expect-stdout:
 #   true
 #   false
 #   false
+#   -4
+#   -5
 #   4
-#   9
+#   0.5
 
 def main() -> None:
     values = [1, 2]
@@ -14,3 +18,5 @@ def main() -> None:
     println(2 in values and 3 in values)
     println(-base ** 2)
     println(~base ** 2)
+    println((-base) ** 2)
+    println(base ** -1)

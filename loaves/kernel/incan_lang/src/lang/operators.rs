@@ -105,7 +105,9 @@ pub enum OperatorId {
 /// - `precedence` is a relative ordering where higher binds tighter. The absolute scale is an implementation detail.
 ///   The parser's precedence ladder (`incan_syntax`'s `parser/expr.rs`) does not read these values; they document it
 ///   for the generated language reference, and the parser's `operator_precedence` tests hold the two in step.
-/// - Prefix `-` has no entry of its own (`Minus` is the infix spelling); it binds like `~`, tighter than `**`.
+/// - Prefix `-` has no entry of its own (`Minus` is the infix spelling); it binds like `~`. `**` binds tighter than a
+///   prefix operator on its left and looser than one on its right, so `-x ** 2` is `-(x ** 2)` and `2 ** -1` is `2 **
+///   (-1)`.
 #[derive(Debug, Clone, Copy)]
 pub struct OperatorInfo {
     pub id: OperatorId,
@@ -278,7 +280,7 @@ pub const OPERATORS: &[OperatorInfo] = &[
     op(
         OperatorId::Tilde,
         &["~"],
-        75,
+        65,
         Associativity::Right,
         Fixity::Prefix,
         false,
@@ -523,7 +525,7 @@ pub const OPERATORS: &[OperatorInfo] = &[
         OperatorId::Not,
         &["not"],
         30,
-        Associativity::Left,
+        Associativity::Right,
         Fixity::Prefix,
         true,
         RFC::_000,

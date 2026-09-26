@@ -18,6 +18,7 @@ mod tests;
 use super::config::FormatConfig;
 use super::writer::FormatWriter;
 use incan_syntax::ast::*;
+use statements::TupleValueLayout;
 
 pub(super) const RFC053_TOP_LEVEL_BLANK_LINES: usize = 2;
 pub(super) const RFC053_METHOD_BLANK_LINES: usize = 1;
@@ -120,6 +121,8 @@ impl Formatter {
                 self.format_expr(&expr.node);
                 self.writer.newline();
             }
+            Statement::TupleUnpack(unpack) => self.format_tuple_unpack(unpack, TupleValueLayout::Parenthesized),
+            Statement::TupleAssign(assign) => self.format_tuple_assign(assign, TupleValueLayout::Parenthesized),
             _ => self.format_statement(stmt),
         }
     }

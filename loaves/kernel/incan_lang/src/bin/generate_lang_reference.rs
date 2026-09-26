@@ -530,13 +530,13 @@ fn render_operators_section(out: &mut String) {
 
     out.push_str("### Notes\n\n");
     out.push_str(
-        "- **Precedence**: Higher binds tighter (e.g. `*` > `+`). Values are relative; they record how the parser groups operators, loosest first: `or`, `and`, `not`, the comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `not in`, `is`, `is not`, `|>`, `<|`), ranges, `|`, `^`, `&`, shifts, `+` and `-`, `*`, `/`, `//`, `%` and `@`, `**`, then the prefix operators `-` and `~`.\n",
+        "- **Precedence**: Higher binds tighter (e.g. `*` > `+`). Values are relative and record how the parser groups operators. From loosest to tightest, one level per `<`: `or` < `and` < `not` < comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `not in`, `is`, `is not`, `|>`, `<|`) < ranges (`..`, `..=`) < `|` < `^` < `&` < shifts (`<<`, `>>`) < `+`, `-` < `*`, `/`, `//`, `%`, `@` < prefix `-`, `~` < `**`.\n",
     );
     out.push_str(
-        "- **Prefix operators**: `not` binds looser than the comparisons, so `not a == b` is `not (a == b)`. Prefix `-` and `~` bind tighter than `**`, so `-x ** 2` is `(-x) ** 2`, where Python reads `-(x ** 2)`; write `-(x ** 2)` for the negated power. Prefix `-` has no row of its own: `Minus` is its infix spelling.\n",
+        "- **Prefix operators**: `not` binds looser than the comparisons: `not a == b` is `not (a == b)`. `**` binds tighter than a prefix `-` or `~` on its left and looser than one on its right: `-x ** 2` is `-(x ** 2)`, `~x ** 2` is `~(x ** 2)`, and `2 ** -1` is `2 ** (-1)`. Prefix `-` has no row of its own (`Minus` is its infix spelling) and binds like `~`.\n",
     );
     out.push_str(
-        "- **Associativity**: How operators of the same precedence group (left-to-right vs right-to-left). `None` means the operator does not chain: `a..b..c` is a syntax error.\n",
+        "- **Associativity**: How operators of the same precedence group (left-to-right vs right-to-left). A prefix operator is `Right`: `not not a` is `not (not a)`. `None` means the operator does not chain: `a..b..c` is a syntax error.\n",
     );
     out.push_str(
         "- **Fixity**: Whether the operator is used as a prefix unary operator or an infix binary operator.\n",

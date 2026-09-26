@@ -336,6 +336,13 @@ pub mod set_methods {
         super::info_for_impl(SET_METHODS, id, "set method info missing")
     }
 
+    /// Return how many arguments a set method takes; a call with any other count is refused.
+    pub fn arity(id: SetMethodId) -> usize {
+        match id {
+            SetMethodId::Add | SetMethodId::Contains => 1,
+        }
+    }
+
     const fn info(
         id: SetMethodId,
         canonical: &'static str,
@@ -450,7 +457,7 @@ pub mod list_methods {
             ListMethodId::Remove,
             "remove",
             &[],
-            "Remove the element at the given index. Returns `None`, not the removed element.",
+            "`remove(index) -> None`: remove the element at the given index. Takes exactly one argument.",
             RFC::_009,
             Since(0, 1),
         ),
@@ -488,6 +495,22 @@ pub mod list_methods {
     /// - If the registry is missing an entry for `id` (this indicates a programming error).
     pub fn info_for(id: ListMethodId) -> &'static ListMethodInfo {
         super::info_for_impl(LIST_METHODS, id, "list method info missing")
+    }
+
+    /// Return how many arguments a list method takes; a call with any other count is refused.
+    pub fn arity(id: ListMethodId) -> usize {
+        match id {
+            ListMethodId::Clone | ListMethodId::Pop => 0,
+            ListMethodId::Append
+            | ListMethodId::Extend
+            | ListMethodId::Contains
+            | ListMethodId::Reserve
+            | ListMethodId::ReserveExact
+            | ListMethodId::Remove
+            | ListMethodId::Count
+            | ListMethodId::Index => 1,
+            ListMethodId::Swap => 2,
+        }
     }
 
     const fn info(
@@ -551,7 +574,7 @@ pub mod dict_methods {
             DictMethodId::Get,
             "get",
             &[],
-            "Look up a key: `Some(value)` when present, `None` when absent. Takes no default; apply one to the `Option` (`unwrap_or`).",
+            "`get(key) -> Option[V]`: `Some(value)` when the key is present, `None` when it is absent. Takes exactly one argument; `counts.get(name).unwrap_or(0)` supplies a fallback.",
             RFC::_009,
             Since(0, 1),
         ),
@@ -589,6 +612,15 @@ pub mod dict_methods {
     /// - If the registry is missing an entry for `id` (this indicates a programming error).
     pub fn info_for(id: DictMethodId) -> &'static DictMethodInfo {
         super::info_for_impl(DICT_METHODS, id, "dict method info missing")
+    }
+
+    /// Return how many arguments a dict method takes; a call with any other count is refused.
+    pub fn arity(id: DictMethodId) -> usize {
+        match id {
+            DictMethodId::Keys | DictMethodId::Values => 0,
+            DictMethodId::Get | DictMethodId::ContainsKey => 1,
+            DictMethodId::Insert => 2,
+        }
     }
 
     const fn info(
@@ -673,6 +705,14 @@ pub mod frozen_set_methods {
         super::info_for_impl(FROZEN_SET_METHODS, id, "frozen set method info missing")
     }
 
+    /// Return how many arguments a frozen set method takes; a call with any other count is refused.
+    pub fn arity(id: FrozenSetMethodId) -> usize {
+        match id {
+            FrozenSetMethodId::Len | FrozenSetMethodId::IsEmpty => 0,
+            FrozenSetMethodId::Contains => 1,
+        }
+    }
+
     const fn info(
         id: FrozenSetMethodId,
         canonical: &'static str,
@@ -744,6 +784,13 @@ pub mod frozen_list_methods {
     /// - If the registry is missing an entry for `id` (this indicates a programming error).
     pub fn info_for(id: FrozenListMethodId) -> &'static FrozenListMethodInfo {
         super::info_for_impl(FROZEN_LIST_METHODS, id, "frozen list method info missing")
+    }
+
+    /// Return how many arguments a frozen list method takes; a call with any other count is refused.
+    pub fn arity(id: FrozenListMethodId) -> usize {
+        match id {
+            FrozenListMethodId::Len | FrozenListMethodId::IsEmpty => 0,
+        }
     }
 
     const fn info(
@@ -826,6 +873,14 @@ pub mod frozen_dict_methods {
     /// - If the registry is missing an entry for `id` (this indicates a programming error).
     pub fn info_for(id: FrozenDictMethodId) -> &'static FrozenDictMethodInfo {
         super::info_for_impl(FROZEN_DICT_METHODS, id, "frozen dict method info missing")
+    }
+
+    /// Return how many arguments a frozen dict method takes; a call with any other count is refused.
+    pub fn arity(id: FrozenDictMethodId) -> usize {
+        match id {
+            FrozenDictMethodId::Len | FrozenDictMethodId::IsEmpty => 0,
+            FrozenDictMethodId::ContainsKey => 1,
+        }
     }
 
     const fn info(
