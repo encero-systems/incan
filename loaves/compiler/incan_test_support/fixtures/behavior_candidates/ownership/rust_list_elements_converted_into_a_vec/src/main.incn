@@ -1,0 +1,14 @@
+# behavior: a list of str passed to a Rust function taking a Vec of a type built from String has each element converted, and an empty list literal passes as an empty Vec
+# retires: loaves/compiler/incan_emit/src/ownership.rs::argument_plan_external_list_element_into_is_value_plan
+# retires: loaves/compiler/incan_emit/src/ownership.rs::argument_plan_external_list_element_into_skips_empty_list_literals
+# expect-stdout:
+#   3
+#   0
+
+from rust::name_list import total_length
+
+
+def main() -> None:
+    names = ["ab", "c"]
+    println(total_length(names))
+    println(total_length([]))

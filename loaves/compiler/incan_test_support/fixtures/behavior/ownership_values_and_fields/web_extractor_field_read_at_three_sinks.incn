@@ -1,0 +1,54 @@
+# behavior: a str field read through a Query or Json extractor wrapper is stored into a model field, collected into a list and assigned to a local, each carrying the text, while a plain generic holder hands its field over at its last use
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_field_read_through_a_transparent_wrapper_always_clones
+# expect-stdout:
+#   orders
+#   ["orders"]
+#   orders
+#   posted
+#   held
+
+from std.web import Json, Query
+from std.serde import json
+
+
+@derive(json)
+model Search:
+    q: str
+
+
+model Reply:
+    value: str
+
+
+model Holder[T]:
+    value: T
+
+
+def to_reply(query: Query[Search]) -> Reply:
+    return Reply(value=query.q)
+
+
+def to_list(query: Query[Search]) -> list[str]:
+    return [query.q]
+
+
+def to_local(query: Query[Search]) -> str:
+    picked = query.q
+    return picked
+
+
+def from_body(body: Json[Search]) -> Reply:
+    return Reply(value=body.q)
+
+
+def from_holder(holder: Holder[str]) -> Reply:
+    return Reply(value=holder.value)
+
+
+def main() -> None:
+    println(to_reply(Query(Search(q="orders"))).value)
+    listed = to_list(Query(Search(q="orders")))
+    println(f"{listed:?}")
+    println(to_local(Query(Search(q="orders"))))
+    println(from_body(Json(Search(q="posted"))).value)
+    println(from_holder(Holder(value="held")).value)

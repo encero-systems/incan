@@ -1,0 +1,39 @@
+# behavior: arithmetic between two f32 values stays f32 (0.1 + 0.2 prints as 0.3, and subtraction, multiplication, division and modulo keep that precision), an f32 mixed with a float, an f64 or an int widens to float precision on either side, and finite float values are accepted at f64 destinations
+# retires: loaves/compiler/incan_emit/src/conversions.rs::exact_float_arithmetic_plans_keep_width_and_validate_each_result
+# retires: loaves/compiler/incan_emit/src/conversions.rs::mixed_f32_arithmetic_plans_widen_the_concrete_f32_operand
+# expect-stdout:
+#   0.3
+#   0.3 0.25 2.5 0.1
+#   0.30000000000000004
+#   0.30000000149011613
+#   0.30000000149011613
+#   0.30000000149011613
+#   0.30000000149011613
+#   0.5
+#   2.5
+#   3.5
+#   1.25 1.25
+
+def widened(value: float) -> f64:
+    return value
+
+
+def main() -> None:
+    narrow_left: f32 = 0.1
+    narrow_right: f32 = 0.2
+    println(narrow_left + narrow_right)
+    half: f32 = 0.5
+    println(f"{half - narrow_right} {half * half} {half / narrow_right} {narrow_left % half}")
+    wide_left: f64 = 0.1
+    wide_right: f64 = 0.2
+    println(wide_left + wide_right)
+    mixed: float = 0.2
+    println(narrow_left + mixed)
+    println(mixed + narrow_left)
+    println(narrow_left + wide_right)
+    println(wide_right + narrow_left)
+    println(half * 1.0)
+    println(half + 2)
+    println(3 + half)
+    exact: f64 = 1.25
+    println(f"{exact} {widened(1.25)}")

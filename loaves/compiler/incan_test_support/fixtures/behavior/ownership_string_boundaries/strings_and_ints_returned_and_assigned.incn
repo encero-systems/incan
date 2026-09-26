@@ -1,0 +1,52 @@
+# behavior: functions return a literal, a str const, a str static and an int const unchanged, and locals take a literal, a const and a static of str and int type with their declared values
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_return_string_literal_to_string
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_return_static_str_to_string
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_return_static_read_to_string
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_return_int_no_conversion
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_assignment_string_literal_to_string
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_assignment_static_str_to_string
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_assignment_static_read_int_stays_as_is
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_assignment_int_no_conversion
+# expect-stdout:
+#   lit
+#   pre
+#   base
+#   42
+#   n pre base
+#   7 42 3
+
+const PREFIX: str = "pre"
+const MARKER: int = 7
+static BASE: str = "base"
+static COUNT: int = 3
+
+
+def literal() -> str:
+    return "lit"
+
+
+def prefix() -> str:
+    return PREFIX
+
+
+def base() -> str:
+    return BASE
+
+
+def answer() -> int:
+    return 42
+
+
+def main() -> None:
+    println(literal())
+    println(prefix())
+    println(base())
+    println(answer())
+    name: str = "n"
+    p: str = PREFIX
+    b = BASE
+    println(f"{name} {p} {b}")
+    marker: int = MARKER
+    count: int = 42
+    stored = COUNT
+    println(f"{marker} {count} {stored}")
