@@ -64,12 +64,12 @@ pub use type_info::{
     CBindingParameter, CBindingRawCall, CBindingRawCallOwner, CBindingResource, CBindingStruct, CBindingStructField,
     CBindingSymbol, CBindingType, COutputMode, CResourceAccess, CapabilityDeclarationInfo, CheckedImportBindings,
     CheckedSourceBinding, ComputedPropertyAccessInfo, DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo,
-    FixedUnpackPlan, FunctionBindingInfo, IdentKind, ImportedRegistryDefinitionInfo, MethodDecoratorReceiverRole,
-    MethodDecoratorReceiverSlot, MutableRustTypeArgumentProjection, PartialProjectionInfo, PartialProjectionPreset,
-    PartialProjectionTargetKind, ProtocolIterationInfo, ProviderOperationDeclarationInfo, QualifiedTypeReferenceInfo,
-    RegistryArtifacts, RegistryDefinitionInfo, RegistryDescriptionRegistry, RegistryExplicitEntryInfo,
-    ResolvedMethodCall, ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind, RustArgCoercionInfo,
-    RustArgCoercionKind, SourceTargetInfo, StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo,
+    ErrorMessageDisplay, FixedUnpackPlan, FunctionBindingInfo, IdentKind, ImportedRegistryDefinitionInfo,
+    MethodDecoratorReceiverRole, MethodDecoratorReceiverSlot, MutableRustTypeArgumentProjection, PartialProjectionInfo,
+    PartialProjectionPreset, PartialProjectionTargetKind, ProtocolIterationInfo, ProviderOperationDeclarationInfo,
+    QualifiedTypeReferenceInfo, RegistryArtifacts, RegistryDefinitionInfo, RegistryDescriptionRegistry,
+    RegistryExplicitEntryInfo, ResolvedMethodCall, ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind,
+    RustArgCoercionInfo, RustArgCoercionKind, SourceTargetInfo, StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo,
     ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode, ValidatedNewtypeCoercionStep,
     c_binding_descriptor_identity,
 };
@@ -5664,7 +5664,17 @@ impl TypeChecker {
             (Some(mut module_path), Some((member, nested))) => {
                 module_path.extend(nested.iter().cloned());
                 let module = Self::module_import_spelling(&module_path);
-                errors::qualified_type_not_declared(&spelling, &module, member, span)
+                // A compiler surface type the module provides (`std.web`'s `Html`) is bound by a direct import but
+                // has no declaration a qualified reference could name (#1824); say so rather than that the module
+                // declares nothing by that name.
+                let module_provides_surface_type = surface_types::from_str(member)
+                    .and_then(surface_types::stdlib_module_path)
+                    .is_some_and(|provider| provider == module_path.join("."));
+                if module_provides_surface_type {
+                    errors::qualified_type_names_surface_type(&spelling, &module, member, span)
+                } else {
+                    errors::qualified_type_not_declared(&spelling, &module, member, span)
+                }
             }
             _ => errors::qualified_type_root_not_a_module(&spelling, root, span),
         };

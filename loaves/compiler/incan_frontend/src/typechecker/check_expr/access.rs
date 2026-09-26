@@ -3731,6 +3731,36 @@ impl TypeChecker {
         }
     }
 
+    /// Resolve a zero-argument `receiver.method()` the compiler synthesizes, exactly as the written call is resolved
+    /// on a source-declared receiver.
+    ///
+    /// This is the first resolution a written call reaches (`check_method_call_with_expected`): the owner's sole
+    /// direct method, else its sole adopted trait method, with the same recorded facts at `call_span`, and the same
+    /// trait-module inheritance from `receiver_span`. `None` when that path does not decide the call, in which case a
+    /// written call falls through to the general method resolution.
+    pub(in crate::typechecker::check_expr) fn resolve_synthesized_source_method_call(
+        &mut self,
+        method: &str,
+        receiver_ty: &ResolvedType,
+        receiver_span: Span,
+        call_span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> Option<ResolvedType> {
+        let call = SourceMethodPrepass {
+            method,
+            receiver_surface: MemberBindingSurface::Instance,
+            type_args: &[],
+            args: &[],
+            span: call_span,
+            receiver_ty,
+            expected_return_ty,
+        };
+        let ret = self.resolve_unambiguous_source_method_without_arg_prepass(&call)?;
+        self.type_info
+            .inherit_same_trait_method_module(receiver_span, call_span);
+        Some(ret)
+    }
+
     /// Resolve one source owner's sole direct or adopted method with declared argument context.
     fn resolve_source_owner_method_without_arg_prepass(
         &mut self,

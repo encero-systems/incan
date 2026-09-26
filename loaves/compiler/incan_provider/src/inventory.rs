@@ -74,6 +74,20 @@ pub fn discover_active_sdk_inventory() -> ProviderResult<Option<Arc<SdkInventory
     Ok(Some(Arc::new(inventory)))
 }
 
+/// Discover an installed SDK inventory, or reuse the one a source checkout already published, without ever building.
+///
+/// This is the resolution every command that must not launch the provider builder uses (the Oven `run`, `build`,
+/// `oven bake`, test collection and formatting). It finds what [`prepare_or_discover_sdk_inventory`] would return
+/// whenever that needs no build: an installed or explicitly named inventory first, then the source checkout's
+/// published one. Only an unpublished checkout still yields `None`, so a program `incan check` accepted parses the
+/// same way here, with the standard library's vocabulary (#1774).
+pub fn discover_or_reuse_published_sdk_inventory() -> ProviderResult<Option<Arc<SdkInventory>>> {
+    if let Some(inventory) = discover_active_sdk_inventory()? {
+        return Ok(Some(inventory));
+    }
+    crate::sdk_build::find_published_sdk_provider_inventory()
+}
+
 /// Discover an installed SDK inventory or publish the source checkout's component providers on demand.
 pub fn prepare_or_discover_sdk_inventory() -> ProviderResult<Option<Arc<SdkInventory>>> {
     if let Some(inventory) = discover_active_sdk_inventory()? {

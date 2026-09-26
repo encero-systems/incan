@@ -75,6 +75,8 @@ An f-string interpolates any expression between `{` and `}`; the value is format
 
 A `float` in a `Display` position — an f-string `{value}`, `str(value)`, or `print`/`println` — renders as Python spells it: always visibly a float. An integral value keeps its decimal point (`100.0`, never `100`), the shortest digits that round-trip are used (`1.5`, `0.30000000000000004`), positional notation holds while the magnitude is at least `1e-4` and below `1e16` (`10000000000.0`) and switches to an exponent with an explicit sign and at least two digits outside that range (`1e+16`, `1.5e-07`), and the non-finite values are `inf`, `-inf`, and `nan`. The exact `f32`/`f64` carriers keep Rust's own `Display`.
 
+A value whose type adopts `Error` and has no `Display` of its own renders its `message()` in a `Display` position: an f-string `{value}`, `str(value)`, and `print`/`println`. `{value:?}` keeps `Debug`. See [Error trait](./stdlib_traits/error.md#displaying-an-error).
+
 See [String representation](./derives/string_representation.md) for how a type provides `Display` and `Debug`.
 
 ## See also

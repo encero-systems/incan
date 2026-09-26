@@ -3823,6 +3823,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/error_display.rs": {
+      "disposition": "keep",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/extern_and_c_bindings.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route.",
@@ -4000,6 +4008,14 @@
       "twin": ""
     },
     "loaves/compiler/incan_frontend/src/typechecker/tests/traits.rs": {
+      "disposition": "keep",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/web_route_payloads.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
       "owner": 1561,
@@ -4628,6 +4644,32 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_ir/src/lower/tests/error_message_display.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "error_adopter_without_str_displays_through_message_issue1778": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/error_adopter_displays_its_message.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (an f-string part, `str` argument and `print` argument of an `Error` adopter with no `__str__` become its `message()` call, spelled as a written call is); retires with `incan_ir`. The behavior, each display position printing the message, is carried by the named fixture (#1778)."
+        },
+        "generic_and_trait_default_adopters_display_through_trait_dispatch_issue1778": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/error_adopter_displays_its_message.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (a trait-default `message` and a type parameter bounded by `Error` display through the trait-dispatched call a written `message()` lowers to); retires with `incan_ir`. The fixture carries the type-parameter half; the trait-default half cannot run until #1825, because that adopter shape does not build even without a display."
+        },
+        "namespaced_builtins_display_error_adopters_through_message_issue1778": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/error_adopter_displays_its_message.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (`std.builtins.str`/`std.builtins.println` display an `Error` adopter through `message()`); retires with `incan_ir`. The behavior is carried by the named fixture (#1778)."
+        },
+        "self_in_an_error_trait_default_displays_per_adopter_issue1778": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/error_adopter_displays_its_message.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (`{self}` in an `Error` subtrait's default displays `self.message()` in an adopter without `__str__` and itself in one with `__str__`); retires with `incan_ir`. The behavior is carried by the named fixture (#1778)."
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_ir/src/lower/tests/method_decorator_receivers.rs": {
       "disposition": "retire",
       "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
@@ -4676,6 +4718,28 @@
         "prefix_operator_over_an_operator_expression_lowers_a_grouped_operand_issue1763": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/negation_keeps_its_operand_grouping.incn",
           "notes": "Asserts the recorded shape on the legacy IR (an operator-shaped operand of `not`, unary `-` or `~` is handed to the emitter as one grouped value in its own type; an atomic operand stays as written); retires with `incan_ir`. The behavior, `not (1 == 2)` printing `true` and `-(2 + 3)` printing `-5`, is carried by the named fixture (#1763)."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/web_surface.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "aliased_std_web_html_lowers_with_its_text_body_issue1768": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/web_html_response_type.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (an aliased `std.web` `Html` lowers to `Page<String>`); retires with `incan_ir`. The behavior, a function returning the aliased `Html` building and running, is carried by the named fixture (#1768)."
+        },
+        "std_web_html_return_type_lowers_with_its_text_body_issue1768": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/web_html_response_type.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (a declared `Html` return type lowers to `Html<String>`); retires with `incan_ir`. The behavior, a route handler and a function returning `Html` building and running, is carried by the named fixture (#1768)."
+        },
+        "web_extractor_value_reads_the_payload_field_issue1768": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/web_extractor_value_reads_the_payload.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (`query.value` reads the extractor's tuple field `0`, typed as the payload); retires with `incan_ir`. The behavior, `.value` returning the wrapped model, is carried by the named fixture (#1768)."
         }
       },
       "twin": ""

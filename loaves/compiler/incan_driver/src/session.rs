@@ -32,7 +32,7 @@ use incan_frontend::typechecker::TypeCheckInfo;
 use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_frontend::{diagnostics, lexer, parser, vocab_desugar_pass};
 use incan_provider::inventory::{
-    discover_active_sdk_inventory, prepare_or_discover_sdk_inventory, provider_used_module_paths,
+    discover_or_reuse_published_sdk_inventory, prepare_or_discover_sdk_inventory, provider_used_module_paths,
     resolve_sdk_component_selection, sdk_provider_bootstrap_namespace_roots, validate_component_inventory_selection,
 };
 use incan_provider::requirements::{
@@ -330,7 +330,9 @@ impl CompilationSession {
         let source_root = resolve_source_root(&project_root, manifest.as_ref());
         let sdk_inventory = match sdk_source {
             SdkInventorySource::PrepareLegacyCargoIfAbsent => prepare_or_discover_sdk_inventory()?,
-            SdkInventorySource::DiscoverOnly => discover_active_sdk_inventory()?,
+            // An Oven command never builds the providers, but it reuses the inventory `incan check` published for a
+            // source checkout, so both parse a file with the same standard-library vocabulary (#1774).
+            SdkInventorySource::DiscoverOnly => discover_or_reuse_published_sdk_inventory()?,
         };
         let package_feature_plan = manifest
             .as_ref()
@@ -384,10 +386,12 @@ impl CompilationSession {
             .map_err(|error| CliError::failure(error.to_string()))?
             .unwrap_or_default();
         // Collection and execution must resolve the same SDK catalog. In a source checkout there is no installed
-        // inventory to discover, so a parser-only collection that skipped publication silently fell back to the
-        // legacy monolithic stdlib. Besides losing component-aware diagnostics, that made a transient SDK profile
-        // fail during collection and allowed the lock projection to drift before execution prepared the artifacts.
-        // Publication is content-addressed and reused; parser-only mode still avoids preparing ordinary dependencies.
+        // inventory to discover, so a session that neither published nor reused the checkout's inventory silently fell
+        // back to the legacy monolithic stdlib. Besides losing component-aware diagnostics and the standard library's
+        // vocabulary, that made a transient SDK profile fail during collection and allowed the lock projection to
+        // drift before execution prepared the artifacts. Publication is content-addressed: the check path publishes
+        // or reuses it, the Oven and collection paths reuse it only, and parser-only mode still avoids preparing
+        // ordinary dependencies.
         validate_component_inventory_selection(manifest.as_ref(), sdk_profile_override, sdk_inventory.as_deref())?;
         let sdk_selection =
             SdkComponentSelection::from_manifest_with_profile_override(manifest.as_ref(), sdk_profile_override);
@@ -905,6 +909,105 @@ mod tests {
 
         assert!(analysis.type_info_for_module_path(&["first".to_string()]).is_some());
         assert!(analysis.type_info_for_module_path(&["second".to_string()]).is_some());
+        Ok(())
+    }
+
+    /// The Oven session reuses the SDK inventory the check session published for a source checkout (#1774).
+    ///
+    /// `incan check` builds its session with [`SdkInventorySource::PrepareLegacyCargoIfAbsent`] and publishes the
+    /// checkout's component providers; `incan run`, `build` and `oven bake` build theirs with
+    /// [`SdkInventorySource::DiscoverOnly`] and never build providers. Before #1774 the Oven session found no
+    /// inventory in a checkout and parsed without the standard library's vocabulary. The suite exports
+    /// `INCAN_SDK_INVENTORY`, which would hide the difference, so the sessions are discovered in a child process
+    /// with that override removed and a synthetic checkout (an empty component catalog) as the only source of an
+    /// inventory: nothing before the check session publishes, and exactly the published inventory after.
+    #[test]
+    fn oven_session_reuses_the_inventory_the_check_session_published_issue1774()
+    -> Result<(), Box<dyn std::error::Error>> {
+        const CHILD: &str = "INCAN_TEST_1774_SESSION_CHILD";
+        const ENTRY: &str = "INCAN_TEST_1774_ENTRY";
+        if std::env::var_os(CHILD).is_some() {
+            let entry = PathBuf::from(std::env::var_os(ENTRY).ok_or("the child needs its entry path")?);
+            let selection = FeatureSelection::default();
+            let before = CompilationSession::discover_for_oven(&entry, &selection, None)?;
+            if let Some(inventory) = before.sdk_inventory.as_ref() {
+                return Err(format!("nothing is published yet, found {}", inventory.root.display()).into());
+            }
+            let check = CompilationSession::discover_with_selections(&entry, &selection, None)?;
+            let published = check
+                .sdk_inventory
+                .as_ref()
+                .ok_or("the check session publishes the checkout's inventory")?
+                .root
+                .clone();
+            let after = CompilationSession::discover_for_oven(&entry, &selection, None)?;
+            let reused = after
+                .sdk_inventory
+                .as_ref()
+                .ok_or("the Oven session must reuse the published inventory")?
+                .root
+                .clone();
+            assert_eq!(
+                reused, published,
+                "the Oven session reads the inventory the check session published"
+            );
+            return Ok(());
+        }
+
+        // ---- A synthetic compiler checkout whose component catalog publishes without building anything ----
+        let tmp = tempfile::tempdir()?;
+        let checkout = tmp.path().join("checkout");
+        let stdlib_root = checkout.join("loaves/stdlib");
+        std::fs::create_dir_all(checkout.join("loaves/compiler/incan_emit/src"))?;
+        std::fs::create_dir_all(&stdlib_root)?;
+        std::fs::write(checkout.join("Cargo.toml"), "[workspace]\nmembers = []\n")?;
+        std::fs::write(
+            checkout.join("loaves/compiler/incan_emit/Cargo.toml"),
+            "[package]\nname = \"incan_emit\"\n",
+        )?;
+        std::fs::write(
+            stdlib_root.join(incan_provider::SDK_SOURCE_CATALOG_FILE),
+            format!(
+                "[sdk]\nid = \"incan\"\nversion = \"{version}\"\ncompiler-requirement = \"={version}\"\n[profiles]\ndefault = []\nfull = []\n[components]\n",
+                version = incan_lang::version::INCAN_VERSION,
+            ),
+        )?;
+        let project = tmp.path().join("project");
+        std::fs::create_dir_all(&project)?;
+        let entry = project.join("main.incn");
+        std::fs::write(&entry, "def main() -> None:\n    pass\n")?;
+        let store = tmp.path().join("store");
+
+        let current_exe = std::env::current_exe()?;
+        let child = std::process::Command::new(&current_exe)
+            .args([
+                "--exact",
+                "session::tests::oven_session_reuses_the_inventory_the_check_session_published_issue1774",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env(ENTRY, &entry)
+            .env("INCAN_STDLIB", &stdlib_root)
+            .env("INCAN_STDLIB_DIR", &stdlib_root)
+            .env("INCAN_SOURCE_ROOT", &checkout)
+            .env(incan_provider::sdk_store::INTERNAL_SDK_PROVIDER_STORE_ENV, &store)
+            // Publication needs a builder executable to name; an empty catalog never launches it.
+            .env("CARGO_BIN_EXE_incan", &current_exe)
+            .env_remove(incan_provider::inventory::SDK_INVENTORY_OVERRIDE_ENV)
+            .env_remove(incan_provider::sdk_store::INTERNAL_SDK_PROVIDER_PATH_FILE_ENV)
+            .env_remove(incan_provider::sdk_store::INTERNAL_SDK_DISTRIBUTION_PROFILE_ENV)
+            .env_remove(incan_provider::SDK_PROVIDER_BUILD_ENV)
+            .output()?;
+        let stdout = String::from_utf8_lossy(&child.stdout);
+        assert!(
+            child.status.success(),
+            "the child session check failed:\n{stdout}\n{}",
+            String::from_utf8_lossy(&child.stderr)
+        );
+        assert!(
+            stdout.contains("1 passed"),
+            "the child must run exactly this test, not an empty filter:\n{stdout}"
+        );
         Ok(())
     }
 }
