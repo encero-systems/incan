@@ -1,0 +1,41 @@
+# behavior: an OrdinalMap over str keys built from keys or pairs answers require and require_many with the ordinal of each key and refuses an unknown key
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_ordinal_map_str_fast_lookup_codegen
+# expect-stdout:
+#   1
+#   0 1
+#   21
+#   missing
+
+from std.collections import OrdinalMap, OrdinalMapError
+
+
+pub def require_column(columns: OrdinalMap[str], key: str) -> Result[int, OrdinalMapError]:
+    return columns.require(key)
+
+
+pub def require_columns(columns: OrdinalMap[str], keys: list[str]) -> Result[list[int], OrdinalMapError]:
+    return columns.require_many(keys)
+
+
+pub def direct_literal_construction() -> Result[int, OrdinalMapError]:
+    columns: OrdinalMap[str] = OrdinalMap.from_keys(["id", "status"])?
+    explicit: OrdinalMap[str] = OrdinalMap.from_pairs([("id", 10), ("status", 20)])?
+    return Ok(columns.require("status")? + explicit.require("status")?)
+
+
+def run() -> Result[None, OrdinalMapError]:
+    columns: OrdinalMap[str] = OrdinalMap.from_keys(["id", "status"])?
+    println(require_column(columns, "status")?)
+    ordinals = require_columns(columns, ["id", "status"])?
+    println(f"{ordinals[0]} {ordinals[1]}")
+    println(direct_literal_construction()?)
+    match require_column(columns, "missing"):
+        Ok(ordinal) => println(ordinal)
+        Err(_) => println("missing")
+    return Ok(None)
+
+
+def main() -> None:
+    match run():
+        Ok(_) => pass
+        Err(_) => println("failed")

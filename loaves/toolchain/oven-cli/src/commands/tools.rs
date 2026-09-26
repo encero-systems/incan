@@ -542,15 +542,20 @@ fn format_api_params(params: &[ParamExport]) -> String {
     params.iter().map(format_api_param).collect::<Vec<_>>().join(", ")
 }
 
-/// Format one checked API callable parameter for generated Markdown signatures.
+/// Format one checked API callable parameter for generated Markdown signatures, spelling its `mut` marker.
 fn format_api_param(param: &ParamExport) -> String {
     let prefix = match param.kind {
         ParamKindExport::Normal => "",
         ParamKindExport::RestPositional => "*",
         ParamKindExport::RestKeyword => "**",
     };
+    let marker = if param.is_mut { "mut " } else { "" };
     let default = if param.has_default { " = ..." } else { "" };
-    format!("{prefix}{}: {}{default}", param.name, format_api_type_ref(&param.ty))
+    format!(
+        "{prefix}{marker}{}: {}{default}",
+        param.name,
+        format_api_type_ref(&param.ty)
+    )
 }
 
 /// Format a checked API type reference for generated Markdown signatures.
@@ -576,6 +581,7 @@ fn format_api_type_ref(ty: &TypeRef) -> String {
         }
         TypeRef::SelfType => "Self".to_string(),
         TypeRef::Ref { inner } => format!("&{}", format_api_type_ref(inner)),
+        TypeRef::MutParam { inner } => format!("mut {}", format_api_type_ref(inner)),
         TypeRef::RustPath { path } => format!("rust::{path}"),
         TypeRef::NativeUnion(native) => native
             .members

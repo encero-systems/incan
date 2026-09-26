@@ -1,0 +1,41 @@
+# behavior: derived Eq, Ord, Hash, Clone, Copy, Default and Debug compare (==, !=, <, >, <=, >=), key, copy, default and render models
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_derives_comparison_compiled_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_derives_copying_compiled_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_derives_string_compiled_codegen
+# expect-stdout:
+#   true false
+#   true true
+#   false true false
+#   2
+#   Point { x: 1, y: 2 }
+#   0 0
+#   1 2
+
+from std.derives.comparison import Eq, Ord, Hash
+from std.derives.copying import Clone, Copy, Default
+from std.derives.string import Debug
+
+
+@derive(Eq, Ord, Hash, Clone, Copy, Default, Debug)
+model Point:
+    x: int = 0
+    y: int = 0
+
+
+def main() -> None:
+    a = Point(x=1, y=2)
+    b = Point(x=1, y=2)
+    c = Point(x=2, y=0)
+    println(f"{a == b} {a == c}")
+    println(f"{a < c} {c > b}")
+    println(f"{a != b} {a <= b} {b >= c}")
+    mut seen: Dict[Point, int] = {}
+    seen[a] = 1
+    seen[b] = 2
+    seen[c] = 3
+    println(len(seen))
+    println(f"{a:?}")
+    origin = Point.default()
+    println(f"{origin.x} {origin.y}")
+    copied = a
+    println(f"{copied.x} {a.y}")

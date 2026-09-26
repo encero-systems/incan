@@ -224,6 +224,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                             receiver: Some(ReceiverExport::Mutable),
                             params: vec![
                                 ParamExport {
+                                    is_mut: false,
                                     name: "logical_name".to_string(),
                                     ty: TypeRef::Named {
                                         origin: None,
@@ -234,6 +235,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                                     default: None,
                                 },
                                 ParamExport {
+                                    is_mut: false,
                                     name: "uri".to_string(),
                                     ty: TypeRef::Named {
                                         origin: None,
@@ -269,6 +271,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                             type_params: vec![type_param_t.clone()],
                             receiver: Some(ReceiverExport::Immutable),
                             params: vec![ParamExport {
+                                is_mut: false,
                                 name: "data".to_string(),
                                 ty: TypeRef::Applied {
                                     origin: None,
@@ -363,6 +366,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                 emitted_name: None,
                 type_params: vec![type_param_t.clone()],
                 params: vec![ParamExport {
+                    is_mut: false,
                     name: "data".to_string(),
                     ty: TypeRef::Applied {
                         origin: None,
@@ -575,6 +579,7 @@ pub def local_default(label: str = LOCAL_SENTINEL) -> str:
             }],
             signature: Some(Box::new(ParamDefaultCallSignatureExport {
                 params: vec![ParamExport {
+                    is_mut: false,
                     name: "value".to_string(),
                     ty: TypeRef::Named {
                         origin: None,

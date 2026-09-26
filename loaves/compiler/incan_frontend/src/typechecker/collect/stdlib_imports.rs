@@ -4550,6 +4550,7 @@ impl TypeChecker {
                         .as_ref()
                         .map_or(param.has_default, ParamDefaultExport::is_materializable),
                 )
+                .with_mut(param.is_mut)
             })
             .collect()
     }

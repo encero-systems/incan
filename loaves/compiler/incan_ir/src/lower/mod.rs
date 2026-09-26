@@ -28,6 +28,7 @@
 mod decl;
 mod errors;
 mod expr;
+mod receiver_plan;
 mod stmt;
 mod types;
 
@@ -891,7 +892,7 @@ impl AstLowering {
                             &source_param.node.ty,
                             base_ty,
                         ),
-                        self.lower_parameter_mutability(source_param.node.is_mut, &source_param.node.ty.node),
+                        self.lower_parameter_mutability(source_param),
                     )
                 } else {
                     (base_ty, Mutability::Immutable)
@@ -971,7 +972,7 @@ impl AstLowering {
                             &source_param.node.ty,
                             base_ty,
                         ),
-                        self.lower_parameter_mutability(source_param.node.is_mut, &source_param.node.ty.node),
+                        self.lower_parameter_mutability(source_param),
                     )
                 } else {
                     (base_ty, Mutability::Immutable)
@@ -1132,7 +1133,14 @@ impl AstLowering {
             ResolvedType::Function(params, ret) => ast::Type::Function(
                 params
                     .iter()
-                    .map(|param| Self::type_from_resolved_type(&param.ty, span))
+                    .map(|param| {
+                        let param_ty = Self::type_from_resolved_type(&param.ty, span);
+                        if param.is_mut {
+                            ast::Spanned::new(ast::Type::MutParam(Box::new(param_ty)), span)
+                        } else {
+                            param_ty
+                        }
+                    })
                     .collect(),
                 Box::new(Self::type_from_resolved_type(ret, span)),
             ),
@@ -2143,6 +2151,19 @@ impl AstLowering {
     /// multiple errors to the user at once.
     #[tracing::instrument(skip_all, fields(decl_count = program.declarations.len()))]
     pub fn lower_program(&mut self, program: &ast::Program) -> Result<IrProgram, LoweringErrors> {
+        // A method decorator's declarations take a `self` receiver the way the method's wrapper passes it; plan that
+        // before any signature is read (#1790).
+        let planned = self.type_info.as_ref().and_then(|info| {
+            receiver_plan::plan_shared_method_decorator_receivers(
+                program,
+                &info.declarations.method_decorator_receiver_slots,
+            )
+        });
+        self.lower_receiver_planned_program(planned.as_ref().unwrap_or(program))
+    }
+
+    /// Lower a program whose method-decorator receivers are already planned; see [`Self::lower_program`].
+    fn lower_receiver_planned_program(&mut self, program: &ast::Program) -> Result<IrProgram, LoweringErrors> {
         let mut ir_program = IrProgram::new();
         self.emitted_member_projections.clear();
         ir_program.source_module_name = self.current_source_module_name.clone();
@@ -2445,7 +2466,7 @@ impl AstLowering {
                                 Ok(FunctionParam {
                                     name: p.node.name.clone(),
                                     ty: param_ty,
-                                    mutability: self.lower_parameter_mutability(p.node.is_mut, &p.node.ty.node),
+                                    mutability: self.lower_parameter_mutability(p),
                                     is_self: false,
                                     kind: p.node.kind,
                                     default: self
@@ -4112,6 +4133,7 @@ mod tests {
 
     mod builtin_str_arguments;
     mod derive_vocabulary_imports;
+    mod method_decorator_receivers;
     mod unary_operand_grouping;
 
     fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {

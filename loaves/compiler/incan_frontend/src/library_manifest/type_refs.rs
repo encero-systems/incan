@@ -48,7 +48,17 @@ pub fn type_ref_from_resolved(ty: &ResolvedType) -> TypeRef {
             args: args.iter().map(type_ref_from_resolved).collect(),
         },
         ResolvedType::Function(params, return_type) => TypeRef::Function {
-            params: params.iter().map(|param| type_ref_from_resolved(&param.ty)).collect(),
+            params: params
+                .iter()
+                .map(|param| {
+                    let ty = type_ref_from_resolved(&param.ty);
+                    if param.is_mut {
+                        TypeRef::MutParam { inner: Box::new(ty) }
+                    } else {
+                        ty
+                    }
+                })
+                .collect(),
             return_type: Box::new(type_ref_from_resolved(return_type)),
         },
         ResolvedType::TypeToken(inner) => TypeRef::TypeToken {
@@ -107,7 +117,12 @@ pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
         TypeRef::Function { params, return_type } => ResolvedType::Function(
             params
                 .iter()
-                .map(|param| CallableParam::positional(resolved_type_from_manifest_type_ref(param)))
+                .map(|param| match param {
+                    TypeRef::MutParam { inner } => {
+                        CallableParam::positional(resolved_type_from_manifest_type_ref(inner)).with_mut(true)
+                    }
+                    other => CallableParam::positional(resolved_type_from_manifest_type_ref(other)),
+                })
                 .collect(),
             Box::new(resolved_type_from_manifest_type_ref(return_type)),
         ),
@@ -118,6 +133,8 @@ pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
         TypeRef::TypeParam { name } => ResolvedType::TypeVar(name.clone()),
         TypeRef::SelfType => ResolvedType::SelfType,
         TypeRef::Ref { inner } => ResolvedType::Ref(Box::new(resolved_type_from_manifest_type_ref(inner))),
+        // The marker belongs to a function type's parameter, decoded above; anywhere else it names its type.
+        TypeRef::MutParam { inner } => resolved_type_from_manifest_type_ref(inner),
         TypeRef::RustPath { path } => ResolvedType::RustPath(path.clone()),
         TypeRef::Unknown => ResolvedType::Unknown,
         TypeRef::NativeUnion(native) => ResolvedType::Generic(

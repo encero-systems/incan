@@ -45,6 +45,18 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOr
 const TYPE_CONSTRUCTOR_HOOK: &str = "__incan_new";
 const API_CRATE_ROOT_SEGMENT: &str = "crate";
 
+/// Return how a parameter rebuilt from library-manifest metadata is passed (#1790).
+///
+/// A parameter the manifest marks `mut` is one whose changes the caller sees, so the call passes it the way a local
+/// `mut` parameter is passed; every other parameter is passed as a value.
+fn manifest_param_mutability(param: &ParamExport) -> Mutability {
+    if param.is_mut {
+        Mutability::Mutable
+    } else {
+        Mutability::Immutable
+    }
+}
+
 /// Name the concrete overload a call selected in its canonical callee path.
 ///
 /// An overload set has no single declaration, so a provider exports only its concrete overloads -- each under its own
@@ -413,7 +425,7 @@ impl AstLowering {
     /// The physical Rust projection is deliberately excluded: it names the emitted call target, not the public
     /// binding that owns typed signatures and defaults. An admitted overload set cannot fall back to its first
     /// member or a structurally reconstructed call-site signature.
-    fn callable_signature_for_imported_pub_path(
+    pub(in crate::lower) fn callable_signature_for_imported_pub_path(
         &mut self,
         path: &[String],
         selected: Option<&incan_semantics_core::CanonicalSymbolId>,
@@ -917,7 +929,7 @@ impl AstLowering {
                     FunctionParam {
                         name: param.name.clone(),
                         ty: Self::lower_param_container_type(kind, base_ty),
-                        mutability: Mutability::Immutable,
+                        mutability: manifest_param_mutability(param),
                         is_self: false,
                         kind,
                         default: self
@@ -1092,7 +1104,7 @@ impl AstLowering {
                     FunctionParam {
                         name: param.name.clone(),
                         ty: Self::lower_param_container_type(kind, base_ty),
-                        mutability: Mutability::Immutable,
+                        mutability: manifest_param_mutability(param),
                         is_self: false,
                         kind,
                         default: self
@@ -1667,7 +1679,7 @@ impl AstLowering {
                     FunctionParam {
                         name: param.name.clone(),
                         ty: Self::lower_param_container_type(kind, base_ty),
-                        mutability: Mutability::Immutable,
+                        mutability: manifest_param_mutability(param),
                         is_self: false,
                         kind,
                         default: self
@@ -1700,7 +1712,7 @@ impl AstLowering {
                                 &incan_frontend::library_manifest::resolved_type_from_manifest_type_ref(&param.ty),
                             ),
                         ),
-                        mutability: Mutability::Immutable,
+                        mutability: manifest_param_mutability(param),
                         is_self: false,
                         kind,
                         default: self
@@ -1735,7 +1747,7 @@ impl AstLowering {
                                 &incan_frontend::library_manifest::resolved_type_from_manifest_type_ref(&param.ty),
                             ),
                         ),
-                        mutability: Mutability::Immutable,
+                        mutability: manifest_param_mutability(param),
                         is_self: false,
                         kind,
                         default: self
@@ -1871,7 +1883,7 @@ impl AstLowering {
                                     &incan_frontend::library_manifest::resolved_type_from_manifest_type_ref(&param.ty),
                                 ),
                             ),
-                            mutability: Mutability::Immutable,
+                            mutability: manifest_param_mutability(param),
                             is_self: false,
                             kind,
                             default: self
@@ -4520,6 +4532,7 @@ mod tests {
             emitted_name: None,
             type_params: Vec::new(),
             params: vec![ParamExport {
+                is_mut: false,
                 name: "value".to_string(),
                 ty: TypeRef::Named {
                     origin: None,
@@ -4927,6 +4940,7 @@ mod tests {
                     decorators: Vec::new(),
                     type_params: Vec::new(),
                     params: vec![ParamExport {
+                        is_mut: false,
                         name: "value".to_string(),
                         ty: TypeRef::Applied {
                             origin: None,

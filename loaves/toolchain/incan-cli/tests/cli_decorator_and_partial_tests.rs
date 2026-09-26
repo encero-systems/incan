@@ -534,7 +534,7 @@ class Box:
         return value
 
 
-def method_identity(func: (&Box, int) -> int) -> ((&Box, int) -> int):
+def method_identity(func: (Box, int) -> int) -> ((Box, int) -> int):
     return func
 
 

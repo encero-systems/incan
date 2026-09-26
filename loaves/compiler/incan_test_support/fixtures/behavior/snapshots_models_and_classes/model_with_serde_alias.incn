@@ -1,0 +1,23 @@
+# behavior: a json-derived model serializes its aliased fields under their alias keys and reads them back
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_model_with_serde_alias_codegen
+# expect-stdout:
+#   {"type":"premium","class":"gold","name":"Ada"}
+#   premium gold Ada
+
+from std.serde import json
+
+
+@derive(json)
+model Account:
+    type_ [alias="type"]: str
+    class_ as "class": str
+    name: str
+
+
+def main() -> None:
+    account = Account(type="premium", class="gold", name="Ada")
+    encoded = account.to_json()
+    println(encoded)
+    match Account.from_json(encoded):
+        Ok(decoded) => println(f"{decoded.type_} {decoded.class_} {decoded.name}")
+        Err(error) => println(f"error {error}")

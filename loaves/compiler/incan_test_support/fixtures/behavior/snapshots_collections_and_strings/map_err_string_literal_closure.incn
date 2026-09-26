@@ -1,0 +1,35 @@
+# behavior: a map_err closure returning a string literal, an f-string or a captured generic value yields that value as the owned error (#880)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue880_map_err_string_literal_closure_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue880_map_err_string_literal_closure_emits_owned_error
+# expect-stdout:
+#   malformed_json
+#   malformed_json
+#   original
+
+"""Issue #880: string literal closure results must materialize owned Incan strings."""
+
+from std.json import JsonValue
+
+
+def parse(source: str) -> Result[JsonValue, str]:
+    return JsonValue.parse(source).map_err((_error) => "malformed_json")
+
+
+def parse_formatted(source: str) -> Result[JsonValue, str]:
+    return JsonValue.parse(source).map_err((_error) => f"malformed_json")
+
+
+def preserve_error[T](value: T) -> Result[int, T]:
+    return Err(value).map_err((_error) => value)
+
+
+def main() -> None:
+    match parse("{"):
+        Ok(_) => println("unexpected")
+        Err(error) => println(error)
+    match parse_formatted("{"):
+        Ok(_) => println("unexpected")
+        Err(error) => println(error)
+    match preserve_error("original"):
+        Ok(_) => println("unexpected")
+        Err(error) => println(error)

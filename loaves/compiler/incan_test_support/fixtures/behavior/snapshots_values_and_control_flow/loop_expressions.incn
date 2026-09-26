@@ -1,0 +1,28 @@
+# behavior: a loop expression yields the value given to break, and a statement loop ends at a plain break
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_loop_expressions_codegen
+# expect-stdout:
+#   42
+#   7
+#   42
+
+def find_value(flag: bool) -> int:
+    return loop:
+        if flag:
+            break 42
+        break 7
+
+
+def spin(limit: int) -> int:
+    mut current = 0
+    loop:
+        if current >= limit:
+            break
+        current += 1
+    return current
+
+
+def main() -> None:
+    let answer: int = find_value(true)
+    println(answer)
+    println(find_value(false))
+    println(spin(answer))

@@ -1,0 +1,27 @@
+# behavior: a Sha256Hasher stored in a model field accepts incremental updates and finalizes to the same digest as a one-shot sha256 (#969)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue969_storable_sha256_hasher_codegen
+# expect-stdout:
+#   true
+#   false
+
+from std.hash import Sha256Hasher, sha256
+
+
+model StructuralSink:
+    hasher: Sha256Hasher
+
+    def append(mut self, chunk: bytes) -> None:
+        self.hasher.update(chunk)
+
+    def finalize(mut self) -> bytes:
+        return self.hasher.finalize_bytes()
+
+
+def main() -> None:
+    mut sink = StructuralSink(hasher=sha256.new())
+    sink.append(b"a")
+    sink.append(b"bc")
+    println(sink.finalize() == sha256.digest(b"abc"))
+    mut other = StructuralSink(hasher=sha256.new())
+    other.append(b"abd")
+    println(other.finalize() == sha256.digest(b"abc"))

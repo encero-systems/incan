@@ -1,0 +1,102 @@
+# behavior: models adopting the std.traits operator, Error, Index, Callable and conversion traits behave through the operators and calls they enable
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_traits_ops_compiled_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_traits_error_compiled_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_traits_indexing_compiled_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_traits_callable_compiled_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_traits_prelude_compiled_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_traits_convert_compiled_codegen
+# expect-stdout:
+#   30 -5 18
+#   Validation failed for 'age': cannot be negative
+#   b
+#   12
+#   7
+#   ok 5
+#   Value must be positive
+
+from std.traits.ops import Add, Neg, Sub
+from std.traits.error import Error
+from std.traits.indexing import Index
+from std.traits.callable import Callable1
+from std.traits.convert import From, TryFrom
+
+
+model Money with Add[Money, Money], Neg[Money], Sub[Money, Money]:
+    cents: int
+
+    def __add__(self, other: Money) -> Money:
+        return Money(cents=self.cents + other.cents)
+
+    def __neg__(self) -> Money:
+        return Money(cents=0 - self.cents)
+
+    def __sub__(self, other: Money) -> Money:
+        return Money(cents=self.cents - other.cents)
+
+
+model AgeValidationError with Error:
+    field: str
+    reason: str
+
+    def message(self) -> str:
+        return f"Validation failed for '{self.field}': {self.reason}"
+
+
+def validate_age(age: int) -> Result[int, AgeValidationError]:
+    if age < 0:
+        return Err(AgeValidationError(field="age", reason="cannot be negative"))
+    return Ok(age)
+
+
+model Letters with Index[int, str]:
+    values: list[str]
+
+    def __getitem__(self, key: int) -> str:
+        return self.values[key]
+
+
+model Tripler with Callable1[int, int]:
+    def __call__(self, value: int) -> int:
+        return value * 3
+
+
+def apply[F with Callable1[int, int]](callable: F, value: int) -> int:
+    return callable(value)
+
+
+model UserId with From[int]:
+    value: int
+
+    @classmethod
+    def from(cls, value: int) -> Self:
+        return UserId(value=value)
+
+
+model PositiveInt with TryFrom[int]:
+    value: int
+
+    @classmethod
+    def try_from(cls, value: int) -> Result[Self, str]:
+        if value <= 0:
+            return Err("Value must be positive")
+        return Ok(PositiveInt(value=value))
+
+
+def main() -> None:
+    total = Money(cents=10) + Money(cents=20)
+    negated = -Money(cents=5)
+    difference = Money(cents=30) - Money(cents=12)
+    println(f"{total.cents} {negated.cents} {difference.cents}")
+    match validate_age(-5):
+        Ok(age) => println(f"Valid age: {age}")
+        Err(error) => println(error.message())
+    letters = Letters(values=["a", "b"])
+    println(letters[1])
+    println(apply(Tripler(), 4))
+    println(UserId.from(7).value)
+    match PositiveInt.try_from(5):
+        Ok(value) => println(f"ok {value.value}")
+        Err(error) => println(error)
+    match PositiveInt.try_from(0):
+        Ok(value) => println(f"ok {value.value}")
+        Err(error) => println(error)

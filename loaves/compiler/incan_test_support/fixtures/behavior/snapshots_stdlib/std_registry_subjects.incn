@@ -10,12 +10,15 @@
 
 from std.registry import Registry, RegistryEntry, RegistrySubject, SubjectKind
 
+
 @derive(Clone, Eq)
 type CapabilityId = newtype str
+
 
 @derive(Descriptor)
 model CapabilitySpec:
     title: str
+
 
 pub static capabilities: Registry[CapabilityId, CapabilitySpec] = Registry.define(
     subjects=[SubjectKind.CompilationUnit, SubjectKind.Package],
@@ -32,6 +35,7 @@ pub static package_capability: RegistryEntry[CapabilityId, CapabilitySpec] = cap
     subject=RegistrySubject.package(),
     descriptor=CapabilitySpec(title="Typed declaration registries"),
 )
+
 
 def main() -> None:
     entries = capabilities.loaded_entries()

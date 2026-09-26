@@ -2352,10 +2352,14 @@ impl AstLowering {
                     .type_info
                     .as_ref()
                     .and_then(|info| match info.expr_type(expr_span) {
+                        // A `mut`-marked parameter is passed so the caller sees the closure's changes (#1790).
                         Some(incan_frontend::symbols::ResolvedType::Function(callable_params, _)) => Some(
                             callable_params
                                 .iter()
-                                .map(|param| self.lower_resolved_type(&param.ty))
+                                .map(|param| {
+                                    let ty = self.lower_resolved_type(&param.ty);
+                                    if param.is_mut { IrType::RefMut(Box::new(ty)) } else { ty }
+                                })
                                 .collect::<Vec<_>>(),
                         ),
                         _ => None,

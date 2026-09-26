@@ -1,0 +1,31 @@
+# behavior: a `mut` parameter whose type is an alias of `int` or `float` is the function's own copy, so the caller's value is unchanged and the function is a value of the unmarked function type
+# retires: loaves/compiler/incan_ir/src/lower/tests/method_decorator_receivers.rs::mut_parameter_passing_follows_the_checker_marker
+# expect-stdout:
+#   2
+#   1
+#   5
+#   1.5
+
+type Count = int
+type Ratio = float
+
+
+def step(mut n: Count) -> int:
+    return n + 1
+
+
+def half(mut r: Ratio) -> float:
+    return r / 2.0
+
+
+def pick() -> (int) -> int:
+    return step
+
+
+def main() -> None:
+    mut c = 1
+    println(step(c))
+    println(c)
+    f = pick()
+    println(f(4))
+    println(half(3.0))

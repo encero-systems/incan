@@ -244,6 +244,7 @@ fn library_index_with_private_class_field_issue883() -> LibraryManifestIndex {
                     }],
                     signature: Some(Box::new(ParamDefaultCallSignatureExport {
                         params: vec![ParamExport {
+                            is_mut: false,
                             name: "value".to_string(),
                             ty: TypeRef::Named {
                                 origin: None,
@@ -692,6 +693,7 @@ pub class Child extends Vault:
             }],
             signature: Some(Box::new(ParamDefaultCallSignatureExport {
                 params: vec![ParamExport {
+                    is_mut: false,
                     name: "value".to_string(),
                     ty: TypeRef::Named {
                         origin: None,

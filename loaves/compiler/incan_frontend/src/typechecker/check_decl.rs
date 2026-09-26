@@ -13,6 +13,7 @@ use crate::typechecker::helpers::{collection_type_id, dict_ty, list_ty};
 
 use super::collect::decorators::resolve_decorator_id;
 use super::collect::{capability_description_text, dotted_path_segments};
+use super::decorated_method_receivers::DecoratedMethodReceiver;
 use super::trait_bound_relations::CallableMarkerOwner;
 use super::type_info::{
     CapabilityDeclarationInfo, ProviderOperationDeclarationInfo, RegistryDefinitionInfo, RegistryDescriptionInfo,
@@ -64,9 +65,9 @@ fn function_info_callable_type(info: &FunctionInfo) -> ResolvedType {
 }
 
 /// Convert a collected method signature into the callable value type that method decorators receive.
-fn method_info_callable_type(info: &MethodInfo, receiver_ty: ResolvedType) -> ResolvedType {
+fn method_info_callable_type(info: &MethodInfo, receiver: CallableParam) -> ResolvedType {
     let mut params = Vec::with_capacity(info.params.len() + 1);
-    params.push(CallableParam::named("self", receiver_ty, ParamKind::Normal));
+    params.push(receiver);
     params.extend(info.params.clone());
     ResolvedType::Function(params, Box::new(info.return_type.clone()))
 }
@@ -405,6 +406,7 @@ impl TypeChecker {
                         kind: param.kind,
                         has_default: param.has_default,
                         is_partial_preset: param.is_partial_preset,
+                        is_mut: param.is_mut,
                     })
                     .collect(),
                 Box::new(Self::concretize_self_type_in_annotation(ret, self_ty)),
@@ -467,6 +469,7 @@ impl TypeChecker {
                 kind: param.kind,
                 has_default: param.has_default,
                 is_partial_preset: param.is_partial_preset,
+                is_mut: param.is_mut,
             })
             .collect();
         concrete.return_type = Self::concretize_self_type_in_annotation(&method.return_type, self_ty);
@@ -5042,12 +5045,12 @@ impl TypeChecker {
         let Some(mut method_info) = self.lookup_method_info_for_update(owner, &method.name) else {
             return;
         };
-        let receiver_ty = self.decorated_method_receiver_type(owner, method.receiver);
-        let original_binding_ty = method_info_callable_type(&method_info, receiver_ty);
+        let receiver = DecoratedMethodReceiver::new(owner, method.receiver);
+        let original_binding_ty = method_info_callable_type(&method_info, receiver.surface_param());
         let mut binding_ty = original_binding_ty.clone();
         for decorator in method.decorators.iter().rev() {
             if self.is_user_defined_decorator_candidate(&decorator.node) {
-                binding_ty = self.apply_user_defined_decorator(decorator, binding_ty, &method.name);
+                binding_ty = self.apply_user_defined_method_decorator(decorator, binding_ty, &method.name, &receiver);
             }
         }
 
@@ -5060,23 +5063,13 @@ impl TypeChecker {
         self.type_info.declarations.decorated_method_bindings.insert(
             (owner.to_string(), method.name.clone()),
             DecoratedMethodBindingInfo {
-                unbound_ty: binding_ty,
-                original_unbound_ty: original_binding_ty,
+                unbound_ty: receiver.with_passing_receiver(binding_ty),
+                original_unbound_ty: receiver.with_passing_receiver(original_binding_ty),
             },
         );
         method_info.params = surface_params.to_vec();
         method_info.return_type = *ret;
         self.replace_method_info(owner, &method.name, method_info);
-    }
-
-    /// Return the source-level receiver type passed as the first argument to a method decorator.
-    fn decorated_method_receiver_type(&self, owner: &str, receiver: Option<Receiver>) -> ResolvedType {
-        let owner_ty = ResolvedType::Named(owner.to_string());
-        if receiver == Some(Receiver::Mutable) {
-            ResolvedType::RefMut(Box::new(owner_ty))
-        } else {
-            ResolvedType::Ref(Box::new(owner_ty))
-        }
     }
 
     /// Return the method metadata currently visible for an owner and method name.
@@ -5138,13 +5131,18 @@ impl TypeChecker {
         binding_name: &str,
     ) -> ResolvedType {
         let display = Self::decorator_display(&decorator.node);
-        let callable_ty = if decorator.node.is_call {
-            self.check_decorator_factory_expr(decorator, &display)
-        } else {
-            self.check_expr(&Self::decorator_path_expr(&decorator.node, decorator.span))
-        };
+        let callable_ty = self.decorator_callable_type(decorator, &display);
 
         self.apply_decorator_callable(&display, callable_ty, binding_ty, binding_name, decorator.span)
+    }
+
+    /// Type-check a decorator's path or factory call and return the callable it applies to the declaration.
+    pub(super) fn decorator_callable_type(&mut self, decorator: &Spanned<Decorator>, display: &str) -> ResolvedType {
+        if decorator.node.is_call {
+            self.check_decorator_factory_expr(decorator, display)
+        } else {
+            self.check_expr(&Self::decorator_path_expr(&decorator.node, decorator.span))
+        }
     }
 
     /// Type-check a decorator factory expression such as `@logged(label="x")` or `@app.get("/")`.
@@ -5176,7 +5174,7 @@ impl TypeChecker {
     }
 
     /// Apply a callable decorator value to the decorated binding type and return the post-decoration callable type.
-    fn apply_decorator_callable(
+    pub(super) fn apply_decorator_callable(
         &mut self,
         display: &str,
         callable_ty: ResolvedType,
@@ -5249,7 +5247,7 @@ impl TypeChecker {
     }
 
     /// Render a decorator path with a coarse call marker for diagnostics.
-    fn decorator_display(decorator: &Decorator) -> String {
+    pub(super) fn decorator_display(decorator: &Decorator) -> String {
         let path = decorator.path.segments.join(".");
         if decorator.is_call {
             if decorator.type_args.is_empty() {
@@ -5842,6 +5840,7 @@ impl TypeChecker {
         // Define parameters after checking defaults so a declaration-owned default cannot resolve a callable-frame
         // binding. The function body still receives its ordinary parameter locals below.
         for (param, resolved_ty) in func.params.iter().zip(resolved_param_types) {
+            self.record_mut_param_marker(&param.node, param.span, &resolved_ty);
             let ty = local_type_for_param(param.node.kind, resolved_ty);
             self.validate_protected_builtin_binding(&param.node.name, param.span);
             self.symbols.define_with_target_kind(
@@ -5899,7 +5898,9 @@ impl TypeChecker {
                 });
 
         // Check body
+        let previous_function = (self.receiver_plan_inputs.current_function).replace((decl_span.start, decl_span.end));
         self.check_statement_block(&func.body);
+        self.receiver_plan_inputs.current_function = previous_function;
 
         self.consumed_iterator_bindings = previous_consumed_iterator_bindings;
         self.transferred_c_resource_bindings = previous_transferred_c_resource_bindings;
@@ -6267,6 +6268,7 @@ impl TypeChecker {
                 param.node.kind,
                 param.node.default.is_some(),
             ));
+            self.record_mut_param_marker(&param.node, param.span, &resolved_ty);
             let ty = local_type_for_param(param.node.kind, resolved_ty);
             self.validate_protected_builtin_binding(&param.node.name, param.span);
             self.symbols.define_with_target_kind(

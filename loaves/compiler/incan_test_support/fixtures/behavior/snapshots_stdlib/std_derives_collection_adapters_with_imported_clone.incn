@@ -11,6 +11,7 @@ from std.derives.copying import Clone
 from std.derives.comparison import Eq as Equality
 from std.traits.callable import Callable1
 
+
 model Readings with FallibleIterator[int, str]:
     items: list[int]
     index: int
@@ -22,10 +23,12 @@ model Readings with FallibleIterator[int, str]:
         self.index += 1
         return Ok(Some(item))
 
+
 @derive(Clone)
 model Double with Callable1[int, int]:
     def __call__(self, value: int) -> int:
         return value * 2
+
 
 @derive(Clone, Eq)
 model Above with Callable1[int, bool]:
@@ -34,13 +37,16 @@ model Above with Callable1[int, bool]:
     def __call__(self, value: int) -> bool:
         return value > self.threshold
 
+
 @derive(Clone)
 model Point:
     x: int
     y: int
 
+
 def pick[T with Equality](value: T) -> T:
     return value
+
 
 def main() -> None:
     match Readings(items=[1, 2, 3], index=0).map(Double()).filter(Above(threshold=2)).collect():
