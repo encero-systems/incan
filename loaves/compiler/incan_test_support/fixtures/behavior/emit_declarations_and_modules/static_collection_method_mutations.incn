@@ -43,8 +43,12 @@ def record(name: str, value: int) -> None:
     counts.insert(name, value)
 
 
-def lookup(name: str) -> str:
-    match counts.get(name):
+def lookup(name: str) -> Option[int]:
+    return counts.get(name)
+
+
+def describe(name: str) -> str:
+    match lookup(name):
         Some(value) => return f"{name}={value}"
         None => return f"{name} missing"
 
@@ -65,9 +69,9 @@ def main() -> None:
     record("a", 1)
     record("a", 2)
     record("b", 1)
-    println(lookup("a"))
-    println(lookup("b"))
-    println(lookup("c"))
+    println(describe("a"))
+    println(describe("b"))
+    println(describe("c"))
     println(len(counts))
     mark(4)
     mark(4)

@@ -30,15 +30,6 @@ pub type Charges = Surcharge | int
 pub type Answer = int | str
 
 
-pub model Box:
-    pub value: int
-
-    def answer(self) -> int | str:
-        if self.value > 0:
-            return self.value
-        return "empty"
-
-
 pub def describe(expr: ColumnExpr) -> str:
     match expr:
         BoolColumnExpr(column) => return f"bool column {column.name}"

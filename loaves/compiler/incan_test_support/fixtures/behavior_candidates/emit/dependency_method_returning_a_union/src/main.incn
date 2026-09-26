@@ -1,0 +1,24 @@
+# behavior: a dependency model's method returning `int | str` hands the consumer a union it passes to its own `int | str` parameter and matches by member
+# retires: loaves/compiler/incan_emit/src/emit/native_unions.rs::publication_captures_nominal_method_return_unions
+# expect-stdout:
+#   answer 3
+#   answer empty
+
+# ROUTE BUG CANDIDATE: `incan check` accepts this program; the run refuses it (E0308: the method's result keeps the
+# provider's union type where the consumer's parameter has the consumer's own `int | str` union, while a provider
+# function's `int | str` result is accepted at the same parameter). Found when `emit_dependency_unions_and_surfaces`
+# first ran, as the `Box.answer()` part of `dependency_unions_across_the_package_boundary`. Lands there again when a
+# method's union result crosses the package boundary.
+
+from pub::querykit import Box
+
+
+def show(value: int | str, label: str) -> str:
+    match value:
+        int(number) => return f"{label} {number}"
+        str(text) => return f"{label} {text}"
+
+
+def main() -> None:
+    println(show(Box(value=3).answer(), "answer"))
+    println(show(Box(value=0).answer(), "answer"))

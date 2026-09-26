@@ -29,3 +29,27 @@ before admitting it; expect the expected lines to need a correction or two.
   `incan run`, `incan build` and `incan oven bake` refuse it with `syntax error: Expected declaration, found
   Ident("binding")`, with and without an `[interop.c]` manifest section. The CLI's own C test reaches a run through
   `incan lock` and `incan oven interop bake`, which the behavior runner does not perform.
+
+## Route bugs found when the areas first ran
+
+These programs were fixtures, or parts of fixtures, that the first replay of the `emit_*` areas refused. Each twin
+kept what its retired test asserted where the failure lay outside it; where it did not, the program moved here and its
+rows are `open`.
+
+- `dependency_same_named_declarations_in_two_modules/`: moved from `emit_dependency_unions_and_surfaces/`; the
+  provider's bake stops at "emitted union ... binds Product to two canonical identities" when two of its modules
+  declare `Product` and `Answer = Product | int` at the same source positions. Two rows.
+- `dependency_method_returning_a_union/`: the `Box.answer()` part of
+  `dependency_unions_across_the_package_boundary`; a dependency model method's `int | str` result keeps the provider's
+  union type at a consumer's own `int | str` parameter (E0308), while a provider function's union result is accepted
+  there. One row.
+- `static_dict_get_with_a_reused_str_parameter.incn`: a str parameter read again after `get` on a static dict is moved
+  into the lookup (E0382). `static_collection_method_mutations.incn` keeps its twin by calling `get` from a helper
+  whose parameter is at its last use. No row.
+- `str_const_returned_as_frozen_str.incn`: a const declared `str` returned at a `FrozenStr | int` or
+  `Option[FrozenStr]` destination is accepted by `incan check` and refused by the run (E0308).
+  `isinstance_str_over_const_union_and_option.incn` declares its const `FrozenStr`, the storage its retired test
+  names. No row.
+- `model_named_like_a_std_web_type.incn`: a model named `Response` is an unknown symbol in its own static method's
+  return annotation (the stdlib surface-type check does not find it); `static_method_with_str_argument.incn` names its
+  model `Page`. No row.

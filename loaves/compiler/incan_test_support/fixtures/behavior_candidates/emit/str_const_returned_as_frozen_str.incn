@@ -1,0 +1,29 @@
+# behavior: a const declared `str` returned where a `FrozenStr | int` and an `Option[FrozenStr]` are expected is read by isinstance as a str
+# expect-stdout:
+#   true
+#   true
+
+# ROUTE BUG CANDIDATE: `incan check` accepts this program; the run refuses it (E0308 twice: the const is returned
+# unwrapped where the union is expected, and converted to an owned string inside `Some` where `Option[FrozenStr]` is
+# expected). Either the checker refuses a `str` const at a `FrozenStr` destination or the route converts it. Found
+# when `emit_calls_and_builtins` first ran; the twin `isinstance_str_over_const_union_and_option.incn` declares its
+# const `FrozenStr`, which is what its retired test's cases name.
+
+const NAME: str = "policy"
+
+
+def frozen_or_int(flag: bool) -> FrozenStr | int:
+    if flag:
+        return NAME
+    return 7
+
+
+def maybe_frozen(flag: bool) -> Option[FrozenStr]:
+    if flag:
+        return Some(NAME)
+    return None
+
+
+def main() -> None:
+    println(isinstance(frozen_or_int(true), str))
+    println(isinstance(maybe_frozen(true), str))

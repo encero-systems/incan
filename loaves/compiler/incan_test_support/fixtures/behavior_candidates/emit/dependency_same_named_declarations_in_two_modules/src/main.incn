@@ -7,6 +7,11 @@
 #   second product two
 #   second number 3
 
+# ROUTE BUG CANDIDATE: baking the provider stops at an emission invariant ("emitted union ... binds Product to two
+# canonical identities"): its `first` and `second` modules declare `Product` and `Answer = Product | int` at the same
+# source positions. Found when `emit_dependency_unions_and_surfaces` first ran, where this project was a fixture.
+# Lands there again when the provider bakes.
+
 from pub::producer.first import Product as FirstProduct, label as first_label
 from pub::producer.second import Product as SecondProduct, label as second_label
 

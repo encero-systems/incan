@@ -1,4 +1,4 @@
-# behavior: isinstance(value, str) is true for a const str, a str literal, a `str | int` holding str, an Option holding a const str, a `FrozenStr | int` holding the const, an `Option[FrozenStr]` holding it and a `FrozenStr | str | int` holding either str member, and false for every int member and for None
+# behavior: isinstance(value, str) is true for a FrozenStr const, a str literal, a `str | int` holding str, an `Option[str]` holding the const, a `FrozenStr | int` holding the const, an `Option[FrozenStr]` holding it and a `FrozenStr | str | int` holding either str member, and false for every int member and for None
 # retires: loaves/compiler/incan_emit/src/emit/expressions/builtins.rs::checked_isinstance_matches_string_storage_in_direct_union_and_option_shapes
 # expect-stdout:
 #   true
@@ -15,7 +15,7 @@
 #   true
 #   false
 
-const NAME: str = "policy"
+const NAME: FrozenStr = "policy"
 
 
 def pick(flag: bool) -> str | int:

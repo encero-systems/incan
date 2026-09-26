@@ -1150,7 +1150,7 @@
         },
         "checked_isinstance_matches_string_storage_in_direct_union_and_option_shapes": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/isinstance_str_over_const_union_and_option.incn",
-          "notes": "asserted `isinstance(x, str)` matches every str storage the test enumerated (a FrozenStr, a literal, `FrozenStr | int`, `Option[FrozenStr]`, `Option[FrozenStr | int]`, `FrozenStr | str | int` and its Option) without a constant `false`; the twin prints thirteen answers over a const (a FrozenStr), a literal, a `str | int` holding each member, an `Option[str]` holding the const and None, a `FrozenStr | int` holding the const and an int, an `Option[FrozenStr]` holding the const and None, and a `FrozenStr | str | int` holding the const, a str local and an int: true for every str-family storage, false for each int and for None (`FrozenStr` reads anywhere `str` is expected, reference *strings*). The `matches!` shapes die with #654."
+          "notes": "asserted `isinstance(x, str)` matches every str storage the test enumerated (a FrozenStr, a literal, `FrozenStr | int`, `Option[FrozenStr]`, `Option[FrozenStr | int]`, `FrozenStr | str | int` and its Option) without a constant `false`; the twin prints thirteen answers over a const (a FrozenStr), a literal, a `str | int` holding each member, an `Option[str]` holding the const and None, a `FrozenStr | int` holding the const and an int, an `Option[FrozenStr]` holding the const and None, and a `FrozenStr | str | int` holding the const, a str local and an int: true for every str-family storage, false for each int and for None (`FrozenStr` reads anywhere `str` is expected, reference *strings*). A const declared `str` at those FrozenStr destinations is a route bug parked as `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/str_const_returned_as_frozen_str.incn`. The `matches!` shapes die with #654."
         },
         "enumerate_copy_policy_keeps_generic_tuple_items_owned": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/enumerate_as_a_list_value_and_over_generic_tuples.incn",
@@ -1534,7 +1534,7 @@
         },
         "type_name_associated_call_does_not_borrow_string_arguments": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/static_method_with_str_argument.incn",
-          "notes": "asserted `Response.html(html)` passes the str by value; the twin calls a model's static method through the type name with a str local and a str literal and prints what it built. The borrow shape dies with #654."
+          "notes": "asserted `Response.html(html)` passes the str by value; the twin calls a model's static method through the type name with a str local and a str literal and prints what it built. The model is named `Page`: named `Response`, the program is refused by a checker bug parked as `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/model_named_like_a_std_web_type.incn`. The borrow shape dies with #654."
         },
         "unregistered_decode_method_with_by_value_metadata_preserves_argument_shape": {
           "twin": "",
@@ -1649,7 +1649,7 @@
     },
     "loaves/compiler/incan_emit/src/emit/native_unions.rs": {
       "disposition": "retire",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 7 twinned by behavior fixtures under fixtures/behavior/emit_*, 1 dies, 0 open.",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned. Disposed per test: 4 twinned by behavior fixtures under fixtures/behavior/emit_*, 1 dies, 3 open.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -1659,8 +1659,8 @@
           "notes": "asserted `accept(value: Option[IntExpr | str] = None)` publishes `Option[union]` (#745); the twin calls the dependency's `accept_optional` with a union result, a str and no argument and prints each arm. The API metadata dies with #654."
         },
         "emitted_union_publication_is_scoped_to_module_and_span": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_same_named_declarations_in_two_modules",
-          "notes": "asserted two modules declaring `pub type Answer` at the same span publish distinct native unions; the twin (a project with a dependency whose `first` and `second` modules are byte-aligned) imports both under aliases and passes each module's `Product` to its own `label`. The `rust_name` spellings and the manifest capture die with #654."
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/dependency_same_named_declarations_in_two_modules`: asserted two modules declaring `pub type Answer` at the same span publish distinct native unions; the candidate (a project with a dependency whose `first` and `second` modules are byte-aligned) imports both under aliases and passes each module's `Product` to its own `label`. route bug, found when `emit_dependency_unions_and_surfaces` first ran: baking the provider stops at an emission invariant (\"emitted union ... binds Product to two canonical identities\") when two of its modules declare `Product` and `Answer = Product | int` at the same source positions. Admitted once the provider bakes. The `rust_name` spellings and the manifest capture die with #654."
         },
         "function_alias_overloads_keep_exact_native_union_projection": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_unions_across_the_package_boundary",
@@ -1671,16 +1671,16 @@
           "notes": "asserted `pub second = alias first` keeps the target's union return in the manifest; the twin calls `second` and `first` from a dependency and matches both members. The manifest export dies with #654."
         },
         "native_union_local_nominals_keep_module_identity_through_forwarding": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_same_named_declarations_in_two_modules",
-          "notes": "asserted a union's local nominal (`Product`) keeps its module identity when two modules declare it identically; the twin (a project with a dependency) imports both modules' `Product` and `label` under aliases and prints each. The forwarding plan dies with #654."
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/dependency_same_named_declarations_in_two_modules`: asserted a union's local nominal (`Product`) keeps its module identity when two modules declare it identically; the candidate imports both modules' `Product` and `label` under aliases and prints each. route bug, found when `emit_dependency_unions_and_surfaces` first ran: baking the provider stops at an emission invariant (\"emitted union ... binds Product to two canonical identities\") when two of its modules declare `Product` and `Answer = Product | int` at the same source positions. Admitted once the provider bakes. The forwarding plan dies with #654."
         },
         "positional_attachment_rejects_incomplete_evidence": {
           "twin": "dies",
           "dies": "the `require_arity` helper refusing incomplete positional attachment evidence; an internal check of the emitter's publication metadata with no source program."
         },
         "publication_captures_nominal_method_return_unions": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_unions_across_the_package_boundary",
-          "notes": "asserted a public model method returning `int | str` publishes its emitted union; the twin calls `Box.answer()` from a dependency for both members and prints them. The captured wrapper name dies with #654."
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/dependency_method_returning_a_union`: asserted a public model method returning `int | str` publishes its emitted union; the candidate calls `Box.answer()` from a dependency for both members and passes each to a consumer `int | str` parameter. route bug, found when `emit_dependency_unions_and_surfaces` first ran (then as part of `dependency_unions_across_the_package_boundary`): the method's result keeps the provider's union type where the consumer's own `int | str` is expected, while a provider function's union result is accepted there. The captured wrapper name dies with #654."
         },
         "source_publication_anchors_survive_every_direct_lowering_path": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_dependency_unions_and_surfaces/dependency_declaration_kinds",
@@ -1772,7 +1772,7 @@
         },
         "storage_binding_analysis_matches_method_mutability_policy": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/static_collection_method_mutations.incn",
-          "notes": "asserted the statement analysis marks a static binding mutable for exactly the collection methods the receiver policy calls mutating (add, insert, remove, append, extend, pop, swap, reserve, reserve_exact) and not for `get`; a drift would leave a static's binding immutable under a mutating call and fail the build. The twin calls extend, swap, pop and remove on a static list, insert (beside a get that only reads) on a static dict and add on a static set, each from its own function, and prints what later readers of each static see: `[1]` extended by `[5, 9]` has length 3, swapped at 0 and 2 reads `9 5 1`, pop returns 1, remove(0) (typed `None` by the checker, so observed through the list) leaves one item, `5`; `a` inserted twice (1 then 2) and `b` once read back `a=2`, `b=1`, `c missing` through `get` and two keys; a set given 4 twice and 6 holds two values, contains 4 and not 5 (list, dict and set method tables in the language reference; `Set()` builds an empty set). `append` is twinned beside it by `static_list_storage_mutation.incn`; `reserve`/`reserve_exact` have no observable. The two tables die with #654."
+          "notes": "asserted the statement analysis marks a static binding mutable for exactly the collection methods the receiver policy calls mutating (add, insert, remove, append, extend, pop, swap, reserve, reserve_exact) and not for `get`; a drift would leave a static's binding immutable under a mutating call and fail the build. The twin calls extend, swap, pop and remove on a static list, insert (beside a get that only reads) on a static dict and add on a static set, each from its own function, and prints what later readers of each static see: `[1]` extended by `[5, 9]` has length 3, swapped at 0 and 2 reads `9 5 1`, pop returns 1, remove(0) (typed `None` by the checker, so observed through the list) leaves one item, `5`; `a` inserted twice (1 then 2) and `b` once read back `a=2`, `b=1`, `c missing` through `get` and two keys; a set given 4 twice and 6 holds two values, contains 4 and not 5 (list, dict and set method tables in the language reference; `Set()` builds an empty set). `append` is twinned beside it by `static_list_storage_mutation.incn`; `reserve`/`reserve_exact` have no observable. The `get` sits in a helper whose parameter is at its last use; a str parameter read again after the static's `get` is a route bug parked as `loaves/compiler/incan_test_support/fixtures/behavior_candidates/emit/static_dict_get_with_a_reused_str_parameter.incn`. The two tables die with #654."
         },
         "storage_mutated_static_binding_let_emits_mut_inside_statement_slice": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_declarations_and_modules/static_list_storage_mutation.incn",

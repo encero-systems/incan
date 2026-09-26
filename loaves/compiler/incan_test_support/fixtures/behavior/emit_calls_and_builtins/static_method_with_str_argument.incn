@@ -4,19 +4,19 @@
 #   <p>hello</p> 12
 #   <p>literal</p> 14
 
-model Response:
+model Page:
     body: str
     length: int
 
     @staticmethod
-    def html(html: str) -> Response:
+    def html(html: str) -> Page:
         wrapped = f"<p>{html}</p>"
-        return Response(body=wrapped, length=len(wrapped))
+        return Page(body=wrapped, length=len(wrapped))
 
 
 def main() -> None:
     html = "hello"
-    response = Response.html(html)
-    println(f"{response.body} {response.length}")
-    literal = Response.html("literal")
+    page = Page.html(html)
+    println(f"{page.body} {page.length}")
+    literal = Page.html("literal")
     println(f"{literal.body} {literal.length}")
