@@ -565,7 +565,8 @@ fn inferred_bound_names(type_params: &[TypeParamExport], name: &str) -> Vec<Stri
 /// A compiled library publishes a hashed type parameter as inferred `Eq` and `Hash` bounds, for a function and a
 /// method. A consumer of the written `.incnlib` manifest is refused with `INCAN-T0114` for a type known to lack them,
 /// for a literal argument too, and not for a library type whose derives come from `@rust.derive`, which the manifest
-/// does not record.
+/// does not record. A consumer's own type parameter forwarded to the library is refused unless its declaration
+/// carries `Eq` and `Hash`.
 #[test]
 fn library_manifest_carries_inferred_hash_bounds_issue1758() -> Result<(), Box<dyn std::error::Error>> {
     let provider = parse_program(
@@ -634,6 +635,12 @@ from pub::hashing import unique, Tags, Key
 enum Tag:
     A
 
+def forwarded[T](items: list[T]) -> set[T]:
+    return unique(items)
+
+def bounded[T with (Eq, Hash)](items: list[T]) -> set[T]:
+    return unique(items)
+
 def main() -> None:
     tags: list[Tag] = [Tag.A]
     println(len(unique([Tag.A])))
@@ -654,6 +661,19 @@ def main() -> None:
         .count();
     if refusals != 2 {
         return Err(format!("expected the function and the method call refused with T0114, got: {errors:?}").into());
+    }
+    let forwarded = with_code(&errors, "INCAN-T0114")
+        .into_iter()
+        .filter(|error| {
+            error.message.contains("so 'T' cannot be its type argument")
+                && error.hints.iter().any(|hint| hint.contains("'T with (Eq, Hash)'"))
+        })
+        .count();
+    if forwarded != 1 {
+        return Err(format!(
+            "expected only the unbounded forwarding function refused, naming the bounds to add, got: {errors:?}"
+        )
+        .into());
     }
     if errors
         .iter()

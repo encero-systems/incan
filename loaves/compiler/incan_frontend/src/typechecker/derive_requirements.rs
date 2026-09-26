@@ -23,7 +23,7 @@ use super::TypeChecker;
 use crate::ast::{CallArg, DictEntry, Expr, ListEntry, ParamKind, Span, Spanned, Type};
 use crate::diagnostics::CompileError;
 use crate::diagnostics::errors::{self, DerivedMember, HashRemedy, HashedCollectionRole};
-use crate::symbols::{CallableParam, NewtypeInfo, ResolvedType, SymbolKind, TypeInfo};
+use crate::symbols::{CallableParam, NewtypeInfo, ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo};
 use crate::typechecker::helpers::collection_type_id;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceDeriveSupport, SurfaceTypeId};
@@ -615,6 +615,42 @@ impl TypeChecker {
             };
             self.refuse_unhashable_type_argument(callee_name, type_param, bound, span);
         }
+    }
+
+    /// Refuse a caller's own type parameter passed where a compiled library's callee hashes its type parameter, unless
+    /// the caller declares the callee's inferred `Eq` and `Hash` bounds on it (#1758).
+    ///
+    /// A callee of this checker's own modules passes its requirement on to the caller's signature instead
+    /// ([`Self::infer_hash_key_type_params`]); a library's cannot, since the caller's generated signature carries only
+    /// the bounds its declaration spells. `placeholder` is the caller's type parameter the call binds.
+    pub(in crate::typechecker) fn refuse_type_parameter_without_hash_bounds(
+        &mut self,
+        callee_name: &str,
+        type_param: &str,
+        placeholder: &str,
+        inferred: &[&TypeBoundInfo],
+        bindings: &HashMap<String, ResolvedType>,
+        span: Span,
+    ) {
+        let missing = inferred
+            .iter()
+            .filter(|bound| !self.active_type_param_satisfies_bound_info(placeholder, bound, bindings))
+            .filter_map(|bound| derives::from_str(&bound.name))
+            .map(derives::as_str)
+            .collect::<Vec<_>>();
+        if missing.is_empty() {
+            return;
+        }
+        let error = errors::type_argument_lacks_hash_derives(
+            callee_name,
+            type_param,
+            placeholder,
+            placeholder,
+            &missing,
+            HashRemedy::TypeParameter,
+            span,
+        );
+        self.push_error_once(error);
     }
 
     /// Refuse one type argument bound to a hashed type parameter when it is known to lack `Eq` or `Hash` (#1758).

@@ -96,6 +96,8 @@ pub enum HashRemedy {
     CustomEquality,
     /// A builtin such as `float` or `set[int]`, which cannot take derives.
     Builtin,
+    /// A type parameter of the calling function: its declaration adds the bounds, which its own callers then meet.
+    TypeParameter,
 }
 
 /// Render the remedy for the type that lacks `Eq` or `Hash`.
@@ -111,6 +113,10 @@ fn hash_remedy_hint(holder_type: &str, missing: &[&str], remedy: HashRemedy) -> 
         HashRemedy::Builtin => {
             format!("'{holder_type}' cannot derive them; use a type that implements Eq and Hash, such as int or str")
         }
+        HashRemedy::TypeParameter => format!(
+            "Bound the type parameter in its declaration: '{holder_type} with ({})'",
+            missing.join(", ")
+        ),
     }
 }
 
