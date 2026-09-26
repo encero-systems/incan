@@ -1,0 +1,35 @@
+# behavior: a user module declaring a derive bundle is applied through @derive under its import binding, plain and aliased, and the bundle's default method answers on both models through a bound on the bundle's trait (#1434)
+# retires: loaves/compiler/incan_emit/src/codegen.rs::module_derive_retains_its_trait_module_import
+# expect-stdout:
+#   1
+#   encoded
+#   2
+#   encoded
+
+import codec
+import codec as formats
+
+
+@derive(codec)
+model Item:
+    value: int
+
+
+@derive(formats)
+model Other:
+    value: int
+
+
+# The bundle's default method is reached through a bound on the bundle's trait; the direct `item.tag()` spelling
+# passes `incan check` and fails to compile (#1792).
+def tag_of[T with codec.Encode](value: T) -> str:
+    return value.tag()
+
+
+def main() -> None:
+    item = Item(value=1)
+    println(item.value)
+    println(tag_of(item))
+    other = Other(value=2)
+    println(other.value)
+    println(tag_of(other))

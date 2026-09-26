@@ -1,0 +1,20 @@
+# behavior: a model derived through the std.serde json bundle encodes to JSON
+# retires: loaves/compiler/incan_emit/tests/stdlib_generated_rust_snapshot_tests.rs::std_serde_prelude_import_snapshot
+# expect-stdout:
+#   {"name":"snap","enabled":true}
+
+from std.serde import json
+
+
+@derive(json)
+model SnapshotConfig:
+    name: str
+    enabled: bool
+
+
+def encode_config(config: SnapshotConfig) -> str:
+    return config.to_json()
+
+
+def main() -> None:
+    println(encode_config(SnapshotConfig(name="snap", enabled=true)))

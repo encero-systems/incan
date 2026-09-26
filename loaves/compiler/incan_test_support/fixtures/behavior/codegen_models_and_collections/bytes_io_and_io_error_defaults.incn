@@ -1,0 +1,46 @@
+# behavior: BytesIO round-trips bytes through getvalue and read, an IoError carries its kind and a source of None through the Error trait's default, and a BytesIO reader streams into a sha256 digest
+# retires: loaves/compiler/incan_emit/src/codegen.rs::package_codegen_keeps_embedded_stdlib_method_identity_at_declaration_origin
+# retires: loaves/compiler/incan_emit/src/codegen.rs::imported_stdlib_trait_default_expands_in_dependency_impl
+# retires: loaves/compiler/incan_emit/src/codegen.rs::streaming_hash_helpers_import_io_error_for_reader_chunk_failures
+# expect-stdout:
+#   4
+#   true
+#   true
+#   unexpected_eof
+#   no source
+#   32
+#   true
+
+from std.io import BytesIO
+from std.hash import reader_digest
+from std.traits.error import Error
+
+
+pub def oven_bytes() -> bytes:
+    return BytesIO(b"oven").getvalue()
+
+
+def show_error_kind() -> None:
+    match BytesIO(b"AB").read_exact(4):
+        Ok(data) => println(len(data))
+        Err(error) =>
+            println(error.kind)
+            match error.source():
+                Some(source) => println(source)
+                None => println("no source")
+
+
+def main() -> None:
+    println(len(oven_bytes()))
+    println(oven_bytes() == b"oven")
+    match BytesIO(b"oven").read(2):
+        Ok(head) => println(head == b"ov")
+        Err(error) => println(error.kind)
+    show_error_kind()
+    match reader_digest(BytesIO(b"oven"), "sha256", chunk_size=4):
+        Ok(digest) =>
+            println(len(digest))
+            match reader_digest(BytesIO(b"oven"), "sha256", chunk_size=1):
+                Ok(again) => println(digest == again)
+                Err(error) => println(error.message())
+        Err(error) => println(error.message())

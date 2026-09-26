@@ -1,0 +1,55 @@
+# behavior: a value returned from every match arm, cloned across arms when used after the match, or returned from a guarded arm is delivered intact
+# retires: loaves/compiler/incan_emit/tests/match_arm_ownership_codegen_tests.rs::generic_value_moves_in_every_terminal_match_arm_without_clone_bound
+# retires: loaves/compiler/incan_emit/tests/match_arm_ownership_codegen_tests.rs::generic_value_clones_in_match_arms_when_used_after_match
+# retires: loaves/compiler/incan_emit/tests/match_arm_ownership_codegen_tests.rs::guarded_match_arm_returns_move_once_the_guard_admits_the_arm
+# retires: loaves/compiler/incan_emit/tests/match_arm_ownership_codegen_tests.rs::guard_expression_reads_stay_conservative_while_the_admitted_return_moves
+# expect-stdout:
+#   first
+#   second
+#   kept
+#   kept
+#   admitted
+#   fallback
+#   2
+#   0
+
+pub def select[T](value: T, choose_first: bool) -> T:
+    match choose_first:
+        true => return value
+        false => return value
+
+
+pub def preserve[T](value: T, choose_first: bool) -> T:
+    match choose_first:
+        true =>
+            first = value
+        false =>
+            second = value
+    return value
+
+
+pub def guarded[T](value: T, choose_first: bool, admit_first: bool) -> T:
+    match choose_first:
+        case true if admit_first: return value
+        case _: return value
+
+
+def admits(value: list[str]) -> bool:
+    return len(value) > 0
+
+
+pub def guarded_list(value: list[str], choose_first: bool) -> list[str]:
+    match choose_first:
+        case true if admits(value): return value
+        case _: return value
+
+
+def main() -> None:
+    println(select("first", true))
+    println(select("second", false))
+    println(preserve("kept", true))
+    println(preserve("kept", false))
+    println(guarded("admitted", true, true))
+    println(guarded("fallback", true, false))
+    println(len(guarded_list(["a", "b"], true)))
+    println(len(guarded_list([], true)))

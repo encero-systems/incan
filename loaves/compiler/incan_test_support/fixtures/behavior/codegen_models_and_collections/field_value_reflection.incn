@@ -1,0 +1,74 @@
+# behavior: a model reflects its scalar field values by name and lists every field, an optional and a list-typed field included, in declaration order; through a type parameter an optional scalar field reflects as its value or None; a generic model's unread field is fine
+# retires: loaves/compiler/incan_emit/src/codegen.rs::normal_codegen_omits_dead_code_expect_for_generated_field_reflection_reads
+# retires: loaves/compiler/incan_emit/src/codegen.rs::normal_codegen_emits_value_reflection_for_optional_scalar_fields
+# retires: loaves/compiler/incan_emit/src/codegen.rs::normal_codegen_skips_value_reflection_for_non_scalar_fields
+# retires: loaves/compiler/incan_emit/src/codegen.rs::normal_codegen_expects_unread_private_fields_when_value_reflection_is_not_emitted
+# expect-stdout:
+#   Ada
+#   str:Ada
+#   int:42
+#   missing
+#   name=Ada
+#   age=42
+#   label
+#   optional_label
+#   optional_label=None
+#   optional_label=x
+#   values
+#   ok
+
+model User:
+    name: str
+    age: int
+
+
+model ProbeRow:
+    label: str
+    optional_label: Option[str]
+
+
+model Batch:
+    values: list[int]
+
+
+model Box[T]:
+    value: T
+
+
+def describe_user_value(value: Option[str | int]) -> str:
+    match value:
+        str(text) => return f"str:{text}"
+        int(number) => return f"int:{number}"
+        None => return "missing"
+
+
+def describe_item(value: str | int) -> str:
+    match value:
+        str(text) => return text
+        int(number) => return f"{number}"
+
+
+def reflect_optional_label[T](row: T) -> str:
+    match row.__field_value__("optional_label"):
+        Some(value) => return f"optional_label={value}"
+        None => return "optional_label=<missing>"
+
+
+def main() -> None:
+    let user = User(name="Ada", age=42)
+    println(user.name)
+    println(describe_user_value(user.__field_value__("name")))
+    println(describe_user_value(user.__field_value__("age")))
+    println(describe_user_value(user.__field_value__("missing")))
+    for name, value in user.__field_items__():
+        println(f"{name}={describe_item(value)}")
+    row = ProbeRow(label="paid", optional_label=None)
+    for name, _ in row.__field_items__():
+        println(name)
+    println(reflect_optional_label[ProbeRow](ProbeRow(label="paid", optional_label=None)))
+    println(reflect_optional_label[ProbeRow](ProbeRow(label="late", optional_label=Some("x"))))
+    let batch = Batch(values=[1, 2, 3])
+    for name, _ in batch.__field_items__():
+        println(name)
+    let box = Box[int](value=42)
+    println("ok")

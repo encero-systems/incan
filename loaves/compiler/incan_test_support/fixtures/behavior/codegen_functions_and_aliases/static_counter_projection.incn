@@ -1,0 +1,33 @@
+# behavior: a public static is one value across its initializer, writes and reads, and public aliases of a function and a static call and read their targets
+# retires: loaves/compiler/incan_emit/src/codegen.rs::source_static_declaration_reads_writes_and_init_share_one_projection
+# retires: loaves/compiler/incan_emit/src/codegen.rs::same_module_public_function_and_static_aliases_bind_exact_projections
+# expect-stdout:
+#   1
+#   2
+#   2
+
+pub static counter: int = 0
+
+
+pub def increment() -> int:
+    counter += 1
+    return counter
+
+
+pub def average(left: int, right: int) -> int:
+    return (left + right) // 2
+
+
+pub mean = alias average
+pub static total: int = 2
+pub tally = alias total
+
+
+pub def summarize() -> int:
+    return mean(total, tally)
+
+
+def main() -> None:
+    println(increment())
+    println(increment())
+    println(summarize())

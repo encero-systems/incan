@@ -19,7 +19,7 @@ Every entry in an area is one of those three shapes. A stray file is refused, an
 
 Two areas ship with the harness: `smoke/`, the first twins (each retires `codegen.rs` unit tests), and `harness/`, the harness proving itself with one fixture per shape of the format (a refused program with one code and with two, a non-zero exit code, an exit code as the only observable, an empty stdout, contained lines, a module directory, a project directory). The `harness/` fixtures twin nothing; a change to the runner or to the route underneath it fails there before it fails in a twin. The header *refusals* are unit tests of `parse_header` in `incan_test_support`, not fixtures: an area fixture must pass, so a fixture cannot prove that a malformed header is refused.
 
-One area is set apart by what its programs need from the runner: `cli_dependencies/`, project fixtures with in-fixture path dependencies, whose providers the runner bakes before the run (see *Project fixtures with dependencies* and *Provider bakes and Cargo*). No behavior root, that one included, is registered for a compiler-suite Cargo capability: every bake the runner performs under the suite is Cargo-guarded.
+The `<family>_dependencies/` areas (`cli_dependencies/`, `codegen_dependencies/`) are set apart by what their programs need from the runner: project fixtures with in-fixture path dependencies, whose providers the runner bakes before the run (see *Project fixtures with dependencies* and *Provider bakes and Cargo*). No behavior root, those included, is registered for a compiler-suite Cargo capability: every bake the runner performs under the suite is Cargo-guarded.
 
 ### Area size
 
@@ -48,7 +48,7 @@ A project fixture may depend on packages that live inside it. It declares them t
 - **What is baked.** Every provider, once, in dependency order (a provider after the providers it depends on; a provider two consumers share once), with `incan oven bake --project .` in the provider's directory and no Cargo authority (see *Provider bakes and Cargo*). Outside the compiler suite the bake publishes into the fixture project's own Oven home, where the consumer's run finds it. A consumer refuses to run until its providers have published a package Loaf, which is the whole reason for the bake. The consumer project itself is baked outside the suite only, as every run fixture is. A refused program is checked, never baked: `incan check` prepares an unbaked provider's metadata itself.
 - **What is refused at discovery** (the area fails to run, naming the fixture, like a malformed header): a dependency whose path resolves outside the fixture directory (only the fixture directory is copied into the scratch project, so `path = "../elsewhere"` would depend on nothing), a cycle among the path dependencies (named as the chain that closes it: neither side could be baked first), and a fixture `loaf.toml` the compiler cannot read.
 - **What fails the fixture** (reported beside the other failures, with the bake's stdout and stderr): a provider whose bake fails for any reason, a `loaf.toml` the compiler refuses included, and under the suite a provider whose bake reaches for Cargo. A provider's manifest the runner cannot read is not a discovery refusal: the provider is planned without dependencies of its own and its bake says what is wrong, so one broken provider fails one fixture rather than the whole area.
-- **Where.** Under `cli_dependencies/`.
+- **Where.** In the `<family>_dependencies/` area of the fixture's family (`cli_dependencies/`, `codegen_dependencies/`, ...).
 
 ## Header
 

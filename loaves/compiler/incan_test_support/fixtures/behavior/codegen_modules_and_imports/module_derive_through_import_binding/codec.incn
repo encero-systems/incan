@@ -1,0 +1,7 @@
+__derives__ = [Encode]
+
+
+@rust.derive("Debug")
+pub trait Encode:
+    def tag(self) -> str:
+        return "encoded"

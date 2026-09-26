@@ -1,0 +1,56 @@
+# behavior: source traits whose supertraits are Rust traits (Display, From under an alias, DeserializeOwned) are adopted by models that satisfy the Rust parent, and the models print, convert and decode through them (#1427)
+# retires: loaves/compiler/incan_emit/src/checked_program/rust_supertrait_codegen.rs::rust_supertrait_codegen_preserves_imported_alias_and_arguments
+# retires: loaves/compiler/incan_emit/src/checked_program/rust_supertrait_codegen.rs::rust_supertrait_codegen_does_not_implement_foreign_parent
+# expect-stdout:
+#   tag:x
+#   9
+#   3
+
+from std.serde import json
+from rust::std::fmt import Display
+from rust::std::convert import From as Convert
+from rust::serde::de import DeserializeOwned
+
+
+pub trait Label with Display:
+    pass
+
+
+pub trait Number with Convert[int]:
+    pass
+
+
+pub trait DecodeReady with DeserializeOwned:
+    pass
+
+
+model Tag with Label:
+    name: str
+
+    def __str__(self) -> str:
+        return f"tag:{self.name}"
+
+
+model Count with Number:
+    value: int
+
+    @classmethod
+    def from(cls, value: int) -> Self:
+        return Count(value=value)
+
+
+@derive(json)
+pub model Config with DecodeReady:
+    value: int
+
+
+def show(label: Label) -> str:
+    return str(label)
+
+
+def main() -> None:
+    println(show(Tag(name="x")))
+    println(Count.from(9).value)
+    match Config.from_json("{\"value\": 3}"):
+        Ok(config) => println(config.value)
+        Err(_) => println("decode error")
