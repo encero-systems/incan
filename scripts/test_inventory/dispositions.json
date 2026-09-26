@@ -1317,11 +1317,15 @@
     },
     "loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs": {
       "disposition": "retire",
-      "notes": "asserts the generated Rust text of tuple statements that write existing places (#1798, #1799); retires with the Rust-source backend.",
+      "notes": "asserts the generated Rust text of multi-target assignments that write existing places (#1798, #1799, #1806); retires with the Rust-source backend.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
       "tests": {
+        "chained_assignment_in_a_loop_assigns_the_bound_name_issue1806": {
+          "notes": "Asserts the loop assigns `x` from the chain instead of shadowing it; the fixture runs the loop and prints 5.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
+        },
         "tuple_assignment_writes_each_field_and_element_issue1798": {
           "notes": "Asserts the emitted writes of a field swap, a list-element swap and a field beside a name; the fixture runs the same shapes and prints the swapped values.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/tuple_assignment_swaps_fields_and_list_elements.incn"
@@ -2498,11 +2502,15 @@
     },
     "loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs": {
       "disposition": "retire",
-      "notes": "the Rust-source backend's own lowering of tuple statements into existing places (#1798, #1799); retires with `incan_ir`. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/).",
+      "notes": "the Rust-source backend's own lowering of multi-target assignments into existing places (#1798, #1799, #1806); retires with `incan_ir`. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/).",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
       "tests": {
+        "chained_assignment_into_bound_names_reassigns_them_inside_a_loop_issue1806": {
+          "notes": "Asserts the legacy IR assigns bound chain targets instead of declaring shadows; the fixture runs two loops and a new-name chain.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
+        },
         "tuple_assignment_to_fields_and_list_elements_writes_each_place_issue1798": {
           "notes": "Asserts the legacy IR writes each field and element from one temporary; the fixture runs the swaps and prints the result.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/tuple_assignment_swaps_fields_and_list_elements.incn"

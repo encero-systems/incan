@@ -1,6 +1,6 @@
-//! Tuple assignment into existing places: a tuple unpacking whose names are already bound reassigns them, and a tuple
-//! assignment to fields and list elements writes each place. Both read the whole right side into one temporary first,
-//! so a swap sees the values from before any write.
+//! Assignments with several targets into existing places: a tuple unpacking or a chained assignment whose names are
+//! already bound reassigns them, and a tuple assignment to fields and list elements writes each place. The tuple
+//! statements read the whole right side into one temporary first, so a swap sees the values from before any write.
 
 use super::*;
 use crate::stmt::AssignTarget;
@@ -51,6 +51,52 @@ fn all_statements<'a>(ir: &'a IrProgram, name: &str) -> Result<Vec<&'a IrStmt>, 
     let mut out = Vec::new();
     flatten(function_body(ir, name)?, &mut out);
     Ok(out)
+}
+
+/// Return every statement of the first `for` loop in the named function, nested statements included.
+fn loop_statements<'a>(ir: &'a IrProgram, name: &str) -> Result<Vec<&'a IrStmt>, String> {
+    let stmts = all_statements(ir, name)?;
+    stmts
+        .iter()
+        .copied()
+        .find_map(|stmt| match &stmt.kind {
+            IrStmtKind::For { body, .. } => {
+                let mut nested = Vec::new();
+                flatten(body, &mut nested);
+                Some(nested)
+            }
+            _ => None,
+        })
+        .ok_or_else(|| format!("`{name}` must keep its loop: {stmts:?}"))
+}
+
+/// Describe each assignment to a local name as `(name, source)`, where the source is the local the value reads, or
+/// `None` for any other value.
+fn name_assignments(stmts: &[&IrStmt]) -> Vec<(String, Option<String>)> {
+    stmts
+        .iter()
+        .copied()
+        .filter_map(|stmt| match &stmt.kind {
+            IrStmtKind::Assign {
+                target: AssignTarget::Var { name, .. },
+                value,
+            } => {
+                let source = match &value.kind {
+                    IrExprKind::Var { name, .. } => Some(name.clone()),
+                    _ => None,
+                };
+                Some((name.clone(), source))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Return whether `stmts` declare a local with the given name.
+fn declares(stmts: &[&IrStmt], name: &str) -> bool {
+    stmts
+        .iter()
+        .any(|stmt| matches!(&stmt.kind, IrStmtKind::Let { name: declared, .. } if declared == name))
 }
 
 /// Return the name of the temporary the tuple value is read into: the one `let` whose value is a tuple.
@@ -117,18 +163,7 @@ def step(start: int) -> int:
 "#,
     )?;
 
-    let stmts = all_statements(&ir, "fib")?;
-    let loop_body: Vec<&IrStmt> = stmts
-        .iter()
-        .find_map(|stmt| match &stmt.kind {
-            IrStmtKind::For { body, .. } => {
-                let mut nested = Vec::new();
-                flatten(body, &mut nested);
-                Some(nested)
-            }
-            _ => None,
-        })
-        .ok_or_else(|| format!("`fib` must keep its loop: {stmts:?}"))?;
+    let loop_body = loop_statements(&ir, "fib")?;
     assert!(
         !loop_body
             .iter()
@@ -204,5 +239,54 @@ def trade(mut grid: Grid, start: int) -> int:
             "`{name}` writes each place from its element of the temporary, in order"
         );
     }
+    Ok(())
+}
+
+/// #1806: `x = y = x + 1` inside a loop updates the loop's `x`, and `y`, first bound by the chain, is declared.
+/// Lowering declared every target with a fresh `let`, so `x` was shadowed for one iteration only.
+#[test]
+fn chained_assignment_into_bound_names_reassigns_them_inside_a_loop_issue1806() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+def count_up(n: int) -> int:
+    mut x = 0
+    for _ in range(n):
+        x = y = x + 1
+    return x
+
+def both(n: int) -> int:
+    mut total = 0
+    mut last = 0
+    for _ in range(n):
+        total = last = total + 2
+    return total + last
+"#,
+    )?;
+
+    let body = loop_statements(&ir, "count_up")?;
+    assert!(!declares(&body, "x"), "the loop must not bind a fresh `x`: {body:?}");
+    assert!(
+        declares(&body, "y"),
+        "`y` is first bound by the chain and is declared: {body:?}"
+    );
+    assert_eq!(
+        name_assignments(&body),
+        vec![("x".to_string(), Some("y".to_string()))],
+        "`x` is assigned from the chain's value"
+    );
+
+    let body = loop_statements(&ir, "both")?;
+    assert!(
+        !declares(&body, "total") && !declares(&body, "last"),
+        "the loop must not bind a fresh `total` or `last`: {body:?}"
+    );
+    assert_eq!(
+        name_assignments(&body),
+        vec![
+            ("last".to_string(), None),
+            ("total".to_string(), Some("last".to_string()))
+        ],
+        "the last target takes the value and each earlier target reads the next one"
+    );
     Ok(())
 }

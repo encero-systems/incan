@@ -40,12 +40,12 @@ fn test_collection_assignments() {
 }
 fn test_multiple_targets() {
     let value: i64 = 5;
-    let _x: i64 = value;
-    let _y: i64 = value;
-    let _z: i64 = value;
-    let z = 5;
-    let y = z;
-    let _x = y;
+    let mut x: i64 = value;
+    let mut y: i64 = value;
+    let mut z: i64 = value;
+    z = 5;
+    y = z;
+    x = y;
 }
 fn main() {
     std::panic::set_hook(

@@ -1636,70 +1636,7 @@ impl AstLowering {
 
             ast::Statement::TupleAssign(ta) => return self.lower_tuple_assign(ta),
 
-            ast::Statement::ChainedAssignment(ca) => {
-                // Lower chained assignment x = y = z = 5 into: let z = 5; let y = z; let x = y; We return a block
-                // expression that does all the assignments
-                let value = self.lower_expr_spanned(&ca.value)?;
-                let ty = value.ty.clone();
-
-                // Assign to last target first (rightmost)
-                let last_target = match ca.targets.last() {
-                    Some(t) => t,
-                    None => {
-                        return Err(LoweringError {
-                            message: "empty chained assignment".to_string(),
-                            span: IrSpan::default(),
-                        });
-                    }
-                };
-                let mutability = match ca.binding {
-                    ast::BindingKind::Mutable => Mutability::Mutable,
-                    _ => Mutability::Immutable,
-                };
-
-                // Record the last target in scope
-                self.define_local_binding(last_target.clone(), ty.clone(), false);
-
-                // Create the first assignment statement
-                let mut stmts = vec![IrStmt::new(IrStmtKind::Let {
-                    name: last_target.clone(),
-                    ty: ty.clone(),
-                    type_annotation: None,
-                    mutability,
-                    value,
-                })];
-
-                // Now assign to each previous target from the next one
-                for i in (0..ca.targets.len() - 1).rev() {
-                    let target = &ca.targets[i];
-                    let source = &ca.targets[i + 1];
-
-                    self.define_local_binding(target.clone(), ty.clone(), false);
-
-                    let source_expr = TypedExpr::new(
-                        IrExprKind::Var {
-                            name: source.clone(),
-                            access: if ty.is_copy() { VarAccess::Copy } else { VarAccess::Move },
-                            ref_kind: VarRefKind::Value,
-                        },
-                        ty.clone(),
-                    );
-
-                    stmts.push(IrStmt::new(IrStmtKind::Let {
-                        name: target.clone(),
-                        ty: ty.clone(),
-                        type_annotation: None,
-                        mutability,
-                        value: source_expr,
-                    }));
-                }
-
-                // Return a block that does all the assignments and returns unit
-                return Ok(IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
-                    IrExprKind::Block { stmts, value: None },
-                    IrType::Unit,
-                ))));
-            }
+            ast::Statement::ChainedAssignment(ca) => return self.lower_chained_assignment(ca),
         };
         Ok(IrStmt::new(kind))
     }

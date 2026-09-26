@@ -1,0 +1,24 @@
+# behavior: a chained assignment into names that are already bound reassigns them, so x = y = x + 1 inside a loop advances the loop's x, and a name the chain binds first is declared
+# retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_assignment_into_bound_names_reassigns_them_inside_a_loop_issue1806
+# retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_assignment_in_a_loop_assigns_the_bound_name_issue1806
+# expect-stdout:
+#   5
+#   10 10
+#   7 7
+
+def count_up(n: int) -> int:
+    mut x = 0
+    for _ in range(n):
+        x = y = x + 1
+    return x
+
+
+def main() -> None:
+    println(count_up(5))
+    mut total = 0
+    mut last = 0
+    for _ in range(5):
+        total = last = total + 2
+    println(f"{total} {last}")
+    first = second = 7
+    println(f"{first} {second}")

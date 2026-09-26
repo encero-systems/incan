@@ -1,5 +1,6 @@
-//! Tuple statements that write existing places emit Rust assignments: a tuple unpacking into bound names assigns the
-//! names instead of declaring shadows (#1799), and a tuple assignment writes each field and element (#1798).
+//! Assignments with several targets that write existing places emit Rust assignments: a tuple unpacking or a chained
+//! assignment into bound names assigns the names instead of declaring shadows (#1799, #1806), and a tuple assignment
+//! writes each field and element (#1798).
 
 use crate::codegen::IrCodegen;
 use incan_frontend::{lexer, parser};
@@ -97,5 +98,30 @@ def main() -> None:
         2,
         "both list elements are written from the temporary:\n{code}"
     );
+    Ok(())
+}
+
+/// `x = y = x + 1` in a loop declares the chain's new `y` and assigns the loop's `x` from it; no `let x` shadows `x`.
+#[test]
+fn chained_assignment_in_a_loop_assigns_the_bound_name_issue1806() -> Result<(), String> {
+    let code = generate_collapsed(
+        r#"
+def count_up(n: int) -> int:
+    mut x = 0
+    for _ in range(n):
+        x = y = x + 1
+    return x
+
+
+def main() -> None:
+    println(count_up(5))
+"#,
+    )?;
+    assert!(
+        code.contains("let y = x + 1;"),
+        "the chain declares its new `y`:\n{code}"
+    );
+    assert!(code.contains("x = y;"), "the loop's `x` is assigned from `y`:\n{code}");
+    assert!(!code.contains("let x = y"), "the loop must not shadow `x`:\n{code}");
     Ok(())
 }

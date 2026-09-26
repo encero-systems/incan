@@ -25,11 +25,11 @@
 //! let ir_program = lowering.lower_program(&ast_program)?;
 //! ```
 
+mod assignment_targets;
 mod decl;
 mod errors;
 mod expr;
 mod stmt;
-mod tuple_targets;
 mod types;
 
 use std::collections::{HashMap, HashSet};

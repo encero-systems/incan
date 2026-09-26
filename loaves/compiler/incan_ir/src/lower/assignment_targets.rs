@@ -1,12 +1,16 @@
-//! Lowering of the two tuple statements: tuple unpacking into names (`a, b = value`) and tuple assignment into places
-//! (`grid.width, items[i] = value`).
+//! Lowering of the assignments with several targets: tuple unpacking into names (`a, b = value`), tuple assignment into
+//! places (`grid.width, items[i] = value`) and chained assignment (`x = y = value`).
 //!
-//! Both read the whole right side into one temporary before writing any target, so a swap such as `a, b = (b, a)` or
-//! `items[i], items[j] = (items[j], items[i])` sees the values from before the first write. Each target then receives
-//! its element of the temporary:
+//! The tuple statements read their whole right side into one temporary before writing any target, so a swap such as
+//! `a, b = (b, a)` or `items[i], items[j] = (items[j], items[i])` sees the values from before the first write. Each
+//! target then receives its element of the temporary. A chained assignment gives its value to the last target and each
+//! earlier target reads the one after it.
+//!
+//! Every target is written the way a single assignment of its shape writes it:
 //!
 //! - a name that is already bound and may be reassigned is assigned in place. A fresh `let` would only shadow it until
-//!   the end of the enclosing block, so `a, b = (b, a + b)` in a loop would never update the loop's `a` and `b`;
+//!   the end of the enclosing block, so `a, b = (b, a + b)` or `x = y = x + 1` in a loop would never update the loop's
+//!   names;
 //! - a new name is declared with the statement's binding kind;
 //! - a field or an element place is written the way a single `obj.field = value` or `items[i] = value` writes it.
 //!
@@ -45,24 +49,71 @@ impl AstLowering {
         let mut stmts = vec![self.bind_tuple_temporary(&temporary, value)];
         for (index, (name, element_ty)) in unpack.names.iter().zip(element_types).enumerate() {
             let element = self.tuple_temporary_element(&temporary, index, element_ty.clone());
-            if let Some(target) = self.bound_name_assign_target(unpack.binding, name) {
-                stmts.push(IrStmt::new(IrStmtKind::Assign { target, value: element }));
-                continue;
-            }
-
-            self.define_local_binding(name.clone(), element_ty.clone(), false);
-            if matches!(mutability, Mutability::Mutable) {
-                self.mutable_vars.insert(name.clone(), true);
-            }
-            stmts.push(IrStmt::new(IrStmtKind::Let {
-                name: name.clone(),
-                ty: element_ty,
-                type_annotation: None,
-                mutability,
-                value: element,
-            }));
+            stmts.push(self.assign_or_declare_name(unpack.binding, name, element_ty, mutability, element));
         }
         Ok(Self::statement_block(stmts))
+    }
+
+    /// Lower `x = y = value` (or `let` / `mut x = y = value`).
+    ///
+    /// The last target takes the value and each earlier target reads the one after it. A plain spelling reassigns every
+    /// target that is already bound and mutable (or a module static) and declares the others, the rule a single
+    /// `x = value` follows; `let` and `mut` spellings declare every target.
+    pub(super) fn lower_chained_assignment(
+        &mut self,
+        chain: &ast::ChainedAssignmentStmt,
+    ) -> Result<IrStmt, LoweringError> {
+        let value = self.lower_expr_spanned(&chain.value)?;
+        let ty = value.ty.clone();
+        let mutability = match chain.binding {
+            ast::BindingKind::Mutable => Mutability::Mutable,
+            _ => Mutability::Immutable,
+        };
+        let Some((last, earlier)) = chain.targets.split_last() else {
+            return Err(LoweringError {
+                message: "empty chained assignment".to_string(),
+                span: IrSpan::default(),
+            });
+        };
+
+        let mut stmts = vec![self.assign_or_declare_name(chain.binding, last, ty.clone(), mutability, value)];
+        for (target, source) in earlier.iter().zip(chain.targets.iter().skip(1)).rev() {
+            let source_read = TypedExpr::new(
+                IrExprKind::Var {
+                    name: source.clone(),
+                    access: if ty.is_copy() { VarAccess::Copy } else { VarAccess::Move },
+                    ref_kind: VarRefKind::Value,
+                },
+                ty.clone(),
+            );
+            stmts.push(self.assign_or_declare_name(chain.binding, target, ty.clone(), mutability, source_read));
+        }
+        Ok(Self::statement_block(stmts))
+    }
+
+    /// Give `value` to one named target: assign it when the statement reassigns the name, otherwise declare the name.
+    fn assign_or_declare_name(
+        &mut self,
+        binding: ast::BindingKind,
+        name: &str,
+        ty: IrType,
+        mutability: Mutability,
+        value: TypedExpr,
+    ) -> IrStmt {
+        if let Some(target) = self.bound_name_assign_target(binding, name) {
+            return IrStmt::new(IrStmtKind::Assign { target, value });
+        }
+        self.define_local_binding(name.to_string(), ty.clone(), false);
+        if matches!(mutability, Mutability::Mutable) {
+            self.mutable_vars.insert(name.to_string(), true);
+        }
+        IrStmt::new(IrStmtKind::Let {
+            name: name.to_string(),
+            ty,
+            type_annotation: None,
+            mutability,
+            value,
+        })
     }
 
     /// Lower `target, target = value` whose targets are places: fields, elements, or names mixed with them.
@@ -86,7 +137,7 @@ impl AstLowering {
         Ok(Self::statement_block(stmts))
     }
 
-    /// Return where a plain tuple-unpacking name is reassigned, or `None` when the statement declares it.
+    /// Return where a plain named target is reassigned, or `None` when the statement declares it.
     ///
     /// This is the rule a single `name = value` follows: a name bound in any enclosing scope is reassigned when it is
     /// mutable or resolves to a module static; `let` and `mut` spellings always declare.
