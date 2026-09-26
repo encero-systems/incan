@@ -1,0 +1,10 @@
+pub def api_version() -> str:
+    return "v1"
+
+
+pub def max_page_size() -> int:
+    return 100
+
+
+pub def default_timeout() -> int:
+    return 30

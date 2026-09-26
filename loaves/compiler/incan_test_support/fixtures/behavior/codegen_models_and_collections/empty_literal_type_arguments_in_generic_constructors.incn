@@ -1,0 +1,48 @@
+# behavior: an empty list literal in a generic model constructor takes the supplied type argument, whether the names differ, match, or the field is concretely typed (#1507)
+# retires: loaves/compiler/incan_emit/tests/checked_empty_collection_constructor_tests.rs::empty_literal_uses_the_supplied_type_argument_not_the_declared_name_issue1507
+# retires: loaves/compiler/incan_emit/tests/checked_empty_collection_constructor_tests.rs::empty_literal_still_emits_a_matching_type_parameter_name_issue1507
+# retires: loaves/compiler/incan_emit/tests/checked_empty_collection_constructor_tests.rs::empty_literal_keeps_a_concrete_declared_field_type_issue1507
+# expect-stdout:
+#   0
+#   0
+#   0
+#   0
+#   1
+
+@derive(Clone)
+model Holder[Elem with Clone]:
+    items: list[Elem]
+    names: list[str]
+
+
+@derive(Clone)
+model Bag[U with Clone]:
+    items: list[U]
+
+
+@derive(Clone)
+model Source[T with Clone]:
+    value: T
+
+    def expand[Picked with Clone](self) -> Holder[Picked]:
+        return Holder[Picked](items=[], names=[])
+
+
+def build[U with Clone]() -> Bag[U]:
+    return Bag[U](items=[])
+
+
+def build_named[Picked with Clone]() -> Holder[Picked]:
+    return Holder[Picked](items=[], names=["n"])
+
+
+def main() -> None:
+    s = Source[int](value=1)
+    h: Holder[str] = s.expand[str]()
+    println(len(h.items))
+    println(len(h.names))
+    g: Bag[str] = build[str]()
+    println(len(g.items))
+    k: Holder[int] = build_named[int]()
+    println(len(k.items))
+    println(len(k.names))

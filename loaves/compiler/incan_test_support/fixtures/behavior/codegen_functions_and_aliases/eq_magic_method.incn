@@ -1,0 +1,23 @@
+# behavior: a model's __eq__ decides == for its values
+# retires: loaves/compiler/incan_emit/src/codegen.rs::source_eq_magic_method_keeps_abi_slot_and_recoverable_projection
+# expect-stdout:
+#   true
+#   false
+#   true
+
+model Value:
+    value: int
+    label: str
+
+    def __eq__(self, other: Value) -> bool:
+        return self.value == other.value
+
+
+def same(left: Value, right: Value) -> bool:
+    return left == right
+
+
+def main() -> None:
+    println(same(Value(value=1, label="a"), Value(value=1, label="b")))
+    println(same(Value(value=1, label="a"), Value(value=2, label="a")))
+    println(Value(value=3, label="x") == Value(value=3, label="y"))

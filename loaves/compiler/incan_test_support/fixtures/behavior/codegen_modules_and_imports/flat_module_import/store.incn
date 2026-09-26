@@ -1,0 +1,5 @@
+from db import Database
+
+
+pub def touch(db: Database) -> str:
+    return f"store:{db.id}"

@@ -1,0 +1,42 @@
+# behavior: async Rust free functions and methods taking references are awaited from Incan with borrowed arguments, including an argument returned by a Rust method
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_borrows_async_rust_backed_free_function_args_from_metadata
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_awaits_async_rust_backed_method_from_metadata
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_borrows_async_rust_backed_free_function_args_from_real_rust_inspect
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_codegen_borrows_async_rust_args_after_rust_method_return
+# retires: loaves/compiler/incan_emit/src/codegen.rs::test_ir_codegen_uses_configured_rust_inspect_workspace_for_async_borrows
+# expect-stdout:
+#   3
+#   registered
+#   refused
+#   7
+
+import std.async
+from std.async import sleep
+from rust::demo_async import CsvReadOptions, Plan, SessionContext, State, consume, make_context, make_options
+
+
+pub async def run(state: State, plan: Plan) -> int:
+    await sleep(0.01)
+    return await consume(state, plan)
+
+
+pub async def register_csv(path: str) -> str:
+    ctx = make_context()
+    opts = make_options()
+    match await ctx.register_csv("orders", path, opts):
+        Ok(_) => return "registered"
+        Err(_) => return "refused"
+
+
+pub async def run_after_method_return(plan: Plan) -> int:
+    ctx = SessionContext.new()
+    state = ctx.state()
+    await sleep(0.01)
+    return await consume(state, plan)
+
+
+async def main() -> None:
+    println(await run(State(value=1), Plan(value=2)))
+    println(await register_csv("orders.csv"))
+    println(await register_csv(""))
+    println(await run_after_method_return(Plan(value=2)))

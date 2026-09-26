@@ -1,0 +1,28 @@
+# behavior: a local that shadows a binding of a static inside a block is an ordinary value, not the static
+# retires: loaves/compiler/incan_emit/src/codegen.rs::nested_ordinary_binding_shadows_outer_static_binding_alias
+# expect-stdout:
+#   2
+#   0
+
+static items: list[int] = []
+
+
+def count_inner() -> int:
+    let live = items
+    if true:
+        let live = [1, 2]
+        return len(live)
+    return len(live)
+
+
+def count_outer() -> int:
+    let live = items
+    if false:
+        let live = [1, 2]
+        return len(live)
+    return len(live)
+
+
+def main() -> None:
+    println(count_inner())
+    println(count_outer())

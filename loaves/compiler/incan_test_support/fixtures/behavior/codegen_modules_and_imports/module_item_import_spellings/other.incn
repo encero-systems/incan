@@ -1,0 +1,2 @@
+pub def count() -> int:
+    return 7

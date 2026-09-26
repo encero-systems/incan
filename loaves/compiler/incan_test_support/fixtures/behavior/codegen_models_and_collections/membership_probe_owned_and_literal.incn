@@ -1,0 +1,28 @@
+# behavior: `in` over a list of str accepts a call result and a literal as the probe (#1066)
+# retires: loaves/compiler/incan_emit/src/codegen.rs::string_membership_probe_borrows_non_variable_owned_string_issue1066
+# retires: loaves/compiler/incan_emit/src/codegen.rs::string_membership_probe_keeps_literal_and_borrowed_probes_well_formed_issue1066
+# expect-stdout:
+#   true
+#   false
+#   true
+#   false
+
+def observation_id_text(value: int) -> str:
+    return f"obs-{value}"
+
+
+def is_known(observation_id: int, observation_ids: list[str]) -> bool:
+    if observation_id_text(observation_id) in observation_ids:
+        return true
+    return false
+
+
+def has_orders(names: list[str]) -> bool:
+    return "orders" in names
+
+
+def main() -> None:
+    println(is_known(1, ["obs-1", "obs-2"]))
+    println(is_known(3, ["obs-1", "obs-2"]))
+    println(has_orders(["orders"]))
+    println(has_orders(["invoices"]))

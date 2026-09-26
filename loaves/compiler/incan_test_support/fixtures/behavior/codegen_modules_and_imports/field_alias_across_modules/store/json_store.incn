@@ -1,0 +1,14 @@
+from db.schema import Account
+from db.schema import Account as A
+
+
+pub def get_type(a: Account) -> str:
+    return a.type
+
+
+pub def make() -> Account:
+    return Account(type="x")
+
+
+pub def make_aliased() -> A:
+    return A(type="y")
