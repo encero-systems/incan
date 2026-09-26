@@ -1,5 +1,5 @@
 # behavior: println renders every argument, space-separated, rather than only the first
-# retires: loaves/compiler/incan_driver/tests/replacement_backend_execution_tests.rs::both_backends_render_a_multi_argument_print_the_same_way
+# retires: loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/collections_strings_and_print.rs::both_backends_render_a_multi_argument_print_the_same_way
 # expect-stdout:
 #   count 3 true
 

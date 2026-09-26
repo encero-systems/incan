@@ -615,13 +615,29 @@
       "split_target": "",
       "twin": "dies"
     },
-    "loaves/compiler/incan_driver/tests/parity_corpus_tests.rs": {
+    "loaves/compiler/incan_driver/tests/parity_corpus_tests/corpus_proofs.rs": {
       "disposition": "re-point",
-      "notes": "the parity corpus: slice 7's own measurement instrument (RFC 120 coverage, replacement receipts, corpus validation). 16 of 28 tests assert a green legacy-vs-replacement shadow comparison through `loaves/compiler/incan_driver/tests/support/parity_corpus.rs` (`shadow_support::compare_source_observable`), the same evidence class as `backend/shadow/**`: slice 7 (#1675) re-points that baseline to the frozen corpus receipts or retires the comparison with the legacy route. The support helper lives outside the file, so the scanner sees only the `replacement` lane.",
       "owner": 1561,
-      "split_required": true,
+      "twin": "",
+      "split_required": false,
       "split_target": "",
-      "twin": ""
+      "notes": "split of parity_corpus_tests.rs (the parity corpus: slice 7's own measurement instrument; the corpus support helper lives outside the file in `loaves/compiler/incan_driver/tests/support/parity_corpus.rs`, so the scanner sees only the `replacement` lane); corpus validation: the red-state schema proof, the green-state structural and behavioral proofs, the replacement rows' receipt-bound evidence and the CI summary."
+    },
+    "loaves/compiler/incan_driver/tests/parity_corpus_tests/paired_row_proofs.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of parity_corpus_tests.rs (the parity corpus: slice 7's own measurement instrument; the corpus support helper lives outside the file in `loaves/compiler/incan_driver/tests/support/parity_corpus.rs`, so the scanner sees only the `replacement` lane); the paired-comparison rows: these tests assert a green (or explicitly unavailable) legacy-vs-replacement shadow comparison through `shadow_support::compare_source_observable`, the same evidence class as `backend/shadow/**`: slice 7 (#1675) re-points that baseline to the frozen corpus receipts or retires the comparison with the legacy route."
+    },
+    "loaves/compiler/incan_driver/tests/parity_corpus_tests/rfc_120_proofs.rs": {
+      "disposition": "re-point",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of parity_corpus_tests.rs (the parity corpus: slice 7's own measurement instrument; the corpus support helper lives outside the file in `loaves/compiler/incan_driver/tests/support/parity_corpus.rs`, so the scanner sees only the `replacement` lane); the RFC 120 coverage and evidence proofs."
     },
     "loaves/compiler/incan_driver/tests/protected_builtin_binding_tests.rs": {
       "disposition": "keep",
@@ -655,25 +671,83 @@
       "split_target": "",
       "twin": ""
     },
-    "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests.rs": {
+    "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/async_tasks_and_race.rs": {
       "disposition": "keep",
-      "notes": "Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep. Two tests compare against the legacy backend.",
       "owner": 1561,
-      "split_required": true,
+      "twin": "",
+      "split_required": false,
       "split_target": "",
+      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); async tasks and `race`, direct and through the CLI."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/bodies_bindings_and_scalars.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); core body execution, bindings, projections and scalars."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/callables_and_generators.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); named calls, closures, partials, callable defaults and generators."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/cli_nominal_and_enum_values.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); CLI-driven nominal and enum programs with their receipts and refusals."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/cli_refusals_shadow_and_boundaries.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); CLI-driven refusals without a receipt, shadow requests that stay explicitly non-green, module and Rust interop boundaries."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/collections_strings_and_print.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); collections, strings, scalar JSON and `print`; one test compares against the legacy backend and retires to its behavior fixture.",
       "tests": {
         "both_backends_render_a_multi_argument_print_the_same_way": {
           "disposition": "retire",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/driver/println_multi_argument.incn",
           "notes": "compared the replacement executor's rendering of `println(\"count\", 3, true)` with the IrCodegen placeholder count; the twin runs the program and reads `count 3 true` from its stdout, and the replacement-only half stays in the keep sibling replacement_executes_print_by_recording_its_output."
-        },
+        }
+      }
+    },
+    "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/modules_and_sessions.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); the execution graph's cross-module resolution and the CLI-driven module, facade and session tests."
+    },
+    "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/nominal_and_enum_values.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); source-local nominal models and enums through a direct callable, with the identity and layout refusals.",
+      "tests": {
         "replacement_refuses_a_nominal_pattern_after_its_exact_target_identity_is_removed": {
           "disposition": "keep",
           "twin": "",
           "notes": "generated-text hit is a diagnostic string"
         }
-      },
-      "twin": ""
+      }
     },
     "loaves/compiler/incan_driver/tests/replacement_bool_truthiness_shadow_tests.rs": {
       "disposition": "re-point",
@@ -1083,11 +1157,10 @@
     },
     "loaves/compiler/incan_emit/src/emit/expressions/methods.rs": {
       "disposition": "retire",
+      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "emitter unit tests; frozen with the emitter under #1561, deleted by #654 once twinned.",
       "tests": {
         "copy_payload_named_observer_is_borrowed_through_a_closure_issue1718": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/result_inspect_named_observer_copy_payload.incn",
@@ -1097,7 +1170,8 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/result_inspect_named_observer_copy_payload.incn",
           "notes": "asserts the adapter or bare item the emitter passes for a named observer over a non-Copy payload; the twin runs inspect over a model payload with a named function and reads what the observer prints."
         }
-      }
+      },
+      "twin": ""
     },
     "loaves/compiler/incan_emit/src/emit/expressions/mod.rs": {
       "disposition": "retire",
@@ -2161,11 +2235,11 @@
     },
     "loaves/compiler/incan_frontend/src/typechecker/web_routes.rs": {
       "disposition": "keep",
+      "notes": "typechecker: route-handler signature rules (#1721, #1722); the inline tests cover the path-capture reader and the shape combinator, the checker rows live in loaves/compiler/incan_frontend/src/typechecker/tests/stdlib_surfaces.rs. No emit/driver dependency.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "typechecker: route-handler signature rules (#1721, #1722); the inline tests cover the path-capture reader and the shape combinator, the checker rows live in loaves/compiler/incan_frontend/src/typechecker/tests/stdlib_surfaces.rs. No emit/driver dependency."
+      "twin": ""
     },
     "loaves/compiler/incan_frontend/src/vocab_ast_bridge.rs": {
       "disposition": "keep",
@@ -2281,17 +2355,17 @@
     },
     "loaves/compiler/incan_ir/src/lower/decl/imports.rs": {
       "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "tests": {
         "renamed_reexport_hop_is_spelled_by_its_declaring_module_issue1710": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_functions_and_projections/reexport_chain",
           "notes": "twinned by the behavior fixture that retires it: the program prints what the lowering decision produces, so the generated-Rust assertion dies with #654 and the observable survives."
         }
-      }
+      },
+      "twin": ""
     },
     "loaves/compiler/incan_ir/src/lower/decl/methods.rs": {
       "disposition": "retire",
@@ -2309,11 +2383,10 @@
     },
     "loaves/compiler/incan_ir/src/lower/decl/mod.rs": {
       "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "tests": {
         "explicit_registry_entry_follows_a_declined_projection_issue1713": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_registry_subjects.incn",
@@ -2327,7 +2400,8 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_registry_subjects.incn",
           "notes": "twinned by the behavior fixture that retires it: the program prints what the lowering decision produces, so the generated-Rust assertion dies with #654 and the observable survives."
         }
-      }
+      },
+      "twin": ""
     },
     "loaves/compiler/incan_ir/src/lower/decl/traits.rs": {
       "disposition": "retire",
@@ -2362,11 +2436,10 @@
     },
     "loaves/compiler/incan_ir/src/lower/expr/patterns.rs": {
       "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "tests": {
         "hoisted_literal_tests_conjoin_with_the_arm_guard_issue1707": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_enums_and_matching/tuple_str_literal_pattern.incn",
@@ -2384,7 +2457,8 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_enums_and_matching/tuple_pattern_bindings.incn",
           "notes": "Asserts the recorded bindings on the legacy IR (a tuple pattern over a `tuple[int, str]` scrutinee binds its names with the element types); retires with `incan_ir`. The behavior is carried by the named fixture (#1714)."
         }
-      }
+      },
+      "twin": ""
     },
     "loaves/compiler/incan_ir/src/lower/mod.rs": {
       "disposition": "retire",
@@ -2406,17 +2480,17 @@
     },
     "loaves/compiler/incan_ir/src/lower/tests/unary_operand_grouping.rs": {
       "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "tests": {
         "prefix_operator_over_an_operator_expression_lowers_a_grouped_operand_issue1763": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/negation_keeps_its_operand_grouping.incn",
           "notes": "Asserts the recorded shape on the legacy IR (an operator-shaped operand of `not`, unary `-` or `~` is handed to the emitter as one grouped value in its own type; an atomic operand stays as written); retires with `incan_ir`. The behavior, `not (1 == 2)` printing `true` and `-(2 + 3)` printing `-5`, is carried by the named fixture (#1763)."
         }
-      }
+      },
+      "twin": ""
     },
     "loaves/compiler/incan_ir/src/lower/types.rs": {
       "disposition": "retire",
@@ -2628,11 +2702,11 @@
     },
     "loaves/kernel/incan_lang/src/interop/capabilities.rs": {
       "disposition": "keep",
+      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level."
+      "twin": ""
     },
     "loaves/kernel/incan_lang/src/interop/coercions.rs": {
       "disposition": "keep",
@@ -3244,11 +3318,11 @@
     },
     "loaves/oven/oven_rustc/src/rustc/direct_compiler/retention.rs": {
       "disposition": "unaffected",
+      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). A source module (compiler-closure retention) with a `#[cfg(all(test, unix))]` region over a synthetic sysroot, measured by that region. Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). A source module (compiler-closure retention) with a `#[cfg(all(test, unix))]` region over a synthetic sysroot, measured by that region. Reviewed at crate level."
+      "twin": ""
     },
     "loaves/oven/oven_rustc/src/rustc/inspection.rs": {
       "disposition": "unaffected",
@@ -3756,11 +3830,11 @@
     },
     "loaves/toolchain/incan-cli/tests/behavior_snapshots_tests.rs": {
       "disposition": "re-point",
+      "notes": "runs every behavior fixture of the snapshots_* areas (one libtest case per leaf area) as a program and compares its observables; the route changes under it, the fixtures do not.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "runs every behavior fixture of the snapshots_* areas (one libtest case per leaf area) as a program and compares its observables; the route changes under it, the fixtures do not."
+      "twin": ""
     },
     "loaves/toolchain/incan-cli/tests/canonical_item_imports.rs": {
       "disposition": "re-point",
@@ -4857,46 +4931,46 @@
       "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings": {
-      "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
+      "notes": "behavior fixtures twinning codegen snapshot tests over lists, dicts, sets, comprehensions, iterators, strings and builtins; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines.",
       "owner": 1561,
-      "notes": "behavior fixtures twinning codegen snapshot tests over lists, dicts, sets, comprehensions, iterators, strings and builtins; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+      "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_enums_and_matching": {
-      "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
+      "notes": "behavior fixtures twinning codegen snapshot tests over enums, patterns, match, unions and `isinstance`; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines.",
       "owner": 1561,
-      "notes": "behavior fixtures twinning codegen snapshot tests over enums, patterns, match, unions and `isinstance`; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+      "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_functions_and_projections": {
-      "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
+      "notes": "behavior fixtures twinning codegen snapshot tests over functions, calls, decorators, aliases, partials and RFC 120 projections; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines.",
       "owner": 1561,
-      "notes": "behavior fixtures twinning codegen snapshot tests over functions, calls, decorators, aliases, partials and RFC 120 projections; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+      "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_models_and_classes": {
-      "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
+      "notes": "behavior fixtures twinning codegen snapshot tests over models, classes, fields, constructors and properties; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines.",
       "owner": 1561,
-      "notes": "behavior fixtures twinning codegen snapshot tests over models, classes, fields, constructors and properties; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+      "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde": {
-      "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
+      "notes": "behavior fixtures twinning codegen snapshot tests over newtypes, validation, JSON and serde trait adoption; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines.",
       "owner": 1561,
-      "notes": "behavior fixtures twinning codegen snapshot tests over newtypes, validation, JSON and serde trait adoption; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+      "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib": {
-      "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
+      "notes": "behavior fixtures twinning codegen snapshot tests over stdlib module surfaces (math, fs, tempfile, testing, async, derives, registry, graph, uuid, regex, compression, traits, web); run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines.",
       "owner": 1561,
-      "notes": "behavior fixtures twinning codegen snapshot tests over stdlib module surfaces (math, fs, tempfile, testing, async, derives, registry, graph, uuid, regex, compression, traits, web); run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+      "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics": {
-      "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
+      "notes": "behavior fixtures twinning codegen snapshot tests over traits, supertraits, bounds, generics, protocol hooks and fallible iteration; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines.",
       "owner": 1561,
-      "notes": "behavior fixtures twinning codegen snapshot tests over traits, supertraits, bounds, generics, protocol hooks and fallible iteration; run by behavior_snapshots_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire tests it twins in `# retires:` lines."
+      "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/invalid": {
       "disposition": "keep",
