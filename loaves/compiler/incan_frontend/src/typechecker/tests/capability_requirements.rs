@@ -551,17 +551,21 @@ def main() -> None:
     Ok(())
 }
 
-/// Return the named type parameter's exported bound names.
-fn exported_bound_names(type_params: &[TypeParamExport], name: &str) -> Vec<String> {
+/// Return the names of the named type parameter's exported bounds the checker inferred.
+fn inferred_bound_names(type_params: &[TypeParamExport], name: &str) -> Vec<String> {
     type_params
         .iter()
         .filter(|param| param.name == name)
-        .flat_map(|param| param.bounds.iter().map(|bound| bound.name.clone()))
+        .flat_map(|param| param.bounds.iter())
+        .filter(|bound| bound.inferred)
+        .map(|bound| bound.name.clone())
         .collect()
 }
 
-/// A compiled library publishes a hashed type parameter as `Eq` and `Hash` bounds, for a function and a method, and a
-/// consumer of the written `.incnlib` manifest is refused by the ordinary bound check, for a literal argument too.
+/// A compiled library publishes a hashed type parameter as inferred `Eq` and `Hash` bounds, for a function and a
+/// method. A consumer of the written `.incnlib` manifest is refused with `INCAN-T0114` for a type known to lack them,
+/// for a literal argument too, and not for a library type whose derives come from `@rust.derive`, which the manifest
+/// does not record.
 #[test]
 fn library_manifest_carries_inferred_hash_bounds_issue1758() -> Result<(), Box<dyn std::error::Error>> {
     let provider = parse_program(
@@ -572,6 +576,10 @@ pub def unique[T](items: list[T]) -> set[T]:
 pub class Tags:
     def unique[T](self, items: list[T]) -> set[T]:
         return set(items)
+
+@rust.derive(PartialEq, Eq, Hash)
+pub model Key:
+    pub id: int
 "#,
         "hashing library",
     );
@@ -600,11 +608,11 @@ pub class Tags:
         .and_then(|class| class.methods.iter().find(|method| method.name == "unique"))
         .ok_or("missing Tags.unique export")?;
     for (owner, bounds) in [
-        ("unique", exported_bound_names(&function.type_params, "T")),
-        ("Tags.unique", exported_bound_names(&method.type_params, "T")),
+        ("unique", inferred_bound_names(&function.type_params, "T")),
+        ("Tags.unique", inferred_bound_names(&method.type_params, "T")),
     ] {
         if !(bounds.iter().any(|bound| bound == "Eq") && bounds.iter().any(|bound| bound == "Hash")) {
-            return Err(format!("{owner} must export Eq and Hash bounds on T, got: {bounds:?}").into());
+            return Err(format!("{owner} must export inferred Eq and Hash bounds on T, got: {bounds:?}").into());
         }
     }
 
@@ -621,7 +629,7 @@ pub class Tags:
     )]));
     let errors = check_str_with_library_index_err(
         r#"
-from pub::hashing import unique, Tags
+from pub::hashing import unique, Tags, Key
 
 enum Tag:
     A
@@ -631,19 +639,30 @@ def main() -> None:
     println(len(unique([Tag.A])))
     println(len(Tags().unique(tags)))
     println(len(unique([1, 2])))
+    println(len(unique([Key(id=1)])))
+    println(len(Tags().unique([Key(id=2)])))
 "#,
         index,
         "a library consumer passing an underived enum must be refused",
     )?;
-    let bound_refusals = errors
-        .iter()
-        .filter(|error| error.message.contains("violates generic bound") && error.message.contains("Tag"))
+    let refusals = with_code(&errors, "INCAN-T0114")
+        .into_iter()
+        .filter(|error| {
+            error.message.contains("'unique' uses its type parameter 'T'")
+                && error.message.contains("'Tag' cannot be its type argument")
+        })
         .count();
-    if bound_refusals < 2 {
-        return Err(format!("expected the function and the method call refused, got: {errors:?}").into());
+    if refusals != 2 {
+        return Err(format!("expected the function and the method call refused with T0114, got: {errors:?}").into());
     }
-    if errors.iter().any(|error| error.message.contains("'int'")) {
-        return Err(format!("an int type argument must be accepted, got: {errors:?}").into());
+    if errors
+        .iter()
+        .any(|error| error.message.contains("violates generic bound") || error.message.contains("'int'"))
+    {
+        return Err(format!("no bound refusal beyond the two T0114 refusals is expected, got: {errors:?}").into());
+    }
+    if errors.iter().any(|error| error.message.contains("Key")) {
+        return Err(format!("a library type with @rust.derive(Eq, Hash) must be accepted, got: {errors:?}").into());
     }
     Ok(())
 }
@@ -845,6 +864,7 @@ fn runtime_future_bound_relation_refuses_only_function_values_issue1772() -> Res
             type_args: vec![ResolvedType::TypeVar("T".to_string())],
             module_path: None,
             implementation_type_params: Vec::new(),
+            inferred: false,
         };
         if checker.type_satisfies_explicit_bound_info(&function_value, &bound, &bindings) {
             return Err(format!("a function value must not satisfy `{name}[T]`"));

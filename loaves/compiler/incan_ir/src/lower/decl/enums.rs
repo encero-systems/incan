@@ -59,13 +59,13 @@ impl AstLowering {
         let clone = derives::as_str(DeriveId::Clone);
         let partial_eq = derives::as_str(DeriveId::PartialEq);
         let can_default_partial_eq = variants.iter().all(enum_variant_payloads_default_partial_eq);
-        if !derives.iter().any(|d| d == debug) {
+        if !derives.iter().any(|d| Self::same_derive(d, debug)) {
             derives.push(debug.to_string());
         }
-        if !derives.iter().any(|d| d == clone) {
+        if !derives.iter().any(|d| Self::same_derive(d, clone)) {
             derives.push(clone.to_string());
         }
-        if can_default_partial_eq && !derives.iter().any(|d| d == partial_eq) {
+        if can_default_partial_eq && !derives.iter().any(|d| Self::same_derive(d, partial_eq)) {
             derives.push(partial_eq.to_string());
         }
 

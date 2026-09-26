@@ -3,15 +3,16 @@
 
 use super::*;
 
-/// Return the derive list lowering gave the named struct or newtype.
+/// Return the derive list lowering gave the named struct, newtype or enum.
 fn struct_derives(ir: &IrProgram, name: &str) -> Result<Vec<String>, String> {
     ir.declarations
         .iter()
         .find_map(|decl| match &decl.kind {
             IrDeclKind::Struct(declaration) if declaration.name == name => Some(declaration.derives.clone()),
+            IrDeclKind::Enum(declaration) if declaration.name == name => Some(declaration.derives.clone()),
             _ => None,
         })
-        .ok_or_else(|| format!("missing struct `{name}`"))
+        .ok_or_else(|| format!("missing declaration `{name}`"))
 }
 
 /// #1754: a newtype carries `Clone` and `Debug` when its underlying type does, `Copy` too for a `Copy` type, and
@@ -51,6 +52,42 @@ type Label = newtype str
     .map_err(|errors| format!("lowering failed: {errors:?}"))?;
     assert_eq!(struct_derives(&ir, "Name")?, vec!["Debug", "Clone"]);
     assert_eq!(struct_derives(&ir, "Label")?, vec!["Debug", "Clone", "std::hash::Hash"]);
+    Ok(())
+}
+
+/// #1754: a model, class or enum names each automatic or implied derive once, whatever `@rust.derive` path also names
+/// it.
+#[test]
+fn rust_derive_paths_of_automatic_and_implied_derives_are_emitted_once_issue1754() -> Result<(), String> {
+    let ir = lower_source(
+        r#"
+@rust.derive("std::clone::Clone", "::core::fmt::Debug")
+model Person:
+    name: str
+
+@rust.derive("std::clone::Clone")
+class Counter:
+    count: int
+
+@derive(Eq)
+@rust.derive("std::cmp::PartialEq", "std::clone::Clone")
+enum Tag:
+    A
+"#,
+    )
+    .map_err(|errors| format!("lowering failed: {errors:?}"))?;
+    for name in ["Person", "Counter", "Tag"] {
+        let derives = struct_derives(&ir, name)?;
+        for leaf in ["Clone", "Debug", "PartialEq"] {
+            let named = derives
+                .iter()
+                .filter(|derive| derive.rsplit("::").next() == Some(leaf))
+                .count();
+            if named > 1 {
+                return Err(format!("{name} names {leaf} {named} times: {derives:?}"));
+            }
+        }
+    }
     Ok(())
 }
 

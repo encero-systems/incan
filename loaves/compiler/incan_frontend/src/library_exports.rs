@@ -90,6 +90,8 @@ pub struct CheckedTypeBound {
     pub type_args: Vec<ResolvedType>,
     pub module_path: Option<Vec<String>>,
     pub implementation_type_params: Vec<ImplementationTypeParamInfo>,
+    /// Whether the checker inferred this `Eq` or `Hash` bound from the callable's body (#1758).
+    pub inferred: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1523,6 +1525,7 @@ fn checked_trait_bound(bound: &TraitBound, checker: &TypeChecker) -> CheckedType
             .collect(),
         module_path: checker.trait_bound_module_path(&bound.name),
         implementation_type_params: Vec::new(),
+        inferred: false,
     }
 }
 
@@ -1536,6 +1539,7 @@ fn map_type_bound_infos(bounds: &[TypeBoundInfo]) -> Vec<CheckedTypeBound> {
             type_args: bound.type_args.clone(),
             module_path: bound.module_path.clone(),
             implementation_type_params: bound.implementation_type_params.clone(),
+            inferred: bound.inferred,
         })
         .collect()
 }
@@ -1801,6 +1805,7 @@ fn checked_method_from_info(name: &str, info: &MethodInfo) -> CheckedMethod {
                         type_args: bound.type_args,
                         module_path: bound.module_path,
                         implementation_type_params: bound.implementation_type_params,
+                        inferred: bound.inferred,
                     })
                     .collect(),
             })

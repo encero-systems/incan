@@ -85,6 +85,9 @@ impl TypeChecker {
     }
 
     /// Return whether a type satisfies one explicit bound, including generic trait arguments.
+    ///
+    /// An `Eq` or `Hash` bound the checker inferred from a callable's body (#1758) holds unless the derive relation
+    /// knows the type lacks the derive.
     pub fn type_satisfies_explicit_bound_info(
         &self,
         ty: &ResolvedType,
@@ -93,6 +96,12 @@ impl TypeChecker {
     ) -> bool {
         if Self::function_value_misses_future_bound(ty, &bound.name) {
             return false;
+        }
+        // An inferred `Eq` or `Hash` bound (#1758) holds unless the type is known to lack the derive.
+        if bound.inferred
+            && let Some(derive) = derives::from_str(&bound.name)
+        {
+            return !matches!(self.derive_support(ty, derive), DeriveSupport::Missing(_));
         }
         if let Some(defer) = self.foreign_trait_bound_requires_native_check(&bound.name) {
             return defer;
@@ -526,6 +535,7 @@ impl TypeChecker {
                         .collect(),
                     module_path,
                     implementation_type_params: Vec::new(),
+                    inferred: false,
                 };
                 self.type_bound_names_match(&candidate, required)
                     && self.type_bound_args_match(&candidate, required, bindings)
@@ -1019,6 +1029,7 @@ impl TypeChecker {
                     .collect(),
             ),
             implementation_type_params: Vec::new(),
+            inferred: false,
         };
         adoptions
             .iter()

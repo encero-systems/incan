@@ -5997,6 +5997,7 @@ impl TypeChecker {
                                     .collect(),
                                 module_path,
                                 implementation_type_params: Vec::new(),
+                                inferred: false,
                             }
                         })
                         .collect(),

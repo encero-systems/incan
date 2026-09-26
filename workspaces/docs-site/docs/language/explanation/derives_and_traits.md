@@ -31,7 +31,7 @@ Use dunder methods when you need **custom semantics** for a built-in capability:
 - `__eq__`: custom equality
 - `__lt__`: custom ordering
 
-Hashing is the exception: there is no `__hash__` hook yet, so a set or dict hashes a type through `@derive(Hash)`, and a method named `__hash__` is an ordinary method. A custom hash is tracked in [#1822](https://github.com/encero-systems/incan/issues/1822).
+Hashing is the exception: it has no dunder hook. A set or dict hashes a type through `@derive(Hash)`, and a method named `__hash__` is an ordinary method that neither provides nor replaces it ([#1822](https://github.com/encero-systems/incan/issues/1822) tracks a custom hash).
 
 Incan treats “derive + corresponding dunder” as a **conflict**. The idea is to avoid ambiguity and keep the mental model simple: “either it’s the default behavior, or it’s my behavior.”
 

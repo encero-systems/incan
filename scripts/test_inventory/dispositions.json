@@ -2498,8 +2498,12 @@
           "notes": "Asserts the derive list lowering gives a newtype (Clone when the underlying type implements it, Debug unless it lacks it, Copy for Copy types). The behavior, a model holding a newtype over str building and reading it back, is carried by the named fixture (#1754)."
         },
         "rust_derive_path_of_an_automatic_derive_is_emitted_once_issue1754": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/newtype_with_rust_derived_clone_path.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/rust_derived_clone_path_on_newtype_and_model.incn",
           "notes": "Asserts that a `@rust.derive` path to a derive a newtype already carries (`std::clone::Clone`) joins the derive list once. The behavior, such a newtype building and a model holding it, is carried by the named fixture (#1754)."
+        },
+        "rust_derive_paths_of_automatic_and_implied_derives_are_emitted_once_issue1754": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/rust_derived_clone_path_on_newtype_and_model.incn",
+          "notes": "Asserts that a model, class or enum names each automatic or implied derive once whatever `@rust.derive` path also names it. The behavior, a model with `@rust.derive(\"std::clone::Clone\")` building, is carried by the named fixture (#1754)."
         },
         "ord_derive_adds_its_prerequisites_in_table_order": {
           "twin": "dies",

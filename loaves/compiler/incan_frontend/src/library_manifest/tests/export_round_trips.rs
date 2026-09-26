@@ -18,6 +18,7 @@ fn manifest_io_round_trip_preserves_recursive_types_and_bounds() -> Result<(), B
                 module_path: None,
                 type_args: Vec::new(),
                 implementation_type_params: Vec::new(),
+                inferred: false,
             }],
         }],
         params: vec![ParamExport {
@@ -695,6 +696,7 @@ fn manifest_io_round_trip_preserves_trait_supertraits() -> Result<(), Box<dyn st
             module_path: None,
             type_args: Vec::new(),
             implementation_type_params: Vec::new(),
+            inferred: false,
         }],
         requires: Vec::new(),
         methods: Vec::new(),
@@ -937,6 +939,7 @@ fn manifest_io_round_trip_preserves_generic_method_type_params() -> Result<(), B
                     module_path: None,
                     type_args: Vec::new(),
                     implementation_type_params: Vec::new(),
+                    inferred: false,
                 }],
             }],
             receiver: Some(ReceiverExport::Immutable),
@@ -1016,6 +1019,7 @@ fn manifest_io_round_trip_preserves_type_trait_adoptions() -> Result<(), Box<dyn
                 origin: ImplementationTraitBoundOriginExport::Standard,
             }],
         }],
+        inferred: false,
     };
     let convert_float = TypeBoundExport {
         name: "Convert".to_string(),
@@ -1026,6 +1030,7 @@ fn manifest_io_round_trip_preserves_type_trait_adoptions() -> Result<(), Box<dyn
             name: "float".to_string(),
         }],
         implementation_type_params: Vec::new(),
+        inferred: false,
     };
     manifest.exports.models.push(ModelExport {
         name: "Record".to_string(),
@@ -1051,6 +1056,7 @@ fn manifest_io_round_trip_preserves_type_trait_adoptions() -> Result<(), Box<dyn
                 name: "str".to_string(),
             }],
             implementation_type_params: Vec::new(),
+            inferred: false,
         }],
         derives: Vec::new(),
         fields: Vec::new(),

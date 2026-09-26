@@ -689,6 +689,10 @@ impl TypeChecker {
     }
 
     /// Emit diagnostics when inferred concrete generic bindings violate explicit `with` bounds.
+    ///
+    /// An `Eq` or `Hash` bound the provider inferred from its body (a compiled library's hashed type parameter, #1758)
+    /// is refused with `INCAN-T0114` and only when the type argument is known to lack the derive, as a callee of this
+    /// checker's own modules is.
     fn emit_explicit_bound_errors(
         &mut self,
         func_name: &str,
@@ -705,7 +709,12 @@ impl TypeChecker {
             if let Some(details) = bound_details_by_param.get(type_param)
                 && !details.is_empty()
             {
-                for bound in details {
+                // Inferred `Eq` and `Hash` bounds are the callee's hashed type parameter (#1758): refused like one,
+                // only when the type argument is known to lack them.
+                if details.iter().any(|bound| bound.inferred) {
+                    self.refuse_unhashable_type_argument(func_name, type_param, actual_ty, call_span);
+                }
+                for bound in details.iter().filter(|bound| !bound.inferred) {
                     if !self.type_satisfies_explicit_bound_info(actual_ty, bound, bindings) {
                         self.errors.push(errors::generic_bound_not_satisfied(
                             func_name,

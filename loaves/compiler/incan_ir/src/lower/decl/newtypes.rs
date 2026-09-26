@@ -22,25 +22,6 @@ impl AstLowering {
             .unwrap_or_else(|| vec![derives::as_str(DeriveId::Debug).to_string()])
     }
 
-    /// Whether two derive spellings name the same derive: equal, or a Rust `std`/`core`/`alloc` path whose last segment
-    /// is the other spelling.
-    fn same_derive(left: &str, right: &str) -> bool {
-        Self::derive_identity(left) == Self::derive_identity(right)
-    }
-
-    /// Return the spelling a derive is compared by: a path into Rust's `std`, `core` or `alloc` names its last segment,
-    /// which is how the prelude spells the same derive; any other spelling is itself, without a leading `::`.
-    fn derive_identity(derive: &str) -> &str {
-        let path = derive.trim_start_matches("::");
-        let from_rust_std = ["std::", "core::", "alloc::"]
-            .iter()
-            .any(|prefix| path.starts_with(prefix));
-        match path.rsplit_once("::") {
-            Some((_, leaf)) if from_rust_std => leaf,
-            _ => path,
-        }
-    }
-
     /// Lower a newtype declaration to tuple struct.
     pub(in crate::lower) fn lower_newtype(&mut self, n: &ast::NewtypeDecl) -> Result<IrStruct, LoweringError> {
         // Newtype compiles to a tuple struct: struct UserId(i64);

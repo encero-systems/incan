@@ -526,6 +526,7 @@ impl TypeChecker {
                 type_args: Vec::new(),
                 module_path: self.trait_bound_module_path(name),
                 implementation_type_params: Vec::new(),
+                inferred: true,
             });
         }
         if bounds.is_empty() {

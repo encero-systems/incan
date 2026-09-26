@@ -1214,6 +1214,11 @@ pub struct TypeBoundExport {
     /// bounds alongside backend-inferred requirements. Older manifests omit the field.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub implementation_type_params: Vec<ImplementationTypeParamExport>,
+    /// An `Eq` or `Hash` bound the compiler inferred because the callable's body hashes the type parameter (#1758),
+    /// rather than one the source declared. A consumer refuses a call for it only when the type argument is known to
+    /// lack the derive. Older manifests omit the field.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub inferred: bool,
 }
 
 /// One implementation-header type parameter published with a checked trait adoption.
@@ -2343,6 +2348,7 @@ fn type_bound_from_checked(bound: &CheckedTypeBound) -> TypeBoundExport {
             .iter()
             .map(implementation_type_param_from_info)
             .collect(),
+        inferred: bound.inferred,
     }
 }
 

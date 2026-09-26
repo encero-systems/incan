@@ -2995,6 +2995,7 @@ impl TypeChecker {
                     type_args: Vec::new(),
                     module_path: None,
                     implementation_type_params: Vec::new(),
+                    inferred: false,
                 });
             }
         }

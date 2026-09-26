@@ -2688,6 +2688,7 @@ def main() -> None:
                     origin: ImplementationTraitBoundOriginExport::Standard,
                 }],
             }],
+            inferred: false,
         }],
         derives: Vec::new(),
         fields: Vec::new(),

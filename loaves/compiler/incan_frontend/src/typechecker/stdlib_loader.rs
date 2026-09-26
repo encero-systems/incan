@@ -1298,6 +1298,7 @@ fn trait_adoption_infos_from_bounds(
                 .collect(),
             module_path: stdlib_imports.get(&bound.node.name).cloned(),
             implementation_type_params: Vec::new(),
+            inferred: false,
         })
         .collect()
 }
@@ -1419,6 +1420,7 @@ fn method_info_from_ast_method(
                             .collect(),
                         module_path: stdlib_imports.get(&bound.name).cloned(),
                         implementation_type_params: Vec::new(),
+                        inferred: false,
                     })
                     .collect(),
             )
@@ -1449,6 +1451,7 @@ fn method_info_from_ast_method(
             .collect(),
         module_path: stdlib_imports.get(&target.node.name).cloned(),
         implementation_type_params: Vec::new(),
+        inferred: false,
     });
     MethodInfo {
         identity: Some(source_member_identity(
@@ -1509,6 +1512,7 @@ fn function_decl_to_info(
                             .collect(),
                         module_path: stdlib_imports.get(&bound.name).cloned(),
                         implementation_type_params: Vec::new(),
+                        inferred: false,
                     })
                     .collect(),
             )

@@ -3681,6 +3681,7 @@ impl TypeChecker {
                 type_args: trait_args,
                 module_path: None,
                 implementation_type_params: Vec::new(),
+                inferred: false,
             };
             return self
                 .resolve_unambiguous_adopted_trait_method_without_arg_prepass(std::slice::from_ref(&adoption), call);
@@ -4024,6 +4025,7 @@ impl TypeChecker {
             type_args: trait_args,
             module_path: None,
             implementation_type_params: Vec::new(),
+            inferred: false,
         };
         self.resolve_named_method(
             &std::collections::HashMap::new(),
@@ -6317,6 +6319,7 @@ impl TypeChecker {
             type_args: Vec::new(),
             module_path: None,
             implementation_type_params: Vec::new(),
+            inferred: false,
         };
         let method_info = self.trait_method_info_resolved_for_adoption(&adoption, method, span)?;
         if !self.is_clone_type(receiver_ty) {

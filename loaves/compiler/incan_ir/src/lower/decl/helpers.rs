@@ -457,10 +457,7 @@ impl AstLowering {
                 continue;
             }
             for implied_derive in *implied {
-                let implied_name = derives::as_str(*implied_derive);
-                if !derives.iter().any(|d| d == implied_name) {
-                    derives.push(implied_name.to_string());
-                }
+                Self::push_unique(&mut derives, derives::as_str(*implied_derive).to_string());
             }
         }
 
@@ -585,10 +582,30 @@ impl AstLowering {
         self.stdlib_cache.lookup_trait_meta(module_path, trait_name).is_some()
     }
 
-    /// Append a string only when it is not already present.
+    /// Append a derive unless one naming the same derive is already present, under this spelling or another
+    /// ([`Self::same_derive`]): naming a derive twice fails the build with E0119.
     fn push_unique(items: &mut Vec<String>, value: String) {
-        if !items.iter().any(|item| item == &value) {
+        if !items.iter().any(|item| Self::same_derive(item, &value)) {
             items.push(value);
+        }
+    }
+
+    /// Whether two derive spellings name the same derive: equal, or a Rust `std`/`core`/`alloc` path whose last segment
+    /// is the other spelling.
+    pub(in crate::lower) fn same_derive(left: &str, right: &str) -> bool {
+        Self::derive_identity(left) == Self::derive_identity(right)
+    }
+
+    /// Return the spelling a derive is compared by: a path into Rust's `std`, `core` or `alloc` names its last segment,
+    /// which is how the prelude spells the same derive; any other spelling is itself, without a leading `::`.
+    fn derive_identity(derive: &str) -> &str {
+        let path = derive.trim_start_matches("::");
+        let from_rust_std = ["std::", "core::", "alloc::"]
+            .iter()
+            .any(|prefix| path.starts_with(prefix));
+        match path.rsplit_once("::") {
+            Some((_, leaf)) if from_rust_std => leaf,
+            _ => path,
         }
     }
 

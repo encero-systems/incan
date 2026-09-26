@@ -227,6 +227,7 @@ fn method_info_from_decl(
                             .collect(),
                         module_path: checker.trait_bound_module_path(&bound.name),
                         implementation_type_params: Vec::new(),
+                        inferred: false,
                     })
                     .collect(),
             )
@@ -263,6 +264,7 @@ fn method_info_from_decl(
             .collect(),
         module_path: checker.trait_bound_module_path(&target.node.name),
         implementation_type_params: Vec::new(),
+        inferred: false,
     });
     MethodInfo {
         identity: Some(checker.symbols.member_declaration_identity(

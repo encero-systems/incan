@@ -613,20 +613,34 @@ impl TypeChecker {
             else {
                 continue;
             };
-            let Some((holder, missing)) = self.first_missing_derives(bound, &[DeriveId::Eq, DeriveId::Hash]) else {
-                continue;
-            };
-            let error = errors::type_argument_lacks_hash_derives(
-                callee_name,
-                type_param,
-                &bound.to_string(),
-                &holder.to_string(),
-                &missing,
-                self.hash_remedy(&holder),
-                span,
-            );
-            self.push_error_once(error);
+            self.refuse_unhashable_type_argument(callee_name, type_param, bound, span);
         }
+    }
+
+    /// Refuse one type argument bound to a hashed type parameter when it is known to lack `Eq` or `Hash` (#1758).
+    ///
+    /// Shared by the callees whose requirement is inferred in this checker and by those whose signature carries it as
+    /// inferred `Eq` and `Hash` bounds (a compiled library's): either way an unknown answer admits the call.
+    pub(in crate::typechecker) fn refuse_unhashable_type_argument(
+        &mut self,
+        callee_name: &str,
+        type_param: &str,
+        argument: &ResolvedType,
+        span: Span,
+    ) {
+        let Some((holder, missing)) = self.first_missing_derives(argument, &[DeriveId::Eq, DeriveId::Hash]) else {
+            return;
+        };
+        let error = errors::type_argument_lacks_hash_derives(
+            callee_name,
+            type_param,
+            &argument.to_string(),
+            &holder.to_string(),
+            &missing,
+            self.hash_remedy(&holder),
+            span,
+        );
+        self.push_error_once(error);
     }
 
     /// Return a generic call's type-parameter bindings with each open one closed from a literal argument, for the
