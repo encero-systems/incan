@@ -208,20 +208,19 @@ impl AstLowering {
 
     /// Lower a parameter's source mutability to how it is passed.
     ///
-    /// A `mut` parameter is passed the way the checker's marker says (#1773): a marked parameter, whose changes reach
-    /// the caller, as [`Mutability::Mutable`] (`&mut T`), an unmarked one (an `int`, `float` or `bool`, also through an
-    /// alias, or a Rust handle) by value as [`Mutability::OwnedMutable`], `mut name: T`. The decision never reads the
-    /// parameter's IR type. A parameter the checker recorded no marker for keeps the rule from its annotation: a direct
-    /// Rust handle by value, anything else as `&mut T`. This is the one place lowering reads the marker; #1701's
-    /// `mut_param_markers` fact takes its place when that change lands.
+    /// A `mut` parameter is passed the way the checker's marker says (#1790, #1773): a marked parameter, whose changes
+    /// reach the caller, as [`Mutability::Mutable`] (`&mut T`), an unmarked one (an `int`, `float` or `bool`, also
+    /// through an alias, or a Rust handle) by value as [`Mutability::OwnedMutable`], `mut name: T`. The decision never
+    /// reads the parameter's IR type. A parameter the checker recorded no marker for keeps the rule from its
+    /// annotation: a direct Rust handle by value, anything else as `&mut T`.
     pub(in crate::lower) fn lower_parameter_mutability(&self, param: &ast::Spanned<ast::Param>) -> Mutability {
         if !param.node.is_mut {
             return Mutability::Immutable;
         }
-        let marker = self.type_info.as_ref().and_then(|info| {
-            info.declarations
-                .mut_param_shows_changes_to_caller(param.span, &param.node.name)
-        });
+        let marker = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.declarations.mut_param_marker(param.span, &param.node.name));
         match marker {
             Some(true) => Mutability::Mutable,
             Some(false) => Mutability::OwnedMutable,

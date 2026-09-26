@@ -53,17 +53,19 @@ impl TypeChecker {
         })
     }
 
-    /// Record whether a checked function's or method's ordinary `mut` parameter is marked, for lowering.
+    /// Record whether a function's or method's ordinary `mut` parameter is marked, for lowering.
     ///
     /// This is the one decision of how a `mut` parameter is passed: lowering passes a marked parameter so the caller
-    /// sees its changes and an unmarked one by value, whatever IR type the parameter's annotation lowers to.
+    /// sees its changes and an unmarked one by value, whatever IR type the parameter's annotation lowers to. The fact
+    /// is keyed by the parameter's span and name, because a check also records the parameters of the imported source
+    /// modules it collects, whose spans number from the start of their own files.
     pub(super) fn record_mut_param_marker(&mut self, param: &Param, span: Span, resolved: &ResolvedType) {
         if param.is_mut && param.kind == ParamKind::Normal {
             let marked = self.def_param_shows_changes_to_caller(param, resolved);
             self.type_info
                 .declarations
                 .mut_param_markers
-                .insert((span.start, span.end), marked);
+                .insert((span.start, span.end, param.name.clone()), marked);
         }
     }
 

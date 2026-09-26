@@ -1,14 +1,16 @@
 //! `mut` parameters whose changes reach the caller, and the arguments a call passes to them (#1773).
 //!
-//! A parameter declared `mut` is a mutable binding inside its function. When its type is not `int`, `float`, `bool`
-//! (or an alias of one) or a Rust type, and it is not a `*args` or `**kwargs` parameter, the function's changes to it
-//! are also visible to the caller: collections, models and class objects are shared with the caller, scalars are the
-//! function's own copy. This module owns that decision and the facts that follow from it:
+//! A parameter declared `mut` is a mutable binding inside its function. When it is marked (its type is not `int`,
+//! `float`, `bool`, an alias of one or a Rust type, and it is not a `*args` or `**kwargs` parameter; see
+//! `mut_marker.rs`), the function's changes to it are also visible to the caller: collections, models and class
+//! objects are shared with the caller, scalars are the function's own copy. This module owns the facts that follow
+//! from the marker:
 //!
-//! - which declared parameters are caller-visible, recorded for lowering by parameter so the Rust shape of the
-//!   declaration and of every call agrees ([`TypeCheckInfo`](super::TypeCheckInfo) declarations);
-//! - which caller-visible parameters a callable's body changes, directly or by passing them on to another callee that
-//!   changes them;
+//! - each declared parameter's marker, recorded at collection for lowering by parameter span and name, so the Rust
+//!   shape of the declaration and of every call agrees ([`TypeCheckInfo`](super::TypeCheckInfo) declarations);
+//! - which caller-visible parameters a callable's body changes, directly, by binding a local to the parameter, or by
+//!   passing them on to another callee that changes them; a method reached by trait dispatch and a callee known only by
+//!   its callable type are taken to change every marked parameter;
 //! - which call arguments are refused (`INCAN-T0117`): an immutable binding or a field of one, an element of a
 //!   collection, or a static, passed to a caller-visible parameter the callee changes, where the change would fail to
 //!   build or be lost;
@@ -20,7 +22,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{CallArg, Expr, Param, ParamKind, Span, Spanned, Type};
+use crate::ast::{CallArg, Expr, Param, ParamKind, Span, Spanned};
 use crate::diagnostics::errors::{self, MutArgumentPlace, MutParameterLabel};
 use crate::symbols::{CallableParam, ResolvedType, SymbolKind, TypeInfo};
 use incan_lang::lang::keywords::{self, KeywordId};
@@ -115,41 +117,13 @@ impl TypeChecker {
     // Declarations
     // ========================================================================
 
-    /// Return whether a declared parameter shows the callee's changes to the caller: whether it is marked.
-    ///
-    /// Only an ordinary `mut` parameter can, and not every one: a parameter whose type resolves to `int`, `float` or
-    /// `bool`, also through an alias, receives its own copy of the argument, and a Rust-typed parameter receives the
-    /// value itself. For those `mut` only makes the parameter reassignable inside the body. The decision is made here
-    /// once, on the resolved type, and recorded for lowering. It is the marker rule of #1701's
-    /// `def_param_shows_changes_to_caller` (`mut_marker.rs`), which replaces this function when that change lands.
-    fn mut_param_shows_changes_to_caller(&self, param: &Param, resolved: &ResolvedType) -> bool {
-        if !param.is_mut || param.kind != ParamKind::Normal {
-            return false;
-        }
-        if matches!(
-            self.expand_type_aliases(resolved.clone()),
-            ResolvedType::Int | ResolvedType::Float | ResolvedType::Bool | ResolvedType::RustPath(_)
-        ) {
-            return false;
-        }
-        let head = match &param.ty.node {
-            Type::Simple(name) | Type::ConstrainedPrimitive(name, _) | Type::Generic(name, _) => Some(name.as_str()),
-            Type::Qualified(segments) => segments.first().map(String::as_str),
-            _ => None,
-        };
-        !head.is_some_and(|name| {
-            self.lookup_symbol(name)
-                .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::RustItem(_)))
-        })
-    }
-
     /// Record one source callable's declared `mut` parameters: for lowering, and for calls when any is caller-visible.
     ///
     /// `declared` and `resolved` are the declaration's parameters without the receiver, in declaration order, and
-    /// `identity` is the declaration identity calls to it resolve to. Every ordinary `mut` parameter's marker is
-    /// published for lowering, keyed by the parameter, including those of imported source modules this check
-    /// collects, so a trait default expanded into an adopter in another module is lowered with its own module's
-    /// markers.
+    /// `identity` is the declaration identity calls to it resolve to. Every ordinary `mut` parameter's marker
+    /// ([`Self::def_param_shows_changes_to_caller`]) is published for lowering at collection, including those of
+    /// imported source modules this check collects but does not check, so a trait default expanded into an adopter in
+    /// another module is lowered with its own module's markers.
     pub(in crate::typechecker) fn record_caller_visible_mut_params(
         &mut self,
         identity: Option<&CanonicalSymbolId>,
@@ -162,17 +136,11 @@ impl TypeChecker {
             .map(|(param, resolved)| DeclaredParamSlot {
                 name: param.node.name.clone(),
                 kind: param.node.kind,
-                shows_changes_to_caller: self.mut_param_shows_changes_to_caller(&param.node, &resolved.ty),
+                shows_changes_to_caller: self.def_param_shows_changes_to_caller(&param.node, &resolved.ty),
             })
             .collect::<Vec<_>>();
-        for (param, slot) in declared.iter().zip(&slots) {
-            if param.node.is_mut && param.node.kind == ParamKind::Normal {
-                self.type_info.declarations.record_mut_param_caller_visibility(
-                    param.span,
-                    &param.node.name,
-                    slot.shows_changes_to_caller,
-                );
-            }
+        for (param, resolved) in declared.iter().zip(resolved) {
+            self.record_mut_param_marker(&param.node, param.span, &resolved.ty);
         }
         if let Some(identity) = identity
             && slots.iter().any(|slot| slot.shows_changes_to_caller)
@@ -205,7 +173,7 @@ impl TypeChecker {
         let caller_visible = params
             .iter()
             .zip(resolved)
-            .filter(|(param, resolved)| self.mut_param_shows_changes_to_caller(&param.node, resolved))
+            .filter(|(param, resolved)| self.def_param_shows_changes_to_caller(&param.node, resolved))
             .map(|(param, _)| (param.node.name.clone(), param.span))
             .collect::<HashMap<_, _>>();
         self.mut_params.bodies_checked.insert(identity.clone());
@@ -258,6 +226,24 @@ impl TypeChecker {
                 .entry(body.identity.clone())
                 .or_default()
                 .insert(param);
+        }
+    }
+
+    /// Record an assignment whose value is a caller-visible parameter itself (`mut other = items`, `other = items`,
+    /// or an element of a tuple value such as `a, b = items, 1`).
+    ///
+    /// The new binding holds the parameter's value, so a change through it is a change to the parameter. The check
+    /// does not follow the binding, so the parameter counts as changed.
+    pub(in crate::typechecker) fn note_mut_param_alias(&mut self, value: &Spanned<Expr>) {
+        match &value.node {
+            Expr::Ident(_) => self.note_place_change(value),
+            Expr::Paren(inner) => self.note_mut_param_alias(inner),
+            Expr::Tuple(items) => {
+                for item in items {
+                    self.note_mut_param_alias(item);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -416,7 +402,14 @@ impl TypeChecker {
             MutArgumentCallee::Function(callee) => callee.span,
             MutArgumentCallee::Method { .. } => call_span,
         };
-        let mut identity = self.type_info.resolved_identity(callee_span).cloned();
+        let mut identity = self
+            .type_info
+            .resolved_identity(callee_span)
+            .cloned()
+            .or_else(|| match callee {
+                MutArgumentCallee::Method { receiver, method } => self.trait_self_method_identity(receiver, method),
+                MutArgumentCallee::Function(_) => None,
+            });
         if let Some(local) = &identity
             && local.kind == SemanticSourceTargetKind::Local
             && let Some(callee) = self
@@ -459,6 +452,13 @@ impl TypeChecker {
                     .map(|identity| identity.declaration_name.clone())
             })
             .unwrap_or_else(|| "the called function".to_string());
+        // A method reached by trait dispatch runs whichever implementation the receiver's type provides, and an
+        // override may change a parameter the declaration this call resolved to only reads.
+        if let MutArgumentCallee::Method { receiver, .. } = callee
+            && self.receiver_dispatches_through_a_trait(receiver)
+        {
+            identity = None;
+        }
         let mut next_positional = Some(0usize);
         for arg in args {
             let (index, value) = match arg {
@@ -513,6 +513,62 @@ impl TypeChecker {
                 place,
                 span: value.span,
             });
+        }
+    }
+
+    /// Return the declaration a trait default's `self.method(...)` call names: the method of the trait being checked or
+    /// of one of its supertraits.
+    ///
+    /// Inside a default, `self` is any adopter, so the call does not resolve to one implementation; the trait's own
+    /// declaration still says which parameters are marked.
+    fn trait_self_method_identity(&self, receiver: &Spanned<Expr>, method: &str) -> Option<CanonicalSymbolId> {
+        if !matches!(self.type_info.expr_type(receiver.span), Some(ResolvedType::SelfType)) {
+            return None;
+        }
+        let mut pending = vec![self.current_trait_name.clone()?];
+        let mut visited = HashSet::new();
+        while let Some(trait_name) = pending.pop() {
+            if !visited.insert(trait_name.clone()) {
+                continue;
+            }
+            let Some(info) = self.lookup_trait_info(&trait_name) else {
+                continue;
+            };
+            if let Some(identity) = info.methods.get(method).and_then(|method| method.identity.clone()) {
+                return Some(identity);
+            }
+            pending.extend(info.supertraits.iter().map(|(name, _)| name.clone()));
+        }
+        None
+    }
+
+    /// Return whether a method call on `receiver` is dispatched to an implementation chosen by the receiver's type at
+    /// run time: the receiver is a value of a type parameter, `Self`, or a trait type, as `g` in
+    /// `def run[T with Grower](g: T)` and `self` in a trait's default method are.
+    fn receiver_dispatches_through_a_trait(&self, receiver: &Spanned<Expr>) -> bool {
+        let Some(receiver_ty) = self.type_info.expr_type(receiver.span) else {
+            return matches!(receiver.node, Expr::SelfExpr);
+        };
+        self.type_dispatches_through_a_trait(receiver_ty)
+    }
+
+    /// Return whether a value of `ty` calls its methods through a trait rather than on one known implementation.
+    ///
+    /// A type parameter (resolved as a type variable, or by name to the checker's type-variable placeholder), `Self`
+    /// and a trait dispatch; a model, class, enum, newtype or Rust type names its one implementation. A name the
+    /// checker cannot resolve counts as dispatching, so an override is never assumed away.
+    fn type_dispatches_through_a_trait(&self, ty: &ResolvedType) -> bool {
+        match ty {
+            ResolvedType::TypeVar(_) | ResolvedType::SelfType => true,
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.type_dispatches_through_a_trait(inner),
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => {
+                self.lookup_symbol(name).is_none_or(|symbol| match &symbol.kind {
+                    SymbolKind::Type(TypeInfo::Builtin) => true,
+                    SymbolKind::Type(_) | SymbolKind::RustItem(_) => false,
+                    _ => true,
+                })
+            }
+            _ => false,
         }
     }
 
@@ -618,10 +674,11 @@ impl TypeChecker {
     /// Decide every recorded argument once the module's bodies have been checked.
     ///
     /// A callee changes a caller-visible parameter when its body writes through it, calls a method that may change it,
-    /// or passes it on to a parameter another callee changes; a callee whose body this check did not read (an imported
-    /// declaration, a trait method without a default) is taken to change it. An immutable binding or field, an element
-    /// or a static passed to a changed parameter is refused with `INCAN-T0117`; an immutable binding or field passed
-    /// to an unchanged one is published for lowering as a copy.
+    /// binds a local to it, or passes it on to a parameter another callee changes; a callee whose body this
+    /// check did not read (an imported declaration, a trait method without a default, a method reached by trait
+    /// dispatch, a callable known only by its type) is taken to change it. An immutable binding or field, an element or
+    /// a static passed to a changed parameter is refused with `INCAN-T0117`; an immutable binding or field passed to an
+    /// unchanged one is published for lowering as a copy.
     pub(in crate::typechecker) fn resolve_mut_arguments(&mut self) {
         let changed = self.mut_param_change_closure();
         let pending = std::mem::take(&mut self.mut_params.pending);
@@ -710,10 +767,10 @@ fn nominal_type_name(ty: &ResolvedType) -> Option<&str> {
 /// it reach the caller.
 ///
 /// This is the one place the checker reads that marker, for a compiled library's function, a function value and a
-/// closure alike. It is #1701's `CallableParam::is_mut`, carried across a library boundary by `ParamExport::is_mut`;
-/// callable types in this tree carry no marker, so no parameter reached this way is marked.
-fn callable_param_is_marked(_param: &CallableParam) -> bool {
-    false
+/// closure alike: the `mut` marker of the callable type, `(mut T) -> R`, which a library carries across its boundary
+/// in its manifest.
+fn callable_param_is_marked(param: &CallableParam) -> bool {
+    param.is_mut
 }
 
 /// Opaque saved state of the enclosing body, restored by [`TypeChecker::exit_mut_param_body`].

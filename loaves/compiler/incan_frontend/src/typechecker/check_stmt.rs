@@ -383,6 +383,7 @@ impl TypeChecker {
             Statement::TupleUnpack(unpack) => {
                 // Check the value expression and get its type
                 let value_ty = self.check_expr(&unpack.value);
+                self.note_mut_param_alias(&unpack.value);
 
                 let element_types = self.destructured_element_types(&value_ty, unpack.names.len(), stmt.span);
 
@@ -397,6 +398,7 @@ impl TypeChecker {
             Statement::TupleAssign(assign) => {
                 // Check the value expression (should be a tuple)
                 let value_ty = self.check_expr(&assign.value);
+                self.note_mut_param_alias(&assign.value);
 
                 let element_types = self.destructured_element_types(&value_ty, assign.targets.len(), stmt.span);
 
@@ -453,6 +455,7 @@ impl TypeChecker {
             Statement::ChainedAssignment(ca) => {
                 // Check the value expression
                 let value_ty = self.check_expr(&ca.value);
+                self.note_mut_param_alias(&ca.value);
 
                 // Chained source assignment has the same declaration/reassignment distinction as a single target.
                 for (index, target) in ca.targets.iter().enumerate() {
@@ -746,6 +749,7 @@ impl TypeChecker {
         } else {
             self.check_expr_with_expected(&assign.value, annotated_ty.as_ref())
         };
+        self.note_mut_param_alias(&assign.value);
 
         // A `const` is registered as a module-scope variable, so the scope-chain walk below finds it. Answer the
         // more specific question first: reassigning a const is not a mutability mistake to be fixed with `mut`, it

@@ -102,13 +102,7 @@ fn trait_method_param_bounds(
             .type_params
             .iter()
             .find(|type_param| type_param.name == param)
-            .map(|type_param| {
-                type_param
-                    .bounds
-                    .iter()
-                    .map(|bound| bound.trait_path.clone())
-                    .collect()
-            })
+            .map(|type_param| type_param.bounds.iter().map(|bound| bound.trait_path.clone()).collect())
             .ok_or_else(|| format!("`{}` has no type parameter `{param}`", function.name))
     };
     let mut found = Vec::new();
@@ -173,7 +167,11 @@ trait Unadopted:
     assert!(function(&ir, "counts")?.type_params.is_empty());
     for method in ["pick", "tail", "chosen"] {
         let signatures = trait_method_param_bounds(&ir, "Picker", method, "K")?;
-        assert_eq!(signatures.len(), 2, "`{method}` has a slot and one implementation: {signatures:?}");
+        assert_eq!(
+            signatures.len(),
+            2,
+            "`{method}` has a slot and one implementation: {signatures:?}"
+        );
         assert!(
             signatures
                 .iter()
@@ -352,6 +350,44 @@ def main() -> None:
     assert!(
         rust.contains("mutn:Count") && rust.contains("(c))") && !rust.contains("&mutc"),
         "a `mut` parameter of an `int` alias is the callee's own copy: {rust}"
+    );
+    Ok(())
+}
+
+/// #1773: a call through a callable known only by its type, `(mut Counter) -> int`, passes the caller's value for the
+/// marked parameter, whether the callable is a local bound to a function, a callable-typed parameter or an annotated
+/// local, so the callee's change reaches the caller.
+#[test]
+fn marked_arguments_through_callable_types_pass_the_callers_value_issue1773() -> Result<(), Box<dyn std::error::Error>>
+{
+    let rust = compact_rust(
+        r#"
+class Counter:
+    pub value: int
+
+def grow(mut counter: Counter) -> int:
+    counter.value += 1
+    return counter.value
+
+def apply(step: (mut Counter) -> int, mut counter: Counter) -> int:
+    return step(counter)
+
+def main() -> None:
+    mut counter = Counter(value=1)
+    g = grow
+    println(g(counter))
+    println(apply(grow, counter))
+    handler: (mut Counter) -> int = grow
+    println(handler(counter))
+"#,
+    )?;
+    assert!(
+        rust.contains("step:fn(&mutCounter)->i64") && rust.contains("returnstep(counter);"),
+        "a callable-typed parameter takes and passes the caller's value: {rust}"
+    );
+    assert!(
+        rust.contains("g(&mutcounter)") && rust.contains("handler(&mutcounter)"),
+        "a call through a local of callable type passes the caller's value: {rust}"
     );
     Ok(())
 }

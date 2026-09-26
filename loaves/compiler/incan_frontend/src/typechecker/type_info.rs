@@ -875,13 +875,6 @@ pub struct MutableRustTypeArgumentProjection {
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
 #[derive(Debug, Default, Clone)]
 pub struct DeclarationArtifacts {
-    /// Whether each declared `mut` parameter shows the callee's changes to the caller, keyed by the parameter's
-    /// declaration span and name (#1773).
-    ///
-    /// The checker decides it once on the resolved type (`int`, `float`, `bool`, their aliases, Rust types and rest
-    /// parameters are the callee's own copy); lowering reads it so the declaration and every call pass the parameter
-    /// the same way. The name keeps parameters of different source files, which share span numbering, apart.
-    pub mut_param_caller_visibility: HashMap<(usize, usize, String), bool>,
     /// Accepted foreign nominal bindings retained before lexical checker context is discarded.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Exact selected foreign origins retained from accepted bindings for native representation projection.
@@ -1037,13 +1030,15 @@ pub struct DeclarationArtifacts {
     /// proved each of these declarations takes it. Lowering passes the receiver to them the way the method's
     /// generated wrapper passes it.
     pub method_decorator_receiver_slots: HashMap<(usize, usize), MethodDecoratorReceiverSlot>,
-    /// Whether each ordinary `mut` parameter of a checked function or method is marked, keyed by parameter span
-    /// (#1790).
+    /// Whether each ordinary `mut` parameter of a function or method is marked, keyed by parameter span and name
+    /// (#1790, #1773).
     ///
     /// A marked parameter's changes reach the caller; an unmarked one (an `int`, `float` or `bool`, also through an
     /// alias, or a Rust handle) is the function's own value. Lowering takes each `mut` parameter's passing mode from
-    /// this fact, not from the parameter's IR type.
-    pub mut_param_markers: HashMap<(usize, usize), bool>,
+    /// this fact, not from the parameter's IR type. The parameters of imported source modules a check collects are
+    /// recorded too, for their trait defaults expanded into this module; the name keeps them apart from this module's
+    /// parameters at the same offsets.
+    pub mut_param_markers: HashMap<(usize, usize, String), bool>,
 }
 
 /// Where a local function declaration takes a decorated method's receiver, and how the method takes it (#1790).
@@ -1792,16 +1787,9 @@ pub struct TestingFixtureInfo {
 }
 
 impl DeclarationArtifacts {
-    /// Record whether one declared `mut` parameter shows the callee's changes to the caller.
-    pub fn record_mut_param_caller_visibility(&mut self, span: Span, name: &str, shows_changes: bool) {
-        self.mut_param_caller_visibility
-            .insert((span.start, span.end, name.to_string()), shows_changes);
-    }
-
-    /// Return whether the `mut` parameter declared at `span` as `name` shows its changes to the caller, when the
-    /// checker collected it.
-    pub fn mut_param_shows_changes_to_caller(&self, span: Span, name: &str) -> Option<bool> {
-        self.mut_param_caller_visibility
+    /// Return whether the `mut` parameter declared at `span` as `name` is marked, when the checker recorded it.
+    pub fn mut_param_marker(&self, span: Span, name: &str) -> Option<bool> {
+        self.mut_param_markers
             .get(&(span.start, span.end, name.to_string()))
             .copied()
     }

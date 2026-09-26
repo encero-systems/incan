@@ -279,10 +279,7 @@ fn mut_parameter_caller_visibility_follows_the_resolved_type_issue1773() -> Resu
     let visibility = function
         .params
         .iter()
-        .map(|param| {
-            info.declarations
-                .mut_param_shows_changes_to_caller(param.span, &param.node.name)
-        })
+        .map(|param| info.declarations.mut_param_marker(param.span, &param.node.name))
         .collect::<Vec<_>>();
     assert_eq!(visibility, [Some(true), Some(false), Some(false), Some(true)]);
     Ok(())
@@ -311,4 +308,194 @@ fn immutable_argument_to_imported_mut_parameter_is_refused_issue1773() -> Result
         .count();
     assert_eq!(refusals, 1, "only the immutable binding is refused, got {errors:?}");
     Ok(())
+}
+
+/// #1773: a method reached by trait dispatch (a generic bound, `self` in a default) may run an override that changes
+/// its `mut` parameter although the trait's default only reads it, so an immutable binding passed to it, directly or
+/// through a forwarding `mut` parameter, is refused; a call on a concrete receiver without an override runs the
+/// default, which only reads, and accepts it.
+#[test]
+fn trait_dispatched_mut_parameter_counts_as_changed_issue1773() -> Result<(), String> {
+    let prelude = r#"
+trait Grower:
+    def grow(self, mut items: list[int]) -> int:
+        return len(items)
+
+model Box with Grower:
+    id: int
+
+    def grow(self, mut items: list[int]) -> int:
+        items.append(1)
+        return len(items)
+
+model Plant with Grower:
+    id: int
+
+def forward[T with Grower](g: T, mut items: list[int]) -> int:
+    return g.grow(items)
+"#;
+    let refused = mut_argument_refusals(&format!(
+        r#"{prelude}
+trait Regrower with Grower:
+    def regrow(self, items: list[int]) -> int:
+        return self.grow(items)
+
+def run[T with Grower](g: T, items: list[int]) -> int:
+    return g.grow(items)
+
+def main() -> None:
+    fixed: list[int] = [1]
+    println(forward(Box(id=1), fixed))
+"#
+    ));
+    assert_eq!(
+        refusals_by_callee(&refused),
+        ["grow", "grow", "forward"],
+        "the call on `self` in a default, the generic call and the forwarding call are refused, got {refused:?}"
+    );
+    checked(&format!(
+        "{prelude}\ndef main() -> None:\n    fixed: list[int] = [1]\n    println(Plant(id=1).grow(fixed))\n    mut items: list[int] = []\n    println(forward(Box(id=1), items))\n"
+    ))?;
+    Ok(())
+}
+
+/// #1773: a local bound to a caller-visible `mut` parameter (`mut other = items`) holds the parameter's value, so a
+/// change through the local counts as a change to the parameter and an immutable binding passed for it is refused.
+#[test]
+fn mut_parameter_changed_through_a_local_alias_counts_as_changed_issue1773() -> Result<(), String> {
+    let prelude = r#"
+def sneaky(mut items: list[int]) -> int:
+    mut other = items
+    other.append(3)
+    return len(other)
+
+def relabeled(mut items: list[int]) -> int:
+    mut other: list[int] = []
+    other = (items)
+    other.append(4)
+    return len(other)
+"#;
+    let refused = mut_argument_refusals(&format!(
+        "{prelude}\ndef main() -> None:\n    fixed: list[int] = [1]\n    println(sneaky(fixed))\n    println(relabeled(fixed))\n"
+    ));
+    assert_eq!(
+        refusals_by_callee(&refused),
+        ["sneaky", "relabeled"],
+        "a new `mut` binding and a reassignment of one both hold the parameter, got {refused:?}"
+    );
+    checked(&format!(
+        "{prelude}\ndef main() -> None:\n    mut items: list[int] = [1]\n    println(sneaky(items))\n    println(relabeled(items))\n"
+    ))?;
+    Ok(())
+}
+
+/// #1773: a callee known only by its callable type, `(mut Counter) -> int`, is taken to change the parameter its type
+/// marks, so an immutable binding passed through a callable-typed parameter is refused, naming the parameter by
+/// position; a local bound to a declared function is checked as that function; a `mut` binding and a temporary are
+/// accepted.
+#[test]
+fn immutable_argument_to_a_marked_callable_type_parameter_is_refused_issue1773() -> Result<(), String> {
+    let prelude = r#"
+class Counter:
+    pub value: int
+
+def grow(mut counter: Counter) -> int:
+    counter.value += 1
+    return counter.value
+"#;
+    let refused = mut_argument_refusals(&format!(
+        r#"{prelude}
+def apply(step: (mut Counter) -> int, counter: Counter) -> int:
+    return step(counter)
+
+def main() -> None:
+    c = Counter(value=1)
+    handler: (mut Counter) -> int = grow
+    println(handler(c))
+"#
+    ));
+    assert_eq!(refusals_by_callee(&refused), ["step", "grow"], "got {refused:?}");
+    assert!(
+        refused[0].message.contains("parameter at position 1"),
+        "a callable type's parameter is named by position, got {refused:?}"
+    );
+    checked(&format!(
+        r#"{prelude}
+def apply(step: (mut Counter) -> int, mut counter: Counter) -> int:
+    return step(counter)
+
+def main() -> None:
+    mut c = Counter(value=1)
+    handler: (mut Counter) -> int = grow
+    println(handler(c))
+    println(apply(grow, c))
+    println(handler(Counter(value=2)))
+"#
+    ))?;
+    Ok(())
+}
+
+/// #1773: a compiled library's function whose manifest marks a parameter `mut` is taken to change it, so an immutable
+/// binding passed to it is refused; a `mut` binding, a temporary and an argument for an unmarked `mut int` parameter
+/// are accepted.
+#[test]
+fn immutable_argument_to_a_marked_library_parameter_is_refused_issue1773() -> Result<(), Box<dyn std::error::Error>> {
+    let producer = parse_program(
+        "pub class Counter:\n    pub value: int\n\npub def grow(mut counter: Counter) -> int:\n    counter.value += 1\n    return counter.value\n\npub def bump(mut n: int) -> int:\n    n += 1\n    return n\n",
+        "counters producer",
+    );
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["lib".to_string()]));
+    checker.set_current_package_identity(Some("counters".to_string()));
+    checker
+        .check_program(&producer)
+        .map_err(|errors| format!("producer check failed: {errors:?}"))?;
+    let exports = crate::library_exports::collect_checked_public_exports(&producer, &checker);
+    let json = LibraryManifest::from_checked_exports("counters", "0.1.0", &exports).to_json_string()?;
+    let manifest = LibraryManifest::from_json_str(&json)?;
+    let index = || {
+        LibraryManifestIndex::from_entries(HashMap::from([(
+            "counters".to_string(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(manifest.clone()),
+                metadata: LibraryArtifactMetadata::from_crate_root(
+                    "counters",
+                    "counters",
+                    synthetic_artifact_root("issue1773_counters"),
+                ),
+            },
+        )]))
+    };
+    let errors = check_str_with_library_index_err(
+        "from pub::counters import Counter, grow\n\ndef main() -> None:\n    c = Counter(value=1)\n    println(grow(c))\n",
+        index(),
+        "an immutable binding passed to a marked library parameter must be refused",
+    )?;
+    let refused = errors
+        .iter()
+        .filter(|error| error.stable_code() == Some(MUT_ARGUMENT_CODE))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(refusals_by_callee(&refused), ["grow"], "got {errors:?}");
+    check_str_with_library_index(
+        "from pub::counters import Counter, grow, bump\n\ndef main() -> None:\n    mut c = Counter(value=1)\n    n = 3\n    println(grow(c) + grow(Counter(value=2)) + bump(n))\n",
+        index(),
+    )
+    .map_err(|errors| format!("the accepted calls were refused: {errors:?}"))?;
+    Ok(())
+}
+
+/// Return the callee each `INCAN-T0117` refusal names, in order.
+fn refusals_by_callee(refusals: &[CompileError]) -> Vec<String> {
+    refusals
+        .iter()
+        .map(|refusal| {
+            refusal
+                .message
+                .split(" of '")
+                .nth(1)
+                .map(|rest| rest.trim_end_matches("' must be a mutable binding").to_string())
+                .unwrap_or_default()
+        })
+        .collect()
 }

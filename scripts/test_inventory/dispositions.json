@@ -1838,6 +1838,10 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/generic_list_index_without_clone_bound.incn",
           "notes": "Asserts the inferred `Clone` bound an element read of a type-parameter list or dict value needs; retires with `incan_emit`. The behavior, `first[K]` returning `items[0]` for int and str elements, is carried by the named fixture (#1756)."
         },
+        "marked_arguments_through_callable_types_pass_the_callers_value_issue1773": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/mut_parameter_changed_through_a_callable_type_reaches_the_caller.incn",
+          "notes": "Asserts generated Rust text for a call through a local bound to a function, a callable-typed parameter and an annotated callable local whose type marks the parameter `mut`; retires with the Rust-source backend. The behavior, each call's change to a `mut` class argument reaching the caller, is carried by the named fixture (#1773)."
+        },
         "mut_arguments_follow_the_checker_facts_issue1773": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/trait_default_method_mutable_parameter.incn",
           "notes": "Asserts generated Rust text for `mut` arguments through a generic bound, a copied immutable binding and an `int` alias; retires with the Rust-source backend. The behavior, a generic call appending through a trait bound, an unchanged `mut` parameter taking an immutable list, and an `int` alias staying the callee's own copy, is carried by the named fixture (#1773)."

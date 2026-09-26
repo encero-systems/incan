@@ -1,0 +1,12 @@
+# behavior: an immutable binding passed to a mut list parameter that the function changes through a local bound to the parameter is refused at check time
+# expect-diagnostic: INCAN-T0117
+
+def sneaky(mut items: list[int]) -> int:
+    mut other = items
+    other.append(3)
+    return len(other)
+
+
+def main() -> None:
+    fixed: list[int] = [1]
+    println(sneaky(fixed))

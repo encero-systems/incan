@@ -1,0 +1,18 @@
+# behavior: an immutable binding passed through a callable-typed parameter whose type marks the parameter mut is refused at check time
+# expect-diagnostic: INCAN-T0117
+
+class Counter:
+    pub value: int
+
+
+def grow(mut counter: Counter) -> int:
+    counter.value += 1
+    return counter.value
+
+
+def apply(step: (mut Counter) -> int, counter: Counter) -> int:
+    return step(counter)
+
+
+def main() -> None:
+    println(apply(grow, Counter(value=1)))

@@ -332,6 +332,9 @@ impl AstLowering {
     }
 
     /// Rebuild a callable signature from frontend metadata for rest-aware IR emission.
+    ///
+    /// A parameter the metadata marks `mut` is [`Mutability::Mutable`](super::super::super::types::Mutability), so a
+    /// call through a callable known only by its type passes it as a marked `def` parameter is passed.
     fn callable_signature_from_params(&self, params: &[CallableParam], ret: &ResolvedType) -> FunctionSignature {
         FunctionSignature {
             params: params
@@ -343,7 +346,13 @@ impl AstLowering {
                     FunctionParam {
                         name: param.name.clone().unwrap_or_else(|| format!("__incan_arg_{idx}")),
                         ty,
-                        mutability: super::super::super::types::Mutability::Immutable,
+                        // A parameter the callable type marks `mut` shows the callee's changes to the caller, so the
+                        // call passes it the way a marked `def` parameter is passed (#1773).
+                        mutability: if param.is_mut {
+                            super::super::super::types::Mutability::Mutable
+                        } else {
+                            super::super::super::types::Mutability::Immutable
+                        },
                         is_self: false,
                         kind: param.kind,
                         default: None,
@@ -3025,7 +3034,9 @@ impl AstLowering {
     pub(in crate::lower) fn callable_signature_for_call_span(&self, span: ast::Span) -> Option<FunctionSignature> {
         let info = self.type_info.as_ref()?;
         let params = info.call_site_callable_params(span)?;
-        let mut params = self.callable_signature_from_params(params, &ResolvedType::Unknown).params;
+        let mut params = self
+            .callable_signature_from_params(params, &ResolvedType::Unknown)
+            .params;
         // The callee's caller-visible `mut` parameters are passed the way its declaration takes them, whatever the
         // receiver: a concrete type, a generic bound, or a type another module declares (#1773).
         if let Some(caller_visible) = info.caller_visible_mut_arguments(span) {
