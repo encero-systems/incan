@@ -1,0 +1,9 @@
+[project]
+name = "fallible_iterator_chain_without_trait_import"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+fallible_streams = { path = "deps/fallible_streams" }

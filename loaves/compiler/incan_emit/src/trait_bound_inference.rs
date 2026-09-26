@@ -2579,9 +2579,18 @@ fn scan_expr_for_bounds(
             scan_expr_for_bounds(operand, type_params, params, bounds_map);
         }
 
-        // ---- Field/Index: recurse ----
+        // ---- Field: recurse ----
         IrExprKind::Field { object, .. } => scan_expr_for_bounds(object, type_params, params, bounds_map),
+
+        // ---- Element read: `items[i]` produces its own copy of the element, which requires `Clone` (#1756) ----
         IrExprKind::Index { object, index } => {
+            if let Some(element_ty) = index_read_copied_element_type(&object.ty) {
+                let mut dependencies = CloneExpressionDependencies::default();
+                collect_clone_expression_dependencies(element_ty, type_params, &mut dependencies);
+                for tp_name in dependencies.explicit_params {
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
+                }
+            }
             scan_expr_for_bounds(object, type_params, params, bounds_map);
             scan_expr_for_bounds(index, type_params, params, bounds_map);
         }
@@ -2776,6 +2785,27 @@ fn scan_expr_for_bounds(
         | IrExprKind::SerdeToJson
         | IrExprKind::SerdeFromJson(_) => {}
     }
+}
+
+/// Return the element type an index read copies out of its collection, or `None` when the read copies nothing.
+///
+/// `items[i]` on a `list[T]` and `table[key]` on a `dict[K, V]` are values in their own right: Incan has no shared
+/// element reads, so the generated program duplicates a non-`Copy` element as it looks it up (`list_get(..).clone()`,
+/// `dict_get(..).clone()` in the Rust-source backend's index emission). A duplicated value of a type parameter needs
+/// that parameter to be `Clone` (RFC 023 section 6: a clone implies a `Clone` bound), which an unbounded
+/// `def first[K](items: list[K]) -> K` never states (#1756). The shape mirrors that emission exactly: one level of
+/// reference is looked through, only lists and dicts duplicate, and a `Copy` element is copied without a bound.
+fn index_read_copied_element_type(object_ty: &IrType) -> Option<&IrType> {
+    let object_ty = match object_ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => inner.as_ref(),
+        other => other,
+    };
+    let element_ty = match object_ty {
+        IrType::List(element) => element.as_ref(),
+        IrType::Dict(_, value) => value.as_ref(),
+        _ => return None,
+    };
+    (!element_ty.is_copy()).then_some(element_ty)
 }
 
 /// Determine if an expression refers to a variable whose type is a type parameter.

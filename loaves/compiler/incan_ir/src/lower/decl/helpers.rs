@@ -547,6 +547,27 @@ impl AstLowering {
         targets
     }
 
+    /// Return the declaration names of the source-module traits a type adopts through `@derive(...)`.
+    ///
+    /// A module derive (`@derive(codec)` over `__derives__ = [Encode]`, RFC 024) or a module-qualified derive
+    /// (`@derive(codec.Encode)`) adopts the named traits as `with Encode` does: the type implements them and their
+    /// methods resolve on it. Lowering must count those traits among the type's adopted traits, or a direct call such
+    /// as `item.tag()` is not routed to the method the implementation provides (#1792). Derives of stdlib modules are
+    /// left out: their traits are realized through backend derives and keep their own method routing.
+    pub(in crate::lower) fn derived_source_trait_adoptions(
+        &mut self,
+        decorators: &[Spanned<ast::Decorator>],
+    ) -> Vec<String> {
+        self.derive_trait_impl_targets(decorators)
+            .into_iter()
+            .filter_map(|(target, _)| {
+                let (qualifier, trait_name) = target.rsplit_once('.')?;
+                let module_path = self.module_path_for_derive_name(qualifier)?;
+                (module_path.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT)).then(|| trait_name.to_string())
+            })
+            .collect()
+    }
+
     /// Look up RFC 024 derivable traits for a module, preferring imported dependency metadata over stdlib metadata.
     fn derivable_traits_for_module(&mut self, module_path: &[String]) -> Option<Vec<String>> {
         let key = module_path.join(".");

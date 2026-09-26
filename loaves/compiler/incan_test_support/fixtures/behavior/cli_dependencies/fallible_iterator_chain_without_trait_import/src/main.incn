@@ -1,0 +1,15 @@
+# behavior: a consumer that never imports FallibleIterator chains its adapters on a dependency's adopter and collects the mapped items
+# expect-stdout:
+#   3
+
+from pub::fallible_streams import numbers
+
+
+def double(value: int) -> int:
+    return value * 2
+
+
+def main() -> None:
+    match numbers().map(double).collect():
+        Ok(items) => println(len(items))
+        Err(error) => println(f"error {error}")

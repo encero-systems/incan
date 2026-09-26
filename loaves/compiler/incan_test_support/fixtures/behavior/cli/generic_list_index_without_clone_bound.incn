@@ -1,0 +1,13 @@
+# behavior: a generic function with no bound on its type parameter returns an element of its list by index, for int and str elements
+# retires: loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs::index_read_of_a_type_parameter_element_states_clone_issue1756
+# expect-stdout:
+#   4
+#   x
+
+def first[K](items: list[K]) -> K:
+    return items[0]
+
+
+def main() -> None:
+    println(first([4, 5]))
+    println(first(["x", "y"]))

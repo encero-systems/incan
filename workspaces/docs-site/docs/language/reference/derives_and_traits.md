@@ -228,6 +228,7 @@ Rules to keep in mind:
 - Method type parameters are scoped to that method only.
 - Enclosing type parameters and method type parameters may both be used in the same signature.
 - Trait methods may also be generic, whether they are required (`...`) or provide a default body.
+- Reading an element by index needs no bound on a type parameter: `items[i]` on a `list[T]` and `table[key]` on a `dict[K, V]` produce the element as a value of its own, in generic functions and methods alike, as in `def first[K](items: list[K]) -> K: return items[0]`.
 
 Examples:
 
@@ -369,6 +370,9 @@ Rules to keep in mind:
 - Enum adopters should satisfy behavior through methods; `@requires(...)` field contracts are usually for models/classes because enum payloads are variant data, not shared fields on the enum.
 - Newtype and rusttype adopters declare the same `with TraitName` clause. When multiple adopted traits require the same method name, target each concrete method with `for TraitName` before the return arrow.
 - Supertrait relationships are transitive: if `OrderedCollection[T]` adopts `Collection[T]`, adopters of `OrderedCollection[T]` also satisfy `Collection[T]`.
+- A default method body names what its trait's module names. A type the trait's module declares is that type in every adopter, whether or not the adopting module imports it: a default `def extent(self) -> Extent: return Extent(width=self.width(), height=self.height())` in module `shapes` returns `shapes.Extent` to an adopter that imports only the trait.
+- A `mut` parameter of a trait method, default or implementation, is the same contract as on a function: a change the method makes to a `mut` list, dict or set parameter is visible to the caller after the call.
+- A type that adopts a trait through a module derive, `@derive(codec)` over a module whose `__derives__` lists the trait, adopts it as a `with` clause does: the trait's methods, defaults included, are called directly on the type (`item.tag()`) and satisfy generic bounds.
 
 When an operation should only be available for values with specific capabilities, express that constraint in the type system with generic bounds instead of selectively hiding inherited trait methods:
 

@@ -2796,6 +2796,10 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// Seed nominal metadata, optionally skipping ambiguous dependency names.
+    ///
+    /// Every impl method's signature is registered under the name a call uses: an inherent method under its own
+    /// emitted name, and a trait method both under its slot name and under the recoverable wrapper name concrete calls
+    /// target, so call-site argument planning sees the declared parameters either way.
     fn seed_nominal_metadata_from_program_inner(&mut self, program: &IrProgram, skip_ambiguous: bool) {
         for (owner, source_name, identity) in &program.member_projections {
             if !skip_ambiguous || !self.ambiguous_type_names.contains(owner) {
@@ -2888,6 +2892,35 @@ impl<'a> IrEmitter<'a> {
                     for method in &i.methods {
                         let params = method.params.iter().filter(|param| !param.is_self).cloned().collect();
                         let key = (i.target_type.clone(), method.name.clone());
+                        self.method_signatures.insert(
+                            key.clone(),
+                            FunctionSignature {
+                                params,
+                                return_type: method.return_type.clone(),
+                            },
+                        );
+                        self.method_signature_type_params
+                            .insert(key, i.type_params.iter().map(|param| param.name.clone()).collect());
+                    }
+                    // A concrete call reaches a trait method through its recoverable wrapper, which is named by the
+                    // method's identity and takes exactly the slot's parameters. Registering the slot's signature
+                    // under that name lets the call pass a `mut` aggregate parameter the way the slot takes it (#1773).
+                    for projection in &i.method_projections {
+                        let Some(method) = i
+                            .methods
+                            .iter()
+                            .find(|method| method.name == projection.abi_method_name)
+                        else {
+                            continue;
+                        };
+                        let key = (
+                            i.target_type.clone(),
+                            encode_incan_symbol_identity(&projection.identity),
+                        );
+                        if self.method_signatures.contains_key(&key) {
+                            continue;
+                        }
+                        let params = method.params.iter().filter(|param| !param.is_self).cloned().collect();
                         self.method_signatures.insert(
                             key.clone(),
                             FunctionSignature {

@@ -1,0 +1,20 @@
+# behavior: a trait default method that appends to its mut list parameter changes the caller's list, as a free function with the same parameter does
+# retires: loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs::trait_method_mut_parameter_keeps_one_shape_across_slot_impl_and_wrapper_issue1773
+# expect-stdout:
+#   3
+#   3
+
+trait Replacer:
+    def replace(self, mut items: list[int]) -> int:
+        items.append(9)
+        return len(items)
+
+
+model Widget with Replacer:
+    id: int
+
+
+def main() -> None:
+    mut items: list[int] = [1, 2]
+    println(Widget(id=1).replace(items))
+    println(len(items))

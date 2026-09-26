@@ -85,7 +85,7 @@ Clone the iterator before a terminal call when the original iterator must still 
     - `__next__(mut self) -> Result[Option[T], E]`
 - **Trait**: `FallibleIterator[T, E]`
 
-Import the trait when defining a custom fallible source or using it in a generic bound:
+Import the trait when defining a custom fallible source or using it in a generic bound. Calling an adapter or a terminal needs no import: the methods are available on any adopter, including one another package returns, and on the `FallibleIterator[U, E]` value an adapter returns, so `numbers().map(double).collect()` works in a module that never imports `FallibleIterator`.
 
 ```incan
 from std.derives.collection import FallibleIterator

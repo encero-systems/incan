@@ -1315,6 +1315,24 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs": {
+      "disposition": "retire",
+      "notes": "lowering through emission: trait-bound inference over generic element reads and the Rust shape of trait-method `mut` parameters on the legacy IR; retires with `incan_emit`.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "index_read_of_a_type_parameter_element_states_clone_issue1756": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/generic_list_index_without_clone_bound.incn",
+          "notes": "Asserts the inferred `Clone` bound an element read of a type-parameter list or dict value needs; retires with `incan_emit`. The behavior, `first[K]` returning `items[0]` for int and str elements, is carried by the named fixture (#1756)."
+        },
+        "trait_method_mut_parameter_keeps_one_shape_across_slot_impl_and_wrapper_issue1773": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/trait_default_method_mutable_parameter.incn",
+          "notes": "Asserts generated Rust text for a trait method's `mut` parameters (slot, default, implementation, wrapper, call site); retires with the Rust-source backend. The behavior, a trait default appending to its `mut` list parameter and the caller seeing the change, is carried by the named fixture (#1773)."
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/trait_bound_inference.rs": {
       "disposition": "retire",
       "notes": "infers Rust trait bounds for generated generics; Rust-shape concern.",
@@ -2474,6 +2492,24 @@
         "fn_family_capability_markers_lower_to_the_callable_bound_issue1716": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_rust_capability_bounds.incn",
           "notes": "asserts the recorded bound shape of the `Fn`, `FnMut` and `FnOnce` markers: the canonical `CallableN` trait with a hidden return-type parameter (#1716); the twin runs each marker over a named function."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/imported_trait_adoption_scope.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "derive_bundle_trait_counts_as_adopted_for_direct_calls_issue1792": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/module_derive_default_method_direct_call",
+          "notes": "Asserts on the legacy IR that a direct call of a derive-bundle trait's method is routed to the recoverable projection the derived implementation provides; retires with `incan_ir`. The behavior, `item.tag()` printing the default's result under the plain and the aliased module binding, is carried by the named fixture (#1792)."
+        },
+        "imported_trait_default_names_its_module_types_by_path_issue1759": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/trait_default_names_its_own_module_types",
+          "notes": "Asserts on the legacy IR that an imported trait default expanded into an adopter names its own module's model by the defining-module Rust path; retires with `incan_ir`. The behavior, the adopter printing the area of the model the default returns without importing it, is carried by the named fixture (#1759)."
         }
       },
       "twin": ""

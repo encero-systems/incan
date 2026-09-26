@@ -55,6 +55,7 @@ use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_frontend::typechecker::{CBindingType, TypeCheckInfo};
 use incan_lang::lang::conventions;
 use incan_lang::lang::decorators::{self, DecoratorId};
+use incan_lang::lang::keywords::{self, KeywordId};
 use incan_lang::lang::stdlib;
 use incan_lang::lang::trait_capabilities;
 use incan_lang::lang::traits::{self as core_traits, TraitId};
@@ -275,7 +276,8 @@ pub struct AstLowering {
     /// A recoverable projection is a wrapper emitted beside a declaration. A local type gets one for a method it
     /// writes and for a trait it adopts -- and for nothing else. A trait method the type never adopted has no slot
     /// here even though the call resolves to a real declaration, so projection needs to know which traits were
-    /// actually adopted rather than inferring it from the identity the call resolved to.
+    /// actually adopted rather than inferring it from the identity the call resolved to. A trait adopted through a
+    /// source-module derive (`@derive(codec)`) counts as adopted, like one written in a `with` clause.
     pub adopted_traits_by_type: HashMap<String, HashSet<String>>,
     /// Trait names this program declares.
     ///
@@ -1582,6 +1584,11 @@ impl AstLowering {
 
     /// Seed trait declarations from imported source modules so RFC 024 default methods can be expanded into adopter
     /// impls.
+    ///
+    /// Each trait also records the Rust paths of the nominal types its defining module declares. A default body is
+    /// expanded in the adopter's module, where a type the trait's module owns (`Extent` in `shapes`) is not in scope
+    /// unless the adopter happens to import it, so the expansion names those types by their defining-module path, the
+    /// same fact stdlib traits already carry (#1759).
     pub fn seed_dependency_trait_decls(
         &mut self,
         dependency_modules: &[(&str, &ast::Program, Option<Vec<String>>)],
@@ -1594,6 +1601,10 @@ impl AstLowering {
                     module_keys.push(dotted);
                 }
             }
+            let module_path = path_segments
+                .clone()
+                .unwrap_or_else(|| module_name.split('.').map(str::to_string).collect());
+            let default_type_paths = Self::source_module_type_paths(module_ast, &module_path);
             for decl in &module_ast.declarations {
                 let ast::Declaration::Trait(tr) = &decl.node else {
                     continue;
@@ -1608,11 +1619,41 @@ impl AstLowering {
                     false,
                 )?;
                 for module_key in &module_keys {
-                    self.register_trait_decl(format!("{module_key}.{}", tr.name), trait_decl.clone(), true);
+                    let trait_key = format!("{module_key}.{}", tr.name);
+                    self.trait_default_type_paths
+                        .insert(trait_key.clone(), default_type_paths.clone());
+                    self.register_trait_decl(trait_key, trait_decl.clone(), true);
                 }
             }
         }
         Ok(())
+    }
+
+    /// Return the Rust path of every nominal type one source module declares, keyed by its declared name.
+    ///
+    /// A source module is emitted as the crate module named by its logical path (`shapes` as `crate::shapes`,
+    /// `api.routes` as `crate::api::routes`; a directory's `mod.incn` names the directory), which is where the paths
+    /// point. Only declarations that are types in their own right are listed: models, classes, enums and newtypes. A
+    /// transparent `type` alias names another type and a trait is a bound, so neither is re-spelled.
+    fn source_module_type_paths(module_ast: &ast::Program, module_path: &[String]) -> HashMap<String, Vec<String>> {
+        let mut rust_module_path = vec![keywords::as_str(KeywordId::Crate).to_string()];
+        rust_module_path.extend(incan_frontend::module::canonicalize_source_module_segments(module_path));
+        module_ast
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.node {
+                ast::Declaration::Model(model) => Some(model.name.clone()),
+                ast::Declaration::Class(class) => Some(class.name.clone()),
+                ast::Declaration::Enum(enum_decl) => Some(enum_decl.name.clone()),
+                ast::Declaration::Newtype(newtype) => Some(newtype.name.clone()),
+                _ => None,
+            })
+            .map(|type_name| {
+                let mut path = rust_module_path.clone();
+                path.push(type_name.clone());
+                (type_name, path)
+            })
+            .collect()
     }
 
     /// Seed alias maps for types that may be referenced from other modules.
@@ -2152,25 +2193,23 @@ impl AstLowering {
         ir_program.function_reexports = self.collect_function_reexports(program);
         self.imported_alias_targets = self.collect_imported_alias_targets(program);
         self.seed_imported_stdlib_trait_decls(program)?;
-        self.adopted_traits_by_type = program
-            .declarations
-            .iter()
-            .filter_map(|decl| match &decl.node {
-                ast::Declaration::Model(m) => Some((m.name.clone(), &m.traits)),
-                ast::Declaration::Class(c) => Some((c.name.clone(), &c.traits)),
-                _ => None,
-            })
-            .map(|(name, traits)| {
-                let adopted = traits
-                    .iter()
-                    .map(|trait_ref| {
-                        let spelled = trait_ref.node.name.as_str();
-                        spelled.rsplit('.').next().unwrap_or(spelled).to_string()
-                    })
-                    .collect::<HashSet<_>>();
-                (name, adopted)
-            })
-            .collect();
+        self.adopted_traits_by_type = HashMap::new();
+        for decl in &program.declarations {
+            let (name, traits, decorators) = match &decl.node {
+                ast::Declaration::Model(m) => (&m.name, &m.traits, &m.decorators),
+                ast::Declaration::Class(c) => (&c.name, &c.traits, &c.decorators),
+                _ => continue,
+            };
+            let mut adopted = traits
+                .iter()
+                .map(|trait_ref| {
+                    let spelled = trait_ref.node.name.as_str();
+                    spelled.rsplit('.').next().unwrap_or(spelled).to_string()
+                })
+                .collect::<HashSet<_>>();
+            adopted.extend(self.derived_source_trait_adoptions(decorators));
+            self.adopted_traits_by_type.insert(name.clone(), adopted);
+        }
         self.declared_trait_names = program
             .declarations
             .iter()
@@ -3812,7 +3851,7 @@ impl AstLowering {
                 && imported
                 && Self::trait_decl_has_lowerable_defaults(decl)
             {
-                self.register_trait_decl_if_absent(alias.clone(), decl.clone(), imported);
+                self.register_imported_trait_alias(alias.clone(), &module_key, decl.clone(), imported);
             }
             let prefix = format!("{module_key}.");
             for (qualified, decl) in &existing {
@@ -3828,9 +3867,24 @@ impl AstLowering {
                 if !imported {
                     continue;
                 }
-                self.register_trait_decl_if_absent(format!("{alias}.{trait_name}"), decl.clone(), imported);
+                self.register_imported_trait_alias(format!("{alias}.{trait_name}"), qualified, decl.clone(), imported);
             }
         }
+    }
+
+    /// Bind an import spelling to an imported trait declaration together with its defining-module type paths.
+    ///
+    /// Default expansion looks up the declaration, its provenance and the type paths of its defining module by the
+    /// spelling the adopter's `with` clause uses, so an alias carries all three or none. A spelling another binding
+    /// already owns keeps that binding and its paths.
+    fn register_imported_trait_alias(&mut self, alias: String, source_key: &str, decl: ast::TraitDecl, imported: bool) {
+        if self.trait_decls.contains_key(&alias) {
+            return;
+        }
+        if let Some(type_paths) = self.trait_default_type_paths.get(source_key).cloned() {
+            self.trait_default_type_paths.entry(alias.clone()).or_insert(type_paths);
+        }
+        self.register_trait_decl(alias, decl, imported);
     }
 
     /// Seed trait declarations imported from stdlib modules.
@@ -4102,6 +4156,7 @@ mod tests {
     use incan_frontend::{lexer, parser, typechecker::TypeChecker};
     use incan_lang::lang::trait_bounds;
 
+    mod imported_trait_adoption_scope;
     mod unary_operand_grouping;
 
     fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {
