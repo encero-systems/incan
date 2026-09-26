@@ -1323,6 +1323,20 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/trait_slot_mut_parameters.rs": {
+      "disposition": "retire",
+      "notes": "asserts the Rust spelling of a trait's bodiless slot and its implementation for `mut` scalar parameters (#1827); retires with the Rust-source backend (#654).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": "",
+      "tests": {
+        "trait_slots_declare_mut_scalar_parameters_without_a_binding": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/trait_mut_scalar_parameter_is_a_local_copy.incn",
+          "notes": "asserts that the trait slot declares `n: Count`, `n: i64` and `x: f64` while the implementation keeps `mut` (#1827); the twin runs an abstract and a default trait method that change their scalar parameter locally."
+        }
+      }
+    },
     "loaves/compiler/incan_emit/src/trait_bound_inference.rs": {
       "disposition": "retire",
       "notes": "infers Rust trait bounds for generated generics; Rust-shape concern.",

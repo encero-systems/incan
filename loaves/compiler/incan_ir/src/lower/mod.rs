@@ -2607,11 +2607,7 @@ impl AstLowering {
                                 Ok(FunctionParam {
                                     name: p.node.name.clone(),
                                     ty: param_ty,
-                                    mutability: if p.node.is_mut {
-                                        Mutability::Mutable
-                                    } else {
-                                        Mutability::Immutable
-                                    },
+                                    mutability: self.lower_parameter_mutability(p),
                                     is_self: false,
                                     kind: p.node.kind,
                                     default: self

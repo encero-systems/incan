@@ -370,11 +370,7 @@ impl AstLowering {
                     Ok(FunctionParam {
                         name: param.node.name.clone(),
                         ty,
-                        mutability: if param.node.is_mut {
-                            super::super::super::types::Mutability::Mutable
-                        } else {
-                            super::super::super::types::Mutability::Immutable
-                        },
+                        mutability: self.unrecorded_parameter_mutability(param),
                         is_self: false,
                         kind: param.node.kind,
                         default: self
@@ -403,11 +399,7 @@ impl AstLowering {
                     Ok(FunctionParam {
                         name: param.node.name.clone(),
                         ty,
-                        mutability: if param.node.is_mut {
-                            super::super::super::types::Mutability::Mutable
-                        } else {
-                            super::super::super::types::Mutability::Immutable
-                        },
+                        mutability: self.unrecorded_parameter_mutability(param),
                         is_self: false,
                         kind: param.node.kind,
                         default: self
