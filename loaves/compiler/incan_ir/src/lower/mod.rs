@@ -3071,6 +3071,14 @@ impl AstLowering {
                     }
                 }
                 ast::Declaration::Alias(alias) if self.alias_projects_overload_set(alias) => {}
+                ast::Declaration::Import(import) => match self.lower_import(import, decl.span) {
+                    Ok(Some(kind)) => ir_program
+                        .declarations
+                        .push(IrDecl::new(kind).with_span(decl.span.into())),
+                    // Derive vocabulary alone: nothing for generated Rust to bind (see `lower_import`).
+                    Ok(None) => {}
+                    Err(e) => errors.push(e),
+                },
                 _ => {
                     // Regular declaration lowering
                     match self.lower_declaration(&decl.node, decl.span) {
@@ -3169,13 +3177,13 @@ impl AstLowering {
             let ast::Declaration::Import(import) = &decl.node else {
                 continue;
             };
-            let Ok(IrDeclKind::Import {
+            let Ok(Some(IrDeclKind::Import {
                 origin,
                 qualifier,
                 path,
                 items,
                 ..
-            }) = self.lower_import(import, decl.span)
+            })) = self.lower_import(import, decl.span)
             else {
                 continue;
             };
@@ -4123,6 +4131,8 @@ mod tests {
     use incan_frontend::{lexer, parser, typechecker::TypeChecker};
     use incan_lang::lang::trait_bounds;
 
+    mod builtin_str_arguments;
+    mod derive_vocabulary_imports;
     mod unary_operand_grouping;
 
     fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {

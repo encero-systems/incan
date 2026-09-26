@@ -617,27 +617,27 @@
     },
     "loaves/compiler/incan_driver/tests/parity_corpus_tests/corpus_proofs.rs": {
       "disposition": "re-point",
+      "notes": "split of parity_corpus_tests.rs (the parity corpus: slice 7's own measurement instrument; the corpus support helper lives outside the file in `loaves/compiler/incan_driver/tests/support/parity_corpus.rs`, so the scanner sees only the `replacement` lane); corpus validation: the red-state schema proof, the green-state structural and behavioral proofs, the replacement rows' receipt-bound evidence and the CI summary.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parity_corpus_tests.rs (the parity corpus: slice 7's own measurement instrument; the corpus support helper lives outside the file in `loaves/compiler/incan_driver/tests/support/parity_corpus.rs`, so the scanner sees only the `replacement` lane); corpus validation: the red-state schema proof, the green-state structural and behavioral proofs, the replacement rows' receipt-bound evidence and the CI summary."
+      "twin": ""
     },
     "loaves/compiler/incan_driver/tests/parity_corpus_tests/paired_row_proofs.rs": {
       "disposition": "re-point",
+      "notes": "split of parity_corpus_tests.rs (the parity corpus: slice 7's own measurement instrument; the corpus support helper lives outside the file in `loaves/compiler/incan_driver/tests/support/parity_corpus.rs`, so the scanner sees only the `replacement` lane); the paired-comparison rows: these tests assert a green (or explicitly unavailable) legacy-vs-replacement shadow comparison through `shadow_support::compare_source_observable`, the same evidence class as `backend/shadow/**`: slice 7 (#1675) re-points that baseline to the frozen corpus receipts or retires the comparison with the legacy route.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parity_corpus_tests.rs (the parity corpus: slice 7's own measurement instrument; the corpus support helper lives outside the file in `loaves/compiler/incan_driver/tests/support/parity_corpus.rs`, so the scanner sees only the `replacement` lane); the paired-comparison rows: these tests assert a green (or explicitly unavailable) legacy-vs-replacement shadow comparison through `shadow_support::compare_source_observable`, the same evidence class as `backend/shadow/**`: slice 7 (#1675) re-points that baseline to the frozen corpus receipts or retires the comparison with the legacy route."
+      "twin": ""
     },
     "loaves/compiler/incan_driver/tests/parity_corpus_tests/rfc_120_proofs.rs": {
       "disposition": "re-point",
+      "notes": "split of parity_corpus_tests.rs (the parity corpus: slice 7's own measurement instrument; the corpus support helper lives outside the file in `loaves/compiler/incan_driver/tests/support/parity_corpus.rs`, so the scanner sees only the `replacement` lane); the RFC 120 coverage and evidence proofs.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of parity_corpus_tests.rs (the parity corpus: slice 7's own measurement instrument; the corpus support helper lives outside the file in `loaves/compiler/incan_driver/tests/support/parity_corpus.rs`, so the scanner sees only the `replacement` lane); the RFC 120 coverage and evidence proofs."
+      "twin": ""
     },
     "loaves/compiler/incan_driver/tests/protected_builtin_binding_tests.rs": {
       "disposition": "keep",
@@ -673,81 +673,81 @@
     },
     "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/async_tasks_and_race.rs": {
       "disposition": "keep",
+      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); async tasks and `race`, direct and through the CLI.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); async tasks and `race`, direct and through the CLI."
+      "twin": ""
     },
     "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/bodies_bindings_and_scalars.rs": {
       "disposition": "keep",
+      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); core body execution, bindings, projections and scalars.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); core body execution, bindings, projections and scalars."
+      "twin": ""
     },
     "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/callables_and_generators.rs": {
       "disposition": "keep",
+      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); named calls, closures, partials, callable defaults and generators.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); named calls, closures, partials, callable defaults and generators."
+      "twin": ""
     },
     "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/cli_nominal_and_enum_values.rs": {
       "disposition": "keep",
+      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); CLI-driven nominal and enum programs with their receipts and refusals.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); CLI-driven nominal and enum programs with their receipts and refusals."
+      "twin": ""
     },
     "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/cli_refusals_shadow_and_boundaries.rs": {
       "disposition": "keep",
+      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); CLI-driven refusals without a receipt, shadow requests that stay explicitly non-green, module and Rust interop boundaries.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); CLI-driven refusals without a receipt, shadow requests that stay explicitly non-green, module and Rust interop boundaries."
+      "twin": ""
     },
     "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/collections_strings_and_print.rs": {
       "disposition": "keep",
+      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); collections, strings, scalar JSON and `print`; one test compares against the legacy backend and retires to its behavior fixture.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); collections, strings, scalar JSON and `print`; one test compares against the legacy backend and retires to its behavior fixture.",
       "tests": {
         "both_backends_render_a_multi_argument_print_the_same_way": {
           "disposition": "retire",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/driver/println_multi_argument.incn",
           "notes": "compared the replacement executor's rendering of `println(\"count\", 3, true)` with the IrCodegen placeholder count; the twin runs the program and reads `count 3 true` from its stdout, and the replacement-only half stays in the keep sibling replacement_executes_print_by_recording_its_output."
         }
-      }
+      },
+      "twin": ""
     },
     "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/modules_and_sessions.rs": {
       "disposition": "keep",
+      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); the execution graph's cross-module resolution and the CLI-driven module, facade and session tests.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); the execution graph's cross-module resolution and the CLI-driven module, facade and session tests."
+      "twin": ""
     },
     "loaves/compiler/incan_driver/tests/replacement_backend_execution_tests/nominal_and_enum_values.rs": {
       "disposition": "keep",
+      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); source-local nominal models and enums through a direct callable, with the identity and layout refusals.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of replacement_backend_execution_tests.rs (Body IR lowering and replacement execution; the CLI-driven tests run the replacement route and stay keep); source-local nominal models and enums through a direct callable, with the identity and layout refusals.",
       "tests": {
         "replacement_refuses_a_nominal_pattern_after_its_exact_target_identity_is_removed": {
           "disposition": "keep",
           "twin": "",
           "notes": "generated-text hit is a diagnostic string"
         }
-      }
+      },
+      "twin": ""
     },
     "loaves/compiler/incan_driver/tests/replacement_bool_truthiness_shadow_tests.rs": {
       "disposition": "re-point",
@@ -2715,43 +2715,43 @@
     },
     "loaves/compiler/incan_format/src/tests/comments_and_blank_lines.rs": {
       "disposition": "keep",
+      "notes": "split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level."
+      "twin": ""
     },
     "loaves/compiler/incan_format/src/tests/declarations.rs": {
       "disposition": "keep",
+      "notes": "split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level."
+      "twin": ""
     },
     "loaves/compiler/incan_format/src/tests/entry_points_imports_and_spacing.rs": {
       "disposition": "keep",
+      "notes": "split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level."
+      "twin": ""
     },
     "loaves/compiler/incan_format/src/tests/expressions_and_calls.rs": {
       "disposition": "keep",
+      "notes": "split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level."
+      "twin": ""
     },
     "loaves/compiler/incan_format/src/tests/statements_and_patterns.rs": {
       "disposition": "keep",
+      "notes": "split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level."
+      "twin": ""
     },
     "loaves/compiler/incan_format/src/writer.rs": {
       "disposition": "keep",
@@ -3471,6 +3471,12 @@
       "owner": 1561,
       "split_required": false,
       "split_target": "",
+      "tests": {
+        "aliased_derivable_trait_bound_lowers_to_the_rust_trait_of_its_derive_issue1727": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters_with_imported_clone.incn",
+          "notes": "Asserts the recorded bound on the legacy IR (`Eq as Equality` and `Clone as Copyable` lower to the registry's Rust traits, `Iterator` under an alias keeps its generated path); retires with `incan_ir`. The behavior, an aliased `Eq` bound admitting a derived model, is carried by the named fixture (#1727)."
+        }
+      },
       "twin": ""
     },
     "loaves/compiler/incan_ir/src/lower/decl/imports.rs": {
@@ -3605,6 +3611,34 @@
       "split_required": false,
       "split_target": "",
       "twin": ""
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/builtin_str_arguments.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "tests": {
+        "str_over_an_operator_expression_lowers_a_grouped_argument_issue1726": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings/str_over_arithmetic_expression.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (an operator-shaped `str(...)` argument is handed to the emitter as one grouped value in its own type; an atomic argument stays as written); retires with `incan_ir`. The behavior, `str(a + b)` rendering the whole sum, is carried by the named fixture (#1726)."
+        }
+      }
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/derive_vocabulary_imports.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "tests": {
+        "derive_vocabulary_imports_lower_to_no_ir_import_issue1727": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters_with_imported_clone.incn",
+          "notes": "Asserts the recorded import fact on the legacy IR (an import of a derivable trait's stdlib stub lowers to no IR import; the source-owned protocol and callable imports stay; the expanded adapter default and an aliased `Eq` bound spell the derive-owned Rust traits); retires with `incan_ir`. The behavior, the FallibleIterator adapters driven with derived callables beside `from std.derives.copying import Clone`, is carried by the named fixture (#1727)."
+        }
+      }
     },
     "loaves/compiler/incan_ir/src/lower/tests/unary_operand_grouping.rs": {
       "disposition": "retire",
@@ -5847,67 +5881,67 @@
     },
     "loaves/toolchain/incan-lsp/src/backend/tests/completions.rs": {
       "disposition": "keep",
+      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level."
+      "twin": ""
     },
     "loaves/toolchain/incan-lsp/src/backend/tests/contract_model_command.rs": {
       "disposition": "keep",
+      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level."
+      "twin": ""
     },
     "loaves/toolchain/incan-lsp/src/backend/tests/hover_previews.rs": {
       "disposition": "keep",
+      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level."
+      "twin": ""
     },
     "loaves/toolchain/incan-lsp/src/backend/tests/identity_navigation.rs": {
       "disposition": "keep",
+      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level."
+      "twin": ""
     },
     "loaves/toolchain/incan-lsp/src/backend/tests/parse_context_and_receivers.rs": {
       "disposition": "keep",
+      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level."
+      "twin": ""
     },
     "loaves/toolchain/incan-lsp/src/backend/tests/rust_inspect_workspace.rs": {
       "disposition": "keep",
+      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level."
+      "twin": ""
     },
     "loaves/toolchain/incan-lsp/src/backend/tests/signature_help.rs": {
       "disposition": "keep",
+      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level."
+      "twin": ""
     },
     "loaves/toolchain/incan-lsp/src/backend/tests/vocab_surfaces.rs": {
       "disposition": "keep",
+      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level."
+      "twin": ""
     },
     "loaves/toolchain/incan-lsp/src/call_site_type_args.rs": {
       "disposition": "keep",

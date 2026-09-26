@@ -1,0 +1,53 @@
+# behavior: a module that imports Clone from std.derives.copying (and Eq under an alias) still drives the stdlib FallibleIterator map, filter and collect adapters with derived callable models, and an aliased Eq bound admits a derived model
+# retires: loaves/compiler/incan_ir/src/lower/tests/derive_vocabulary_imports.rs::derive_vocabulary_imports_lower_to_no_ir_import_issue1727
+# retires: loaves/compiler/incan_ir/src/lower/decl/helpers.rs::aliased_derivable_trait_bound_lowers_to_the_rust_trait_of_its_derive_issue1727
+# expect-stdout:
+#   2 4 6
+#   1 2
+#   true
+
+from std.derives.collection import FallibleIterator
+from std.derives.copying import Clone
+from std.derives.comparison import Eq as Equality
+from std.traits.callable import Callable1
+
+model Readings with FallibleIterator[int, str]:
+    items: list[int]
+    index: int
+
+    def __next__(mut self) -> Result[Option[int], str]:
+        if self.index >= len(self.items):
+            return Ok(None)
+        item = self.items[self.index]
+        self.index += 1
+        return Ok(Some(item))
+
+@derive(Clone)
+model Double with Callable1[int, int]:
+    def __call__(self, value: int) -> int:
+        return value * 2
+
+@derive(Clone, Eq)
+model Above with Callable1[int, bool]:
+    threshold: int
+
+    def __call__(self, value: int) -> bool:
+        return value > self.threshold
+
+@derive(Clone)
+model Point:
+    x: int
+    y: int
+
+def pick[T with Equality](value: T) -> T:
+    return value
+
+def main() -> None:
+    match Readings(items=[1, 2, 3], index=0).map(Double()).filter(Above(threshold=2)).collect():
+        Ok(values) => println(f"{len(values)} {values[0]} {values[1]}")
+        Err(error) => println(error)
+    origin = Point(x=1, y=2)
+    copied = origin.clone()
+    println(f"{copied.x} {copied.y}")
+    chosen = pick(Above(threshold=41))
+    println(chosen(42))

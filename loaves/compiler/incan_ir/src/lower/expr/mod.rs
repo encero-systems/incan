@@ -1811,7 +1811,7 @@ impl AstLowering {
                 if Self::is_explicit_builtin_namespace_expr(o)
                     && let Some(builtin) = BuiltinFn::from_name(m)
                 {
-                    let args_ir = self.lower_call_args(args)?.into_iter().map(|a| a.expr).collect();
+                    let args_ir = self.lower_builtin_call_args(builtin, args)?;
                     let result_ty = self.lowered_builtin_call_type(builtin, expr_span);
                     return Ok(TypedExpr::new(
                         IrExprKind::BuiltinCall {
