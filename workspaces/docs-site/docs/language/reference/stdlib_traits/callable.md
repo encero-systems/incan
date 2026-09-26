@@ -19,16 +19,27 @@ Both forms are interchangeable in type annotations. Named `def` functions and cl
 A parameter of an arrow-form function type can carry the `mut` marker, `(mut T, ...) -> R`. It means what `mut` means on a `def` parameter: the callable's changes to that argument are visible to the caller.
 
 ```incan
-def keep(func: (mut Counter, int) -> int) -> (mut Counter, int) -> int:
-    return func
+class Counter:
+    pub value: int
+
+def grow(mut counter: Counter, by: int) -> int:
+    counter.value += by
+    return counter.value
+
+def apply(step: (mut Counter, int) -> int, mut counter: Counter) -> int:
+    return step(counter, 2)   # the caller's counter sees the change
+
+def pick() -> (Counter, int) -> int:
+    return grow               # refused: INCAN-T0001, found '(mut Counter, int) -> int'
 ```
 
-| Rule                 | Behavior                                                                                                                        |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Where it is written  | On a parameter of an arrow-form function type only. `Callable[...]` sugar, tuple types and parenthesized types refuse it at parse time. |
-| Unmarked for marked  | A callable whose parameter is not marked can be passed where a marked one is expected: it leaves the argument as it was.        |
-| Marked for unmarked  | A callable whose parameter is marked cannot be passed where the caller does not expect the change; the checker refuses it.      |
-| Display              | Diagnostics and hovers spell the marker, as in `(mut Counter, int) -> int`.                                                     |
+| Rule                    | Behavior                                                                                                                                                                                              |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Where it is written     | On a parameter of an arrow-form function type. In a tuple type, a parenthesized type, or the parameter list of `Callable[...]` it is a syntax error.                                                  |
+| Type identity           | The marker is part of the function type. Two function types match only when they mark the same parameters; a mismatch in either direction is refused with `INCAN-T0001`.                              |
+| `def` parameters        | A `def` parameter declared `mut` is marked in the function's type, except a parameter of type `int`, `float` or `bool`, or of a Rust type, and a `*args` or `**kwargs` parameter.                     |
+| Closures                | A closure checked against a function type has each parameter that type marks marked in its own type.                                                                                                  |
+| Display                 | Diagnostics and hovers spell the marker, as in `(mut Counter, int) -> int`.                                                                                                                           |
 
 Method decorators use the marker for a `mut self` method's receiver; see [Decorators](../language.md#decorators).
 

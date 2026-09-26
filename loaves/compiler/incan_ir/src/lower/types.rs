@@ -284,7 +284,7 @@ impl AstLowering {
                 }
                 self.expand_pub_manifest_type_refs(library, return_type, expanding);
             }
-            TypeRef::Ref { inner } | TypeRef::TypeToken { inner } => {
+            TypeRef::Ref { inner } | TypeRef::TypeToken { inner } | TypeRef::MutParam { inner } => {
                 self.expand_pub_manifest_type_refs(library, inner, expanding)
             }
             // Native descriptors already describe final emitted members, not source aliases.

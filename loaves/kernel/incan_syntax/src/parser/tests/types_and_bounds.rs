@@ -314,18 +314,14 @@ def keep(func: (mut Counter, int) -> int) -> (mut Counter, int) -> int:
     let program = parse_str(source)?;
     let function = require_function_decl(&program.declarations[1])?;
     for shape in [&function.params[0].node.ty.node, &function.return_type.node] {
-        match shape {
-            Type::Function(params, ret) => {
-                assert!(
-                    matches!(&params[0].node, Type::MutParam(inner) if matches!(&inner.node, Type::Simple(name) if name == "Counter")),
-                    "expected the receiver to carry the mut marker, got {:?}",
-                    params[0].node
-                );
-                assert!(matches!(&params[1].node, Type::Simple(name) if name == "int"));
-                assert!(matches!(&ret.node, Type::Simple(name) if name == "int"));
-            }
-            other => panic!("Expected function type, got: {other:?}"),
-        }
+        assert!(
+            matches!(shape, Type::Function(params, ret)
+                if matches!(params.as_slice(), [receiver, value]
+                    if matches!(&receiver.node, Type::MutParam(inner) if matches!(&inner.node, Type::Simple(name) if name == "Counter"))
+                        && matches!(&value.node, Type::Simple(name) if name == "int"))
+                    && matches!(&ret.node, Type::Simple(name) if name == "int")),
+            "expected `(mut Counter, int) -> int` with the receiver marked, got {shape:?}"
+        );
         assert_eq!(shape.to_string(), "(mut Counter, int) -> int");
     }
     Ok(())
@@ -334,13 +330,16 @@ def keep(func: (mut Counter, int) -> int) -> (mut Counter, int) -> int:
 /// Issue #1790: the `mut` marker belongs to a callable type's parameters, so a tuple or a parenthesized type refuses
 /// it instead of dropping it.
 #[test]
-fn test_mut_marker_outside_callable_params_is_parse_error() {
+fn test_mut_marker_outside_callable_params_is_parse_error() -> Result<(), String> {
     for source in [
         "def bad(pair: (mut int, str)) -> None:\n  pass\n",
         "def bad(value: (mut int)) -> None:\n  pass\n",
+        "def bad(func: Callable[(mut int, str), int]) -> None:\n  pass\n",
     ] {
         let Err(errs) = parse_str(source) else {
-            panic!("a `mut` marker outside a callable type's parameters should fail to parse: {source}");
+            return Err(format!(
+                "a `mut` marker outside a callable type's parameters should fail to parse: {source}"
+            ));
         };
         assert!(
             errs.iter()
@@ -349,6 +348,7 @@ fn test_mut_marker_outside_callable_params_is_parse_error() {
             errs.iter().map(|err| &err.message).collect::<Vec<_>>()
         );
     }
+    Ok(())
 }
 
 #[test]

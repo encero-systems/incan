@@ -576,6 +576,7 @@ fn format_api_type_ref(ty: &TypeRef) -> String {
         }
         TypeRef::SelfType => "Self".to_string(),
         TypeRef::Ref { inner } => format!("&{}", format_api_type_ref(inner)),
+        TypeRef::MutParam { inner } => format!("mut {}", format_api_type_ref(inner)),
         TypeRef::RustPath { path } => format!("rust::{path}"),
         TypeRef::NativeUnion(native) => native
             .members

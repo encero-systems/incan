@@ -192,6 +192,33 @@ impl TypeChecker {
         }
     }
 
+    /// Return whether a `def` parameter shows its changes to the caller, which is what the `mut` marker on a parameter
+    /// of a callable type means (#1790).
+    ///
+    /// A `mut` parameter of type `int`, `float` or `bool`, or of an imported Rust type, receives its own copy of the
+    /// argument: `mut` lets the body reassign that copy and is not part of the function's callable shape. Every other
+    /// `mut` parameter is marked, so the function's value type is `(mut T, ...) -> R`.
+    fn def_param_shows_changes_to_caller(&self, param: &Param, resolved: &ResolvedType) -> bool {
+        if !param.is_mut || param.kind != ParamKind::Normal {
+            return false;
+        }
+        if matches!(
+            resolved,
+            ResolvedType::Int | ResolvedType::Float | ResolvedType::Bool | ResolvedType::RustPath(_)
+        ) {
+            return false;
+        }
+        let head = match &param.ty.node {
+            Type::Simple(name) | Type::ConstrainedPrimitive(name, _) | Type::Generic(name, _) => Some(name.as_str()),
+            Type::Qualified(segments) => segments.first().map(String::as_str),
+            _ => None,
+        };
+        !head.is_some_and(|name| {
+            self.lookup_symbol(name)
+                .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::RustItem(_)))
+        })
+    }
+
     /// Register a module-level alias after concrete symbols have been collected.
     fn collect_alias(&mut self, alias: &AliasDecl, span: Span) {
         let target_name = alias.target.segments.join(".");
@@ -1765,12 +1792,10 @@ impl TypeChecker {
             .params
             .iter()
             .map(|p| {
-                CallableParam::named_with_default(
-                    p.node.name.clone(),
-                    self.resolve_type_checked(&p.node.ty),
-                    p.node.kind,
-                    p.node.default.is_some(),
-                )
+                let ty = self.resolve_type_checked(&p.node.ty);
+                let is_mut = self.def_param_shows_changes_to_caller(&p.node, &ty);
+                CallableParam::named_with_default(p.node.name.clone(), ty, p.node.kind, p.node.default.is_some())
+                    .with_mut(is_mut)
             })
             .collect();
         let return_type = self.resolve_type_checked(&func.return_type);

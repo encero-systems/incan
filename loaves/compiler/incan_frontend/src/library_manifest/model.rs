@@ -1377,6 +1377,11 @@ pub enum TypeRef {
     /// producer supplied actual native representation evidence. Appending the variant preserves earlier positional
     /// discriminants; readers still need the containing payload's version to accept new representation evidence.
     NativeUnion(NativeUnionExport),
+    /// A `mut`-marked parameter of a function type, `mut T` in `(mut T, int) -> R` (#1790).
+    ///
+    /// It appears only as an element of [`TypeRef::Function`]'s `params` and carries the parameter's type in `inner`.
+    /// Appended after every earlier variant so their discriminants are unchanged.
+    MutParam { inner: Box<TypeRef> },
 }
 
 /// Exported field metadata for models and classes.
@@ -2117,7 +2122,7 @@ fn rewrite_type_ref_names(
             }
             rewrite_type_ref_names(return_type, owner_module_path, public_names, source_paths_by_leaf);
         }
-        TypeRef::TypeToken { inner } | TypeRef::Ref { inner } => {
+        TypeRef::TypeToken { inner } | TypeRef::Ref { inner } | TypeRef::MutParam { inner } => {
             rewrite_type_ref_names(inner, owner_module_path, public_names, source_paths_by_leaf);
         }
         TypeRef::Tuple { elements } => {

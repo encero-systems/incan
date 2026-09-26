@@ -370,25 +370,24 @@ pub fn method_decorator_receiver_mut_mismatch(
     CompileError::type_error(message, span).with_hint(fix.to_string())
 }
 
-/// Report a method decorator whose receiver shape the compiler cannot pass the way the method's wrapper does (#1790).
+/// Report a `self`-method decorator chain the compiler cannot pass the receiver through (#1790).
 ///
-/// The compiler passes a decorated method's receiver to the decorator's shapes and to the function it returns in the
-/// method's place the way the method receives it. It can do that for a decorator declared in the module of the
-/// method's owner whose shapes are written as callable types, `(Box, int) -> str`. `reason` says which of the two the
-/// decorator is missing.
-pub fn method_decorator_receiver_shape_unsupported(
-    decorator: &str,
-    method: &str,
-    reason: &str,
-    span: Span,
-) -> CompileError {
+/// A decorator whose shapes name a `self` method's receiver takes that receiver the way the method's generated wrapper
+/// passes it, and so does every function it returns in the method's place. The compiler arranges that for private
+/// functions of the method's module that are only used in the chain. `subject` names the declaration or use at
+/// fault (`Method decorator '@as_int'`, `Function 'parse'`), `method` the decorated method and `reason` the rule the
+/// chain breaks. `INCAN-T0112` is its stable code.
+pub fn method_decorator_receiver_not_planned(subject: &str, method: &str, reason: &str, span: Span) -> CompileError {
     CompileError::type_error(
-        format!("Method decorator '@{decorator}' cannot receive the receiver of '{method}': {reason}"),
+        format!("{subject} cannot take the receiver of '{method}': {reason}"),
         span,
     )
-    .with_hint(
-        "Declare the decorator beside the method's type and write its shapes as callable types, such as \
-         `(Box, int) -> str`",
+    .with_stable_code("INCAN-T0112")
+    .with_note(
+        "A decorator whose shapes name the receiver of a `self` method is a private function of the module that \
+         declares the method's type, writes those shapes as callable types, and returns the decorated callable or a \
+         private function of that module by name; those functions are used only in the decorator chain, and a \
+         returned function can also be called directly in its module",
     )
 }
 

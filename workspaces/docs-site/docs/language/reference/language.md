@@ -364,7 +364,24 @@ pub def sample(value: int) -> int:
     return value + 1
 ```
 
-Method decorators receive an unbound callable shape with the receiver first, spelled the way the method spells it. A decorator on `def label(self, value: int) -> str` sees `(Box, int) -> str`; a decorator on `def bump(mut self, value: int) -> int` sees `(mut Box, int) -> int`, where `mut` marks the parameter whose changes the caller sees, as it does on a `def` parameter. A function the decorator returns in the method's place is declared the same way: `def parse(box: Box, value: int) -> int` for a `self` method, `def grow(mut box: Box, value: int) -> int` for a `mut self` method. The compiler decides how the receiver is passed, so a receiver written `&Box` or `&mut Box` in these shapes is refused with `INCAN-T0110`. A decorator whose shapes name a `self` method's receiver is declared in the module of the method's type, with those shapes written as callable types rather than through a type alias.
+Method decorators receive an unbound callable shape with the receiver first, spelled the way the method spells it. A function a decorator returns in the method's place declares the receiver the same way:
+
+| Method                                  | Decorator shape         | Function returned in the method's place     |
+| --------------------------------------- | ----------------------- | ------------------------------------------- |
+| `def label(self, value: int) -> str`    | `(Box, int) -> str`     | `def parse(box: Box, value: int) -> int`    |
+| `def bump(mut self, value: int) -> int` | `(mut Box, int) -> int` | `def grow(mut box: Box, value: int) -> int` |
+
+`mut` in a function type marks a parameter whose changes the caller sees, as on a `def` parameter; see [`mut` parameters in function types](stdlib_traits/callable.md#mut-parameters-in-function-types). The receiver's marker matches the method in every shape of the decorator chain and on the function returned in the method's place. A receiver written `&Box` or `&mut Box` in those positions is refused with `INCAN-T0110`.
+
+A decorator of a `self` method whose shapes name the receiver is refused with `INCAN-T0112` unless all of these hold:
+
+- the decorator, or the factory that produces it, is a function declared in the method's module and applied by name;
+- the shapes that name the receiver are written as callable types, not through a type alias;
+- each `return` of a factory returns a decorator declared in the module, by name, and each `return` of a decorator returns the callable it accepts or a function declared in the module, by name;
+- none of those functions is declared `pub`, and none serves as more than one of factory, decorator and returned function;
+- the decorator and the factory are used only as decorators of `self` methods, and a function returned in the method's place is used only by being returned there or called directly in its module.
+
+A decorator generic over the whole callable, such as `(F) -> F`, and the decorator chain of a `mut self` method are not subject to these conditions.
 
 Class, model, trait, enum, newtype, field, alias, and module decorators remain limited to compiler-owned decorators. Compiler-owned decorators such as `@derive`, `@route`, `@rust.extern`, `@rust.allow`, `@staticmethod`, `@classmethod`, and `@requires` keep their existing special behavior.
 

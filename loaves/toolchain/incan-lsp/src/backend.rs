@@ -2611,6 +2611,7 @@ fn format_type_ref(ty: &TypeRef) -> String {
         TypeRef::TypeParam { name } => name.clone(),
         TypeRef::SelfType => "Self".to_string(),
         TypeRef::Ref { inner } => format!("ref {}", format_type_ref(inner)),
+        TypeRef::MutParam { inner } => format!("mut {}", format_type_ref(inner)),
         TypeRef::RustPath { path } => format!("rust::{path}"),
         TypeRef::NativeUnion(native) => native
             .members

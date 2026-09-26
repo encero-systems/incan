@@ -1126,6 +1126,21 @@ impl TypeChecker {
             return;
         }
 
+        if let (Some(function), Some(e)) = (self.current_function_declaration_span, expr) {
+            let mut value = e;
+            while let Expr::Paren(inner) = &value.node {
+                value = &**inner;
+            }
+            let name = match &value.node {
+                Expr::Ident(name) => Some(name.clone()),
+                _ => None,
+            };
+            let span = if name.is_some() { value.span } else { e.span };
+            self.returned_values
+                .entry(function)
+                .or_default()
+                .push(super::ReturnedValue { span, name });
+        }
         let return_ty = if let Some(e) = expr {
             let expected_return_ty = self.symbols.current_return_type().cloned();
             self.check_expr_with_expected(e, expected_return_ty.as_ref())

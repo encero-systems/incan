@@ -759,6 +759,8 @@ pub fn ir_type_from_projected_manifest(
             ret: Box::new(child(return_type)),
         },
         TypeRef::Ref { inner } => IrType::Ref(Box::new(child(inner))),
+        // A `mut`-marked function-type parameter is passed so the caller sees the callee's changes (#1790).
+        TypeRef::MutParam { inner } => IrType::RefMut(Box::new(child(inner))),
         TypeRef::TypeToken { inner } => IrType::TypeToken(Box::new(child(inner))),
         _ => ordinary(ty),
     }

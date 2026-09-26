@@ -2786,6 +2786,7 @@ fn type_ref_doc_name(ty: &TypeRef) -> String {
         TypeRef::TypeParam { name } => name.clone(),
         TypeRef::SelfType => "Self".to_string(),
         TypeRef::Ref { inner } => format!("&{}", type_ref_doc_name(inner)),
+        TypeRef::MutParam { inner } => format!("mut {}", type_ref_doc_name(inner)),
         TypeRef::RustPath { path } => path.clone(),
         TypeRef::NativeUnion(native) => native
             .members

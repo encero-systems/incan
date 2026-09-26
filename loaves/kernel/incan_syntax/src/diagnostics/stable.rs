@@ -405,6 +405,28 @@ const METHOD_DECORATOR_RECEIVER_SPELLING: DiagnosticCatalogEntry = DiagnosticCat
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/language/"),
 };
 
+const METHOD_DECORATOR_RECEIVER_NOT_PLANNED: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0112",
+    title: "Method decorator chain cannot take the receiver",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A decorator whose shapes name the receiver of a `self` method, or a function it returns in the method's place, is declared or used where the receiver cannot be passed the way the method passes it.",
+    explanation: "A decorator on a `self` method whose shapes name the receiver, such as `def as_int(func: (Box, int) -> str) -> (Box, int) -> int`, takes that receiver the way the method's generated wrapper passes it, and so does every function it returns in the method's place, such as `def parse(box: Box, value: int) -> int`. That holds for a chain whose declarations meet every rule: each is a private function of the module that declares the method's type; the shapes that hold the receiver are written as callable types, not through a type alias; a decorator returns the decorated callable or a private function of that module, named directly, and a factory returns such a decorator named directly; and each is named only in the decorator chain, except that a returned function is also called directly in its module. A declaration or use that breaks a rule is refused. A `mut self` method's chain is not subject to these rules: its receiver is written `mut Box`, which says how it is passed.",
+    examples: &[
+        "class Box:\n    value: int\n\n    @as_int\n    def label(self, value: int) -> str:\n        return \"value\"\n\ndef parse(box: Box, value: int) -> int:\n    return value\n\ndef as_int(func: (Box, int) -> str) -> (Box, int) -> int:\n    return parse\n\ndef apply(f: (Box, int) -> int, box: Box) -> int:\n    return f(box, 1)\n\ndef main() -> None:\n    println(apply(parse, Box(value=1)))",
+    ],
+    common_causes: &[
+        "Passing a function that a `self`-method decorator returns as a value, or applying that decorator to a function.",
+        "A decorator imported from another module, reached through a value, or declared `pub`.",
+        "A decorator that returns a closure, a call result or a conditional expression instead of a named function.",
+    ],
+    fixes: &[
+        "Declare the decorator and the functions it returns as private functions beside the method's type, with callable-type shapes, and return them by name.",
+        "Give the other use its own function instead of the one the decorator returns.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/language/"),
+};
+
 const IMPORT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-I0001",
     title: "Import or module resolution error",
@@ -528,6 +550,7 @@ const CATALOG: &[DiagnosticCatalogEntry] = &[
     ROUTE_HANDLER_PARAMETER_UNBOUND,
     OPERATOR_HAS_NO_TYPE_PARAMETER_BOUND,
     METHOD_DECORATOR_RECEIVER_SPELLING,
+    METHOD_DECORATOR_RECEIVER_NOT_PLANNED,
     IMPORT,
     SDK_COMPONENT_DISABLED,
     SDK_COMPONENT_UNAVAILABLE,
@@ -888,6 +911,31 @@ mod tests {
         }
         let Some(entry) = explain("INCAN-T0110") else {
             return Err("INCAN-T0110 must have a catalog explanation".into());
+        };
+        assert_eq!(entry.severity, "error");
+        assert_eq!(entry.phase, "typecheck");
+        Ok(())
+    }
+
+    /// Issue #1790: a `self`-method decorator chain the receiver cannot be passed through has its own explainable
+    /// code, and the refusal names the rule the chain breaks.
+    #[test]
+    fn method_decorator_receiver_plan_refusal_uses_a_distinct_stable_code() -> Result<(), Box<dyn std::error::Error>> {
+        let refusal = errors::method_decorator_receiver_not_planned(
+            "'parse'",
+            "label",
+            "'parse' takes the receiver in the decorator chain of '@as_int', so it is only returned in the method's \
+             place or called directly",
+            Span::default(),
+        );
+        assert_eq!(code_for_error(&refusal, DiagnosticPhase::Typecheck), "INCAN-T0112");
+        assert!(
+            refusal.message.contains("'parse' cannot take the receiver of 'label'"),
+            "the message must name the declaration and the method, got {}",
+            refusal.message
+        );
+        let Some(entry) = explain("INCAN-T0112") else {
+            return Err("INCAN-T0112 must have a catalog explanation".into());
         };
         assert_eq!(entry.severity, "error");
         assert_eq!(entry.phase, "typecheck");

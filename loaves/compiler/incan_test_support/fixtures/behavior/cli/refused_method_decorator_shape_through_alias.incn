@@ -1,0 +1,20 @@
+# behavior: a decorator on a `self` method whose shape names the receiver through a type alias is refused at check time
+# expect-diagnostic: INCAN-T0112
+
+class Box:
+    value: int
+
+    @keep
+    def label(self, value: int) -> str:
+        return f"{value}"
+
+
+type LabelShape = (Box, int) -> str
+
+
+def keep(func: LabelShape) -> LabelShape:
+    return func
+
+
+def main() -> None:
+    println(Box(value=1).label(2))

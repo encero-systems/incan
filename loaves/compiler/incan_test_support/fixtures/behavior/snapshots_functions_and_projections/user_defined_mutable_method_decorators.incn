@@ -1,5 +1,6 @@
 # behavior: a user-defined decorator on a mutating method runs once, when the method binding is initialized before main starts, keeps the method callable and leaves its mutation of the receiver visible after each call (RFC 036)
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_user_defined_mutable_method_decorators_codegen
+# retires: loaves/compiler/incan_ir/src/lower/tests/method_decorator_receivers.rs::mutable_receiver_slots_leave_the_program_as_written
 # expect-stdout:
 #   decorating bump
 #   main

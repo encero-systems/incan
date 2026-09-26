@@ -1491,10 +1491,10 @@ pub struct CallableParam {
     pub is_partial_preset: bool,
     /// The callable type marks this parameter `mut`: the callable's changes to the argument are visible to the caller.
     ///
-    /// Only the `(mut T, ...) -> R` spelling, a closure checked against it, and a `mut self` method's receiver in the
-    /// callable shape its decorators see set the marker (#1790). A callable whose parameter is not marked can stand in
-    /// where a marked one is expected, because it leaves the argument as it was; a marked one cannot stand in where
-    /// the caller does not expect the change.
+    /// The `(mut T, ...) -> R` spelling, a `def` parameter declared `mut` whose changes reach the caller, a closure
+    /// checked against a marked shape, and a `mut self` method's receiver in the callable shape its decorators see set
+    /// the marker (#1790). The marker decides how the argument is passed, so two callable types are compatible only
+    /// when their markers agree.
     pub is_mut: bool,
 }
 

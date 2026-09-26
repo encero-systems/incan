@@ -677,7 +677,9 @@ impl ProviderPlan {
                     }
                     bind_member(plan, return_type, owner, origins)?;
                 }
-                TypeRef::Ref { inner } | TypeRef::TypeToken { inner } => bind_member(plan, inner, owner, origins)?,
+                TypeRef::Ref { inner } | TypeRef::TypeToken { inner } | TypeRef::MutParam { inner } => {
+                    bind_member(plan, inner, owner, origins)?
+                }
                 TypeRef::Named { .. }
                 | TypeRef::TypeParam { .. }
                 | TypeRef::SelfType

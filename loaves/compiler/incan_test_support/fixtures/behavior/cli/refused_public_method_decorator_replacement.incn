@@ -1,0 +1,21 @@
+# behavior: a public function a decorator returns in a `self` method's place is refused at check time, since another module could call it
+# expect-diagnostic: INCAN-T0112
+
+class Box:
+    value: int
+
+    @as_int
+    def label(self, value: int) -> str:
+        return f"{value}"
+
+
+pub def parse(box: Box, value: int) -> int:
+    return value + 1
+
+
+def as_int(func: (Box, int) -> str) -> (Box, int) -> int:
+    return parse
+
+
+def main() -> None:
+    println(Box(value=1).label(2))

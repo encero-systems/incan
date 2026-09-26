@@ -3201,6 +3201,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/method_decorator_receivers.rs": {
+      "disposition": "keep",
+      "notes": "typechecker unit tests for #1790 method-decorator receivers: the receiver spelled like the method, the `mut` marker as part of the function type, the `INCAN-T0110` refusal of `&Owner` / `&mut Owner` and the `INCAN-T0112` chain rules; typechecker only, no emit/driver dependency. `receiver_written_with_ampersand_is_refused` is the proof of `INCAN-T0110`: no behavior fixture spells a receiver with `&`.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/models_enums_and_newtypes.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -3604,14 +3612,6 @@
       },
       "twin": ""
     },
-    "loaves/compiler/incan_ir/src/lower/receiver_plan.rs": {
-      "disposition": "retire",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level. The receiver planning these tests pin (#1790) is observable through the RFC 036 method-decorator behavior fixtures in `snapshots_functions_and_projections/`, which run the planned programs.",
-      "owner": 1561,
-      "split_required": false,
-      "split_target": "",
-      "twin": ""
-    },
     "loaves/compiler/incan_ir/src/lower/tests/builtin_str_arguments.rs": {
       "disposition": "retire",
       "owner": 1561,
@@ -3637,6 +3637,36 @@
         "derive_vocabulary_imports_lower_to_no_ir_import_issue1727": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters_with_imported_clone.incn",
           "notes": "Asserts the recorded import fact on the legacy IR (an import of a derivable trait's stdlib stub lowers to no IR import; the source-owned protocol and callable imports stay; the expanded adapter default and an aliased `Eq` bound spell the derive-owned Rust traits); retires with `incan_ir`. The behavior, the FallibleIterator adapters driven with derived callables beside `from std.derives.copying import Clone`, is carried by the named fixture (#1727)."
+        }
+      }
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/method_decorator_receivers.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "tests": {
+        "shared_receiver_slots_are_planned_to_the_wrapper_form": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_functions_and_projections/user_defined_method_decorators.incn",
+          "notes": "asserts that lowering rewrites a `self` method's decorator shapes and replacement to the form the method's wrapper passes the receiver in, and nothing else (#1790); the twin runs that decorator chain."
+        },
+        "factory_slot_plans_the_decorator_shape_it_returns": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/self_method_decorator_factory_and_direct_call.incn",
+          "notes": "asserts that a factory's planned slot rewrites the decorator shape it returns (#1790); the twin runs a factory-produced decorator on a `self` method."
+        },
+        "mutable_receiver_slots_leave_the_program_as_written": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_functions_and_projections/user_defined_mutable_method_decorators.incn",
+          "notes": "asserts that a `mut self` chain is lowered as written, since the `mut` marker already says how the receiver is passed (#1790); the twin runs that chain."
+        },
+        "direct_call_of_a_planned_replacement_uses_the_planned_signature": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/self_method_decorator_factory_and_direct_call.incn",
+          "notes": "asserts that a direct call of a planned replacement carries the planned signature (#1790); the twin calls the replacement directly and prints its result."
+        },
+        "closure_checked_against_a_mut_marked_shape_takes_the_argument_mut": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/mut_marked_callable_value_changes_the_argument.incn",
+          "notes": "asserts that a closure checked against a `(mut T, ...)` shape lowers that parameter the way a `mut` parameter is passed (#1790); the twin calls a value of that shape and prints the caller's changed argument."
         }
       }
     },
