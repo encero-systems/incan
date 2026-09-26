@@ -1031,6 +1031,42 @@ pub struct DeclarationArtifacts {
     pub generic_identity_decorator_applications: HashSet<(usize, usize)>,
     /// RFC 036: Method names whose declaration was rebound through a user-defined decorator chain.
     pub decorated_method_bindings: HashMap<(String, String), DecoratedMethodBindingInfo>,
+    /// Local function declarations that take a decorated method's receiver, keyed by declaration span (#1790).
+    ///
+    /// Source spells a method decorator's receiver the way the method does, `(Box, int) -> str`, and the checker
+    /// proved each of these declarations takes it. Lowering passes the receiver to them the way the method's
+    /// generated wrapper passes it.
+    pub method_decorator_receiver_slots: HashMap<(usize, usize), MethodDecoratorReceiverSlot>,
+    /// Whether each ordinary `mut` parameter of a checked function or method is marked, keyed by parameter span
+    /// (#1790).
+    ///
+    /// A marked parameter's changes reach the caller; an unmarked one (an `int`, `float` or `bool`, also through an
+    /// alias, or a Rust handle) is the function's own value. Lowering takes each `mut` parameter's passing mode from
+    /// this fact, not from the parameter's IR type.
+    pub mut_param_markers: HashMap<(usize, usize), bool>,
+}
+
+/// Where a local function declaration takes a decorated method's receiver, and how the method takes it (#1790).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MethodDecoratorReceiverSlot {
+    /// Whether the decorated method takes `mut self`, so its receiver is spelled `mut Box` in the chain.
+    pub mutable: bool,
+    /// Which positions of the declaration's signature hold the receiver.
+    pub role: MethodDecoratorReceiverRole,
+}
+
+/// The positions of a declaration's signature that hold a decorated method's receiver (#1790).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MethodDecoratorReceiverRole {
+    /// A decorator, `def as_int(func: (Box, int) -> str) -> (Box, int) -> int`: the first parameter of the callable
+    /// type it accepts first and of the callable type it returns.
+    Decorator,
+    /// A decorator factory, `def logged(label: str) -> (((Box, int) -> str) -> (Box, int) -> str)`: the same two
+    /// positions inside the decorator shape it returns.
+    Factory,
+    /// A function a decorator returns in the method's place, `def parse(box: Box, value: int) -> int`: its first
+    /// parameter.
+    Replacement,
 }
 
 /// One active source binding exported for declaration-level HIR lowering.

@@ -50,7 +50,7 @@ pub const DERIVES: &[DeriveInfo] = &[
     info(
         DeriveId::Debug,
         "Debug",
-        "Derive Rust-style debug formatting.",
+        "Derive debug formatting.",
         RFC::_000,
         Since(0, 1),
     ),

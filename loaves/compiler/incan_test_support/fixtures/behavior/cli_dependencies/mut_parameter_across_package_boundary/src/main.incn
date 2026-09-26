@@ -1,0 +1,19 @@
+# behavior: a dependency's function whose parameter is `mut` changes the consumer's argument, called directly and passed as a value of a function type that marks the parameter `mut`
+# retires: loaves/compiler/incan_ir/src/lower/tests/method_decorator_receivers.rs::imported_mut_parameter_is_passed_mut_across_the_library_boundary
+# expect-stdout:
+#   3
+#   6
+#   6
+
+from pub::counters import Counter, grow, new_counter
+
+
+def apply(step: (mut Counter, int) -> int, mut counter: Counter) -> int:
+    return step(counter, 3)
+
+
+def main() -> None:
+    mut counter = new_counter(1)
+    println(grow(counter, 2))
+    println(apply(grow, counter))
+    println(counter.value)

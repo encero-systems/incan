@@ -1,0 +1,61 @@
+# behavior: arithmetic, comparison, logical, unary and membership operators evaluate to their values, including a call result probed with in (#1066)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_operators_codegen
+# expect-stdout:
+#   3 2 24 3.3333333333333335 1
+#   true true true true true true
+#   false true false false false
+#   -42 -3.14 -3
+#   true true true true
+
+def sample_word() -> str:
+    return "alpha"
+
+
+def test_operators() -> None:
+    # Basic arithmetic
+    add: int = 1 + 2
+    sub: int = 5 - 3
+    mul: int = 4 * 6
+    float_div: float = 10 / 3
+    mod_result: int = 10 % 3
+    println(f"{add} {sub} {mul} {float_div} {mod_result}")
+
+    # Comparison operators
+    eq: bool = 5 == 5
+    ne: bool = 3 != 4
+    lt: bool = 2 < 5
+    le: bool = 2 <= 2
+    gt: bool = 10 > 5
+    ge: bool = 10 >= 9
+    println(f"{eq} {ne} {lt} {le} {gt} {ge}")
+
+    # Logical operators
+    and_result: bool = True and False
+    or_result: bool = True or False
+    not_result: bool = not True
+    lowercase_bool: bool = true and false
+    using_is: bool = True is false
+    println(f"{and_result} {or_result} {not_result} {lowercase_bool} {using_is}")
+
+    # Unary operators
+    neg_int: int = -42
+    neg_float: float = -3.14
+
+    # Compound expressions
+    complex: int = (1 + 2) * (3 - 4)
+    println(f"{neg_int} {neg_float} {complex}")
+
+    # String membership probes should work against owned list/set storage
+    words: list[str] = ["alpha", "beta"]
+    has_alpha: bool = "alpha" in words
+    vowels = {"a", "e", "i"}
+    has_a: bool = "a" in vowels
+    lacks_z: bool = "z" not in vowels
+
+    # Regression for #1066: a Call-result probe must also borrow at its point of use, not move.
+    has_alpha_from_call: bool = sample_word() in words
+    println(f"{has_alpha} {has_a} {lacks_z} {has_alpha_from_call}")
+
+
+def main() -> None:
+    test_operators()

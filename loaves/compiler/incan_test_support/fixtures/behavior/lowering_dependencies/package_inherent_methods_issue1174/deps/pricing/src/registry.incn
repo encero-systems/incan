@@ -1,0 +1,6 @@
+pub model Entry:
+    pub key: str
+    pub amount: int
+
+    def describe(self) -> str:
+        return f"{self.key}={self.amount}"

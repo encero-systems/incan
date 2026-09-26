@@ -1,0 +1,35 @@
+# behavior: an alternation pattern in a match arm and in an if-let binds the same name from either alternative
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_pattern_alternation_codegen
+# expect-stdout:
+#   waiting
+#   waiting
+#   done
+#   1
+#   2
+
+enum Status:
+    Pending
+    Retrying
+    Done
+
+
+def label(status: Status) -> str:
+    match status:
+        Status.Pending | Status.Retrying =>
+            return "waiting"
+        Status.Done =>
+            return "done"
+
+
+def first(result: Result[int, int]) -> int:
+    if let Ok(value) | Err(value) = result:
+        return value
+    return 0
+
+
+def main() -> None:
+    print(label(Status.Pending))
+    print(label(Status.Retrying))
+    print(label(Status.Done))
+    print(first(Ok(1)))
+    print(first(Err(2)))

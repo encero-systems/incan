@@ -1,0 +1,44 @@
+# behavior: newtypes without a hook wrap raw values, a newtype with from_underlying validates on construction, and a non-canonical from_str helper is an ordinary method (RFC 017)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_newtype_checked_construction_codegen
+# expect-stdout:
+#   42 0.5 5 alice@example.com
+#   ok alice@example.com
+#   missing @
+
+type UserId = newtype int
+
+
+type Ratio = newtype float
+
+
+type Attempts = newtype int:
+    def from_underlying(n: int) -> Result[Attempts, ValidationError]:
+        if n <= 0:
+            return Err(ValidationError("attempts must be >= 1"))
+        return Ok(Attempts(n))
+
+
+type Email = newtype str:
+    # RFC 017 keeps from_underlying as the only canonical validation hook.
+    def from_str(v: str) -> Result[Email, str]:
+        if "@" not in v:
+            return Err("missing @")
+        return Ok(Email(v.lower()))
+
+
+def main() -> None:
+    # No validation hook: should remain a raw wrap in v0.1.
+    uid = UserId(42)
+    ratio = Ratio(0.5)
+
+    # With canonical validation hook: should be lowered as checked construction.
+    attempts = Attempts(5)
+    # Non-canonical from_* helpers do not drive checked construction.
+    email = Email("alice@example.com")
+    println(f"{uid.0} {ratio.0} {attempts.0} {email.0}")
+    match Email.from_str("Alice@Example.com"):
+        Ok(parsed) => println(f"ok {parsed.0}")
+        Err(error) => println(error)
+    match Email.from_str("alice"):
+        Ok(parsed) => println(f"ok {parsed.0}")
+        Err(error) => println(error)

@@ -1,0 +1,139 @@
+# behavior: wildcard, literal, string, bool, Option, Result, nested, tuple and guarded patterns each select the arm that prints
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_patterns_codegen
+# expect-stdout:
+#   wildcard matches anything
+#   five
+#   Hello Alice
+#   yes
+#   42
+#   nothing
+#   42
+#   failed
+#   42
+#   first is forty-two
+#   large
+
+"""Test advanced pattern matching in match expressions"""
+
+
+def test_pattern_wildcard() -> None:
+    x: int = 42
+    match x:
+        case _:
+            print("wildcard matches anything")
+
+
+def test_pattern_literals() -> None:
+    value: int = 5
+    match value:
+        case 0:
+            print("zero")
+        case 1:
+            print("one")
+        case 5:
+            print("five")
+        case _:
+            print("other")
+
+
+def test_pattern_string_literal() -> None:
+    name: str = "Alice"
+    match name:
+        case "Alice":
+            print("Hello Alice")
+        case "Bob":
+            print("Hello Bob")
+        case _:
+            print("Hello stranger")
+
+
+def test_pattern_bool() -> None:
+    flag: bool = true
+    match flag:
+        case true:
+            print("yes")
+        case false:
+            print("no")
+
+
+def test_pattern_option_some() -> None:
+    maybe: Option[int] = Some(42)
+    match maybe:
+        case Some(n):
+            print(n)
+        case None:
+            print("nothing")
+
+
+def test_pattern_option_none() -> None:
+    maybe: Option[int] = None
+    match maybe:
+        case Some(n):
+            print(n)
+        case None:
+            print("nothing")
+
+
+def test_pattern_result_ok() -> None:
+    result: Result[int, str] = Ok(42)
+    match result:
+        case Ok(value):
+            print(value)
+        case Err(error):
+            print(error)
+
+
+def test_pattern_result_err() -> None:
+    result: Result[int, str] = Err("failed")
+    match result:
+        case Ok(value):
+            print(value)
+        case Err(error):
+            print(error)
+
+
+def test_pattern_nested_option() -> None:
+    nested: Option[Option[int]] = Some(Some(42))
+    match nested:
+        case Some(Some(n)):
+            print(n)
+        case Some(None):
+            print("inner none")
+        case None:
+            print("outer none")
+
+
+def test_pattern_tuple() -> None:
+    pair: tuple[int, str] = (42, "answer")
+    match pair:
+        case (0, _):
+            print("first is zero")
+        case (42, _):
+            print("first is forty-two")
+        case _:
+            print("something else")
+
+
+def test_pattern_multiple_bindings() -> None:
+    value: Option[int] = Some(10)
+    match value:
+        case Some(x) if x > 5:
+            print("large")
+        case Some(x):
+            print("small")
+        case None:
+            print("none")
+
+
+def main() -> None:
+    test_pattern_wildcard()
+    test_pattern_literals()
+    test_pattern_string_literal()
+    test_pattern_bool()
+    test_pattern_option_some()
+    test_pattern_option_none()
+    test_pattern_result_ok()
+    test_pattern_result_err()
+    test_pattern_nested_option()
+    test_pattern_tuple()
+    test_pattern_multiple_bindings()

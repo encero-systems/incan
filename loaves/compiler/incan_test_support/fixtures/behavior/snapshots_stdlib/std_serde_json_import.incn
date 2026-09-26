@@ -1,0 +1,26 @@
+# behavior: a json-derived model serializes its str, int and bool fields as a JSON object through std.serde.json (RFC 024)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_serde_json_import_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_serde_json_compiled_codegen
+# expect-stdout:
+#   {"host":"localhost","port":8080,"debug":true}
+#   localhost 8080 true
+
+# RFC 024: Verify module-level JSON derive metadata resolves and compiles.
+
+from std.serde import json
+
+
+@derive(json)
+model Config:
+    host: str
+    port: int
+    debug: bool
+
+
+def main() -> None:
+    config = Config(host="localhost", port=8080, debug=true)
+    encoded = config.to_json()
+    print(encoded)
+    match Config.from_json(encoded):
+        Ok(decoded) => println(f"{decoded.host} {decoded.port} {decoded.debug}")
+        Err(_) => println("decode failed")

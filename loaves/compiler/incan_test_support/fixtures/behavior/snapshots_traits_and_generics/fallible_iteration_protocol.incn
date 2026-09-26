@@ -1,0 +1,76 @@
+# behavior: a for loop over a fallible iterator yields each Ok(Some) item and propagates the first Err through ?, on a concrete and on a trait-typed receiver
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_fallible_iteration_protocol_propagates_next_errors_codegen
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_fallible_iteration_protocol_lowers_trait_typed_receiver_codegen
+# expect-stdout:
+#   chunk 1
+#   chunk 2
+#   done
+#   chunk 1
+#   failed: broken at 2
+#   chunk 1
+#   failed: broken at 2
+
+model ChunkStream:
+    next_value: int
+    fail_at: int
+
+    def __iter__(self) -> ChunkStream:
+        return self
+
+    def __next__(mut self) -> Result[Option[int], str]:
+        if self.next_value == self.fail_at:
+            return Err(f"broken at {self.next_value}")
+        if self.next_value > 2:
+            return Ok(None)
+        value = self.next_value
+        self.next_value += 1
+        return Ok(Some(value))
+
+
+trait FallibleStream[T, E]:
+    def __iter__(self) -> Self:
+        return self
+
+    def __next__(mut self) -> Result[Option[T], E]: ...
+
+
+model TraitStream with FallibleStream[int, str]:
+    next_value: int
+    fail_at: int
+
+    def __next__(mut self) -> Result[Option[int], str]:
+        if self.next_value == self.fail_at:
+            return Err(f"broken at {self.next_value}")
+        if self.next_value > 2:
+            return Ok(None)
+        value = self.next_value
+        self.next_value += 1
+        return Ok(Some(value))
+
+
+def chunks(fail_at: int) -> FallibleStream[int, str]:
+    return TraitStream(next_value=1, fail_at=fail_at)
+
+
+def drain_concrete(fail_at: int) -> Result[None, str]:
+    for chunk in ChunkStream(next_value=1, fail_at=fail_at)?:
+        println(f"chunk {chunk}")
+    return Ok(None)
+
+
+def drain_trait(fail_at: int) -> Result[None, str]:
+    for chunk in chunks(fail_at)?:
+        println(f"chunk {chunk}")
+    return Ok(None)
+
+
+def main() -> None:
+    match drain_concrete(0):
+        Ok(_) => println("done")
+        Err(error) => println(f"failed: {error}")
+    match drain_concrete(2):
+        Ok(_) => println("done")
+        Err(error) => println(f"failed: {error}")
+    match drain_trait(2):
+        Ok(_) => println("done")
+        Err(error) => println(f"failed: {error}")

@@ -1,0 +1,40 @@
+# behavior: a model and an enum adopting one generic trait at two instantiations dispatch the same-named method by the annotated result type
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_multi_instantiation_trait_methods_codegen_trait_impls_only
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_enum_multi_instantiation_trait_methods_codegen_trait_impls_only
+# expect-stdout:
+#   1 1.5
+#   1 1.5
+
+trait Convert[T]:
+    def convert(self) -> T: ...
+
+
+model Reading with Convert[int], Convert[float]:
+    value: int
+
+    def convert(self) -> int:
+        return self.value
+
+    def convert(self) -> float:
+        return 1.5
+
+
+enum Token with Convert[int], Convert[float]:
+    Number
+
+    def convert(self) -> int:
+        return 1
+
+    def convert(self) -> float:
+        return 1.5
+
+
+def main() -> None:
+    reading = Reading(value=1)
+    whole: int = reading.convert()
+    precise: float = reading.convert()
+    println(f"{whole} {precise}")
+    token: Token = Token.Number
+    token_whole: int = token.convert()
+    token_precise: float = token.convert()
+    println(f"{token_whole} {token_precise}")

@@ -227,6 +227,7 @@ impl TypeChecker {
                 kind: param.kind,
                 has_default: param.has_default,
                 is_partial_preset: param.is_partial_preset,
+                is_mut: param.is_mut,
             })
             .collect()
     }
@@ -385,6 +386,7 @@ impl TypeChecker {
                     kind: param.kind,
                     has_default: param.has_default,
                     is_partial_preset: param.is_partial_preset,
+                    is_mut: param.is_mut,
                 }
             })
             .collect()

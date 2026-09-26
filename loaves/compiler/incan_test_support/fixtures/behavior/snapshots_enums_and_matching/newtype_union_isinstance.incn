@@ -1,0 +1,44 @@
+# behavior: isinstance narrows an optional union of a str newtype and str, and two independent exhaustive isinstance branches each return (#501, #502)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue501_option_union_isinstance_codegen_no_raw_call
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_issue502_exhaustive_independent_isinstance_branches_codegen_has_no_unit_fallback
+# expect-stdout:
+#   PLAIN
+#   local
+#   missing
+#   plain
+#   local
+
+@derive(Clone)
+type LocalPath = newtype str
+
+
+pub def describe(value: Option[LocalPath | str]) -> str:
+    if value is not None:
+        if isinstance(value, str):
+            return value.upper()
+        elif isinstance(value, LocalPath):
+            return value.0
+    return "missing"
+
+
+pub def normalize_path_like(value: LocalPath | str) -> LocalPath:
+    if isinstance(value, str):
+        return LocalPath(value)
+    if isinstance(value, LocalPath):
+        return value
+
+
+def plain() -> LocalPath | str:
+    return "plain"
+
+
+def local() -> LocalPath | str:
+    return LocalPath("local")
+
+
+def main() -> None:
+    println(describe(Some(plain())))
+    println(describe(Some(local())))
+    println(describe(None))
+    println(normalize_path_like(plain()).0)
+    println(normalize_path_like(local()).0)

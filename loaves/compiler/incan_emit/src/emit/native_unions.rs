@@ -493,7 +493,7 @@ impl IrEmitter<'_> {
                 }
             }
             (
-                TypeRef::Ref { inner } | TypeRef::TypeToken { inner },
+                TypeRef::Ref { inner } | TypeRef::TypeToken { inner } | TypeRef::MutParam { inner },
                 IrType::Ref(ty) | IrType::RefMut(ty) | IrType::TypeToken(ty),
             ) => {
                 **inner = self.project_emitted_union_type(inner, ty, definitions, origins, local_nominals)?;

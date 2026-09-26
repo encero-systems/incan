@@ -66,6 +66,7 @@ mod extern_and_c_bindings;
 mod fields_and_members;
 mod generics_and_type_tokens;
 mod imports_and_stdlib_modules;
+mod method_decorator_receivers;
 mod models_enums_and_newtypes;
 mod mut_parameters;
 mod narrowing_and_matching;

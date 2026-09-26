@@ -1,0 +1,20 @@
+# behavior: a str variable handed to a Rust method generic over Into[String] is encoded twice while the caller keeps it, and once more at its last use
+# retires: loaves/compiler/incan_emit/src/ownership.rs::argument_plan_external_inferred_generic_read_string_clones
+# retires: loaves/compiler/incan_emit/src/ownership.rs::argument_plan_external_inferred_generic_moved_string_stays_direct
+# expect-stdout:
+#   hello world
+#   HELLO WORLD
+#   hello world
+#   HELLO WORLD
+
+from rust::into_method_helper import Tokenizer
+
+
+def main() -> None:
+    tokenizer = Tokenizer.new()
+    text = "hello world"
+    println(tokenizer.encode(text, false))
+    println(tokenizer.encode(text, true))
+    println(text)
+    last = "hello world"
+    println(tokenizer.encode(last, true))

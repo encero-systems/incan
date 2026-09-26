@@ -1,0 +1,15 @@
+# behavior: a Rust error value handed to an Incan function taking a str arrives as its message text
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_rust_path_value_to_string_param
+# expect-stdout:
+#   error: disk is full
+
+from rust::std::io import Error, ErrorKind
+
+
+def describe(message: str) -> str:
+    return "error: " + message
+
+
+def main() -> None:
+    failure = Error.new(ErrorKind.Other, "disk is full")
+    println(describe(failure))

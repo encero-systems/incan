@@ -1,0 +1,8 @@
+pub const DEFAULT_SIZE: int = 4
+
+
+pub def build_index(size: int, label: str) -> str:
+    return f"{label} of size {size}"
+
+
+pub default_index = partial build_index(size=DEFAULT_SIZE)

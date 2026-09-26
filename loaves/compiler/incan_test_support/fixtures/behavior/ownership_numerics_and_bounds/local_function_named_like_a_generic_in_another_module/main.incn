@@ -1,0 +1,16 @@
+# behavior: a module's own non-generic function keeps its plain signature while another module of the program declares a generic function of the same name
+# retires: loaves/compiler/incan_emit/src/trait_bound_inference.rs::external_generic_bounds_do_not_rewrite_same_named_local_non_generic_function
+# expect-stdout:
+#   local timeout
+#   helper 5
+
+from helper import describe
+
+
+def timeout() -> str:
+    return "local timeout"
+
+
+def main() -> None:
+    println(timeout())
+    println(describe(5))

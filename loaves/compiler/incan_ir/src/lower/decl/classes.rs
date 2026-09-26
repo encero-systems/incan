@@ -171,7 +171,9 @@ impl AstLowering {
                     .any(|param| self.type_uses_direct_rust_import(&param.node))
                     || self.type_uses_direct_rust_import(&ret.node)
             }
-            ast::Type::Ref(inner) | ast::Type::RefMut(inner) => self.type_uses_direct_rust_import(&inner.node),
+            ast::Type::Ref(inner) | ast::Type::RefMut(inner) | ast::Type::MutParam(inner) => {
+                self.type_uses_direct_rust_import(&inner.node)
+            }
             ast::Type::Tuple(items) => items.iter().any(|item| self.type_uses_direct_rust_import(&item.node)),
             ast::Type::Unit | ast::Type::SelfType | ast::Type::IntLiteral(_) | ast::Type::Infer => false,
         }
@@ -195,6 +197,7 @@ impl AstLowering {
             | ast::Type::Function(_, _)
             | ast::Type::Ref(_)
             | ast::Type::RefMut(_)
+            | ast::Type::MutParam(_)
             | ast::Type::Tuple(_)
             | ast::Type::Unit
             | ast::Type::SelfType

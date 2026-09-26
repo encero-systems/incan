@@ -1,0 +1,51 @@
+# behavior: generic instance methods on a class, a generic model, a trait default, a two-parameter method and a newtype each return the argument they were given
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_generic_methods_codegen
+# expect-stdout:
+#   1 shelf b true 1.5
+
+"""Generic instance methods should lower through class impls."""
+
+
+class Box:
+    def get[T with Clone](self, value: T) -> T:
+        return value
+
+
+model Shelf[U]:
+    item: U
+
+    def swap[T with Clone](self, value: T) -> T:
+        return value
+
+
+trait Echo:
+    def echo[T with Clone](self, value: T) -> T:
+        return value
+
+
+class Pair:
+    def swap[T with Clone, U with Clone](self, left: T, right: U) -> U:
+        return right
+
+
+class EchoBox with Echo:
+    marker: int
+
+
+type Wrapper[U] = newtype U:
+    def echo[T with Clone](self, value: T) -> T:
+        return value
+
+
+def main() -> None:
+    box = Box()
+    value: int = box.get(1)
+    shelf: Shelf[int] = Shelf(item=1)
+    shelf_value: str = shelf.swap("shelf")
+    pair = Pair()
+    swapped: str = pair.swap("a", "b")
+    echo_box: EchoBox = EchoBox(marker=1)
+    echoed_bool: bool = echo_box.echo(true)
+    wrapper: Wrapper[int] = Wrapper(1)
+    echoed_float: float = wrapper.echo(1.5)
+    println(f"{value} {shelf_value} {swapped} {echoed_bool} {echoed_float}")

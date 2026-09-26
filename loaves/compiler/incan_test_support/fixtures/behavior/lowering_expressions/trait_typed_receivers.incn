@@ -1,0 +1,47 @@
+# behavior: a parameter typed as a trait dispatches the trait's own method, and one typed as a supertrait adopter dispatches a method of the supertrait
+# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::a_receiver_typed_as_a_supertrait_adopter_keeps_the_trait_slot_spelling
+# retires: loaves/compiler/incan_ir/src/lower/expr/mod.rs::a_receiver_typed_as_the_dispatched_trait_keeps_the_trait_slot_spelling
+# expect-stdout:
+#   plan 7
+#   first 4
+
+trait DataSet[T]:
+    def to_substrait_plan(self) -> int: ...
+
+
+class DataFrame[T] with DataSet[T]:
+    pub rows: int
+
+    def to_substrait_plan(self) -> int:
+        return self.rows
+
+
+trait Collection:
+    def first(self) -> int: ...
+
+
+trait OrderedCollection with Collection:
+    def last(self) -> int: ...
+
+
+model Sorted with OrderedCollection:
+    items: list[int]
+
+    def first(self) -> int:
+        return self.items[0]
+
+    def last(self) -> int:
+        return self.items[len(self.items) - 1]
+
+
+def display[T](data: DataSet[T]) -> None:
+    println(f"plan {data.to_substrait_plan()}")
+
+
+def take_sorted(items: list[int]) -> OrderedCollection:
+    return Sorted(items=items)
+
+
+def main() -> None:
+    display(DataFrame[int](rows=7))
+    println(f"first {take_sorted([4, 8, 9]).first()}")

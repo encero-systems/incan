@@ -119,7 +119,7 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/native_unions.rs",
-      "sha256": "c908c4e362090c3e778387f9a0d623893d043d4fa24d7826a23d6dd624afcfaa",
+      "sha256": "9da0f9c32dceafa0fa24f124ec9c9b47dc4e586d382f96d4b2ac6178722a597e",
       "lines": 2071
     },
     {
@@ -153,6 +153,21 @@
       "behavior_evidence": "behavior fixture snapshots_stdlib/result_inspect_named_observer_copy_payload.incn (Oven Linux replay), emitter unit test copy_payload_named_observer_is_borrowed_through_a_closure_issue1718 in emit/expressions/methods.rs, and the unchanged non-Copy adapter test test_rfc070_result_inspect_non_copy_observer_borrows_payload",
       "semantic_owner": "the RFC 070 combinator callable fact: the observer takes the payload by borrow (Body IR passes the observer in the borrow shape the std.result helper declares, fn(&T) for every T)",
       "retirement_condition": "the Rust-source backend is deleted (#654); the replacement route emits the helper call from the recorded borrow shape and needs no Copy special case"
+    },
+    {
+      "kind": "change",
+      "pr": 1701,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/native_unions.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1790",
+      "behavior_evidence": "unit test marked_callable_parameter_publishes_its_marker_and_native_union in loaves/compiler/incan_emit/src/tests/mut_marker_publication.rs, which fails without the change (the union inside a mut-marked callable parameter stays unprojected)",
+      "semantic_owner": "#1561: the checked callable-parameter marker (CallableParam.is_mut) published as TypeRef::MutParam; the replacement route reads the marker from checked facts",
+      "retirement_condition": "the Rust-source backend is deleted (#654); native union projection for published types moves to the replacement route"
     },
     {
       "kind": "change",

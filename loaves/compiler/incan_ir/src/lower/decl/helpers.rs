@@ -844,6 +844,7 @@ impl AstLowering {
             ast::Type::Function(_, _) => "fn".to_string(),
             ast::Type::Ref(inner) => format!("&{}", Self::serialize_type(&inner.node)),
             ast::Type::RefMut(inner) => format!("&mut {}", Self::serialize_type(&inner.node)),
+            ast::Type::MutParam(inner) => format!("&mut {}", Self::serialize_type(&inner.node)),
             ast::Type::Unit => "()".to_string(),
             ast::Type::Tuple(items) => {
                 let inner = items
@@ -974,6 +975,65 @@ mod tests {
             expanded_default.trait_path,
             "crate::__incan_std::traits::callable::Callable1"
         );
+    }
+
+    /// #1727: a derivable trait imported under another spelling is the Rust trait its derive implements, never the
+    /// generated `__incan_std` stub. The guardrail test `derivable_source_owned_traits_have_rust_bound_mappings` in
+    /// `incan_lang` pins that every such trait has a registry mapping to take.
+    #[test]
+    fn aliased_derivable_trait_bound_lowers_to_the_rust_trait_of_its_derive_issue1727() {
+        let mut lowering = AstLowering::new();
+        lowering.current_source_module_name = Some("main".to_string());
+        let type_params = HashSet::from(["T"]);
+        lowering.import_aliases.insert(
+            "Equality".to_string(),
+            vec![
+                "std".to_string(),
+                "derives".to_string(),
+                "comparison".to_string(),
+                core_traits::as_str(core_traits::TraitId::Eq).to_string(),
+            ],
+        );
+        lowering.import_aliases.insert(
+            "Copyable".to_string(),
+            vec![
+                "std".to_string(),
+                "derives".to_string(),
+                "copying".to_string(),
+                core_traits::as_str(core_traits::TraitId::Clone).to_string(),
+            ],
+        );
+
+        let equality = lowering.lower_trait_bound(&adopted_bound("Equality").node, &type_params);
+        assert_eq!(equality.origin, IrTraitBoundOrigin::Standard);
+        assert_eq!(
+            equality.trait_path,
+            trait_bounds::incan_to_rust(core_traits::as_str(core_traits::TraitId::Eq)).unwrap_or_default(),
+            "an aliased `Eq` takes the registry's Rust bound, not the stub"
+        );
+        let copyable = lowering.lower_trait_bound(&adopted_bound("Copyable").node, &type_params);
+        assert_eq!(
+            copyable.trait_path,
+            trait_bounds::incan_to_rust(core_traits::as_str(core_traits::TraitId::Clone)).unwrap_or_default(),
+        );
+        assert!(
+            !copyable.trait_path.contains(stdlib::INCAN_STD_NAMESPACE),
+            "a derivable trait never lowers to the generated stub: {}",
+            copyable.trait_path
+        );
+
+        // A source-owned protocol that no derive implements keeps its generated path through the same alias route.
+        lowering.import_aliases.insert(
+            "Stream".to_string(),
+            vec![
+                "std".to_string(),
+                "derives".to_string(),
+                "collection".to_string(),
+                core_traits::as_str(core_traits::TraitId::Iterator).to_string(),
+            ],
+        );
+        let stream = lowering.lower_trait_bound(&adopted_bound("Stream").node, &type_params);
+        assert_eq!(stream.trait_path, "crate::__incan_std::derives::collection::Iterator");
     }
 
     fn field(name: &str, ty: IrType) -> StructField {

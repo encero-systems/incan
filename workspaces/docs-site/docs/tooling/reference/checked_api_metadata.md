@@ -39,14 +39,14 @@ Output:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "package": {
     "name": "catalog",
     "version": "0.1.0"
   },
   "modules": [
     {
-      "schema_version": 1,
+      "schema_version": 2,
       "module_path": [
         "lib"
       ],
@@ -169,7 +169,7 @@ The metadata is derived from parsed and typechecked semantics. Public declaratio
 - decorator metadata with resolved decorator paths, safe argument projections, and decorated callable context when the decorator is attached to a callable declaration
 - safe const values for public consts and safe decorator arguments
 
-Types use the same structural `TypeRef` encoding as library manifest exports. For example, a non-generic type is encoded as `{"Named": {"name": "str"}}`, while a generic application is encoded as `{"Applied": {"name": "List", "args": [...]}}`.
+Types use the same structural `TypeRef` encoding as library manifest exports. For example, a non-generic type is encoded as `{"Named": {"name": "str"}}`, while a generic application is encoded as `{"Applied": {"name": "List", "args": [...]}}`. A parameter of a function type that carries the `mut` marker is encoded as `{"MutParam": {"inner": ...}}`, and a callable parameter marked `mut` carries `"is_mut": true`; both appear from schema version 2, and an omitted `is_mut` means unmarked.
 
 Built-library metadata captured during native emission may describe an anonymous union using `{"NativeUnion": {...}}` with these fields:
 

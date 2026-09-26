@@ -575,7 +575,7 @@ fn collect_type_signature_references(ty: &ast::Type, names: &mut HashSet<String>
             }
             collect_type_signature_references(&return_type.node, names);
         }
-        ast::Type::Ref(inner) | ast::Type::RefMut(inner) => {
+        ast::Type::Ref(inner) | ast::Type::RefMut(inner) | ast::Type::MutParam(inner) => {
             collect_type_signature_references(&inner.node, names);
         }
         ast::Type::Tuple(elements) => {

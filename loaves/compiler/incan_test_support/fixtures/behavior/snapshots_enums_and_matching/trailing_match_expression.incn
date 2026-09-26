@@ -1,0 +1,38 @@
+# behavior: a trailing match in a value-returning function is its result, a match expression assigns its arm value, and a trailing match in a unit function runs its arm
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_trailing_match_statement_is_returned_not_discarded
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_match_arms_convert_to_the_match_result_type
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_trailing_match_statement_in_unit_function_stays_a_statement
+# expect-stdout:
+#   one
+#   other
+#   one
+#   other
+#   one
+#   other
+
+def pick(n: int) -> str:
+    match n:
+        1 => "one"
+        _ => "other"
+
+
+def pick_bound(n: int) -> str:
+    label = match n:
+        1 => "one"
+        _ => "other"
+    return label
+
+
+def report(n: int) -> None:
+    match n:
+        1 => println("one")
+        _ => println("other")
+
+
+def main() -> None:
+    println(pick(1))
+    println(pick(2))
+    println(pick_bound(1))
+    println(pick_bound(2))
+    report(1)
+    report(2)

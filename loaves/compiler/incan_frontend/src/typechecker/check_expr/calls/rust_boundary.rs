@@ -759,6 +759,7 @@ impl TypeChecker {
                     kind: ParamKind::Normal,
                     has_default: false,
                     is_partial_preset: false,
+                    is_mut: false,
                 }
             })
             .collect();
@@ -785,6 +786,7 @@ impl TypeChecker {
                     kind: ParamKind::Normal,
                     has_default: false,
                     is_partial_preset: false,
+                    is_mut: false,
                 }
             })
             .collect();
