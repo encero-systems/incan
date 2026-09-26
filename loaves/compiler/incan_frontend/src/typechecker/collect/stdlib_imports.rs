@@ -1418,7 +1418,7 @@ impl TypeChecker {
             info.is_imported = true;
         }
         self.validate_root_namespace(&local_name, span);
-        let target_identity = self.dependency_member_identity(resolved_module, &item.name);
+        let target = self.dependency_member_resolution(resolved_module, &item.name);
         let mut binding_path = canonicalize_source_module_segments(&written_module.segments);
         binding_path.push(item.name.clone());
         let symbol_id = self.symbols.define_import_binding_at_path(
@@ -1428,18 +1428,22 @@ impl TypeChecker {
                 span,
                 scope: 0,
             },
-            target_identity.clone(),
+            target.as_ref().map(|member| member.identity.clone()),
             binding_path,
         );
         if !self.symbols.is_active_lookup_binding(symbol_id) {
             return;
         }
 
-        if let Some(identity) = target_identity {
+        if let Some(member) = target {
             self.type_info
                 .declarations
                 .resolved_import_identities
-                .insert(local_name.clone(), identity);
+                .insert(local_name.clone(), member.identity);
+            self.type_info
+                .declarations
+                .resolved_import_declared_names
+                .insert(local_name.clone(), member.declared_name);
         }
 
         if matches!(kind, SymbolKind::Type(TypeInfo::TypeAlias))

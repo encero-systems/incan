@@ -212,6 +212,8 @@ If a Rust API requires a narrowing conversion, apply an explicit resize policy b
 | `**`                             | Matching exact floats retain their width; `int ** <non-negative int literal>` produces `int`; otherwise `float`. |
 | `==`, `!=`, `<`, `<=`, `>`, `>=` | `bool`.                                                                                     |
 
+These rules for `/`, `//`, `%` and `**` belong to the concrete numeric types, so `incan check` refuses each of them between two values of a type parameter (`INCAN-T0109`): write the function over `int` or `float`, or bound the parameter with a trait that defines the operator's hook (`__div__`, `__floordiv__`, `__mod__` or `__pow__`), as in `def modulo[T with Remainder](a: T, b: T) -> T`, so the operator resolves through that trait.
+
 ### Division
 
 `/` is true division. Matching `f32` operands produce `f32`, and matching exact `f64` operands produce exact `f64`.

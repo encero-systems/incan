@@ -1,0 +1,49 @@
+# behavior: Result.inspect and inspect_err take a named function over a Copy payload, beside the callable-object and non-Copy shapes that already ran (RFC 070, #1718)
+# retires: loaves/compiler/incan_emit/src/emit/expressions/methods.rs::copy_payload_named_observer_is_borrowed_through_a_closure_issue1718
+# retires: loaves/compiler/incan_emit/src/emit/expressions/methods.rs::non_copy_payload_named_observer_keeps_the_adapter_route
+# expect-stdout:
+#   saw 3
+#   ok 3
+#   code 7
+#   failed 7
+#   observer 3
+#   ok 3
+#   payload orders
+#   ok orders
+
+from std.traits.callable import Callable1
+
+def observe_int(value: int) -> None:
+    println(f"saw {value}")
+
+def observe_code(code: int) -> None:
+    println(f"code {code}")
+
+model Observer with Callable1[int, None]:
+    def __call__(self, value: int) -> None:
+        println(f"observer {value}")
+
+model Payload:
+    name: str
+
+def observe_payload(payload: Payload) -> None:
+    println(f"payload {payload.name}")
+
+def main() -> None:
+    result: Result[int, str] = Ok(3)
+    match result.inspect(observe_int):
+        Ok(value) => println(f"ok {value}")
+        Err(error) => println(error)
+    failed: Result[str, int] = Err(7)
+    match failed.inspect_err(observe_code):
+        Ok(value) => println(value)
+        Err(code) => println(f"failed {code}")
+    observer = Observer()
+    again: Result[int, str] = Ok(3)
+    match again.inspect(observer):
+        Ok(value) => println(f"ok {value}")
+        Err(error) => println(error)
+    wrapped: Result[Payload, str] = Ok(Payload(name="orders"))
+    match wrapped.inspect(observe_payload):
+        Ok(payload) => println(f"ok {payload.name}")
+        Err(error) => println(error)

@@ -190,8 +190,10 @@ async def wait_for[T, F with Awaitable[T]](task: F) -> T:
     assert_check_ok(source);
 }
 
+/// The documented wrapper (`stdlib_traits/awaitable.md` before #1711) is refused at the adoption: `Awaitable[T]` is
+/// only a bound, and a model always derives `Clone`, which the `JoinHandle[T]` it holds cannot be.
 #[test]
-fn test_await_declared_wrapper_delegates_to_awaitable_field() {
+fn test_awaitable_wrapper_adoption_is_refused_on_a_model_issue1711() {
     let source = r#"
 import std.async
 from std.async.task import JoinHandle, TaskJoinError
@@ -202,7 +204,53 @@ model TaskBox[T] with Awaitable[Result[T, TaskJoinError]]:
 async def wait_for(box: TaskBox[int]) -> Result[int, TaskJoinError]:
   return await box
 "#;
-    assert_check_ok(source);
+    let errors = check_str_err(source, "Awaitable wrapper adoption should fail");
+    assert!(
+        errors.iter().any(|error| {
+            error
+                .message
+                .contains("Type 'TaskBox' cannot adopt Awaitable[Result[T, TaskJoinError]]")
+                && error.hints.iter().any(|hint| hint.contains("F with Awaitable[T]"))
+        }),
+        "expected the awaitable adoption refusal with its field-await hint, got: {errors:?}"
+    );
+}
+
+/// A class is refused the same way.
+#[test]
+fn test_awaitable_wrapper_adoption_is_refused_on_a_class_issue1711() {
+    let source = r#"
+import std.async
+from std.async.task import JoinHandle, TaskJoinError
+
+class TaskBox with Awaitable[Result[int, TaskJoinError]]:
+  handle: JoinHandle[int]
+"#;
+    let errors = check_str_err(source, "Awaitable wrapper adoption on a class should fail");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Type 'TaskBox' cannot adopt Awaitable[Result[int, TaskJoinError]]")),
+        "expected the awaitable adoption refusal, got: {errors:?}"
+    );
+}
+
+/// A newtype is refused too: only a `rusttype` adoption took the `awaitable_future_bridge_blocked` path, so a plain
+/// newtype's adoption passed the checker and lowered to a trait impl rustc refuses.
+#[test]
+fn test_awaitable_wrapper_adoption_is_refused_on_a_newtype_issue1711() {
+    let source = r#"
+import std.async
+
+type Ticket = newtype int with Awaitable[int]
+"#;
+    let errors = check_str_err(source, "Awaitable adoption on a newtype should fail");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Type 'Ticket' cannot adopt Awaitable[int]")),
+        "expected the awaitable adoption refusal, got: {errors:?}"
+    );
 }
 
 #[test]
@@ -217,8 +265,8 @@ model Bad with Awaitable[int]:
     assert!(
         errors
             .iter()
-            .any(|error| error.message.contains("adopts Awaitable[int]") && error.message.contains("no valid await")),
-        "expected invalid Awaitable adoption diagnostic, got: {errors:?}"
+            .any(|error| error.message.contains("Type 'Bad' cannot adopt Awaitable[int]")),
+        "expected the awaitable adoption refusal, got: {errors:?}"
     );
 }
 
@@ -235,8 +283,8 @@ model Bad with Awaitable[int]:
     assert!(
         errors
             .iter()
-            .any(|error| error.message.contains("adopts Awaitable[int]") && error.message.contains("no valid await")),
-        "expected invalid Awaitable adoption diagnostic, got: {errors:?}"
+            .any(|error| error.message.contains("Type 'Bad' cannot adopt Awaitable[int]")),
+        "expected the awaitable adoption refusal, got: {errors:?}"
     );
 }
 

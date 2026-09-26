@@ -1,0 +1,10 @@
+# behavior: printing a tuple value is refused at check time because a tuple has no printed form
+# expect-diagnostic: INCAN-T0103
+
+def get_coordinates() -> tuple[int, int]:
+    return (10, 20)
+
+
+def main() -> None:
+    coords: tuple[int, int] = get_coordinates()
+    print(coords)

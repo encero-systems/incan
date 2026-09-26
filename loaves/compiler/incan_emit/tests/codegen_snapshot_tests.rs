@@ -2231,13 +2231,13 @@ def main() -> None:
 import std.async
 from std.web import route, POST
 
-@route("/things", methods=[POST])
-async def create(id: int) -> int:
-  return id
+@route("/things/{id}", methods=[POST])
+async def create(id: int) -> str:
+  return str(id)
 
-@route("/search")
-async def search(id: int) -> int:
-  return id
+@route("/search/{id}")
+async def search(id: int) -> str:
+  return str(id)
 "#;
 
     let Ok(main_tokens) = lexer::lex(main_source) else {
@@ -3087,8 +3087,8 @@ fn test_issue1464_list_constructor_codegen() {
         "an empty list() must adopt its annotated element type; generated:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("(source).into_iter().collect::<Vec<_>>()"),
-        "list() over a generator must consume it through IntoIterator; generated:\n{rust_code}"
+        rust_code.contains("::std::iter::Iterator::collect::<Vec<_>>(source)"),
+        "list() over a generator must collect it through the Iterator trait, not the wrapper's inherent collect; generated:\n{rust_code}"
     );
     assert!(
         rust_code.contains("let mut __incan_iter = pairs;"),
@@ -3098,7 +3098,8 @@ fn test_issue1464_list_constructor_codegen() {
 }
 
 /// A comprehension over a by-value Rust iterator (or a generator) consumes it through `IntoIterator`, as the `for`
-/// statement over the same value already does, instead of borrowing it with `.iter()` (#1490).
+/// statement over the same value already does, instead of borrowing it with `.iter()` (#1490). A generator moves as
+/// the `Iterator` trait's iterator so the chain's adapters are the trait's, not the runtime wrapper's (#1464).
 #[test]
 fn test_issue1490_comprehension_over_rust_iterator_codegen() {
     let source = load_test_file("issue1490_comprehension_over_rust_iterator");
@@ -3114,8 +3115,8 @@ fn test_issue1490_comprehension_over_rust_iterator_codegen() {
         "the comprehension must consume the iterator through IntoIterator; generated:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("((source).into_iter())"),
-        "a generator source must be consumed by value as well; generated:\n{rust_code}"
+        rust_code.contains("(::std::iter::Iterator::fuse(source).into_iter())"),
+        "a generator source must be consumed by value as the Iterator trait's iterator; generated:\n{rust_code}"
     );
     assert_codegen_snapshot!("issue1490_comprehension_over_rust_iterator", rust_code);
 }
@@ -5646,23 +5647,24 @@ pub async def fastest() -> int:
     assert_codegen_snapshot!("race_for_expression_codegen", rust_code);
 }
 
-/// Awaiting a declared wrapper must delegate to the proven awaitable field.
+/// A generic `F with Awaitable[T]` bound names the async runtime's `Awaitable<T>` trait, the one realization of RFC
+/// 039's protocol in generated Rust; the awaited operand stays a plain `.await` (#1711).
 #[test]
-fn test_awaitable_wrapper_delegation_codegen() {
+fn test_awaitable_bound_lowers_to_runtime_trait_codegen() {
     let source = r#"
 import std.async
-from std.async.task import JoinHandle, TaskJoinError
 
-pub model TaskBox[T] with Awaitable[Result[T, TaskJoinError]]:
-  pub handle: JoinHandle[T]
-
-pub async def wait_for(box: TaskBox[int]) -> Result[int, TaskJoinError]:
-  return await box
+pub async def wait_for[T, F with Awaitable[T]](task: F) -> T:
+  return await task
 "#;
     let rust_code = generate_rust(source);
     assert!(
-        rust_code.contains("r#box.handle.await"),
-        "awaitable wrapper should lower through its awaitable field, got:\n{rust_code}"
+        rust_code.contains("F: incan_std_async::task::Awaitable<T>"),
+        "an Awaitable bound should name the runtime trait, got:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("task.await"),
+        "the bound operand should be awaited directly, got:\n{rust_code}"
     );
 }
 
