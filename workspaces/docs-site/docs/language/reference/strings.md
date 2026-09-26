@@ -66,16 +66,65 @@ Membership uses the method, not the `in` operator: `s.contains("x")`.
 
 ## F-strings
 
-An f-string interpolates any expression between `{` and `}`; the value is formatted through `Display`. A format spec after `:` selects another formatting:
+An f-string interpolates any expression between `{` and `}`. A format spec after `:` selects the formatting:
 
 | Spec | Formatting |
 | --- | --- |
-| `{value}` | `Display` |
+| `{value}` | The value's [display](#display) text |
 | `{value:?}` | `Debug`: the value's structure, for example `Point { x: 10, y: 20 }` |
 
-A `float` in a `Display` position — an f-string `{value}`, `str(value)`, or `print`/`println` — renders as Python spells it: always visibly a float. An integral value keeps its decimal point (`100.0`, never `100`), the shortest digits that round-trip are used (`1.5`, `0.30000000000000004`), positional notation holds while the magnitude is at least `1e-4` and below `1e16` (`10000000000.0`) and switches to an exponent with an explicit sign and at least two digits outside that range (`1e+16`, `1.5e-07`), and the non-finite values are `inf`, `-inf`, and `nan`. The exact `f32`/`f64` carriers keep Rust's own `Display`.
-
 See [String representation](./derives/string_representation.md) for how a type provides `Display` and `Debug`.
+
+## Display
+
+`print(value)`, `println(value)`, `str(value)` and an f-string `{value}` part display a value under one rule: all four render the same text for the same value.
+
+| Value | Displayed text |
+| --- | --- |
+| `str`, `FrozenStr` | The text itself, unquoted |
+| `int` and the exact-width integers | Decimal digits |
+| `bool` | `true` or `false` |
+| `float` | Decimal digits with a decimal point or an exponent, below |
+| `f32`, `f64` | The shortest digits that round-trip, below |
+| A type that defines `__str__` | What `__str__` returns |
+| A value enum | The variant's value |
+| Tuple | `(10, 20)` |
+| `list` | `[1, 2, 3]` |
+| `dict` | `{"a": 1}` |
+| `set` | `{1, 2}` |
+| `Option` | `Some(1)` or `None` |
+| `Result` | `Ok(2)` or `Err("bad")` |
+| `FrozenList`, `FrozenSet`, `FrozenDict` | Each element's own display text, unquoted: `[a, b]`, `{1, 2}`, `{a: 1}` |
+| `FrozenBytes` | A byte literal, `b"abc"`, with `\\`, `\"` and every byte outside printable ASCII escaped (`\x00`) |
+
+Inside a tuple, list, dict, set, `Option` or `Result`, every element or payload displays as its structure, the `{value:?}` form, whatever its own display text: a `str` is quoted (`["a", "b"]`), a `float` keeps its decimal point and uses an unsigned exponent from `1e16` up and below `1e-4` (`[100.0, 1e16]`), a model or class shows its fields even when its type defines `__str__` (`[Point { x: 1, y: 2 }]`), and an enum value shows its variant (`[Red]`). The entry order of a set or a dict is unspecified.
+
+Inside a `FrozenList`, `FrozenSet` or `FrozenDict`, a `float` element prints its shortest round-trip digits with no forced decimal point (`[100, 1.5]`).
+
+A `float` always shows a decimal point or an exponent. An integral value keeps its decimal point (`100.0`), the shortest digits that round-trip are used (`1.5`, `0.30000000000000004`), positional notation holds while the magnitude is at least `1e-4` and below `1e16` (`10000000000.0`), outside that range the value uses an exponent with an explicit sign and at least two digits (`1e+16`, `1.5e-07`), and the non-finite values are `inf`, `-inf` and `nan`. An `f32` or `f64` prints the shortest digits that round-trip in positional notation, with no forced decimal point (`100`, `1.5`, `0.0000001`), and its non-finite values are `inf`, `-inf` and `NaN`.
+
+A value with no printed form is refused at check time with `INCAN-T0103`, in every display position: a union value (`int | str`), a `Generator`, a function, `bytes`, and a model or class whose type defines no `__str__` and adopts neither `Display` nor `Error`. A member bound by narrowing a union displays as its own type (see [Union types](./union_types.md)).
+
+```incan
+model Point:
+    x: int
+    y: int
+
+def main() -> None:
+    items: list[int] = [1, 2, 3]
+    print(items)                # [1, 2, 3]
+    println(str(items))         # [1, 2, 3]
+    println(f"{items}")         # [1, 2, 3]
+    maybe: Option[int] = None
+    println(maybe)              # None
+    point = Point(x=1, y=2)
+    println(f"{point:?}")       # Point { x: 1, y: 2 }
+    println(point)              # refused: INCAN-T0103
+    println(str(point))         # refused: INCAN-T0103
+    println(f"{point}")         # refused: INCAN-T0103
+```
+
+The how-to [Displaying a value with no printed form](../how-to/error_messages.md#displaying-a-value-with-no-printed-form) covers the refused cases.
 
 ## See also
 

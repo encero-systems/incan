@@ -643,7 +643,7 @@ def main() -> Result[None, SessionError]:
   mut session = Session.default()
   lines = session.read_csv[Row]("orders", "orders.csv")?
   df = lines.collect()?
-  print(df)
+  println(f"{df:?}")
   return Ok(None)
 "#;
 
@@ -667,7 +667,7 @@ def main() -> Result[None, SessionError]:
   mut session = Session.default()
   lines = session.read_csv[Row]("orders", "orders.csv")?
   df = lines.clone().collect()?
-  print(df)
+  println(f"{df:?}")
   return Ok(None)
 "#;
 

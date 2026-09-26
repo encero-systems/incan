@@ -1192,8 +1192,14 @@ impl TypeChecker {
     }
 
     /// Return whether two union member candidates are equivalent for narrowing.
+    ///
+    /// A `str` and a `FrozenStr` are one semantic string: `isinstance(value, str)` selects a `FrozenStr` member, the
+    /// same way lowering binds that member for the branch, so the branch checks the value as the member it holds
+    /// rather than as the whole union (#1748).
     fn union_member_matches(&self, member: &ResolvedType, target: &ResolvedType) -> bool {
-        self.types_compatible(member, target) && self.types_compatible(target, member)
+        let is_text = |ty: &ResolvedType| matches!(ty, ResolvedType::Str | ResolvedType::FrozenStr);
+        (is_text(member) && is_text(target))
+            || (self.types_compatible(member, target) && self.types_compatible(target, member))
     }
 
     /// Return the type available in the true branch of an `isinstance` check.

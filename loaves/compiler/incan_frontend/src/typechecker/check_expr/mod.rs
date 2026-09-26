@@ -26,6 +26,7 @@ mod comps;
 mod control_flow;
 mod match_;
 mod ops;
+mod printed_form;
 
 impl TypeChecker {
     /// Type-check a local partial expression and return its projected callable type.
@@ -93,6 +94,23 @@ impl TypeChecker {
         // A local partial retains its complete callable signature. Presets become defaulted, name-overrideable
         // slots; `is_partial_preset` preserves the separate positional rule that starts at the residual arguments.
         ResolvedType::Function(Self::local_partial_params(projected, &partial.args), ret)
+    }
+
+    /// Type-check every interpolated expression of an f-string and refuse a `{value}` part with no printed form
+    /// (#1748).
+    ///
+    /// A `{value}` part displays under the rule `print`/`println` arguments and `str(...)` share (see
+    /// [`Self::check_display_operand`]). A `{value:?}` part asks for the value's structure and is left alone.
+    fn check_fstring_parts(&mut self, parts: &[FStringPart]) {
+        for part in parts {
+            let FStringPart::Expr { expr, format } = part else {
+                continue;
+            };
+            let ty = self.check_expr(expr);
+            if matches!(format, FStringFormat::Display) {
+                self.check_display_operand(errors::DisplayPosition::Interpolation, expr, &ty);
+            }
+        }
     }
 
     /// Resolve a field by canonical name or alias, returning the canonical name and FieldInfo.
@@ -266,11 +284,7 @@ impl TypeChecker {
             Expr::Paren(inner) => self.check_expr(inner),
             Expr::Constructor(name, args) => self.check_constructor(name, args, expr.span),
             Expr::FString(parts) => {
-                for part in parts {
-                    if let FStringPart::Expr { expr, .. } = part {
-                        self.check_expr(expr);
-                    }
-                }
+                self.check_fstring_parts(parts);
                 ResolvedType::Str
             }
             Expr::Yield(inner) => {

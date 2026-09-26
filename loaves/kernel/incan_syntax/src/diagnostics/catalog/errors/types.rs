@@ -5,7 +5,9 @@
 
 use crate::ast::Span;
 use incan_lang::lang::builtins::{self, BuiltinFnId};
+use incan_lang::lang::conventions;
 use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 use crate::diagnostics::CompileError;
 
@@ -14,6 +16,31 @@ use crate::diagnostics::CompileError;
 pub fn unknown_symbol(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Unknown symbol '{}'", name), span)
         .with_hint("Did you forget to import it or define it?")
+}
+
+/// Report a source name that starts with the compiler's reserved `__incan_` prefix (#1769).
+///
+/// The compiler spells the items and locals it generates with that prefix, the original a decorator wraps among them,
+/// so a source declaration, binding or import alias with the same prefix could collide with a generated name and stop
+/// the build on a duplicate definition. `name` is the spelling the source used and `kind` the kind of name it declares
+/// (`function`, `parameter`, `import alias`, ...), which the message and hint repeat. The hint suggests the name
+/// without the prefix when what remains starts like an identifier. `INCAN-T0111` is its stable code.
+pub fn reserved_compiler_name(name: &str, kind: &str, span: Span) -> CompileError {
+    let prefix = conventions::RESERVED_COMPILER_NAME_PREFIX;
+    let suggestion = name
+        .strip_prefix(prefix)
+        .filter(|rest| rest.starts_with(|first: char| first.is_ascii_alphabetic() || first == '_'));
+    let hint = match suggestion {
+        Some(rest) => format!("Rename the {kind} so it does not start with '{prefix}', for example '{rest}'"),
+        None => format!("Rename the {kind} so it does not start with '{prefix}'"),
+    };
+    CompileError::type_error(
+        format!("The {kind} '{name}' starts with '{prefix}', a prefix reserved for names the compiler generates"),
+        span,
+    )
+    .with_stable_code("INCAN-T0111")
+    .with_hint(hint)
+    .with_note("The compiler names the items and locals it generates with this prefix, so a source name spelled the same way could collide with one of them")
 }
 
 /// Report an unknown type name written in a callable's signature or body annotation.
@@ -2513,23 +2540,145 @@ pub fn tuple_annotation_requires_element_types(spelling: &str, span: Span) -> Co
     ))
 }
 
-/// Report a `print`/`println` argument that is a tuple (#1725).
+/// Report a builtin collection annotation written without its type arguments (#1717, #1749).
 ///
-/// A tuple has no printed form in the language, so the call would print nothing the reader can rely on. `builtin`
-/// is the spelling the call used (`print` or `println`), `value` the argument as the source spells it when it is a
-/// plain name (`coords`) or a placeholder otherwise, and `arity` the tuple's length, which shapes the hint's
-/// element-by-element spelling. `INCAN-T0103` is its stable code.
-pub fn print_argument_is_tuple(builtin: &str, value: &str, arity: usize, span: Span) -> CompileError {
-    let elements = (0..arity.max(1))
-        .map(|index| format!("{value}[{index}]"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    CompileError::type_error(format!("'{builtin}' cannot print the tuple '{value}'"), span)
+/// `list`, `dict`, `set`, `tuple`, `Option`, `Result`, the frozen collections and `Generator` each name a family of
+/// types, one per argument list, so a bare spelling names no type at all and the build has nothing to emit for it.
+/// `spelling` is the word the source used (`List`, `list`, `Option`, ...) so the message and the hint keep the
+/// author's casing; the family decides which type arguments the hint spells. `INCAN-T0104` is its stable code.
+pub fn collection_annotation_requires_type_arguments(spelling: &str, span: Span) -> CompileError {
+    let family = collections::from_str(spelling);
+    let (missing, arguments) = match family {
+        Some(CollectionTypeId::Tuple) => return tuple_annotation_requires_element_types(spelling, span),
+        Some(CollectionTypeId::Dict | CollectionTypeId::FrozenDict) => ("key and value types", "str, int"),
+        Some(CollectionTypeId::Result) => ("value and error types", "int, str"),
+        Some(CollectionTypeId::Option) => ("value type", "int"),
+        Some(
+            CollectionTypeId::List
+            | CollectionTypeId::Set
+            | CollectionTypeId::FrozenList
+            | CollectionTypeId::FrozenSet
+            | CollectionTypeId::Generator,
+        )
+        | None => ("element type", "int"),
+    };
+    let family_name = match family {
+        Some(family) => collections::as_str(family),
+        None => spelling,
+    };
+    CompileError::type_error(
+        format!("{family_name} annotation '{spelling}' is missing its {missing}"),
+        span,
+    )
+    .with_stable_code("INCAN-T0104")
+    .with_hint(format!(
+        "Write the type arguments, for example '{spelling}[{arguments}]'"
+    ))
+}
+
+// -- Display -----------------------------------------------------------------
+
+/// Where a value is displayed: every position shares one display rule (#1748).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayPosition<'a> {
+    /// An argument of `print` or `println`.
+    Print {
+        /// The spelling the call used (`print` or `println`).
+        builtin: &'a str,
+    },
+    /// The argument of `str(...)`.
+    Str,
+    /// An f-string `{value}` part.
+    Interpolation,
+}
+
+/// A value with no printed form in any display position (#1748).
+///
+/// A tuple, list, dict, set, `Option` or `Result` renders through its structure in every display position, and a
+/// scalar, a `str` or a type that defines `__str__` renders through its own text. What remains has no printed form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnprintableValue<'a> {
+    /// A value of an anonymous union type (`int | str`), which prints once it is narrowed to one member.
+    Union,
+    /// A `Generator` value, whose items exist only as it is consumed.
+    Generator,
+    /// A function or closure value.
+    Function,
+    /// A `bytes` value, which has no text of its own.
+    Bytes,
+    /// A model or class value whose type defines no `__str__`.
+    Nominal {
+        /// The type as the checker names it.
+        type_name: &'a str,
+    },
+}
+
+impl UnprintableValue<'_> {
+    /// Name the value for a message: `the union value 'x'` when the source spells it as a plain name, otherwise the
+    /// kind with its indefinite article (`a union value`).
+    fn describe(self, name: Option<&str>) -> String {
+        let kind = match self {
+            Self::Union => "union value".to_string(),
+            Self::Generator => "generator".to_string(),
+            Self::Function => "function".to_string(),
+            Self::Bytes => "bytes value".to_string(),
+            Self::Nominal { type_name } => format!("{type_name} value"),
+        };
+        match name {
+            Some(name) => format!("the {kind} '{name}'"),
+            None if kind.starts_with(['A', 'E', 'I', 'O', 'U', 'a', 'e', 'i', 'o', 'u']) => format!("an {kind}"),
+            None => format!("a {kind}"),
+        }
+    }
+}
+
+/// Report a displayed value that has no printed form (#1748).
+///
+/// `print`/`println` arguments, the argument of `str(...)` and f-string `{value}` parts share one display rule, so the
+/// same value is refused in all three; `position` words the message for the position the source used. `name` is the
+/// operand when the source spells it as a plain name (or `self`), `None` for any other expression. The hint names what
+/// does display: a narrowed union member, a collected generator's list, a called function's result, decoded bytes, or
+/// a type's `__str__` (and its `{value:?}` structure, spelled with the operand's own name when it has one).
+/// `INCAN-T0103` is its stable code.
+pub fn value_has_no_printed_form(
+    position: DisplayPosition<'_>,
+    name: Option<&str>,
+    value: UnprintableValue<'_>,
+    span: Span,
+) -> CompileError {
+    let what = value.describe(name);
+    let message = match position {
+        DisplayPosition::Print { builtin } => format!("'{builtin}' cannot print {what}"),
+        DisplayPosition::Str => format!("'str' cannot convert {what} to text"),
+        DisplayPosition::Interpolation => format!("f-string cannot interpolate {what}"),
+    };
+    let hint = match value {
+        UnprintableValue::Union => {
+            "Narrow it to one member first, with match or isinstance, and display that member".to_string()
+        }
+        UnprintableValue::Generator => {
+            "Collect its items first with list(...); a list displays its elements".to_string()
+        }
+        UnprintableValue::Function => "Call it and display the result".to_string(),
+        UnprintableValue::Bytes => {
+            "Decode it to text first with decode(), or display its length with len(...)".to_string()
+        }
+        UnprintableValue::Nominal { type_name } => {
+            // Spell the structure form with the operand's own name; any other expression gets the format spec alone,
+            // so the hint never names a binding the program does not have.
+            let structure = match name {
+                Some(name) => format!("with f\"{{{name}:?}}\""),
+                None => "by adding the :? format spec to its f-string part".to_string(),
+            };
+            format!(
+                "Define __str__(self) -> str on '{type_name}' to give it a printed form, or interpolate its structure {structure}"
+            )
+        }
+    };
+    CompileError::type_error(message, span)
         .with_stable_code("INCAN-T0103")
-        .with_hint(format!(
-            "Print the elements instead: {builtin}({elements}), or unpack them first and print the names"
-        ))
-        .with_note("Tuples have no printed form; each element prints on its own")
+        .with_hint(hint)
+        .with_note("print, println, str and an f-string {value} display a value alike, and none of them has a printed form for this one")
 }
 
 pub fn tuple_field_assignment(span: Span) -> CompileError {

@@ -1,0 +1,11 @@
+# behavior: printing a model that defines no __str__ is refused at check time, as str and an f-string refuse it
+# expect-diagnostic: INCAN-T0103
+
+model Point:
+    x: int
+    y: int
+
+
+def main() -> None:
+    point = Point(x=1, y=2)
+    println(point)

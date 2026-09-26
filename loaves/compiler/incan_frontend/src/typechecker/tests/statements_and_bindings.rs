@@ -1,7 +1,7 @@
 //! Statements and plain expressions: variables, arithmetic, comparison and logical operators, control flow, closures,
 //! tuples, loop expressions, the diagnostics a plain function body produces, plain assignment versus `let` / `mut`
-//! (#1072), statement tuple unpacking (#1132), the `isinstance` facts retained for Body IR (#1281), and unreachable
-//! code after an unconditional `return` (#1117).
+//! (#1072), statement tuple unpacking (#1132), the `isinstance` facts retained for Body IR (#1281), unreachable
+//! code after an unconditional `return` (#1117), and the `__incan_` prefix reserved for generated names (#1769).
 
 use super::*;
 
@@ -1170,5 +1170,123 @@ fn isinstance_retains_a_nominal_targets_canonical_declaration_identity() -> Resu
         Some("Alias"),
         "the target fact must retain the reference span, not the declaration span"
     );
+    Ok(())
+}
+
+// ---- #1769: the `__incan_` prefix belongs to the compiler ----
+
+/// Return the names the `INCAN-T0111` refusals of a program report, in report order.
+fn reserved_name_refusals(source: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let errors = check_str(source)
+        .err()
+        .ok_or("a source name with the reserved prefix must be refused")?;
+    Ok(errors
+        .into_iter()
+        .filter(|error| error.stable_code() == Some("INCAN-T0111"))
+        .map(|error| error.message)
+        .collect())
+}
+
+#[test]
+fn declarations_spelled_like_decorator_machinery_are_refused_issue1769() -> Result<(), Box<dyn std::error::Error>> {
+    // The program from #1769 and its static twin: public or private, the spelling is the compiler's.
+    let refused = reserved_name_refusals(
+        r#"
+def preserve[F]() -> ((F) -> F):
+    return (func) => func
+
+@preserve()
+pub def target() -> int:
+    return 40
+
+pub def __incan_original_target() -> int:
+    return 2
+
+static __incan_decorated_target: int = 41
+
+def main() -> None:
+    println(target() + __incan_original_target())
+"#,
+    )?;
+    assert_eq!(
+        refused,
+        vec![
+            "The function '__incan_original_target' starts with '__incan_', a prefix reserved for names the compiler generates",
+            "The static '__incan_decorated_target' starts with '__incan_', a prefix reserved for names the compiler generates",
+        ],
+    );
+    Ok(())
+}
+
+#[test]
+fn every_kind_of_source_name_is_refused_with_the_reserved_prefix_issue1769() -> Result<(), Box<dyn std::error::Error>> {
+    let refused = reserved_name_refusals(
+        r#"
+from std.async.time import sleep as __incan_sleep
+
+model __incan_Point:
+    __incan_x: int
+
+def total[__incan_T](__incan_items: list[int]) -> int:
+    mut __incan_sum = 0
+    for __incan_item in __incan_items:
+        __incan_sum += __incan_item
+    doubled = [__incan_n * 2 for __incan_n in __incan_items]
+    scale = (__incan_factor) => __incan_factor * 2
+    match Some(1):
+        Some(__incan_value) => println(__incan_value)
+        None => println("none")
+    return __incan_sum + len(doubled) + scale(1)
+"#,
+    )?;
+    let kinds = refused
+        .iter()
+        .filter_map(|message| message.split(" '").next())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        kinds,
+        vec![
+            "The import alias",
+            "The model",
+            "The field",
+            "The type parameter",
+            "The parameter",
+            "The binding",
+            "The binding",
+            "The binding",
+            "The parameter",
+            "The binding",
+        ],
+        "each declaring position reports once, uses and compound assignments never, got: {refused:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_constructor_hook_and_synthesized_names_keep_the_prefix_issue1769() -> Result<(), Box<dyn std::error::Error>> {
+    // A type's `__incan_new` is the hook the compiler looks up by that name.
+    check_str(
+        r#"
+class Counter:
+    value: int = 0
+
+    @staticmethod
+    def __incan_new() -> Self:
+        return Counter(value=5)
+"#,
+    )
+    .map_err(|errors| format!("the constructor hook must keep its name, got: {errors:?}"))?;
+
+    // A declaration the compiler synthesized carries no source span, like the helper imports a vocabulary desugarer
+    // receives, and is the compiler's own name.
+    let tokens = lexer::lex("def __incan_helper() -> int:\n    return 1\n")
+        .map_err(|errors| format!("lex failed: {errors:?}"))?;
+    let mut program = parser::parse(&tokens).map_err(|errors| format!("parse failed: {errors:?}"))?;
+    let declaration = program
+        .declarations
+        .first_mut()
+        .ok_or("the helper declaration must parse")?;
+    declaration.span = Span::default();
+    check(&program).map_err(|errors| format!("a synthesized declaration must not be refused, got: {errors:?}"))?;
     Ok(())
 }

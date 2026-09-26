@@ -1152,12 +1152,13 @@ def explicit_call() -> int:
     assert_check_ok(source);
 }
 
-// ---- #1725: `print` has no rendering for a tuple ----
+// ---- #1725, #1748: a tuple prints its structure, like an f-string renders it ----
 
 #[test]
-fn print_of_a_tuple_value_is_refused_issue1725() {
-    // The program from #1725: the tuple has no printed form, so the checker refuses it where the build would have.
-    let source = r#"
+fn print_of_a_tuple_value_prints_its_structure_issue1725() -> Result<(), Box<dyn std::error::Error>> {
+    // The program from #1725, refused under the tuple-only rule, prints `(10, 20)` twice under the shared display rule.
+    check_str(
+        r#"
 def get_coordinates() -> tuple[int, int]:
     return (10, 20)
 
@@ -1165,28 +1166,10 @@ def main() -> None:
     coords: tuple[int, int] = get_coordinates()
     print(coords)
     println(get_coordinates())
-"#;
-    let errors = check_str_err(source, "printing a tuple must be refused");
-    let refused = errors
-        .iter()
-        .filter(|error| error.stable_code() == Some("INCAN-T0103"))
-        .map(|error| (error.message.as_str(), error.hints.clone()))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        refused.len(),
-        2,
-        "both call spellings refuse the tuple, got: {refused:?}"
-    );
-    assert_eq!(refused[0].0, "'print' cannot print the tuple 'coords'");
-    assert!(
-        refused[0]
-            .1
-            .iter()
-            .any(|hint| hint.contains("print(coords[0], coords[1])")),
-        "the hint spells the element-by-element form, got: {:?}",
-        refused[0].1
-    );
-    assert_eq!(refused[1].0, "'println' cannot print the tuple 'value'");
+"#,
+    )
+    .map_err(|errors| format!("a tuple must print, got: {errors:?}"))?;
+    Ok(())
 }
 
 #[test]
@@ -1204,4 +1187,211 @@ def main() -> None:
     println(f"{coords[0]},{coords[1]}")
 "#,
     );
+}
+
+// ---- #1748: one display rule for print, str and f-strings ----
+
+/// One `INCAN-T0103` refusal: its message and its hints.
+type PrintedFormRefusal = (String, Vec<String>);
+
+/// Return the `INCAN-T0103` refusals of a program the checker must refuse, as message and hints.
+fn printed_form_refusals(source: &str) -> Result<Vec<PrintedFormRefusal>, Box<dyn std::error::Error>> {
+    let errors = check_str(source)
+        .err()
+        .ok_or("a value with no printed form must be refused")?;
+    Ok(errors
+        .into_iter()
+        .filter(|error| error.stable_code() == Some("INCAN-T0103"))
+        .map(|error| (error.message, error.hints))
+        .collect())
+}
+
+#[test]
+fn collections_options_and_results_display_in_every_position_issue1748() -> Result<(), Box<dyn std::error::Error>> {
+    // The program from #1748, widened to every structural kind and to `str(...)`: each position renders the value's
+    // structure, so nothing is refused.
+    check_str(
+        r#"
+def main() -> None:
+    items: list[int] = [1, 2, 3]
+    print(items)
+    counts: dict[str, int] = {"a": 1}
+    println(counts)
+    seen: set[int] = {1}
+    println(seen)
+    maybe: Option[int] = Some(1)
+    println(maybe)
+    outcome: Result[int, str] = Ok(1)
+    println(outcome)
+    pair: tuple[int, str] = (1, "one")
+    println(pair)
+    println([1, 2])
+    text = str(items) + str(maybe) + str(pair)
+    println(f"{items} {counts} {seen} {maybe} {outcome} {pair} {text}")
+"#,
+    )
+    .map_err(|errors| format!("structural values must display, got: {errors:?}"))?;
+    Ok(())
+}
+
+#[test]
+fn values_with_no_printed_form_are_refused_in_every_position_issue1748() -> Result<(), Box<dyn std::error::Error>> {
+    let refused = printed_form_refusals(
+        r#"
+model Point:
+    x: int
+    y: int
+
+def parse(flag: bool) -> int | str:
+    if flag:
+        return 1
+    return "one"
+
+def numbers() -> Generator[int]:
+    yield 1
+
+def double(n: int) -> int:
+    return n * 2
+
+def main() -> None:
+    value = parse(true)
+    println(value)
+    text = str(value)
+    println(f"{value}")
+    point = Point(x=1, y=2)
+    print(point)
+    println(str(point))
+    println(f"{point}")
+    gen = numbers()
+    println(gen)
+    data: bytes = b"abc"
+    println(data)
+    println(double)
+    println(str(Point(x=3, y=4)))
+"#,
+    )?;
+    assert_eq!(
+        refused.iter().map(|(message, _)| message.as_str()).collect::<Vec<_>>(),
+        vec![
+            "'println' cannot print the union value 'value'",
+            "'str' cannot convert the union value 'value' to text",
+            "f-string cannot interpolate the union value 'value'",
+            "'print' cannot print the Point value 'point'",
+            "'str' cannot convert the Point value 'point' to text",
+            "f-string cannot interpolate the Point value 'point'",
+            "'println' cannot print the generator 'gen'",
+            "'println' cannot print the bytes value 'data'",
+            "'println' cannot print the function 'double'",
+            "'str' cannot convert a Point value to text",
+        ],
+        "one refusal per displayed value with no printed form, in every position, in source order"
+    );
+    assert!(
+        refused[3]
+            .1
+            .iter()
+            .any(|hint| hint.contains("__str__") && hint.contains("f\"{point:?}\"")),
+        "a model's remedy names __str__ and its structure, got: {:?}",
+        refused[3].1
+    );
+    assert!(
+        refused[9]
+            .1
+            .iter()
+            .any(|hint| hint.contains(":? format spec") && !hint.contains("{value")),
+        "an unnamed operand's remedy names no binding the program lacks, got: {:?}",
+        refused[9].1
+    );
+    assert!(
+        refused[0].1.iter().any(|hint| hint.contains("match or isinstance")),
+        "a union value's remedy narrows it first, got: {:?}",
+        refused[0].1
+    );
+    Ok(())
+}
+
+#[test]
+fn a_model_printing_itself_is_named_self_in_the_refusal_issue1748() -> Result<(), Box<dyn std::error::Error>> {
+    let refused = printed_form_refusals(
+        r#"
+model Point:
+    x: int
+
+    def show(self) -> None:
+        println(self)
+"#,
+    )?;
+    let [(message, hints)] = refused.as_slice() else {
+        return Err(format!("expected one refusal, got {refused:?}").into());
+    };
+    assert_eq!(message, "'println' cannot print the Point value 'self'");
+    assert!(
+        hints.iter().any(|hint| hint.contains("f\"{self:?}\"")),
+        "the structure form is spelled with `self`, got: {hints:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn values_with_a_printed_form_display_in_every_position_issue1748() -> Result<(), Box<dyn std::error::Error>> {
+    // `__str__` on the type, inherited from a base class, or supplied by an adopted trait gives a printed form; a
+    // `{value:?}` part asks for the structure; a narrowed union member prints as its own type, a `FrozenStr` member
+    // selected by `isinstance(value, str)` included; an `Error` adopter is left to the display rule for errors.
+    check_str(
+        r#"
+model Label:
+    text: str
+
+    def __str__(self) -> str:
+        return self.text
+
+class Base:
+    name: str
+
+    def __str__(self) -> str:
+        return self.name
+
+class Child extends Base:
+    size: int
+
+trait Named:
+    def __str__(self) -> str:
+        return "named"
+
+model Tagged with Named:
+    tag: int
+
+model Point:
+    x: int
+
+model Failure with Error:
+    detail: str
+
+    def message(self) -> str:
+        return self.detail
+
+def parse(flag: bool) -> int | str:
+    if flag:
+        return 1
+    return "one"
+
+def frozen_text(value: FrozenStr | int) -> str:
+    if isinstance(value, str):
+        return str(value)
+    return "number"
+
+def main() -> None:
+    println(Label(text="hi"))
+    println(str(Child(name="c", size=1)))
+    println(f"{Tagged(tag=1)}")
+    point = Point(x=1)
+    println(f"{point:?}")
+    println(Failure(detail="boom"))
+    match parse(true):
+        int(n) => println(n)
+        str(s) => println(s)
+"#,
+    )
+    .map_err(|errors| format!("values with a printed form must display, got: {errors:?}"))?;
+    Ok(())
 }

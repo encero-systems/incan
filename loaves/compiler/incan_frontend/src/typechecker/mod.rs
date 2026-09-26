@@ -46,11 +46,13 @@ mod check_decl;
 mod check_expr;
 mod check_stmt;
 mod collect;
+mod collection_annotations;
 mod const_eval;
 mod decorated_method_receivers;
 mod helpers;
 mod mut_marker;
 mod reachability;
+mod reserved_names;
 pub mod stdlib_loader;
 mod trait_bound_relations;
 mod type_info;
@@ -560,9 +562,15 @@ pub struct TypeChecker {
     /// Whether source annotation names should be validated during the semantic check pass.
     validate_source_type_names: bool,
     /// Source annotation diagnostics already emitted in the current program check, keyed by spelling and span:
-    /// unbound names, and bare tuple annotations (#1717), which the collection pass and the body check can both
-    /// meet.
+    /// unbound names, and bare builtin collection annotations (#1717, #1749), which the collection pass and the body
+    /// check can both meet.
     unknown_source_type_names_emitted: HashSet<(String, usize, usize)>,
+    /// Type names the program under check declares itself, recorded before its declarations are collected.
+    ///
+    /// A program may take a builtin collection spelling (`Result`, `Tuple`) for its own type; an annotation that
+    /// names such a type is an ordinary nominal, and the collection pass can meet the annotation before it meets the
+    /// declaration, so the bare-collection refusal consults this set rather than the symbol table alone (#1749).
+    source_type_declaration_names: HashSet<String>,
     /// The callable whose signature and body annotations are being checked, when one is active.
     ///
     /// An unknown type name inside a callable is most likely a type parameter that was never declared, so the
@@ -833,6 +841,7 @@ impl TypeChecker {
             dependency_import_type_alias_transaction: None,
             validate_source_type_names: false,
             unknown_source_type_names_emitted: HashSet::new(),
+            source_type_declaration_names: HashSet::new(),
             annotation_owner: None,
             static_decl_positions: HashMap::new(),
             checking_registry_entry_static_initializer: false,
@@ -5126,18 +5135,7 @@ impl TypeChecker {
         if let Some(decimal_ty) = self.resolve_decimal_type_checked(ty) {
             return decimal_ty;
         }
-        if let Type::Simple(name) = &ty.node
-            && self.is_bare_builtin_tuple_annotation(name)
-        {
-            // The same annotation can be resolved by the collection pass and again by the body check; one report
-            // per occurrence, keyed the way unknown annotation names are.
-            if self
-                .unknown_source_type_names_emitted
-                .insert((name.clone(), ty.span.start, ty.span.end))
-            {
-                self.errors
-                    .push(errors::tuple_annotation_requires_element_types(name, ty.span));
-            }
+        if self.report_bare_builtin_collection_annotations(ty) {
             return ResolvedType::Unknown;
         }
         if let Type::Simple(name) = &ty.node
@@ -5158,17 +5156,6 @@ impl TypeChecker {
         );
         self.record_mutable_rust_type_argument_projection(ty);
         self.expand_type_aliases(resolved)
-    }
-
-    /// Return whether a simple annotation is the builtin tuple family written without element types (#1717).
-    ///
-    /// `Tuple` and `tuple` name a family of types, one per element list; the bare word names no type, and the
-    /// shared resolver would otherwise hand lowering a `Tuple` nominal that no backend can spell. Only the prelude
-    /// builtin counts: a source declaration that shadows the spelling with its own `Tuple` type is a nominal like
-    /// any other and resolves as one.
-    fn is_bare_builtin_tuple_annotation(&self, name: &str) -> bool {
-        collection_type_id(name) == Some(CollectionTypeId::Tuple)
-            && matches!(self.lookup_type_info(name), Some(TypeInfo::Builtin))
     }
 
     /// Return the nominal type a module-qualified spelling was proven to name, for the shared type resolver.
@@ -6503,6 +6490,7 @@ impl TypeChecker {
         // Reset per-run caches.
         self.validate_source_type_names = false;
         self.unknown_source_type_names_emitted.clear();
+        self.source_type_declaration_names = Self::collect_source_type_declaration_names(&program.declarations);
         self.const_decls.clear();
         self.static_decls.clear();
         self.local_function_decls.clear();
@@ -6533,6 +6521,7 @@ impl TypeChecker {
             self.foreign_pub_type_remappings.clear();
         }
         self.validate_alias_declarations(program);
+        self.report_reserved_compiler_names(program);
 
         // `check_with_imports` / `import_module` can queue supertrait bounds while collecting dependency ASTs.
         // Resolve those queued bounds into trait symbols before we collect and resolve the current program.

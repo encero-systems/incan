@@ -382,6 +382,17 @@ The names `std` and `rust` are reserved at the root level. You cannot shadow the
 import models as std
 ```
 
+### Reserved name prefix
+
+Names that start with `__incan_` are reserved for the compiler. A function, static, constant, type, field, method, parameter, type parameter, local or pattern binding, or import alias whose name starts with `__incan_` is refused at check time with `INCAN-T0111`, public or private. A method named `__incan_new` is exempt: it is the type's constructor hook.
+
+```incan
+pub def __incan_original_target() -> int:  # refused: INCAN-T0111
+    return 2
+
+from helpers import total as __incan_total  # refused: INCAN-T0111
+```
+
 ## Stdlib module: `std.math`
 
 See the stdlib reference page: [Standard library reference: `std.math`](stdlib/math.md).

@@ -226,6 +226,85 @@ while let Some(user) = current:
     current = next_user(user)
 ```
 
+### Displaying a Value With No Printed Form
+
+**Error:**
+
+```bash
+'println' cannot print the Point value 'point'
+```
+
+**Problem:** `print`, `println`, `str` and an f-string `{value}` share one display rule (see [Display](../reference/strings.md#display)). A union value, a generator, a function, `bytes`, and a model or class without `__str__` have no printed form in any of them (`INCAN-T0103`). Lists, tuples, dicts, sets, `Option` and `Result` do print: `println(items)` prints `[1, 2, 3]`.
+
+**Solution:** Give the value a printed form, or display something that has one.
+
+```incan
+model Point:
+    x: int
+    y: int
+
+    # Right - define __str__ to give the model a printed form
+    def __str__(self) -> str:
+        return f"({self.x}, {self.y})"
+
+def show(value: int | str) -> None:
+    # Right - narrow a union and print the member
+    match value:
+        int(n) => println(n)
+        str(s) => println(s)
+
+def main() -> None:
+    point = Point(x=1, y=2)
+    println(point)          # ✅ (1, 2)
+    println(f"{point:?}")   # ✅ the structure: Point { x: 1, y: 2 }
+    evens = (n * 2 for n in [1, 2, 3])
+    println(list(evens))    # ✅ collect a generator first: [2, 4, 6]
+```
+
+### Collection Annotation Without Type Arguments
+
+**Error:**
+
+```bash
+List annotation 'List' is missing its element type
+```
+
+**Problem:** `list`, `dict`, `set`, `tuple`, `Option` and `Result` (and the frozen collections and `Generator`) each name a family of types, so the bare word names no type (`INCAN-T0104`). The refusal also applies to a bare word inside another annotation, such as `Option[List]`.
+
+**Solution:**
+
+```incan
+# Wrong
+items: List = [1, 2]  # ❌
+
+# Right
+items: list[int] = [1, 2]  # ✅
+counts: dict[str, int] = {"a": 1}
+maybe: Option[int] = None
+```
+
+### Reserved `__incan_` Names
+
+**Error:**
+
+```bash
+The function '__incan_original_target' starts with '__incan_', a prefix reserved for names the compiler generates
+```
+
+**Problem:** A name the program declares or binds starts with `__incan_`, which is reserved for the compiler (`INCAN-T0111`; see [Reserved name prefix](../reference/imports_and_modules.md#reserved-name-prefix)).
+
+**Solution:** Rename it without the prefix.
+
+```incan
+# Wrong
+pub def __incan_original_target() -> int:  # ❌
+    return 2
+
+# Right
+pub def original_target() -> int:  # ✅
+    return 2
+```
+
 ## Philosophy: Explicit is Better
 
 Incan intentionally requires explicit handling of:

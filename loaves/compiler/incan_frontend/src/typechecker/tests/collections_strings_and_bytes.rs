@@ -1042,3 +1042,82 @@ def sum(pair: Tuple) -> int:
 "#,
     );
 }
+
+// ---- #1749: every builtin collection annotation spells its type arguments ----
+
+#[test]
+fn bare_collection_annotations_are_refused_where_they_stand_issue1749() -> Result<(), Box<dyn std::error::Error>> {
+    // The program from #1749, plus a parameter and two nested spellings: each bare family is refused where it
+    // stands, once, with its own missing arguments named.
+    let source = r#"
+def first(items: List) -> int:
+    return 0
+
+def main() -> None:
+    counts: Dict = {"a": 1}
+    maybe: Option = None
+    outcome: Result = Ok(1)
+    nested: list[Set] = []
+    wrapped: Option[List] = None
+    println("ok")
+"#;
+    let errors = check_str(source)
+        .err()
+        .ok_or("a bare collection annotation must be refused")?;
+    let mut refused = errors
+        .iter()
+        .filter(|error| error.stable_code() == Some("INCAN-T0104"))
+        .map(|error| error.message.as_str())
+        .collect::<Vec<_>>();
+    refused.sort_unstable();
+    assert_eq!(
+        refused,
+        vec![
+            "Dict annotation 'Dict' is missing its key and value types",
+            "List annotation 'List' is missing its element type",
+            "List annotation 'List' is missing its element type",
+            "Option annotation 'Option' is missing its value type",
+            "Result annotation 'Result' is missing its value and error types",
+            "Set annotation 'Set' is missing its element type",
+        ],
+        "one report per bare occurrence, nested ones included"
+    );
+    let dict_hints = errors
+        .iter()
+        .find(|error| error.message.starts_with("Dict annotation"))
+        .map(|error| error.hints.clone())
+        .ok_or("the Dict refusal must be present")?;
+    assert!(
+        dict_hints.iter().any(|hint| hint.contains("'Dict[str, int]'")),
+        "the hint keeps the author's spelling with the missing arguments, got: {dict_hints:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn source_types_spelled_like_collection_families_stay_nominal_issue1749() -> Result<(), Box<dyn std::error::Error>> {
+    // A program may take a family spelling for its own type, and an annotation may name that type before the
+    // declaration: both are ordinary nominals.
+    check_str(
+        r#"
+def describe(outcome: Result) -> str:
+    match outcome:
+        case Result.Good:
+            return "good"
+        case Result.Bad:
+            return "bad"
+
+enum Result:
+    Good
+    Bad
+
+model List:
+    size: int
+
+def measure(list_value: List) -> int:
+    return list_value.size
+"#,
+    )
+    .map_err(|errors| format!("a source type spelled like a collection family must resolve, got: {errors:?}"))?;
+    Ok(())
+}

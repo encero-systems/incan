@@ -26,33 +26,19 @@ impl TypeChecker {
         }
     }
 
-    /// Type-check the arguments of a `print`/`println` call and refuse any that is a tuple (#1725).
+    /// Type-check the arguments of a `print`/`println` call and refuse any that has no printed form (#1748).
     ///
-    /// Every argument is checked as usual so its own diagnostics still surface; a tuple argument is then refused
-    /// with the call's own spelling (`builtin`), because a tuple has no printed form and the program could not be
-    /// built. The tuple's arity shapes the element-by-element remedy in the hint. Any other argument type stays
-    /// as permissive as before.
+    /// Every argument is checked as usual so its own diagnostics still surface. An argument displays under the rule
+    /// `str(...)` and an f-string `{value}` share (see [`Self::check_display_operand`]): a tuple, list, dict, set,
+    /// `Option` or `Result` prints its structure, and only a value with no printed form is refused, with the call's
+    /// own spelling (`builtin`) in the message.
     fn check_print_call_args(&mut self, builtin: &str, args: &[CallArg]) {
         for arg in args {
             let arg_expr = Self::call_arg_expr(arg);
             self.call_argument_depth += 1;
             let arg_ty = self.check_expr(arg_expr);
             self.call_argument_depth -= 1;
-            let arity = match &arg_ty {
-                ResolvedType::Tuple(elements) => elements.len(),
-                ResolvedType::Generic(name, elements)
-                    if collection_type_id(name.as_str()) == Some(CollectionTypeId::Tuple) =>
-                {
-                    elements.len()
-                }
-                _ => continue,
-            };
-            let value = match &arg_expr.node {
-                Expr::Ident(name) => name.as_str(),
-                _ => "value",
-            };
-            self.errors
-                .push(errors::print_argument_is_tuple(builtin, value, arity, arg_expr.span));
+            self.check_display_operand(errors::DisplayPosition::Print { builtin }, arg_expr, &arg_ty);
         }
     }
 
@@ -417,7 +403,11 @@ impl TypeChecker {
                     }
                 }
                 BuiltinFnId::Str => {
-                    self.check_call_args(args);
+                    // `str(value)` displays its argument under the rule `print` and an f-string share (#1748).
+                    let arg_types = self.check_call_arg_types(args);
+                    if let ([arg], [arg_ty]) = (args, arg_types.as_slice()) {
+                        self.check_display_operand(errors::DisplayPosition::Str, Self::call_arg_expr(arg), arg_ty);
+                    }
                     Some(ResolvedType::Str)
                 }
                 BuiltinFnId::Int => {

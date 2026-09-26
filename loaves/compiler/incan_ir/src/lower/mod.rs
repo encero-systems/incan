@@ -4133,6 +4133,7 @@ mod tests {
 
     mod builtin_str_arguments;
     mod derive_vocabulary_imports;
+    mod display_operands;
     mod method_decorator_receivers;
     mod unary_operand_grouping;
 
@@ -4557,13 +4558,13 @@ class Account:
     }
 
     #[test]
-    fn decorated_function_original_name_collision_uses_distinct_registry_keys() -> Result<(), String> {
+    fn decorated_function_original_uses_a_generated_registry_key() -> Result<(), String> {
+        // A source declaration can no longer spell `__incan_original_target` (the checker reserves the prefix,
+        // #1769), so the generated original is the only declaration with that physical name; it is registered under
+        // the generated key, never as a source declaration.
         let source = r#"
 def preserve[F]() -> ((F) -> F):
   return (func) => func
-
-def __incan_original_target() -> int:
-  return 1
 
 @preserve()
 def target() -> int:
@@ -4589,7 +4590,8 @@ def target() -> int:
         assert!(
             ir.function_registry
                 .canonical_identity("__incan_original_target")
-                .is_some()
+                .is_none(),
+            "the generated original's physical name must not register as a source declaration"
         );
         Ok(())
     }
