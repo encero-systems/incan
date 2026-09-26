@@ -3282,6 +3282,47 @@ impl TypeChecker {
         })
     }
 
+    /// Return whether `expr` builds a new value without taking anything out of an existing place, so storing it moves
+    /// the value and needs no copy (#1821).
+    ///
+    /// A literal and an f-string are new values. A call, a method call and a constructor are new values only when
+    /// every argument, and a method call's receiver, is itself a new value by this rule or has a `Copy` or `Clone`
+    /// type: `spawn(work(n))` qualifies, while `Some(handle)`, `maybe.unwrap()` and `holder.get()` over a place whose
+    /// type is not `Clone` do not, since building them would move or copy out of that place. A name, a field, an
+    /// element, `self` and every other shape read a place the program may use again; the checker does not decide
+    /// whether a read is the place's last use, so those are never new values. Parentheses and `?` yield the value of
+    /// the expression they wrap. The call's own callee is not a part of the value and is not inspected.
+    fn is_fresh_value(&self, expr: &Spanned<Expr>) -> bool {
+        let arguments_are_fresh_or_copyable = |args: &[CallArg]| {
+            args.iter().all(|arg| match arg {
+                CallArg::Positional(value) | CallArg::Named(_, value) => self.is_fresh_or_copyable_value(value),
+                CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => false,
+            })
+        };
+        match &expr.node {
+            Expr::Literal(_) | Expr::FString(_) => true,
+            Expr::Paren(inner) | Expr::Try(inner) => self.is_fresh_value(inner),
+            Expr::Call(_, _, args) | Expr::Constructor(_, args) => arguments_are_fresh_or_copyable(args),
+            Expr::MethodCall(receiver, _, _, args) => {
+                self.is_fresh_or_copyable_value(receiver) && arguments_are_fresh_or_copyable(args)
+            }
+            _ => false,
+        }
+    }
+
+    /// Return whether `expr` is a new value ([`Self::is_fresh_value`]) or has a checked type that is `Copy` or `Clone`,
+    /// so a value built from it takes nothing out of a place the program may use again.
+    ///
+    /// A part whose type the checker did not record counts as neither, which keeps the enclosing append's `Clone`
+    /// requirement.
+    fn is_fresh_or_copyable_value(&self, expr: &Spanned<Expr>) -> bool {
+        self.is_fresh_value(expr)
+            || self
+                .type_info
+                .expr_type(expr.span)
+                .is_some_and(|ty| self.is_copy_type(ty) || self.is_clone_type(ty))
+    }
+
     /// [`ResolvedType::SelfType`] in a trait method signature means the receiver type for this call site.
     fn concrete_type_for_trait_self(&self, receiver: &ResolvedType) -> ResolvedType {
         match receiver {
@@ -5852,7 +5893,13 @@ impl TypeChecker {
                                 self.errors
                                     .push(errors::type_mismatch(&elem.to_string(), &arg0.to_string(), span));
                             }
-                            if !self.is_copy_type(clone_ty) && !self.is_clone_type(clone_ty) {
+                            // A new value moves into the list; a value taken from a place is copied (#1821).
+                            let appends_fresh_value = matches!(
+                                args.first(),
+                                Some(CallArg::Positional(value) | CallArg::Named(_, value))
+                                    if self.is_fresh_value(value)
+                            );
+                            if !appends_fresh_value && !self.is_copy_type(clone_ty) && !self.is_clone_type(clone_ty) {
                                 self.errors
                                     .push(errors::list_append_requires_clone(&clone_ty.to_string(), span));
                             }

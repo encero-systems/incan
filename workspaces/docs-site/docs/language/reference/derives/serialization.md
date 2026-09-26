@@ -29,6 +29,48 @@ def encode[T with json.Serialize](value: T) -> str:
 
 ---
 
+## Generic bounds and trait-typed positions
+
+A type parameter bounded by `std.serde.json`'s `Serialize` or `Deserialize` accepts the types that adopt that trait: through `@derive(json)`, `@derive(Serialize)` / `@derive(Deserialize)`, or `with Serialize` / `with Deserialize` on a model, class, enum or newtype. Any other type argument is refused at check time. The rules below hold for these three spellings of the trait: the imported name (`Serialize`), an alias (`from std.serde.json import Serialize as JsonSerialize`), and the name qualified by the imported module (`json.Serialize` after `from std.serde import json`).
+
+| Position | Provides, for the value |
+| --- | --- |
+| `T with Serialize`, for `value: T` | `value.to_json() -> str` and `json_stringify(value) -> str` |
+| `T with Deserialize` | `T.from_json(input: str) -> Result[T, str]` |
+| a parameter annotated `Serialize` | `value.to_json() -> str` and `json_stringify(value) -> str` |
+| a return type annotated `Serialize`, on a function or method | `to_json()` and `json_stringify` on the returned value |
+
+The bound holds on the type parameters of functions, methods, models and classes. A model or class whose parameter carries the bound may derive or adopt the same trait, and `json_stringify` accepts a value that contains the parameter, such as a `list[T]` field.
+
+```incan
+from std.serde.json import Deserialize, Serialize
+
+@derive(Serialize, Deserialize)
+model Payload:
+    value: int
+
+@derive(Serialize)
+model Envelope[T with Serialize]:
+    payload: T
+
+def encode[T with Serialize](value: T) -> str:
+    return value.to_json()          # encode(Payload(value=1)) is {"value":1}
+
+def stringify[T with Serialize](value: T) -> str:
+    return json_stringify(value)    # stringify(Payload(value=1)) is {"value":1}
+
+def decode[T with Deserialize](text: str) -> Result[T, str]:
+    return T.from_json(text)        # decode[Payload]("{\"value\":2}") is Ok(Payload(value=2))
+
+def make() -> Serialize:
+    return Payload(value=5)         # json_stringify(make()) and make().to_json() are {"value":5}
+
+# Envelope(payload=Payload(value=3)).to_json() is {"payload":{"value":3}}
+# encode(1) is refused: int does not adopt Serialize
+```
+
+---
+
 ## Serialize
 
 - **Derive**: `@derive(json)` for both JSON directions, or `@derive(Serialize)` after importing `Serialize` directly
@@ -161,13 +203,13 @@ Newtypes also support `@derive(json)`:
 from std.serde import json
 
 @derive(json)
-newtype UserId(int)
+type UserId = newtype int
 
 @derive(json)
-newtype Email(str)
+type Email = newtype str
 ```
 
-Newtypes serialize to/from their underlying type's JSON representation.
+Newtypes serialize to/from their underlying type's JSON representation: `UserId(7).to_json()` is `7`. A newtype that derives `Serialize` or `Deserialize` satisfies the matching generic bound, so `decode[UserId]("7")` with the `decode` above is `Ok(UserId(7))`.
 
 When a newtype defines the canonical `from_underlying` validation hook or primitive constraints, JSON deserialization reconstructs through that checked ingress. Invalid JSON values return `Err` instead of creating an invalid nominal value.
 

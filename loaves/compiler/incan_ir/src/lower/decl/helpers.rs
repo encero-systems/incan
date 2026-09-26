@@ -158,12 +158,19 @@ impl AstLowering {
     }
 
     /// Lower a single AST type parameter to its IR representation.
+    ///
+    /// A bound on a `std.serde.json` protocol trait also carries the Rust serde capability that trait forwards to its
+    /// adopters, through [`Self::json_protocol_capability_bound`].
     fn lower_type_param(&self, tp: &ast::TypeParam, type_param_names: &HashSet<&str>) -> IrTypeParam {
-        let bounds = tp
-            .bounds
-            .iter()
-            .map(|bound| self.lower_trait_bound(bound, type_param_names))
-            .collect();
+        let mut bounds = Vec::new();
+        for bound in &tp.bounds {
+            bounds.push(self.lower_trait_bound(bound, type_param_names));
+            if let Some(capability) = self.json_protocol_capability_bound(&bound.name)
+                && !bounds.contains(&capability)
+            {
+                bounds.push(capability);
+            }
+        }
         IrTypeParam {
             name: tp.name.clone(),
             bounds,
@@ -221,10 +228,12 @@ impl AstLowering {
     /// no import or local declaration behind it. A user trait that merely shares the declaration name
     /// (`yaml.Serialize`, a local `trait Eq`) keeps its own path.
     ///
-    /// The `std.serde.json` protocol traits are the one identity still looked up by spelling: their bounds and
-    /// dispatches are shaped by the protocol machinery (#1431, #1712), where an alias such as `JsonSerialize` lowers
-    /// as written and resolves through its re-export, and the registry's `serde::Serialize` mapping is reached only
-    /// by the bare `Serialize` and `Deserialize` spellings, exactly as before.
+    /// The `std.serde.json` protocol traits map to no Rust trait under any spelling: the bare import (`Serialize`),
+    /// an alias (`JsonSerialize`) and the module-qualified name (`json.Serialize`) all lower as written and resolve
+    /// through the import to the stdlib trait, which is the trait a checked `to_json()` or `from_json()` call
+    /// dispatches through (#1712). The registry's `serde::Serialize` and `serde::de::DeserializeOwned` rows name the
+    /// Rust capability those traits forward to an adopter as a derive; a type parameter's bound carries it beside the
+    /// stdlib trait through [`Self::json_protocol_capability_bound`], never in its place (#1820).
     pub(in crate::lower) fn rust_mapped_builtin_trait_path(&self, visible_name: &str) -> Option<&'static str> {
         let (module_path, source_name) = self.canonical_trait_identity(visible_name);
         let source_name = source_name?;
@@ -236,7 +245,7 @@ impl AstLowering {
             .as_deref()
             .is_some_and(|segments| stdlib::stdlib_json_trait_id_for_identity(segments, &source_name).is_some());
         if json_protocol {
-            return trait_bounds::incan_to_rust(visible_name);
+            return None;
         }
         trait_bounds::incan_to_rust(&source_name)
     }
@@ -326,6 +335,9 @@ impl AstLowering {
     }
 
     /// Lower a callable parameter type, synthesizing a hidden Rust generic when the source annotation names a trait.
+    ///
+    /// The hidden generic is bounded exactly as a written `T with Trait` parameter would be, including the serde
+    /// capability of a `std.serde.json` protocol trait ([`Self::json_protocol_capability_bound`]).
     pub(in crate::lower) fn lower_callable_param_type(
         &self,
         ty: &ast::Type,
@@ -336,9 +348,17 @@ impl AstLowering {
         if let Some(bound) = self.lower_trait_annotation_bound(ty, type_param_names) {
             let hidden_name = format!("__IncanTrait{}", *hidden_counter);
             *hidden_counter += 1;
+            let annotated_trait = match ty {
+                ast::Type::Simple(name) | ast::Type::Generic(name, _) => Some(name.as_str()),
+                _ => None,
+            };
+            let mut bounds = vec![bound];
+            if let Some(capability) = annotated_trait.and_then(|name| self.json_protocol_capability_bound(name)) {
+                bounds.push(capability);
+            }
             hidden_type_params.push(IrTypeParam {
                 name: hidden_name.clone(),
-                bounds: vec![bound],
+                bounds,
             });
             return IrType::Generic(hidden_name);
         }

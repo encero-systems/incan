@@ -10,6 +10,7 @@ mod enums;
 mod functions;
 mod helpers;
 mod imports;
+mod json_protocol;
 mod methods;
 mod models;
 mod newtypes;

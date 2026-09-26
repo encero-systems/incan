@@ -3,6 +3,7 @@
 
 mod borrowed_rust_enum;
 mod embedded_fragment;
+mod fresh_list_append;
 mod rust_supertrait_codegen;
 mod rust_trait_receiver_codegen;
 mod sdk_module_derives;

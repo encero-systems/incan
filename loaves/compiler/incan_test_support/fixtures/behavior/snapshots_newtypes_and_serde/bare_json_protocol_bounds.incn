@@ -1,0 +1,82 @@
+# behavior: std.serde.json Serialize and Deserialize, bare and module-qualified, bound functions, a generic model and a generic class and type a function's return, and to_json, from_json and json_stringify work through each for models and derived newtypes (#1820)
+# retires: loaves/compiler/incan_ir/src/lower/tests/json_protocol_bounds.rs::json_protocol_bounds_carry_the_trait_and_its_serde_capability_issue1820
+# retires: loaves/compiler/incan_ir/src/lower/tests/json_protocol_bounds.rs::deserialize_bound_carries_the_trait_and_its_serde_capability_issue1820
+# retires: loaves/compiler/incan_ir/src/lower/tests/json_protocol_bounds.rs::json_protocol_bounds_carry_the_serde_capability_on_owners_and_trait_parameters_issue1820
+# retires: loaves/compiler/incan_ir/src/lower/tests/json_protocol_bounds.rs::derived_json_protocol_newtypes_implement_the_stdlib_trait_issue1820
+# retires: loaves/compiler/incan_ir/src/lower/tests/json_protocol_bounds.rs::json_protocol_returns_carry_the_trait_and_its_serde_capability_issue1820
+# expect-stdout:
+#   {"value":1}
+#   {"value":1}
+#   {"value":1}
+#   2
+#   {"payload":{"value":3}}
+#   [{"value":4}]
+#   7
+#   8
+#   9
+#   {"value":5}
+#   {"value":5}
+
+from std.serde import json
+from std.serde.json import Deserialize, Serialize
+
+
+@derive(Serialize, Deserialize)
+model Payload:
+    value: int
+
+
+@derive(Serialize, Deserialize)
+type UserId = newtype int
+
+
+@derive(Serialize)
+model Envelope[T with Serialize]:
+    payload: T
+
+
+class Recorder[T with Serialize]:
+    items: list[T]
+
+    def dump(self) -> str:
+        return json_stringify(self.items)
+
+
+def encode[T with Serialize](value: T) -> str:
+    return value.to_json()
+
+
+def stringify[T with Serialize](value: T) -> str:
+    return json_stringify(value)
+
+
+def stringify_qualified[T with json.Serialize](value: T) -> str:
+    return json_stringify(value)
+
+
+def decode[T with Deserialize](text: str) -> Result[T, str]:
+    return T.from_json(text)
+
+
+def make() -> Serialize:
+    return Payload(value=5)
+
+
+def main() -> None:
+    println(encode(Payload(value=1)))
+    println(stringify(Payload(value=1)))
+    println(stringify_qualified(Payload(value=1)))
+    match decode[Payload]("{\"value\":2}"):
+        Ok(payload) => println(payload.value)
+        Err(error) => println(error)
+    envelope = Envelope(payload=Payload(value=3))
+    println(envelope.to_json())
+    recorder = Recorder(items=[Payload(value=4)])
+    println(recorder.dump())
+    println(UserId(7).to_json())
+    println(stringify(UserId(8)))
+    match decode[UserId]("9"):
+        Ok(user_id) => println(user_id.0)
+        Err(error) => println(error)
+    println(json_stringify(make()))
+    println(make().to_json())

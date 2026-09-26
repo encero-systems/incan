@@ -793,7 +793,12 @@ impl AstLowering {
 
     /// Resolve one source-owned stdlib trait through the provider, public package, or provider-local facade that owns
     /// the receiver at the current compilation boundary.
-    fn lower_stdlib_trait_dispatch_path(&self, segments: &[String], trait_name: &str, receiver: &TypedExpr) -> String {
+    pub(in crate::lower) fn lower_stdlib_trait_dispatch_path(
+        &self,
+        segments: &[String],
+        trait_name: &str,
+        receiver: &TypedExpr,
+    ) -> String {
         let module = segments.iter().skip(1).cloned().collect::<Vec<_>>().join("::");
         let trait_name = trait_name
             .rsplit(['.', ':'])
