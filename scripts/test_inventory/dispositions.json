@@ -4759,13 +4759,45 @@
       "split_target": "",
       "twin": ""
     },
-    "loaves/compiler/incan_format/src/lib.rs": {
+    "loaves/compiler/incan_format/src/tests/comments_and_blank_lines.rs": {
       "disposition": "keep",
-      "notes": "formatter; no emit/driver dependency. Reviewed at crate level.",
       "owner": 1561,
-      "split_required": true,
+      "twin": "",
+      "split_required": false,
       "split_target": "",
-      "twin": ""
+      "notes": "split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/incan_format/src/tests/declarations.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/incan_format/src/tests/entry_points_imports_and_spacing.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/incan_format/src/tests/expressions_and_calls.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level."
+    },
+    "loaves/compiler/incan_format/src/tests/statements_and_patterns.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level."
     },
     "loaves/compiler/incan_format/src/writer.rs": {
       "disposition": "keep",
@@ -8325,13 +8357,69 @@
       "split_target": "",
       "twin": ""
     },
-    "loaves/toolchain/incan-lsp/src/backend.rs": {
+    "loaves/toolchain/incan-lsp/src/backend/tests/completions.rs": {
       "disposition": "keep",
-      "notes": "language server over the checker; no codegen. Reviewed at crate level.",
       "owner": 1561,
-      "split_required": true,
+      "twin": "",
+      "split_required": false,
       "split_target": "",
-      "twin": ""
+      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level."
+    },
+    "loaves/toolchain/incan-lsp/src/backend/tests/contract_model_command.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level."
+    },
+    "loaves/toolchain/incan-lsp/src/backend/tests/hover_previews.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level."
+    },
+    "loaves/toolchain/incan-lsp/src/backend/tests/identity_navigation.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level."
+    },
+    "loaves/toolchain/incan-lsp/src/backend/tests/parse_context_and_receivers.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level."
+    },
+    "loaves/toolchain/incan-lsp/src/backend/tests/rust_inspect_workspace.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level."
+    },
+    "loaves/toolchain/incan-lsp/src/backend/tests/signature_help.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level."
+    },
+    "loaves/toolchain/incan-lsp/src/backend/tests/vocab_surfaces.rs": {
+      "disposition": "keep",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "split of incan-lsp/src/backend.rs; language server over the checker; no codegen. Reviewed at crate level."
     },
     "loaves/toolchain/incan-lsp/src/call_site_type_args.rs": {
       "disposition": "keep",
