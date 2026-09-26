@@ -3492,6 +3492,14 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_ir/src/lower/receiver_plan.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level. The receiver planning these tests pin (#1790) is observable through the RFC 036 method-decorator behavior fixtures in `snapshots_functions_and_projections/`, which run the planned programs.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_ir/src/lower/tests/unary_operand_grouping.rs": {
       "disposition": "retire",
       "owner": 1561,

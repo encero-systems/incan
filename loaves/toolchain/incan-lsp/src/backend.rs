@@ -3051,6 +3051,7 @@ fn format_type(ty: &Type) -> String {
         }
         Type::Ref(inner) => format!("&{}", format_type(&inner.node)),
         Type::RefMut(inner) => format!("&mut {}", format_type(&inner.node)),
+        Type::MutParam(inner) => format!("mut {}", format_type(&inner.node)),
         Type::IntLiteral(value) => value.repr.clone(),
         Type::Unit => "()".to_string(),
         Type::SelfType => "Self".to_string(),

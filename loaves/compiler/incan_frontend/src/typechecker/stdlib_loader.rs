@@ -1816,14 +1816,20 @@ fn ast_type_to_resolved_with_rust_imports(
                 .collect(),
         ),
         ast::Type::Function(params, ret) => {
+            // A `mut`-marked parameter keeps its type and carries the marker on the callable parameter (#1790).
             let param_types: Vec<CallableParam> = params
                 .iter()
                 .map(|p| {
+                    let (param_ty, is_mut) = match &p.node {
+                        ast::Type::MutParam(inner) => (&inner.node, true),
+                        other => (other, false),
+                    };
                     CallableParam::positional(ast_type_to_resolved_with_rust_imports(
-                        &p.node,
+                        param_ty,
                         type_params,
                         rust_imports,
                     ))
+                    .with_mut(is_mut)
                 })
                 .collect();
             let ret_type = ast_type_to_resolved_with_rust_imports(&ret.node, type_params, rust_imports);
@@ -1839,6 +1845,7 @@ fn ast_type_to_resolved_with_rust_imports(
             type_params,
             rust_imports,
         ))),
+        ast::Type::MutParam(inner) => ast_type_to_resolved_with_rust_imports(&inner.node, type_params, rust_imports),
         ast::Type::Tuple(elems) => {
             let elem_types: Vec<ResolvedType> = elems
                 .iter()

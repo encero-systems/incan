@@ -14,6 +14,24 @@ This page documents callable types in Incan.
 
 Both forms are interchangeable in type annotations. Named `def` functions and closures are both accepted wherever a function type is expected.
 
+## `mut` parameters in function types
+
+A parameter of an arrow-form function type can carry the `mut` marker, `(mut T, ...) -> R`. It means what `mut` means on a `def` parameter: the callable's changes to that argument are visible to the caller.
+
+```incan
+def keep(func: (mut Counter, int) -> int) -> (mut Counter, int) -> int:
+    return func
+```
+
+| Rule                 | Behavior                                                                                                                        |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Where it is written  | On a parameter of an arrow-form function type only. `Callable[...]` sugar, tuple types and parenthesized types refuse it at parse time. |
+| Unmarked for marked  | A callable whose parameter is not marked can be passed where a marked one is expected: it leaves the argument as it was.        |
+| Marked for unmarked  | A callable whose parameter is marked cannot be passed where the caller does not expect the change; the checker refuses it.      |
+| Display              | Diagnostics and hovers spell the marker, as in `(mut Counter, int) -> int`.                                                     |
+
+Method decorators use the marker for a `mut self` method's receiver; see [Decorators](../language.md#decorators).
+
 ## Rest-Aware Function Values
 
 Function values preserve source-declared rest parameters. A function declared with `*args: T` accepts additional positional arguments and `*list_value` unpacking through the function value. A function declared with `**kwargs: T` accepts additional keyword arguments and `**dict_value` unpacking through the function value.

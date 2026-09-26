@@ -304,6 +304,44 @@ This amendment preserves RFC 036's binding contract: later references, exports, 
 
 Python decorators can replace a function binding with an arbitrary object. Incan intentionally does not copy that dynamic part of Python's model: user-defined function and method decorators are callable-to-callable transforms. Python's `Callable[[A, B], R]` corresponds to Incan's `(A, B) -> R`; `=>` is only for closure expressions, not callable types. The common generic registry shape is `(F) -> F`; wrappers that intentionally change the callable signature should spell both the source callable type and replacement callable type explicitly.
 
+### v0.6 amendment (2026-09-26): method decorator receivers are spelled like the method
+
+Issue #1790 changed how a method decorator's shapes spell the receiver. As shipped in v0.3, a decorator on `def label(self, value: int) -> str` had to accept `(&Box, int) -> str`, a decorator on `def bump(mut self, value: int) -> int` had to accept `(&mut Box, int) -> int`, and a function returned in the method's place was declared `def parse(box: &Box, value: int) -> int`. That was the one place ordinary Incan source had to write `&` or `&mut`. Everywhere else source says `self` or `mut self` and the compiler plans how the value is passed; that planning (duckborrowing) is meant to keep those spellings out of Incan source, so the method decorator path now uses it too.
+
+The receiver is spelled the way the method spells it:
+
+```incan
+class Box:
+    value: int
+
+    @as_int
+    def label(self, value: int) -> str:
+        return "value"
+
+    @keep
+    def bump(mut self, by: int) -> int:
+        self.value = self.value + by
+        return self.value
+
+def parse(box: Box, value: int) -> int:
+    return value + 1
+
+def as_int(func: (Box, int) -> str) -> (Box, int) -> int:
+    return parse
+
+def keep(func: (mut Box, int) -> int) -> (mut Box, int) -> int:
+    return func
+```
+
+- A `self` method's shapes take the owner type, `(Box, int) -> str`, and a function returned in its place takes `box: Box`.
+- A `mut self` method's shapes mark the receiver `mut`, `(mut Box, int) -> int`, and a function returned in its place takes `mut box: Box`. The marker is new function-type syntax, `(mut T, ...) -> R`, with the meaning a `mut` parameter already has: the callable's changes to that argument are visible to the caller. A callable whose parameter is not marked can be passed where a marked one is expected; a marked one cannot be passed where none is expected.
+- The marker follows the method in every shape of the decorator chain and on every function a decorator returns in the method's place; a mismatch is a type error.
+- The compiler decides how the receiver is passed, and a program written with the new spelling builds to the same program the former spelling did.
+- A decorator whose shapes name a `self` method's receiver is declared in the module of the method's type and writes those shapes as callable types, not through a type alias, so the compiler can pass the receiver to it the way the method's wrapper does.
+
+**Migration.** The former spelling is refused rather than deprecated. A receiver written `&Box` or `&mut Box` in a method decorator's shape, or on the function it returns in the method's place, fails with `INCAN-T0110`, and the diagnostic names what to write instead: `(Box, int) -> str` for a `self` method, `(mut Box, int) -> int` for a `mut self` method, `box: Box` or `mut box: Box` on the returned function. `&T` and `&mut T` remain valid type syntax where a Rust signature needs them.
+
+### Async decorators
 ### Async decorators
 
 A decorator applied to an `async def` receives an async function value. The decorator is responsible for preserving async semantics correctly — typically by defining an `async def wrapper(...)` internally. The compiler does not automatically lift a synchronous wrapper to async; a sync decorator applied to an async function produces a sync-typed result, which is likely a type error at the call site.
@@ -315,6 +353,7 @@ A decorator applied to an `async def` receives an async function value. The deco
 | Decorator is not callable              | `decorator 'X' is not callable`                     |
 | Decorator argument type mismatch       | `decorator 'X' expects a function of type …, got …` |
 | Decorator factory returns non-callable | `'X(args)' does not return a callable`              |
+| Method decorator receiver written `&Owner` or `&mut Owner` (v0.6 amendment) | `INCAN-T0110`, naming the spelling to write |
 | Compiler built-in used on wrong target | Existing compiler diagnostics (unchanged)           |
 
 ## Design details
@@ -323,7 +362,7 @@ A decorator applied to an `async def` receives an async function value. The deco
 
 RFC 036 originally required no new decorator syntax beyond `@name` and `@name(args)`. The v0.3 implementation amendment also accepts explicit generic call-site arguments on decorator factory calls, as in `@name[T](args)`, using the same type-argument syntax as ordinary generic calls. Unknown decorator names no longer produce an error on `def`, `async def`, or method declarations — they desugar instead.
 
-Method decorator signatures use reference callable parameters for receivers. Immutable method receivers are written as `&Owner`, and mutable method receivers are written as `&mut Owner`, for example `(&Box, int) -> str` and `(&mut Counter, int) -> int`.
+Method decorator signatures spell the receiver the way the method does (v0.6 amendment above): the owner type for a `self` method and the owner type marked `mut` for a `mut self` method, for example `(Box, int) -> str` and `(mut Counter, int) -> int`. The v0.3 spelling, `(&Box, int) -> str` and `(&mut Counter, int) -> int`, is refused with `INCAN-T0110`.
 
 Class, model, trait, newtype, enum, field, alias, and module declarations continue to restrict decorators to compiler built-ins where such decorators are supported.
 
@@ -350,6 +389,8 @@ If `module_a` decorates with `module_b`'s `app` object, `module_b`'s exported bi
 ### Compatibility / migration
 
 Fully additive and non-breaking. Previously-invalid unknown decorators on functions and methods now desugar rather than error. All existing compiler built-in decorators are unaffected.
+
+The v0.6 amendment is the exception: a method decorator written against v0.3 with a `&Owner` or `&mut Owner` receiver is refused with `INCAN-T0110` and is rewritten as described in that amendment.
 
 ## Alternatives considered
 

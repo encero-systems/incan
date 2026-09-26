@@ -478,6 +478,7 @@ impl AstLowering {
                         kind: param.kind,
                         has_default: param.has_default,
                         is_partial_preset: param.is_partial_preset,
+                        is_mut: param.is_mut,
                     })
                     .collect(),
                 Box::new(self.expand_pub_manifest_type_aliases(library, *ret, expanding)),
@@ -1084,7 +1085,15 @@ impl AstLowering {
             ResolvedType::Function(params, ret) => IrType::Function {
                 params: params
                     .iter()
-                    .map(|param| self.lower_resolved_type_with_rust_path_mode(&param.ty, rust_path_mode))
+                    .map(|param| {
+                        let param_ty = self.lower_resolved_type_with_rust_path_mode(&param.ty, rust_path_mode);
+                        // A `mut`-marked callable parameter is passed so the caller sees the callee's changes (#1790).
+                        if param.is_mut {
+                            IrType::RefMut(Box::new(param_ty))
+                        } else {
+                            param_ty
+                        }
+                    })
                     .collect(),
                 ret: Box::new(self.lower_resolved_type_with_rust_path_mode(ret, rust_path_mode)),
             },
@@ -1322,6 +1331,10 @@ impl AstLowering {
                 self.lower_type_with_type_params(&inner.node, type_param_names),
             )),
             ast::Type::RefMut(inner) => IrType::RefMut(Box::new(
+                self.lower_type_with_type_params(&inner.node, type_param_names),
+            )),
+            // A `mut`-marked callable parameter is passed so the caller sees the callee's changes (#1790).
+            ast::Type::MutParam(inner) => IrType::RefMut(Box::new(
                 self.lower_type_with_type_params(&inner.node, type_param_names),
             )),
             ast::Type::Unit => IrType::Unit,

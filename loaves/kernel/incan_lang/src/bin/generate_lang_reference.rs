@@ -428,7 +428,7 @@ pub def sample(value: int) -> int:
     return value + 1
 ```
 
-Method decorators receive an unbound callable shape with the receiver first. A decorator on `def label(self, value: int) -> str` sees `(&Box, int) -> str`; a decorator on `def bump(mut self, value: int) -> int` sees `(&mut Box, int) -> int`. The wrapper passes the actual receiver borrow through to the decorated callable, so method decorators do not require cloning the receiver.
+Method decorators receive an unbound callable shape with the receiver first, spelled the way the method spells it. A decorator on `def label(self, value: int) -> str` sees `(Box, int) -> str`; a decorator on `def bump(mut self, value: int) -> int` sees `(mut Box, int) -> int`, where `mut` marks the parameter whose changes the caller sees, as it does on a `def` parameter. A function the decorator returns in the method's place is declared the same way: `def parse(box: Box, value: int) -> int` for a `self` method, `def grow(mut box: Box, value: int) -> int` for a `mut self` method. The compiler decides how the receiver is passed, so a receiver written `&Box` or `&mut Box` in these shapes is refused with `INCAN-T0110`. A decorator whose shapes name a `self` method's receiver is declared in the module of the method's type, with those shapes written as callable types rather than through a type alias.
 
 Class, model, trait, enum, newtype, field, alias, and module decorators remain limited to compiler-owned decorators. Compiler-owned decorators such as `@derive`, `@route`, `@rust.extern`, `@rust.allow`, `@staticmethod`, `@classmethod`, and `@requires` keep their existing special behavior.
 

@@ -16,7 +16,7 @@ class Counter:
         self.value = self.value + by
         return self.value
 
-def keep(func: (&mut Counter, int) -> int) -> (&mut Counter, int) -> int:
+def keep(func: (mut Counter, int) -> int) -> (mut Counter, int) -> int:
     println("decorating bump")
     return func
 

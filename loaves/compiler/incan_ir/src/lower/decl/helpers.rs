@@ -815,6 +815,7 @@ impl AstLowering {
             ast::Type::Function(_, _) => "fn".to_string(),
             ast::Type::Ref(inner) => format!("&{}", Self::serialize_type(&inner.node)),
             ast::Type::RefMut(inner) => format!("&mut {}", Self::serialize_type(&inner.node)),
+            ast::Type::MutParam(inner) => format!("&mut {}", Self::serialize_type(&inner.node)),
             ast::Type::Unit => "()".to_string(),
             ast::Type::Tuple(items) => {
                 let inner = items

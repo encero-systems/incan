@@ -384,6 +384,27 @@ const OPERATOR_HAS_NO_TYPE_PARAMETER_BOUND: DiagnosticCatalogEntry = DiagnosticC
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/numeric_semantics/"),
 };
 
+const METHOD_DECORATOR_RECEIVER_SPELLING: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0110",
+    title: "Method decorator spells the receiver with `&`",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A method decorator's shape writes the decorated method's receiver as `&Owner` or `&mut Owner` instead of the way the method writes it.",
+    explanation: "A decorator on a method receives the method as a callable whose first parameter is the receiver, and returns the callable that takes the method's place. Incan source spells that receiver the way the method does. A decorator on `def label(self, value: int) -> str` accepts `(Box, int) -> str`; a decorator on `def bump(mut self, value: int) -> int` accepts `(mut Box, int) -> int`, where `mut` marks the parameter whose changes the caller sees, as it does on a `def` parameter. A function a decorator returns in the method's place is declared the same way: `def parse(box: Box, value: int) -> int`, or `def grow(mut box: Box, value: int) -> int` for a `mut self` method. The compiler decides how the receiver is passed, so the `&Owner` and `&mut Owner` spellings are refused in that position; `&T` and `&mut T` stay available where a Rust signature needs them.",
+    examples: &[
+        "class Box:\n    value: int\n\n    @as_int\n    def label(self, value: int) -> str:\n        return \"value\"\n\ndef parse(box: &Box, value: int) -> int:\n    return value\n\ndef as_int(func: (&Box, int) -> str) -> (&Box, int) -> int:\n    return parse",
+    ],
+    common_causes: &[
+        "A method decorator written before the receiver spelling changed, when RFC 036 required `&Owner` and `&mut Owner`.",
+        "Carrying a Rust `&self` or `&mut self` signature over into an Incan callable type.",
+    ],
+    fixes: &[
+        "For a `self` method, write the owner type: `(Box, int) -> str`, and `def parse(box: Box, value: int) -> int` for a function returned in the method's place.",
+        "For a `mut self` method, mark it `mut`: `(mut Box, int) -> int`, and `def grow(mut box: Box, value: int) -> int` for a function returned in the method's place.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/language/"),
+};
+
 const IMPORT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-I0001",
     title: "Import or module resolution error",
@@ -506,6 +527,7 @@ const CATALOG: &[DiagnosticCatalogEntry] = &[
     ROUTE_HANDLER_RETURN_NOT_RESPONSE,
     ROUTE_HANDLER_PARAMETER_UNBOUND,
     OPERATOR_HAS_NO_TYPE_PARAMETER_BOUND,
+    METHOD_DECORATOR_RECEIVER_SPELLING,
     IMPORT,
     SDK_COMPONENT_DISABLED,
     SDK_COMPONENT_UNAVAILABLE,
@@ -827,6 +849,49 @@ mod tests {
             "the remedy must name the operator's trait hook, got {:?}",
             operator.hints
         );
+    }
+
+    /// Issue #1790: the refused receiver spelling on a method decorator has its own explainable code, and its remedy
+    /// names the spelling to write instead.
+    #[test]
+    fn method_decorator_receiver_spelling_refusal_uses_a_distinct_stable_code() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let shared = errors::method_decorator_receiver_spelling(
+            "Method decorator '@as_int'",
+            "label",
+            "&Box",
+            "(Box, int) -> str",
+            false,
+            Span::default(),
+        );
+        let mutable = errors::method_decorator_receiver_spelling(
+            "Method decorator '@keep'",
+            "bump",
+            "&mut Counter",
+            "(mut Counter, int) -> int",
+            true,
+            Span::default(),
+        );
+
+        for (refusal, shape, receiver) in [
+            (&shared, "`(Box, int) -> str`", "`self`"),
+            (&mutable, "`(mut Counter, int) -> int`", "`mut self`"),
+        ] {
+            assert_eq!(code_for_error(refusal, DiagnosticPhase::Typecheck), "INCAN-T0110");
+            assert!(
+                refusal.hints.iter().any(|hint| hint.contains(shape)
+                    && hint.contains(receiver)
+                    && hint.contains("the compiler decides how the receiver is passed")),
+                "the remedy must spell the replacement shape, got {:?}",
+                refusal.hints
+            );
+        }
+        let Some(entry) = explain("INCAN-T0110") else {
+            return Err("INCAN-T0110 must have a catalog explanation".into());
+        };
+        assert_eq!(entry.severity, "error");
+        assert_eq!(entry.phase, "typecheck");
+        Ok(())
     }
 
     #[test]

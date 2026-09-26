@@ -34,6 +34,12 @@ pub enum Type {
     Ref(Box<Spanned<Type>>),
     /// Mutable reference type: `&mut T`
     RefMut(Box<Spanned<Type>>),
+    /// `mut`-marked parameter of a callable type: the `mut T` in `(mut T, int) -> R`.
+    ///
+    /// The marker says the callable's changes to that argument are visible to the caller, which is what a `mut`
+    /// parameter of a `def` already means. The parser produces it only for a parameter of a `(...) -> R` callable type
+    /// and refuses it in a tuple or grouped type.
+    MutParam(Box<Spanned<Type>>),
     /// Unit type
     Unit,
     /// Tuple type: `(int, str)`
@@ -112,7 +118,7 @@ impl Type {
             Type::Function(params, ret) => {
                 params.iter().any(|param| param.node.mentions_name(name)) || ret.node.mentions_name(name)
             }
-            Type::Ref(inner) | Type::RefMut(inner) => inner.node.mentions_name(name),
+            Type::Ref(inner) | Type::RefMut(inner) | Type::MutParam(inner) => inner.node.mentions_name(name),
             Type::Tuple(elems) => elems.iter().any(|elem| elem.node.mentions_name(name)),
             Type::Qualified(_) | Type::Dotted(_) | Type::IntLiteral(_) | Type::Unit | Type::SelfType | Type::Infer => {
                 false
@@ -193,6 +199,7 @@ impl fmt::Display for Type {
             }
             Type::Ref(inner) => write!(f, "&{}", inner.node),
             Type::RefMut(inner) => write!(f, "&mut {}", inner.node),
+            Type::MutParam(inner) => write!(f, "mut {}", inner.node),
             Type::Unit => write!(f, "Unit"),
             Type::Tuple(elems) => {
                 write!(f, "(")?;
@@ -243,6 +250,7 @@ mod tests {
         assert!(Type::Tuple(vec![simple("int"), simple("T")]).mentions_name("T"));
         assert!(Type::Function(vec![simple("int")], Box::new(simple("T"))).mentions_name("T"));
         assert!(Type::Ref(Box::new(simple("T"))).mentions_name("T"));
+        assert!(Type::MutParam(Box::new(simple("T"))).mentions_name("T"));
         assert!(Type::DottedGeneric(vec!["c".to_string(), "Ptr".to_string()], vec![simple("T")]).mentions_name("T"));
         assert!(!Type::Qualified(vec!["T".to_string(), "Inner".to_string()]).mentions_name("T"));
         assert!(!Type::Dotted(vec!["T".to_string(), "Inner".to_string()]).mentions_name("T"));

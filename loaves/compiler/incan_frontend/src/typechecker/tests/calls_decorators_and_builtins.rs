@@ -1,6 +1,6 @@
 //! Callables at the call site: parameter lists and callable defaults, variadic rest parameters, fixed and variadic call
-//! unpacking, borrowed (`&`) parameter shapes, RFC 022 decorator resolution and user-defined decorators, builtin
-//! functions, and module or import shadowing of builtins (#1116).
+//! unpacking, borrowed (`&`) parameter shapes, RFC 022 decorator resolution and user-defined decorators with their
+//! method receiver spelling (#1790), builtin functions, and module or import shadowing of builtins (#1116).
 
 use super::*;
 
@@ -506,8 +506,40 @@ async def fetch() -> int:
     assert_check_ok(source);
 }
 
+/// Check `source`, returning the checker so a test can read the facts it recorded for lowering.
+fn checked_decorator_program(source: &str) -> Result<(crate::ast::Program, TypeChecker), Box<dyn std::error::Error>> {
+    let tokens = lexer::lex(source).map_err(|errs| format!("lex failed: {errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("parse failed: {errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| format!("typecheck failed: {errs:?}"))?;
+    Ok((ast, checker))
+}
+
+/// Return the receiver slot the checker recorded for the function declaration named `name`.
+fn receiver_slot_of(
+    ast: &crate::ast::Program,
+    checker: &TypeChecker,
+    name: &str,
+) -> Option<MethodDecoratorReceiverSlot> {
+    let decl = ast
+        .declarations
+        .iter()
+        .find(|decl| matches!(&decl.node, crate::ast::Declaration::Function(function) if function.name == name))?;
+    checker
+        .type_info()
+        .declarations
+        .method_decorator_receiver_slots
+        .get(&(decl.span.start, decl.span.end))
+        .copied()
+}
+
+/// Issue #1790: a `self` method's decorator spells the receiver the way the method does, and so does the function it
+/// returns in the method's place. The recorded binding keeps the form the method's wrapper passes the receiver in, and
+/// the decorator and its replacement are named for lowering.
 #[test]
-fn test_user_defined_method_decorator_updates_method_binding_type() {
+fn test_user_defined_method_decorator_updates_method_binding_type() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 class Box:
   value: int
@@ -516,16 +548,40 @@ class Box:
   def label(self, value: int) -> str:
     return "value"
 
-def parse(box: &Box, value: int) -> int:
+def parse(box: Box, value: int) -> int:
   return value
 
-def as_int(func: (&Box, int) -> str) -> (&Box, int) -> int:
+def as_int(func: (Box, int) -> str) -> (Box, int) -> int:
   return parse
 
 def main(box: Box) -> int:
   return box.label(1)
 "#;
-    assert_check_ok(source);
+    let (ast, checker) = checked_decorator_program(source)?;
+    let binding = checker
+        .type_info()
+        .declarations
+        .decorated_method_bindings
+        .get(&("Box".to_string(), "label".to_string()))
+        .ok_or("expected a decorated binding for Box.label")?;
+    assert_eq!(binding.unbound_ty.to_string(), "(&Box, int) -> int");
+    assert_eq!(binding.original_unbound_ty.to_string(), "(&Box, int) -> str");
+    assert_eq!(
+        receiver_slot_of(&ast, &checker, "as_int"),
+        Some(MethodDecoratorReceiverSlot {
+            mutable: false,
+            role: MethodDecoratorReceiverRole::Decorator,
+        })
+    );
+    assert_eq!(
+        receiver_slot_of(&ast, &checker, "parse"),
+        Some(MethodDecoratorReceiverSlot {
+            mutable: false,
+            role: MethodDecoratorReceiverRole::Replacement,
+        })
+    );
+    assert_eq!(receiver_slot_of(&ast, &checker, "main"), None);
+    Ok(())
 }
 
 #[test]
@@ -535,7 +591,7 @@ trait Service:
   @keep
   def read(self) -> int
 
-def keep(func: (&Service) -> int) -> (&Service) -> int:
+def keep(func: (Service) -> int) -> (Service) -> int:
   return func
 "#;
     assert_check_ok(source);
@@ -562,8 +618,10 @@ model Bad:
     );
 }
 
+/// Issue #1790: a `mut self` method's decorator marks the receiver `mut`, and the function it returns in the method's
+/// place takes the receiver as a `mut` parameter, whose changes the caller sees.
 #[test]
-fn test_user_defined_decorator_on_mutable_method_is_checked() {
+fn test_user_defined_decorator_on_mutable_method_is_checked() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 class Counter:
   value: int
@@ -573,10 +631,231 @@ class Counter:
     self.value = self.value + 1
     return self.value
 
-def keep(func: (&mut Counter) -> int) -> (&mut Counter) -> int:
+  @doubled
+  def add(mut self, by: int) -> int:
+    self.value = self.value + by
+    return self.value
+
+def keep(func: (mut Counter) -> int) -> (mut Counter) -> int:
   return func
+
+def grow(mut counter: Counter, by: int) -> int:
+  counter.value = counter.value + by * 2
+  return counter.value
+
+def doubled(func: (mut Counter, int) -> int) -> (mut Counter, int) -> int:
+  return grow
 "#;
-    assert_check_ok(source);
+    let (ast, checker) = checked_decorator_program(source)?;
+    let binding = checker
+        .type_info()
+        .declarations
+        .decorated_method_bindings
+        .get(&("Counter".to_string(), "add".to_string()))
+        .ok_or("expected a decorated binding for Counter.add")?;
+    assert_eq!(binding.unbound_ty.to_string(), "(&mut Counter, int) -> int");
+    assert_eq!(
+        receiver_slot_of(&ast, &checker, "grow"),
+        Some(MethodDecoratorReceiverSlot {
+            mutable: true,
+            role: MethodDecoratorReceiverRole::Replacement,
+        })
+    );
+    Ok(())
+}
+
+/// Assert that `source` is refused with `INCAN-T0110` and a remedy naming `replacement`.
+fn assert_receiver_spelling_refused(source: &str, written: &str, replacement: &str) {
+    let errors = check_str_err(source, "a method decorator receiver spelled with `&` must be refused");
+    assert!(
+        errors.iter().any(|err| err.stable_code() == Some("INCAN-T0110")
+            && err.message.contains(&format!("as `{written}`"))
+            && err.hints.iter().any(|hint| hint.contains(&format!("`{replacement}`"))
+                && hint.contains("the compiler decides how the receiver is passed"))),
+        "expected INCAN-T0110 for `{written}` naming `{replacement}`, got {errors:?}"
+    );
+}
+
+/// Issue #1790: the `&Owner` and `&mut Owner` receiver spellings are refused with a code that names the spelling to
+/// write, in the shape a decorator accepts, in the shape it returns, and on the function it returns.
+#[test]
+fn test_method_decorator_receiver_spelled_with_ampersand_is_refused() {
+    assert_receiver_spelling_refused(
+        r#"
+class Box:
+  value: int
+
+  @as_int
+  def label(self, value: int) -> str:
+    return "value"
+
+def parse(box: Box, value: int) -> int:
+  return value
+
+def as_int(func: (&Box, int) -> str) -> (Box, int) -> int:
+  return parse
+"#,
+        "&Box",
+        "(Box, int) -> str",
+    );
+    assert_receiver_spelling_refused(
+        r#"
+class Box:
+  value: int
+
+  @as_int
+  def label(self, value: int) -> str:
+    return "value"
+
+def as_int(func: (Box, int) -> str) -> (&Box, int) -> str:
+  return func
+"#,
+        "&Box",
+        "(Box, int) -> str",
+    );
+    assert_receiver_spelling_refused(
+        r#"
+class Counter:
+  value: int
+
+  @keep
+  def bump(mut self, by: int) -> int:
+    self.value = self.value + by
+    return self.value
+
+def keep(func: (&mut Counter, int) -> int) -> (&mut Counter, int) -> int:
+  return func
+"#,
+        "&mut Counter",
+        "(mut Counter, int) -> int",
+    );
+    assert_receiver_spelling_refused(
+        r#"
+class Box:
+  value: int
+
+  @as_int
+  def label(self, value: int) -> str:
+    return "value"
+
+def parse(box: &Box, value: int) -> int:
+  return value
+
+def as_int(func: (Box, int) -> str) -> (Box, int) -> int:
+  return parse
+"#,
+        "&Box",
+        "box: Box",
+    );
+}
+
+/// Issue #1790: the receiver's `mut` marker follows the method, in the decorator's shapes and on the function it
+/// returns in the method's place.
+#[test]
+fn test_method_decorator_receiver_mut_marker_must_match_the_method() {
+    let cases = [
+        (
+            r#"
+class Counter:
+  value: int
+
+  @keep
+  def bump(mut self, by: int) -> int:
+    self.value = self.value + by
+    return self.value
+
+def keep(func: (Counter, int) -> int) -> (Counter, int) -> int:
+  return func
+"#,
+            "Method decorator '@keep' takes the receiver of 'bump' without `mut`",
+        ),
+        (
+            r#"
+class Box:
+  value: int
+
+  @as_int
+  def label(self, value: int) -> str:
+    return "value"
+
+def as_int(func: (mut Box, int) -> str) -> (mut Box, int) -> str:
+  return func
+"#,
+            "Method decorator '@as_int' marks the receiver of 'label' `mut`",
+        ),
+        (
+            r#"
+class Counter:
+  value: int
+
+  @keep
+  def bump(mut self, by: int) -> int:
+    self.value = self.value + by
+    return self.value
+
+def keep(func: (mut Counter, int) -> int) -> (Counter, int) -> int:
+  return func
+"#,
+            "Method decorator '@keep' returns a shape that takes the receiver of 'bump' without `mut`",
+        ),
+        (
+            r#"
+class Counter:
+  value: int
+
+  @keep
+  def bump(mut self, by: int) -> int:
+    self.value = self.value + by
+    return self.value
+
+def peek(counter: Counter, by: int) -> int:
+  return counter.value + by
+
+def keep(func: (mut Counter, int) -> int) -> (mut Counter, int) -> int:
+  return peek
+"#,
+            "Function 'peek', returned by '@keep', takes the receiver of 'bump' without `mut`",
+        ),
+    ];
+    for (source, expected) in cases {
+        let errors = check_str_err(
+            source,
+            "a receiver `mut` marker that differs from the method must be refused",
+        );
+        assert!(
+            errors.iter().any(|err| err.message.contains(expected)),
+            "expected `{expected}`, got {errors:?}"
+        );
+    }
+}
+
+/// Issue #1790: a callable that changes its `mut` argument cannot stand in where the caller does not expect the
+/// change, and one that leaves its argument alone can stand in where a change is allowed.
+#[test]
+fn test_mut_marked_callable_parameters_are_compatible_in_one_direction() {
+    assert_check_ok(
+        r#"
+class Counter:
+  value: int
+
+def widen(func: (Counter) -> int) -> (mut Counter) -> int:
+  return func
+"#,
+    );
+    let errors = check_str_err(
+        r#"
+class Counter:
+  value: int
+
+def narrow(func: (mut Counter) -> int) -> (Counter) -> int:
+  return func
+"#,
+        "a `mut`-marked callable must not stand in for an unmarked one",
+    );
+    assert!(
+        errors.iter().any(|err| err.message.contains("(mut Counter) -> int")),
+        "expected the mismatch to spell the `mut` marker, got {errors:?}"
+    );
 }
 
 #[test]

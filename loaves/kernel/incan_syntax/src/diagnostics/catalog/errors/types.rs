@@ -318,6 +318,80 @@ pub fn decorator_result_not_callable(path: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("decorator '{path}' must return a callable"), span)
 }
 
+/// Report a method decorator, or a function it returns in the method's place, that spells the decorated method's
+/// receiver as `&Owner` or `&mut Owner` (#1790).
+///
+/// Incan source spells a method decorator's receiver the way the method spells it: `(Box, int) -> str` for a `self`
+/// method and `(mut Box, int) -> int` for a `mut self` method, and the compiler decides how the receiver is passed.
+/// `subject` names what spells it (`Method decorator '@as_int'`), `method` is the decorated method, `written` the
+/// refused receiver spelling (`&Box`) and `replacement` the spelling to write instead, a callable shape or a parameter.
+/// `INCAN-T0110` is its stable code.
+pub fn method_decorator_receiver_spelling(
+    subject: &str,
+    method: &str,
+    written: &str,
+    replacement: &str,
+    mutable_receiver: bool,
+    span: Span,
+) -> CompileError {
+    let receiver = if mutable_receiver { "mut self" } else { "self" };
+    CompileError::type_error(
+        format!("{subject} spells the receiver of '{method}' as `{written}`"),
+        span,
+    )
+    .with_stable_code("INCAN-T0110")
+    .with_hint(format!(
+        "Write `{replacement}` for a `{receiver}` method; the compiler decides how the receiver is passed"
+    ))
+    .with_note(
+        "A method decorator spells the receiver the way the method does: the owner type for `self`, and the owner \
+         type marked `mut` for `mut self`",
+    )
+}
+
+/// Report a method-decorator shape or replacement whose receiver `mut` marker disagrees with the method (#1790).
+///
+/// A `mut self` method's changes to its receiver are visible to its caller, so every shape in its decorator chain and
+/// every function a decorator returns in its place must take the receiver marked `mut`; a `self` method's must not.
+/// `subject` names what carries the wrong marker (the decorator's accepted shape, its returned shape, or a replacement
+/// function) and `fix` is the spelling to write instead.
+pub fn method_decorator_receiver_mut_mismatch(
+    subject: &str,
+    method: &str,
+    mutable_receiver: bool,
+    fix: &str,
+    span: Span,
+) -> CompileError {
+    let message = if mutable_receiver {
+        format!("{subject} takes the receiver of '{method}' without `mut`, but '{method}' is a `mut self` method")
+    } else {
+        format!("{subject} marks the receiver of '{method}' `mut`, but '{method}' is a `self` method")
+    };
+    CompileError::type_error(message, span).with_hint(fix.to_string())
+}
+
+/// Report a method decorator whose receiver shape the compiler cannot pass the way the method's wrapper does (#1790).
+///
+/// The compiler passes a decorated method's receiver to the decorator's shapes and to the function it returns in the
+/// method's place the way the method receives it. It can do that for a decorator declared in the module of the
+/// method's owner whose shapes are written as callable types, `(Box, int) -> str`. `reason` says which of the two the
+/// decorator is missing.
+pub fn method_decorator_receiver_shape_unsupported(
+    decorator: &str,
+    method: &str,
+    reason: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!("Method decorator '@{decorator}' cannot receive the receiver of '{method}': {reason}"),
+        span,
+    )
+    .with_hint(
+        "Declare the decorator beside the method's type and write its shapes as callable types, such as \
+         `(Box, int) -> str`",
+    )
+}
+
 /// Report a type-valued decorator argument on a user-defined decorator factory.
 pub fn decorator_type_argument_not_supported(path: &str, span: Span) -> CompileError {
     CompileError::type_error(

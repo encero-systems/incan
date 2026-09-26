@@ -300,6 +300,57 @@ def decorate(f: (&Box, &mut Box) -> int) -> (&Box) -> int:
     Ok(())
 }
 
+/// Issue #1790: a callable type marks the parameter whose changes the caller sees with `mut`, as a `def` does, in the
+/// accepted and in the returned shape alike.
+#[test]
+fn test_function_type_accepts_mut_marked_params() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+class Counter:
+  value: int
+
+def keep(func: (mut Counter, int) -> int) -> (mut Counter, int) -> int:
+  return func
+"#;
+    let program = parse_str(source)?;
+    let function = require_function_decl(&program.declarations[1])?;
+    for shape in [&function.params[0].node.ty.node, &function.return_type.node] {
+        match shape {
+            Type::Function(params, ret) => {
+                assert!(
+                    matches!(&params[0].node, Type::MutParam(inner) if matches!(&inner.node, Type::Simple(name) if name == "Counter")),
+                    "expected the receiver to carry the mut marker, got {:?}",
+                    params[0].node
+                );
+                assert!(matches!(&params[1].node, Type::Simple(name) if name == "int"));
+                assert!(matches!(&ret.node, Type::Simple(name) if name == "int"));
+            }
+            other => panic!("Expected function type, got: {other:?}"),
+        }
+        assert_eq!(shape.to_string(), "(mut Counter, int) -> int");
+    }
+    Ok(())
+}
+
+/// Issue #1790: the `mut` marker belongs to a callable type's parameters, so a tuple or a parenthesized type refuses
+/// it instead of dropping it.
+#[test]
+fn test_mut_marker_outside_callable_params_is_parse_error() {
+    for source in [
+        "def bad(pair: (mut int, str)) -> None:\n  pass\n",
+        "def bad(value: (mut int)) -> None:\n  pass\n",
+    ] {
+        let Err(errs) = parse_str(source) else {
+            panic!("a `mut` marker outside a callable type's parameters should fail to parse: {source}");
+        };
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("`mut` marks a parameter of a callable type")),
+            "Expected the mut-marker placement error for {source}, got: {:?}",
+            errs.iter().map(|err| &err.message).collect::<Vec<_>>()
+        );
+    }
+}
+
 #[test]
 fn test_callable_invalid_arity_is_parse_error() {
     let source = r#"

@@ -20,7 +20,7 @@ use super::type_info::{
 };
 use super::{
     DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FunctionBindingInfo, MemberBindingSurface,
-    TestingFixtureInfo, TypeChecker, YieldContext,
+    MethodDecoratorReceiverRole, MethodDecoratorReceiverSlot, TestingFixtureInfo, TypeChecker, YieldContext,
 };
 use incan_lang::interop::{RustItemKind, RustItemMetadata, RustTraitAssoc};
 use incan_lang::lang::decorators::{self, DecoratorId};
@@ -64,11 +64,98 @@ fn function_info_callable_type(info: &FunctionInfo) -> ResolvedType {
 }
 
 /// Convert a collected method signature into the callable value type that method decorators receive.
-fn method_info_callable_type(info: &MethodInfo, receiver_ty: ResolvedType) -> ResolvedType {
+fn method_info_callable_type(info: &MethodInfo, receiver: CallableParam) -> ResolvedType {
     let mut params = Vec::with_capacity(info.params.len() + 1);
-    params.push(CallableParam::named("self", receiver_ty, ParamKind::Normal));
+    params.push(receiver);
     params.extend(info.params.clone());
     ResolvedType::Function(params, Box::new(info.return_type.clone()))
+}
+
+/// Return the receiver parameter of a callable shape: its first parameter, when the shape is a callable type.
+fn callable_receiver_slot(shape: &ResolvedType) -> Option<&CallableParam> {
+    match shape {
+        ResolvedType::Function(params, _) => params.first(),
+        _ => None,
+    }
+}
+
+/// How a method decorator declaration's shapes hold the decorated method's receiver (#1790).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReceiverShapeSpelling {
+    /// No shape holds the receiver in a position of its own, as with a generic `(F) -> F` decorator.
+    Absent,
+    /// Every shape that holds the receiver is written as a callable type, `(Box, int) -> str`.
+    Written,
+    /// A shape that holds the receiver is written through a type alias.
+    ThroughAlias,
+}
+
+/// How a decorated method takes its receiver, and the two forms that receiver has in the method's callable shape.
+///
+/// Source spells the receiver the way the method does (#1790): the owner type for `self`, the owner type marked `mut`
+/// for `mut self`. That surface form is what the decorator chain is checked against. The recorded binding keeps the
+/// form the method's generated wrapper passes, `&Owner` or `&mut Owner`, so lowering builds the decorated static,
+/// adapter and wrapper from the same types it built them from when source had to spell that form.
+#[derive(Debug, Clone)]
+struct DecoratedMethodReceiver {
+    /// The owner type the receiver belongs to.
+    owner_ty: ResolvedType,
+    /// Whether the method takes `mut self`.
+    mutable: bool,
+}
+
+impl DecoratedMethodReceiver {
+    /// Describe the receiver of `owner`'s method with the given receiver; a static method keeps the shared form.
+    fn new(owner: &str, receiver: Option<Receiver>) -> Self {
+        Self {
+            owner_ty: ResolvedType::Named(owner.to_string()),
+            mutable: receiver == Some(Receiver::Mutable),
+        }
+    }
+
+    /// Return the receiver parameter of the method's callable shape as source spells it.
+    fn surface_param(&self) -> CallableParam {
+        CallableParam::named("self", self.owner_ty.clone(), ParamKind::Normal).with_mut(self.mutable)
+    }
+
+    /// Return `shape` with its receiver written the way this method spells it: without `&`, marked `mut` for `mut
+    /// self`.
+    ///
+    /// Diagnostics use it to spell the shape the source should have written, keeping the rest of the shape and a type
+    /// parameter in the receiver position as they are.
+    fn surface_shape(&self, shape: &ResolvedType) -> ResolvedType {
+        let ResolvedType::Function(params, ret) = shape else {
+            return shape.clone();
+        };
+        let mut params = params.clone();
+        if let Some(receiver) = params.first_mut() {
+            if let ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) = &receiver.ty {
+                receiver.ty = (**inner).clone();
+            }
+            receiver.is_mut = self.mutable;
+        }
+        ResolvedType::Function(params, ret.clone())
+    }
+
+    /// Return a checked shape with its receiver in the form the method's generated wrapper passes it.
+    ///
+    /// This is the one place the checker turns the source spelling into `&Owner` / `&mut Owner`: the recorded binding
+    /// is lowering's input for the decorated static and wrapper, and is never shown to the user.
+    fn with_passing_receiver(&self, shape: ResolvedType) -> ResolvedType {
+        let ResolvedType::Function(mut params, ret) = shape else {
+            return shape;
+        };
+        if let Some(receiver) = params.first_mut() {
+            let ty = std::mem::replace(&mut receiver.ty, ResolvedType::Unknown);
+            receiver.ty = if self.mutable {
+                ResolvedType::RefMut(Box::new(ty))
+            } else {
+                ResolvedType::Ref(Box::new(ty))
+            };
+            receiver.is_mut = false;
+        }
+        ResolvedType::Function(params, ret)
+    }
 }
 
 /// Callable signature resolved for one `interop:` adapter reference.
@@ -405,6 +492,7 @@ impl TypeChecker {
                         kind: param.kind,
                         has_default: param.has_default,
                         is_partial_preset: param.is_partial_preset,
+                        is_mut: param.is_mut,
                     })
                     .collect(),
                 Box::new(Self::concretize_self_type_in_annotation(ret, self_ty)),
@@ -467,6 +555,7 @@ impl TypeChecker {
                 kind: param.kind,
                 has_default: param.has_default,
                 is_partial_preset: param.is_partial_preset,
+                is_mut: param.is_mut,
             })
             .collect();
         concrete.return_type = Self::concretize_self_type_in_annotation(&method.return_type, self_ty);
@@ -5042,12 +5131,12 @@ impl TypeChecker {
         let Some(mut method_info) = self.lookup_method_info_for_update(owner, &method.name) else {
             return;
         };
-        let receiver_ty = self.decorated_method_receiver_type(owner, method.receiver);
-        let original_binding_ty = method_info_callable_type(&method_info, receiver_ty);
+        let receiver = DecoratedMethodReceiver::new(owner, method.receiver);
+        let original_binding_ty = method_info_callable_type(&method_info, receiver.surface_param());
         let mut binding_ty = original_binding_ty.clone();
         for decorator in method.decorators.iter().rev() {
             if self.is_user_defined_decorator_candidate(&decorator.node) {
-                binding_ty = self.apply_user_defined_decorator(decorator, binding_ty, &method.name);
+                binding_ty = self.apply_user_defined_method_decorator(decorator, binding_ty, &method.name, &receiver);
             }
         }
 
@@ -5060,8 +5149,8 @@ impl TypeChecker {
         self.type_info.declarations.decorated_method_bindings.insert(
             (owner.to_string(), method.name.clone()),
             DecoratedMethodBindingInfo {
-                unbound_ty: binding_ty,
-                original_unbound_ty: original_binding_ty,
+                unbound_ty: receiver.with_passing_receiver(binding_ty),
+                original_unbound_ty: receiver.with_passing_receiver(original_binding_ty),
             },
         );
         method_info.params = surface_params.to_vec();
@@ -5069,14 +5158,374 @@ impl TypeChecker {
         self.replace_method_info(owner, &method.name, method_info);
     }
 
-    /// Return the source-level receiver type passed as the first argument to a method decorator.
-    fn decorated_method_receiver_type(&self, owner: &str, receiver: Option<Receiver>) -> ResolvedType {
-        let owner_ty = ResolvedType::Named(owner.to_string());
-        if receiver == Some(Receiver::Mutable) {
-            ResolvedType::RefMut(Box::new(owner_ty))
-        } else {
-            ResolvedType::Ref(Box::new(owner_ty))
+    /// Type-check one decorator on a method against the method's current callable shape.
+    ///
+    /// A method decorator gets every check a function decorator gets, and must also spell the receiver the way the
+    /// method does (#1790): a receiver written `&Owner` or `&mut Owner` in the shape the decorator accepts or returns
+    /// is refused with `INCAN-T0110`, and the receiver's `mut` marker must match the method's receiver in both shapes.
+    /// A decorator whose shapes name the receiver as a callable type must also be one lowering can pass a shared
+    /// receiver to, which [`Self::method_decorator_receiver_is_plannable`] decides.
+    fn apply_user_defined_method_decorator(
+        &mut self,
+        decorator: &Spanned<Decorator>,
+        binding_ty: ResolvedType,
+        method_name: &str,
+        receiver: &DecoratedMethodReceiver,
+    ) -> ResolvedType {
+        let display = Self::decorator_display(&decorator.node);
+        let callable_ty = self.user_defined_decorator_callable_type(decorator, &display);
+
+        // ---- Context: the receiver as the decorator's declared shapes spell it ----
+        let (accepted, returned) = match &callable_ty {
+            ResolvedType::Function(params, ret) => (params.first().map(|param| &param.ty), Some(&**ret)),
+            _ => (None, None),
+        };
+        for shape in [accepted, returned].into_iter().flatten() {
+            if let Some(slot) = callable_receiver_slot(shape)
+                && matches!(slot.ty, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
+            {
+                self.errors.push(errors::method_decorator_receiver_spelling(
+                    &format!("Method decorator '@{display}'"),
+                    method_name,
+                    &slot.ty.to_string(),
+                    &receiver.surface_shape(shape).to_string(),
+                    receiver.mutable,
+                    decorator.span,
+                ));
+                return ResolvedType::Unknown;
+            }
         }
+        if let Some(shape) = accepted
+            && let Some(slot) = callable_receiver_slot(shape)
+            && slot.is_mut != receiver.mutable
+        {
+            self.errors.push(errors::method_decorator_receiver_mut_mismatch(
+                &format!("Method decorator '@{display}'"),
+                method_name,
+                receiver.mutable,
+                &format!("Write `{}`", receiver.surface_shape(shape)),
+                decorator.span,
+            ));
+            return ResolvedType::Unknown;
+        }
+        let names_receiver = [accepted, returned]
+            .into_iter()
+            .flatten()
+            .any(|shape| callable_receiver_slot(shape).is_some());
+        if names_receiver && !receiver.mutable && !self.method_decorator_receiver_is_plannable(decorator) {
+            self.errors.push(errors::method_decorator_receiver_shape_unsupported(
+                &display,
+                method_name,
+                "it is not a function declared in this module",
+                decorator.span,
+            ));
+            return ResolvedType::Unknown;
+        }
+
+        // ---- Context: the ordinary decorator application, then the receiver of the shape it produced ----
+        let result = self.apply_decorator_callable(&display, callable_ty, binding_ty, method_name, decorator.span);
+        if let Some(slot) = callable_receiver_slot(&result)
+            && slot.is_mut != receiver.mutable
+        {
+            self.errors.push(errors::method_decorator_receiver_mut_mismatch(
+                &format!("Method decorator '@{display}' returns a shape that"),
+                method_name,
+                receiver.mutable,
+                &format!("Return `{}`", receiver.surface_shape(&result)),
+                decorator.span,
+            ));
+            return ResolvedType::Unknown;
+        }
+        result
+    }
+
+    /// Return whether lowering can pass a shared receiver to the declaration a method decorator resolved to.
+    ///
+    /// Lowering passes a `self` method's receiver to the decorator's shapes and to the function the decorator returns
+    /// the way the method's wrapper passes it, by rewriting those declarations' signatures (#1790). It can rewrite a
+    /// function declared in this module only; a decorator imported from elsewhere, or reached through a value, keeps
+    /// the signature its own module gave it.
+    fn method_decorator_receiver_is_plannable(&self, decorator: &Spanned<Decorator>) -> bool {
+        self.local_function_declaration_span(decorator.span).is_some()
+    }
+
+    /// Return the declaration span of the function declared in this module that the reference at `span` resolved to.
+    fn local_function_declaration_span(&self, span: Span) -> Option<(usize, usize)> {
+        let identity = self.type_info.resolved_identity(span)?;
+        if identity.kind != SemanticSourceTargetKind::Function {
+            return None;
+        }
+        let declaration_span = (identity.declaration_span.start, identity.declaration_span.end);
+        self.type_info
+            .declarations
+            .function_bindings_by_span
+            .get(&declaration_span)
+            .is_some_and(|binding| binding.identity.as_ref() == Some(identity))
+            .then_some(declaration_span)
+    }
+
+    /// Record the local declarations that take a decorated method's receiver, and check the functions a method
+    /// decorator returns in the method's place (#1790).
+    ///
+    /// A method decorator's shapes and the function it returns in the method's place spell the receiver the way the
+    /// method does, `(Box, int) -> str` and `def parse(box: Box, value: int)`. The method's generated wrapper passes a
+    /// `self` receiver without giving it up, so lowering passes it to those declarations the same way; this pass names
+    /// them, keyed by declaration span. It runs once every body is checked, because a decorator may be declared after
+    /// the type it decorates and the functions it returns are known only from its checked body.
+    pub(super) fn record_method_decorator_receiver_slots(&mut self, program: &Program) {
+        let functions: HashMap<(usize, usize), &FunctionDecl> = program
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.node {
+                Declaration::Function(function) => Some(((decl.span.start, decl.span.end), function)),
+                _ => None,
+            })
+            .collect();
+        for decl in &program.declarations {
+            let (owner, methods) = match &decl.node {
+                Declaration::Model(model) => (&model.name, &model.methods),
+                Declaration::Class(class) => (&class.name, &class.methods),
+                Declaration::Newtype(newtype) => (&newtype.name, &newtype.methods),
+                Declaration::Enum(enum_decl) => (&enum_decl.name, &enum_decl.methods),
+                Declaration::Trait(trait_decl) => (&trait_decl.name, &trait_decl.methods),
+                _ => continue,
+            };
+            for method in methods {
+                let key = (owner.clone(), method.node.name.clone());
+                if !self.type_info.declarations.decorated_method_bindings.contains_key(&key) {
+                    continue;
+                }
+                let receiver = DecoratedMethodReceiver::new(owner, method.node.receiver);
+                for decorator in &method.node.decorators {
+                    if self.is_user_defined_decorator_candidate(&decorator.node) {
+                        self.record_decorator_receiver_slots(decorator, &method.node.name, &receiver, &functions);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Record one method decorator's declaration, the decorators a factory returns, and their replacements as receiver
+    /// slots.
+    ///
+    /// A decorator that is not a function of this module was already refused, or needs no slot, when the chain was
+    /// checked. A shared receiver needs the shapes that hold it written as callable types, because lowering rewrites
+    /// the receiver position of those annotations; a shape reached through a type alias has none of its own and is
+    /// refused here.
+    fn record_decorator_receiver_slots(
+        &mut self,
+        decorator: &Spanned<Decorator>,
+        method_name: &str,
+        receiver: &DecoratedMethodReceiver,
+        functions: &HashMap<(usize, usize), &FunctionDecl>,
+    ) {
+        let Some(declaration_span) = self.local_function_declaration_span(decorator.span) else {
+            return;
+        };
+        let Some(function) = functions.get(&declaration_span).copied() else {
+            return;
+        };
+        let display = Self::decorator_display(&decorator.node);
+
+        // ---- Context: the decorator declarations in this chain link ----
+        let decorating = if decorator.node.is_call {
+            let role = MethodDecoratorReceiverRole::Factory;
+            match self.receiver_shape_spelling(function, declaration_span, role) {
+                ReceiverShapeSpelling::ThroughAlias if !receiver.mutable => {
+                    self.push_receiver_shape_through_alias(&display, method_name, decorator.span);
+                    return;
+                }
+                ReceiverShapeSpelling::Absent => {}
+                ReceiverShapeSpelling::Written | ReceiverShapeSpelling::ThroughAlias => {
+                    self.record_receiver_slot(declaration_span, receiver, role);
+                }
+            }
+            self.returned_local_functions(&function.body, functions)
+        } else {
+            vec![(declaration_span, function)]
+        };
+
+        // ---- Context: each decorator's shapes and the functions it returns in the method's place ----
+        for (span, decorating_function) in decorating {
+            let role = MethodDecoratorReceiverRole::Decorator;
+            match self.receiver_shape_spelling(decorating_function, span, role) {
+                ReceiverShapeSpelling::ThroughAlias if !receiver.mutable => {
+                    self.push_receiver_shape_through_alias(&display, method_name, decorator.span);
+                    continue;
+                }
+                ReceiverShapeSpelling::Absent => {}
+                ReceiverShapeSpelling::Written | ReceiverShapeSpelling::ThroughAlias => {
+                    self.record_receiver_slot(span, receiver, role);
+                }
+            }
+            for (replacement_span, replacement) in self.returned_local_functions(&decorating_function.body, functions) {
+                if self.check_method_decorator_replacement(replacement, &display, method_name, receiver) {
+                    self.record_receiver_slot(replacement_span, receiver, MethodDecoratorReceiverRole::Replacement);
+                }
+            }
+        }
+    }
+
+    /// Record that the declaration at `span` takes a decorated method's receiver in `role`.
+    fn record_receiver_slot(
+        &mut self,
+        span: (usize, usize),
+        receiver: &DecoratedMethodReceiver,
+        role: MethodDecoratorReceiverRole,
+    ) {
+        self.type_info.declarations.method_decorator_receiver_slots.insert(
+            span,
+            MethodDecoratorReceiverSlot {
+                mutable: receiver.mutable,
+                role,
+            },
+        );
+    }
+
+    /// Refuse a method decorator whose receiver shape is written through a type alias.
+    fn push_receiver_shape_through_alias(&mut self, display: &str, method_name: &str, span: Span) {
+        self.errors.push(errors::method_decorator_receiver_shape_unsupported(
+            display,
+            method_name,
+            "a shape that holds the receiver is written through a type alias instead of as a callable type",
+            span,
+        ));
+    }
+
+    /// Say whether a decorator declaration's shapes hold the receiver, and whether they are written as callable types.
+    ///
+    /// The positions are the first parameter and the result of a decorator, and the same two inside the decorator
+    /// shape a factory returns. A position holds the receiver when the checker resolved it to a callable type; lowering
+    /// can rewrite its receiver only when the source wrote it as one.
+    fn receiver_shape_spelling(
+        &self,
+        function: &FunctionDecl,
+        span: (usize, usize),
+        role: MethodDecoratorReceiverRole,
+    ) -> ReceiverShapeSpelling {
+        let Some(binding) = self.type_info.declarations.function_bindings_by_span.get(&span) else {
+            return ReceiverShapeSpelling::Absent;
+        };
+        // Each pair is an annotation as written and the type the checker resolved for it.
+        let positions: Vec<(&Type, &ResolvedType)> = match role {
+            MethodDecoratorReceiverRole::Decorator => {
+                let mut positions = vec![(&function.return_type.node, &binding.return_type)];
+                if let (Some(param), Some(resolved)) = (function.params.first(), binding.params.first()) {
+                    positions.push((&param.node.ty.node, &resolved.ty));
+                }
+                positions
+            }
+            MethodDecoratorReceiverRole::Factory => match (&function.return_type.node, &binding.return_type) {
+                (Type::Function(params, ret), ResolvedType::Function(resolved_params, resolved_ret)) => {
+                    let mut positions = vec![(&ret.node, &**resolved_ret)];
+                    if let (Some(param), Some(resolved)) = (params.first(), resolved_params.first()) {
+                        positions.push((&param.node, &resolved.ty));
+                    }
+                    positions
+                }
+                (annotation, resolved) => vec![(annotation, resolved)],
+            },
+            MethodDecoratorReceiverRole::Replacement => Vec::new(),
+        };
+        let mut holding = positions
+            .into_iter()
+            .filter(|(_, resolved)| callable_receiver_slot(resolved).is_some())
+            .map(|(annotation, _)| annotation)
+            .peekable();
+        if holding.peek().is_none() {
+            ReceiverShapeSpelling::Absent
+        } else if holding.all(|annotation| matches!(annotation, Type::Function(..))) {
+            ReceiverShapeSpelling::Written
+        } else {
+            ReceiverShapeSpelling::ThroughAlias
+        }
+    }
+
+    /// Check the receiver of a function a method decorator returns in the method's place; return whether it takes the
+    /// receiver the way the method does.
+    ///
+    /// The replacement declares the receiver as its first parameter, spelled the way the method spells it: `box: Box`
+    /// for a `self` method, `mut box: Box` for a `mut self` method, whose changes the caller sees.
+    fn check_method_decorator_replacement(
+        &mut self,
+        replacement: &FunctionDecl,
+        display: &str,
+        method_name: &str,
+        receiver: &DecoratedMethodReceiver,
+    ) -> bool {
+        let Some(first) = replacement.params.first() else {
+            return false;
+        };
+        let param = &first.node;
+        let owner = match &param.ty.node {
+            Type::Ref(inner) | Type::RefMut(inner) => inner.node.to_string(),
+            other => other.to_string(),
+        };
+        let spelled = if receiver.mutable {
+            format!("mut {}: {owner}", param.name)
+        } else {
+            format!("{}: {owner}", param.name)
+        };
+        let subject = format!("Function '{}', returned by '@{display}',", replacement.name);
+        if matches!(param.ty.node, Type::Ref(_) | Type::RefMut(_)) {
+            self.errors.push(errors::method_decorator_receiver_spelling(
+                &subject,
+                method_name,
+                &param.ty.node.to_string(),
+                &spelled,
+                receiver.mutable,
+                param.ty.span,
+            ));
+            return false;
+        }
+        if param.is_mut != receiver.mutable {
+            self.errors.push(errors::method_decorator_receiver_mut_mismatch(
+                &subject,
+                method_name,
+                receiver.mutable,
+                &format!("Declare its first parameter as `{spelled}`"),
+                first.span,
+            ));
+            return false;
+        }
+        true
+    }
+
+    /// Return the functions declared in this module that `body` returns by name, outside nested callables.
+    fn returned_local_functions<'p>(
+        &self,
+        body: &[Spanned<Statement>],
+        functions: &HashMap<(usize, usize), &'p FunctionDecl>,
+    ) -> Vec<((usize, usize), &'p FunctionDecl)> {
+        let mut returned = Vec::new();
+        let mut blocks = vec![body];
+        while let Some(block) = blocks.pop() {
+            for statement in block {
+                match &statement.node {
+                    Statement::Return(Some(value)) => {
+                        if matches!(value.node, Expr::Ident(_))
+                            && let Some(span) = self.local_function_declaration_span(value.span)
+                            && let Some(function) = functions.get(&span)
+                        {
+                            returned.push((span, *function));
+                        }
+                    }
+                    Statement::If(if_stmt) => {
+                        blocks.push(&if_stmt.then_body);
+                        blocks.extend(if_stmt.elif_branches.iter().map(|(_, branch)| branch.as_slice()));
+                        if let Some(else_body) = &if_stmt.else_body {
+                            blocks.push(else_body);
+                        }
+                    }
+                    Statement::While(loop_stmt) => blocks.push(&loop_stmt.body),
+                    Statement::For(loop_stmt) => blocks.push(&loop_stmt.body),
+                    Statement::Loop(loop_stmt) => blocks.push(&loop_stmt.body),
+                    Statement::Unsafe(unsafe_stmt) => blocks.push(&unsafe_stmt.body),
+                    _ => {}
+                }
+            }
+        }
+        returned
     }
 
     /// Return the method metadata currently visible for an owner and method name.
@@ -5138,13 +5587,18 @@ impl TypeChecker {
         binding_name: &str,
     ) -> ResolvedType {
         let display = Self::decorator_display(&decorator.node);
-        let callable_ty = if decorator.node.is_call {
-            self.check_decorator_factory_expr(decorator, &display)
-        } else {
-            self.check_expr(&Self::decorator_path_expr(&decorator.node, decorator.span))
-        };
+        let callable_ty = self.user_defined_decorator_callable_type(decorator, &display);
 
         self.apply_decorator_callable(&display, callable_ty, binding_ty, binding_name, decorator.span)
+    }
+
+    /// Type-check a decorator's path or factory call and return the callable it applies to the declaration.
+    fn user_defined_decorator_callable_type(&mut self, decorator: &Spanned<Decorator>, display: &str) -> ResolvedType {
+        if decorator.node.is_call {
+            self.check_decorator_factory_expr(decorator, display)
+        } else {
+            self.check_expr(&Self::decorator_path_expr(&decorator.node, decorator.span))
+        }
     }
 
     /// Type-check a decorator factory expression such as `@logged(label="x")` or `@app.get("/")`.
