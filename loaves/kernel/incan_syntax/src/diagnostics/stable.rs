@@ -386,22 +386,22 @@ const OPERATOR_HAS_NO_TYPE_PARAMETER_BOUND: DiagnosticCatalogEntry = DiagnosticC
 
 const IMMUTABLE_ARGUMENT_TO_MUT_PARAMETER: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-T0117",
-    title: "Immutable argument for a `mut` parameter",
+    title: "Immutable argument for a changed `mut` parameter",
     severity: "error",
     phase: "typecheck",
-    summary: "A `mut` parameter whose changes reach the caller receives an immutable binding, a literal or another temporary.",
-    explanation: "A parameter declared `mut` is a mutable binding inside its function. When its type is not `int`, `float`, `bool` or a Rust type, and it is not a `*args` or `**kwargs` parameter, the function's changes to it are also visible to the caller after the call. The argument therefore has to be a place the caller owns and may change: a binding or parameter declared `mut`, a static, `self` in a `mut self` method, or a field or element of one of those. An immutable binding, a literal, a call result or any other temporary is refused. The rule applies to functions, methods and trait methods alike.",
+    summary: "A `mut` parameter the callee changes, and whose changes reach the caller, receives an immutable binding, a field of one, a collection element or a static.",
+    explanation: "A parameter declared `mut` is a mutable binding inside its function. When its type is not `int`, `float`, `bool` or a Rust type, and it is not a `*args` or `**kwargs` parameter, the function's changes to it are visible to the caller after the call. When the function does change such a parameter (assigns to its elements or fields, calls a method that changes it, or passes it on to a parameter that is changed), the argument has to be a place the caller may change: a binding or parameter declared `mut`, `self` in a `mut self` method, or a field of one of those. An immutable binding or a field of one is refused, and so are an element of a list or dict and a static, whose change would reach only a copy. A literal or a call result is accepted, and so is any argument for a parameter the function never changes. The rule applies to functions, methods and trait methods alike.",
     examples: &[
         "def extend(mut items: list[int]) -> None:\n    items.append(9)\n\ndef main() -> None:\n    items: list[int] = [1, 2]\n    extend(items)",
-        "def extend(mut items: list[int]) -> None:\n    items.append(9)\n\ndef main() -> None:\n    extend([1, 2])",
+        "def extend(mut items: list[int]) -> None:\n    items.append(9)\n\ndef main() -> None:\n    mut rows: list[list[int]] = [[1]]\n    extend(rows[0])",
     ],
     common_causes: &[
         "A binding declared without `mut` passed to a function that changes it.",
-        "A literal or a call result passed directly to a `mut` parameter.",
+        "A list element, dict value or static passed straight to a function that changes it.",
     ],
     fixes: &[
         "Declare the binding with `mut`: `mut items: list[int] = [1, 2]`.",
-        "Bind a literal or a call result to a `mut` variable first and pass the variable.",
+        "Bind the element or static to a `mut` variable, pass the variable, and store it back.",
     ],
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/derives_and_traits/"),
 };
@@ -812,9 +812,15 @@ mod tests {
 
     #[test]
     fn immutable_argument_to_mut_parameter_uses_its_stable_code_issue1773() -> Result<(), String> {
-        let binding = errors::immutable_argument_to_mut_parameter("items", "extend", Some("items"), Span::default());
-        let temporary = errors::immutable_argument_to_mut_parameter("items", "extend", None, Span::default());
-        for error in [&binding, &temporary] {
+        let binding = errors::immutable_argument_to_mut_parameter(
+            "items",
+            "extend",
+            errors::MutArgumentPlace::Binding("items".to_string()),
+            Span::default(),
+        );
+        let element =
+            errors::immutable_argument_to_mut_parameter("items", "extend", errors::MutArgumentPlace::Element, Span::default());
+        for error in [&binding, &element] {
             assert_eq!(code_for_error(error, DiagnosticPhase::Typecheck), "INCAN-T0117");
         }
         let entry = explain("INCAN-T0117").ok_or("INCAN-T0117 must have a catalog explanation")?;
@@ -826,12 +832,9 @@ mod tests {
             binding.hints
         );
         assert!(
-            temporary
-                .hints
-                .iter()
-                .any(|hint| hint.contains("Bind the value to a 'mut' variable")),
-            "a temporary's remedy says to bind it to a 'mut' variable first, got {:?}",
-            temporary.hints
+            element.hints.iter().any(|hint| hint.contains("store it back")),
+            "an element's remedy says to pass a 'mut' variable and store it back, got {:?}",
+            element.hints
         );
         Ok(())
     }

@@ -9,8 +9,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/decls/functions.rs",
-      "sha256": "11501d995cb618e961baa6acc25c8e0bf8b15874be9ee8aa68631a36f0dd6a40",
-      "lines": 2013
+      "sha256": "e4fa0e923dbbdc742967c64980250cc88d6aa56c5a74b92020792fdcb39d8b0f",
+      "lines": 2015
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/decls/impls.rs",
@@ -114,8 +114,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/mod.rs",
-      "sha256": "c84568ff798ff2b3852915c702752ae0bd3f19e7e95f187907d83834a74db1ab",
-      "lines": 4637
+      "sha256": "513391073130cd9250c415e4d21cf9dcca31d2cf58ac13a5ecd2060a4de5755c",
+      "lines": 4604
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/native_unions.rs",
@@ -156,7 +156,7 @@
     },
     {
       "kind": "change",
-      "pr": null,
+      "pr": 1814,
       "policy": "frozen",
       "files": [
         {
@@ -166,15 +166,11 @@
         {
           "path": "loaves/compiler/incan_emit/src/emit/decls/impls.rs",
           "change": "modified"
-        },
-        {
-          "path": "loaves/compiler/incan_emit/src/emit/mod.rs",
-          "change": "modified"
         }
       ],
       "compatibility_issue": "#1773",
-      "behavior_evidence": "behavior fixture cli/trait_default_method_mutable_parameter.incn (combined-branch run); emitter unit test trait_method_mut_parameter_keeps_one_shape_across_slot_impl_and_wrapper_issue1773 in incan_emit/src/tests/trait_parameters_and_element_bounds.rs; codegen_snapshot_tests and stdlib_generated_rust_snapshot_tests unchanged",
-      "semantic_owner": "1561: the checked parameter fact lowering already carries (FunctionParam mutability, Mutable = the caller sees the change); after the cutover Body IR states the parameter-passing shape and the trait slot, implementation and wrapper read it from there",
+      "behavior_evidence": "behavior fixture cli/trait_default_method_mutable_parameter.incn (combined-branch run); emitter unit tests trait_method_mut_parameter_keeps_one_shape_across_slot_impl_and_wrapper_issue1773 and mut_arguments_follow_the_checker_facts_issue1773 in incan_emit/src/tests/trait_parameters_and_element_bounds.rs; codegen_snapshot_tests and stdlib_generated_rust_snapshot_tests unchanged",
+      "semantic_owner": "1561: the checked parameter marker lowering already carries (FunctionParam mutability, Mutable = the caller sees the change); after the cutover Body IR states the parameter-passing shape and the trait slot, implementation and wrapper read it from there",
       "retirement_condition": "#654: the Rust-source backend is deleted; the replacement route passes a mut parameter from the recorded parameter fact and needs no separate trait-method or wrapper spelling"
     }
   ]

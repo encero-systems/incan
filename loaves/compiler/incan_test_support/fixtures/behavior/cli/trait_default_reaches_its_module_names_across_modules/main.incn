@@ -1,0 +1,28 @@
+# behavior: an imported trait's defaults, adopted through a module that re-exports the trait, return a variant of the trait module's enum, match on it, construct a model the trait module imports and call a private helper of the trait module, and a re-exported trait without defaults takes the adopter's method
+# retires: loaves/compiler/incan_ir/src/lower/tests/imported_trait_adoption_scope.rs::imported_trait_default_reaches_its_module_names_issue1759
+# retires: loaves/compiler/incan_ir/src/lower/tests/imported_trait_adoption_scope.rs::reexported_trait_binds_to_its_declaration_issue1759
+# retires: loaves/compiler/incan_ir/src/lower/tests/imported_trait_adoption_scope.rs::trait_default_helpers_are_visible_to_the_crate_issue1759
+# retires: loaves/compiler/incan_emit/src/codegen/dependency_metadata.rs::selected_trait_keeps_its_default_body_helpers_issue1759
+# expect-stdout:
+#   6
+#   true
+#   card
+
+from geometry import Measured, Plain
+
+
+model Card with Measured, Plain:
+    w: int
+
+    def width(self) -> int:
+        return self.w
+
+    def label(self) -> str:
+        return "card"
+
+
+def main() -> None:
+    card = Card(w=3)
+    println(card.size().n)
+    println(card.is_top())
+    println(card.label())

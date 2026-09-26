@@ -5236,6 +5236,7 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
         self.reject_mutating_call_through_immutable_self(base, &base_ty, method, span);
+        self.note_mut_param_method_call(base, &base_ty, method);
         if let Some(identity) = Self::compiler_builtin_method_identity(&base_ty, method) {
             self.type_info.record_resolved_identity(span, identity);
         }

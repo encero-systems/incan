@@ -461,10 +461,9 @@ pub struct TypeChecker {
     pub warnings: Vec<CompileError>,
     /// Track which bindings are mutable for mutation checks.
     pub mutable_bindings: HashSet<String>,
-    /// Declared parameters of every source callable with a `mut` parameter whose changes reach the caller, keyed by
-    /// the callable's declaration identity; calls to those callables must pass a mutable place for such a parameter
-    /// (#1773, `INCAN-T0117`).
-    pub(crate) caller_visible_mut_params: HashMap<CanonicalSymbolId, Vec<mut_arguments::DeclaredParamSlot>>,
+    /// Caller-visible `mut` parameters: which callables declare them, which the checked bodies change, and the call
+    /// arguments waiting to be decided once the module's bodies are known (#1773, `INCAN-T0117`).
+    pub(crate) mut_params: mut_arguments::MutParamFacts,
     /// The method whose body is being checked while its receiver is a plain `self`, so a write through `self`
     /// inside it can be refused with the declaration to change (#1723). `None` outside a method body, and inside a
     /// `mut self` method.
@@ -789,7 +788,7 @@ impl TypeChecker {
             errors: Vec::new(),
             warnings: Vec::new(),
             mutable_bindings: HashSet::new(),
-            caller_visible_mut_params: HashMap::new(),
+            mut_params: mut_arguments::MutParamFacts::default(),
             current_immutable_self_method: None,
             consumed_iterator_bindings: HashMap::new(),
             transferred_c_resource_bindings: HashMap::new(),
@@ -6555,6 +6554,7 @@ impl TypeChecker {
                 self.check_declaration(decl);
             }
         }
+        self.resolve_mut_arguments();
 
         self.type_info
             .c_abi

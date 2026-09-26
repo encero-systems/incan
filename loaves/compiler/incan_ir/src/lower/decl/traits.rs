@@ -6,10 +6,13 @@ use incan_lang::lang::magic_methods::{self, MagicMethodId};
 use incan_lang::lang::surface::methods::iterator_methods::{self, IteratorMethodId};
 use incan_lang::lang::traits as core_traits;
 use incan_lang::lang::traits::TraitId;
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::{callables, stdlib, trait_bounds};
 
 use super::super::super::Mutability;
-use super::super::super::decl::{FunctionParam, FunctionParamDefault, IrFunction, IrTrait, Visibility};
+use super::super::super::decl::{
+    FunctionParam, FunctionParamDefault, IrFunction, IrTrait, IrTraitBound, Visibility,
+};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
@@ -84,6 +87,42 @@ impl AstLowering {
             .collect()
     }
 
+    /// Return the method type parameters whose values a trait default body copies out of a list or dict (#1756).
+    ///
+    /// The Rust trait slot carries no body (defaults are expanded into each adopting implementation), so its generics
+    /// come from the declaration alone. A default that reads `items[0]` or slices `items[1:]` on a `list[K]`, or reads
+    /// `table[key]` on a `dict[str, V]`, copies a value of that type parameter, and each expansion states `Clone` for
+    /// it; the slot states it too, so an expanded method is never stricter than the slot it fills, wherever the
+    /// adopter lives.
+    fn default_body_copied_type_params(
+        &self,
+        body: &[ast::Spanned<ast::Statement>],
+        method_type_params: &HashSet<&str>,
+    ) -> HashSet<String> {
+        let mut copied = HashSet::new();
+        if method_type_params.is_empty() {
+            return copied;
+        }
+        let Some(info) = self.type_info.as_ref() else {
+            return copied;
+        };
+        incan_frontend::ast_walk::any_expr_in_body(body, |expr| {
+            let (base, slice) = match expr {
+                ast::Expr::Index(base, _) => (base, false),
+                ast::Expr::Slice(base, _) => (base, true),
+                _ => return false,
+            };
+            if let Some(element) = info
+                .expr_type(base.span)
+                .and_then(|base_ty| copied_collection_element(base_ty, slice))
+            {
+                collect_type_param_mentions(element, method_type_params, &mut copied);
+            }
+            false
+        });
+        copied
+    }
+
     /// Lower a trait declaration.
     pub(in crate::lower) fn lower_trait(&mut self, t: &ast::TraitDecl) -> Result<IrTrait, LoweringError> {
         let type_param_names: HashSet<&str> = t.type_params.iter().map(|tp| tp.name.as_str()).collect();
@@ -151,7 +190,7 @@ impl AstLowering {
                         Ok(FunctionParam {
                             name: p.node.name.clone(),
                             ty,
-                            mutability: self.lower_parameter_mutability(p.node.is_mut, &p.node.ty.node),
+                            mutability: self.lower_parameter_mutability(p),
                             is_self: false,
                             kind: p.node.kind,
                             default: self
@@ -173,6 +212,23 @@ impl AstLowering {
                 self.pop_scope();
 
                 let mut all_type_params = self.lower_callable_type_params(&m.node.type_params);
+                if let Some(default_body) = &m.node.body {
+                    let copied = self.default_body_copied_type_params(default_body, &method_type_param_names);
+                    for type_param in all_type_params
+                        .iter_mut()
+                        .filter(|type_param| copied.contains(type_param.name.as_str()))
+                    {
+                        if !type_param
+                            .bounds
+                            .iter()
+                            .any(|bound| bound.trait_path == trait_bounds::rust::CLONE)
+                        {
+                            type_param
+                                .bounds
+                                .push(IrTraitBound::simple(trait_bounds::rust::CLONE));
+                        }
+                    }
+                }
                 all_type_params.extend(hidden_type_params);
 
                 Ok(IrFunction {
@@ -228,6 +284,46 @@ impl AstLowering {
             methods,
             visibility: Self::map_visibility(t.visibility),
         })
+    }
+}
+
+/// Return the element an index read (or, with `slice`, a slice) of a list or dict of this type copies out.
+///
+/// A list index or slice copies list elements and a dict index copies a value; a dict has no slice.
+fn copied_collection_element(ty: &ResolvedType, slice: bool) -> Option<&ResolvedType> {
+    match ty {
+        ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => copied_collection_element(inner, slice),
+        ResolvedType::Generic(name, args) => match (collections::from_str(name), args.as_slice()) {
+            (Some(CollectionTypeId::List), [element]) => Some(element),
+            (Some(CollectionTypeId::Dict), [_, value]) if !slice => Some(value),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Collect the names of `type_params` that `ty` mentions, at any depth.
+fn collect_type_param_mentions(ty: &ResolvedType, type_params: &HashSet<&str>, mentioned: &mut HashSet<String>) {
+    match ty {
+        ResolvedType::TypeVar(name) | ResolvedType::Named(name) => {
+            if type_params.contains(name.as_str()) {
+                mentioned.insert(name.clone());
+            }
+        }
+        ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
+            for arg in args {
+                collect_type_param_mentions(arg, type_params, mentioned);
+            }
+        }
+        ResolvedType::FrozenList(inner)
+        | ResolvedType::FrozenSet(inner)
+        | ResolvedType::Ref(inner)
+        | ResolvedType::RefMut(inner) => collect_type_param_mentions(inner, type_params, mentioned),
+        ResolvedType::FrozenDict(key, value) => {
+            collect_type_param_mentions(key, type_params, mentioned);
+            collect_type_param_mentions(value, type_params, mentioned);
+        }
+        _ => {}
     }
 }
 

@@ -1,40 +1,57 @@
-//! `mut` parameters (#1773): a `mut` parameter is a mutable binding inside its function, method or trait default, and
-//! a call passes a mutable place for each `mut` parameter whose changes reach the caller (`INCAN-T0117`).
+//! `mut` parameters (#1773): a `mut` parameter is a mutable binding inside its function, method or trait default; a
+//! caller-visible one (any type but `int`, `float`, `bool` or a Rust type) is changed in place, never rebound, and a
+//! call passes a mutable place for it when the callee changes it (`INCAN-T0117`).
 
 use super::*;
 
 const MUT_ARGUMENT_CODE: &str = "INCAN-T0117";
 
-/// Return the `INCAN-T0117` refusals of one program, which must fail to check.
-fn mut_argument_refusals(source: &str) -> Result<Vec<CompileError>, String> {
-    match check_str(source) {
-        Ok(()) => Err(format!("expected INCAN-T0117 refusals, the program checked:\n{source}")),
-        Err(errors) => Ok(errors
-            .into_iter()
-            .filter(|error| error.stable_code() == Some(MUT_ARGUMENT_CODE))
-            .collect()),
-    }
+/// Check a program and return its errors, or an empty list when it checks.
+fn check_errors(source: &str) -> Vec<CompileError> {
+    check_str(source).err().unwrap_or_default()
 }
 
-/// Check one program that must be accepted, reporting its errors otherwise.
-fn assert_accepted(source: &str) -> Result<(), String> {
-    check_str(source).map_err(|errors| format!("expected the program to check, got {errors:?}\n{source}"))
+/// Return the `INCAN-T0117` refusals among a program's errors.
+fn mut_argument_refusals(source: &str) -> Vec<CompileError> {
+    check_errors(source)
+        .into_iter()
+        .filter(|error| error.stable_code() == Some(MUT_ARGUMENT_CODE))
+        .collect()
 }
 
-/// #1773: `n += 1` and a reassignment of a `mut` parameter are accepted in a function, an inherent method and a trait
-/// default method, whatever the parameter's type, while a parameter without `mut` stays immutable.
+/// Check a program that must be accepted, returning the program and its type facts.
+fn checked(source: &str) -> Result<(crate::ast::Program, TypeCheckInfo), String> {
+    let program = parse_program(source, "mut parameter program");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("expected the program to check, got {errors:?}\n{source}"))?;
+    Ok((program, checker.type_info().clone()))
+}
+
+/// Return the span of the `occurrence`-th (0-based) appearance of `needle` in `source`.
+fn span_of(source: &str, needle: &str, occurrence: usize) -> Result<Span, String> {
+    let start = source
+        .match_indices(needle)
+        .nth(occurrence)
+        .map(|(index, _)| index)
+        .ok_or_else(|| format!("`{needle}` #{occurrence} is not in the program"))?;
+    Ok(Span::new(start, start + needle.len()))
+}
+
+/// #1773: a `mut` scalar parameter is the callee's own copy, reassignable in a function, an inherent method and a
+/// trait default; a caller-visible `mut` parameter is changed in place, and rebinding it is refused; a parameter
+/// without `mut` stays immutable.
 #[test]
-fn mut_parameter_is_a_mutable_binding_in_its_body_issue1773() -> Result<(), String> {
-    assert_accepted(
+fn mut_parameter_bindings_in_their_bodies_issue1773() -> Result<(), String> {
+    checked(
         r#"
-def bumped(mut n: int) -> int:
-    n += 1
-    n = n * 2
-    return n
+type Count = int
 
-def relabeled(mut label: str) -> str:
-    label = label + "!"
-    return label
+def bumped(mut n: int, mut c: Count) -> int:
+    n += 1
+    c = c + n
+    return c
 
 class Counter:
     step: int
@@ -49,17 +66,15 @@ trait Stepper:
         return n
 
     def extended(self, mut items: list[int]) -> int:
-        items = [0]
         items.append(1)
+        items[0] = 2
         return len(items)
 
 model Walker with Stepper:
     id: int
 
 def main() -> None:
-    println(bumped(1))
-    mut label = "a"
-    println(relabeled(label))
+    println(bumped(1, 2))
     println(Counter(step=2).advanced(1))
     println(Walker(id=1).stepped(1))
     mut items: list[int] = []
@@ -67,29 +82,55 @@ def main() -> None:
 "#,
     )?;
 
-    let errors = match check_str("def frozen(n: int) -> int:\n    n += 1\n    return n\n") {
-        Ok(()) => return Err("a parameter without `mut` must stay immutable".to_string()),
-        Err(errors) => errors,
-    };
+    let rebinding = check_errors(
+        r#"
+def reset(mut items: list[int]) -> None:
+    items = [0]
+
+def relabeled(mut label: str) -> str:
+    label += "!"
+    return label
+
+trait Resetter:
+    def cleared(self, mut items: list[int]) -> int:
+        items = []
+        return 0
+"#,
+    );
+    let refused = rebinding
+        .iter()
+        .filter(|error| error.message.contains("Cannot rebind the 'mut' parameter"))
+        .count();
+    assert_eq!(
+        refused, 3,
+        "each rebinding of a caller-visible parameter is refused, got {rebinding:?}"
+    );
+
+    let frozen = check_errors("def frozen(n: int) -> int:\n    n += 1\n    return n\n");
     assert!(
-        errors.iter().any(|error| error.message.contains("Cannot mutate 'n'")),
-        "expected the immutable-parameter refusal, got {errors:?}"
+        frozen.iter().any(|error| error.message.contains("Cannot mutate 'n'")),
+        "a parameter without `mut` stays immutable, got {frozen:?}"
     );
     Ok(())
 }
 
-/// #1773: an immutable binding, a literal, a call result and a field of an immutable binding passed to a `mut`
-/// parameter whose changes reach the caller are refused, for a function, an inherent method and a trait default
-/// method, positionally and by name; each refusal names the parameter and the callee.
+/// #1773: when the callee changes a caller-visible parameter, an immutable binding, a field of one, a list element and
+/// a static are refused, for a function, a method and a trait default, positionally, by name, through a function value,
+/// and through a callee that passes the parameter on to one that changes it.
 #[test]
-fn immutable_argument_to_mut_parameter_is_refused_issue1773() -> Result<(), String> {
+fn argument_for_a_changed_mut_parameter_must_be_a_mutable_binding_issue1773() -> Result<(), String> {
     let refusals = mut_argument_refusals(
         r#"
+static LOG: list[int] = []
+
 model Basket:
     items: list[int]
 
 def extend(mut items: list[int]) -> None:
     items.append(9)
+
+def forward(mut items: list[int]) -> None:
+    extend(items)
 
 class Store:
     def fill(self, mut items: list[int]) -> None:
@@ -103,39 +144,40 @@ trait Replacer:
 model Widget with Replacer:
     id: int
 
-def fresh() -> list[int]:
-    return [3]
-
 def main() -> None:
     items: list[int] = [1, 2]
     basket = Basket(items=[4])
+    mut rows: list[list[int]] = [[1]]
     extend(items)
-    extend([1, 2])
-    extend(fresh())
     extend(basket.items)
+    extend(rows[0])
+    extend(LOG)
     extend(items=items)
+    forward(items)
+    f = extend
+    f(items)
     Store().fill(items)
     println(Widget(id=1).replace(items))
 "#,
-    )?;
-    assert_eq!(
-        refusals.len(),
-        7,
-        "one refusal per immutable argument, got {refusals:?}"
     );
-    for (index, callee) in ["extend", "extend", "extend", "extend", "extend", "fill", "replace"]
+    let callees = refusals
         .iter()
-        .enumerate()
-    {
-        let refusal = &refusals[index];
-        assert!(
+        .map(|refusal| {
             refusal
                 .message
-                .contains(&format!("'mut' parameter 'items' of '{callee}'")),
-            "refusal {index} must name the parameter and `{callee}`, got {:?}",
-            refusal.message
-        );
-    }
+                .split("' of '")
+                .nth(1)
+                .map(|rest| rest.trim_end_matches("' must be a mutable binding").to_string())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        callees,
+        [
+            "extend", "extend", "extend", "extend", "extend", "forward", "extend", "fill", "replace"
+        ],
+        "one refusal per argument that cannot receive the change, got {refusals:?}"
+    );
     assert!(
         refusals[0]
             .hints
@@ -145,58 +187,108 @@ def main() -> None:
         refusals[0].hints
     );
     assert!(
-        refusals[1]
-            .hints
-            .iter()
-            .any(|hint| hint.contains("Bind the value to a 'mut' variable")),
-        "a literal's refusal says to bind it to a `mut` variable, got {:?}",
-        refusals[1].hints
+        refusals[2].hints.iter().any(|hint| hint.contains("store it back")),
+        "an element's refusal says to pass a `mut` variable and store it back, got {:?}",
+        refusals[2].hints
     );
     Ok(())
 }
 
-/// #1773: a `mut` binding, a `mut` parameter passed on, a field of `mut self`, a static and an element of a `mut`
-/// binding are mutable places; a `mut` parameter of type `int`, `float` or `bool` only makes the parameter reassignable
-/// in its body, so any argument, a literal included, is accepted for it.
+/// #1773: temporaries, mutable places, scalar and scalar-alias parameters, and any argument for a parameter the callee
+/// never changes are accepted; an immutable binding for an unchanged parameter is handed over as a copy.
 #[test]
-fn mutable_places_and_copied_mut_parameters_are_accepted_issue1773() -> Result<(), String> {
-    assert_accepted(
-        r#"
-static LOG: list[int] = []
+fn arguments_the_callee_can_receive_are_accepted_issue1773() -> Result<(), String> {
+    let source = r#"
+type Count = int
 
 def extend(mut items: list[int]) -> None:
     items.append(9)
 
-def forward(mut items: list[int]) -> None:
-    extend(items)
+def total(mut items: list[int]) -> int:
+    return len(items)
 
-def bumped(mut n: int, mut ratio: float, mut flag: bool) -> int:
+def touch[T](mut value: T) -> None:
+    pass
+
+def bump(mut n: Count) -> Count:
     n += 1
     return n
 
+def fresh() -> list[int]:
+    return [3]
+
+trait Reader:
+    def measured(self, mut items: list[int]) -> int:
+        return len(items)
+
+model Probe with Reader:
+    id: int
+
 class Store:
     pub items: list[int]
-    pub rows: list[list[int]]
 
     def refill(mut self) -> None:
         extend(self.items)
-        extend(self.rows[0])
 
 def main() -> None:
     mut items: list[int] = [1]
+    fixed: list[int] = [1, 2]
+    c: Count = 1
     extend(items)
-    forward(items)
-    extend(items=items)
-    extend(LOG)
-    println(bumped(1, 2.0, true))
-    mut store = Store(items=[], rows=[[1]])
+    extend([3])
+    extend(fresh())
+    println(total(fixed))
+    touch(3)
+    println(bump(c))
+    println(Probe(id=1).measured(fixed))
+    mut store = Store(items=[])
     store.refill()
     extend(store.items)
-"#,
-    )
+"#;
+    let (_, info) = checked(source)?;
+    for occurrence in [1, 2] {
+        let span = span_of(source, "fixed)", occurrence - 1)?;
+        let argument = Span::new(span.start, span.start + "fixed".len());
+        assert!(
+            info.mut_argument_is_copied(argument),
+            "an immutable binding passed to an unchanged `mut` parameter is copied (occurrence {occurrence})"
+        );
+    }
+    let changed_argument = span_of(source, "extend(items)", 0)?;
+    assert!(
+        !info.mut_argument_is_copied(Span::new(changed_argument.start + 7, changed_argument.end - 1)),
+        "a mutable binding passed to a changed parameter is passed as itself"
+    );
+    Ok(())
 }
 
-/// #1773: the refusal follows a call into another source module, where the `mut` parameter is declared.
+/// #1773: the checker publishes each `mut` parameter's caller visibility for lowering, by resolved type, so an alias
+/// of `int` is the callee's own copy like `int` itself.
+#[test]
+fn mut_parameter_caller_visibility_follows_the_resolved_type_issue1773() -> Result<(), String> {
+    let source = "type Count = int\n\ndef touch(mut items: list[int], mut n: int, mut c: Count, mut label: str) -> None:\n    pass\n";
+    let (program, info) = checked(source)?;
+    let Some(crate::ast::Declaration::Function(function)) = program
+        .declarations
+        .iter()
+        .map(|declaration| &declaration.node)
+        .find(|declaration| matches!(declaration, crate::ast::Declaration::Function(_)))
+    else {
+        return Err("missing `touch`".to_string());
+    };
+    let visibility = function
+        .params
+        .iter()
+        .map(|param| {
+            info.declarations
+                .mut_param_shows_changes_to_caller(param.span, &param.node.name)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(visibility, [Some(true), Some(false), Some(false), Some(true)]);
+    Ok(())
+}
+
+/// #1773: the refusal follows a call into another source module, whose body this check does not read.
 #[test]
 fn immutable_argument_to_imported_mut_parameter_is_refused_issue1773() -> Result<(), String> {
     let helpers = parse_program(

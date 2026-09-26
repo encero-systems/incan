@@ -875,6 +875,13 @@ pub struct MutableRustTypeArgumentProjection {
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
 #[derive(Debug, Default, Clone)]
 pub struct DeclarationArtifacts {
+    /// Whether each declared `mut` parameter shows the callee's changes to the caller, keyed by the parameter's
+    /// declaration span and name (#1773).
+    ///
+    /// The checker decides it once on the resolved type (`int`, `float`, `bool`, their aliases, Rust types and rest
+    /// parameters are the callee's own copy); lowering reads it so the declaration and every call pass the parameter
+    /// the same way. The name keeps parameters of different source files, which share span numbering, apart.
+    pub mut_param_caller_visibility: HashMap<(usize, usize, String), bool>,
     /// Accepted foreign nominal bindings retained before lexical checker context is discarded.
     pub named_type_identities: std::collections::BTreeMap<String, CanonicalSymbolId>,
     /// Exact selected foreign origins retained from accepted bindings for native representation projection.
@@ -1295,6 +1302,12 @@ pub enum PartialProjectionTargetKind {
 /// Call-site semantic decisions selected by the typechecker.
 #[derive(Debug, Default, Clone)]
 pub struct CallArtifacts {
+    /// The callee's caller-visible `mut` parameter names for each call that resolved to such a callee, keyed by the
+    /// full call span, so lowering passes those arguments the way the declaration takes them (#1773).
+    pub caller_visible_mut_arguments: HashMap<(usize, usize), Vec<String>>,
+    /// Argument expressions, by span, that a call hands to a caller-visible `mut` parameter the callee never changes
+    /// while the argument is an immutable binding or field: lowering passes a copy of the value (#1773).
+    pub mut_argument_copies: HashSet<(usize, usize)>,
     /// Compiler-owned builtin selected for a call, keyed by the full call span.
     ///
     /// This distinguishes an explicit `std.builtins.name(...)` or unshadowed ambient builtin from a source/import
@@ -1742,7 +1755,36 @@ pub struct TestingFixtureInfo {
     pub dependencies: Vec<String>,
 }
 
+impl DeclarationArtifacts {
+    /// Record whether one declared `mut` parameter shows the callee's changes to the caller.
+    pub fn record_mut_param_caller_visibility(&mut self, span: Span, name: &str, shows_changes: bool) {
+        self.mut_param_caller_visibility
+            .insert((span.start, span.end, name.to_string()), shows_changes);
+    }
+
+    /// Return whether the `mut` parameter declared at `span` as `name` shows its changes to the caller, when the
+    /// checker collected it.
+    pub fn mut_param_shows_changes_to_caller(&self, span: Span, name: &str) -> Option<bool> {
+        self.mut_param_caller_visibility
+            .get(&(span.start, span.end, name.to_string()))
+            .copied()
+    }
+}
+
 impl TypeCheckInfo {
+    /// Return the caller-visible `mut` parameter names of the callee the call at `span` resolved to, if any.
+    pub fn caller_visible_mut_arguments(&self, span: Span) -> Option<&[String]> {
+        self.calls
+            .caller_visible_mut_arguments
+            .get(&(span.start, span.end))
+            .map(Vec::as_slice)
+    }
+
+    /// Return whether the argument expression at `span` is passed to its `mut` parameter as a copy.
+    pub fn mut_argument_is_copied(&self, span: Span) -> bool {
+        self.calls.mut_argument_copies.contains(&(span.start, span.end))
+    }
+
     /// Return the checked source path associated with one active import-derived binding.
     pub fn import_binding_path(&self, local_name: &str) -> Option<&[String]> {
         self.import_bindings.path(local_name)

@@ -207,6 +207,8 @@ impl TypeChecker {
                     if !is_mutable {
                         self.errors
                             .push(errors::mutation_without_mut(&compound.name, stmt.span));
+                    } else {
+                        self.refuse_caller_visible_mut_param_rebinding(&compound.name, stmt.span);
                     }
                     // Type check the value expression
                     let value_ty = self.check_expr(&compound.value);
@@ -407,8 +409,11 @@ impl TypeChecker {
                     match &target.node {
                         Expr::Ident(name) => {
                             self.record_write_target_identity(target.span, name);
-                            // Check that the variable is mutable
-                            if let Some(var_info) = self.lookup_local_variable_info(name)
+                            // Check that the variable is mutable; a caller-visible `mut` parameter is changed in
+                            // place, never rebound (#1773).
+                            if self.refuse_caller_visible_mut_param_rebinding(name, target.span) {
+                                // Reported by the refusal itself.
+                            } else if let Some(var_info) = self.lookup_local_variable_info(name)
                                 && !var_info.is_mutable
                             {
                                 self.errors.push(errors::mutation_without_mut(name, target.span));
@@ -428,6 +433,7 @@ impl TypeChecker {
                             if let Some(place) = Self::self_rooted_place(target) {
                                 self.reject_write_through_immutable_self(&place, SelfMutation::Assignment, target.span);
                             }
+                            self.note_mut_param_write(target);
                         }
                         _ => {
                             self.errors.push(errors::invalid_tuple_assignment_target(target.span));
@@ -507,6 +513,7 @@ impl TypeChecker {
     fn check_field_assignment(&mut self, field_assign: &FieldAssignmentStmt, span: Span) {
         // Check the object expression
         let obj_ty = self.check_expr(&field_assign.object);
+        self.note_mut_param_write(&field_assign.object);
         let field = &field_assign.field;
         if let Some(place) = Self::self_rooted_place(&field_assign.object) {
             self.reject_write_through_immutable_self(
@@ -614,6 +621,7 @@ impl TypeChecker {
     fn check_index_assignment(&mut self, index_assign: &IndexAssignmentStmt, span: Span) {
         // Check the object expression (should be a collection)
         let obj_ty = self.check_expr(&index_assign.object);
+        self.note_mut_param_write(&index_assign.object);
         if let Some(place) = Self::self_rooted_place(&index_assign.object) {
             self.reject_write_through_immutable_self(&format!("{place}[...]"), SelfMutation::Assignment, span);
         }
@@ -760,6 +768,8 @@ impl TypeChecker {
             if !is_mutable {
                 self.errors
                     .push(errors::mutation_without_mut(&assign.name, target_span));
+            } else {
+                self.refuse_caller_visible_mut_param_rebinding(&assign.name, target_span);
             }
             if !self.types_compatible(&value_ty, &var_ty) {
                 self.errors.push(errors::assignment_type_mismatch(
@@ -851,6 +861,7 @@ impl TypeChecker {
             self.symbols.define(symbol);
         }
         self.record_write_target_identity(target_span, &assign.name);
+        self.note_function_value_binding(target_span, &assign.value);
         self.bind_c_abi_output_slot_assignment(&assign.name, assign.value.span);
         self.bind_c_abi_span_assignment(&assign.name, assign.value.span);
         self.bind_c_abi_raw_result_assignment(&assign.name, assign.value.span);
@@ -906,6 +917,8 @@ impl TypeChecker {
                 let declared_ty = var_info.ty.clone();
                 if !is_mutable {
                     self.errors.push(errors::mutation_without_mut(name, target_span));
+                } else {
+                    self.refuse_caller_visible_mut_param_rebinding(name, target_span);
                 }
                 if !self.types_compatible(&value_ty, &declared_ty) {
                     self.errors.push(errors::assignment_type_mismatch(

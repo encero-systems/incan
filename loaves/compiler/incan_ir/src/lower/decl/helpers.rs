@@ -549,11 +549,12 @@ impl AstLowering {
 
     /// Return the declaration names of the source-module traits a type adopts through `@derive(...)`.
     ///
-    /// A module derive (`@derive(codec)` over `__derives__ = [Encode]`, RFC 024) or a module-qualified derive
-    /// (`@derive(codec.Encode)`) adopts the named traits as `with Encode` does: the type implements them and their
-    /// methods resolve on it. Lowering must count those traits among the type's adopted traits, or a direct call such
-    /// as `item.tag()` is not routed to the method the implementation provides (#1792). Derives of stdlib modules are
-    /// left out: their traits are realized through backend derives and keep their own method routing.
+    /// A module derive (`@derive(codec)` over `__derives__ = [Encode]`, RFC 024) and a derive of a derivable trait
+    /// imported from a source module (`from codec import Encode` with `@derive(Encode)`) adopt the trait as
+    /// `with Encode` does: the type implements it and its methods resolve on it. Lowering must count those traits
+    /// among the type's adopted traits, or a direct call such as `item.tag()` is not routed to the method the
+    /// implementation provides (#1792). Derives of stdlib modules are left out: their traits are realized through
+    /// backend derives and keep their own method routing.
     pub(in crate::lower) fn derived_source_trait_adoptions(
         &mut self,
         decorators: &[Spanned<ast::Decorator>],
@@ -561,9 +562,16 @@ impl AstLowering {
         self.derive_trait_impl_targets(decorators)
             .into_iter()
             .filter_map(|(target, _)| {
-                let (qualifier, trait_name) = target.rsplit_once('.')?;
-                let module_path = self.module_path_for_derive_name(qualifier)?;
-                (module_path.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT)).then(|| trait_name.to_string())
+                let (module_path, trait_name) = match target.rsplit_once('.') {
+                    Some((qualifier, trait_name)) => (self.module_path_for_derive_name(qualifier)?, trait_name.to_string()),
+                    None => {
+                        let resolved = self.resolve_derive_path(&target);
+                        let (trait_name, module_path) = resolved.split_last()?;
+                        (module_path.to_vec(), trait_name.clone())
+                    }
+                };
+                (!module_path.is_empty() && module_path.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT))
+                    .then_some(trait_name)
             })
             .collect()
     }

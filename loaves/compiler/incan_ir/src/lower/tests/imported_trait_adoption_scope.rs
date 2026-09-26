@@ -1,7 +1,8 @@
 //! A trait declared in another source module reaches its adopters with that module's facts: a default body expanded
-//! into the adopter names the trait module's own types by their defining path (#1759), and a trait adopted through a
-//! derive bundle counts as adopted, so a direct call is routed to the method the derived implementation provides
-//! (#1792).
+//! into the adopter names the types, enum variants and helper functions its module declares or imports by their
+//! declaring path, and the trait binds to its declaration when the adopter imports it through a re-export (#1759); a
+//! trait adopted through a derive bundle counts as adopted, so a direct call is routed to the method the derived
+//! implementation provides (#1792).
 
 use super::*;
 
@@ -21,20 +22,41 @@ fn lower_main_with_dependency(
     dependency_path: &[&str],
     dependency: &str,
 ) -> Result<IrProgram, String> {
-    let dependency = parse_module(dependency, dependency_name)?;
+    lower_main_with_dependencies(main, &[(dependency_name, dependency_path, dependency)])
+}
+
+/// Check `main` against several dependency modules, given as `(name, module path, source)`, and lower it the way
+/// multi-module codegen does, every dependency seeded as a source module under its path.
+fn lower_main_with_dependencies(main: &str, dependencies: &[(&str, &[&str], &str)]) -> Result<IrProgram, String> {
+    let parsed = dependencies
+        .iter()
+        .map(|(name, _, source)| parse_module(source, name))
+        .collect::<Result<Vec<_>, _>>()?;
     let program = parse_module(main, "main")?;
+    let imports = dependencies
+        .iter()
+        .zip(&parsed)
+        .map(|((name, _, _), module)| (*name, module))
+        .collect::<Vec<_>>();
     let mut checker = TypeChecker::new();
     checker.set_current_module_path(Some(vec!["main".to_string()]));
     checker
-        .check_with_imports(&program, &[(dependency_name, &dependency)])
+        .check_with_imports(&program, &imports)
         .map_err(|errors| format!("main should typecheck: {errors:?}"))?;
     let mut lowering = AstLowering::new_with_type_info(checker.type_info().clone());
+    let seeded = dependencies
+        .iter()
+        .zip(&parsed)
+        .map(|((name, path, _), module)| {
+            (
+                *name,
+                module,
+                Some(path.iter().map(|segment| segment.to_string()).collect::<Vec<_>>()),
+            )
+        })
+        .collect::<Vec<_>>();
     lowering
-        .seed_dependency_trait_decls(&[(
-            dependency_name,
-            &dependency,
-            Some(dependency_path.iter().map(|segment| segment.to_string()).collect()),
-        )])
+        .seed_dependency_trait_decls(&seeded)
         .map_err(|errors| format!("dependency trait seeding failed: {errors:?}"))?;
     lowering
         .lower_program(&program)
@@ -231,15 +253,16 @@ fn collect_expr_method_calls(expr: &TypedExpr, calls: &mut Vec<(String, Option<I
     }
 }
 
-/// #1792: a trait adopted through a user module's derive bundle, under the plain and the aliased import binding,
-/// counts as adopted by the model, so `item.tag()` is routed to the recoverable method the derived implementation
-/// provides instead of a Rust method lookup that needs the trait in scope.
+/// #1792: a trait adopted through a user module's derive bundle, under the plain and the aliased import binding, or
+/// through a derive of the trait imported by name, counts as adopted by the model, so `item.tag()` is routed to the
+/// recoverable method the derived implementation provides instead of a Rust method lookup that needs the trait in
+/// scope.
 #[test]
 fn derive_bundle_trait_counts_as_adopted_for_direct_calls_issue1792() -> Result<(), String> {
-    let main = "import codec\nimport codec as formats\n\n\n@derive(codec)\nmodel Item:\n    value: int\n\n\n@derive(formats)\nmodel Other:\n    value: int\n\n\ndef main() -> None:\n    item = Item(value=1)\n    println(item.tag())\n    other = Other(value=2)\n    println(other.tag())\n";
+    let main = "import codec\nimport codec as formats\nfrom codec import Encode\n\n\n@derive(codec)\nmodel Item:\n    value: int\n\n\n@derive(formats)\nmodel Other:\n    value: int\n\n\n@derive(Encode)\nmodel Third:\n    value: int\n\n\ndef main() -> None:\n    item = Item(value=1)\n    println(item.tag())\n    other = Other(value=2)\n    println(other.tag())\n    third = Third(value=3)\n    println(third.tag())\n";
     let ir = lower_main_with_dependency(main, "codec", &["codec"], CODEC)?;
     let calls = main_method_calls(&ir)?;
-    assert_eq!(calls.len(), 2, "expected the two `tag()` calls, got {calls:?}");
+    assert_eq!(calls.len(), 3, "expected the three `tag()` calls, got {calls:?}");
     for (method, dispatch) in &calls {
         assert!(
             matches!(dispatch, Some(IrMethodDispatch::SourceProjection(_))),
@@ -247,5 +270,169 @@ fn derive_bundle_trait_counts_as_adopted_for_direct_calls_issue1792() -> Result<
         );
         assert_ne!(method, "tag", "the call names the projection, not the trait slot");
     }
+    Ok(())
+}
+
+const UNITS: &str = "pub model Size:\n    pub n: int\n";
+
+const CORNERS: &str = r#"
+from units import Size
+
+
+pub enum Corner:
+    Top
+    Bottom
+
+
+def doubled(n: int) -> int:
+    return n * 2
+
+
+def unused(n: int) -> int:
+    return n
+
+
+pub trait Plain:
+    def label(self) -> str: ...
+
+
+pub trait Measured:
+    def width(self) -> int: ...
+
+    def corner(self) -> Corner:
+        return Corner.Top
+
+    def is_top(self) -> bool:
+        match self.corner():
+            Corner.Top => return true
+            _ => return false
+
+    def size(self) -> Size:
+        return Size(n=doubled(self.width()))
+"#;
+
+/// Return the Rust path a chain of field reads rooted in an external name spells (`crate::shapes::Corner::Top`).
+fn external_path(expr: &TypedExpr) -> Option<Vec<String>> {
+    match &expr.kind {
+        IrExprKind::Var {
+            name,
+            ref_kind: VarRefKind::ExternalName,
+            ..
+        } => Some(vec![name.clone()]),
+        IrExprKind::Field { object, field } => {
+            let mut path = external_path(object)?;
+            path.push(field.clone());
+            Some(path)
+        }
+        _ => None,
+    }
+}
+
+/// Return the expression a function's final `return` hands back.
+fn returned_expr(function: &IrFunction) -> Result<&TypedExpr, String> {
+    match function.body.last() {
+        Some(IrStmt {
+            kind: IrStmtKind::Return(Some(expr)),
+            ..
+        }) => Ok(expr),
+        other => Err(format!("`{}` must end in a `return`, got {other:?}", function.name)),
+    }
+}
+
+/// #1759: an imported trait's defaults reach what their module names wherever the adopter lives: an enum variant of
+/// the module (`Corner.Top`) in an expression and in a match pattern, a model the module imports from a third module,
+/// and a private helper function of the module, each by its declaring module's path.
+#[test]
+fn imported_trait_default_reaches_its_module_names_issue1759() -> Result<(), String> {
+    let main = "from shapes import Measured\n\n\nmodel Card with Measured:\n    w: int\n\n    def width(self) -> int:\n        return self.w\n\n\ndef main() -> None:\n    println(Card(w=3).size().n)\n";
+    let ir = lower_main_with_dependencies(
+        main,
+        &[("units", &["units"], UNITS), ("shapes", &["shapes"], CORNERS)],
+    )?;
+
+    let corner = trait_impl_method(&ir, "Card", "Measured", "corner")?;
+    assert_eq!(
+        external_path(returned_expr(corner)?).map(|path| path.join("::")),
+        Some("crate::shapes::Corner::Top".to_string()),
+        "the variant is read through the trait module's path"
+    );
+
+    let is_top = format!("{:?}", trait_impl_method(&ir, "Card", "Measured", "is_top")?.body);
+    assert!(
+        is_top.contains("variant: \"crate::shapes::Corner::Top\""),
+        "the match pattern names the variant through the trait module's path: {is_top}"
+    );
+
+    let size = trait_impl_method(&ir, "Card", "Measured", "size")?;
+    assert_eq!(size.return_type, IrType::Struct("crate::units::Size".to_string()));
+    assert_eq!(returned_struct_name(size)?, "crate::units::Size");
+    let IrExprKind::Struct { fields, .. } = &returned_expr(size)?.kind else {
+        return Err("`size` must return a construction".to_string());
+    };
+    let Some((_, IrExprKind::Call { func, canonical_path, .. })) =
+        fields.first().map(|(field, value)| (field, &value.kind))
+    else {
+        return Err(format!("`n` must be a call of the helper, got {fields:?}"));
+    };
+    assert_eq!(canonical_path.as_deref(), Some(["shapes".to_string(), "doubled".to_string()].as_slice()));
+    assert!(
+        matches!(
+            func.kind,
+            IrExprKind::Var {
+                ref_kind: VarRefKind::ExternalName,
+                ..
+            }
+        ),
+        "the helper is reached through its module's path, got {func:?}"
+    );
+    Ok(())
+}
+
+/// #1759: a trait an adopter imports from a module that re-exports it binds to the declaring module's trait, with or
+/// without defaults, so the adopter's own methods fill the implementation and the defaults expand into it.
+#[test]
+fn reexported_trait_binds_to_its_declaration_issue1759() -> Result<(), String> {
+    let main = "from geometry import Measured, Plain\n\n\nmodel Card with Measured, Plain:\n    w: int\n\n    def width(self) -> int:\n        return self.w\n\n    def label(self) -> str:\n        return \"card\"\n\n\ndef main() -> None:\n    println(Card(w=3).label())\n";
+    let ir = lower_main_with_dependencies(
+        main,
+        &[
+            ("units", &["units"], UNITS),
+            ("shapes", &["shapes"], CORNERS),
+            ("geometry", &["geometry"], "pub from shapes import Measured, Plain\n"),
+        ],
+    )?;
+    trait_impl_method(&ir, "Card", "Plain", "label")?;
+    trait_impl_method(&ir, "Card", "Measured", "width")?;
+    let size = trait_impl_method(&ir, "Card", "Measured", "size")?;
+    assert_eq!(size.return_type, IrType::Struct("crate::units::Size".to_string()));
+    Ok(())
+}
+
+/// #1759: a private function a public trait's default calls is visible to the crate, so an adopter in another module
+/// can call it through the trait module's path; a private function no default calls stays private.
+#[test]
+fn trait_default_helpers_are_visible_to_the_crate_issue1759() -> Result<(), String> {
+    let units = parse_module(UNITS, "units")?;
+    let shapes = parse_module(CORNERS, "shapes")?;
+    assert_eq!(
+        AstLowering::source_trait_default_helper_functions(&shapes),
+        std::collections::HashSet::from(["doubled".to_string()])
+    );
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["shapes".to_string()]));
+    checker
+        .check_with_imports(&shapes, &[("units", &units)])
+        .map_err(|errors| format!("shapes should typecheck: {errors:?}"))?;
+    let ir = AstLowering::new_with_type_info(checker.type_info().clone())
+        .lower_program(&shapes)
+        .map_err(|errors| format!("shapes lowering failed: {errors:?}"))?;
+    let visibility = |name: &str| {
+        ir.declarations.iter().find_map(|decl| match &decl.kind {
+            IrDeclKind::Function(function) if function.name == name => Some(function.visibility),
+            _ => None,
+        })
+    };
+    assert_eq!(visibility("doubled"), Some(Visibility::Crate));
+    assert_eq!(visibility("unused"), Some(Visibility::Private));
     Ok(())
 }

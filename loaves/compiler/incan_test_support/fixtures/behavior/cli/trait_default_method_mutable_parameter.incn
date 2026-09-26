@@ -1,15 +1,28 @@
-# behavior: a mut list parameter changed by a trait default method or a function changes the caller's mut list, and a mut int parameter is a local the method increments
+# behavior: a mut list parameter changed by a trait default method, a function or a generic function calling through a trait bound changes the caller's mut list, a temporary or an unchanged parameter needs no mut binding, and a mut int parameter, or one of an int alias, is a local the callee increments while the caller's value stays
 # retires: loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs::trait_method_mut_parameter_keeps_one_shape_across_slot_impl_and_wrapper_issue1773
 # retires: loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs::scalar_mut_parameter_is_a_mutable_local_in_every_body_issue1773
+# retires: loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs::mut_arguments_follow_the_checker_facts_issue1773
 # expect-stdout:
 #   3
 #   3
 #   4
+#   2
+#   3
 #   6
+#   5
+#   5
+#   2
+#   1
+
+type Count = int
+
 
 trait Replacer:
     def replace(self, mut items: list[int]) -> int:
         items.append(9)
+        return len(items)
+
+    def measured(self, mut items: list[int]) -> int:
         return len(items)
 
     def bumped(self, mut n: int) -> int:
@@ -25,10 +38,27 @@ def extend(mut items: list[int]) -> None:
     items.append(7)
 
 
+def run[T with Replacer](replacer: T, mut items: list[int]) -> int:
+    return replacer.replace(items)
+
+
+def bump(mut n: Count) -> Count:
+    n += 1
+    return n
+
+
 def main() -> None:
     mut items: list[int] = [1, 2]
     println(Widget(id=1).replace(items))
     println(len(items))
     extend(items)
     println(len(items))
+    println(Widget(id=1).replace([5]))
+    fixed: list[int] = [1, 2, 3]
+    println(Widget(id=1).measured(fixed))
     println(Widget(id=1).bumped(5))
+    println(run(Widget(id=1), items))
+    println(len(items))
+    c: Count = 1
+    println(bump(c))
+    println(c)

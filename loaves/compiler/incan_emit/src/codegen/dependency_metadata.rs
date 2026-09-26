@@ -645,11 +645,13 @@ fn trait_emission_references(trait_decl: &ast::TraitDecl) -> HashSet<String> {
     names
 }
 
-/// Extend selected trait declarations with the local trait declarations needed to emit their public surface.
+/// Extend selected trait declarations with the local trait declarations needed to emit their public surface, and with
+/// the module's functions their default bodies call.
 ///
 /// This fixed-point closure is needed because an initial import can retain `Sum[T]` while its `sum` method refers to
 /// `Iterator[T]`. Both source declarations must be emitted together, regardless of whether the importing program
-/// happens to call an iterator method.
+/// happens to call an iterator method. A default body is expanded into adopters in other modules, which call its
+/// helpers through the trait module's path (#1759), so a selected trait keeps those helpers too.
 fn retain_same_module_trait_signature_dependencies(
     reachable: &mut HashMap<Vec<String>, HashSet<String>>,
     dependency_modules: &[(&str, &Program, Option<Vec<String>>)],
@@ -672,6 +674,7 @@ fn retain_same_module_trait_signature_dependencies(
                     _ => None,
                 })
                 .collect::<HashMap<_, _>>();
+            let default_helpers = incan_ir::AstLowering::source_trait_default_helper_functions(program);
             for selected_name in selected {
                 let Some(trait_decl) = declared_traits.get(selected_name.as_str()) else {
                     continue;
@@ -679,6 +682,11 @@ fn retain_same_module_trait_signature_dependencies(
                 for reference in trait_emission_references(trait_decl) {
                     if declared_traits.contains_key(reference.as_str()) && !selected.contains(&reference) {
                         additions.push((module_path.clone(), reference));
+                    }
+                }
+                for helper in &default_helpers {
+                    if !selected.contains(helper) {
+                        additions.push((module_path.clone(), helper.clone()));
                     }
                 }
             }
@@ -947,6 +955,23 @@ pub trait {sum}[T]:
             collect_externally_reachable_items_by_module(&main, &[("text_vaults", &vaults, Some(path.clone()))]);
 
         assert_eq!(reachable.get(&path), Some(&HashSet::from(["Vault".to_string()])));
+    }
+
+    /// #1759: a selected trait keeps the helper functions its default bodies call, because adopters in other modules
+    /// call them through the trait module's path; a function no default calls is not kept for the trait's sake.
+    #[test]
+    fn selected_trait_keeps_its_default_body_helpers_issue1759() {
+        let main = parse("from shapes import Measured\n");
+        let shapes = parse(
+            "def doubled(n: int) -> int:\n    return n * 2\n\ndef unused(n: int) -> int:\n    return n\n\npub trait Measured:\n    def width(self) -> int: ...\n\n    def twice(self) -> int:\n        return doubled(self.width())\n",
+        );
+        let path = vec!["shapes".to_string()];
+        let reachable = collect_externally_reachable_items_by_module(&main, &[("shapes", &shapes, Some(path.clone()))]);
+
+        assert_eq!(
+            reachable.get(&path),
+            Some(&HashSet::from(["Measured".to_string(), "doubled".to_string()]))
+        );
     }
 
     #[test]

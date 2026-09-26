@@ -1,4 +1,4 @@
-# behavior: an immutable binding or a literal passed to a mut list parameter of a trait default method or a function is refused at check time
+# behavior: an immutable binding or a list element passed to a mut list parameter that a trait default method or a function changes is refused at check time
 # expect-diagnostic: INCAN-T0117
 
 trait Replacer:
@@ -19,4 +19,5 @@ def main() -> None:
     items: list[int] = [1, 2]
     println(Widget(id=1).replace(items))
     println(len(items))
-    extend([3])
+    mut rows: list[list[int]] = [[1]]
+    extend(rows[0])

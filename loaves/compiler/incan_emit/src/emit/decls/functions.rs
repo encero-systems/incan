@@ -1287,8 +1287,8 @@ impl<'a> IrEmitter<'a> {
     ///
     /// The same path spells the trait declaration's slot (no body) and every `impl Trait for Type` method (an override
     /// or an expanded default), so a parameter's Rust shape must depend only on the signature, never on a body: a
-    /// `mut` aggregate parameter is `&mut T` in both, exactly as the call site passes it, and a `mut` scalar is a plain
-    /// `T` in the slot and a `mut` binding in a body that uses it.
+    /// `mut` aggregate parameter is `&mut T` in both, exactly as the call site passes it, and a parameter the callee owns
+    /// (a `mut` scalar or Rust handle) is a plain `T` in the slot and a `mut` binding in a body that uses it.
     fn emit_trait_method_with_where(
         &self,
         func: &incan_ir::decl::IrFunction,
@@ -1321,8 +1321,10 @@ impl<'a> IrEmitter<'a> {
                     };
                     let pty = self.emit_type(&p.ty);
                     match p.mutability {
+                        // A binding pattern such as `mut n` belongs to a body; a trait slot without one spells the
+                        // plain parameter, which every implementation may still bind mutably.
                         incan_ir::types::Mutability::OwnedMutable
-                            if func.body.is_empty() || used_names.contains(&p.name) =>
+                            if !func.body.is_empty() && used_names.contains(&p.name) =>
                         {
                             quote! { mut #pname: #pty }
                         }

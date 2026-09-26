@@ -1089,6 +1089,12 @@
       "owner": 1561,
       "split_required": false,
       "split_target": "",
+      "tests": {
+        "selected_trait_keeps_its_default_body_helpers_issue1759": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/trait_default_reaches_its_module_names_across_modules",
+          "notes": "Asserts that a selected trait keeps the helper functions its defaults call among the dependency module's emitted items; retires with the Rust-source backend. The behavior, an adopter in another module printing the result of a default that calls the trait module's private helper, is carried by the named fixture (#1759)."
+        }
+      },
       "twin": ""
     },
     "loaves/compiler/incan_emit/src/conversions.rs": {
@@ -1326,9 +1332,17 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/generic_list_index_without_clone_bound.incn",
           "notes": "Asserts the inferred `Clone` bound an element read of a type-parameter list or dict value needs; retires with `incan_emit`. The behavior, `first[K]` returning `items[0]` for int and str elements, is carried by the named fixture (#1756)."
         },
+        "mut_arguments_follow_the_checker_facts_issue1773": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/trait_default_method_mutable_parameter.incn",
+          "notes": "Asserts generated Rust text for `mut` arguments through a generic bound, a copied immutable binding and an `int` alias; retires with the Rust-source backend. The behavior, a generic call appending through a trait bound, an unchanged `mut` parameter taking an immutable list, and an `int` alias staying the callee's own copy, is carried by the named fixture (#1773)."
+        },
         "scalar_mut_parameter_is_a_mutable_local_in_every_body_issue1773": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/trait_default_method_mutable_parameter.incn",
           "notes": "Asserts generated Rust text for a scalar `mut` parameter changed in a function, a method and a trait default; retires with the Rust-source backend. The behavior, a trait default incrementing its `mut int` parameter, is carried by the named fixture (#1773)."
+        },
+        "trait_method_and_slice_element_copies_state_clone_on_every_signature_issue1756": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/generic_list_index_without_clone_bound.incn",
+          "notes": "Asserts the inferred `Clone` bound a list slice and a trait method's element read or slice need on the function, the trait slot and each implementation; retires with `incan_emit`. The behavior, `rest[K]` slicing and a trait's `pick[K]`/`tail[K]` defaults for int and str elements, is carried by the named fixture (#1756)."
         },
         "trait_method_mut_parameter_keeps_one_shape_across_slot_impl_and_wrapper_issue1773": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/trait_default_method_mutable_parameter.incn",
@@ -2522,6 +2536,18 @@
         "imported_trait_default_names_its_module_types_by_path_issue1759": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/trait_default_names_its_own_module_types",
           "notes": "Asserts on the legacy IR that an imported trait default expanded into an adopter names its own module's model by the defining-module Rust path; retires with `incan_ir`. The behavior, the adopter printing the area of the model the default returns without importing it, is carried by the named fixture (#1759)."
+        },
+        "imported_trait_default_reaches_its_module_names_issue1759": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/trait_default_reaches_its_module_names_across_modules",
+          "notes": "Asserts on the legacy IR that an imported trait default expanded into an adopter reads its module's enum variant, matches on it, constructs a model its module imports and calls its module's helper, each by the declaring module's Rust path; retires with `incan_ir`. The behavior, the adopter printing the helper-built size, the matched corner and its own label, is carried by the named fixture (#1759)."
+        },
+        "reexported_trait_binds_to_its_declaration_issue1759": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/trait_default_reaches_its_module_names_across_modules",
+          "notes": "Asserts on the legacy IR that a trait imported through a re-exporting module, with and without defaults, gets the adopter's methods and its expanded defaults in its implementation; retires with `incan_ir`. The behavior, an adopter importing both traits from the re-exporting module and printing their results, is carried by the named fixture (#1759)."
+        },
+        "trait_default_helpers_are_visible_to_the_crate_issue1759": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/trait_default_reaches_its_module_names_across_modules",
+          "notes": "Asserts on the legacy IR that a private function a public trait's default calls is lowered with crate visibility and an uncalled one stays private; retires with `incan_ir`. The behavior, an adopter in another module printing the result of a default that calls the trait module's private helper, is carried by the named fixture (#1759)."
         }
       },
       "twin": ""

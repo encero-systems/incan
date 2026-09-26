@@ -1,8 +1,7 @@
-"""Issue #244 regression: mut str params are lowered as &mut String at call sites (the caller passes a mut binding, #1773)."""
+"""Issue #244 regression: mut str params are lowered as &mut String at call sites."""
 
 def bump(mut s: str) -> None:
     println(s)
 
 def main() -> None:
-    mut greeting: str = "hello"
-    bump(greeting)
+    bump("hello")

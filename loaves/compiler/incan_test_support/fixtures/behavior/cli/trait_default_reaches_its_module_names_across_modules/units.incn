@@ -1,0 +1,2 @@
+pub model Size:
+    pub n: int

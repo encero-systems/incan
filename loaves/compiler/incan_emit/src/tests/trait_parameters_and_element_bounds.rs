@@ -1,6 +1,7 @@
-//! What a generic element read and a trait method's `mut` parameter need from the generated Rust: an index read of a
-//! type-parameter element states the `Clone` capability its copy needs (#1756), and a `mut` aggregate parameter keeps
-//! one Rust shape across the trait slot, every implementation and the recoverable wrapper (#1773).
+//! What a generic element read and a trait method's `mut` parameter need from the generated Rust: an index read or a
+//! slice of type-parameter elements states the `Clone` capability its copy needs, on a function, a trait slot and its
+//! implementations (#1756), and a `mut` aggregate parameter keeps one Rust shape across the trait slot, every
+//! implementation and the recoverable wrapper (#1773).
 
 use incan_frontend::typechecker::TypeChecker;
 use incan_frontend::{ast, lexer, parser};
@@ -85,6 +86,101 @@ def first_of_first[K](items: list[K]) -> K:
         type_param_has_bound(function(&ir, "first_of_first")?, "K", tb::CLONE)?,
         "a caller that passes its own `K` to `first` needs the bound `first` states"
     );
+    Ok(())
+}
+
+/// Return the bounds of type parameter `param` on method `method` of trait `trait_name` and of every implementation
+/// of that trait's method, slot first.
+fn trait_method_param_bounds(
+    ir: &IrProgram,
+    trait_name: &str,
+    method: &str,
+    param: &str,
+) -> Result<Vec<Vec<String>>, String> {
+    let bounds_of = |function: &IrFunction| -> Result<Vec<String>, String> {
+        function
+            .type_params
+            .iter()
+            .find(|type_param| type_param.name == param)
+            .map(|type_param| {
+                type_param
+                    .bounds
+                    .iter()
+                    .map(|bound| bound.trait_path.clone())
+                    .collect()
+            })
+            .ok_or_else(|| format!("`{}` has no type parameter `{param}`", function.name))
+    };
+    let mut found = Vec::new();
+    for decl in &ir.declarations {
+        match &decl.kind {
+            IrDeclKind::Trait(trait_decl) if trait_decl.name == trait_name => {
+                for function in trait_decl.methods.iter().filter(|function| function.name == method) {
+                    found.insert(0, bounds_of(function)?);
+                }
+            }
+            IrDeclKind::Impl(impl_block) if impl_block.trait_name.as_deref() == Some(trait_name) => {
+                for function in impl_block.methods.iter().filter(|function| function.name == method) {
+                    found.push(bounds_of(function)?);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(found)
+}
+
+/// #1756: a list slice copies elements like an index read, so a generic function slicing a `list[K]` states `Clone`;
+/// a trait method whose default reads or slices a `list[K]` (or reads a `dict[str, K]` value) states it on the trait
+/// slot, adopted or not, as well as on each expanded implementation, and a slot filled by an adopter's own
+/// element-reading body admits that body's `Clone`.
+#[test]
+fn trait_method_and_slice_element_copies_state_clone_on_every_signature_issue1756() -> Result<(), String> {
+    let ir = lower_with_inferred_bounds(
+        r#"
+def rest[K](items: list[K]) -> list[K]:
+    return items[1:]
+
+def counts(items: list[int]) -> list[int]:
+    return items[1:]
+
+trait Picker:
+    def pick[K](self, items: list[K]) -> K:
+        return items[0]
+
+    def tail[K](self, items: list[K]) -> list[K]:
+        return items[1:]
+
+    def chosen[K](self, items: list[K]) -> K
+
+model Chooser with Picker:
+    id: int
+
+    def chosen[K](self, items: list[K]) -> K:
+        return items[0]
+
+trait Unadopted:
+    def first_of[K](self, table: dict[str, K], key: str) -> K:
+        return table[key]
+"#,
+    )?;
+    assert_eq!(
+        trait_method_param_bounds(&ir, "Unadopted", "first_of", "K")?,
+        [vec![tb::CLONE.to_string()]],
+        "a default's element read states `Clone` on the slot itself, for adopters in other modules"
+    );
+    assert!(type_param_has_bound(function(&ir, "rest")?, "K", tb::CLONE)?);
+    assert!(function(&ir, "counts")?.type_params.is_empty());
+    for method in ["pick", "tail", "chosen"] {
+        let signatures = trait_method_param_bounds(&ir, "Picker", method, "K")?;
+        assert_eq!(signatures.len(), 2, "`{method}` has a slot and one implementation: {signatures:?}");
+        assert!(
+            signatures
+                .iter()
+                .all(|bounds| bounds.iter().filter(|bound| *bound == tb::CLONE).count() == 1),
+            "the slot and the implementation of `{method}` both state `Clone` once: {signatures:?}"
+        );
+    }
     Ok(())
 }
 
@@ -205,6 +301,57 @@ def main() -> None:
         rust.contains("fnstepped(&self,n:i64)->i64;")
             && rust.contains("fnstepped(&self,mutn:i64)->i64{n=n+1;returnn;}"),
         "the trait slot takes the value and the expanded default binds it mutably: {rust}"
+    );
+    Ok(())
+}
+
+/// #1773: a call through a generic bound passes a caller-visible `mut` argument the way the trait slot takes it,
+/// an immutable binding for a parameter the callee never changes is passed as a copy, and a `mut` parameter of an
+/// alias of `int` is the callee's own copy, passed by value.
+#[test]
+fn mut_arguments_follow_the_checker_facts_issue1773() -> Result<(), Box<dyn std::error::Error>> {
+    let rust = compact_rust(
+        r#"
+type Count = int
+
+trait Grower:
+    def grow(self, mut items: list[int]) -> int:
+        items.append(1)
+        return len(items)
+
+model Plant with Grower:
+    id: int
+
+def run[T with Grower](g: T, mut items: list[int]) -> int:
+    return g.grow(items)
+
+def total(mut items: list[int]) -> int:
+    return len(items)
+
+def bump(mut n: Count) -> Count:
+    n += 1
+    return n
+
+def main() -> None:
+    mut items: list[int] = []
+    println(run(Plant(id=1), items))
+    fixed: list[int] = [1, 2]
+    println(total(fixed))
+    c: Count = 1
+    println(bump(c))
+"#,
+    )?;
+    assert!(
+        rust.contains(".grow(items)") && !rust.contains("items.clone())"),
+        "the generic call hands its `mut` parameter on without a copy: {rust}"
+    );
+    assert!(
+        rust.contains("(&mutfixed.clone())"),
+        "an immutable binding for an unchanged `mut` parameter is passed as a copy: {rust}"
+    );
+    assert!(
+        rust.contains("mutn:Count") && rust.contains("(c))") && !rust.contains("&mutc"),
+        "a `mut` parameter of an `int` alias is the callee's own copy: {rust}"
     );
     Ok(())
 }

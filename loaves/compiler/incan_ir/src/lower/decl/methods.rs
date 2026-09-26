@@ -1673,7 +1673,7 @@ impl AstLowering {
                 );
                 let base_ty = self.apply_mutable_rust_type_argument_projections(p.node.is_mut, &p.node.ty, base_ty);
                 let param_ty = Self::lower_param_container_type(p.node.kind, base_ty);
-                let mutability = self.lower_parameter_mutability(p.node.is_mut, &p.node.ty.node);
+                let mutability = self.lower_parameter_mutability(p);
                 Ok(FunctionParam {
                     name: p.node.name.clone(),
                     ty: param_ty,
@@ -1979,7 +1979,7 @@ impl AstLowering {
                 );
                 let base_ty = self.apply_mutable_rust_type_argument_projections(p.node.is_mut, &p.node.ty, base_ty);
                 let param_ty = Self::lower_param_container_type(p.node.kind, base_ty);
-                let mutability = self.lower_parameter_mutability(p.node.is_mut, &p.node.ty.node);
+                let mutability = self.lower_parameter_mutability(p);
                 // Ordinary mutable Incan parameters are references. Direct Rust handles keep owned ABI identity.
                 let ty = if mutability == Mutability::Mutable {
                     IrType::RefMut(Box::new(param_ty.clone()))

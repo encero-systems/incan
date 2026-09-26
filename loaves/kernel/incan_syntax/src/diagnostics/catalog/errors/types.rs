@@ -923,22 +923,39 @@ pub fn self_mutation_requires_mut_self(
         .with_note("A method that changes the object it is called on says so in its receiver; a plain 'self' method only reads it")
 }
 
-/// Refuse an argument that is not a mutable place for a `mut` parameter whose changes reach the caller (#1773).
+/// The argument an `INCAN-T0117` refusal names, which decides the remedy its hint spells.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MutArgumentPlace {
+    /// A binding declared without `mut`, by name.
+    Binding(String),
+    /// A field reached from a binding declared without `mut`.
+    Field,
+    /// An element of a list or a dict, which a call receives as a copy of the stored value.
+    Element,
+    /// A module static, which a call receives as a copy of its current value.
+    Static,
+}
+
+/// Refuse an argument for a `mut` parameter whose changes reach the caller when the callee changes it and the change
+/// would fail to reach the argument (#1773).
 ///
-/// A `mut` parameter of any type but `int`, `float`, `bool`, a Rust type or a rest parameter shows the callee's changes
-/// to the caller, so the argument has to be a place the caller can see change: a `mut` binding or parameter, a static,
-/// `self` in a `mut self` method, or a field or element of one of those. `parameter` and `callee` name the declaration;
-/// `binding` is the name the argument spells when it is a plain binding, so the hint can say which declaration to
-/// change. `INCAN-T0117` is its stable code.
+/// A `mut` parameter of any type but `int`, `float`, `bool` or a Rust type, and not a rest parameter, shows the
+/// callee's changes to the caller. When the callee does change it, the argument must be a place the caller may change:
+/// an immutable binding or a field of one cannot be changed, and an element or a static reaches the callee as a copy,
+/// so the change would be lost. `parameter` and `callee` name the declaration and `place` the argument, which picks the
+/// remedy. `INCAN-T0117` is its stable code.
 pub fn immutable_argument_to_mut_parameter(
     parameter: &str,
     callee: &str,
-    binding: Option<&str>,
+    place: MutArgumentPlace,
     span: Span,
 ) -> CompileError {
-    let hint = match binding {
-        Some(name) => format!("Declare '{name}' with 'mut' where it is bound: mut {name} = ..."),
-        None => format!("Bind the value to a 'mut' variable and pass the variable: mut {parameter} = ..."),
+    let hint = match &place {
+        MutArgumentPlace::Binding(name) => format!("Declare '{name}' with 'mut' where it is bound: mut {name} = ..."),
+        MutArgumentPlace::Field => "Declare the binding the field belongs to with 'mut'".to_string(),
+        MutArgumentPlace::Element | MutArgumentPlace::Static => format!(
+            "Bind the value to a 'mut' variable, pass the variable, and store it back: mut {parameter} = ..., then assign it to the element or static"
+        ),
     };
     CompileError::type_error(
         format!("Argument for the 'mut' parameter '{parameter}' of '{callee}' must be a mutable binding"),
@@ -947,8 +964,25 @@ pub fn immutable_argument_to_mut_parameter(
     .with_stable_code("INCAN-T0117")
     .with_hint(hint)
     .with_note(format!(
-        "'{callee}' may change '{parameter}', and its changes are visible to the caller, so the caller passes a binding declared with 'mut'"
+        "'{callee}' changes '{parameter}', and its changes are visible to the caller, so the caller passes a binding declared with 'mut'"
     ))
+}
+
+/// Refuse rebinding a `mut` parameter whose changes reach the caller inside its own body (#1773).
+///
+/// The caller sees what the callee does to such a parameter's value, not a new value bound to its name, so an
+/// assignment or compound assignment to the parameter itself could only be lost. Changes in place (appending, element
+/// or field assignment) stay allowed; a parameter of type `int`, `float` or `bool` is the callee's own copy and may be
+/// rebound freely.
+pub fn caller_visible_mut_parameter_rebinding(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Cannot rebind the 'mut' parameter '{name}': its changes are visible to the caller"),
+        span,
+    )
+    .with_hint(format!(
+        "Change '{name}' in place (append to it, assign its elements or fields), or bind the new value to a new name"
+    ))
+    .with_note("The caller sees changes made to the value it passed, not a new value bound to the parameter's name")
 }
 
 /// A Rust interop parameter requires an exclusive borrow of an immutable Incan binding.

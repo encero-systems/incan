@@ -183,63 +183,25 @@ def _reader_digest_handle[R with BinaryReader](
     Dispatch streaming digest byte output after request validation.
     """
     match algorithm:
-        _Algorithm.Sha224 =>
-            mut hasher = sha224.new()
-            return _feed_digest_reader(hasher, input, algorithm, chunk_size)
-        _Algorithm.Sha256 =>
-            mut hasher = sha256.new()
-            return _feed_digest_reader(hasher, input, algorithm, chunk_size)
-        _Algorithm.Sha384 =>
-            mut hasher = sha384.new()
-            return _feed_digest_reader(hasher, input, algorithm, chunk_size)
-        _Algorithm.Sha512 =>
-            mut hasher = sha512.new()
-            return _feed_digest_reader(hasher, input, algorithm, chunk_size)
-        _Algorithm.Sha3_224 =>
-            mut hasher = sha3_224.new()
-            return _feed_digest_reader(hasher, input, algorithm, chunk_size)
-        _Algorithm.Sha3_256 =>
-            mut hasher = sha3_256.new()
-            return _feed_digest_reader(hasher, input, algorithm, chunk_size)
-        _Algorithm.Sha3_384 =>
-            mut hasher = sha3_384.new()
-            return _feed_digest_reader(hasher, input, algorithm, chunk_size)
-        _Algorithm.Sha3_512 =>
-            mut hasher = sha3_512.new()
-            return _feed_digest_reader(hasher, input, algorithm, chunk_size)
-        _Algorithm.Shake128 =>
-            mut hasher = shake128.new()
-            return _feed_shake_reader(hasher, input, algorithm, chunk_size, length)
-        _Algorithm.Shake256 =>
-            mut hasher = shake256.new()
-            return _feed_shake_reader(hasher, input, algorithm, chunk_size, length)
-        _Algorithm.Blake2b =>
-            mut hasher = blake2b.new()
-            return _feed_digest_reader(hasher, input, algorithm, chunk_size)
-        _Algorithm.Blake2s =>
-            mut hasher = blake2s.new()
-            return _feed_digest_reader(hasher, input, algorithm, chunk_size)
-        _Algorithm.Blake3 =>
-            mut hasher = blake3.new()
-            return _feed_digest_reader(hasher, input, algorithm, chunk_size)
-        _Algorithm.Md5 =>
-            mut hasher = md5.new()
-            return _feed_digest_reader(hasher, input, algorithm, chunk_size)
-        _Algorithm.Sha1 =>
-            mut hasher = sha1.new()
-            return _feed_digest_reader(hasher, input, algorithm, chunk_size)
-        _Algorithm.Xxh32 =>
-            mut hasher = xxh32.new()
-            return _feed_hash32_reader(hasher, input, algorithm, chunk_size)
-        _Algorithm.Xxh64 =>
-            mut hasher = xxh64.new()
-            return _feed_hash64_reader(hasher, input, algorithm, chunk_size)
-        _Algorithm.Xxh3_64 =>
-            mut hasher = xxh3_64.new()
-            return _feed_hash64_reader(hasher, input, algorithm, chunk_size)
-        _Algorithm.Xxh3_128 =>
-            mut hasher = xxh3_128.new()
-            return _feed_hash128_reader(hasher, input, algorithm, chunk_size)
+        _Algorithm.Sha224 => return _feed_digest_reader(sha224.new(), input, algorithm, chunk_size)
+        _Algorithm.Sha256 => return _feed_digest_reader(sha256.new(), input, algorithm, chunk_size)
+        _Algorithm.Sha384 => return _feed_digest_reader(sha384.new(), input, algorithm, chunk_size)
+        _Algorithm.Sha512 => return _feed_digest_reader(sha512.new(), input, algorithm, chunk_size)
+        _Algorithm.Sha3_224 => return _feed_digest_reader(sha3_224.new(), input, algorithm, chunk_size)
+        _Algorithm.Sha3_256 => return _feed_digest_reader(sha3_256.new(), input, algorithm, chunk_size)
+        _Algorithm.Sha3_384 => return _feed_digest_reader(sha3_384.new(), input, algorithm, chunk_size)
+        _Algorithm.Sha3_512 => return _feed_digest_reader(sha3_512.new(), input, algorithm, chunk_size)
+        _Algorithm.Shake128 => return _feed_shake_reader(shake128.new(), input, algorithm, chunk_size, length)
+        _Algorithm.Shake256 => return _feed_shake_reader(shake256.new(), input, algorithm, chunk_size, length)
+        _Algorithm.Blake2b => return _feed_digest_reader(blake2b.new(), input, algorithm, chunk_size)
+        _Algorithm.Blake2s => return _feed_digest_reader(blake2s.new(), input, algorithm, chunk_size)
+        _Algorithm.Blake3 => return _feed_digest_reader(blake3.new(), input, algorithm, chunk_size)
+        _Algorithm.Md5 => return _feed_digest_reader(md5.new(), input, algorithm, chunk_size)
+        _Algorithm.Sha1 => return _feed_digest_reader(sha1.new(), input, algorithm, chunk_size)
+        _Algorithm.Xxh32 => return _feed_hash32_reader(xxh32.new(), input, algorithm, chunk_size)
+        _Algorithm.Xxh64 => return _feed_hash64_reader(xxh64.new(), input, algorithm, chunk_size)
+        _Algorithm.Xxh3_64 => return _feed_hash64_reader(xxh3_64.new(), input, algorithm, chunk_size)
+        _Algorithm.Xxh3_128 => return _feed_hash128_reader(xxh3_128.new(), input, algorithm, chunk_size)
 
 
 def _reader_hash_u32_handle[R with BinaryReader](
@@ -251,9 +213,7 @@ def _reader_hash_u32_handle[R with BinaryReader](
     Dispatch streaming native `u32` hash output for supported algorithms.
     """
     match algorithm:
-        _Algorithm.Xxh32 =>
-            mut hasher = xxh32.new()
-            return _feed_hash32_reader_value(hasher, input, algorithm, chunk_size)
+        _Algorithm.Xxh32 => return _feed_hash32_reader_value(xxh32.new(), input, algorithm, chunk_size)
         _ => return Err(_unsupported_width_error(algorithm.name(), "u32"))
 
 
@@ -266,12 +226,8 @@ def _reader_hash_u64_handle[R with BinaryReader](
     Dispatch streaming native `u64` hash output for supported algorithms.
     """
     match algorithm:
-        _Algorithm.Xxh3_64 =>
-            mut hasher = xxh3_64.new()
-            return _feed_hash64_reader_value(hasher, input, algorithm, chunk_size)
-        _Algorithm.Xxh64 =>
-            mut hasher = xxh64.new()
-            return _feed_hash64_reader_value(hasher, input, algorithm, chunk_size)
+        _Algorithm.Xxh3_64 => return _feed_hash64_reader_value(xxh3_64.new(), input, algorithm, chunk_size)
+        _Algorithm.Xxh64 => return _feed_hash64_reader_value(xxh64.new(), input, algorithm, chunk_size)
         _ => return Err(_unsupported_width_error(algorithm.name(), "u64"))
 
 
@@ -284,9 +240,7 @@ def _reader_hash_u128_handle[R with BinaryReader](
     Dispatch streaming native `u128` hash output for supported algorithms.
     """
     match algorithm:
-        _Algorithm.Xxh3_128 =>
-            mut hasher = xxh3_128.new()
-            return _feed_hash128_reader_value(hasher, input, algorithm, chunk_size)
+        _Algorithm.Xxh3_128 => return _feed_hash128_reader_value(xxh3_128.new(), input, algorithm, chunk_size)
         _ => return Err(_unsupported_width_error(algorithm.name(), "u128"))
 
 
