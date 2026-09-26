@@ -21,7 +21,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{CallArg, Expr, Param, ParamKind, Span, Spanned, Type};
-use crate::diagnostics::errors::{self, MutArgumentPlace};
+use crate::diagnostics::errors::{self, MutArgumentPlace, MutParameterLabel};
 use crate::symbols::{CallableParam, ResolvedType, SymbolKind, TypeInfo};
 use incan_lang::lang::keywords::{self, KeywordId};
 use incan_lang::lang::surface::{dict_methods, list_methods, set_methods};
@@ -56,6 +56,18 @@ enum ArgumentPlace {
     Detached { place: MutArgumentPlace },
 }
 
+/// The callee of a call whose arguments for `mut` parameters are recorded.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum MutArgumentCallee<'a> {
+    /// A function call's callee expression.
+    Function(&'a Spanned<Expr>),
+    /// A method call's receiver and method name.
+    Method {
+        receiver: &'a Spanned<Expr>,
+        method: &'a str,
+    },
+}
+
 /// One argument recorded at a call, resolved once every body of the module has been checked.
 #[derive(Debug, Clone)]
 struct PendingMutArgument {
@@ -64,6 +76,8 @@ struct PendingMutArgument {
     /// The callee's name as the refusal names it.
     callee_name: String,
     param: String,
+    /// The parameter's 1-based position, which names it when its callable type gives it no name.
+    position: usize,
     place: ArgumentPlace,
     span: Span,
 }
@@ -383,8 +397,9 @@ impl TypeChecker {
 
     /// Record each argument a call passes to a caller-visible `mut` parameter of its resolved callee.
     ///
-    /// `callee_span` is the span the call recorded its resolved declaration at: the callee expression of a function
-    /// call, the whole expression of a method call; `call_span` is the whole call. Positional arguments bind ordinary
+    /// `callee` is the callee expression of a function call, or the receiver and name of a method call; `call_span` is
+    /// the whole call. The call's resolved declaration is recorded at the callee expression of a function call and at
+    /// the whole expression of a method call. Positional arguments bind ordinary
     /// parameters in order and named arguments bind by name; an unpacked argument ends positional binding. For a
     /// source declaration this check collected, the caller-visible parameter names are published for lowering at
     /// `call_span`, so the call passes them the way the declaration takes them. A callee known only by its callable
@@ -393,10 +408,14 @@ impl TypeChecker {
     /// bodies are known.
     pub(in crate::typechecker) fn record_mut_arguments(
         &mut self,
-        callee_span: Span,
+        callee: MutArgumentCallee<'_>,
         call_span: Span,
         args: &[CallArg],
     ) {
+        let callee_span = match callee {
+            MutArgumentCallee::Function(callee) => callee.span,
+            MutArgumentCallee::Method { .. } => call_span,
+        };
         let mut identity = self.type_info.resolved_identity(callee_span).cloned();
         if let Some(local) = &identity
             && local.kind == SemanticSourceTargetKind::Local
@@ -422,7 +441,7 @@ impl TypeChecker {
                 );
                 slots
             }
-            None => match self.callable_type_mut_slots(callee_span, call_span) {
+            None => match self.callable_type_mut_slots(callee, call_span) {
                 Some(slots) => {
                     // The callable's body is not one this check reads, so its changes are unknown.
                     identity = None;
@@ -442,21 +461,28 @@ impl TypeChecker {
             .unwrap_or_else(|| "the called function".to_string());
         let mut next_positional = Some(0usize);
         for arg in args {
-            let (slot, value) = match arg {
+            let (index, value) = match arg {
                 CallArg::Positional(value) => {
-                    let slot = next_positional
-                        .and_then(|index| slots.get(index))
-                        .filter(|slot| slot.kind == ParamKind::Normal);
-                    next_positional = slot.and(next_positional.map(|index| index + 1));
-                    (slot, value)
+                    let index = next_positional
+                        .filter(|index| slots.get(*index).is_some_and(|slot| slot.kind == ParamKind::Normal));
+                    next_positional = index.map(|index| index + 1);
+                    (index, value)
                 }
-                CallArg::Named(name, value) => (slots.iter().find(|slot| slot.name == name.node), value),
+                CallArg::Named(name, value) => (
+                    slots
+                        .iter()
+                        .position(|slot| !slot.name.is_empty() && slot.name == name.node),
+                    value,
+                ),
                 CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => {
                     next_positional = None;
                     continue;
                 }
             };
-            let Some(slot) = slot.filter(|slot| slot.shows_changes_to_caller) else {
+            let Some((index, slot)) = index
+                .and_then(|index| slots.get(index).map(|slot| (index, slot)))
+                .filter(|(_, slot)| slot.shows_changes_to_caller)
+            else {
                 continue;
             };
             let place = self.classify_argument_place(value);
@@ -475,11 +501,7 @@ impl TypeChecker {
                     // Passing the parameter on to a callee whose body is unknown may change it.
                     None => {
                         let owner = body.identity.clone();
-                        self.mut_params
-                            .changed
-                            .entry(owner)
-                            .or_default()
-                            .insert(param.clone());
+                        self.mut_params.changed.entry(owner).or_default().insert(param.clone());
                     }
                 }
             }
@@ -487,6 +509,7 @@ impl TypeChecker {
                 callee: identity.clone(),
                 callee_name: callee_name.clone(),
                 param: slot.name.clone(),
+                position: index + 1,
                 place,
                 span: value.span,
             });
@@ -495,27 +518,55 @@ impl TypeChecker {
 
     /// Return the parameter slots of a callee known only by its callable type, when any of them is marked `mut`.
     ///
-    /// The parameters are the ones the checker resolved the call against: the call's recorded callable parameters,
-    /// or, for a function call, the callee expression's function type. A method call's own expression type is its
-    /// result, never its signature, so only the recorded parameters describe it.
-    fn callable_type_mut_slots(&self, callee_span: Span, call_span: Span) -> Option<Vec<DeclaredParamSlot>> {
-        let params = match self.type_info.call_site_callable_params(call_span) {
-            Some(params) => params.to_vec(),
-            None if callee_span != call_span => match self.type_info.expr_type(callee_span)? {
-                ResolvedType::Function(params, _) => params.clone(),
-                _ => return None,
-            },
-            None => return None,
+    /// The parameters are the ones the checker resolved the call against: for a function call, the function a callee
+    /// name binds (an imported library function) or the function type of a callee value (a function value, a
+    /// parameter of function type, a closure); for a method call, the method of the receiver's nominal type (a
+    /// compiled library's model or class); and for any call, the call's recorded callable parameters.
+    fn callable_type_mut_slots(
+        &self,
+        callee: MutArgumentCallee<'_>,
+        call_span: Span,
+    ) -> Option<Vec<DeclaredParamSlot>> {
+        let resolved = match callee {
+            MutArgumentCallee::Function(callee) => {
+                let bound = match &callee.node {
+                    Expr::Ident(name) => self.lookup_symbol(name).and_then(|symbol| match &symbol.kind {
+                        SymbolKind::Function(info) => Some(info.params.as_slice()),
+                        SymbolKind::Variable(info) => function_type_params(&info.ty),
+                        _ => None,
+                    }),
+                    _ => None,
+                };
+                bound.or_else(|| self.type_info.expr_type(callee.span).and_then(function_type_params))
+            }
+            MutArgumentCallee::Method { receiver, method } => self
+                .type_info
+                .expr_type(receiver.span)
+                .and_then(nominal_type_name)
+                .and_then(|type_name| self.lookup_symbol(type_name))
+                .and_then(|symbol| match &symbol.kind {
+                    SymbolKind::Type(TypeInfo::Class(info)) => info.methods.get(method),
+                    SymbolKind::Type(TypeInfo::Model(info)) => info.methods.get(method),
+                    SymbolKind::Type(TypeInfo::Newtype(info)) => info.methods.get(method),
+                    SymbolKind::Type(TypeInfo::Enum(info)) => info.methods.get(method),
+                    _ => None,
+                })
+                .map(|info| info.params.as_slice()),
         };
-        let slots = params
-            .iter()
-            .map(|param| DeclaredParamSlot {
-                name: param.name.clone().unwrap_or_default(),
-                kind: param.kind,
-                shows_changes_to_caller: callable_param_is_marked(param),
+        [resolved, self.type_info.call_site_callable_params(call_span)]
+            .into_iter()
+            .flatten()
+            .map(|params| {
+                params
+                    .iter()
+                    .map(|param| DeclaredParamSlot {
+                        name: param.name.clone().unwrap_or_default(),
+                        kind: param.kind,
+                        shows_changes_to_caller: callable_param_is_marked(param),
+                    })
+                    .collect::<Vec<_>>()
             })
-            .collect::<Vec<_>>();
-        slots.iter().any(|slot| slot.shows_changes_to_caller).then_some(slots)
+            .find(|slots| slots.iter().any(|slot| slot.shows_changes_to_caller))
     }
 
     /// Classify an argument by the storage a change to it would reach.
@@ -597,12 +648,13 @@ impl TypeChecker {
             let Some(place) = refused_place else {
                 continue;
             };
-            let error = errors::immutable_argument_to_mut_parameter(
-                &argument.param,
-                &argument.callee_name,
-                place,
-                argument.span,
-            );
+            let parameter = if argument.param.is_empty() {
+                MutParameterLabel::Position(argument.position)
+            } else {
+                MutParameterLabel::Named(&argument.param)
+            };
+            let error =
+                errors::immutable_argument_to_mut_parameter(parameter, &argument.callee_name, place, argument.span);
             let already_reported = self
                 .errors
                 .iter()
@@ -634,6 +686,23 @@ impl TypeChecker {
                 return changed;
             }
         }
+    }
+}
+
+/// Return the parameters of a function type.
+fn function_type_params(ty: &ResolvedType) -> Option<&[CallableParam]> {
+    match ty {
+        ResolvedType::Function(params, _) => Some(params.as_slice()),
+        _ => None,
+    }
+}
+
+/// Return the name of the nominal type a receiver's type names, through a reference.
+fn nominal_type_name(ty: &ResolvedType) -> Option<&str> {
+    match ty {
+        ResolvedType::Named(name) | ResolvedType::Generic(name, _) => Some(name.as_str()),
+        ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => nominal_type_name(inner),
+        _ => None,
     }
 }
 

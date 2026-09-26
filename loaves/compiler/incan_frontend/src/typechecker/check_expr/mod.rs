@@ -17,6 +17,7 @@ use incan_semantics_core::SurfaceExprTypeCheck;
 use std::collections::HashMap;
 
 use super::TypeChecker;
+use super::mut_arguments::MutArgumentCallee;
 
 mod access;
 mod basics;
@@ -246,7 +247,7 @@ impl TypeChecker {
             Expr::Unary(op, operand) => self.check_unary(*op, operand, expr.span),
             Expr::Call(callee, type_args, args) => {
                 let ty = self.check_call(callee, type_args, args, expr.span);
-                self.record_mut_arguments(callee.span, expr.span, args);
+                self.record_mut_arguments(MutArgumentCallee::Function(callee), expr.span, args);
                 ty
             }
             Expr::Index(base, index) => self.check_index(base, index, expr.span),
@@ -254,7 +255,7 @@ impl TypeChecker {
             Expr::Field(base, field) => self.check_field(base, field, expr.span),
             Expr::MethodCall(base, method, type_args, args) => {
                 let ty = self.check_method_call(base, method, type_args, args, expr.span);
-                self.record_mut_arguments(expr.span, expr.span, args);
+                self.record_mut_arguments(MutArgumentCallee::Method { receiver: base, method }, expr.span, args);
                 ty
             }
             Expr::Partial(partial) => self.check_partial_expr(partial, expr.span),
@@ -426,13 +427,13 @@ impl TypeChecker {
             (Expr::Try(inner), Some(expected_ty)) => self.check_try_with_expected(inner, expr.span, Some(expected_ty)),
             (Expr::Call(callee, type_args, args), Some(expected_ty)) => {
                 let ty = self.check_call_with_expected(callee, type_args, args, expr.span, Some(expected_ty));
-                self.record_mut_arguments(callee.span, expr.span, args);
+                self.record_mut_arguments(MutArgumentCallee::Function(callee), expr.span, args);
                 ty
             }
             (Expr::MethodCall(base, method, type_args, args), Some(expected_ty)) => {
                 let ty =
                     self.check_method_call_with_expected(base, method, type_args, args, expr.span, Some(expected_ty));
-                self.record_mut_arguments(expr.span, expr.span, args);
+                self.record_mut_arguments(MutArgumentCallee::Method { receiver: base, method }, expr.span, args);
                 ty
             }
             (Expr::Tuple(items), Some(ResolvedType::Unit)) if items.is_empty() => ResolvedType::Unit,

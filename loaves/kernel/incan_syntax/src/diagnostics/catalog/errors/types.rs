@@ -936,6 +936,34 @@ pub enum MutArgumentPlace {
     Static,
 }
 
+/// How an `INCAN-T0117` refusal names the `mut` parameter: by its declared name, or by its position when the callee is
+/// known only by a callable type whose parameters have no names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MutParameterLabel<'a> {
+    /// A declared parameter name.
+    Named(&'a str),
+    /// A 1-based position in the callable type's parameter list.
+    Position(usize),
+}
+
+impl MutParameterLabel<'_> {
+    /// Spell the parameter inside a sentence: `'items'` or `at position 1`.
+    fn in_sentence(self) -> String {
+        match self {
+            Self::Named(name) => format!("'{name}'"),
+            Self::Position(position) => format!("at position {position}"),
+        }
+    }
+
+    /// Name a `mut` variable a remedy binds the value to.
+    fn binding_name(self) -> String {
+        match self {
+            Self::Named(name) => name.to_string(),
+            Self::Position(_) => "value".to_string(),
+        }
+    }
+}
+
 /// Refuse an argument for a `mut` parameter whose changes reach the caller when the callee changes it and the change
 /// would fail to reach the argument (#1773).
 ///
@@ -943,28 +971,30 @@ pub enum MutArgumentPlace {
 /// callee's changes to the caller. When the callee does change it, the argument must be a place the caller may change:
 /// an immutable binding or a field of one cannot be changed, and an element or a static reaches the callee as a copy,
 /// so the change would be lost. `parameter` and `callee` name the declaration and `place` the argument, which picks the
-/// remedy. `INCAN-T0117` is its stable code.
+/// remedy; a callee known only by its callable type names the parameter by position. `INCAN-T0117` is its stable code.
 pub fn immutable_argument_to_mut_parameter(
-    parameter: &str,
+    parameter: MutParameterLabel<'_>,
     callee: &str,
     place: MutArgumentPlace,
     span: Span,
 ) -> CompileError {
+    let binding = parameter.binding_name();
+    let parameter = parameter.in_sentence();
     let hint = match &place {
         MutArgumentPlace::Binding(name) => format!("Declare '{name}' with 'mut' where it is bound: mut {name} = ..."),
         MutArgumentPlace::Field => "Declare the binding the field belongs to with 'mut'".to_string(),
         MutArgumentPlace::Element | MutArgumentPlace::Static => format!(
-            "Bind the value to a 'mut' variable, pass the variable, and store it back: mut {parameter} = ..., then assign it to the element or static"
+            "Bind the value to a 'mut' variable, pass the variable, and store it back: mut {binding} = ..., then assign it to the element or static"
         ),
     };
     CompileError::type_error(
-        format!("Argument for the 'mut' parameter '{parameter}' of '{callee}' must be a mutable binding"),
+        format!("Argument for the 'mut' parameter {parameter} of '{callee}' must be a mutable binding"),
         span,
     )
     .with_stable_code("INCAN-T0117")
     .with_hint(hint)
     .with_note(format!(
-        "'{callee}' changes '{parameter}', and its changes are visible to the caller, so the caller passes a binding declared with 'mut'"
+        "'{callee}' changes the parameter {parameter}, and its changes are visible to the caller, so the caller passes a binding declared with 'mut'"
     ))
 }
 

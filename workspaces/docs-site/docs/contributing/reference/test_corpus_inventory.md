@@ -661,7 +661,7 @@ Per-test overrides in `loaves/compiler/incan_ir/src/lower/tests/unary_operand_gr
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
 | `loaves/kernel/incan_syntax/src/ast/types.rs` | 1 | 252 | 39 | keep | - | - | - | #1561 | - | lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/diagnostics/base.rs` | 2 | 396 | 39 | keep | - | - | - | #1561 | checker 1 | lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
-| `loaves/kernel/incan_syntax/src/diagnostics/stable.rs` | 8 | 910 | 238 | keep | - | - | - | #1561 | checker 8 | lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
+| `loaves/kernel/incan_syntax/src/diagnostics/stable.rs` | 8 | 924 | 252 | keep | - | - | - | #1561 | checker 8 | lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/lexer/mod.rs` | 20 | 909 | 400 | keep | - | - | - | #1561 | checker 20, parser 20 | lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/embedded/tests.rs` | 28 | 915 | 907 | keep | - | - | - | #1561 | checker 24, parser 4 | lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/expressions.rs` | 26 | 769 | 769 | keep | - | - | - | #1561 | checker 20, parser 26 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |

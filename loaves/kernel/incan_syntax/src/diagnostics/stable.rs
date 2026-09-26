@@ -390,7 +390,7 @@ const IMMUTABLE_ARGUMENT_TO_MUT_PARAMETER: DiagnosticCatalogEntry = DiagnosticCa
     severity: "error",
     phase: "typecheck",
     summary: "A `mut` parameter the callee changes, and whose changes reach the caller, receives an immutable binding, a field of one, a collection element or a static.",
-    explanation: "A parameter declared `mut` is a mutable binding inside its function. When its type is not `int`, `float`, `bool` or a Rust type, and it is not a `*args` or `**kwargs` parameter, the function's changes to it are visible to the caller after the call. When the function does change such a parameter (assigns to its elements or fields, calls a method that changes it, or passes it on to a parameter that is changed), the argument has to be a place the caller may change: a binding or parameter declared `mut`, `self` in a `mut self` method, or a field of one of those. An immutable binding or a field of one is refused, and so are an element of a list or dict and a static, whose change would reach only a copy. A literal or a call result is accepted, and so is any argument for a parameter the function never changes. The rule applies to functions, methods and trait methods alike.",
+    explanation: "A parameter declared `mut` is a mutable binding inside its function. When its type is not `int`, `float`, `bool` or a Rust type, and it is not a `*args` or `**kwargs` parameter, the function's changes to it are visible to the caller after the call. When the function does change such a parameter (assigns to its elements or fields, calls a method that changes it, or passes it on to a parameter that is changed), the argument has to be a place the caller may change: a binding or parameter declared `mut`, `self` in a `mut self` method, or a field of one of those. An immutable binding or a field of one is refused, and so are an element of a list or dict and a static, whose change would reach only a copy. A literal or a call result is accepted, and so is any argument for a parameter the function never changes. The rule applies to functions, methods and trait methods alike, and to a call through a function value. A callee whose body the check does not read, such as a compiled library's function or a function value whose type marks the parameter `mut`, is taken to change the parameter.",
     examples: &[
         "def extend(mut items: list[int]) -> None:\n    items.append(9)\n\ndef main() -> None:\n    items: list[int] = [1, 2]\n    extend(items)",
         "def extend(mut items: list[int]) -> None:\n    items.append(9)\n\ndef main() -> None:\n    mut rows: list[list[int]] = [[1]]\n    extend(rows[0])",
@@ -813,14 +813,28 @@ mod tests {
     #[test]
     fn immutable_argument_to_mut_parameter_uses_its_stable_code_issue1773() -> Result<(), String> {
         let binding = errors::immutable_argument_to_mut_parameter(
-            "items",
+            errors::MutParameterLabel::Named("items"),
             "extend",
             errors::MutArgumentPlace::Binding("items".to_string()),
             Span::default(),
         );
-        let element =
-            errors::immutable_argument_to_mut_parameter("items", "extend", errors::MutArgumentPlace::Element, Span::default());
-        for error in [&binding, &element] {
+        let element = errors::immutable_argument_to_mut_parameter(
+            errors::MutParameterLabel::Named("items"),
+            "extend",
+            errors::MutArgumentPlace::Element,
+            Span::default(),
+        );
+        let positional = errors::immutable_argument_to_mut_parameter(
+            errors::MutParameterLabel::Position(1),
+            "step",
+            errors::MutArgumentPlace::Binding("counter".to_string()),
+            Span::default(),
+        );
+        assert_eq!(
+            positional.message,
+            "Argument for the 'mut' parameter at position 1 of 'step' must be a mutable binding"
+        );
+        for error in [&binding, &element, &positional] {
             assert_eq!(code_for_error(error, DiagnosticPhase::Typecheck), "INCAN-T0117");
         }
         let entry = explain("INCAN-T0117").ok_or("INCAN-T0117 must have a catalog explanation")?;
