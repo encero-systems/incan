@@ -1234,13 +1234,15 @@ impl AstLowering {
                                 IrType::Unit,
                             );
 
+                            let (pattern, guard) =
+                                Self::hoist_nested_string_literal_patterns(self.lower_pattern(&pattern.node));
                             Ok(IrStmtKind::Match {
                                 scrutinee,
                                 arms: vec![
                                     MatchArm {
-                                        pattern: self.lower_pattern(&pattern.node),
+                                        pattern,
                                         bindings: Vec::new(),
-                                        guard: None,
+                                        guard,
                                         body: then_body,
                                     },
                                     MatchArm {
@@ -1290,15 +1292,17 @@ impl AstLowering {
                                 IrType::Unit,
                             );
 
+                            let (pattern, guard) =
+                                Self::hoist_nested_string_literal_patterns(self.lower_pattern(&pattern.node));
                             Ok(IrStmtKind::Loop {
                                 label: None,
                                 body: vec![IrStmt::new(IrStmtKind::Match {
                                     scrutinee,
                                     arms: vec![
                                         MatchArm {
-                                            pattern: self.lower_pattern(&pattern.node),
+                                            pattern,
                                             bindings: Vec::new(),
-                                            guard: None,
+                                            guard,
                                             body: body_expr,
                                         },
                                         MatchArm {

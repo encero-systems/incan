@@ -1,0 +1,25 @@
+# behavior: a method that assigns to a field or pops from one while its receiver is a plain self is refused at check time
+# expect-diagnostic: INCAN-T0102
+
+trait Resizable:
+    def resize(self, factor: float) -> None
+
+
+class Carton with Resizable:
+    width: float
+
+    def resize(self, factor: float) -> None:
+        self.width *= factor
+
+
+class Stack:
+    items: list[int]
+
+    def pop(self) -> int:
+        return self.items.pop()
+
+
+def main() -> None:
+    mut carton: Carton = Carton(width=2.0)
+    carton.resize(3.0)
+    println(carton.width)

@@ -17,6 +17,25 @@ pub const INCAN_STD_NAMESPACE: &str = "__incan_std";
 /// `std.web` module name.
 pub const STDLIB_WEB: &str = "web";
 
+/// `std.web.routing.route`, the decorator that registers a function as an HTTP route handler.
+///
+/// The checker recognizes the decorator by this name together with its backing crate
+/// ([`STDLIB_WEB_MACROS_CRATE`]) rather than by import spelling, so `@route`, `@web.route` and
+/// `@std.web.routing.route` are one decorator once the import resolves.
+pub const STDLIB_WEB_ROUTE_DECORATOR: &str = "route";
+
+/// The proc-macro crate that backs `std.web.routing.route`.
+///
+/// A `@rust.extern` stdlib function bound to this crate is emitted as a passthrough Rust attribute; the checker uses
+/// the same binding to know which decorated functions are route handlers and to check their signatures.
+pub const STDLIB_WEB_MACROS_CRATE: &str = "incan_web_macros";
+
+/// `std.web.macros.IntoResponse`, the derive that makes a wrapper type usable as a route handler's return type.
+pub const STDLIB_WEB_INTO_RESPONSE_TRAIT: &str = "IntoResponse";
+
+/// `std.web.macros.FromRequestParts`, the derive that makes a wrapper type usable as a route handler parameter.
+pub const STDLIB_WEB_FROM_REQUEST_PARTS_TRAIT: &str = "FromRequestParts";
+
 /// `std.reflection` module name.
 pub const STDLIB_REFLECTION: &str = "reflection";
 
@@ -140,21 +159,11 @@ pub enum StdlibJsonTraitId {
 const STDLIB_JSON_SERIALIZE_TRAIT_METHODS: &[&str] = &["to_json"];
 const STDLIB_JSON_DESERIALIZE_TRAIT_METHODS: &[&str] = &["from_json"];
 
-const STDLIB_JSON_SERIALIZE_TRAIT_NAMES: &[&str] = &[
-    "Serialize",
-    "JsonSerialize",
-    "json.Serialize",
-    "std.serde.json.Serialize",
-];
+const STDLIB_JSON_SERIALIZE_TRAIT_NAMES: &[&str] = &["Serialize", "json.Serialize", "std.serde.json.Serialize"];
 
 const STDLIB_JSON_CANONICAL_TRAIT_NAMES: &[&str] = &["std.serde.json.Serialize", "std.serde.json.Deserialize"];
 
-const STDLIB_JSON_DESERIALIZE_TRAIT_NAMES: &[&str] = &[
-    "Deserialize",
-    "JsonDeserialize",
-    "json.Deserialize",
-    "std.serde.json.Deserialize",
-];
+const STDLIB_JSON_DESERIALIZE_TRAIT_NAMES: &[&str] = &["Deserialize", "json.Deserialize", "std.serde.json.Deserialize"];
 
 /// Return whether `name` is the canonical dynamic JSON value type.
 #[must_use]
@@ -168,7 +177,11 @@ pub fn is_diverging_rust_error_helper_name(name: &str) -> bool {
     DIVERGING_RUST_ERROR_HELPERS.contains(&name)
 }
 
-/// Return the stdlib JSON trait id for a source, alias, or qualified trait spelling.
+/// Return the stdlib JSON trait id for a source or qualified trait spelling.
+///
+/// The spellings here are the ones a program can write without an import binding of its own: the declaration name
+/// and the module-qualified forms. An import alias (`Serialize as JsonSerialize`) is a binding the frontend proves,
+/// so it is resolved by identity through [`stdlib_json_trait_id_for_identity`], never by its spelling (#1712).
 #[must_use]
 pub fn stdlib_json_trait_id(name: &str) -> Option<StdlibJsonTraitId> {
     if STDLIB_JSON_SERIALIZE_TRAIT_NAMES.contains(&name) {
@@ -420,7 +433,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         facet: Some(facets::WEB),
         extra_crate_deps: &[
             StdlibExtraCrateDep {
-                crate_name: "incan_web_macros",
+                crate_name: STDLIB_WEB_MACROS_CRATE,
                 source: StdlibExtraCrateSource::Path("crates/incan_web_macros"),
                 features: &[],
             },
@@ -1248,25 +1261,24 @@ mod tests {
     }
 
     #[test]
-    fn stdlib_json_trait_lookup_covers_aliases_and_qualified_names() {
-        for name in [
-            "Serialize",
-            "JsonSerialize",
-            "json.Serialize",
-            "std.serde.json.Serialize",
-        ] {
+    fn stdlib_json_trait_lookup_covers_source_and_qualified_names_only() {
+        for name in ["Serialize", "json.Serialize", "std.serde.json.Serialize"] {
             assert_eq!(stdlib_json_trait_id(name), Some(StdlibJsonTraitId::Serialize));
         }
 
-        for name in [
-            "Deserialize",
-            "JsonDeserialize",
-            "json.Deserialize",
-            "std.serde.json.Deserialize",
-        ] {
+        for name in ["Deserialize", "json.Deserialize", "std.serde.json.Deserialize"] {
             assert_eq!(stdlib_json_trait_id(name), Some(StdlibJsonTraitId::Deserialize));
         }
 
+        // An import alias is a binding, resolved by identity rather than by spelling (#1712).
+        assert_eq!(stdlib_json_trait_id("JsonSerialize"), None);
+        assert_eq!(stdlib_json_trait_id("JsonDeserialize"), None);
+        let json_module = ["std", "serde", "json"].map(String::from);
+        assert_eq!(
+            stdlib_json_trait_id_for_identity(&json_module, "Serialize"),
+            Some(StdlibJsonTraitId::Serialize)
+        );
+        assert_eq!(stdlib_json_trait_id_for_identity(&json_module, "JsonSerialize"), None);
         assert_eq!(stdlib_json_trait_id("yaml.Serialize"), None);
         assert_eq!(stdlib_json_trait_scope_import_id("Serialize"), None);
         assert_eq!(stdlib_json_trait_scope_import_id("JsonSerialize"), None);

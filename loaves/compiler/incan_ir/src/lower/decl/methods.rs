@@ -1269,10 +1269,15 @@ impl AstLowering {
         false
     }
 
-    /// Keep only methods that Rust can safely emit as inherent methods.
+    /// Keep the methods that belong in the owner's inherent impl block.
     ///
-    /// Rust does not support inherent overloads by name. Same-name methods that match adopted trait obligations are
-    /// emitted in trait impl blocks instead; a single remaining distinct-shape method can still be emitted inherently.
+    /// Same-spelled methods that match adopted trait obligations are emitted in trait impl blocks instead. Every
+    /// other method is inherent, including a type-owned and an instance-owned method that share one source spelling:
+    /// the checker admits at most one non-trait-backed declaration per receiver surface, and every inherent method is
+    /// emitted under its canonical identity projection (see [`Self::lower_decorated_or_plain_methods`]), so two
+    /// spellings of `next` never become two Rust methods named `next`. Only the source-spelled forwarding projection
+    /// is withheld for such a pair, in [`Self::source_method_projections`]. Dropping the pair here left the emitted
+    /// `impl` without either declaration while both call sites already named their projection (#1709).
     fn inherent_methods_for_rust_impl(
         &mut self,
         type_params: &[ast::TypeParam],
@@ -1300,7 +1305,6 @@ impl AstLowering {
                 continue;
             }
 
-            let mut inherent_indexes = Vec::new();
             for idx in indexes {
                 if !self.method_matches_adopted_trait_impl(
                     &methods[*idx].node,
@@ -1308,11 +1312,8 @@ impl AstLowering {
                     &owner_type_param_names,
                     adopted_traits,
                 ) {
-                    inherent_indexes.push(*idx);
+                    out.push(methods[*idx].clone());
                 }
-            }
-            if inherent_indexes.len() == 1 {
-                out.push(methods[inherent_indexes[0]].clone());
             }
         }
         out
@@ -1728,7 +1729,7 @@ impl AstLowering {
         let is_extern = Self::has_rust_extern_decorator(&m.decorators);
         let rust_attributes = self.extract_passthrough_attributes(&m.decorators);
         let lint_allows = self.extract_rust_lint_allows(&m.decorators);
-        let mut all_type_params = self.lower_type_params(&m.type_params);
+        let mut all_type_params = self.lower_callable_type_params(&m.type_params);
         all_type_params.extend(hidden_type_params);
 
         self.pop_scope();
@@ -2045,7 +2046,7 @@ impl AstLowering {
         let is_extern = Self::has_rust_extern_decorator(&m.decorators);
         let rust_attributes = self.extract_passthrough_attributes(&m.decorators);
         let lint_allows = self.extract_rust_lint_allows(&m.decorators);
-        let mut all_type_params = self.lower_type_params(&m.type_params);
+        let mut all_type_params = self.lower_callable_type_params(&m.type_params);
         all_type_params.extend(hidden_type_params);
 
         Ok(IrFunction {
@@ -2226,6 +2227,92 @@ class Container:
         assert_eq!(
             signature.params[1].ty.rust_name(),
             "ProviderHandle<(&mut i64, &mut i64)>"
+        );
+        Ok(())
+    }
+
+    /// Lower one checked program and return the inherent impl block of `owner`.
+    fn lower_inherent_impl(source: &str, owner: &str) -> Result<IrImpl, String> {
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let mut checker = TypeChecker::new();
+        checker
+            .check_program(&program)
+            .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
+        let mut lowering = AstLowering::new_with_type_info(checker.type_info().clone());
+        let ir = lowering
+            .lower_program(&program)
+            .map_err(|errors| format!("lowering failed: {errors:?}"))?;
+        ir.declarations
+            .into_iter()
+            .find_map(|decl| match decl.kind {
+                IrDeclKind::Impl(impl_block) if impl_block.target_type == owner && impl_block.trait_name.is_none() => {
+                    Some(impl_block)
+                }
+                _ => None,
+            })
+            .ok_or_else(|| format!("no inherent impl block lowered for `{owner}`"))
+    }
+
+    /// A type-owned and an instance-owned method with one spelling both stay in the inherent impl (#1709).
+    ///
+    /// Each is emitted under its own identity projection, so the pair never collides in Rust; the checker admits
+    /// the pair (one declaration per receiver surface), and both call sites already select their declaration by
+    /// identity. Dropping the pair left `impl Counter` empty while `Counter::<projection>(4)` named it.
+    #[test]
+    fn same_spelled_static_and_instance_methods_both_lower_inherently_issue1709() -> Result<(), String> {
+        let impl_block = lower_inherent_impl(
+            r#"
+model Counter:
+  value: int
+
+  @staticmethod
+  def next(value: int) -> Counter:
+    return Counter(value=value)
+
+  def next(self) -> int:
+    return self.value + 1
+
+def main() -> None:
+  println(Counter.next(4).next())
+"#,
+            "Counter",
+        )?;
+
+        let mut names = impl_block
+            .methods
+            .iter()
+            .map(|method| method.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names.len(), 2, "both declarations must lower: {names:?}");
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(
+            names.len(),
+            2,
+            "the two declarations must project to distinct Rust names"
+        );
+        assert!(
+            names
+                .iter()
+                .all(|name| name.starts_with(incan_semantics_core::INCAN_SYMBOL_RUST_PREFIX)),
+            "inherent methods are emitted under their identity projections: {names:?}"
+        );
+        let receiver_shapes = impl_block
+            .methods
+            .iter()
+            .map(|method| method.params.iter().any(|param| param.is_self))
+            .collect::<Vec<_>>();
+        assert!(
+            receiver_shapes.contains(&true) && receiver_shapes.contains(&false),
+            "one declaration is type-owned and one instance-owned: {receiver_shapes:?}"
+        );
+        assert!(
+            impl_block
+                .source_method_projections
+                .iter()
+                .all(|projection| projection.source_name != "next"),
+            "an overloaded spelling gets no source-spelled forwarding projection"
         );
         Ok(())
     }

@@ -2,7 +2,8 @@
 //!
 //! The installer provisions Incan's own Rustup home; a development checkout resolves through the ambient Rustup.
 //! `resolve_active_rustc`, the one-spawn `rustc -vV` probe, `rustdoc_for_rustc` and the dynamic-library environment a
-//! direct compile runs under live here.
+//! direct compile runs under live here, as does `rustc_probe_command`, the launcher every probe of a compiler's own
+//! identity, sysroot or cfg facts goes through.
 
 use std::collections::HashMap;
 use std::env;
@@ -192,6 +193,35 @@ pub fn resolve_active_rustc() -> Result<PathBuf, OvenRustcError> {
     verified_regular_file(Path::new(&reported), "rustc")
 }
 
+/// The dynamic-loader search-path variables a compiler probe must not inherit from the calling process.
+///
+/// Windows resolves libraries through `PATH`, which also locates the compiler itself, so it has no entry here.
+const INHERITED_LOADER_SEARCH_PATH_VARIABLES: [&str; 3] =
+    ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"];
+
+/// Build the command that asks one compiler about itself, answering for that compiler's own closure.
+///
+/// Every probe of a compiler's identity, sysroot or cfg facts starts from this command. It clears the ambient Cargo
+/// state a direct compile clears, and also the dynamic-loader search paths the calling process carries. Those matter
+/// because `rustc` derives its sysroot from wherever the loader found `librustc_driver`, not from its own location:
+/// on Linux `LD_LIBRARY_PATH` is consulted before the binary's own `$ORIGIN/../lib` runpath, so a copied or
+/// store-retained compiler that inherits a path naming another toolchain's `lib` loads that toolchain's driver and
+/// reports that toolchain's sysroot. The compiler-suite runner exports exactly such a path to every libtest child,
+/// which is how the retained-toolchain staging test failed under the Linux replay while passing on macOS, where
+/// `DYLD_FALLBACK_LIBRARY_PATH` is consulted only after the rpath (#1755). The same launcher serves a test that
+/// compiles with a retained compiler to prove it stands on its own closure.
+///
+/// A real direct compile does not come through here: it runs under the frozen environment the JEC plan admits, with
+/// nothing inherited at all.
+pub fn rustc_probe_command(rustc: &Path) -> Command {
+    let mut command = Command::new(rustc);
+    clear_inherited_cargo_environment(&mut command);
+    for name in INHERITED_LOADER_SEARCH_PATH_VARIABLES {
+        command.env_remove(name);
+    }
+    command
+}
+
 /// The two facts every command asks of the selected compiler, answered by one `rustc -vV`.
 #[derive(Debug, Clone)]
 pub struct RustcProbe {
@@ -225,9 +255,8 @@ pub fn rustc_probe(rustc: &Path) -> Result<RustcProbe, OvenRustcError> {
     {
         return Ok(probe.clone());
     }
-    let mut command = Command::new(&rustc);
+    let mut command = rustc_probe_command(&rustc);
     command.arg("-vV");
-    clear_inherited_cargo_environment(&mut command);
     let output = command.output().map_err(|source| OvenRustcError::Io {
         path: rustc.clone(),
         source,
@@ -321,9 +350,9 @@ pub fn rustc_host_and_target_cfg_snapshots(
     Ok((host, target))
 }
 
-/// Build the Cargo-clean compiler command that yields one cfg snapshot.
+/// Build the probe command that yields one cfg snapshot from the compiler's own closure.
 fn rustc_cfg_snapshot_command(rustc: &Path, target: Option<&str>) -> Result<Command, OvenRustcError> {
-    let mut command = Command::new(rustc);
+    let mut command = rustc_probe_command(rustc);
     command.args(["--print", "cfg"]);
     if let Some(target) = target {
         if target.is_empty() || target.trim() != target {
@@ -334,7 +363,6 @@ fn rustc_cfg_snapshot_command(rustc: &Path, target: Option<&str>) -> Result<Comm
         }
         command.args(["--target", target]);
     }
-    clear_inherited_cargo_environment(&mut command);
     Ok(command)
 }
 
@@ -383,11 +411,13 @@ fn parse_rustc_cfg_snapshot(stdout: &str) -> Result<OvenSelectedRustFacetCfgSnap
 }
 
 /// Resolve the selected compiler's sysroot without consulting Cargo.
+///
+/// The answer is the sysroot the compiler stands in, not the one an inherited loader path would steer it to; see
+/// [`rustc_probe_command`] for why the two can differ for a copied or store-retained compiler.
 pub fn rustc_sysroot(rustc: &Path) -> Result<PathBuf, OvenRustcError> {
     let rustc = verified_regular_file(rustc, "rustc")?;
-    let mut command = Command::new(&rustc);
+    let mut command = rustc_probe_command(&rustc);
     command.args(["--print", "sysroot"]);
-    clear_inherited_cargo_environment(&mut command);
     let output = command.output().map_err(|source| OvenRustcError::Io {
         path: rustc.clone(),
         source,
@@ -539,7 +569,7 @@ pub fn expected_artifacts(manifest: &OvenRustcArtifactManifest) -> Result<BTreeM
 /// Return the exact commit hash reported by `rustc -vV`, used to remap installed `rust-src` checkouts onto the
 /// virtual `/rustc/<commit>` prefix a source-less toolchain embeds in standard-library debug spans.
 pub fn rustc_commit_hash(rustc: &Path) -> Option<String> {
-    let output = Command::new(rustc).arg("-vV").output().ok()?;
+    let output = rustc_probe_command(rustc).arg("-vV").output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -587,6 +617,28 @@ mod tests {
         assert_eq!(target.values["target_os"], ["unknown"]);
         assert!(rustc_cfg_snapshot(&rustc, Some("not-an-oven-target")).is_err());
         Ok(())
+    }
+
+    #[test]
+    fn probe_command_clears_the_inherited_loader_search_paths() {
+        let command = rustc_probe_command(Path::new("/sealed/rustc"));
+        assert_eq!(command.get_program(), Path::new("/sealed/rustc").as_os_str());
+        assert!(command.get_args().next().is_none());
+        let cleared = command
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(name, _)| name.to_string_lossy().into_owned())
+            .collect::<BTreeSet<_>>();
+        for name in INHERITED_LOADER_SEARCH_PATH_VARIABLES {
+            assert!(
+                cleared.contains(name),
+                "`{name}` would steer the probed compiler to another toolchain's driver and sysroot"
+            );
+        }
+        assert!(
+            !cleared.contains("PATH"),
+            "`PATH` locates the compiler on Windows and must survive the probe"
+        );
     }
 
     #[test]

@@ -25,7 +25,7 @@ def test_collections() -> None:
     # Tuple literals
     pair: tuple[int, str] = (1, "one")
     triple: tuple[int, int, int] = (1, 2, 3)
-    multiple: Tuple = ("a", pair, "b", triple, 42)
+    multiple: tuple[tuple[int, str], tuple[int, int, int]] = (pair, triple)
 
     # Indexing
     first: int = numbers[0]

@@ -698,11 +698,6 @@ pub struct ExpressionArtifacts {
     /// This differs from the initializer expression type when contextual numeric typing or a validated coercion
     /// selects the annotated destination type. Body IR consumes this fact instead of reconstructing annotations.
     pub assignment_binding_types: HashMap<(usize, usize), ResolvedType>,
-    /// Type names that implement `Awaitable[T]` by delegating to one concrete awaitable field.
-    ///
-    /// Lowering consumes this so `await wrapper` and `race for` arms can emit `wrapper.<field>.await` instead of
-    /// trying to await the wrapper struct itself.
-    pub awaitable_delegation_fields: HashMap<String, String>,
     /// RFC 046 computed property reads keyed by the full field-access expression span.
     ///
     /// Lowering/emission can use this to distinguish `obj.field` storage reads from `obj.property` getter calls while
@@ -730,6 +725,14 @@ pub struct ExpressionArtifacts {
     /// The codegraph exporter consumes this instead of re-resolving names from syntax. Absence means the target is
     /// unsupported, ambiguous, degraded, or outside the current conservative source target set.
     pub source_targets: HashMap<(usize, usize), SourceTargetInfo>,
+    /// Fields a model or class destructuring pattern leaves unnamed, keyed by the constructor name's span.
+    ///
+    /// `Account(tier=1)` names one field and is silent about the rest; the source says nothing about them, and the
+    /// checker is the only stage that knows the complete canonical field list of the matched nominal wherever it
+    /// was declared (locally, in another source module or in a compiled dependency). The value is the omitted
+    /// canonical field names in declaration order. Lowering consumes it to record the rest explicitly in the
+    /// pattern shape it hands the backend (#1708). A pattern that names every field records nothing.
+    pub pattern_rest_fields: HashMap<(usize, usize), Vec<String>>,
 }
 
 /// Source-reference resolution facts keyed by source spans.
@@ -912,6 +915,16 @@ pub struct DeclarationArtifacts {
     /// written path, so the proven identity is recorded here and is simply absent when resolution did not prove one.
     /// A re-export resolves to the identity of the module that *declares* the member, never to the facade.
     pub resolved_import_identities: HashMap<String, CanonicalSymbolId>,
+    /// The name the declaring module binds each resolved source import under, keyed by the local import name.
+    ///
+    /// Recorded beside [`Self::resolved_import_identities`] for imports that resolved through the source module
+    /// graph. A facade may re-export a declaration under a new name, and the written item name then says nothing
+    /// about how the declaring module spells it; the identity's `declaration_name` does not answer either, because an
+    /// `alias` declaration binds one identity under a second name of its own. Lowering spells a projected import
+    /// (function, partial, static) by this name so a re-export rename lowers exactly like a direct import of the
+    /// declaration, and an `alias` declaration keeps its own spelling (#1710). Absent for an import that resolved
+    /// through a compiled provider's manifest, whose public names carry no such fact.
+    pub resolved_import_declared_names: HashMap<String, String>,
     /// Module-qualified type annotations the checker resolved, keyed by their dotted source spelling.
     ///
     /// `mod.Type` in type position reaches a declaration through a module binding rather than through a local type
@@ -2009,6 +2022,17 @@ impl TypeCheckInfo {
         self.expressions.assignment_binding_types.get(&(span.start, span.end))
     }
 
+    /// Return the canonical fields a destructuring pattern leaves unnamed, keyed by its constructor name's span.
+    ///
+    /// `None` means the pattern names every field of its nominal or is not a model or class pattern at all; the
+    /// two cases need no distinction because both leave nothing for lowering to add.
+    pub fn pattern_rest_fields(&self, span: Span) -> Option<&[String]> {
+        self.expressions
+            .pattern_rest_fields
+            .get(&(span.start, span.end))
+            .map(Vec::as_slice)
+    }
+
     /// Return exact Rust parameter displays recorded for a closure expression, if any.
     pub fn closure_param_type_displays(&self, span: Span) -> Option<&[String]> {
         self.rust
@@ -2049,6 +2073,17 @@ impl TypeCheckInfo {
     /// [`DeclarationArtifacts::resolved_import_identities`].
     pub fn resolved_import_identity(&self, local_name: &str) -> Option<&CanonicalSymbolId> {
         self.declarations.resolved_import_identities.get(local_name)
+    }
+
+    /// Return the name the declaring module binds an imported source symbol under, if resolution recorded it.
+    ///
+    /// Absent for imports the source module graph did not resolve (compiled providers): see
+    /// [`DeclarationArtifacts::resolved_import_declared_names`].
+    pub fn resolved_import_declared_name(&self, local_name: &str) -> Option<&str> {
+        self.declarations
+            .resolved_import_declared_names
+            .get(local_name)
+            .map(String::as_str)
     }
 
     /// Return the declaration a module-qualified type annotation resolved to, keyed by its dotted spelling.

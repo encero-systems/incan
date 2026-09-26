@@ -1648,6 +1648,128 @@ def main() -> None:
         Ok(())
     }
 
+    /// Regression for #1697: a consumer narrows a dependency-owned union alias reached through a dependency-owned
+    /// model field with the same provider-qualified wrapper patterns as a local binding of that union.
+    ///
+    /// The field, a binding copied from the field, a binding holding a public helper's result, and a `List` field's
+    /// elements in a `for` loop all narrow through `::querykit::__IncanUnion…::V<n>(…)` and run to the expected lines.
+    #[test]
+    fn external_pub_consumer_narrows_dependency_owned_union_through_model_field_issue1697()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let provider_root = tmp.path().join("querykit");
+        std::fs::create_dir_all(provider_root.join("src"))?;
+        std::fs::write(
+            provider_root.join("loaf.toml"),
+            "[project]\nname = \"querykit\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            provider_root.join("src/lib.incn"),
+            r#"pub model IntLiteralExpr:
+  pub value: int
+
+pub model StringLiteralExpr:
+  pub value: str
+
+pub type ColumnExpr = Union[IntLiteralExpr, StringLiteralExpr]
+
+pub model AggregateMeasure:
+  pub expr: ColumnExpr
+
+pub model Projection:
+  pub columns: List[ColumnExpr]
+
+pub def lit(value: int) -> ColumnExpr:
+  return IntLiteralExpr(value=value)
+
+pub def col(name: str) -> ColumnExpr:
+  return StringLiteralExpr(value=name)
+"#,
+        )?;
+        let provider_bake = bake_library_provider(&provider_root)?;
+        assert!(
+            provider_bake.status.success(),
+            "expected the #1697 querykit provider bake to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&provider_bake.stdout),
+            String::from_utf8_lossy(&provider_bake.stderr)
+        );
+
+        let consumer_root = tmp.path().join("consumer");
+        let consumer_main = write_project_files(
+            &consumer_root,
+            "[project]\nname = \"issue1697_union_field_consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\nquerykit = { path = \"../querykit\" }\n",
+            r#"from pub::querykit import AggregateMeasure, IntLiteralExpr, Projection, StringLiteralExpr, col, lit
+
+def describe_field(measure: AggregateMeasure) -> str:
+  match measure.expr:
+    IntLiteralExpr(inner) => return f"int {inner.value}"
+    StringLiteralExpr(inner) => return f"str {inner.value}"
+
+def describe_field_binding(measure: AggregateMeasure) -> str:
+  expr = measure.expr
+  match expr:
+    IntLiteralExpr(inner) => return f"int {inner.value}"
+    StringLiteralExpr(inner) => return f"str {inner.value}"
+
+def describe_helper_binding() -> str:
+  expr = lit(5)
+  match expr:
+    IntLiteralExpr(inner) => return f"int {inner.value}"
+    StringLiteralExpr(inner) => return f"str {inner.value}"
+
+def describe_columns(projection: Projection) -> None:
+  for column in projection.columns:
+    match column:
+      IntLiteralExpr(inner) => println(f"int {inner.value}")
+      StringLiteralExpr(inner) => println(f"str {inner.value}")
+
+def main() -> None:
+  println(describe_field(AggregateMeasure(expr=IntLiteralExpr(value=5))))
+  println(describe_field(AggregateMeasure(expr=StringLiteralExpr(value="orders"))))
+  println(describe_field_binding(AggregateMeasure(expr=StringLiteralExpr(value="bound"))))
+  println(describe_helper_binding())
+  describe_columns(Projection(columns=[lit(7), col("name")]))
+"#,
+        )?;
+
+        let consumer_bake = bake_project(&consumer_root)?;
+        let generated_main_path = consumer_root.join("target/incan/issue1697_union_field_consumer/src/main.rs");
+        let generated_main = std::fs::read_to_string(&generated_main_path).unwrap_or_default();
+        assert!(
+            consumer_bake.status.success(),
+            "expected the #1697 consumer bake to narrow the dependency-owned union through the model field.\ngenerated main.rs:\n{}\nstdout:\n{}\nstderr:\n{}",
+            generated_main,
+            String::from_utf8_lossy(&consumer_bake.stdout),
+            String::from_utf8_lossy(&consumer_bake.stderr)
+        );
+        assert!(
+            !generated_main.contains("pub enum __IncanUnion"),
+            "the consumer must not re-own the provider's union.\ngenerated main.rs:\n{generated_main}"
+        );
+        assert!(
+            generated_main.contains("querykit::__IncanUnion"),
+            "expected every narrowing to use the provider-qualified union wrapper.\ngenerated main.rs:\n{generated_main}"
+        );
+
+        let consumer_run = incan_command()
+            .current_dir(&consumer_root)
+            .args(["run", consumer_main.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            consumer_run.status.success(),
+            "expected the #1697 consumer to run.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&consumer_run.stdout),
+            String::from_utf8_lossy(&consumer_run.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&consumer_run.stdout),
+            "int 5\nstr orders\nstr bound\nint 5\nint 7\nstr name\n"
+        );
+
+        Ok(())
+    }
+
     #[test]
     fn boundary_parity_preserves_decorated_alias_partial_identity_through_facade()
     -> Result<(), Box<dyn std::error::Error>> {

@@ -20,11 +20,12 @@ use oven_store::store::{
 };
 use oven_store::{OvenReceipt, digest_bytes};
 
-/// Hash the selected compiler and the bounded sysroot closure that can affect one direct `rlib` compilation.
+/// Hash the selected compiler and the bounded sysroot closure that can affect one direct compilation or link.
 ///
 /// Package names, versions and installation locations are deliberately absent. The projection contains the invoked
-/// compiler bytes, its actual sysroot compiler when distinct, the driver/LLVM libraries beside that compiler, and
-/// the host/target Rust libraries selected by the invocation. Other installed targets are not members.
+/// compiler bytes, its actual sysroot compiler when distinct, the driver/LLVM libraries beside that compiler, the
+/// host/target Rust libraries selected by the invocation, and the host's self-contained linker when the installation
+/// ships one (`collect_compiler_closure_linker` says which files and why). Other installed targets are not members.
 pub fn direct_rustc_compiler_evidence(
     rustc: &Path,
     target: &str,
@@ -108,6 +109,7 @@ pub fn direct_rustc_compiler_evidence(
             }
         }
     }
+    collect_compiler_closure_linker(&sysroot, &host, &mut members, &mut total_bytes, MAX_MEMBERS, MAX_BYTES)?;
     let member_digests = members
         .iter()
         .map(|(path, (_, digest))| (path.clone(), digest.clone()))
@@ -134,11 +136,12 @@ pub fn direct_rustc_compiler_evidence(
 /// Digest one compiler closure from its members' logical coordinates and byte identities.
 ///
 /// The schema tag is folded in so a later change to what a closure contains cannot silently collide with an
-/// identity minted under the old shape.
+/// identity minted under the old shape. Shape 2 admits the host's self-contained linker; shape 1 stopped at the
+/// libraries, and an installation without a linker would otherwise digest identically under both.
 pub(crate) fn direct_rustc_compiler_closure_digest(
     members: &BTreeMap<String, String>,
 ) -> Result<String, OvenRustcError> {
-    let material = serde_json::to_vec(&("incan.oven.rustc-rlib-closure/1", members)).map_err(|error| {
+    let material = serde_json::to_vec(&("incan.oven.rustc-rlib-closure/2", members)).map_err(|error| {
         OvenRustcError::InvalidInput {
             field: "JEC compiler closure",
             message: format!("cannot encode compiler-member identities: {error}"),
@@ -486,6 +489,75 @@ pub(crate) fn collect_compiler_closure_directory(
     Ok(())
 }
 
+/// Admit the host's self-contained linker into the closure when the installation ships one.
+///
+/// Since 1.90 `rustc` links binaries on `x86_64-unknown-linux-gnu` through `lib/rustlib/<host>/bin/gcc-ld/ld.lld`,
+/// the wrapper `cc -fuse-ld=lld` resolves through `-B`, which in turn executes `lib/rustlib/<host>/bin/rust-lld`
+/// beside it. A retained sysroot without them compiles every `rlib` and then fails its first binary link with "the
+/// self-contained linker was requested, but it wasn't found in the target's sysroot". Both are host executables, so
+/// only the host's copies are members; the emitted-for target's `bin/` is not walked. Each is admitted when present
+/// and skipped when absent, because a `cc`-linked host before 1.90 or a distribution package ships neither, and the
+/// optional tools that share the directory (`llvm-tools`, `wasm-component-ld`, `rust-objcopy`) stay out so an
+/// installed component that takes no part in a native link cannot change the closure identity. Their bytes count
+/// against the same member and byte budget as every other member.
+pub(crate) fn collect_compiler_closure_linker(
+    sysroot: &Path,
+    host: &str,
+    members: &mut BTreeMap<String, (PathBuf, String)>,
+    total_bytes: &mut u64,
+    max_members: usize,
+    max_bytes: u64,
+) -> Result<(), OvenRustcError> {
+    let bin = sysroot.join("lib/rustlib").join(host).join("bin");
+    let logical_bin = format!("lib/rustlib/{host}/bin");
+    let linker = bin.join("rust-lld");
+    match fs::symlink_metadata(&linker) {
+        Ok(_) => collect_compiler_closure_file(
+            &linker,
+            format!("{logical_bin}/rust-lld"),
+            members,
+            total_bytes,
+            max_members,
+            max_bytes,
+        )?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(OvenRustcError::Io {
+                path: linker,
+                source: error,
+            });
+        }
+    }
+    let wrappers = bin.join("gcc-ld");
+    match fs::symlink_metadata(&wrappers) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+            collect_compiler_closure_directory(
+                &wrappers,
+                &format!("{logical_bin}/gcc-ld"),
+                true,
+                members,
+                total_bytes,
+                max_members,
+                max_bytes,
+            )?;
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(OvenRustcError::Io {
+                path: wrappers,
+                source: error,
+            });
+        }
+        _ => {
+            return Err(OvenRustcError::InvalidInput {
+                field: "JEC compiler closure",
+                message: format!("{} is not a non-symlink directory", wrappers.display()),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Admit one compiler-closure file under its logical coordinate, enforcing the member and byte bounds.
 pub(crate) fn collect_compiler_closure_file(
     path: &Path,
@@ -526,4 +598,173 @@ pub(crate) fn collect_compiler_closure_file(
         });
     }
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+
+    use super::{collect_compiler_closure_linker, direct_rustc_compiler_evidence};
+    use oven_store::digest_bytes;
+
+    const HOST: &str = "test-host";
+    const CROSS_TARGET: &str = "cross-target";
+
+    /// Lay out a sysroot whose `bin/rustc` reports `test-host`, with a linker under the host and under a cross
+    /// target, an optional-component tool beside the host linker, and one library per target.
+    fn write_synthetic_sysroot(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let sysroot = root.join("toolchain");
+        fs::create_dir_all(sysroot.join("bin"))?;
+        let rustc = sysroot.join("bin/rustc");
+        fs::write(
+            &rustc,
+            r#"#!/bin/sh
+if [ "$1" = "--print" ] && [ "$2" = "sysroot" ]; then
+  cd "$(dirname "$0")/.." || exit 1
+  pwd -P
+elif [ "$1" = "-vV" ]; then
+  printf '%s\n' 'rustc 1.99.0-test' 'host: test-host'
+else
+  exit 2
+fi
+"#,
+        )?;
+        fs::set_permissions(&rustc, fs::Permissions::from_mode(0o755))?;
+        for (relative, bytes) in [
+            ("lib/libdriver.so", "driver bytes"),
+            ("lib/rustlib/test-host/lib/libstd-host.rlib", "host standard library"),
+            ("lib/rustlib/test-host/bin/rust-lld", "host linker"),
+            ("lib/rustlib/test-host/bin/gcc-ld/ld.lld", "host gnu wrapper"),
+            ("lib/rustlib/test-host/bin/gcc-ld/wasm-ld", "host wasm wrapper"),
+            ("lib/rustlib/test-host/bin/llvm-ar", "optional llvm-tools member"),
+            (
+                "lib/rustlib/cross-target/lib/libstd-cross.rlib",
+                "cross standard library",
+            ),
+            ("lib/rustlib/cross-target/bin/rust-lld", "cross linker"),
+            ("lib/rustlib/cross-target/bin/gcc-ld/ld.lld", "cross gnu wrapper"),
+        ] {
+            let path = sysroot.join(relative);
+            fs::create_dir_all(path.parent().ok_or("synthetic member has no parent")?)?;
+            fs::write(&path, bytes)?;
+        }
+        Ok(sysroot)
+    }
+
+    /// The logical coordinates of a closure's members, for comparing what was retained against what was laid out.
+    fn member_paths(members: &[super::OvenDirectRustcCompilerMember]) -> BTreeSet<&str> {
+        members.iter().map(|member| member.relative_path.as_str()).collect()
+    }
+
+    /// The host's `rust-lld` and `gcc-ld/` wrappers are members; the emitted-for target's linker and an optional
+    /// tool beside the host linker are not, and a closure without the linker digests differently.
+    #[test]
+    fn compiler_evidence_retains_the_host_linker_and_wrappers_only() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let sysroot = write_synthetic_sysroot(root.path())?;
+        let rustc = sysroot.join("bin/rustc");
+
+        let evidence = direct_rustc_compiler_evidence(&rustc, CROSS_TARGET)?;
+        assert_eq!(evidence.host, HOST);
+        assert_eq!(evidence.target, CROSS_TARGET);
+        assert_eq!(
+            member_paths(&evidence.members),
+            BTreeSet::from([
+                "bin/rustc",
+                "lib/libdriver.so",
+                "lib/rustlib/cross-target/lib/libstd-cross.rlib",
+                "lib/rustlib/test-host/bin/gcc-ld/ld.lld",
+                "lib/rustlib/test-host/bin/gcc-ld/wasm-ld",
+                "lib/rustlib/test-host/bin/rust-lld",
+                "lib/rustlib/test-host/lib/libstd-host.rlib",
+            ])
+        );
+        let linker = evidence
+            .members
+            .iter()
+            .find(|member| member.relative_path == "lib/rustlib/test-host/bin/rust-lld")
+            .ok_or("the host linker was not retained")?;
+        assert_eq!(linker.digest, digest_bytes(b"host linker"));
+        assert_eq!(
+            linker.source_path,
+            fs::canonicalize(&sysroot)?.join("lib/rustlib/test-host/bin/rust-lld")
+        );
+
+        // A closure that lost its linker digests differently: a Store owner retained before the linker was a
+        // member cannot be mistaken for one that can link.
+        fs::remove_file(sysroot.join("lib/rustlib/test-host/bin/rust-lld"))?;
+        fs::remove_dir_all(sysroot.join("lib/rustlib/test-host/bin/gcc-ld"))?;
+        let without_linker = direct_rustc_compiler_evidence(&rustc, CROSS_TARGET)?;
+        assert_ne!(without_linker.closure_digest, evidence.closure_digest);
+        assert!(
+            member_paths(&without_linker.members)
+                .iter()
+                .all(|path| !path.contains("/bin/")),
+            "an installation without a self-contained linker retains no bin/ member"
+        );
+        Ok(())
+    }
+
+    /// The linker's bytes are accounted like every other member's: a budget one byte short of them is refused.
+    #[test]
+    fn linker_members_count_against_the_closure_byte_budget() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let sysroot = write_synthetic_sysroot(root.path())?;
+        let linker_bytes = u64::try_from("host linker".len())?;
+        let wrapper_bytes = u64::try_from("host gnu wrapper".len() + "host wasm wrapper".len())?;
+
+        let mut members = BTreeMap::new();
+        let mut total_bytes = 0_u64;
+        collect_compiler_closure_linker(
+            &sysroot,
+            HOST,
+            &mut members,
+            &mut total_bytes,
+            8,
+            linker_bytes + wrapper_bytes,
+        )?;
+        assert_eq!(members.len(), 3);
+        assert_eq!(total_bytes, linker_bytes + wrapper_bytes);
+
+        let mut over_budget = BTreeMap::new();
+        let mut over_budget_bytes = 0_u64;
+        let refused = collect_compiler_closure_linker(
+            &sysroot,
+            HOST,
+            &mut over_budget,
+            &mut over_budget_bytes,
+            8,
+            linker_bytes + wrapper_bytes - 1,
+        );
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|error| error.to_string().contains("bounded member or byte budget")),
+            "{refused:?}"
+        );
+        Ok(())
+    }
+
+    /// A symlinked `rust-lld` is refused the way a symlinked library is, so the retained bytes are always the real
+    /// file's.
+    #[test]
+    fn a_symlinked_linker_is_refused_like_any_other_member() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let sysroot = write_synthetic_sysroot(root.path())?;
+        let linker = sysroot.join("lib/rustlib/test-host/bin/rust-lld");
+        fs::remove_file(&linker)?;
+        std::os::unix::fs::symlink(sysroot.join("lib/rustlib/cross-target/bin/rust-lld"), &linker)?;
+
+        let refused = direct_rustc_compiler_evidence(&sysroot.join("bin/rustc"), HOST);
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|error| error.to_string().contains("non-symlink regular file")),
+            "{refused:?}"
+        );
+        Ok(())
+    }
 }

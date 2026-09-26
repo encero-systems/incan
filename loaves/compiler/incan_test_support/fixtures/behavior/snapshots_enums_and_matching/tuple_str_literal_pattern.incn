@@ -1,0 +1,55 @@
+# behavior: a str literal nested in a tuple, Option, alternation or if-let pattern selects the arm whose value equals it
+# retires: loaves/compiler/incan_ir/src/lower/expr/patterns.rs::nested_string_literal_pattern_lowers_to_a_guarded_binding_issue1707
+# retires: loaves/compiler/incan_ir/src/lower/expr/patterns.rs::hoisted_literal_tests_conjoin_with_the_arm_guard_issue1707
+# expect-stdout:
+#   second is answer
+#   answered
+#   open
+#   open
+#   found alice
+#   no bob
+#   nobody
+#   pair is a match
+
+"""Issue #1707: a str literal below the top of a pattern matches an owned str value."""
+
+def tuple_literal() -> None:
+    """The issue's program: a str literal as the second item of a tuple pattern."""
+    pair: tuple[int, str] = (42, "answer")
+    match pair:
+        (0, _) => println("first is zero")
+        (_, "answer") => println("second is answer")
+        _ => println("something else")
+
+def classify(pair: tuple[int, str]) -> str:
+    """A nested alternation of str literals under a guard on the other item."""
+    match pair:
+        (n, "yes" | "no") if n > 0 => return "answered"
+        _ => return "open"
+
+def option_literal(name: Option[str]) -> None:
+    """A str literal as an Option payload, beside a binding arm and None."""
+    match name:
+        Some("alice") => println("found alice")
+        Some(other) => println(f"no {other}")
+        None => println("nobody")
+
+def if_let_literal() -> None:
+    """A str literal nested in an if-let pattern."""
+    pair: tuple[int, str] = (1, "match")
+    if let (_, "match") = pair:
+        println("pair is a match")
+
+def main() -> None:
+    """Run every form once and print what each selected."""
+    tuple_literal()
+    answered: tuple[int, str] = (1, "yes")
+    println(classify(answered))
+    unanswered: tuple[int, str] = (0, "yes")
+    println(classify(unanswered))
+    undecided: tuple[int, str] = (1, "maybe")
+    println(classify(undecided))
+    option_literal(Some("alice"))
+    option_literal(Some("bob"))
+    option_literal(None)
+    if_let_literal()

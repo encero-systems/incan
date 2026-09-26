@@ -1,0 +1,16 @@
+# behavior: a route handler declared to return an int is refused at check time because an int has no response form
+# expect-diagnostic: INCAN-T0107
+
+import std.async
+from std.web import route, GET, POST
+
+@route("/posts/{year}/{month}", methods=[GET])
+async def get_posts(year: int, month: int) -> int:
+    return year + month
+
+@route("/users/{id}", methods=[POST])
+async def create_user(id: int) -> int:
+    return id
+
+async def main() -> None:
+    println(await create_user(7))
