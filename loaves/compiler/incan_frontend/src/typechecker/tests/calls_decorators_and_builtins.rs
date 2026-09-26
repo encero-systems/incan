@@ -627,7 +627,7 @@ model Bad:
 fn test_user_defined_decorator_on_mutable_method_is_checked() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 class Counter:
-  value: int
+  pub value: int
 
   @keep
   def bump(mut self) -> int:
@@ -804,7 +804,7 @@ def keep(func: (mut Counter, int) -> int) -> (Counter, int) -> int:
         (
             r#"
 class Counter:
-  value: int
+  pub value: int
 
   @keep
   def bump(mut self, by: int) -> int:

@@ -6,7 +6,7 @@
 #   9
 
 class Counter:
-    value: int
+    pub value: int
 
     @doubled
     def add(mut self, by: int) -> int:
