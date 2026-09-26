@@ -1,0 +1,17 @@
+# behavior: a generic function calls a trait method that a generic model of another module implements by formatting its payload, and runs for the payloads it is given
+# retires: loaves/compiler/incan_emit/src/trait_bound_inference.rs::external_implementation_bounds_propagate_through_checked_trait_dispatch
+# retires: loaves/compiler/incan_emit/src/tests/generic_caller_bounds.rs::external_impl_bounds_reach_a_generic_caller_issue1280
+# expect-stdout:
+#   held 5
+#   held five
+
+from shapes import Holder
+
+
+def describe[U](held: Holder[U]) -> str:
+    return held.show()
+
+
+def main() -> None:
+    println(describe(Holder(value=5)))
+    println(describe(Holder(value="five")))

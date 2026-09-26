@@ -102,6 +102,28 @@ enum Maybe[U]:
         return value
 ```
 
+### Bounds you write and bounds the compiler infers
+
+A bound you write on a type's parameter, such as `model Stream[R with Clone]`, is part of that type's contract, so every generic declaration that uses the type with its own type parameter repeats it. A bound that only a body needs is different. Formatting a value in an f-string needs `Display`, comparing with `==` needs `PartialEq`, and returning a field of a generic model needs `Clone`. The compiler infers these from the body, so a generic caller never spells them.
+
+Inference reaches through method calls. A method's requirements include those of every other method of the same model, because they share one implementation block:
+
+```incan
+model Holder[V]:
+    value: V
+
+    def show(self) -> str:
+        return f"{self.value}"
+
+    def get(self) -> V:
+        return self.value
+
+def first[U](held: Holder[U]) -> U:
+    return held.get()
+```
+
+`first` writes no bound on `U`, yet it needs `Display` (from `show`) and `Clone` (from `get`), and the compiler supplies both.
+
 For the rationale behind explicit call-site generics (`f[T](...)` / `obj.m[T](...)`), see:
 
 - [Why call-site type arguments exist](call_site_type_arguments.md)

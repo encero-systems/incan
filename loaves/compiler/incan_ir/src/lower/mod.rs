@@ -4133,6 +4133,7 @@ mod tests {
 
     mod builtin_str_arguments;
     mod derive_vocabulary_imports;
+    mod list_count_forms;
     mod method_decorator_receivers;
     mod unary_operand_grouping;
 

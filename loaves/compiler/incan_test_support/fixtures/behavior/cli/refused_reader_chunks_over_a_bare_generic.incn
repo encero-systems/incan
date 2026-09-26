@@ -1,0 +1,18 @@
+# behavior: a generic function that names the chunk stream of a binary reader over a type parameter without the stream's BinaryReader bound is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+from std.io import BytesIO, IoError, ReaderChunks
+
+
+def count_chunks[R](chunks: ReaderChunks[R]) -> Result[int, IoError]:
+    mut count = 0
+    for chunk in chunks?:
+        println(len(chunk))
+        count += 1
+    return Ok(count)
+
+
+def main() -> None:
+    match count_chunks(BytesIO(b"abcde").chunks(2)):
+        Ok(count) => println(f"{count} chunks")
+        Err(error) => println(f"error {error.kind}")

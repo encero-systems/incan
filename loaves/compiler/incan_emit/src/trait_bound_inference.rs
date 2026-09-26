@@ -50,6 +50,12 @@ use incan_ir::expr::{
 use incan_ir::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use incan_ir::types::{IrType, SetConstructorIteration};
 
+mod inherent_method_calls;
+use inherent_method_calls::{
+    InherentMethodIndex, MethodCallParts, collect_method_implementation_bound_requirements, nominal_names_match,
+    nominal_receiver_type,
+};
+
 /// Bound-bearing local trait implementation that a generic caller can select through checked method dispatch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImplementationBoundRequirement {
@@ -131,6 +137,7 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
     // We iterate until a fixed point is reached (no new bounds added). Clone-per-iteration avoids borrow conflicts
     // between reading callee bounds and writing caller bounds.
     let max_iterations = 20; // safety cap
+    let inherent_methods = InherentMethodIndex::from_programs(program, &[]);
     for _ in 0..max_iterations {
         let mut changed = false;
         let snapshot = function_bounds.clone();
@@ -138,6 +145,7 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
             snapshot: &snapshot,
             function_params: &function_params,
             implementation_requirements: &[],
+            inherent_methods: &inherent_methods,
         };
 
         for decl in &program.declarations {
@@ -274,11 +282,12 @@ fn callable_inference_type_params(func: &IrFunction, owner_type_params: Option<&
     type_params
 }
 
-/// Propagate bounds from exact local trait implementations into the generic callers that select them.
+/// Propagate bounds from exact local implementations into the generic callers that select them.
 ///
 /// Backend ownership inference can add an impl-only bound after ordinary call propagation has reached its first fixed
-/// point. This bounded outer loop rebuilds implementation requirements after every write-back, so an impl method that
-/// itself gains a transitive requirement can expose the updated header to its callers on the next iteration.
+/// point. This bounded outer loop rebuilds implementation requirements and the method index after every write-back, so
+/// an impl header that gains a bound, through checked trait dispatch or an ordinary method call (#1779), exposes it to
+/// its callers on the next iteration.
 fn propagate_local_implementation_bounds(program: &mut IrProgram) {
     let external_bounds = HashMap::new();
     let external_params = HashMap::new();
@@ -286,9 +295,14 @@ fn propagate_local_implementation_bounds(program: &mut IrProgram) {
 
     for _ in 0..max_iterations {
         let requirements = collect_local_implementation_bound_requirements(program);
-        if requirements.is_empty()
-            || !propagate_trait_bounds_from_signature_maps(program, &external_bounds, &external_params, &requirements)
-        {
+        let inherent_methods = InherentMethodIndex::from_programs(program, &[]);
+        if !propagate_trait_bounds_from_signature_maps(
+            program,
+            &external_bounds,
+            &external_params,
+            &requirements,
+            &inherent_methods,
+        ) {
             break;
         }
     }
@@ -335,24 +349,28 @@ pub fn propagate_trait_bounds_from_programs(program: &mut IrProgram, externals: 
         collect_current_callable_signature_maps(external, &mut external_bounds, &mut external_params);
         implementation_requirements.extend(collect_local_implementation_bound_requirements(external));
     }
+    let inherent_methods = InherentMethodIndex::from_programs(program, externals);
     let _ = propagate_trait_bounds_from_signature_maps(
         program,
         &external_bounds,
         &external_params,
         &implementation_requirements,
+        &inherent_methods,
     );
 }
 
 /// Propagate generic bounds using local callable signatures plus externally supplied callable signatures.
 ///
 /// The current program supplies the mutable destination signatures, while `external_bounds` and `external_params`
-/// provide already-inferred signatures for imported call targets that may appear in this program's call graph. The pass
-/// iterates to a fixed point because generic functions can forward type parameters through chains of calls.
+/// provide already-inferred signatures for imported call targets that may appear in this program's call graph, and
+/// `inherent_methods` the impl methods an ordinary method call can reach. The pass iterates to a fixed point because
+/// generic functions can forward type parameters through chains of calls.
 fn propagate_trait_bounds_from_signature_maps(
     program: &mut IrProgram,
     external_bounds: &HashMap<String, Vec<IrTypeParam>>,
     external_params: &HashMap<String, Vec<FunctionParam>>,
     implementation_requirements: &[ImplementationBoundRequirement],
+    inherent_methods: &InherentMethodIndex,
 ) -> bool {
     let mut function_bounds: HashMap<String, Vec<IrTypeParam>> = HashMap::new();
     let mut function_params: HashMap<String, Vec<FunctionParam>> = HashMap::new();
@@ -379,6 +397,7 @@ fn propagate_trait_bounds_from_signature_maps(
             snapshot: &snapshot,
             function_params: &function_params,
             implementation_requirements,
+            inherent_methods,
         };
 
         for decl in &program.declarations {
@@ -491,7 +510,8 @@ fn free_function_callable_key(program: &IrProgram, registry_name: &str) -> Strin
 ///
 /// The propagation pass needs two parallel maps: type-parameter bounds for each generic callable, and parameter types
 /// for mapping callee type parameters back to caller type parameters at call sites. Impl methods are keyed by their
-/// owner and method identity because multiple impl blocks can contain same-named methods.
+/// owner and method identity because multiple impl blocks can contain same-named methods, and carry both the impl's
+/// and the method's own type parameters, so a generic method of a non-generic owner can receive bounds too.
 fn collect_current_callable_signature_maps(
     program: &IrProgram,
     function_bounds: &mut HashMap<String, Vec<IrTypeParam>>,
@@ -514,8 +534,12 @@ fn collect_current_callable_signature_maps(
                     function_params.insert(key, method.params.clone());
                 }
             }
-            IrDeclKind::Impl(impl_block) if !impl_block.type_params.is_empty() => {
+            IrDeclKind::Impl(impl_block) => {
                 for (index, method) in impl_block.methods.iter().enumerate() {
+                    let type_params = callable_inference_type_params(method, Some(&impl_block.type_params));
+                    if type_params.is_empty() {
+                        continue;
+                    }
                     let key = format!(
                         "impl:{}:{}:{}:{}",
                         impl_block.target_type,
@@ -523,7 +547,7 @@ fn collect_current_callable_signature_maps(
                         index,
                         method.name
                     );
-                    function_bounds.insert(key.clone(), impl_block.type_params.clone());
+                    function_bounds.insert(key.clone(), type_params);
                     function_params.insert(key, method.params.clone());
                 }
             }
@@ -2219,6 +2243,7 @@ struct CallableBoundPropagationContext<'a> {
     snapshot: &'a HashMap<String, Vec<IrTypeParam>>,
     function_params: &'a HashMap<String, Vec<FunctionParam>>,
     implementation_requirements: &'a [ImplementationBoundRequirement],
+    inherent_methods: &'a InherentMethodIndex,
 }
 
 /// Propagate bounds for a callable by transitive inference from called generic functions.
@@ -2237,13 +2262,7 @@ fn propagate_bounds_for_callable(
         return;
     }
 
-    let required_bounds = collect_propagated_bound_requirements(
-        func,
-        type_params,
-        context.snapshot,
-        context.function_params,
-        context.implementation_requirements,
-    );
+    let required_bounds = collect_propagated_bound_requirements(func, type_params, context);
     if let Some(current_bounds) = function_bounds.get_mut(key) {
         for (source_bounds, type_arg_mapping) in &required_bounds {
             if propagate_transitive_bounds(current_bounds, source_bounds, type_arg_mapping) {
@@ -2866,6 +2885,8 @@ fn collect_type_param_mapping(
             collect_type_param_mapping(callee_key, caller_key, caller_type_params, mapping);
             collect_type_param_mapping(callee_value, caller_value, caller_type_params, mapping);
         }
+        (IrType::NamedGeneric(callee_name, _), IrType::NamedGeneric(caller_name, _))
+            if !nominal_names_match(callee_name, caller_name) => {}
         (IrType::Tuple(callee_items), IrType::Tuple(caller_items))
         | (IrType::NamedGeneric(_, callee_items), IrType::NamedGeneric(_, caller_items))
             if callee_items.len() == caller_items.len() =>
@@ -3156,22 +3177,22 @@ fn substitute_ir_type(ty: &IrType, subst: &HashMap<&str, &IrType>) -> IrType {
 
 /// Collect bound-bearing call targets and their type-parameter mappings.
 ///
-/// Ordinary generic calls contribute their callable signature. Checked trait dispatch also contributes the exact local
-/// implementation header selected for its receiver. Each mapping connects the source requirement's type parameters to
-/// caller parameters when the receiver or argument is a direct generic pass-through.
+/// Ordinary generic calls contribute their callable signature. Checked trait dispatch contributes the exact local
+/// implementation header selected for its receiver, and a method call the impl method it reaches (#1779). Each mapping
+/// connects the source requirement's type parameters to caller parameters when the receiver or argument is a direct
+/// generic pass-through.
 fn collect_propagated_bound_requirements(
     func: &IrFunction,
     type_params: &[IrTypeParam],
-    function_bounds: &HashMap<String, Vec<IrTypeParam>>,
-    function_params: &HashMap<String, Vec<FunctionParam>>,
-    implementation_requirements: &[ImplementationBoundRequirement],
+    propagation: &CallableBoundPropagationContext<'_>,
 ) -> Vec<(Vec<IrTypeParam>, HashMap<String, String>)> {
     let type_param_names: HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
     let context = BoundCollectionContext {
         type_params: &type_param_names,
-        function_bounds,
-        function_params,
-        implementation_requirements,
+        function_bounds: propagation.snapshot,
+        function_params: propagation.function_params,
+        implementation_requirements: propagation.implementation_requirements,
+        inherent_methods: propagation.inherent_methods,
     };
     let mut result = Vec::new();
 
@@ -3193,6 +3214,7 @@ struct BoundCollectionContext<'context, 'type_name> {
     function_bounds: &'context HashMap<String, Vec<IrTypeParam>>,
     function_params: &'context HashMap<String, Vec<FunctionParam>>,
     implementation_requirements: &'context [ImplementationBoundRequirement],
+    inherent_methods: &'context InherentMethodIndex,
 }
 
 /// Add the exact local implementation requirement selected by one checked trait-method dispatch.
@@ -3257,66 +3279,6 @@ fn collect_implementation_bound_requirements(
             .collect();
         result.push((source_bounds, mapping));
     }
-}
-
-/// Return the exact nominal receiver and its concrete generic arguments after removing borrow wrappers.
-fn nominal_receiver_type(ty: &IrType) -> Option<(&str, &[IrType])> {
-    match ty {
-        IrType::Ref(inner) | IrType::RefMut(inner) => nominal_receiver_type(inner),
-        IrType::NamedGeneric(name, type_args) => Some((name.as_str(), type_args)),
-        IrType::Struct(name) | IrType::Enum(name) => Some((name.as_str(), &[])),
-        _ => None,
-    }
-}
-
-/// Collect implementation-header requirements without widening every recursive expression-scan frame.
-fn collect_method_implementation_bound_requirements(
-    receiver: &IrExpr,
-    dispatch: Option<&incan_ir::expr::IrMethodDispatch>,
-    context: &BoundCollectionContext<'_, '_>,
-    result: &mut Vec<PropagatedBoundRequirement>,
-) {
-    let Some(
-        incan_ir::expr::IrMethodDispatch::Trait(dispatch)
-        | incan_ir::expr::IrMethodDispatch::SourceProjection(dispatch),
-    ) = dispatch
-    else {
-        return;
-    };
-    let trait_source_name = &dispatch.trait_source_name;
-    let trait_module_path = &dispatch.trait_module_path;
-    let implementation_type_params = &dispatch.implementation_type_params;
-    let trait_type_args = &dispatch.type_args;
-
-    if !implementation_type_params.is_empty()
-        && let Some((target_type, _)) = nominal_receiver_type(&receiver.ty)
-    {
-        let checked_requirement = ImplementationBoundRequirement {
-            target_type: target_type.to_string(),
-            type_params: implementation_type_params.clone(),
-            trait_source_name: trait_source_name.clone(),
-            trait_module_path: trait_module_path.clone(),
-            trait_type_args: trait_type_args.clone(),
-        };
-        collect_implementation_bound_requirements(
-            receiver,
-            trait_source_name,
-            trait_module_path.as_deref(),
-            trait_type_args,
-            context.type_params,
-            std::slice::from_ref(&checked_requirement),
-            result,
-        );
-    }
-    collect_implementation_bound_requirements(
-        receiver,
-        trait_source_name,
-        trait_module_path.as_deref(),
-        trait_type_args,
-        context.type_params,
-        context.implementation_requirements,
-        result,
-    );
 }
 
 /// Recursively collect generic function calls from a statement.
@@ -3492,11 +3454,23 @@ fn collect_calls_in_expr(
         }
         IrExprKind::MethodCall {
             receiver,
+            method,
             dispatch,
+            type_args,
             args,
             ..
         } => {
-            collect_method_implementation_bound_requirements(receiver, dispatch.as_ref(), context, result);
+            collect_method_implementation_bound_requirements(
+                MethodCallParts {
+                    receiver,
+                    method,
+                    dispatch: dispatch.as_ref(),
+                    type_args,
+                    args,
+                },
+                context,
+                result,
+            );
             recurse_expr(receiver, result);
             for arg in args {
                 recurse_expr(&arg.expr, result);

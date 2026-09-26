@@ -657,6 +657,7 @@ impl TypeChecker {
                         self.dependency_trait_rust_derive_paths
                             .insert(format!("{module_key}.{}", trait_metadata.name), paths);
                     }
+                    self.record_provider_type_param_bounds(&declaration, canonical.as_ref());
                     let Some(mut kind) = self.symbol_kind_from_api_declaration(&declaration) else {
                         continue;
                     };
@@ -1197,6 +1198,11 @@ impl TypeChecker {
 
         if let Some(info) = self.stdlib_cache.lookup_type(&context.module.segments, &item.name) {
             self.define_from_import_symbol(context.module, item, SymbolKind::Type(info), span);
+            self.record_imported_stdlib_type_param_bounds(
+                &context.module.segments,
+                &item.name,
+                &Self::import_item_local_name(item),
+            );
             return true;
         }
 
@@ -3230,6 +3236,11 @@ impl TypeChecker {
             imported_type_aliases,
             span,
         );
+        let declared_type_params = match &export {
+            ManifestExportRef::Model(model) => model.type_params.clone(),
+            ManifestExportRef::Class(class) => class.type_params.clone(),
+            _ => Vec::new(),
+        };
         let mut type_alias_target = None;
         let mut kind = match export {
             ManifestExportRef::Model(export) => {
@@ -3331,6 +3342,7 @@ impl TypeChecker {
         if let Some(identity) = self.public_library_nominal_type_identity(library, manifest, source_name) {
             self.public_library_type_identities.insert(local_name.clone(), identity);
         }
+        self.record_manifest_type_param_bounds(&local_name, &declared_type_params);
         if let Some(target) = type_alias_target {
             self.record_dependency_import_type_alias_before_change(&local_name);
             self.type_aliases.insert(local_name.clone(), target);

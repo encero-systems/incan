@@ -1,0 +1,11 @@
+# behavior: a match over an int whose arms are only literals leaves every other value unmatched and is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+def label(n: int) -> str:
+    match n:
+        0 => return "zero"
+        1 => return "one"
+
+
+def main() -> None:
+    println(label(0))

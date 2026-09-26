@@ -660,7 +660,7 @@ Class, model, trait, enum, newtype, field, alias and module declarations accept 
 | Reserve | `reserve` |  | Reserve capacity for at least N more elements. | RFC 009 | 0.1 | Stable |
 | ReserveExact | `reserve_exact` |  | Reserve capacity for exactly N more elements. | RFC 009 | 0.1 | Stable |
 | Remove | `remove` |  | Remove and return the element at the given index. | RFC 009 | 0.1 | Stable |
-| Count | `count` |  | Count occurrences of a value. | RFC 009 | 0.1 | Stable |
+| Count | `count` |  | `items.count(value)` returns how many items equal `value`; `items.count()` with no argument is the iterator terminal and returns the number of items. Any other argument count is refused (`INCAN-T0001`). | RFC 009 | 0.1 | Stable |
 | Index | `index` |  | Return the index of a value (or error if not found). | RFC 009 | 0.1 | Stable |
 
 

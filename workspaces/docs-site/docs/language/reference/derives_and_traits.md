@@ -262,6 +262,27 @@ type Wrapper[U] = newtype U:
 
 Method generic syntax is additive and aligned with function generics: `def method[T](...)` extends, but does not replace, `def method(...)`.
 
+### Bounds of instantiated types
+
+A bound on a type parameter of a model, class, enum or newtype (`model Stream[R with Clone]`) applies to every instantiation of that type. A function, method, model, class, enum or newtype that instantiates it with one of its own type parameters (in a parameter, return, field, payload or underlying type, or in the type of an expression in a body) must declare the same bound on that type parameter, or a bound that implies it (`Copy` implies `Clone`). Otherwise the declaration is refused with `INCAN-T0001`.
+
+```incan
+model Stream[R with Clone]:
+    item: R
+
+def consume[T with Clone](stream: Stream[T]) -> int:   # accepted
+    return 1
+
+def consume_any[T](stream: Stream[T]) -> int:          # refused: T does not declare Clone (INCAN-T0001)
+    return 1
+
+def wrap[T](value: T) -> int:                           # refused: Stream(item=value) needs T with Clone (INCAN-T0001)
+    stream = Stream(item=value)
+    return 1
+```
+
+A bound that a called function's or method's body needs, such as `Display` for a value formatted in an f-string, is inferred. A generic caller does not declare it.
+
 ### Call-site type arguments
 
 Generic calls normally infer type parameters from value arguments. You may also provide explicit type arguments at the call site.

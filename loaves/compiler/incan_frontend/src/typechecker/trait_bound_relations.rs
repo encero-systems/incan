@@ -364,7 +364,7 @@ impl TypeChecker {
     }
 
     /// Check whether an active generic placeholder already carries the bound required by a nested generic call.
-    fn active_type_param_satisfies_bound_info(
+    pub(in crate::typechecker) fn active_type_param_satisfies_bound_info(
         &self,
         placeholder_name: &str,
         required: &TypeBoundInfo,
