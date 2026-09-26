@@ -3239,6 +3239,8 @@ impl TypeChecker {
                         let err_ok = args.get(1).is_none_or(|t| self.is_clone_type(t));
                         ok_ok && err_ok
                     }
+                    // A generator is a one-shot runtime iterator; it has no copy.
+                    Some(CollectionTypeId::Generator) => false,
                     _ => args.iter().all(|t| self.is_clone_type(t)),
                 }
             }

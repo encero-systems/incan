@@ -330,10 +330,145 @@ def present(table: dict[str, Lock], key: str) -> bool:
         refusal
             .hints
             .iter()
-            .any(|hint| hint.contains("only reads the value works")),
+            .any(|hint| hint.contains("Read the value where it is stored")),
         "the refusal names the lookup that works: {refusal:?}"
     );
     let kept_start = source.find("table.get(key)").ok_or("missing the kept lookup")?;
     assert_eq!(refusal.span.start, kept_start, "the refusal points at the kept lookup");
     Ok(())
+}
+
+/// A lookup whose binding is only read stays read-only only while the arm leaves the dict alone until the binding's
+/// last read: assigning into it, reassigning it, calling a `mut self` method on its owner, or passing it on before then
+/// makes the lookup keep its own copy. A change in the `None` arm, or after the binding's last read, leaves it
+/// read-only. A lookup through a local bound directly to a static is never read-only, like the static itself.
+#[test]
+fn a_dict_changed_while_the_binding_is_read_keeps_its_own_copy() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+static counts: dict[str, int] = {}
+
+
+class Groups:
+    items: dict[str, list[int]]
+
+    def touch(mut self) -> None:
+        self.items["touched"] = []
+
+    def first(mut self, key: str) -> int:
+        match self.items.get(key):
+            Some(values) =>
+                self.touch()
+                return len(values)
+            None => return 0
+
+
+def consume(table: dict[str, list[int]]) -> int:
+    return len(table)
+
+
+def assigned(mut groups: dict[str, list[int]], key: str) -> int:
+    match groups.get(key):
+        Some(items) =>
+            groups["last"] = []
+            return len(items)
+        None => return 0
+
+
+def reassigned(key: str) -> int:
+    mut groups: dict[str, list[int]] = {"a": [1]}
+    match groups.get(key):
+        Some(items) =>
+            groups = {}
+            return len(items)
+        None => return 0
+
+
+def passed(groups: dict[str, list[int]], key: str) -> int:
+    match groups.get(key):
+        Some(items) =>
+            total = consume(groups)
+            return total + len(items)
+        None => return 0
+
+
+def changed_when_missing(mut groups: dict[str, list[int]], key: str) -> int:
+    match groups.get(key):
+        Some(items) => return len(items)
+        None =>
+            groups[key] = []
+            return 0
+
+
+def changed_after_reading(mut groups: dict[str, list[int]], key: str) -> int:
+    match groups.get(key):
+        Some(items) =>
+            size = len(items)
+            groups["last"] = []
+            return size
+        None => return 0
+
+
+def aliased(key: str) -> bool:
+    live = counts
+    match live.get(key):
+        Some(_) => return true
+        None => return false
+"#;
+    let info = typecheck_info_for_module(source, vec!["main".to_string()], "dict changed while bound")?;
+    for (function, call, read_only) in [
+        ("def first", "self.items.get(key)", false),
+        ("def assigned", "groups.get(key)", false),
+        ("def reassigned", "groups.get(key)", false),
+        ("def passed", "groups.get(key)", false),
+        ("def changed_when_missing", "groups.get(key)", true),
+        ("def changed_after_reading", "groups.get(key)", true),
+        ("def aliased", "live.get(key)", false),
+    ] {
+        let function_start = source
+            .find(function)
+            .ok_or_else(|| format!("missing `{function}` in the source"))?;
+        let start = source[function_start..]
+            .find(call)
+            .map(|offset| function_start + offset)
+            .ok_or_else(|| format!("missing `{call}` in `{function}`"))?;
+        assert_eq!(
+            info.is_read_only_dict_lookup(Span::new(start, start + call.len())),
+            read_only,
+            "the lookup in `{function}` must be read-only: {read_only}"
+        );
+    }
+    Ok(())
+}
+
+/// `INCAN-T0118`: a lookup that keeps its own `Generator` is refused, since a generator cannot be copied; reading the
+/// entry without keeping it is accepted.
+#[test]
+fn a_kept_dict_get_of_a_generator_is_refused_with_its_stable_code() {
+    let kept = r#"
+def numbers() -> Generator[int]:
+    yield 1
+
+
+def pick(streams: dict[str, Generator[int]], key: str) -> Option[Generator[int]]:
+    return streams.get(key)
+"#;
+    let errors = check_str_err(kept, "a kept lookup of a generator must not check");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0118") && error.message.contains("Generator[int]")),
+        "the kept lookup is refused with INCAN-T0118, naming the value type, got {errors:?}"
+    );
+
+    let read = r#"
+def numbers() -> Generator[int]:
+    yield 1
+
+
+def present(streams: dict[str, Generator[int]], key: str) -> bool:
+    match streams.get(key):
+        Some(_) => return true
+        None => return false
+"#;
+    assert!(check_str(read).is_ok(), "a lookup that only reads the generator checks");
 }

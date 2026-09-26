@@ -211,6 +211,84 @@ def main() -> None:
     Ok(())
 }
 
+/// A lookup whose binding is read after the arm changes the dict (`groups["last"] = []`) or calls a `mut self` method
+/// on the dict's owner is copied out first, so the change and the read do not overlap; a change after the last read
+/// keeps the in-place read. A read-only lookup over `dict[str, int | str]` matched with type patterns matches the
+/// union's variants inside `Some`.
+#[test]
+fn dict_get_is_copied_when_the_dict_changes_while_it_is_read() -> Result<(), Box<dyn std::error::Error>> {
+    let code = generated_rust_without_whitespace(
+        r#"
+class Groups:
+    items: dict[str, list[int]]
+
+    def touch(mut self) -> None:
+        self.items["touched"] = []
+
+    def first(mut self, key: str) -> int:
+        match self.items.get(key):
+            Some(values) =>
+                self.touch()
+                return len(values)
+            None => return 0
+
+
+def assigned(mut groups: dict[str, list[int]], key: str) -> int:
+    match groups.get(key):
+        Some(items) =>
+            groups["last"] = []
+            return len(items)
+        None => return 0
+
+
+def changed_after_reading(mut groups: dict[str, list[int]], key: str) -> int:
+    match groups.get(key):
+        Some(items) =>
+            size = len(items)
+            groups["last"] = []
+            return size
+        None => return 0
+
+
+def describe(table: dict[str, int | str], key: str) -> str:
+    match table.get(key):
+        int(number) => return f"int:{number}"
+        str(text) => return f"str:{text}"
+        None => return "missing"
+
+
+def main() -> None:
+    mut owner = Groups(items={"a": [1]})
+    println(owner.first("a"))
+    mut groups: dict[str, list[int]] = {"a": [1, 2]}
+    println(assigned(groups, "a"))
+    println(changed_after_reading(groups, "a"))
+    mixed: dict[str, int | str] = {"n": 1, "s": "x"}
+    println(describe(mixed, "n"))
+"#,
+    )?;
+    assert!(
+        code.contains("matchself.items.get(<_asAsRef<str>>::as_ref(&key)).cloned(){"),
+        "`first` copies the entry before its `mut self` call: {code}"
+    );
+    assert_eq!(
+        code.matches("matchgroups.get(<_asAsRef<str>>::as_ref(&key)).cloned(){")
+            .count(),
+        1,
+        "`assigned` copies the entry before the dict changes: {code}"
+    );
+    assert_eq!(
+        code.matches("matchgroups.get(<_asAsRef<str>>::as_ref(&key)){").count(),
+        1,
+        "`changed_after_reading` reads the entry in place: {code}"
+    );
+    assert!(
+        code.contains("matchtable.get(<_asAsRef<str>>::as_ref(&key)){Some(__IncanUnion"),
+        "the union type patterns match inside `Some` over the in-place read: {code}"
+    );
+    Ok(())
+}
+
 /// #1794: a `const` declared `str` is a `'static` string that carries `FrozenStr`, so every `FrozenStr` destination
 /// wraps it: a plain return, a `FrozenStr | int` return and argument, a `Some(...)` in an `Option[FrozenStr]` return,
 /// argument and binding, an annotated binding, a model field, a list element and a dict value.

@@ -384,6 +384,27 @@ const OPERATOR_HAS_NO_TYPE_PARAMETER_BOUND: DiagnosticCatalogEntry = DiagnosticC
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/numeric_semantics/"),
 };
 
+const KEPT_DICT_LOOKUP_VALUE_CANNOT_BE_COPIED: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0118",
+    title: "Kept dict lookup of a value that cannot be copied",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A `dict.get(key)` result is kept, so it is a copy of the stored value, and the value type cannot be copied.",
+    explanation: "`get` answers with the stored value, `Option[V]`. A result that is only read needs no copy: the value of a `match`, `if let` or `while let` whose bindings are only passed to `len`, `print` or `println`, interpolated in an f-string, used to call a method that only reads them, or not used. Any other result (returned, bound to a name, passed on, compared, or read while the dict changes) is the lookup's own copy of the stored value, and a value type that cannot be copied, such as a `Generator` or a Rust type without `Clone`, has none.",
+    examples: &[
+        "def numbers() -> Generator[int]:\n    yield 1\n\ndef pick(streams: dict[str, Generator[int]], key: str) -> Option[Generator[int]]:\n    return streams.get(key)",
+    ],
+    common_causes: &[
+        "Returning or binding the result of `get` on a dict of generators or of Rust values without `Clone`.",
+        "Changing the dict inside a `match` arm while its binding is still read.",
+    ],
+    fixes: &[
+        "Read the value where it is stored: `match streams.get(key):` with arms that only read the binding.",
+        "Store a value type that can be copied, or keep the value outside the dict.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/language/"),
+};
+
 const IMPORT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-I0001",
     title: "Import or module resolution error",
@@ -506,6 +527,7 @@ const CATALOG: &[DiagnosticCatalogEntry] = &[
     ROUTE_HANDLER_RETURN_NOT_RESPONSE,
     ROUTE_HANDLER_PARAMETER_UNBOUND,
     OPERATOR_HAS_NO_TYPE_PARAMETER_BOUND,
+    KEPT_DICT_LOOKUP_VALUE_CANNOT_BE_COPIED,
     IMPORT,
     SDK_COMPONENT_DISABLED,
     SDK_COMPONENT_UNAVAILABLE,
@@ -785,6 +807,29 @@ mod tests {
             open_generics.hints
         );
         Ok(())
+    }
+
+    #[test]
+    fn kept_dict_lookup_of_a_value_that_cannot_be_copied_uses_its_stable_code() {
+        let refusal = errors::kept_dict_lookup_value_cannot_be_copied("Generator[int]", Span::default());
+        assert_eq!(code_for_error(&refusal, DiagnosticPhase::Typecheck), "INCAN-T0118");
+        let Some(entry) = explain("INCAN-T0118") else {
+            panic!("INCAN-T0118 must have a catalog explanation");
+        };
+        assert_eq!(entry.severity, "error");
+        assert_eq!(entry.phase, "typecheck");
+        assert!(
+            refusal.message.contains("Generator[int]"),
+            "the refusal names the value type"
+        );
+        assert!(
+            refusal
+                .hints
+                .iter()
+                .any(|hint| hint.contains("`len`, `print` or `println`") && hint.contains("f-string")),
+            "the hint names the uses that count as reading, got {:?}",
+            refusal.hints
+        );
     }
 
     #[test]

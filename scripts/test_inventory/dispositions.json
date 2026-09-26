@@ -1326,6 +1326,10 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/static_dict_get_with_a_reused_str_parameter.incn",
           "notes": "Asserts the generated Rust of in-place lookups (a generic value, a list of models in a loop, a Rust value that cannot be copied) and of kept lookups with their inferred `Clone`/`Eq + Hash` bounds; retires with `incan_emit`. The behavior is carried by the named fixture (#1793)."
         },
+        "dict_get_is_copied_when_the_dict_changes_while_it_is_read": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/static_dict_get_with_a_reused_str_parameter.incn",
+          "notes": "Asserts the generated Rust of lookups whose dict changes while the binding is read (`.cloned()` before the change), the in-place read otherwise, and union type patterns inside `Some`; retires with `incan_emit`. The behavior is carried by the named fixture (#1793)."
+        },
         "frozen_str_const_is_converted_at_str_destinations_issue1794": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/str_const_returned_as_frozen_str.incn",
           "notes": "Asserts the generated Rust of a `FrozenStr` const at `str` destinations (converted to an owned string as a return, a union member, a `Some` payload, an argument and a binding); retires with `incan_emit`. The behavior is carried by the named fixture (#1794)."
@@ -2562,9 +2566,17 @@
       "split_target": "",
       "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "tests": {
+        "a_dict_changed_while_the_binding_is_read_is_copied": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/static_dict_get_with_a_reused_str_parameter.incn",
+          "notes": "Asserts the legacy IR completion of a lookup whose dict changes or is passed on before its binding's last read (`cloned`), and the in-place read otherwise; retires with `incan_ir`. The behavior, a value read from a dict that is changed in the arm, is carried by the named fixture (#1793)."
+        },
         "a_dict_get_whose_result_is_only_read_stays_in_place": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/static_dict_get_with_a_reused_str_parameter.incn",
           "notes": "Asserts the legacy IR shape of a `dict.get` whose result is only read (an in-place lookup, no copy) and of a kept result (completed with `cloned`); retires with `incan_ir`. The behavior, a generic dict read in a `match` and returned, is carried by the named fixture (#1793)."
+        },
+        "a_read_only_lookup_matched_with_union_type_patterns_names_the_variants": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/static_dict_get_with_a_reused_str_parameter.incn",
+          "notes": "Asserts the legacy IR patterns of union type patterns over an in-place lookup (`Some(<union variant>)`); retires with `incan_ir`. The behavior, `int(n)`/`str(t)` arms over a `dict[str, int | str]` lookup, is carried by the named fixture (#1793)."
         },
         "arguments_read_after_a_static_method_call_are_kept_readable_issue1793": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/static_dict_get_with_a_reused_str_parameter.incn",

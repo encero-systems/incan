@@ -611,3 +611,139 @@ def handed(table: dict[str, list[int]], key: str) -> list[int]:
     );
     Ok(())
 }
+
+/// A lookup whose binding is only read keeps its own copy when the arm changes or passes on the dict before the
+/// binding's last read (assigning into it, reassigning it, a `mut self` call on its owner, passing it on); a change in
+/// the `None` arm or after the last read leaves it an in-place read. A local bound directly to a static reads through
+/// the static's storage access, which copies the entry out, and is never an in-place read.
+#[test]
+fn a_dict_changed_while_the_binding_is_read_is_copied() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+static counts: dict[str, int] = {}
+
+
+class Groups:
+    items: dict[str, list[int]]
+
+    def touch(mut self) -> None:
+        self.items["touched"] = []
+
+    def first(mut self, key: str) -> int:
+        match self.items.get(key):
+            Some(values) =>
+                self.touch()
+                return len(values)
+            None => return 0
+
+
+def consume(table: dict[str, list[int]]) -> int:
+    return len(table)
+
+
+def assigned(mut groups: dict[str, list[int]], key: str) -> int:
+    match groups.get(key):
+        Some(items) =>
+            groups["last"] = []
+            return len(items)
+        None => return 0
+
+
+def reassigned(key: str) -> int:
+    mut groups: dict[str, list[int]] = {"a": [1]}
+    match groups.get(key):
+        Some(items) =>
+            groups = {}
+            return len(items)
+        None => return 0
+
+
+def passed(groups: dict[str, list[int]], key: str) -> int:
+    match groups.get(key):
+        Some(items) =>
+            total = consume(groups)
+            return total + len(items)
+        None => return 0
+
+
+def changed_when_missing(mut groups: dict[str, list[int]], key: str) -> int:
+    match groups.get(key):
+        Some(items) => return len(items)
+        None =>
+            groups[key] = []
+            return 0
+
+
+def changed_after_reading(mut groups: dict[str, list[int]], key: str) -> int:
+    match groups.get(key):
+        Some(items) =>
+            size = len(items)
+            groups["last"] = []
+            return size
+        None => return 0
+
+
+def aliased(key: str) -> bool:
+    live = counts
+    match live.get(key):
+        Some(_) => return true
+        None => return false
+"#,
+    )?;
+    let in_place = "in place: Option(Ref(List(Int)))".to_string();
+    for (function, expected) in [
+        ("assigned", vec!["cloned".to_string()]),
+        ("reassigned", vec!["cloned".to_string()]),
+        ("passed", vec!["cloned".to_string()]),
+        ("changed_when_missing", vec![in_place.clone()]),
+        ("changed_after_reading", vec![in_place]),
+    ] {
+        assert_eq!(
+            dict_lookup_shapes(&ir, function)?,
+            expected,
+            "`{function}` reads its lookup this way"
+        );
+    }
+    // `Groups.first` is the only lookup through a field (`self.items`); its method name is projected in the IR.
+    let first_copies = ir.declarations.iter().any(|decl| {
+        let decl = format!("{:?}", decl.kind);
+        decl.contains("field: \"items\"") && decl.contains("method: \"cloned\"")
+    });
+    assert!(
+        first_copies,
+        "`Groups.first` copies its lookup before the `mut self` call"
+    );
+    let aliased = dict_lookup_shapes(&ir, "aliased")?;
+    assert!(
+        matches!(aliased.as_slice(), [shape] if shape == "in place: Option(Int)"),
+        "a local bound to a static reads through the storage access, whose lookup answers with the value itself, got \
+         {aliased:?}"
+    );
+    Ok(())
+}
+
+/// A lookup over `dict[str, int | str]` matched with type patterns and only read in its arms stays an in-place read,
+/// and its patterns still name the union's variants inside `Some`.
+#[test]
+fn a_read_only_lookup_matched_with_union_type_patterns_names_the_variants() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+def describe(table: dict[str, int | str], key: str) -> str:
+    match table.get(key):
+        int(number) => return f"int:{number}"
+        str(text) => return f"str:{text}"
+        None => return "missing"
+"#,
+    )?;
+    let shapes = dict_lookup_shapes(&ir, "describe")?;
+    assert!(
+        matches!(shapes.as_slice(), [shape] if shape.starts_with("in place: Option(Ref(")),
+        "the lookup reads its entry in place, got {shapes:?}"
+    );
+    let body = format!("{:?}", function_body(&ir, "describe")?);
+    assert!(
+        body.matches("variant: \"Some\", fields: [Enum").count() >= 2,
+        "each type pattern matches a union variant inside `Some`: {body}"
+    );
+    Ok(())
+}

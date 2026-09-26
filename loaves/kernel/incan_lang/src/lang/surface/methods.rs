@@ -551,7 +551,7 @@ pub mod dict_methods {
             DictMethodId::Get,
             "get",
             &[],
-            "Return the stored value for a key: `Some(value)` when the key is present, `None` otherwise.",
+            "Return the stored value for a key: `Some(value)` when the key is present, `None` otherwise. A result that is kept (returned, bound, passed on, compared, or read while the dict changes) is a copy of the stored value, and a value type that cannot be copied is refused there with `INCAN-T0118`; a result only read in a `match` or `if let` whose bindings are passed to `len`, `print` or `println`, interpolated in an f-string, or used to call a method that only reads them works for any value type.",
             RFC::_009,
             Since(0, 1),
         ),

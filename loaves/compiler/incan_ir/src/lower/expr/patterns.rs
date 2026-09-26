@@ -85,12 +85,22 @@ impl AstLowering {
         self.union_subset_target(expected_ty, target_ty)
     }
 
+    /// Return the union an `Option` scrutinee carries: the union itself, or the stored union a dict lookup whose result
+    /// is only read finds in place (`Option[&union]` in Rust).
+    fn option_payload_union(ty: &IrType) -> Option<&IrType> {
+        let IrType::Option(inner) = ty else {
+            return None;
+        };
+        let payload = match inner.as_ref() {
+            IrType::Ref(found) => found.as_ref(),
+            payload => payload,
+        };
+        payload.is_union().then_some(payload)
+    }
+
     /// Resolve how a target type maps onto a union scrutinee.
     fn union_subset_target(&self, expected_ty: &IrType, target_ty: IrType) -> Option<UnionPatternTarget> {
-        let union_ty = match expected_ty {
-            IrType::Option(inner) if inner.is_union() => inner.as_ref(),
-            _ => expected_ty,
-        };
+        let union_ty = Self::option_payload_union(expected_ty).unwrap_or(expected_ty);
         let source_members = union_ty.union_members()?;
 
         if let Some(target_members) = target_ty.union_members() {
@@ -302,10 +312,7 @@ impl AstLowering {
         let Some(primary_binding) = bindings.first() else {
             return Ok(Vec::new());
         };
-        let source_union_ty = match scrutinee_ty {
-            IrType::Option(inner) if inner.is_union() => inner.as_ref(),
-            _ => scrutinee_ty,
-        };
+        let source_union_ty = Self::option_payload_union(scrutinee_ty).unwrap_or(scrutinee_ty);
         let Some(source_union_name) = source_union_ty.union_type_name() else {
             return Ok(Vec::new());
         };
@@ -321,7 +328,7 @@ impl AstLowering {
                 variant: variant_path,
                 fields: vec![Pattern::Var(temp_name.clone())],
             };
-            let pattern = if matches!(scrutinee_ty, IrType::Option(inner) if inner.is_union()) {
+            let pattern = if Self::option_payload_union(scrutinee_ty).is_some() {
                 Pattern::Enum {
                     name: "Option".to_string(),
                     variant: constructors::as_str(ConstructorId::Some).to_string(),
@@ -609,10 +616,7 @@ impl AstLowering {
             && !name.node.contains("::")
         {
             let target_ty = self.lower_type_pattern_name(&name.node);
-            let option_wrapped_union = match expected_ty {
-                IrType::Option(inner) if inner.is_union() => Some(inner.as_ref()),
-                _ => None,
-            };
+            let option_wrapped_union = Self::option_payload_union(expected_ty);
             let union_ty = option_wrapped_union.unwrap_or(expected_ty);
             if let Some(variant_index) = union_ty.union_variant_index_for_member(&target_ty)
                 && let Some(union_name) = union_ty.union_type_name()

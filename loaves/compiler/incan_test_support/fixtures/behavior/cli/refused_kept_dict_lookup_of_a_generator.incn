@@ -1,0 +1,15 @@
+# behavior: a dict lookup whose result is returned, so it is its own copy of the stored value, is refused when the value is a generator, which cannot be copied
+# expect-diagnostic: INCAN-T0118
+
+def numbers() -> Generator[int]:
+    yield 1
+
+
+def pick(streams: dict[str, Generator[int]], key: str) -> Option[Generator[int]]:
+    return streams.get(key)
+
+
+def main() -> None:
+    streams: dict[str, Generator[int]] = {"a": numbers()}
+    found = pick(streams, "a")
+    println(found is None)
