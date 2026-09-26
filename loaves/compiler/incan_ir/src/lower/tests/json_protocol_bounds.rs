@@ -4,11 +4,14 @@
 
 use super::*;
 
-/// The Rust serde capability a `Serialize` bound carries beside the stdlib trait.
-const SERDE_SERIALIZE: &str = "serde::Serialize";
+/// The Rust serde capability a `Serialize` bound carries beside the stdlib trait, spelled from the crate root.
+const SERDE_SERIALIZE: &str = "::serde::Serialize";
 
-/// The Rust serde capability a `Deserialize` bound carries beside the stdlib trait.
-const SERDE_DESERIALIZE_OWNED: &str = "serde::de::DeserializeOwned";
+/// The Rust serde capability a `Deserialize` bound carries beside the stdlib trait, spelled from the crate root.
+const SERDE_DESERIALIZE_OWNED: &str = "::serde::de::DeserializeOwned";
+
+/// The stdlib `Serialize` trait as its method dispatch names it outside an SDK provider build.
+const STDLIB_SERIALIZE_PATH: &str = "crate::__incan_std::serde::json::Serialize";
 
 /// One spelling of `std.serde.json.Serialize`: the program that imports it and bounds `encode` and `stringify`, and
 /// the bound as written.
@@ -143,7 +146,7 @@ fn json_protocol_bounds_carry_the_trait_and_its_serde_capability_issue1820() -> 
         }
         assert_eq!(
             returned_dispatch_trait_path(&ir, "encode")?,
-            "crate::__incan_std::serde::json::Serialize",
+            STDLIB_SERIALIZE_PATH,
             "the dispatch under `{}` names the stdlib trait the bound resolves to",
             spelling.written
         );
@@ -234,6 +237,127 @@ def main() -> None:
         bound_paths(&lowered_function(&ir, "describe")?.type_params),
         serialize,
         "the hidden parameter of a trait-typed argument is bounded like a written one"
+    );
+    Ok(())
+}
+
+/// Return the trait names of the impl blocks lowered for `type_name`, in declaration order.
+fn implemented_traits(ir: &IrProgram, type_name: &str) -> Vec<String> {
+    ir.declarations
+        .iter()
+        .filter_map(|decl| match &decl.kind {
+            IrDeclKind::Impl(impl_block) if impl_block.target_type == type_name => impl_block.trait_name.clone(),
+            _ => None,
+        })
+        .collect()
+}
+
+/// #1820: a newtype that derives `Serialize` or `Deserialize` implements the stdlib trait as a model does, so
+/// `UserId(7).to_json()` and a `T with Serialize` bound over it have the impl they dispatch through. A generic
+/// newtype's impl requires the serde capability of its parameter, which is what the impl's default body needs.
+#[test]
+fn derived_json_protocol_newtypes_implement_the_stdlib_trait_issue1820() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+from std.serde.json import Deserialize, Serialize
+
+@derive(Serialize, Deserialize)
+type UserId = newtype int
+
+@derive(Serialize)
+type Boxed[T] = newtype T
+
+def main() -> None:
+  println(UserId(7).to_json())
+  println(Boxed[int](8).to_json())
+"#,
+    )?;
+    assert_eq!(implemented_traits(&ir, "UserId"), vec!["Serialize", "Deserialize"]);
+    let boxed = ir
+        .declarations
+        .iter()
+        .find_map(|decl| match &decl.kind {
+            IrDeclKind::Impl(impl_block)
+                if impl_block.target_type == "Boxed" && impl_block.trait_name.as_deref() == Some("Serialize") =>
+            {
+                Some(impl_block)
+            }
+            _ => None,
+        })
+        .ok_or("missing the derived Serialize impl for `Boxed`")?;
+    assert_eq!(bound_paths(&boxed.type_params), vec![vec![SERDE_SERIALIZE.to_string()]]);
+    Ok(())
+}
+
+/// #1820: a callable declared to return a `std.serde.json` trait type returns the exact Rust type `impl <stdlib
+/// trait> + <serde capability>`, since a single `ImplTrait` bound cannot carry both. A method's return also carries
+/// the capture list the emitter writes for its trait-typed returns: the owner's parameters, and `Self` in a trait.
+#[test]
+fn json_protocol_returns_carry_the_trait_and_its_serde_capability_issue1820() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+from std.serde.json import Serialize
+
+@derive(Serialize)
+model Payload:
+  value: int
+
+trait Source:
+  def emit(self) -> Serialize: ...
+
+model Feed with Source:
+  value: int
+
+  def emit(self) -> Serialize:
+    return Payload(value=self.value)
+
+model Builder:
+  value: int
+
+  def build(self) -> Serialize:
+    return Payload(value=self.value)
+
+def make() -> Serialize:
+  return Payload(value=1)
+
+def main() -> None:
+  println(json_stringify(make()))
+  println(make().to_json())
+  println(json_stringify(Builder(value=2).build()))
+  println(json_stringify(Feed(value=3).emit()))
+"#,
+    )?;
+    let two_bounds = format!("impl {STDLIB_SERIALIZE_PATH} + {SERDE_SERIALIZE}");
+    assert_eq!(
+        lowered_function(&ir, "make")?.return_type,
+        IrType::RustDisplay(two_bounds.clone())
+    );
+    let method_returns = |owner: &str| -> Vec<IrType> {
+        ir.declarations
+            .iter()
+            .flat_map(|decl| match &decl.kind {
+                IrDeclKind::Impl(impl_block) if impl_block.target_type == owner => impl_block.methods.as_slice(),
+                IrDeclKind::Trait(trait_decl) if trait_decl.name == owner => trait_decl.methods.as_slice(),
+                _ => &[],
+            })
+            .map(|function| function.return_type.clone())
+            .collect()
+    };
+    let method_two_bounds = IrType::RustDisplay(format!("{two_bounds} + use<>"));
+    assert!(
+        method_returns("Builder").contains(&method_two_bounds),
+        "an inherent method's return carries both bounds and its capture list: {:?}",
+        method_returns("Builder")
+    );
+    assert!(
+        method_returns("Feed").contains(&method_two_bounds),
+        "a trait impl method's return carries both bounds and its capture list: {:?}",
+        method_returns("Feed")
+    );
+    assert!(
+        method_returns("Source").contains(&IrType::RustDisplay(format!("{two_bounds} + use<Self>"))),
+        "a trait method's return also captures `Self`: {:?}",
+        method_returns("Source")
     );
     Ok(())
 }

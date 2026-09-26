@@ -177,25 +177,6 @@ impl AstLowering {
         }
     }
 
-    /// Return the Rust serde capability that a bound on a `std.serde.json` protocol trait requires beside the trait.
-    ///
-    /// The protocol traits declare `to_json` and `from_json`, and a bound names the stdlib trait so those calls have a
-    /// bound that provides them (#1712). The serde capability (`serde::Serialize`, `serde::de::DeserializeOwned`) is
-    /// what everything else serde does with the value compiles against: `json_stringify(value)`, the derive on a
-    /// generic model or class holding the parameter, and the adopter's own default body. The stdlib traits do not
-    /// name it as a supertrait, so a bound under any spelling (the bare import, an alias, the module-qualified name)
-    /// lowers to both (#1820). The spelling is resolved by its checked identity, so a trait that merely shares the
-    /// name carries nothing extra. Every type the checker admits for the bound meets both, since adopting a protocol
-    /// trait forwards its serde derive.
-    fn json_protocol_capability_bound(&self, visible_name: &str) -> Option<IrTraitBound> {
-        let capability = match self.stdlib_json_protocol_for_adopted_trait(visible_name)? {
-            stdlib::StdlibJsonTraitId::Serialize => trait_bounds::TraitBoundId::Serialize,
-            stdlib::StdlibJsonTraitId::Deserialize => trait_bounds::TraitBoundId::Deserialize,
-        };
-        let path = trait_bounds::rust_path(capability)?;
-        Some(IrTraitBound::with_type_args_classified(path, Vec::new()))
-    }
-
     /// Map an Incan trait bound to the corresponding Rust trait bound.
     ///
     /// A bound on a builtin the `incan_lang::lang::trait_bounds` registry maps (Incan `Eq` to Rust `PartialEq`) is
