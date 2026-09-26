@@ -1,0 +1,21 @@
+# behavior: `and` binds tighter than `or`, so a parenthesized `or` on the right of `and` is evaluated as a group
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_binop_parenthesizes_lower_precedence_right_operand
+# expect-stdout:
+#   false
+#   true
+#   true
+#   false
+
+def grouped(left: bool, right_a: bool, right_b: bool) -> bool:
+    return left and (right_a or right_b)
+
+
+def ungrouped(left: bool, right_a: bool, right_b: bool) -> bool:
+    return left and right_a or right_b
+
+
+def main() -> None:
+    println(grouped(False, True, True))
+    println(ungrouped(False, True, True))
+    println(grouped(True, False, True))
+    println(grouped(True, False, False))

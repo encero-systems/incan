@@ -1,0 +1,43 @@
+# behavior: take on a model adopting the stdlib FallibleIterator stops after the given int count of successful items and collect returns them, and a negative count yields none
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::source_trait_take_dispatch_preserves_incan_int_argument
+# expect-stdout:
+#   3
+#   1 2 3
+#   0
+#   0
+
+from std.derives.collection import FallibleIterator
+
+
+model NumberStream with FallibleIterator[int, str]:
+    items: list[int]
+    index: int
+
+    def __next__(mut self) -> Result[Option[int], str]:
+        if self.index >= len(self.items):
+            return Ok(None)
+        item = self.items[self.index]
+        self.index += 1
+        return Ok(Some(item))
+
+
+def render(items: list[int]) -> str:
+    mut parts: list[str] = []
+    for item in items:
+        parts.append(str(item))
+    return " ".join(parts)
+
+
+def main() -> None:
+    stream = NumberStream(items=[1, 2, 3, 4, 5], index=0)
+    match stream.take(3).collect():
+        Ok(values) =>
+            println(len(values))
+            println(render(values))
+        Err(error) => println(error)
+    match NumberStream(items=[1, 2], index=0).take(0).collect():
+        Ok(values) => println(len(values))
+        Err(error) => println(error)
+    match NumberStream(items=[1, 2], index=0).take(-1).collect():
+        Ok(values) => println(len(values))
+        Err(error) => println(error)

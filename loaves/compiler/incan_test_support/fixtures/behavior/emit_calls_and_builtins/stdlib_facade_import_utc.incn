@@ -1,0 +1,14 @@
+# behavior: a function imported through the std.datetime facade resolves to its declaring module's definition and returns the zero offset
+# retires: loaves/compiler/incan_emit/src/emit/decls/mod.rs::stdlib_import_through_a_facade_finds_the_provider_by_the_declaring_module
+# retires: loaves/compiler/incan_emit/src/emit/decls/mod.rs::stdlib_import_reexports_the_providers_identity_over_a_same_named_source_declaration
+# expect-stdout:
+#   Z
+#   0
+
+from std.datetime import utc
+
+
+def main() -> None:
+    offset = utc()
+    println(offset.isoformat())
+    println(offset.seconds)

@@ -1,0 +1,11 @@
+[project]
+name = "dependency_constructor_surfaces"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+sealed = { path = "deps/sealed" }
+decoy = { path = "deps/decoy" }
+modulelib = { path = "deps/modulelib" }

@@ -1,0 +1,36 @@
+# behavior: a module static list appended through a function keeps the appended items for later readers of the same static, and a static list that is only read yields its declared items
+# retires: loaves/compiler/incan_emit/src/emit/statements.rs::storage_mutated_static_binding_let_emits_mut_inside_statement_slice
+# retires: loaves/compiler/incan_emit/src/emit/statements.rs::immutable_static_binding_let_does_not_emit_mut
+# expect-stdout:
+#   3
+#   6
+#   2
+#   true
+
+static items: list[int] = [1]
+static active_flags: list[bool] = [True, False]
+
+
+def push(value: int) -> None:
+    items.append(value)
+
+
+def total() -> int:
+    mut acc = 0
+    for item in items:
+        acc += item
+    return acc
+
+
+def first_flag() -> bool:
+    flags = active_flags
+    return flags[0]
+
+
+def main() -> None:
+    push(2)
+    push(3)
+    println(len(items))
+    println(total())
+    println(len(active_flags))
+    println(first_flag())

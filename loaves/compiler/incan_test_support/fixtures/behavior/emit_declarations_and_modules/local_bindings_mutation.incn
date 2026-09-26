@@ -1,0 +1,17 @@
+# behavior: a `mut` list local is extended in place and a `mut` int local reassigned later reads back its last value
+# retires: loaves/compiler/incan_emit/src/emit/statements.rs::source_mutable_let_still_emits_mut
+# retires: loaves/compiler/incan_emit/src/emit/statements.rs::later_assignment_to_plain_local_emits_mut
+# expect-stdout:
+#   2
+#   false
+#   2
+
+def main() -> None:
+    flags_src: list[bool] = [True]
+    mut flags = flags_src
+    flags.append(False)
+    println(len(flags))
+    println(flags[1])
+    mut current = 1
+    current = 2
+    println(current)

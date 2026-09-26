@@ -1,0 +1,54 @@
+# behavior: a Rust Box's as_ref() result is materialized as an owned model exactly once wherever an owned value is needed: a let binding, a reassignment, a dict-index assignment, a return value, a struct field, a collection element; a match over the borrowed result binds without copying
+# retires: loaves/compiler/incan_emit/src/emit/statements.rs::let_binding_from_method_call_result_clones_borrowed_value_exactly_once
+# retires: loaves/compiler/incan_emit/src/emit/statements.rs::local_reassignment_materializes_borrowed_method_result_exactly_once
+# retires: loaves/compiler/incan_emit/src/emit/statements.rs::dict_index_assignment_from_method_call_result_clones_borrowed_value_exactly_once
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::method_call_return_value_materializes_borrowed_as_ref_result
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::method_call_struct_field_materializes_borrowed_as_ref_result
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::method_call_collection_element_materializes_borrowed_as_ref_result
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::method_call_match_scrutinee_reaches_the_ownership_plan_without_over_cloning
+# expect-stdout:
+#   1
+#   2
+#   3
+#   4
+#   5
+#   6
+#   leaf 7
+
+from rust::std::boxed import Box
+
+
+@derive(Clone)
+model Node:
+    value: int
+
+
+model Holder:
+    node: Node
+
+
+def unboxed(child: Box[Node]) -> Node:
+    return child.as_ref()
+
+
+def describe(child: Box[Node]) -> str:
+    match child.as_ref():
+        Node(node) => return f"leaf {node.value}"
+
+
+def main() -> None:
+    child = Box.new(Node(value=1))
+    node = child.as_ref()
+    println(node.value)
+    mut current = Node(value=0)
+    current = Box.new(Node(value=2)).as_ref()
+    println(current.value)
+    mut nodes: dict[str, Node] = {}
+    nodes["a"] = Box.new(Node(value=3)).as_ref()
+    println(nodes["a"].value)
+    println(unboxed(Box.new(Node(value=4))).value)
+    holder = Holder(node=Box.new(Node(value=5)).as_ref())
+    println(holder.node.value)
+    items: list[Node] = [Box.new(Node(value=6)).as_ref()]
+    println(items[0].value)
+    println(describe(Box.new(Node(value=7))))

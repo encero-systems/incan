@@ -1,0 +1,33 @@
+# behavior: abs and sum over int compute their values and raise ValueError instead of wrapping when the result overflows
+# retires: loaves/compiler/incan_emit/src/emit/expressions/builtins.rs::canonical_and_legacy_abs_sum_emit_one_checked_contract
+# expect-stdout:
+#   5
+#   7
+#   6
+#   -9223372036854775808
+#   abs overflow raised
+#   sum overflow raised
+
+from std.testing import assert_raises
+
+const LOWEST: int = -9223372036854775807 - 1
+const HIGHEST: int = 9223372036854775807
+
+
+def abs_of_lowest() -> None:
+    abs(LOWEST)
+
+
+def sum_past_highest() -> None:
+    sum([HIGHEST, 1])
+
+
+def main() -> None:
+    println(abs(-5))
+    println(abs(7))
+    println(sum([1, 2, 3]))
+    println(LOWEST)
+    assert_raises[ValueError](abs_of_lowest)
+    println("abs overflow raised")
+    assert_raises[ValueError](sum_past_highest)
+    println("sum overflow raised")

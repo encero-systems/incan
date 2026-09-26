@@ -1,0 +1,39 @@
+# behavior: std.fs Path methods whose target is `Path | str` accept a str and a Path alike, each resolving the target through a helper of the same standard-library package: samefile answers for both spellings and rename moves a file to a str target and back to a Path target
+# retires: loaves/compiler/incan_emit/src/emit/mod.rs::an_sdk_provider_binds_the_native_unions_it_owns
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::canonical_self_package_call_uses_crate_path_without_losing_package_identity
+# expect-stdout:
+#   true
+#   true
+#   false
+#   renamed.txt
+#   true
+#   original.txt
+#   true
+
+from std.fs import Path
+from std.io import IoError
+from std.tempfile import TemporaryDirectory
+
+
+def run() -> Result[None, IoError]:
+    workspace = TemporaryDirectory.try_new()?
+    original = workspace.path().joinpath("original.txt")
+    original.write_text("payload", encoding="utf-8", errors="strict", newline=None)?
+    println(original.samefile(original.0)?)
+    println(original.samefile(original)?)
+    other = workspace.path().joinpath("other.txt")
+    other.write_text("other", encoding="utf-8", errors="strict", newline=None)?
+    println(original.samefile(other)?)
+    renamed = original.rename(workspace.path().joinpath("renamed.txt").0)?
+    println(renamed.name())
+    println(renamed.exists())
+    restored = renamed.rename(original)?
+    println(restored.name())
+    println(restored.exists())
+    return Ok(None)
+
+
+def main() -> None:
+    match run():
+        Ok(_) => pass
+        Err(error) => println(f"io error: {error.detail}")

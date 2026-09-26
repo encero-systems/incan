@@ -1,0 +1,39 @@
+# behavior: a Rust HashMap answers get with a str literal and with a str local, and a local model whose insert method has a defaulted parameter is dispatched by its own signature beside the map's two-argument insert
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::regular_method_call_policy_preserves_lookup_arg_shape
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::regular_hash_map_get_preserves_borrowed_probe_shape
+# retires: loaves/compiler/incan_emit/src/emit/mod.rs::qualified_rust_receiver_does_not_inherit_same_named_incan_method_signature
+# expect-stdout:
+#   2
+#   1
+#   missing
+#   3
+
+from rust::std::collections import HashMap
+
+
+model Counter:
+    total: int
+
+    def insert(mut self, key: str, value: int = 1) -> None:
+        self.total += value
+
+
+def lookup(counts: HashMap[str, int], word: str) -> str:
+    match counts.get(word):
+        Some(count) => return str(count)
+        None => return "missing"
+
+
+def main() -> None:
+    mut counts = HashMap.new[str, int]()
+    counts.insert("the", 2)
+    counts.insert("cat", 1)
+    match counts.get("the"):
+        Some(count) => println(count)
+        None => println("missing")
+    println(lookup(counts, "cat"))
+    println(lookup(counts, "dog"))
+    mut counter = Counter(total=0)
+    counter.insert("a")
+    counter.insert("b", 2)
+    println(counter.total)

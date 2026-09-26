@@ -1,0 +1,22 @@
+# behavior: a list literal of (str, int) tuples passed to a generic list[tuple[K, V]] parameter keeps its concrete str keys and int values
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::generic_collection_literal_target_uses_inferred_tuple_item_types
+# expect-stdout:
+#   2
+#   host=1
+#   port=8080
+
+def count_pairs[K, V](items: list[tuple[K, V]]) -> int:
+    return len(items)
+
+
+def render(items: list[tuple[str, int]]) -> list[str]:
+    mut out: list[str] = []
+    for pair in items:
+        out.append(f"{pair[0]}={pair[1]}")
+    return out
+
+
+def main() -> None:
+    println(count_pairs([("host", 1), ("port", 8080)]))
+    for line in render([("host", 1), ("port", 8080)]):
+        println(line)

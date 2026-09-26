@@ -1,0 +1,10 @@
+# behavior: two pub statics from different modules imported under one alias are refused as an ambiguous import binding
+# retires: loaves/compiler/incan_emit/src/emit/mod.rs::colliding_static_import_aliases_fail_closed
+# expect-diagnostic: INCAN-I0001
+
+from left import counter as shared
+from right import counter as shared
+
+
+def main() -> None:
+    println(shared)

@@ -1,0 +1,86 @@
+# behavior: std.testing assert helpers compare plain values, comparison operands, strings and inline model constructors, return the unwrapped Some/Ok/Err payload, and assert_raises catches a raised ValueError from a call expression or a function reference
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_eq_uses_plain_comparison
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_eq_message_preserves_empty_message_semantics
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_eq_parenthesizes_comparison_operands
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_ne_reuses_string_binop_plan
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_model_constructor_comparison_parses
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_is_some_returns_unwrapped_value
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_is_none_accepts_bare_none_literal
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_is_ok_accepts_bare_ok_literal
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_is_err_accepts_bare_err_literal
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_raises_catches_panic_payloads
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_assert_raises_invokes_zero_arg_function_argument
+# expect-stdout:
+#   plain and messaged assert_eq passed
+#   comparison operand passed
+#   assert_ne passed
+#   constructor comparisons passed
+#   some 5
+#   none passed
+#   ok 42
+#   err boom
+#   raised from call expression
+#   raised from function reference
+#   assert_eq failure is an AssertionError
+#   empty message failure is an AssertionError
+
+from std.testing import assert_eq, assert_ne, assert_is_some, assert_is_none, assert_is_ok, assert_is_err, assert_raises
+
+@derive(Eq)
+model Pair:
+    x: int
+
+
+def explode() -> None:
+    int("boom")
+
+
+def bad_parse() -> None:
+    int("not a number")
+
+
+def failing_eq() -> None:
+    assert_eq(1, 2, "custom")
+
+
+def failing_eq_empty_message() -> None:
+    assert_eq(1, 2, "")
+
+
+def main() -> None:
+    left = 3
+    right = 3
+    assert_eq(left, right)
+    assert_eq(left, right, "same")
+    assert_eq(left, right, "")
+    println("plain and messaged assert_eq passed")
+    encoded = 4
+    assert_eq(encoded > 0, True)
+    println("comparison operand passed")
+    value = "alpha"
+    target = "beta"
+    assert_ne(value, target)
+    println("assert_ne passed")
+    pair = Pair(x=1)
+    assert_eq(pair, Pair(x=1))
+    assert_eq(Pair(x=1), pair)
+    assert_eq(Pair(x=1), Pair(x=1))
+    assert_ne(Pair(x=1), Pair(x=2))
+    println("constructor comparisons passed")
+    maybe: Option[int] = Some(5)
+    unwrapped = assert_is_some(maybe)
+    println(f"some {unwrapped}")
+    assert_is_none(None)
+    println("none passed")
+    ok_value = assert_is_ok(Ok(42))
+    println(f"ok {ok_value}")
+    err_value = assert_is_err(Err("boom"))
+    println(f"err {err_value}")
+    assert explode() raises ValueError
+    println("raised from call expression")
+    assert_raises[ValueError](bad_parse)
+    println("raised from function reference")
+    assert_raises[AssertionError](failing_eq)
+    println("assert_eq failure is an AssertionError")
+    assert_raises[AssertionError](failing_eq_empty_message)
+    println("empty message failure is an AssertionError")

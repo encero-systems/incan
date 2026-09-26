@@ -1,0 +1,11 @@
+pub model Product:
+    pub value: str
+
+
+pub type Answer = Product | int
+
+
+pub def label(answer: Answer) -> str:
+    match answer:
+        Product(product) => return f"second product {product.value}"
+        int(number) => return f"second number {number}"

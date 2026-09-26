@@ -1,0 +1,67 @@
+# behavior: isinstance(value, str) is true for a const str, a str literal, a `str | int` holding str, an Option holding a const str, a `FrozenStr | int` holding the const, an `Option[FrozenStr]` holding it and a `FrozenStr | str | int` holding either str member, and false for every int member and for None
+# retires: loaves/compiler/incan_emit/src/emit/expressions/builtins.rs::checked_isinstance_matches_string_storage_in_direct_union_and_option_shapes
+# expect-stdout:
+#   true
+#   true
+#   true
+#   false
+#   true
+#   false
+#   true
+#   false
+#   true
+#   false
+#   true
+#   true
+#   false
+
+const NAME: str = "policy"
+
+
+def pick(flag: bool) -> str | int:
+    if flag:
+        return "text"
+    return 7
+
+
+def maybe(flag: bool) -> Option[str]:
+    if flag:
+        return Some(NAME)
+    return None
+
+
+def frozen_or_int(flag: bool) -> FrozenStr | int:
+    if flag:
+        return NAME
+    return 7
+
+
+def maybe_frozen(flag: bool) -> Option[FrozenStr]:
+    if flag:
+        return Some(NAME)
+    return None
+
+
+def mixed(which: int) -> FrozenStr | str | int:
+    if which == 0:
+        return NAME
+    if which == 1:
+        text: str = "text"
+        return text
+    return 7
+
+
+def main() -> None:
+    println(isinstance(NAME, str))
+    println(isinstance("literal", str))
+    println(isinstance(pick(True), str))
+    println(isinstance(pick(False), str))
+    println(isinstance(maybe(True), str))
+    println(isinstance(maybe(False), str))
+    println(isinstance(frozen_or_int(True), str))
+    println(isinstance(frozen_or_int(False), str))
+    println(isinstance(maybe_frozen(True), str))
+    println(isinstance(maybe_frozen(False), str))
+    println(isinstance(mixed(0), str))
+    println(isinstance(mixed(1), str))
+    println(isinstance(mixed(2), str))

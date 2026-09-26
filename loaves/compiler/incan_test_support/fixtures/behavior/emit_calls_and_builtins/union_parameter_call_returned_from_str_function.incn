@@ -1,0 +1,25 @@
+# behavior: a str literal passed to a `str | bool | float | int` parameter inside a `return` of a str function is matched as the str member, and the other members dispatch by their own patterns
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_call_expr_keeps_return_context_union_string_seed_as_union_value
+# expect-stdout:
+#   str:open
+#   bool:true
+#   float:2.5
+#   int:3
+
+def lit(value: str | bool | float | int) -> str:
+    match value:
+        str(text) => return f"str:{text}"
+        bool(truth) => return f"bool:{truth}"
+        float(number) => return f"float:{number}"
+        int(number) => return f"int:{number}"
+
+
+def state() -> str:
+    return lit("open")
+
+
+def main() -> None:
+    println(state())
+    println(lit(True))
+    println(lit(2.5))
+    println(lit(3))

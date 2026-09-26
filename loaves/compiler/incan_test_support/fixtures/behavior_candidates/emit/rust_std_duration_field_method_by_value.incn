@@ -1,0 +1,27 @@
+# behavior: a Rust Duration held in a model field is added to another model's field through saturating_add, which takes its argument by value, and the sum reads back in seconds as an int, as an exact f32 that passes the finite-value check and as an ordinary float
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::external_method_call_uses_by_value_signature_for_field_argument
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::exact_float_rust_call_results_are_guarded_without_changing_ordinary_float
+# expect-stdout:
+#   5
+#   7
+#   5.5
+#   5.5
+
+from rust::std::time import Duration as RustDuration
+
+
+model Span:
+    value: RustDuration
+
+    def plus(self, other: Span) -> RustDuration:
+        return self.value.saturating_add(other.value)
+
+
+def main() -> None:
+    left = Span(value=RustDuration.from_secs(2))
+    right = Span(value=RustDuration.from_secs(3))
+    println(left.plus(right).as_secs())
+    println(left.plus(Span(value=RustDuration.from_secs(5))).as_secs())
+    half = Span(value=RustDuration.from_millis(3500))
+    println(left.plus(half).as_secs_f32())
+    println(left.plus(half).as_secs_f64())

@@ -1,0 +1,82 @@
+pub model Record:
+    pub value: int
+
+
+pub class Container:
+    pub value: int
+
+    def doubled(self) -> int:
+        return self.value * 2
+
+
+pub enum Mode:
+    Fast
+    Slow
+
+
+pub type Token = newtype int
+
+
+pub trait Named:
+    def label(self) -> str
+
+
+pub model Badge with Named:
+    pub text: str
+
+    def label(self) -> str:
+        return f"badge {self.text}"
+
+
+pub type Answer = int | str
+
+pub const ZERO: int = 0
+
+pub static count: int = 10
+
+
+pub def current_count() -> int:
+    return count
+
+
+pub def first(value: int) -> int:
+    return value
+
+
+pub fixed = partial first(value=1)
+
+pub second = alias first
+
+
+def preserve[F]() -> ((F) -> F):
+    return (func) => func
+
+
+@preserve()
+pub def decorated() -> int:
+    return 1
+
+
+@preserve()
+pub def generic[T](value: T) -> T:
+    return value
+
+
+pub def convert(value: int) -> int:
+    return value + 1
+
+
+pub def convert(value: str) -> str:
+    return f"{value}!"
+
+
+pub def show_mode(mode: Mode) -> str:
+    match mode:
+        Mode.Fast => return "fast"
+        Mode.Slow => return "slow"
+
+
+pub def show_answer(answer: Answer) -> str:
+    match answer:
+        int(number) => return f"int {number}"
+        str(text) => return f"str {text}"

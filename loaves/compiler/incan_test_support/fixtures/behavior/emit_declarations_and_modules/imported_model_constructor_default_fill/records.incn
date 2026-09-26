@@ -1,0 +1,4 @@
+pub model Record:
+    pub count: int = 0
+    pub label: str = "none"
+    pub tags: list[str] = []
