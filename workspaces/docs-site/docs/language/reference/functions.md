@@ -30,7 +30,7 @@ Arguments bind to normal parameters in this order:
 4. Required parameters that remain unbound are reported as missing.
 5. Unknown named arguments are rejected unless the callee declares `**kwargs`.
 6. Extra positional arguments are rejected unless the callee declares `*args`.
-7. A defaulted parameter that remains unbound takes its declared default. A name in a default resolves in the module that declares the callable, whichever module the call is written in: a const, static or function of that module, and a model, class, enum or newtype of that module that the default constructs or names a variant of, private or public. The same holds for the presets of a method partial. A call from another package omits such an argument under the same rule, except where the default constructs a model or class: that argument is required from another package.
+7. A defaulted parameter that remains unbound takes its declared default. A name in a default resolves in the module that declares the callable, whichever module the call is written in: a name that module declares resolves to that declaration, private or public, and a name it imports resolves to the declaration the import names. The same holds for the presets of a method partial. A call from another package omits such an argument under the same rule, except where the default constructs a model or class private to its package: that argument is required in another package, and a call there that omits it is error `INCAN-T0001`.
 
 ```incan
 def connect(host: str, port: int) -> str:
@@ -62,6 +62,31 @@ from helpers import describe
 def main() -> None:
     println(describe())   # 4 bytes
     println(describe(8))  # 8 bytes
+```
+
+A default that names an imported const, called from a module that declares a const of the same name:
+
+```incan
+# sizes.incn
+pub const SIZE: int = 3
+```
+
+```incan
+# boxes.incn
+from sizes import SIZE
+
+pub def box_size(n: int = SIZE) -> int:
+    return n
+```
+
+```incan
+# main.incn
+from boxes import box_size
+
+const SIZE: int = 9
+
+def main() -> None:
+    println(box_size())  # 3
 ```
 
 ## Rest Parameter Mental Model

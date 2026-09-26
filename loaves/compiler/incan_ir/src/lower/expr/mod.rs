@@ -8,8 +8,10 @@
 
 mod calls;
 mod comprehensions;
+mod default_owner_paths;
 mod helpers;
 mod patterns;
+mod pub_default_constructions;
 mod stdlib_defaults;
 mod union_owner;
 
@@ -1303,6 +1305,12 @@ impl AstLowering {
                 }
                 _ => {}
             }
+        }
+        // A const read in a parameter default reaches callers in other modules as a path to its declaring module.
+        if let ast::Expr::Ident(name) = &expr.node
+            && let Some(spelled) = self.default_owner_const_path(name, expr.span, &lowered)
+        {
+            lowered = spelled;
         }
         // Apply any rusttype method return coercion recorded by the typechecker (e.g. &str → String).
         lowered = self.wrap_with_rust_return_coercion(lowered, expr.span)?;

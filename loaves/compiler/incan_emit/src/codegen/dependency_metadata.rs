@@ -4,15 +4,22 @@ use std::collections::{HashMap, HashSet};
 
 use incan_frontend::ast::{self, Declaration, Expr, ImportKind, ImportPath, Program};
 use incan_frontend::decorator_resolution;
-use incan_frontend::module::{canonicalize_source_module_segments, logical_source_import_candidates};
+use incan_frontend::module::{
+    canonicalize_source_module_segments, declaration_package_identity, logical_source_import_candidates,
+};
 use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
+use incan_ir::decl::FunctionParamDefault;
 use incan_ir::expr::{BuiltinFn, IrDictEntry, IrGeneratorClause, IrListEntry, MethodKind, Pattern, VarRefKind};
-use incan_ir::{IrDecl, IrDeclKind, IrExpr, IrExprKind, IrProgram, IrStmt, IrStmtKind, IrType};
+use incan_ir::{IrDecl, IrDeclKind, IrExpr, IrExprKind, IrFunction, IrProgram, IrStmt, IrStmtKind, IrType};
 use incan_lang::lang::{
     generated_support, stdlib,
     surface::result_methods,
     traits::{self as core_traits, TraitId},
 };
+use incan_semantics_core::SymbolOrigin;
+
+/// The root segment of a crate-relative Rust path.
+const CRATE_ROOT_SEGMENT: &str = "crate";
 
 /// Collect field-alias metadata for exported models.
 pub fn collect_model_field_aliases(
@@ -160,7 +167,8 @@ fn record_generated_support_required_items(
 ///
 /// This deliberately runs on IR instead of source spelling. Domain APIs may legitimately define methods named
 /// `filter`, `map`, or `count`; only calls classified as an iterator method or builtin iterator constructor cause the
-/// emitter to name `__incan_std.derives.collection` directly.
+/// emitter to name `__incan_std.derives.collection` directly. The module items that parameter defaults reach through
+/// crate paths are kept the same way.
 pub fn record_direct_generated_path_support_items_from_ir(
     reachable: &mut HashMap<Vec<String>, HashSet<String>>,
     program: &IrProgram,
@@ -176,6 +184,112 @@ pub fn record_direct_generated_path_support_items_from_ir(
         }
     }
     record_result_helper_support_items_from_ir(reachable, program);
+    record_default_path_items_from_ir(reachable, program);
+}
+
+/// Keep the module items a parameter default reaches through a crate path.
+///
+/// Lowering spells a const that a default reads as a path to the const's declaring module (#1771), so the default's
+/// callers reach the const without a use of its name. The generated-use analysis retains a module's items from
+/// the names reachable code uses, which such a path does not carry, so each item a default spells is recorded as
+/// reachable in its module here. Stdlib paths are left to the stdlib support records.
+fn record_default_path_items_from_ir(reachable: &mut HashMap<Vec<String>, HashSet<String>>, program: &IrProgram) {
+    let mut paths: HashSet<Vec<String>> = HashSet::new();
+    let mut collect = |expr: &IrExpr| {
+        if let Some(path) = crate_rooted_item_path(expr) {
+            paths.insert(path);
+        }
+        false
+    };
+    for decl in &program.declarations {
+        let functions: Vec<&IrFunction> = match &decl.kind {
+            IrDeclKind::Function(function) => vec![function],
+            IrDeclKind::Impl(impl_decl) => impl_decl.methods.iter().collect(),
+            IrDeclKind::Trait(trait_decl) => trait_decl.methods.iter().collect(),
+            _ => Vec::new(),
+        };
+        for default in functions
+            .iter()
+            .flat_map(|function| &function.params)
+            .filter_map(|param| match &param.default {
+                Some(FunctionParamDefault::Source(default)) => Some(default.as_ref()),
+                _ => None,
+            })
+        {
+            ir_expr_any_expr(default, &mut collect);
+        }
+    }
+    let spelled = paths.clone();
+    for path in paths {
+        // The walk also meets each path's own prefixes, which name the modules on the way rather than items.
+        if spelled
+            .iter()
+            .any(|other| other.len() > path.len() && other.starts_with(&path))
+        {
+            continue;
+        }
+        let Some((item, module_path)) = path.split_last() else {
+            continue;
+        };
+        if module_path.is_empty() || module_path.first().map(String::as_str) == Some(stdlib::INCAN_STD_NAMESPACE) {
+            continue;
+        }
+        reachable.entry(module_path.to_vec()).or_default().insert(item.clone());
+    }
+}
+
+/// Return the segments below the crate root of a `crate::a::b` path expression, if `expr` is one.
+fn crate_rooted_item_path(expr: &IrExpr) -> Option<Vec<String>> {
+    match &expr.kind {
+        IrExprKind::Var {
+            name,
+            ref_kind: VarRefKind::ExternalName,
+            ..
+        } if name == CRATE_ROOT_SEGMENT => Some(Vec::new()),
+        IrExprKind::Field { object, field } => crate_rooted_item_path(object).map(|mut path| {
+            path.push(field.clone());
+            path
+        }),
+        _ => None,
+    }
+}
+
+/// Map the origin of each emitted source module's declarations to the module's Rust path below the crate root.
+///
+/// `modules` pairs each module's checked module path with its Rust path. Lowering spells a name that a parameter
+/// default reads through this map (#1771). Stdlib modules are left out: a stdlib const in a default is spelled from
+/// the stdlib loader's own paths.
+pub fn source_module_rust_paths(
+    modules: impl IntoIterator<Item = (Vec<String>, Vec<String>)>,
+    package_identity: Option<&str>,
+) -> HashMap<SymbolOrigin, Vec<String>> {
+    let mut paths = HashMap::new();
+    for (module_path, rust_path) in modules {
+        if module_path
+            .first()
+            .is_some_and(|root| root == stdlib::STDLIB_ROOT || root == stdlib::INCAN_STD_NAMESPACE)
+        {
+            continue;
+        }
+        for origin in source_module_origins(&module_path, package_identity) {
+            paths.insert(origin, rust_path.clone());
+        }
+    }
+    paths
+}
+
+/// Return the origins the checked identities of one source module's declarations carry.
+///
+/// A declaration is owned by its module, or by its package and module when the compilation produces a package.
+pub fn source_module_origins(module_path: &[String], package_identity: Option<&str>) -> Vec<SymbolOrigin> {
+    let mut origins = vec![SymbolOrigin::Module(module_path.to_vec())];
+    if let Some(library) = declaration_package_identity(package_identity, Some(module_path)) {
+        origins.push(SymbolOrigin::Package {
+            library,
+            module_path: module_path.to_vec(),
+        });
+    }
+    origins
 }
 
 /// Return whether one lowered program uses a surface that backend emission routes through generated Rust paths.
@@ -992,9 +1106,6 @@ pub struct DependencySymbolMetadata {
     pub ambiguous_type_names: HashSet<String>,
     pub value_module_paths: HashMap<String, Vec<String>>,
     pub ambiguous_value_names: HashSet<String>,
-    /// Every dependency module that declares each value name, so a default argument can name the declaration its
-    /// callable's module owns even when other modules declare the same name.
-    pub value_declaring_modules: HashMap<String, Vec<Vec<String>>>,
     pub enum_type_names: HashSet<String>,
 }
 
@@ -1004,7 +1115,6 @@ pub fn collect_dependency_symbol_metadata(deps: &[(&str, &Program, Option<Vec<St
     let mut ambiguous: HashSet<String> = HashSet::new();
     let mut value_paths: HashMap<String, Vec<String>> = HashMap::new();
     let mut ambiguous_values: HashSet<String> = HashSet::new();
-    let mut value_declaring_modules: HashMap<String, Vec<Vec<String>>> = HashMap::new();
     let mut enum_type_names: HashSet<String> = HashSet::new();
     let mut non_enum_type_names: HashSet<String> = HashSet::new();
 
@@ -1030,10 +1140,6 @@ pub fn collect_dependency_symbol_metadata(deps: &[(&str, &Program, Option<Vec<St
                     | Declaration::Docstring(_) => None,
                 }
             {
-                let declaring = value_declaring_modules.entry(name.clone()).or_default();
-                if !declaring.contains(segs) {
-                    declaring.push(segs.clone());
-                }
                 if let Some(existing) = value_paths.get(name) {
                     if existing != segs {
                         ambiguous_values.insert(name.clone());
@@ -1088,7 +1194,6 @@ pub fn collect_dependency_symbol_metadata(deps: &[(&str, &Program, Option<Vec<St
         ambiguous_type_names: ambiguous,
         value_module_paths: value_paths,
         ambiguous_value_names: ambiguous_values,
-        value_declaring_modules,
         enum_type_names,
     }
 }

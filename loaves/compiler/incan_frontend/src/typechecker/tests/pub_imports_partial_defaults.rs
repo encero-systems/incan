@@ -91,12 +91,12 @@ pub default_build = partial build(size=3)
     .map_err(|errors| format!("naming the leftover satisfies the partial: {errors:?}"))
 }
 
-/// A dependency's default that constructs one of its models, public or private, is not carried across the package
-/// boundary: a consumer has no constructor for another package's model, so a call omitting the argument is refused for
-/// the missing argument rather than accepted and left to fail in the build. A default naming a variant of the
-/// dependency's enum is carried, and a call may omit it.
+/// A dependency's default that constructs one of its public models is carried across the package boundary, and so is
+/// one naming a variant of its private enum: a call may omit either. A default that constructs a private model is not
+/// carried, because a consumer constructs another package's model only through its public path; a call omitting that
+/// argument is refused for the missing argument rather than accepted and left to fail in the build.
 #[test]
-fn dependency_default_constructing_a_model_is_not_carried_issue1771() -> Result<(), String> {
+fn dependency_default_constructing_a_private_model_is_not_carried_issue1771() -> Result<(), String> {
     let index = provider_index(
         r#"
 model _Default:
@@ -116,7 +116,7 @@ pub def make(settings: _Default = _Default()) -> int:
     return settings.size
 
 
-pub def configure(settings: Settings = Settings()) -> int:
+pub def configure(settings: Settings = Settings(size=6)) -> int:
     return settings.size
 
 
@@ -124,22 +124,23 @@ pub def run(mode: _Mode = _Mode.Fast) -> int:
     return 1
 "#,
     )?;
-    for (callee, call) in [("make", "make()"), ("configure", "configure()")] {
-        let errors = check_str_with_library_index_err(
-            &format!("from pub::modulelib import configure, make\n\ndef use() -> int:\n  return {call}\n"),
+    let errors = check_str_with_library_index_err(
+        "from pub::modulelib import make\n\ndef use() -> int:\n  return make()\n",
+        index.clone(),
+        "a construction of a private model is not carried across the package boundary",
+    )?;
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message == "Missing required argument 'settings' when calling 'make'"),
+        "`make()` is refused for the missing `settings`: {errors:?}"
+    );
+    for (callee, call) in [("configure", "configure()"), ("run", "run()")] {
+        check_str_with_library_index(
+            &format!("from pub::modulelib import {callee}\n\ndef use() -> int:\n  return {call}\n"),
             index.clone(),
-            "a constructed default is not carried across the package boundary",
-        )?;
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.message == format!("Missing required argument 'settings' when calling '{callee}'")),
-            "`{call}` is refused for the missing `settings`: {errors:?}"
-        );
+        )
+        .map_err(|errors| format!("`{call}` takes its carried default: {errors:?}"))?;
     }
-    check_str_with_library_index(
-        "from pub::modulelib import run\n\ndef use() -> int:\n  return run()\n",
-        index,
-    )
-    .map_err(|errors| format!("an enum variant default is carried: {errors:?}"))
+    Ok(())
 }

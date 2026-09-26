@@ -1,0 +1,25 @@
+pub model Card:
+    size: int = 4
+    pub label: str = "card"
+
+    def describe(self) -> str:
+        return f"{self.label} of size {self.size}"
+
+
+pub class Tray:
+    pub slots: int = 3
+
+
+pub def show(card: Card = Card(label="note")) -> str:
+    return card.describe()
+
+
+pub def count(tray: Tray = Tray()) -> int:
+    return tray.slots
+
+
+pub def stacked(layers: int, tray: Tray = Tray()) -> int:
+    return layers * tray.slots
+
+
+pub stacked_twice = partial stacked(layers=2)

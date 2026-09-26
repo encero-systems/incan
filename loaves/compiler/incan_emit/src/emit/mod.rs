@@ -663,12 +663,6 @@ pub struct IrEmitter<'a> {
     value_module_paths: HashMap<String, Vec<String>>,
     /// Value names that are declared in multiple modules (ambiguous).
     ambiguous_value_names: HashSet<String>,
-    /// Every dependency module that declares each value name, including names declared in more than one module.
-    value_declaring_modules: HashMap<String, Vec<Vec<String>>>,
-    /// The module that declares the callable whose default argument is being emitted, when it is known.
-    ///
-    /// A default names items of its callable's module; that module settles a name several modules declare.
-    default_owner_module: RefCell<Option<Vec<String>>>,
     /// Imported enum type names discovered from dependency modules.
     ///
     /// Imported enums usually lower to `IrType::Struct(name)` in consumer modules, so for-loop emission needs this
@@ -826,8 +820,6 @@ impl<'a> IrEmitter<'a> {
             ambiguous_type_names: HashSet::new(),
             value_module_paths: HashMap::new(),
             ambiguous_value_names: HashSet::new(),
-            value_declaring_modules: HashMap::new(),
-            default_owner_module: RefCell::new(None),
             dependency_enum_types: HashSet::new(),
             internal_module_roots: HashSet::new(),
             source_module_paths: HashSet::new(),
@@ -1877,42 +1869,6 @@ impl<'a> IrEmitter<'a> {
         self.ambiguous_value_names = ambiguous;
     }
 
-    /// Set every dependency module that declares each value name, so a default argument can name the one its callable's
-    /// module declares even when other modules declare the same name.
-    pub fn set_value_declaring_modules(&mut self, modules: HashMap<String, Vec<Vec<String>>>) {
-        self.value_declaring_modules = modules;
-    }
-
-    /// Return the dependency module that declares a called function, from its canonical path or its dependency binding.
-    pub(in crate::emit) fn default_owner_module_for_call(
-        &self,
-        func: &TypedExpr,
-        canonical_path: Option<&[String]>,
-    ) -> Option<Vec<String>> {
-        if let Some((_, module)) = canonical_path.and_then(<[String]>::split_last)
-            && self.is_internal_module_path(module)
-        {
-            return Some(module.to_vec());
-        }
-        let IrExprKind::Var { name, .. } = &func.kind else {
-            return None;
-        };
-        self.value_module_paths
-            .get(name)
-            .or_else(|| {
-                self.canonical_function_registry()
-                    .source_name(name)
-                    .and_then(|source| self.value_module_paths.get(source))
-            })
-            .cloned()
-    }
-
-    /// Emit default-argument values with `owner` as the module that declares the callable, restoring the previous
-    /// owner afterwards.
-    pub(in crate::emit) fn replace_default_owner_module(&self, owner: Option<Vec<String>>) -> Option<Vec<String>> {
-        self.default_owner_module.replace(owner)
-    }
-
     /// Emit a qualified path for an item imported from dependency metadata.
     pub(in crate::emit) fn emit_dependency_item_path(&self, module_path: &[String], name: &str) -> Option<TokenStream> {
         let mut segments = vec![quote! { crate }];
@@ -1965,32 +1921,9 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// Emit a dependency-qualified value path when a local value name is ambiguous.
-    ///
-    /// A name several dependency modules declare has no single path, except inside a default argument: a default
-    /// names the item its callable's module declares, so that module settles it.
-    ///
-    /// Migration note (rust_source_backend_deprecation.md):
-    /// - Compatibility issue: #1771 -- `a.incn` and `b.incn` each declare `const SIZE` and a function defaulting to it;
-    ///   a caller importing both emitted a bare `SIZE` for either default (E0425).
-    /// - Behavior evidence: behavior fixture `cli/same_named_default_consts_across_modules` and the emitter test
-    ///   `same_named_default_consts_resolve_in_their_callables_modules_issue1771` in
-    ///   `tests/default_argument_codegen_tests.rs`.
-    /// - Semantic owner: the checked identity of the item a default names, which carries its declaring module.
-    /// - Retirement condition: the Rust-source backend is deleted (#654); the replacement route resolves a default's
-    ///   names by identity and needs no name-keyed module map.
     pub(in crate::emit) fn emit_dependency_value_path(&self, name: &str) -> Option<TokenStream> {
-        if name.contains("::") {
+        if name.contains("::") || self.ambiguous_value_names.contains(name) {
             return None;
-        }
-        if self.ambiguous_value_names.contains(name) {
-            let owner = self.default_owner_module.borrow().clone()?;
-            let declared_by_owner = self
-                .value_declaring_modules
-                .get(name)
-                .is_some_and(|modules| modules.contains(&owner));
-            return declared_by_owner
-                .then(|| self.emit_dependency_item_path(&owner, name))
-                .flatten();
         }
         // The map is keyed by each dependency declaration's source spelling, read from its AST, while a reference
         // reaching here carries the projection lowering gave it. Follow the registry's compiler-created pairing

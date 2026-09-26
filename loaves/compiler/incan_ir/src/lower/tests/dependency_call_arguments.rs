@@ -1,12 +1,13 @@
 //! Arguments of calls into a `pub::` dependency: the defaults an imported partial's target declares for the
-//! parameters the partial leaves open (#1760), and the dependency's own union for a `Some(member)` argument (#1743).
+//! parameters the partial leaves open (#1760), a default that constructs one of the dependency's public models (#1771),
+//! and the dependency's own union for a `Some(member)` argument (#1743).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::*;
 use crate::decl::FunctionParamDefault;
-use crate::expr::IrCallArg;
+use crate::expr::{IrCallArg, VarRefKind};
 use incan_frontend::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
     materialize_api_alias_projections, materialize_checked_api_public_namespaces,
@@ -326,5 +327,76 @@ def field_assignment() -> Holder:
             );
         }
     }
+    Ok(())
+}
+
+/// #1771: a dependency default that constructs one of the dependency's public models is carried as a call whose callee
+/// is the type, reached through the dependency's public path, so a consumer that never imports the type constructs it
+/// from the dependency's constructor metadata. A default that calls a helper function stays an ordinary call.
+#[test]
+fn dependency_default_constructing_a_public_model_calls_the_type_issue1771() -> Result<(), String> {
+    let index = provider_index(&[(
+        &["lib"],
+        r#"
+pub model Settings:
+    pub size: int = 5
+
+
+pub def standard() -> int:
+    return 6
+
+
+pub def configure(settings: Settings = Settings(size=6)) -> int:
+    return settings.size
+
+
+pub def scale(factor: int = standard()) -> int:
+    return factor
+"#,
+    )])?;
+    let ir = lower_consumer(
+        r#"
+from pub::modulelib import configure, scale
+
+
+def configured() -> int:
+    return configure()
+
+
+def scaled() -> int:
+    return scale()
+"#,
+        index,
+    )?;
+    let construction = call_default(&ir, "configured", "settings")?;
+    let IrExprKind::Call {
+        func,
+        args,
+        canonical_path,
+        ..
+    } = &construction.kind
+    else {
+        return Err(format!("the default must be a call, got {construction:?}"));
+    };
+    assert!(
+        matches!(&func.kind, IrExprKind::Var { name, ref_kind: VarRefKind::TypeName, .. } if name == "Settings"),
+        "the callee is the type: {func:?}"
+    );
+    assert_eq!(
+        canonical_path.as_deref(),
+        Some(["pub".to_string(), LIBRARY.to_string(), "Settings".to_string()].as_slice()),
+        "the type is reached through the dependency's public path"
+    );
+    assert_eq!(
+        args.iter().map(|arg| arg.name.as_deref()).collect::<Vec<_>>(),
+        vec![Some("size")],
+        "the construction keeps its named field"
+    );
+    let helper = call_default(&ir, "scaled", "factor")?;
+    assert!(
+        matches!(&helper.kind, IrExprKind::Call { func, .. }
+            if matches!(&func.kind, IrExprKind::Var { ref_kind: VarRefKind::Value, .. })),
+        "a helper-function default stays an ordinary call: {helper:?}"
+    );
     Ok(())
 }

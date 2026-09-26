@@ -25,6 +25,12 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 struct DefaultPathContext<'a> {
     checker: &'a TypeChecker,
     owner_module_path: Option<&'a [String]>,
+    /// Whether a default that constructs one of the package's exported models or classes is carried to consumers.
+    ///
+    /// A consumer receives a function's or method's parameter default as its own construction of the type. A field
+    /// default reaches a consumer only as a value of the constructor it fills, which has no construction form, so a
+    /// field default that constructs a type is not carried.
+    carries_constructions: bool,
 }
 
 impl<'a> DefaultPathContext<'a> {
@@ -33,6 +39,15 @@ impl<'a> DefaultPathContext<'a> {
         Self {
             checker,
             owner_module_path: non_root_module_path(checker.current_module_path.as_deref()),
+            carries_constructions: false,
+        }
+    }
+
+    /// Build the path context for the parameter defaults of the functions and methods one source module exports.
+    fn for_callable_parameters(checker: &'a TypeChecker) -> Self {
+        Self {
+            carries_constructions: true,
+            ..Self::for_checker(checker)
         }
     }
 
@@ -44,6 +59,21 @@ impl<'a> DefaultPathContext<'a> {
         self.checker
             .lookup_symbol(name)
             .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Type(TypeInfo::Model(_) | TypeInfo::Class(_))))
+    }
+
+    /// Return whether the package's consumers can construct the model or class a callee expression names.
+    ///
+    /// A consumer constructs the type through the package's public path, which exists for a type this module declares
+    /// `pub` and for one it imports from another module of the package. A private type, and a type of another
+    /// package or of the stdlib, has no such path.
+    fn names_exported_type(self, callee: &Expr) -> bool {
+        let Expr::Ident(name) = callee else {
+            return false;
+        };
+        match self.checker.import_binding_path(name) {
+            Some(path) => !path_is_already_absolute(path),
+            None => self.checker.declares_public(name),
+        }
     }
 
     /// Resolve a default-expression value path to the module that owns it.
@@ -1062,9 +1092,11 @@ fn checked_param_default(expr: &Spanned<Expr>, context: DefaultPathContext<'_>) 
                 .collect(),
         ),
         Expr::Call(callee, _type_args, args) => {
-            // A consumer across the package boundary has no constructor for another package's model or class, so a
-            // default that constructs one is not carried there; the parameter stays required for such callers.
-            if context.names_model_or_class(&callee.node) {
+            // A consumer constructs a model or class through the package's public path to it, so a default that
+            // constructs a type without such a path is not carried; the parameter stays required for such callers.
+            if context.names_model_or_class(&callee.node)
+                && !(context.carries_constructions && context.names_exported_type(&callee.node))
+            {
                 return CheckedParamDefault::Unsupported;
             }
             let path = context.canonical_value_path(checked_preset_path(&callee.node));
@@ -1224,7 +1256,7 @@ fn checked_function_export(
         _ => return None,
     };
 
-    let default_context = DefaultPathContext::for_checker(checker);
+    let default_context = DefaultPathContext::for_callable_parameters(checker);
     Some(CheckedFunctionExport {
         name: function.name.clone(),
         emitted_name,
@@ -1825,7 +1857,7 @@ fn attach_method_defaults(
     checker: &TypeChecker,
 ) {
     let mut used = vec![false; ast_methods.len()];
-    let default_context = DefaultPathContext::for_checker(checker);
+    let default_context = DefaultPathContext::for_callable_parameters(checker);
     for entry in entries {
         let Some(idx) = matching_ast_method_index(entry, ast_methods, &used, checker) else {
             continue;

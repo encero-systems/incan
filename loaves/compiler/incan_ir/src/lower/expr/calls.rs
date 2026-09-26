@@ -53,7 +53,7 @@ const API_CRATE_ROOT_SEGMENT: &str = "crate";
 /// typechecker resolved one overload, which is also the only case where substituting is safe: a non-overloaded
 /// function is exported under its own name, and replacing its path segment would defeat the emitter's
 /// compiled-provider metadata lookup, which is keyed on the source-shaped path.
-fn canonical_path_naming_selected_overload(mut path: Vec<String>, selected: Option<&str>) -> Vec<String> {
+pub(super) fn canonical_path_naming_selected_overload(mut path: Vec<String>, selected: Option<&str>) -> Vec<String> {
     if let (Some(selected), Some(declaration)) = (selected, path.last_mut()) {
         *declaration = selected.to_string();
     }
@@ -767,7 +767,11 @@ impl AstLowering {
     }
 
     /// Resolve a public dependency callable by exact checked source path when a module namespace selected it.
-    fn pub_function_export_for_path(&self, library: &str, public_path: &[String]) -> Option<FunctionExport> {
+    pub(in crate::lower) fn pub_function_export_for_path(
+        &self,
+        library: &str,
+        public_path: &[String],
+    ) -> Option<FunctionExport> {
         let function_name = public_path.last()?;
         if public_path.len() == 1 {
             return self.pub_function_export(library, function_name);
@@ -991,6 +995,8 @@ impl AstLowering {
     }
 
     /// Lower an exported default call while preserving the public dependency canonical path for nested call planning.
+    ///
+    /// A call that constructs one of the dependency's models or classes lowers as the consumer's own construction.
     fn lower_pub_default_call(
         &mut self,
         library: &str,
@@ -998,6 +1004,9 @@ impl AstLowering {
         args: &[ParamDefaultCallArgExport],
         signature: Option<&ParamDefaultCallSignatureExport>,
     ) -> Option<TypedExpr> {
+        if self.pub_default_path_names_constructed_type(library, path) {
+            return self.lower_pub_default_construction(library, path, args);
+        }
         let function_name = path.last()?.clone();
         let canonical_path = self.pub_default_canonical_path(library, path);
         let function = self.pub_function_export(library, &function_name);
@@ -3786,13 +3795,14 @@ impl AstLowering {
             IrType::Unknown
         };
         Self::retain_argument_union_owners(&mut args_ir, callable_signature.as_ref());
+        let canonical_path = imported_callee_path.or_else(|| self.default_owner_callee_path(f, selected_overload_name));
         Ok((
             IrExprKind::Call {
                 func: Box::new(func),
                 type_args: lowered_type_args,
                 args: args_ir,
                 callable_signature,
-                canonical_path: imported_callee_path,
+                canonical_path,
             },
             ret_ty,
         ))

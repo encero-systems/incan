@@ -538,6 +538,11 @@ pub struct TypeChecker {
     pub static_decls: Vec<(StaticDecl, Span)>,
     /// Collected module-level function declarations for static dependency analysis.
     pub local_function_decls: HashMap<String, FunctionDecl>,
+    /// Names of the declarations the program being checked marks `pub`.
+    ///
+    /// A public library carries a parameter default that constructs a model or class to its consumers only when they
+    /// can construct that type themselves, which needs its declaration to be public.
+    current_module_public_declarations: HashSet<String>,
     /// Function symbols collected in the current module pass, keyed by source name.
     ///
     /// The checker imports dependency modules into one ambient symbol table. Same-name overload grouping is
@@ -821,6 +826,7 @@ impl TypeChecker {
             const_decls: HashMap::new(),
             static_decls: Vec::new(),
             local_function_decls: HashMap::new(),
+            current_module_public_declarations: HashSet::new(),
             current_module_function_symbols: HashMap::new(),
             type_aliases: HashMap::new(),
             rejected_member_bindings: HashSet::new(),
@@ -6452,6 +6458,11 @@ impl TypeChecker {
         }
     }
 
+    /// Return whether the program last checked declares `name` itself and marks that declaration `pub`.
+    pub fn declares_public(&self, name: &str) -> bool {
+        self.current_module_public_declarations.contains(name)
+    }
+
     /// Check a program and return errors if any.
     ///
     /// Runs the two-pass type-checking algorithm:
@@ -6520,6 +6531,13 @@ impl TypeChecker {
             self.foreign_pub_type_remappings.clear();
         }
         self.validate_alias_declarations(program);
+        self.current_module_public_declarations = program
+            .declarations
+            .iter()
+            .filter(|decl| is_public_decl(decl))
+            .filter_map(declaration_name)
+            .map(str::to_string)
+            .collect();
 
         // `check_with_imports` / `import_module` can queue supertrait bounds while collecting dependency ASTs.
         // Resolve those queued bounds into trait symbols before we collect and resolve the current program.

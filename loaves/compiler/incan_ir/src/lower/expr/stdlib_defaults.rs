@@ -36,7 +36,7 @@ impl AstLowering {
         {
             return Ok(Some(qualified));
         }
-        self.lower_param_default_expr(default)
+        self.lower_foreign_param_default_expr(default)
     }
 
     /// Build a value expression naming the stdlib const at a canonical `std.*` path.
@@ -65,6 +65,17 @@ impl AstLowering {
 
     /// Build `crate::__incan_std::<module>::<name>` for a stdlib path compiled into the current crate.
     fn crate_stdlib_path_expr(path: &[String]) -> TypedExpr {
+        Self::crate_path_expr(
+            std::iter::once(stdlib::INCAN_STD_NAMESPACE).chain(
+                path.iter()
+                    .map(String::as_str)
+                    .skip_while(|segment| *segment == stdlib::STDLIB_ROOT),
+            ),
+        )
+    }
+
+    /// Build the value expression `crate::<segments>`, a path from the crate root to an item of this crate.
+    pub(in crate::lower) fn crate_path_expr<'a>(segments: impl IntoIterator<Item = &'a str>) -> TypedExpr {
         let root = TypedExpr::new(
             IrExprKind::Var {
                 name: CRATE_ROOT_SEGMENT.to_string(),
@@ -73,21 +84,15 @@ impl AstLowering {
             },
             IrType::Unknown,
         );
-        std::iter::once(stdlib::INCAN_STD_NAMESPACE)
-            .chain(
-                path.iter()
-                    .map(String::as_str)
-                    .skip_while(|segment| *segment == stdlib::STDLIB_ROOT),
+        segments.into_iter().fold(root, |object, segment| {
+            TypedExpr::new(
+                IrExprKind::Field {
+                    object: Box::new(object),
+                    field: segment.to_string(),
+                },
+                IrType::Unknown,
             )
-            .fold(root, |object, segment| {
-                TypedExpr::new(
-                    IrExprKind::Field {
-                        object: Box::new(object),
-                        field: segment.to_string(),
-                    },
-                    IrType::Unknown,
-                )
-            })
+        })
     }
 
     /// Return the IR type a stdlib const of the given declared type has, mirroring the `const` annotation mapping.

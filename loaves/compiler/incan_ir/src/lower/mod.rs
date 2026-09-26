@@ -236,9 +236,13 @@ pub struct AstLowering {
     /// Return statements need this source-owned context to widen a checked-C scalar result only when the
     /// typechecker has already accepted a lossless conversion to an ordinary Incan numeric type.
     pub callable_return_types: Vec<IrType>,
-    /// Module consts and functions that a parameter default or method-partial preset of the module names; their
-    /// generated items are published because the default is expanded at call sites outside the module.
+    /// Module items -- consts, statics, functions and nominal types -- that a parameter default or method-partial
+    /// preset of the module names; their generated items are published because the default is expanded at call
+    /// sites outside the module.
     pub default_named_items: HashSet<String>,
+    /// Module models and classes that a parameter default or method-partial preset constructs; their fields are
+    /// published because the construction is spelled at call sites outside the module.
+    pub default_constructed_types: HashSet<String>,
     /// Module-level symbol aliases mapped from alias name to canonical target name.
     pub symbol_aliases: HashMap<String, String>,
     /// Imported overload bindings that must be reexported because a public alias projects them.
@@ -303,6 +307,12 @@ pub struct AstLowering {
     /// declarations from another package's -- see [`AstLowering::produced_library_identity`]. It is `None` when no
     /// project owns the compilation, and every package identity is then genuinely foreign.
     pub registry_package_identity: Option<String>,
+    /// Rust module path below the crate root of each source module compiled into this crate, keyed by the origin the
+    /// checked identities of that module's declarations carry. Names in parameter defaults are spelled through it.
+    pub source_module_rust_paths: HashMap<SymbolOrigin, Vec<String>>,
+    /// Number of source parameter defaults being lowered; names read in them are spelled through their declaring
+    /// modules.
+    pub param_default_depth: usize,
 }
 
 impl AstLowering {
@@ -598,7 +608,24 @@ impl AstLowering {
     /// Parameter defaults participate in the callable surface used by direct calls, decorated wrappers, aliases,
     /// imports, and stdlib source rehydration. Dropping a lowering error here silently changes that callable surface,
     /// so every source-backed default must either lower successfully or report the original lowering failure.
+    ///
+    /// A caller that omits the argument receives the default at its own call site, so the consts and functions the
+    /// default names are spelled through the modules that declare them (#1771).
     pub(in crate::lower) fn lower_param_default_expr(
+        &mut self,
+        default_expr: Option<&ast::Spanned<ast::Expr>>,
+    ) -> Result<Option<TypedExpr>, LoweringError> {
+        self.param_default_depth += 1;
+        let lowered = self.lower_foreign_param_default_expr(default_expr);
+        self.param_default_depth -= 1;
+        lowered
+    }
+
+    /// Lower a parameter default read from another module's source, such as a stdlib declaration, as written.
+    ///
+    /// The checked facts of the module being lowered do not cover that source's spans, so its names are not spelled
+    /// through their declaring modules; see [`Self::lower_param_default_expr`].
+    pub(in crate::lower) fn lower_foreign_param_default_expr(
         &mut self,
         default_expr: Option<&ast::Spanned<ast::Expr>>,
     ) -> Result<Option<TypedExpr>, LoweringError> {
@@ -697,6 +724,7 @@ impl AstLowering {
             callable_param_scopes: Vec::new(),
             callable_return_types: Vec::new(),
             default_named_items: HashSet::new(),
+            default_constructed_types: HashSet::new(),
             symbol_aliases: HashMap::new(),
             overload_alias_reexport_targets: HashSet::new(),
             source_type_alias_targets: HashMap::new(),
@@ -714,6 +742,8 @@ impl AstLowering {
             declared_trait_names: HashSet::new(),
             local_function_declared_returns: HashMap::new(),
             registry_package_identity: None,
+            source_module_rust_paths: HashMap::new(),
+            param_default_depth: 0,
         }
     }
 
@@ -4109,6 +4139,7 @@ mod tests {
     use incan_lang::lang::trait_bounds;
 
     mod default_named_items;
+    mod default_owner_paths;
     mod dependency_call_arguments;
     mod method_partial_forwarding;
     mod stdlib_const_defaults;

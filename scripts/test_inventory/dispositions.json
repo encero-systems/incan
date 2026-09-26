@@ -1439,11 +1439,23 @@
       "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "generated-Rust spelling of default arguments expanded outside their callable's module; asserts emitted paths, which retire with the Rust-source backend.",
+      "notes": "generated-Rust spelling of default arguments expanded outside their callable's module or package; asserts emitted paths, which retire with the Rust-source backend.",
       "tests": {
         "same_named_default_consts_resolve_in_their_callables_modules_issue1771": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/same_named_default_consts_across_modules",
-          "notes": "Asserts the emitted `crate::a::SIZE` / `crate::b::SIZE` paths; the behavior, each omitted argument taking its own module's `SIZE`, is carried by the named fixture (#1771)."
+          "notes": "Asserts the emitted `crate::a::SIZE` / `crate::b::SIZE` paths and that both pruned modules keep their `SIZE`; the behavior, each omitted argument taking its own module's `SIZE`, is carried by the named fixture (#1771)."
+        },
+        "imported_default_const_resolves_to_its_declaring_module_issue1771": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/same_named_default_consts_across_modules",
+          "notes": "Asserts the emitted `crate::c::SIZE` path for a default that reads a `SIZE` imported from `c`, and that the pruned `c` keeps it; the behavior is carried by the named fixture's `third()` (#1771)."
+        },
+        "default_consts_of_the_calling_module_and_a_dependency_stay_apart_issue1771": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/same_named_default_consts_across_modules",
+          "notes": "Asserts the emitted `crate::SIZE` path for the crate-root module's own default beside a dependency's `crate::c::SIZE`; the behavior is carried by the named fixture's `local()` (#1771)."
+        },
+        "public_construction_default_reaches_a_consumer_through_the_dependency_issue1771": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/public_construction_default_from_dependency",
+          "notes": "Asserts the emitted construction a consumer receives for a dependency default that constructs a public model or class, spelled through the dependency's path and otherwise equal to the consumer's own construction; the behavior is carried by the named fixture (#1771)."
         }
       }
     },
@@ -2530,6 +2542,24 @@
         }
       }
     },
+    "loaves/compiler/incan_ir/src/lower/tests/default_owner_paths.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "tests": {
+        "module_items_a_default_names_are_spelled_through_their_module_issue1771": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/same_named_default_consts_across_modules",
+          "notes": "Asserts the recorded shape on the legacy IR (a const a default or method-partial preset reads lowers to a crate path to its declaring module, a function it calls carries that module's canonical callee path); retires with `incan_ir`. The behavior is carried by the named fixture (#1771)."
+        },
+        "crate_root_and_unmapped_module_defaults_issue1771": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/same_named_default_consts_across_modules",
+          "notes": "Asserts the recorded shape on the legacy IR for the crate-root module (`crate::SIZE`) and for a module the crate does not map (unchanged); retires with `incan_ir`. The root case is carried by the named fixture's `local()` (#1771)."
+        }
+      }
+    },
     "loaves/compiler/incan_ir/src/lower/tests/dependency_call_arguments.rs": {
       "disposition": "retire",
       "owner": 1561,
@@ -2545,6 +2575,10 @@
         "some_member_takes_the_dependency_owned_union_at_every_destination_issue1743": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/some_member_into_dependency_option_union",
           "notes": "Asserts the recorded shape on the legacy IR (a `Some(member)` whose destination is a dependency's `Option[union]` is instantiated at the dependency-owned union as a call argument, a list element, a model field at construction and by assignment, an annotated binding, a `match` arm and a returned value); retires with `incan_ir`. The behavior is carried by the named fixture (#1743)."
+        },
+        "dependency_default_constructing_a_public_model_calls_the_type_issue1771": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/public_construction_default_from_dependency",
+          "notes": "Asserts the recorded shape on the legacy IR (a dependency default that constructs a public model lowers to a call whose callee is the type, reached through the dependency's public path; a helper-function default stays an ordinary call); retires with `incan_ir`. The behavior is carried by the named fixture (#1771)."
         }
       }
     },

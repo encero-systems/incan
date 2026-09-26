@@ -66,7 +66,7 @@ mod string_try_from_bridge;
 use dependency_metadata::{
     DependencySymbolMetadata, collect_dependency_symbol_metadata, collect_externally_reachable_items_by_module,
     collect_model_field_aliases, record_direct_generated_path_support_items_from_ir,
-    should_preserve_dependency_public_items,
+    should_preserve_dependency_public_items, source_module_origins, source_module_rust_paths,
 };
 use ordinal_bridge::{OrdinalBridgeConfig, compilation_imports_std_ordinal_contract, imports_std_ordinal_contract};
 use serde_activation::{add_serde_to_newtypes, collect_serde_derives};
@@ -949,7 +949,6 @@ impl<'a> IrCodegen<'a> {
             metadata.value_module_paths.clone(),
             metadata.ambiguous_value_names.clone(),
         );
-        emitter.set_value_declaring_modules(metadata.value_declaring_modules.clone());
         let mut enum_type_names = metadata.enum_type_names.clone();
         if let Some(plan) = provider_plan {
             for provider in plan.active_sdk_records() {
@@ -1232,6 +1231,16 @@ impl<'a> IrCodegen<'a> {
             env::var_os(SDK_PROVIDER_BUILD_ENV).is_some() || env::var_os(OVEN_LOAF_ENV).is_some(),
         );
         lowering.set_registry_package_identity(self.registry_package_identity.clone());
+        lowering.set_source_module_rust_paths(source_module_rust_paths(
+            self.dependency_modules
+                .iter()
+                .filter_map(|(name, program, path_segments)| {
+                    let rust_path = path_segments.clone().unwrap_or_else(|| vec![(*name).to_string()]);
+                    source_module_identity_path(program, path_segments.clone(), Some(name))
+                        .map(|module_path| (module_path, rust_path))
+                }),
+            self.canonical_emission_package_identity.as_deref(),
+        ));
     }
 
     /// Add a dependency module (for multi-file compilation)
@@ -1632,6 +1641,13 @@ impl<'a> IrCodegen<'a> {
         // Lower AST to IR using typechecker output when available
         let mut lowering = AstLowering::new_with_type_info(type_info_opt);
         self.configure_lowering(&mut lowering);
+        // This module is emitted at the crate root, so its items are reached through the root's empty path.
+        for origin in source_module_origins(
+            &root_module_path.clone().unwrap_or_default(),
+            self.canonical_emission_package_identity.as_deref(),
+        ) {
+            lowering.add_source_module_rust_path(origin, Vec::new());
+        }
         lowering.set_current_source_module_name(root_module_path.as_ref().map(|path| path.join(".")));
         lowering.seed_dependency_trait_decls(&dependency_modules)?;
         lowering.seed_struct_field_aliases(global_aliases.clone());
