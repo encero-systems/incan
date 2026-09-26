@@ -17,11 +17,12 @@ impl TypeChecker {
     /// Report every bare builtin collection family in the annotation `ty` and return whether there was one.
     ///
     /// The bare word is refused wherever it stands: alone, as a generic argument (`list[Dict]`, `Option[List]`,
-    /// `dict[str, Tuple]`), inside a function type, behind a reference or as an element of a written tuple type. Every
-    /// occurrence gets its own report, so an annotation that spells two bare words names both places. The collection
-    /// pass and the body check can both resolve one annotation, so each occurrence is reported once, keyed the way
-    /// unknown annotation names are. The caller yields `Unknown` for the whole annotation, since the shared resolver
-    /// would otherwise hand lowering a bare family nominal that no backend can spell, nested or not.
+    /// `dict[str, Tuple]`), inside a function type, behind a reference or a `mut` parameter marker, or as an element of
+    /// a written tuple type. Every occurrence gets its own report, so an annotation that spells two bare words
+    /// names both places. The collection pass and the body check can both resolve one annotation, so each
+    /// occurrence is reported once, keyed the way unknown annotation names are. The caller yields `Unknown` for the
+    /// whole annotation, since the shared resolver would otherwise hand lowering a bare family nominal that no
+    /// backend can spell, nested or not.
     pub(super) fn report_bare_builtin_collection_annotations(&mut self, ty: &Spanned<Type>) -> bool {
         match &ty.node {
             Type::Simple(name) => {
@@ -45,7 +46,9 @@ impl TypeChecker {
                 let in_params = self.report_bare_builtin_collection_annotations_in(params);
                 self.report_bare_builtin_collection_annotations(ret) || in_params
             }
-            Type::Ref(inner) | Type::RefMut(inner) => self.report_bare_builtin_collection_annotations(inner),
+            Type::Ref(inner) | Type::RefMut(inner) | Type::MutParam(inner) => {
+                self.report_bare_builtin_collection_annotations(inner)
+            }
             Type::Qualified(_)
             | Type::Dotted(_)
             | Type::ConstrainedPrimitive(_, _)
