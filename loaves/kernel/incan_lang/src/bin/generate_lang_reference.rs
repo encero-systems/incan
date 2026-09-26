@@ -529,8 +529,15 @@ fn render_operators_section(out: &mut String) {
     start_section(out, "## Operators");
 
     out.push_str("### Notes\n\n");
-    out.push_str("- **Precedence**: Higher binds tighter (e.g. `*` > `+`). Values are relative and must be consistent with the parser.\n");
-    out.push_str("- **Associativity**: How operators of the same precedence group (left-to-right vs right-to-left).\n");
+    out.push_str(
+        "- **Precedence**: Higher binds tighter (e.g. `*` > `+`). Values are relative; they record how the parser groups operators, loosest first: `or`, `and`, `not`, the comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `not in`, `is`, `is not`, `|>`, `<|`), ranges, `|`, `^`, `&`, shifts, `+` and `-`, `*`, `/`, `//`, `%` and `@`, `**`, then the prefix operators `-` and `~`.\n",
+    );
+    out.push_str(
+        "- **Prefix operators**: `not` binds looser than the comparisons, so `not a == b` is `not (a == b)`. Prefix `-` and `~` bind tighter than `**`, so `-x ** 2` is `(-x) ** 2`, where Python reads `-(x ** 2)`; write `-(x ** 2)` for the negated power. Prefix `-` has no row of its own: `Minus` is its infix spelling.\n",
+    );
+    out.push_str(
+        "- **Associativity**: How operators of the same precedence group (left-to-right vs right-to-left). `None` means the operator does not chain: `a..b..c` is a syntax error.\n",
+    );
     out.push_str(
         "- **Fixity**: Whether the operator is used as a prefix unary operator or an infix binary operator.\n",
     );

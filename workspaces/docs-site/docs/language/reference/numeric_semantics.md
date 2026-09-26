@@ -267,6 +267,8 @@ exp = 3
 2 ** exp
 ```
 
+A prefix `-` binds tighter than `**`: `-x ** 2` is `(-x) ** 2`, where Python reads `-(x ** 2)`. Write `-(x ** 2)` for the negated power. The [operator table](language.md#operators) lists the full precedence order.
+
 ## Compound assignment
 
 Compound assignment is typechecked as assignment of the operator result back to the left-hand binding.

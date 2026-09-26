@@ -1,0 +1,16 @@
+# behavior: mixed operators group by the documented precedence: or is looser than and, and is looser than not, in sits at the comparison level, and a prefix minus or tilde binds tighter than a power
+# expect-stdout:
+#   true
+#   false
+#   false
+#   4
+#   9
+
+def main() -> None:
+    values = [1, 2]
+    base = 2
+    println(true or false and false)
+    println(not false and false)
+    println(2 in values and 3 in values)
+    println(-base ** 2)
+    println(~base ** 2)

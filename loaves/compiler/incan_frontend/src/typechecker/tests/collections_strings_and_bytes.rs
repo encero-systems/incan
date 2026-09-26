@@ -1,6 +1,6 @@
 //! Builtin container and text surfaces: `list` / `set` constructor identity (#951, #1464), list literals and spreads,
-//! slicing, element-bound methods, `dict.contains_key`, string methods and f-string spans, and `str.encode` /
-//! `bytes.decode` codecs (#1668).
+//! slicing, element-bound methods, `dict.contains_key`, the `list.remove` and `dict.get` results the reference
+//! documents (#1783), string methods and f-string spans, and `str.encode` / `bytes.decode` codecs (#1668).
 
 use super::*;
 
@@ -1041,4 +1041,41 @@ def sum(pair: Tuple) -> int:
     return pair.left + pair.right
 "#,
     );
+}
+
+#[test]
+fn list_remove_returns_none_and_dict_get_takes_one_key_issue1783() -> Result<(), String> {
+    // The collections reference and `static_storage.md` document what the checker accepts: `items.remove(i)` removes
+    // in place and returns `None`, and `counts.get(key)` takes one key and returns an `Option` the fallback is applied
+    // to. This is the static-storage page's example.
+    check_str(
+        r#"
+static items: list[int] = []
+static counts: dict[str, int] = {}
+
+def record(name: str) -> None:
+    items.append(len(items))
+    current = counts.get(name).copied().unwrap_or(0)
+    counts[name] = current + 1
+
+def drop_first(mut values: list[int]) -> int:
+    values.remove(0)
+    return len(values)
+"#,
+    )
+    .map_err(|errors| format!("the documented forms must check: {errors:?}"))?;
+
+    if check_str(
+        r#"
+def take_first(mut values: list[int]) -> int:
+    return values.remove(0)
+"#,
+    )
+    .is_ok()
+    {
+        return Err(
+            "`return values.remove(0)` from an `int` function must be refused: the call returns None".to_string(),
+        );
+    }
+    Ok(())
 }

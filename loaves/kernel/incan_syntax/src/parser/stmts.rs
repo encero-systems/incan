@@ -917,6 +917,9 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse a named assignment or tuple-unpacking statement.
+    ///
+    /// A tuple unpacking's value may be a bare comma-separated tuple (`a, b = b, a`); see
+    /// [`Self::tuple_assignment_value`].
     fn assignment_stmt(&mut self) -> Result<Statement, CompileError> {
         let binding = if self.match_token(&TokenKind::Keyword(KeywordId::Let)) {
             BindingKind::Let
@@ -941,7 +944,7 @@ impl<'a> Parser<'a> {
                 }
             }
             self.expect(&TokenKind::Operator(OperatorId::Eq), "Expected '=' in tuple unpacking")?;
-            let value = self.expression()?;
+            let value = self.tuple_assignment_value()?;
             return Ok(Statement::TupleUnpack(TupleUnpackStmt {
                 binding,
                 names,
@@ -996,7 +999,47 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse the value side of a tuple unpacking (`a, b = ...`) or a tuple assignment (`self.x, self.y = ...`).
+    ///
+    /// The value may be written as a bare comma-separated tuple, the Python swap idiom `a, b = b, a`. It builds the
+    /// same [`Expr::Tuple`] as the parenthesized spelling `a, b = (b, a)`, spanning the first element to the last,
+    /// so the checker and everything after it see one shape whichever spelling the source uses. A single expression
+    /// is returned unchanged.
+    fn tuple_assignment_value(&mut self) -> Result<Spanned<Expr>, CompileError> {
+        let first = self.expression()?;
+        if !self.tuple_value_continues() {
+            return Ok(first);
+        }
+
+        let start = first.span.start;
+        let mut elements = vec![first];
+        while self.tuple_value_continues() {
+            self.advance(); // the comma separating the next element
+            elements.push(self.expression()?);
+        }
+        let end = elements.last().map_or(start, |element| element.span.end);
+        Ok(Spanned::new(Expr::Tuple(elements), Span::new(start, end)))
+    }
+
+    /// Return whether the current token is a comma that introduces another element of a bare tuple value.
+    ///
+    /// A comma followed by the end of the line, the end of the block or a closing delimiter introduces no element, so
+    /// it is left in place for the enclosing construct, such as the separator between the items of a braced vocab body.
+    fn tuple_value_continues(&self) -> bool {
+        self.check(&TokenKind::Punctuation(PunctuationId::Comma))
+            && !matches!(
+                self.peek_next().kind,
+                TokenKind::Newline
+                    | TokenKind::Dedent
+                    | TokenKind::Eof
+                    | TokenKind::Punctuation(PunctuationId::RParen | PunctuationId::RBracket | PunctuationId::RBrace)
+            )
+    }
+
     /// Parse either an assignment-like statement or a plain expression statement.
+    ///
+    /// A tuple assignment's value may be a bare comma-separated tuple (`self.x, self.y = self.y, self.x`); see
+    /// [`Self::tuple_assignment_value`].
     fn assignment_or_expr_stmt(&mut self) -> Result<Statement, CompileError> {
         // Look for `ident = expr` or `ident, ident = expr` pattern (simple or tuple assignment)
         if let TokenKind::Ident(_) = &self.peek().kind {
@@ -1042,7 +1085,7 @@ impl<'a> Parser<'a> {
                 }
             }
             self.expect(&TokenKind::Operator(OperatorId::Eq), "Expected '=' in tuple assignment")?;
-            let value = self.expression()?;
+            let value = self.tuple_assignment_value()?;
             return Ok(Statement::TupleAssign(TupleAssignStmt { targets, value }));
         }
 

@@ -3028,6 +3028,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/kernel/incan_syntax/src/parser/tests/operator_precedence.rs": {
+      "disposition": "keep",
+      "notes": "parser grouping of mixed operators checked against the operator registry precedence (#1786); lexer, parser and registry, below the emitter, cannot reach codegen.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/kernel/incan_syntax/src/parser/tests/patterns_and_matching.rs": {
       "disposition": "keep",
       "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level.",
@@ -3047,6 +3055,14 @@
     "loaves/kernel/incan_syntax/src/parser/tests/statements_and_blocks.rs": {
       "disposition": "keep",
       "notes": "split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/kernel/incan_syntax/src/parser/tests/tuple_assignments.rs": {
+      "disposition": "keep",
+      "notes": "the bare-tuple value side of tuple assignment and unpacking (#1789); parser only, below the emitter, cannot reach codegen.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",

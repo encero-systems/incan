@@ -23,8 +23,11 @@ use super::registry::{Example, RFC, RfcId, Since, Stability};
 /// Define how operators associate when chained.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Associativity {
+    /// `a op b op c` groups as `(a op b) op c`.
     Left,
+    /// `a op b op c` groups as `a op (b op c)`.
     Right,
+    /// The operator does not chain: `a..b..c` is a syntax error.
     None,
 }
 
@@ -99,8 +102,10 @@ pub enum OperatorId {
 ///
 /// ## Notes
 /// - `spellings` may contain multiple accepted spellings for the same operator id (synonyms).
-/// - `precedence` is a relative ordering where higher binds tighter. The absolute scale is an implementation detail,
-///   but must be consistent across the parser.
+/// - `precedence` is a relative ordering where higher binds tighter. The absolute scale is an implementation detail.
+///   The parser's precedence ladder (`incan_syntax`'s `parser/expr.rs`) does not read these values; they document it
+///   for the generated language reference, and the parser's `operator_precedence` tests hold the two in step.
+/// - Prefix `-` has no entry of its own (`Minus` is the infix spelling); it binds like `~`, tighter than `**`.
 #[derive(Debug, Clone, Copy)]
 pub struct OperatorInfo {
     pub id: OperatorId,
@@ -273,7 +278,7 @@ pub const OPERATORS: &[OperatorInfo] = &[
     op(
         OperatorId::Tilde,
         &["~"],
-        65,
+        75,
         Associativity::Right,
         Fixity::Prefix,
         false,
@@ -476,8 +481,8 @@ pub const OPERATORS: &[OperatorInfo] = &[
     op(
         OperatorId::DotDot,
         &[".."],
-        30,
-        Associativity::Left,
+        42,
+        Associativity::None,
         Fixity::Infix,
         false,
         RFC::_000,
@@ -486,8 +491,8 @@ pub const OPERATORS: &[OperatorInfo] = &[
     op(
         OperatorId::DotDotEq,
         &["..="],
-        30,
-        Associativity::Left,
+        42,
+        Associativity::None,
         Fixity::Infix,
         false,
         RFC::_000,
@@ -497,7 +502,7 @@ pub const OPERATORS: &[OperatorInfo] = &[
     op(
         OperatorId::And,
         &["and"],
-        35,
+        25,
         Associativity::Left,
         Fixity::Infix,
         true,
@@ -507,7 +512,7 @@ pub const OPERATORS: &[OperatorInfo] = &[
     op(
         OperatorId::Or,
         &["or"],
-        35,
+        20,
         Associativity::Left,
         Fixity::Infix,
         true,
@@ -517,7 +522,7 @@ pub const OPERATORS: &[OperatorInfo] = &[
     op(
         OperatorId::Not,
         &["not"],
-        45,
+        30,
         Associativity::Left,
         Fixity::Prefix,
         true,
@@ -527,7 +532,7 @@ pub const OPERATORS: &[OperatorInfo] = &[
     op(
         OperatorId::In,
         &["in"],
-        35,
+        40,
         Associativity::Left,
         Fixity::Infix,
         true,
@@ -537,7 +542,7 @@ pub const OPERATORS: &[OperatorInfo] = &[
     op(
         OperatorId::Is,
         &["is"],
-        35,
+        40,
         Associativity::Left,
         Fixity::Infix,
         true,

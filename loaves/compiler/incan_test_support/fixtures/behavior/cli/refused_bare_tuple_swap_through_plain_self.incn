@@ -1,0 +1,20 @@
+# behavior: a swap written with an unparenthesized right side checks like the parenthesized one, so swapping two fields or two list elements of the receiver in a plain-self method is refused at check time
+# expect-diagnostic: INCAN-T0102
+
+class Grid:
+    cells: list[int]
+    width: int
+    height: int
+
+    def swap_dimensions(self) -> None:
+        self.width, self.height = self.height, self.width
+
+    def swap_cells(self) -> None:
+        self.cells[0], self.cells[1] = self.cells[1], self.cells[0]
+
+
+def main() -> None:
+    mut grid = Grid(cells=[1, 2], width=1, height=2)
+    grid.swap_dimensions()
+    grid.swap_cells()
+    println(grid.width)
