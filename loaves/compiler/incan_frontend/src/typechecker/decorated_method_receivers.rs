@@ -101,8 +101,8 @@ struct ChainSite<'a> {
 ///
 /// Source spells the receiver the way the method does: the owner type for `self`, the owner type marked `mut` for
 /// `mut self`. That surface form is what the decorator chain is checked against. The recorded binding keeps the form
-/// the method's generated wrapper passes, `&Owner` or `&mut Owner`, so lowering builds the decorated static, adapter
-/// and wrapper from the same types it built them from when source had to spell that form.
+/// the method's generated wrapper passes, `&Owner` or `&mut Owner`, which is the type lowering builds the decorated
+/// static, adapter and wrapper from.
 #[derive(Debug, Clone)]
 pub(super) struct DecoratedMethodReceiver {
     /// The owner type the receiver belongs to.

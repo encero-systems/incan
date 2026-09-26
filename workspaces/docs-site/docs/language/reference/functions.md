@@ -56,6 +56,7 @@ h: (str) -> int = double          # refused: INCAN-T0001
 | Copied scalars      | On an `int`, `float` or `bool` parameter, also through a type alias, the marker is refused with `INCAN-T0001`.                                                            |
 | Type identity       | The marker is part of the function type. Two function types match only when they mark the same parameters; a mismatch in either direction is refused with `INCAN-T0001`.  |
 | `def` parameters    | A `def` parameter declared `mut` is marked, except a parameter of type `int`, `float` or `bool`, a parameter of a Rust type, and `*args` or `**kwargs`.                   |
+| Arguments           | The argument for a marked parameter is a mutable place: a `mut` binding or parameter, a static, `self` in a `mut self` method, or a field or element of one. An immutable binding, a literal or another temporary is refused with `INCAN-T0117`. |
 | Libraries           | A published function keeps its marked parameters: a consumer sees the function type the producer checked.                                                               |
 | Closures            | A closure checked against a function type has each parameter that type marks marked in its own type.                                                                      |
 | Display             | Diagnostics and hovers spell the marker, as in `(mut Counter, int) -> int`.                                                                                               |

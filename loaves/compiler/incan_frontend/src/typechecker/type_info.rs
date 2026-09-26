@@ -1030,6 +1030,13 @@ pub struct DeclarationArtifacts {
     /// proved each of these declarations takes it. Lowering passes the receiver to them the way the method's
     /// generated wrapper passes it.
     pub method_decorator_receiver_slots: HashMap<(usize, usize), MethodDecoratorReceiverSlot>,
+    /// Whether each ordinary `mut` parameter of a checked function or method is marked, keyed by parameter span
+    /// (#1790).
+    ///
+    /// A marked parameter's changes reach the caller; an unmarked one (an `int`, `float` or `bool`, also through an
+    /// alias, or a Rust handle) is the function's own value. Lowering takes each `mut` parameter's passing mode from
+    /// this fact, not from the parameter's IR type.
+    pub mut_param_markers: HashMap<(usize, usize), bool>,
 }
 
 /// Where a local function declaration takes a decorated method's receiver, and how the method takes it (#1790).

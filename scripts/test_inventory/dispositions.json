@@ -1556,7 +1556,7 @@
         },
         "test_classes_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_models_and_classes/classes.incn",
-          "notes": "twinned by the program run to completion, now also calling `Counter.reset`, `Stack.is_empty`, `Calculator.subtract`/`multiply` and reading `Calculator.name` and `Person.age` through methods. `Stack.pop` takes `mut self` in the twin: the build emitted `pub fn pop(&self)` around a mutation and rustc refused it, while the checker had accepted the mutation inside a non-`mut self` method (a checker bug; bug, issue pending). The retired snapshot (the program's whole generated Rust) dies with #654."
+          "notes": "twinned by the program run to completion, which also calls `Counter.reset`, `Stack.is_empty`, `Calculator.subtract`/`multiply` and reads `Calculator.name` and `Person.age` through methods. `Stack.pop` takes `mut self` in the twin: a mutation inside a plain `self` method is refused (#1723, INCAN-T0102, fixture `cli/refused_mutation_through_plain_self.incn`). The retired snapshot (the program's whole generated Rust) dies with #654."
         },
         "test_collection_literal_spread_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings/collection_literal_spread.incn",
@@ -1564,7 +1564,7 @@
         },
         "test_collections_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings/collections.incn",
-          "notes": "twinned by the program printing every index, slice, concatenation and extension result. The bare `Tuple`-annotated literal is dropped: the build emits a `Tuple` type that does not exist (E0425). The retired snapshot (the program's whole generated Rust) dies with #654."
+          "notes": "twinned by the program printing every index, slice, concatenation and extension result. The bare `Tuple`-annotated literal is dropped: a bare `Tuple` annotation is refused (#1717, fixture `cli/refused_bare_tuple_annotation.incn`). The retired snapshot (the program's whole generated Rust) dies with #654."
         },
         "test_const_bytes_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_values_and_control_flow/const_str_chain_and_bytes.incn",
@@ -1852,7 +1852,7 @@
         },
         "test_issue459_rust_enum_pattern_import_codegen": {
           "twin": "dies",
-          "dies": "the `substrait` crate the program matches against is a stub the test writes to a temporary directory for `rust_inspect`; no fixture layout carries a Rust crate today, and the assertion is that the `use ::substrait::proto::rel::RelType;` line survives pruning (generated shape). If the harness grows a local-Rust-crate fixture layout, the pattern behavior can be twinned then."
+          "dies": "the `substrait` crate the program matches against is a stub the test writes to a temporary directory for `rust_inspect`; no fixture layout carries a Rust crate, and the assertion is that the `use ::substrait::proto::rel::RelType;` line survives pruning (generated shape). If the harness grows a local-Rust-crate fixture layout, the pattern behavior can be twinned then."
         },
         "test_issue483_list_comp_tuple_unpack_enumerate_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings/enumerate_tuple_unpack.incn",
@@ -2072,7 +2072,7 @@
         },
         "test_patterns_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_enums_and_matching/patterns.incn",
-          "notes": "twinned by the program run to completion. The tuple arm with a str literal element (`(_, \"answer\")` printing `second is answer`) is replaced by `(42, _)` printing `first is forty-two`: the build emits `&str` against `String` in tuple patterns (E0308), a gap the tuple-pattern str-literal arm cannot cross today. The retired snapshot (the program's whole generated Rust) dies with #654."
+          "notes": "twinned by the program run to completion. The tuple arm with a str literal element (`(_, \"answer\")` printing `second is answer`) is replaced by `(42, _)` printing `first is forty-two`; a str literal inside a tuple pattern is covered by `snapshots_enums_and_matching/tuple_str_literal_pattern.incn` (#1707). The retired snapshot (the program's whole generated Rust) dies with #654."
         },
         "test_power_receiver_parenthesization_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_functions_and_projections/power_operator_receivers.incn",
@@ -2240,7 +2240,7 @@
         },
         "test_rust_interop_associated_functions_codegen": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/snapshots/rust_interop_associated_functions.incn`: associated functions of imported Rust types are called (a random Uuid renders as 36 characters, a typed HashMap starts empty, `Instant.now()` is taken), printing `36` and `0`. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (`no source-current project inspection authority` under the suite otherwise); the candidate passes standalone (`incan oven bake` + `incan run`). The untyped `HashMap.new()` binding is not in the candidate (E0282: fails to compile)."
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/snapshots/rust_interop_associated_functions.incn`: associated functions of imported Rust types are called (a random Uuid renders as 36 characters, a typed HashMap starts empty, `Instant.now()` is taken), printing `36` and `0`. waits for a Cargo-free bake under the suite: a `rust::` program needs source-current project inspection authority, which only an explicit bake of its project records, and that bake runs Rust inspection through Cargo (`no source-current project inspection authority` under the suite otherwise); the candidate passes standalone (`incan oven bake` + `incan run`). The untyped `HashMap.new()` binding is not in the candidate: it is refused (#1720)."
         },
         "test_rust_interop_field_access_codegen": {
           "twin": "",
@@ -2292,7 +2292,7 @@
         },
         "test_std_derives_collection_compiled_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_collection_adapters.incn",
-          "notes": "twinned by `std_derives_collection_adapters.incn`: a model adopting the stdlib `Iterator` drives a for loop (`3`) and a model adopting the stdlib `FallibleIterator` drives `.map(Double())`, `.filter(Above(threshold=2))` and `.collect()` with `@derive(Clone)` callable models (`2 4 6`), which is what the `StoredMapFn: Clone + Callable1<T, Output>` and `filter<Predicate: Clone + Callable1<Output, bool>>` bound assertions were about; those spellings and the module snapshot die with #654. Route gap found while twinning: the same adopter in a module that also imports `Clone` from `std.derives.copying` is accepted by the checker but refused by rustc (E0276 `impl has stricter requirements than trait`, then E0277 on every adapter) because the adapter defaults expanded into the adopter's impl resolve their `Clone` bounds to the imported `incan_stdlib_core::derives::Clone` where the trait means `std::clone::Clone`; the adopter therefore has its own fixture without that import (bug, issue pending)."
+          "notes": "twinned by `std_derives_collection_adapters.incn`: a model adopting the stdlib `Iterator` drives a for loop (`3`) and a model adopting the stdlib `FallibleIterator` drives `.map(Double())`, `.filter(Above(threshold=2))` and `.collect()` with `@derive(Clone)` callable models (`2 4 6`), which is what the `StoredMapFn: Clone + Callable1<T, Output>` and `filter<Predicate: Clone + Callable1<Output, bool>>` bound assertions were about; those spellings and the module snapshot die with #654. The same adopter in a module that also imports `Clone` from `std.derives.copying` is #1727 (fixed), covered by `snapshots_stdlib/std_derives_collection_adapters_with_imported_clone.incn`."
         },
         "test_std_derives_comparison_compiled_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_derives_surface.incn",
@@ -2376,11 +2376,11 @@
         },
         "test_std_traits_callable_compiled_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_traits_surface.incn",
-          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` is not importable by a program: `from std.traits.prelude import Error` is refused with `Unknown stdlib module std.traits.prelude` (the hint's own known-modules list names it) and the `from std.traits.prelude import *` form documented in `workspaces/docs-site/docs/language/reference/stdlib/traits.md` is a parse error, so the prelude's compilation is covered by the traits it re-exports and the docs claim is wrong (docs issue pending). The stdlib module snapshots die with #654."
+          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` is not importable by a program: `from std.traits.prelude import Error` is refused with `Unknown stdlib module std.traits.prelude` (the hint's own known-modules list names it) and the `from std.traits.prelude import *` form documented in `workspaces/docs-site/docs/language/reference/stdlib/traits.md` is a parse error, so the prelude's compilation is covered by the traits it re-exports and the docs claim is wrong (#1728). The stdlib module snapshots die with #654."
         },
         "test_std_traits_convert_compiled_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_traits_surface.incn",
-          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` is not importable by a program: `from std.traits.prelude import Error` is refused with `Unknown stdlib module std.traits.prelude` (the hint's own known-modules list names it) and the `from std.traits.prelude import *` form documented in `workspaces/docs-site/docs/language/reference/stdlib/traits.md` is a parse error, so the prelude's compilation is covered by the traits it re-exports and the docs claim is wrong (docs issue pending). The stdlib module snapshots die with #654."
+          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` is not importable by a program: `from std.traits.prelude import Error` is refused with `Unknown stdlib module std.traits.prelude` (the hint's own known-modules list names it) and the `from std.traits.prelude import *` form documented in `workspaces/docs-site/docs/language/reference/stdlib/traits.md` is a parse error, so the prelude's compilation is covered by the traits it re-exports and the docs claim is wrong (#1728). The stdlib module snapshots die with #654."
         },
         "test_std_traits_convert_usage_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_traits_convert_usage.incn",
@@ -2388,19 +2388,19 @@
         },
         "test_std_traits_error_compiled_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_traits_surface.incn",
-          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` is not importable by a program: `from std.traits.prelude import Error` is refused with `Unknown stdlib module std.traits.prelude` (the hint's own known-modules list names it) and the `from std.traits.prelude import *` form documented in `workspaces/docs-site/docs/language/reference/stdlib/traits.md` is a parse error, so the prelude's compilation is covered by the traits it re-exports and the docs claim is wrong (docs issue pending). The stdlib module snapshots die with #654."
+          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` is not importable by a program: `from std.traits.prelude import Error` is refused with `Unknown stdlib module std.traits.prelude` (the hint's own known-modules list names it) and the `from std.traits.prelude import *` form documented in `workspaces/docs-site/docs/language/reference/stdlib/traits.md` is a parse error, so the prelude's compilation is covered by the traits it re-exports and the docs claim is wrong (#1728). The stdlib module snapshots die with #654."
         },
         "test_std_traits_indexing_compiled_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_traits_surface.incn",
-          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` is not importable by a program: `from std.traits.prelude import Error` is refused with `Unknown stdlib module std.traits.prelude` (the hint's own known-modules list names it) and the `from std.traits.prelude import *` form documented in `workspaces/docs-site/docs/language/reference/stdlib/traits.md` is a parse error, so the prelude's compilation is covered by the traits it re-exports and the docs claim is wrong (docs issue pending). The stdlib module snapshots die with #654."
+          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` is not importable by a program: `from std.traits.prelude import Error` is refused with `Unknown stdlib module std.traits.prelude` (the hint's own known-modules list names it) and the `from std.traits.prelude import *` form documented in `workspaces/docs-site/docs/language/reference/stdlib/traits.md` is a parse error, so the prelude's compilation is covered by the traits it re-exports and the docs claim is wrong (#1728). The stdlib module snapshots die with #654."
         },
         "test_std_traits_ops_compiled_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_traits_surface.incn",
-          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` is not importable by a program: `from std.traits.prelude import Error` is refused with `Unknown stdlib module std.traits.prelude` (the hint's own known-modules list names it) and the `from std.traits.prelude import *` form documented in `workspaces/docs-site/docs/language/reference/stdlib/traits.md` is a parse error, so the prelude's compilation is covered by the traits it re-exports and the docs claim is wrong (docs issue pending). The stdlib module snapshots die with #654."
+          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` is not importable by a program: `from std.traits.prelude import Error` is refused with `Unknown stdlib module std.traits.prelude` (the hint's own known-modules list names it) and the `from std.traits.prelude import *` form documented in `workspaces/docs-site/docs/language/reference/stdlib/traits.md` is a parse error, so the prelude's compilation is covered by the traits it re-exports and the docs claim is wrong (#1728). The stdlib module snapshots die with #654."
         },
         "test_std_traits_prelude_compiled_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_traits_surface.incn",
-          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` is not importable by a program: `from std.traits.prelude import Error` is refused with `Unknown stdlib module std.traits.prelude` (the hint's own known-modules list names it) and the `from std.traits.prelude import *` form documented in `workspaces/docs-site/docs/language/reference/stdlib/traits.md` is a parse error, so the prelude's compilation is covered by the traits it re-exports and the docs claim is wrong (docs issue pending). The stdlib module snapshots die with #654."
+          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` is not importable by a program: `from std.traits.prelude import Error` is refused with `Unknown stdlib module std.traits.prelude` (the hint's own known-modules list names it) and the `from std.traits.prelude import *` form documented in `workspaces/docs-site/docs/language/reference/stdlib/traits.md` is a parse error, so the prelude's compilation is covered by the traits it re-exports and the docs claim is wrong (#1728). The stdlib module snapshots die with #654."
         },
         "test_std_uuid_compiled_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_uuid.incn",
@@ -2456,7 +2456,7 @@
         },
         "test_traits_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/traits.incn",
-          "notes": "twinned by the program run to completion. `Resizable.resize` takes `mut self` in the twin: the build emitted `fn resize(&self)` around a field assignment and rustc refused it, while the checker had accepted the assignment inside a non-`mut self` method (a checker bug; bug, issue pending). The retired snapshot (the program's whole generated Rust) dies with #654."
+          "notes": "twinned by the program run to completion. `Resizable.resize` takes `mut self` in the twin: a field assignment inside a plain `self` method is refused (#1723, INCAN-T0102, fixture `cli/refused_mutation_through_plain_self.incn`). The retired snapshot (the program's whole generated Rust) dies with #654."
         },
         "test_type_annotations_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_values_and_control_flow/type_annotations.incn",
@@ -3679,6 +3679,10 @@
         "imported_mut_parameter_is_passed_mut_across_the_library_boundary": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/mut_parameter_across_package_boundary",
           "notes": "asserts that a direct call of a library function with a `mut` parameter lowers that argument as `mut` (#1790); the twin calls the dependency's function directly and through a marked function type and prints the consumer's changed argument."
+        },
+        "mut_parameter_passing_follows_the_checker_marker": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/mut_parameter_of_a_scalar_alias.incn",
+          "notes": "asserts that lowering passes each `mut` parameter the way the checker's marker says, so an `int` or `float` alias parameter is passed by value (#1790); the twin calls such a function directly and as a value of `(int) -> int` and prints the caller's unchanged value."
         }
       }
     },

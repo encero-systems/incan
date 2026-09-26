@@ -5840,6 +5840,7 @@ impl TypeChecker {
         // Define parameters after checking defaults so a declaration-owned default cannot resolve a callable-frame
         // binding. The function body still receives its ordinary parameter locals below.
         for (param, resolved_ty) in func.params.iter().zip(resolved_param_types) {
+            self.record_mut_param_marker(&param.node, param.span, &resolved_ty);
             let ty = local_type_for_param(param.node.kind, resolved_ty);
             self.validate_protected_builtin_binding(&param.node.name, param.span);
             self.symbols.define_with_target_kind(
@@ -6267,6 +6268,7 @@ impl TypeChecker {
                 param.node.kind,
                 param.node.default.is_some(),
             ));
+            self.record_mut_param_marker(&param.node, param.span, &resolved_ty);
             let ty = local_type_for_param(param.node.kind, resolved_ty);
             self.validate_protected_builtin_binding(&param.node.name, param.span);
             self.symbols.define_with_target_kind(

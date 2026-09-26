@@ -158,7 +158,7 @@ The migrated program passes the receiver as the former spelling did.
 
 1. Declare the changed parameter `mut` in the function you pass: `def grow(mut counter: Counter, by: int) -> int`.
 2. Mark the same parameter in the function type that receives it: `step: (mut Counter, int) -> int`.
-3. Declare the receiving parameter and the caller's binding `mut` too, so the change travels back to the caller.
+3. Declare the receiving parameter `mut`, and pass the value from a `mut` binding: the argument rule is in [`mut` parameters](../reference/functions.md#mut-parameters).
 
 ```incan
 class Counter:

@@ -1,6 +1,6 @@
 # Behavior-fixture candidates
 
-A candidate is a behavior fixture that cannot be admitted to an area under `../behavior/` yet. It is written in the format of `../behavior/README.md`, and it lives in the subdirectory named after the area family it belongs to (`snapshots/`, `emit/`, `ownership/`, …).
+A candidate is a behavior fixture that cannot be admitted to an area under `../behavior/` yet. It is written in the format of `../behavior/README.md`, and it lives in the subdirectory named after the area family it belongs to (`snapshots/`, `cli/`, …).
 
 Nothing runs a candidate. The runner and the test inventory read only the areas declared in `scripts/test_inventory/dispositions.json` (`fixture_roots`), so a file here is not discovered, checked, or counted.
 

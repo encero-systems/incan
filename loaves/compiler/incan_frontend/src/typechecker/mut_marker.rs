@@ -7,7 +7,7 @@
 //! marked, and a function type cannot mark one. A parameter of an imported Rust type is handed over whole and is not
 //! marked either.
 
-use crate::ast::{Param, ParamKind, Spanned, Type};
+use crate::ast::{Param, ParamKind, Span, Spanned, Type};
 use crate::diagnostics::errors;
 use crate::symbols::{ResolvedType, SymbolKind};
 
@@ -39,7 +39,7 @@ impl TypeChecker {
     /// This is [`def_param_is_marked`] plus one check the symbol table allows: a parameter whose type names an
     /// imported Rust item is handed over whole, so it is not marked.
     pub(super) fn def_param_shows_changes_to_caller(&self, param: &Param, resolved: &ResolvedType) -> bool {
-        if !def_param_is_marked(param, resolved) {
+        if !def_param_is_marked(param, &self.expand_type_aliases(resolved.clone())) {
             return false;
         }
         let head = match &param.ty.node {
@@ -51,6 +51,20 @@ impl TypeChecker {
             self.lookup_symbol(name)
                 .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::RustItem(_)))
         })
+    }
+
+    /// Record whether a checked function's or method's ordinary `mut` parameter is marked, for lowering.
+    ///
+    /// This is the one decision of how a `mut` parameter is passed: lowering passes a marked parameter so the caller
+    /// sees its changes and an unmarked one by value, whatever IR type the parameter's annotation lowers to.
+    pub(super) fn record_mut_param_marker(&mut self, param: &Param, span: Span, resolved: &ResolvedType) {
+        if param.is_mut && param.kind == ParamKind::Normal {
+            let marked = self.def_param_shows_changes_to_caller(param, resolved);
+            self.type_info
+                .declarations
+                .mut_param_markers
+                .insert((span.start, span.end), marked);
+        }
     }
 
     /// Refuse the `mut` marker on an `int`, `float` or `bool` parameter of every function type written in `ty`.

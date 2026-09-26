@@ -892,7 +892,7 @@ impl AstLowering {
                             &source_param.node.ty,
                             base_ty,
                         ),
-                        self.lower_parameter_mutability(source_param.node.is_mut, &source_param.node.ty.node),
+                        self.lower_parameter_mutability(source_param),
                     )
                 } else {
                     (base_ty, Mutability::Immutable)
@@ -972,7 +972,7 @@ impl AstLowering {
                             &source_param.node.ty,
                             base_ty,
                         ),
-                        self.lower_parameter_mutability(source_param.node.is_mut, &source_param.node.ty.node),
+                        self.lower_parameter_mutability(source_param),
                     )
                 } else {
                     (base_ty, Mutability::Immutable)
@@ -2466,7 +2466,7 @@ impl AstLowering {
                                 Ok(FunctionParam {
                                     name: p.node.name.clone(),
                                     ty: param_ty,
-                                    mutability: self.lower_parameter_mutability(p.node.is_mut, &p.node.ty.node),
+                                    mutability: self.lower_parameter_mutability(p),
                                     is_self: false,
                                     kind: p.node.kind,
                                     default: self

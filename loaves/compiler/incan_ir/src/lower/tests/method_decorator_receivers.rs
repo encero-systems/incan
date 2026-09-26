@@ -305,3 +305,75 @@ pub def grow(mut counter: Counter, by: int) -> int:
     assert_eq!(mutabilities, vec![Mutability::Mutable, Mutability::Immutable]);
     Ok(())
 }
+
+/// Issue #1790: a `mut` parameter is passed the way the checker's marker says, whatever its annotation lowers to: an
+/// `int` or `float` parameter, also through a type alias, is the function's own copy and is passed by value, so the
+/// function is a value of the unmarked function type; a model parameter is passed so the caller sees its changes.
+#[test]
+fn mut_parameter_passing_follows_the_checker_marker() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+type Count = int
+type Ratio = float
+
+class Counter:
+    pub value: int
+
+def step(mut n: Count) -> int:
+    return n
+
+def scale(mut r: Ratio) -> float:
+    return r
+
+def plain(mut k: int) -> int:
+    return k
+
+def grow(mut counter: Counter) -> int:
+    counter.value += 1
+    return counter.value
+
+def pick() -> (int) -> int:
+    return step
+
+def main() -> int:
+    c = 1
+    f = pick()
+    return step(c) + f(2)
+"#,
+    )?;
+    for (name, expected) in [
+        ("step", Mutability::OwnedMutable),
+        ("scale", Mutability::OwnedMutable),
+        ("plain", Mutability::OwnedMutable),
+        ("grow", Mutability::Mutable),
+    ] {
+        let function = lowered_function(&ir, name)?;
+        assert_eq!(
+            function.params.first().map(|param| param.mutability),
+            Some(expected),
+            "`{name}`'s `mut` parameter"
+        );
+    }
+    let main = lowered_function(&ir, "main")?;
+    let Some(IrStmt {
+        kind: IrStmtKind::Return(Some(sum)),
+        ..
+    }) = main.body.last()
+    else {
+        return Err(format!("`main` must end in a return, got {:?}", main.body));
+    };
+    let IrExprKind::BinOp { left, .. } = &sum.kind else {
+        return Err(format!("`main` must return a sum, got {sum:?}"));
+    };
+    let IrExprKind::Call {
+        callable_signature: Some(signature),
+        ..
+    } = &left.kind
+    else {
+        return Err(format!(
+            "the sum must start with a call carrying its signature, got {left:?}"
+        ));
+    };
+    assert_eq!(signature.params[0].mutability, Mutability::OwnedMutable);
+    Ok(())
+}

@@ -346,7 +346,7 @@ A method decorator receives the method as a callable with the receiver first, sp
 
 - `mut` in a function type marks a parameter whose changes reach the caller: a collection, model or class object passed to a `mut` parameter. An `int`, `float` or `bool` parameter is the function's own copy and is not marked. See [`mut` parameters](functions.md#mut-parameters).
 - The receiver's marker matches the method in every shape of the decorator chain and on the function returned in the method's place; a mismatch is refused with `INCAN-T0001`.
-- A receiver written `&Box` or `&mut Box` in those positions is refused with `INCAN-T0110`. `&T` and `&mut T` in other positions are unaffected.
+- A receiver written `&Box` or `&mut Box` in those positions is refused with `INCAN-T0110`.
 - The compiler decides how the receiver is passed to the decorator's shapes and to the function returned in the method's place.
 
 A decorator of a `self` method whose shapes name the receiver is refused with `INCAN-T0116` unless all of these hold:
