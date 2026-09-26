@@ -1702,9 +1702,9 @@ pub fn operator_has_no_type_parameter_bound(
 /// Report a `dict.get(key)` whose result is kept although the stored value type cannot be copied.
 ///
 /// `get` answers with the stored value. A result that is only read (a `match`, `if let` or `while let` whose bindings
-/// are only the argument of `len`, `print` or `println`, an f-string interpolation, or the receiver of a method that
-/// only reads it, or are unused) needs no copy; any other result is the lookup's own copy of the value, which
-/// `value_type` does not provide. `INCAN-T0118` is its stable code.
+/// are only the argument of `len`, `print` or `println`, an f-string interpolation, or the receiver of a Rust method
+/// with a shared receiver whose result is not kept, or are unused) needs no copy; any other result is the lookup's own
+/// copy of the value, which `value_type` does not provide. `INCAN-T0118` is its stable code.
 pub fn kept_dict_lookup_value_cannot_be_copied(value_type: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("`get` here has to return its own `{value_type}`, and `{value_type}` cannot be copied"),
@@ -1713,8 +1713,9 @@ pub fn kept_dict_lookup_value_cannot_be_copied(value_type: &str, span: Span) -> 
     .with_stable_code("INCAN-T0118")
     .with_hint(
         "Read the value where it is stored instead: `match table.get(key):` or `if let Some(item) = table.get(key):`, \
-         where `item` is only passed to `len`, `print` or `println`, interpolated in an f-string, used to call a method \
-         that only reads it, or not used",
+         where `item` is only passed to `len`, `print` or `println`, interpolated in an f-string, used to call a Rust \
+         method with a shared receiver whose result is not kept (an Incan method taking `self` does not count), or not \
+         used",
     )
     .with_note("`get` returns the stored value; a result that is returned, bound, passed on or changed is a copy of it")
 }

@@ -390,7 +390,7 @@ const KEPT_DICT_LOOKUP_VALUE_CANNOT_BE_COPIED: DiagnosticCatalogEntry = Diagnost
     severity: "error",
     phase: "typecheck",
     summary: "A `dict.get(key)` result is kept, so it is a copy of the stored value, and the value type cannot be copied.",
-    explanation: "`get` answers with the stored value, `Option[V]`. A result that is only read needs no copy: the value of a `match`, `if let` or `while let` whose bindings are only passed to `len`, `print` or `println`, interpolated in an f-string, used to call a method that only reads them, or not used. Any other result (returned, bound to a name, passed on, compared, or read while the dict changes) is the lookup's own copy of the stored value, and a value type that cannot be copied, such as a `Generator` or a Rust type without `Clone`, has none.",
+    explanation: "`get` answers with the stored value, `Option[V]`. A result that is only read needs no copy: the value of a `match`, `if let` or `while let` whose bindings are only passed to `len`, `print` or `println`, interpolated in an f-string, used to call a Rust method with a shared receiver whose result is not kept (an Incan method taking `self` does not count), or not used. Any other result (returned, bound to a name, passed on, compared, or read while the dict changes) is the lookup's own copy of the stored value, and a value type that cannot be copied, such as a `Generator` or a Rust type without `Clone`, has none.",
     examples: &[
         "def numbers() -> Generator[int]:\n    yield 1\n\ndef pick(streams: dict[str, Generator[int]], key: str) -> Option[Generator[int]]:\n    return streams.get(key)",
     ],
@@ -828,6 +828,14 @@ mod tests {
                 .iter()
                 .any(|hint| hint.contains("`len`, `print` or `println`") && hint.contains("f-string")),
             "the hint names the uses that count as reading, got {:?}",
+            refusal.hints
+        );
+        assert!(
+            refusal.hints.iter().any(|hint| {
+                hint.contains("a Rust method with a shared receiver whose result is not kept")
+                    && hint.contains("an Incan method taking `self` does not count")
+            }),
+            "the hint names exactly which method calls count as reading, got {:?}",
             refusal.hints
         );
     }

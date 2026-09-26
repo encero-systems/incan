@@ -672,7 +672,7 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 |---|---|---|---|---|---|---|
 | Keys | `keys` |  | Return an iterable/list of keys. | RFC 009 | 0.1 | Stable |
 | Values | `values` |  | Return an iterable/list of values. | RFC 009 | 0.1 | Stable |
-| Get | `get` |  | Return the stored value for a key: `Some(value)` when the key is present, `None` otherwise. A result that is kept (returned, bound, passed on, compared, or read while the dict changes) is a copy of the stored value, and a value type that cannot be copied is refused there with `INCAN-T0118`; a result only read in a `match` or `if let` whose bindings are passed to `len`, `print` or `println`, interpolated in an f-string, or used to call a method that only reads them works for any value type. | RFC 009 | 0.1 | Stable |
+| Get | `get` |  | Return the stored value for a key: `Some(value)` when the key is present, `None` otherwise. A result that is kept (returned, bound, passed on, compared, or read while the dict changes) is a copy of the stored value, and a value type that cannot be copied is refused there with `INCAN-T0118`; a result only read in a `match`, `if let` or `while let` whose bindings are passed to `len`, `print` or `println`, interpolated in an f-string, or used to call a Rust method with a shared receiver whose result is not kept (an Incan method taking `self` does not count) works for any value type. | RFC 009 | 0.1 | Stable |
 | Insert | `insert` |  | Insert or overwrite a key/value pair. | RFC 009 | 0.1 | Stable |
 | ContainsKey | `contains_key` |  | Return true if the dict contains a key. | RFC 009 | 0.6 | Stable |
 

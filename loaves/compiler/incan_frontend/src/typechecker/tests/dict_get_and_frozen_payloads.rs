@@ -341,7 +341,8 @@ def present(table: dict[str, Lock], key: str) -> bool:
 /// A lookup whose binding is only read stays read-only only while the arm leaves the dict alone until the binding's
 /// last read: assigning into it, reassigning it, calling a `mut self` method on its owner, or passing it on before then
 /// makes the lookup keep its own copy. A change in the `None` arm, or after the binding's last read, leaves it
-/// read-only. A lookup through a local bound directly to a static is never read-only, like the static itself.
+/// read-only. A closure that captures the binding keeps it past its last written read, so that lookup keeps its own
+/// copy. A lookup through a local bound directly to a static is never read-only, like the static itself.
 #[test]
 fn a_dict_changed_while_the_binding_is_read_keeps_its_own_copy() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
@@ -408,6 +409,15 @@ def changed_after_reading(mut groups: dict[str, list[int]], key: str) -> int:
         None => return 0
 
 
+def captured(mut groups: dict[str, list[int]], key: str) -> int:
+    match groups.get(key):
+        Some(items) =>
+            count = () => len(items)
+            groups["x"] = []
+            return count()
+        None => return 0
+
+
 def aliased(key: str) -> bool:
     live = counts
     match live.get(key):
@@ -422,6 +432,7 @@ def aliased(key: str) -> bool:
         ("def passed", "groups.get(key)", false),
         ("def changed_when_missing", "groups.get(key)", true),
         ("def changed_after_reading", "groups.get(key)", true),
+        ("def captured", "groups.get(key)", false),
         ("def aliased", "live.get(key)", false),
     ] {
         let function_start = source
@@ -471,4 +482,113 @@ def present(streams: dict[str, Generator[int]], key: str) -> bool:
         None => return false
 "#;
     assert!(check_str(read).is_ok(), "a lookup that only reads the generator checks");
+}
+
+/// A lookup whose binding calls a Rust method with a shared receiver stays read-only while the method's result is
+/// discarded, tested, compared, or passed to `len`, `print` or `println`. A result that is kept, here bound to a name
+/// and read after the dict changes, can hold on to the entry, so that lookup keeps its own copy: with a value type
+/// proven unable to be copied, it is refused with `INCAN-T0118`.
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn a_kept_result_of_a_rust_method_on_the_binding_keeps_its_own_copy() -> Result<(), Box<dyn std::error::Error>> {
+    use incan_lang::interop::RustReceiverContract;
+
+    let source = r#"
+from rust::demo import Lock
+
+
+def kept(mut locks: dict[str, Lock], key: str, spare: Lock) -> int:
+    match locks.get(key):
+        Some(lock) =>
+            label = lock.name()
+            locks["y"] = spare
+            return len(label)
+        None => return 0
+
+
+def read(locks: dict[str, Lock], key: str) -> bool:
+    match locks.get(key):
+        Some(lock) if lock.name() != "" =>
+            lock.name()
+            if lock.name() == "main":
+                println(lock.name())
+            println(f"{lock.name()}")
+            return len(lock.name()) > 0
+        _ => return false
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Lock".to_string(),
+                definition_path: Some("demo::Lock".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    type_params: Vec::new(),
+                    type_param_defaults: Vec::new(),
+                    mutable_reference_type_params: Vec::new(),
+                    expanded_derive_traits: Vec::new(),
+                    has_const_params: false,
+                    alias_target: None,
+                    metadata_completeness: Default::default(),
+                    methods: vec![RustMethodSig {
+                        name: "name".to_string(),
+                        signature: RustFunctionSig {
+                            receiver_contract: Some(RustReceiverContract {
+                                shared: true,
+                                returns_receiver_borrow: true,
+                            }),
+                            type_params: Vec::new(),
+                            params: vec![RustParam {
+                                name: Some("self".to_string()),
+                                type_display: "&self".to_string(),
+                            }],
+                            return_type: "&str".to_string(),
+                            is_async: false,
+                            is_unsafe: false,
+                        },
+                    }],
+                    implemented_traits: Vec::new(),
+                    fields: vec![],
+                    variants: vec![],
+                }),
+            },
+        )
+        .map_err(|error| std::io::Error::other(format!("seed rust-inspect lock: {error}")))?;
+    let errors = match checker.check_program(&ast) {
+        Ok(()) => return Err("a kept result of a Rust method on a lookup of a lock must not check".into()),
+        Err(errors) => errors,
+    };
+    let [refusal] = errors.as_slice() else {
+        return Err(format!("only the lookup whose method result is kept is refused, got {errors:?}").into());
+    };
+    assert_eq!(
+        refusal.stable_code(),
+        Some("INCAN-T0118"),
+        "the refusal is the kept lookup's: {refusal:?}"
+    );
+    let kept_start = source.find("locks.get(key)").ok_or("missing the kept lookup")?;
+    assert_eq!(refusal.span.start, kept_start, "the refusal points at the kept lookup");
+    Ok(())
+}
+
+/// A named stdlib surface type whose runtime value has a copy, such as `FieldInfo`, is not refused where a lookup keeps
+/// its value: `is_clone_type` does not answer for it, so the lookup is completed with a copy instead.
+#[test]
+fn a_kept_dict_get_of_field_info_checks() {
+    let source = r#"
+from std.reflection import FieldInfo
+
+
+def pick(fields: dict[str, FieldInfo], key: str) -> Option[FieldInfo]:
+    return fields.get(key)
+"#;
+    assert_check_ok(source);
 }

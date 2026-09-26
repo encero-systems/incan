@@ -613,8 +613,9 @@ def handed(table: dict[str, list[int]], key: str) -> list[int]:
 }
 
 /// A lookup whose binding is only read keeps its own copy when the arm changes or passes on the dict before the
-/// binding's last read (assigning into it, reassigning it, a `mut self` call on its owner, passing it on); a change in
-/// the `None` arm or after the last read leaves it an in-place read. A local bound directly to a static reads through
+/// binding's last read (assigning into it, reassigning it, a `mut self` call on its owner, passing it on), or when a
+/// closure captures the binding and outlives that read; a change in the `None` arm or after the last read leaves it an
+/// in-place read. A local bound directly to a static reads through
 /// the static's storage access, which copies the entry out, and is never an in-place read.
 #[test]
 fn a_dict_changed_while_the_binding_is_read_is_copied() -> Result<(), String> {
@@ -683,6 +684,15 @@ def changed_after_reading(mut groups: dict[str, list[int]], key: str) -> int:
         None => return 0
 
 
+def captured(mut groups: dict[str, list[int]], key: str) -> int:
+    match groups.get(key):
+        Some(items) =>
+            count = () => len(items)
+            groups["x"] = []
+            return count()
+        None => return 0
+
+
 def aliased(key: str) -> bool:
     live = counts
     match live.get(key):
@@ -697,6 +707,7 @@ def aliased(key: str) -> bool:
         ("passed", vec!["cloned".to_string()]),
         ("changed_when_missing", vec![in_place.clone()]),
         ("changed_after_reading", vec![in_place]),
+        ("captured", vec!["cloned".to_string()]),
     ] {
         assert_eq!(
             dict_lookup_shapes(&ir, function)?,

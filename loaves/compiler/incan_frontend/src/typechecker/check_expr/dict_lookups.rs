@@ -7,7 +7,8 @@
 //! keeps its own value, and one whose value type cannot be copied is refused with `INCAN-T0118`.
 
 use crate::ast::{
-    AssignmentStmt, CallArg, Expr, FStringPart, MatchArm, MatchBody, Pattern, PatternArg, Span, Spanned, Statement,
+    AssignmentStmt, BinaryOp, CallArg, Condition, Expr, FStringPart, MatchArm, MatchBody, Pattern, PatternArg, Span,
+    Spanned, Statement, UnaryOp,
 };
 use crate::ast_walk::{any_expr_in_body, any_expr_in_expr};
 use crate::diagnostics::errors;
@@ -15,6 +16,7 @@ use crate::symbols::ResolvedType;
 use crate::typechecker::IdentKind;
 use crate::typechecker::helpers::collection_type_id;
 use incan_lang::interop::RustItemKind;
+use incan_lang::lang::surface::types as surface_types;
 use incan_lang::lang::traits::{self, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 
@@ -174,10 +176,15 @@ impl TypeChecker {
     }
 
     /// Whether the binding `name` is only read in `arm`: every use is the argument of `len(...)`, `print(...)` or
-    /// `println(...)`, an f-string interpolation, or the receiver of a Rust method that takes its receiver shared.
+    /// `println(...)`, an f-string interpolation, or the receiver of a Rust method with a shared receiver whose result
+    /// is not kept. A closure that captures the binding keeps it, and so does a kept result of such a method, which
+    /// can hold on to the entry after the binding's last written use.
     fn binding_is_only_read(&self, name: &str, arm: &LookupArm<'_>) -> bool {
         let mut uses = 0usize;
         let mut reads = 0usize;
+        let mut unkept_rust_reads = arm
+            .guard
+            .map_or(0, |guard| usize::from(self.is_shared_rust_call_on(guard, name)));
         let mut count = |expr: &Expr| {
             self.count_binding_uses(name, expr, &mut uses, &mut reads);
             false
@@ -188,19 +195,82 @@ impl TypeChecker {
         match arm.body {
             LookupArmBody::Block(stmts) => {
                 any_expr_in_body(stmts, &mut count);
+                self.count_unkept_rust_reads(name, stmts, &mut unkept_rust_reads);
             }
             LookupArmBody::Expr(expr) => {
                 any_expr_in_expr(&expr.node, &mut count);
             }
         }
-        uses == reads
+        uses == reads + unkept_rust_reads
+    }
+
+    /// Count the calls of a Rust method with a shared receiver on the binding `name` that `stmts` (and their nested
+    /// blocks) make as a whole expression statement or as the condition of an `if`, `elif` or `while`: the result is
+    /// discarded or tested at once, so the call reads the binding and keeps nothing from it.
+    fn count_unkept_rust_reads(&self, name: &str, stmts: &[Spanned<Statement>], reads: &mut usize) {
+        let condition_reads = |condition: &Condition| match condition {
+            Condition::Expr(expr) => usize::from(self.is_shared_rust_call_on(expr, name)),
+            Condition::Let { .. } => 0,
+        };
+        for stmt in stmts {
+            match &stmt.node {
+                Statement::Expr(expr) => *reads += usize::from(self.is_shared_rust_call_on(expr, name)),
+                Statement::If(if_stmt) => {
+                    *reads += condition_reads(&if_stmt.condition);
+                    self.count_unkept_rust_reads(name, &if_stmt.then_body, reads);
+                    for (condition, body) in &if_stmt.elif_branches {
+                        *reads += usize::from(self.is_shared_rust_call_on(condition, name));
+                        self.count_unkept_rust_reads(name, body, reads);
+                    }
+                    if let Some(body) = &if_stmt.else_body {
+                        self.count_unkept_rust_reads(name, body, reads);
+                    }
+                }
+                Statement::While(while_stmt) => {
+                    *reads += condition_reads(&while_stmt.condition);
+                    self.count_unkept_rust_reads(name, &while_stmt.body, reads);
+                }
+                Statement::For(for_stmt) => self.count_unkept_rust_reads(name, &for_stmt.body, reads),
+                Statement::Loop(loop_stmt) => self.count_unkept_rust_reads(name, &loop_stmt.body, reads),
+                Statement::Unsafe(unsafe_stmt) => self.count_unkept_rust_reads(name, &unsafe_stmt.body, reads),
+                _ => {}
+            }
+        }
+    }
+
+    /// Whether `expr` calls a Rust method with a shared receiver on the binding `name`.
+    ///
+    /// The checker records the receiver contract of each Rust method call under the call's span.
+    fn is_shared_rust_call_on(&self, expr: &Spanned<Expr>, name: &str) -> bool {
+        matches!(&expr.node, Expr::MethodCall(base, ..) if matches!(&base.node, Expr::Ident(ident) if ident == name))
+            && self
+                .type_info
+                .rust
+                .receiver_contracts
+                .get(&(expr.span.start, expr.span.end))
+                .is_some_and(|contract| contract.shared)
     }
 
     /// Count the uses of `name` directly in `expr` (`uses`) and the uses of those that only read it (`reads`).
+    ///
+    /// A read is the binding passed to `len`, `print` or `println`, interpolated in an f-string, or used to call a
+    /// Rust method with a shared receiver whose result is passed on the same way, compared, negated, or discarded or
+    /// tested at once (see [`Self::count_unkept_rust_reads`]). A closure that mentions the binding keeps it for as long
+    /// as the closure lives, so it counts as one more use that no read balances.
     fn count_binding_uses(&self, name: &str, expr: &Expr, uses: &mut usize, reads: &mut usize) {
-        let names_binding = |expr: &Spanned<Expr>| matches!(&expr.node, Expr::Ident(ident) if ident == name);
+        let names_binding = |expr: &Spanned<Expr>| {
+            matches!(&expr.node, Expr::Ident(ident) if ident == name) || self.is_shared_rust_call_on(expr, name)
+        };
         match expr {
             Expr::Ident(ident) if ident == name => *uses += 1,
+            Expr::Closure(_, body)
+                if any_expr_in_expr(
+                    &body.node,
+                    |inner: &Expr| matches!(inner, Expr::Ident(ident) if ident == name),
+                ) =>
+            {
+                *uses += 1;
+            }
             Expr::Call(callee, _, args) => {
                 let Expr::Ident(callee_name) = &callee.node else {
                     return;
@@ -215,39 +285,40 @@ impl TypeChecker {
                     _ => {}
                 }
             }
+            Expr::Binary(
+                lhs,
+                BinaryOp::Eq
+                | BinaryOp::NotEq
+                | BinaryOp::Lt
+                | BinaryOp::Gt
+                | BinaryOp::LtEq
+                | BinaryOp::GtEq
+                | BinaryOp::And
+                | BinaryOp::Or,
+                rhs,
+            ) => {
+                *reads += [lhs, rhs]
+                    .into_iter()
+                    .filter(|operand| self.is_shared_rust_call_on(operand, name))
+                    .count();
+            }
+            Expr::Unary(UnaryOp::Not, operand) => *reads += usize::from(self.is_shared_rust_call_on(operand, name)),
             Expr::FString(parts) => {
                 *reads += parts
                     .iter()
                     .filter(|part| matches!(part, FStringPart::Expr { expr, .. } if names_binding(expr)))
                     .count();
             }
-            Expr::MethodCall(base, _, _, _) if names_binding(base) && self.rust_receiver_is_shared(base.span) => {
-                *reads += 1;
-            }
             _ => {}
         }
     }
 
-    /// Whether the Rust method called on the receiver at `receiver_span` takes its receiver shared.
-    ///
-    /// The receiver contract is keyed by the call's span, which starts where its receiver starts; the innermost call
-    /// on that receiver is the one that ends first after it.
-    fn rust_receiver_is_shared(&self, receiver_span: Span) -> bool {
-        self.type_info
-            .rust
-            .receiver_contracts
-            .iter()
-            .filter(|((start, end), _)| *start == receiver_span.start && *end > receiver_span.end)
-            .min_by_key(|((_, end), _)| *end)
-            .is_some_and(|(_, contract)| contract.shared)
-    }
-
     /// Whether a value of type `ty` cannot be copied, so a lookup that keeps one is refused.
     ///
-    /// This asks the relation `is_clone_type` answers, looking through containers, with two differences: a type
-    /// parameter is given the `Clone` bound where a lookup copies it (see trait bound inference), and a Rust type
-    /// counts as not copyable only when its inspected metadata proves it implements no `Clone` (`is_clone_type`
-    /// does not ask Rust, so it answers `false` for every Rust type).
+    /// This asks the relation `is_clone_type` answers, looking through containers, with three differences: a type
+    /// parameter is given the `Clone` bound where a lookup copies it (see trait bound inference); a Rust type counts
+    /// as not copyable only when its inspected metadata proves it implements no `Clone` (`is_clone_type` does not ask
+    /// Rust, so it answers `false` for every Rust type); and a named stdlib surface type is never refused.
     fn value_type_cannot_be_copied(&self, ty: &ResolvedType) -> bool {
         match ty {
             ResolvedType::RustPath(path) => self.rust_type_proven_not_clone(path),
@@ -264,6 +335,10 @@ impl TypeChecker {
             ResolvedType::FrozenDict(key, value) => {
                 self.value_type_cannot_be_copied(key) || self.value_type_cannot_be_copied(value)
             }
+            // A named stdlib surface type (`FieldInfo`, `Mutex`, ...) or an unresolved slot has no answer here, since
+            // `is_clone_type` answers `false` for most of them whatever their runtime type provides.
+            ResolvedType::Named(name) if surface_types::from_str(name.as_str()).is_some() => false,
+            ResolvedType::CallSiteInfer => false,
             other => !self.is_clone_type(other),
         }
     }
