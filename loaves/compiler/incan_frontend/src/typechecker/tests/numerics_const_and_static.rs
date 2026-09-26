@@ -457,6 +457,65 @@ def foo() -> FrozenStr:
     assert!(check_str(source).is_ok());
 }
 
+/// Regression for #1719: a frozen collection is a `const` value and the language defines no constructor call for
+/// one, so `FrozenList([...])`, `FrozenDict({...})` and `FrozenSet([...])` are refused at check time with the
+/// documented spelling instead of being typed `Unknown` and left for the build to reject.
+#[test]
+fn frozen_collection_value_constructors_are_refused_issue1719() {
+    let source = r#"
+def count(frozen: FrozenList[int]) -> int:
+  return len(frozen)
+
+def main() -> None:
+  println(count(FrozenList([7, 8])))
+  names = FrozenSet(["a"])
+  ages = FrozenDict({"a": 1})
+"#;
+    let errs = check_str_err(source, "frozen collection constructors should be refused");
+    let messages: Vec<&str> = errs.iter().map(|err| err.message.as_str()).collect();
+    for name in ["FrozenList", "FrozenSet", "FrozenDict"] {
+        let expected = format!("{name}(...) is not a constructor; a frozen collection is declared as a const");
+        assert!(
+            messages.contains(&expected.as_str()),
+            "expected a refusal for {name}(...), got: {messages:?}"
+        );
+    }
+    let list_hint = errs
+        .iter()
+        .find(|err| err.message.starts_with("FrozenList("))
+        .and_then(|err| err.hints.first())
+        .map(String::as_str);
+    assert_eq!(
+        list_hint,
+        Some("Declare it as a const: `const NAME: FrozenList[T] = [...]`"),
+        "the hint names the documented const spelling"
+    );
+    let dict_hint = errs
+        .iter()
+        .find(|err| err.message.starts_with("FrozenDict("))
+        .and_then(|err| err.hints.first())
+        .map(String::as_str);
+    assert_eq!(
+        dict_hint,
+        Some("Declare it as a const: `const NAME: FrozenDict[K, V] = {...}`")
+    );
+}
+
+/// The documented spelling keeps working: a frozen const passed where the frozen type is expected.
+#[test]
+fn frozen_collection_consts_remain_the_documented_spelling() {
+    let source = r#"
+const FROZEN: FrozenList[int] = [7, 8]
+
+def count(frozen: FrozenList[int]) -> int:
+  return len(frozen)
+
+def main() -> None:
+  println(count(FROZEN))
+"#;
+    assert!(check_str(source).is_ok());
+}
+
 #[test]
 fn test_runtime_str_does_not_implicitly_satisfy_frozen_str() {
     let source = r#"

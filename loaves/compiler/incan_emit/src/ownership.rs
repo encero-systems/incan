@@ -836,9 +836,14 @@ pub fn plan_for_loop_iteration(
 /// (text, bytes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListConstructorSourcePlan {
-    /// Consume the owned source through `IntoIterator`: an ordinary list or set, a generator, or an opaque Rust value
-    /// the checker could not see into, exactly as `for item in source` hands it to Rust.
+    /// Consume the owned source through `IntoIterator`: an ordinary list or set, or an opaque Rust value the checker
+    /// could not see into, exactly as `for item in source` hands it to Rust.
     IntoOwnedItems,
+    /// Collect an owned runtime generator through the `Iterator` trait, named in full: the runtime wrapper keeps an
+    /// inherent `collect(self) -> Vec<T>` with no type parameter (the shape a source-level `gen.collect()` relies
+    /// on), and on an owned receiver that inherent method shadows the trait's, so the method-call spelling with a
+    /// turbofish is refused (E0107, #1464).
+    CollectOwnedIterator,
     /// Clone each item out of an immutable collection that only lends its elements.
     CloneBorrowedItems,
     /// Materialize each item of an immutable collection of `str` as an owned string: the frozen wrappers store
@@ -855,6 +860,7 @@ impl ListConstructorSourcePlan {
     pub fn apply(&self, tokens: TokenStream) -> TokenStream {
         let items = match self {
             Self::IntoOwnedItems => quote! { (#tokens).into_iter() },
+            Self::CollectOwnedIterator => return quote! { ::std::iter::Iterator::collect::<Vec<_>>(#tokens) },
             Self::CloneBorrowedItems => quote! { (#tokens).iter().cloned() },
             Self::OwnedStringsFromFrozenText => {
                 quote! { (#tokens).iter().map(|__incan_item| __incan_item.to_string()) }
@@ -904,8 +910,18 @@ pub fn plan_list_constructor_source(source_ty: &IrType) -> ListConstructorSource
                 ListConstructorSourcePlan::CloneBorrowedItems
             }
         }
+        ty if is_runtime_generator_type(ty) => ListConstructorSourcePlan::CollectOwnedIterator,
         _ => ListConstructorSourcePlan::IntoOwnedItems,
     }
+}
+
+/// Whether an IR type is the RFC 006 runtime generator wrapper (`Generator[T]`).
+///
+/// The wrapper implements `Iterator` but also carries inherent `map`/`filter`/`take`/`collect` adapters that the
+/// emitter relies on for source-level generator methods; on an owned receiver those inherent methods shadow the
+/// trait's, so a plan that chains trait adapters onto a generator must name the trait (#1464).
+fn is_runtime_generator_type(ty: &IrType) -> bool {
+    matches!(ty, IrType::NamedGeneric(name, _) if collections::from_str(name) == Some(CollectionTypeId::Generator))
 }
 
 /// Whether a frozen collection's item type is Incan `str`, which the frozen wrappers store as `&'static str`.
@@ -1017,6 +1033,10 @@ pub enum OwnedIteratorSourcePlan {
     Move,
     /// Clone the source expression before moving it into the adapter.
     Clone,
+    /// Move a runtime generator into the adapter as the `Iterator` trait's iterator (`Iterator::fuse`, which changes
+    /// nothing for a chain that runs to exhaustion): the wrapper's inherent `map`/`filter`/`collect` would otherwise
+    /// capture the chain's adapters on the owned receiver and refuse the final turbofish (E0107, #1464).
+    MoveThroughIteratorTrait,
 }
 
 impl OwnedIteratorSourcePlan {
@@ -1025,6 +1045,7 @@ impl OwnedIteratorSourcePlan {
         match self {
             Self::Move => quote! { (#tokens) },
             Self::Clone => quote! { (#tokens).clone() },
+            Self::MoveThroughIteratorTrait => quote! { ::std::iter::Iterator::fuse(#tokens) },
         }
     }
 }
@@ -1053,12 +1074,16 @@ pub fn plan_owned_iterator_source(expr: &IrExpr) -> OwnedIteratorSourcePlan {
 /// `.iter()`, which a by-value iterator does not have (#1490). Sources the comprehension planner already understands
 /// (collections, ranges, text) return `None` and keep their borrowed item plans. A borrowed opaque value is consumed
 /// through the reference exactly as the loop consumes it, so it is never cloned; an owned one follows the same
-/// move-or-clone materialization as every other adapter-owned source.
+/// move-or-clone materialization as every other adapter-owned source, except a runtime generator, which moves as
+/// the `Iterator` trait's iterator (#1464).
 pub fn plan_opaque_comprehension_source(expr: &IrExpr) -> Option<OwnedIteratorSourcePlan> {
     match &expr.ty {
         IrType::Ref(inner) | IrType::RefMut(inner) => {
             comprehension_source_is_opaque(inner).then_some(OwnedIteratorSourcePlan::Move)
         }
+        // A generator is consumed by the comprehension as a `for` statement consumes it; it is never cloned (the
+        // wrapper is not `Clone`), and the chain must reach the trait's adapters rather than the wrapper's own.
+        ty if is_runtime_generator_type(ty) => Some(OwnedIteratorSourcePlan::MoveThroughIteratorTrait),
         ty => comprehension_source_is_opaque(ty).then(|| plan_owned_iterator_source(expr)),
     }
 }
@@ -1819,6 +1844,47 @@ mod tests {
         );
     }
 
+    /// `list(generator)` and a comprehension over a generator reach the `Iterator` trait's adapters by name: the
+    /// runtime wrapper's inherent `collect`/`map` would otherwise capture the chain on the owned receiver (#1464).
+    #[test]
+    fn generator_sources_are_consumed_through_the_iterator_trait() {
+        let generator = IrType::NamedGeneric(
+            collections::as_str(CollectionTypeId::Generator).to_string(),
+            vec![IrType::Int],
+        );
+        assert_eq!(
+            plan_list_constructor_source(&generator),
+            ListConstructorSourcePlan::CollectOwnedIterator
+        );
+        assert_eq!(
+            plan_list_constructor_source(&IrType::RefMut(Box::new(generator.clone()))),
+            ListConstructorSourcePlan::CollectOwnedIterator
+        );
+        assert_eq!(
+            render(ListConstructorSourcePlan::CollectOwnedIterator.apply(quote! { source })),
+            "::std::iter::Iterator::collect::<Vec<_>>(source)"
+        );
+        assert!(!ListConstructorSourcePlan::CollectOwnedIterator.clones_items());
+        assert_eq!(list_constructor_item_type(&generator), Some(&IrType::Int));
+
+        let reused_source = IrExpr::new(
+            IrExprKind::Var {
+                name: "source".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            generator,
+        );
+        assert_eq!(
+            plan_opaque_comprehension_source(&reused_source),
+            Some(OwnedIteratorSourcePlan::MoveThroughIteratorTrait)
+        );
+        assert_eq!(
+            render(OwnedIteratorSourcePlan::MoveThroughIteratorTrait.apply(quote! { source })),
+            "::std::iter::Iterator::fuse(source)"
+        );
+    }
+
     /// A comprehension over a value that is not an Incan collection consumes it as the `for` statement does: a
     /// one-shot Rust iterator moves, a borrowed one is read through the reference, and collections keep their own
     /// borrowed item plans (#1490).
@@ -1861,12 +1927,13 @@ mod tests {
             plan_opaque_comprehension_source(&reused_var(IrType::RefMut(Box::new(rust_iterator.clone())))),
             Some(OwnedIteratorSourcePlan::Move)
         );
+        // A generator is never cloned (the wrapper is not `Clone`); it moves as the trait's iterator (#1464).
         assert_eq!(
             plan_opaque_comprehension_source(&reused_var(IrType::NamedGeneric(
                 collections::as_str(CollectionTypeId::Generator).to_string(),
                 vec![IrType::Int]
             ))),
-            Some(OwnedIteratorSourcePlan::Clone)
+            Some(OwnedIteratorSourcePlan::MoveThroughIteratorTrait)
         );
         assert_eq!(
             plan_opaque_comprehension_source(&reused_var(IrType::List(Box::new(IrType::Int)))),

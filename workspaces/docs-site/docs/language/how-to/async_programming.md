@@ -95,20 +95,9 @@ async def wait_for[T, F with Awaitable[T]](task: F) -> T:
     return await task
 ```
 
-The compiler recognizes direct async calls, Rust-backed futures, `JoinHandle[T]`, and checked wrapper types. Awaiting a `JoinHandle[T]` produces `Result[T, TaskJoinError]`, not `T`, because the spawned task can fail to join.
+The compiler recognizes direct async calls, Rust-backed futures and `JoinHandle[T]`. Awaiting a `JoinHandle[T]` produces `Result[T, TaskJoinError]`, not `T`, because the spawned task can fail to join.
 
-Wrapper types can adopt `Awaitable[T]` only when they contain a compatible awaitable field:
-
-```incan
-import std.async
-from std.async.task import JoinHandle, TaskJoinError
-
-model TaskBox[T] with Awaitable[Result[T, TaskJoinError]]:
-    handle: JoinHandle[T]
-
-async def wait_for(box: TaskBox[int]) -> Result[int, TaskJoinError]:
-    return await box
-```
+`Awaitable[T]` is a bound, not something a declaration adopts: a `model`, `class`, `enum` or `newtype` written `with Awaitable[T]` is refused. Pass the `JoinHandle[T]` itself, or take the awaitable through a generic bound as above, with the type arguments written out at the call; see [Awaitable values](../reference/stdlib_traits/awaitable.md).
 
 ## Time Primitives
 

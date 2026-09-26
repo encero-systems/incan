@@ -63,7 +63,7 @@ async def get_posts(year: int, month: int) -> Json[list[Post]]:
     return Json(fetch_posts(year, month))
 ```
 
-Use a scalar parameter when the handler body needs the captured value. A route may instead declare an unused typed `Path[T]` extractor with the wildcard pattern when only Axum's extraction and rejection behavior is required:
+Use a scalar parameter when the handler body needs the captured value. Every scalar parameter must be named by a `{segment}` of the path: a parameter that no segment binds and no `Json[T]`, `Query[T]` or `Path[T]` extractor supplies has nothing to receive, and `incan check` refuses it (`INCAN-T0108`). A route may instead declare an unused typed `Path[T]` extractor with the wildcard pattern when only Axum's extraction and rejection behavior is required:
 
 ```incan
 from std.web import route, Json, Path
@@ -104,6 +104,8 @@ async def delete_item(id: int) -> Response:
 ```
 
 ## Responses
+
+A handler's return value is the HTTP response, so its declared return type must be a response type: `str`, `None`, `Json[T]`, `Html`, `Response`, a `Result` of those, or a wrapper type that derives `IntoResponse`. A handler declared to return an `int`, a tuple, a list or a plain model is refused by `incan check` (`INCAN-T0107`); return the value as text (`str(value)`) or wrap it in `Json(...)`.
 
 ### JSON Responses
 

@@ -1,0 +1,43 @@
+# behavior: explicit registry entries for the current compilation unit and the package carry their subject kinds and the unit's and package's names (RFC 113, #1713)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_std_registry_subjects_codegen
+# retires: loaves/compiler/incan_ir/src/lower/decl/mod.rs::explicit_registry_entry_follows_the_source_stdlib_projection_issue1713
+# retires: loaves/compiler/incan_ir/src/lower/decl/mod.rs::explicit_registry_entry_follows_a_declined_projection_issue1713
+# retires: loaves/compiler/incan_ir/src/lower/decl/mod.rs::explicit_registry_entry_refuses_an_unknown_spelling_issue1713
+# expect-stdout:
+#   2
+#   main
+#   std_registry_subjects
+
+from std.registry import Registry, RegistryEntry, RegistrySubject, SubjectKind
+
+@derive(Clone, Eq)
+type CapabilityId = newtype str
+
+@derive(Descriptor)
+model CapabilitySpec:
+    title: str
+
+pub static capabilities: Registry[CapabilityId, CapabilitySpec] = Registry.define(
+    subjects=[SubjectKind.CompilationUnit, SubjectKind.Package],
+)
+
+pub static logging_capability: RegistryEntry[CapabilityId, CapabilitySpec] = capabilities.entry(
+    key=CapabilityId("std.logging"),
+    subject=RegistrySubject.current_unit(),
+    descriptor=CapabilitySpec(title="Structured logging"),
+)
+
+pub static package_capability: RegistryEntry[CapabilityId, CapabilitySpec] = capabilities.entry(
+    key=CapabilityId("std.registry"),
+    subject=RegistrySubject.package(),
+    descriptor=CapabilitySpec(title="Typed declaration registries"),
+)
+
+def main() -> None:
+    entries = capabilities.loaded_entries()
+    assert len(entries) == 2
+    assert logging_capability.subject.kind == SubjectKind.CompilationUnit
+    assert package_capability.subject.kind == SubjectKind.Package
+    println(len(entries))
+    println(logging_capability.subject.qualified_name)
+    println(package_capability.subject.qualified_name)

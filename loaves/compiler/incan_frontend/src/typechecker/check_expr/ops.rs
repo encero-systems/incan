@@ -105,6 +105,20 @@ fn inherit_same_trait_dispatch_module(
     }
 }
 
+/// Return the dunder hook for an arithmetic operator whose semantics only the concrete numeric types carry.
+///
+/// `/` yields `float` for any operands, `//` and `%` round toward negative infinity and `**` picks its result type
+/// from the exponent: these are the language's numeric rules, provided by the runtime for `int`, `float` and the
+/// exact-width numerics, with no trait standing for them. `+`, `-` and `*` are not in this set: they lower to the
+/// operator traits and become inferred bounds on a type parameter (RFC 023). The hook is returned so a diagnostic can
+/// name what a bound trait would have to define for the operator to resolve through RFC 028 dispatch instead.
+fn numeric_only_operator_dunder(op: BinaryOp) -> Option<&'static str> {
+    match op {
+        BinaryOp::Div | BinaryOp::FloorDiv | BinaryOp::Mod | BinaryOp::Pow => binary_operator_dunder(op),
+        _ => None,
+    }
+}
+
 /// Return the dunder hook for a binary operator that can participate in RFC 028 dispatch.
 fn binary_operator_dunder(op: BinaryOp) -> Option<&'static str> {
     match op {
@@ -375,8 +389,9 @@ impl TypeChecker {
 
                 // RFC 023: allow arithmetic on generic type variables.
                 //
-                // The Rust backend will infer and emit the appropriate trait bounds (e.g. `T: Add<Output = T>`).
-                // Here we keep the typechecker permissive so generic stdlib helpers can typecheck.
+                // The Rust backend infers and emits the trait bound the operator needs (`T: Add<Output = T>`), so the
+                // typechecker stays permissive for `+`, `-` and `*` and generic stdlib helpers typecheck. A bound
+                // trait's RFC 028 hook is consulted first, so `T with Remainder` resolves `%` through the trait.
                 if self.is_generic_placeholder_type(&left_ty)
                     && let Some(method) = binary_operator_dunder(op)
                 {
@@ -394,7 +409,20 @@ impl TypeChecker {
                     self.generic_placeholder_name(&left_ty),
                     self.generic_placeholder_name(&right_ty),
                 ) {
-                    (Some(left_name), Some(right_name)) if left_name == right_name => return left_ty.clone(),
+                    (Some(left_name), Some(right_name)) if left_name == right_name => {
+                        // `/`, `//`, `%` and `**` have no bound a type argument could satisfy (#1715): their
+                        // Python-shaped numeric semantics belong to the concrete numeric types, not to a trait.
+                        if let Some(dunder) = numeric_only_operator_dunder(op) {
+                            self.errors.push(errors::operator_has_no_type_parameter_bound(
+                                &op.to_string(),
+                                left_name,
+                                dunder,
+                                span,
+                            ));
+                            return ResolvedType::Unknown;
+                        }
+                        return left_ty.clone();
+                    }
                     (Some(_), None) if matches!(right_ty, ResolvedType::Unknown) => return left_ty.clone(),
                     (None, Some(_)) if matches!(left_ty, ResolvedType::Unknown) => return right_ty.clone(),
                     _ => {}

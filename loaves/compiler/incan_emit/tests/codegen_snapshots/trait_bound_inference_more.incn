@@ -3,7 +3,8 @@
 # Covers:
 # - f-string interpolation -> Display
 # - Dict literal with generic key -> Eq + Hash
-# - arithmetic operators: +, -, *, /, % -> Add/Sub/Mul/Div/Rem<Output = T>
+# - arithmetic operators: +, -, * -> Add/Sub/Mul<Output = T> (/, //, % and ** on a type parameter are refused
+#   at check time, INCAN-T0109: their numeric rules belong to the concrete numeric types)
 # - clone() method call -> Clone
 # - transitive inference across generic function calls
 # - combined explicit + inferred bounds
@@ -22,12 +23,6 @@ def subtract[T](a: T, b: T) -> T:
 
 def multiply[T](a: T, b: T) -> T:
     return a * b
-
-def divide[T](a: T, b: T) -> T:
-    return a / b
-
-def modulo[T](a: T, b: T) -> T:
-    return a % b
 
 def duplicate[T](x: T) -> T:
     return x.clone()

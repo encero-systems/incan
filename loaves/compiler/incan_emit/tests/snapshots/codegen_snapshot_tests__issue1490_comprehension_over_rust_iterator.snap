@@ -25,7 +25,9 @@ fn long_arguments() -> Vec<String> {
         .collect::<Vec<_>>();
 }
 fn squares(source: incan_std_core::iter::Generator<i64>) -> Vec<i64> {
-    return ((source).into_iter()).map(|value| value * value).collect::<Vec<_>>();
+    return (::std::iter::Iterator::fuse(source).into_iter())
+        .map(|value| value * value)
+        .collect::<Vec<_>>();
 }
 fn main() {
     std::panic::set_hook(

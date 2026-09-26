@@ -1054,3 +1054,83 @@ model M with Leaf:
     );
     Ok(())
 }
+
+// ---- #1723: trait implementations and default methods honor the receiver the same way ----
+
+#[test]
+fn trait_implementation_mutating_through_plain_self_is_refused_issue1723() {
+    // The program from #1723: the trait declares `resize(self, ...)`, the class implements it and scales its
+    // fields. The class method is the one that writes, so it is the one refused; the trait declaration itself
+    // has no body to refuse.
+    let source = r#"
+trait Resizable:
+    def resize(self, factor: float) -> None
+
+class Carton with Resizable:
+    width: float
+
+    def resize(self, factor: float) -> None:
+        self.width *= factor
+
+def main() -> None:
+    mut carton: Carton = Carton(width=2.0)
+    carton.resize(3.0)
+    println(carton.width)
+"#;
+    let errors = check_str_err(
+        source,
+        "a trait implementation writing through plain self must be refused",
+    );
+    let refused = errors
+        .iter()
+        .filter(|error| error.stable_code() == Some("INCAN-T0102"))
+        .map(|error| error.message.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        refused,
+        vec!["Method 'resize' assigns to 'self.width' but takes 'self'"]
+    );
+
+    // Declaring `mut self` on both the trait and the implementation is the accepted form. `width` is `pub` here
+    // because `main` reads it, and a class field is private to the class's own methods by default.
+    assert_check_ok(
+        r#"
+trait Resizable:
+    def resize(mut self, factor: float) -> None
+
+class Carton with Resizable:
+    pub width: float
+
+    def resize(mut self, factor: float) -> None:
+        self.width *= factor
+
+def main() -> None:
+    mut carton: Carton = Carton(width=2.0)
+    carton.resize(3.0)
+    println(carton.width)
+"#,
+    );
+}
+
+#[test]
+fn trait_default_method_mutating_a_required_field_through_plain_self_is_refused_issue1723() {
+    let source = r#"
+@requires(count: int)
+trait Countable:
+    def bump(self) -> None:
+        self.count += 1
+
+    def bump_twice(mut self) -> None:
+        self.bump()
+"#;
+    let errors = check_str_err(
+        source,
+        "a trait default method writing through plain self must be refused",
+    );
+    let refused = errors
+        .iter()
+        .filter(|error| error.stable_code() == Some("INCAN-T0102"))
+        .map(|error| error.message.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(refused, vec!["Method 'bump' assigns to 'self.count' but takes 'self'"]);
+}
