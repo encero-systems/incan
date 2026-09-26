@@ -24,6 +24,7 @@ mod calls;
 mod collections;
 mod comps;
 mod control_flow;
+mod error_display;
 mod match_;
 mod ops;
 
@@ -267,8 +268,11 @@ impl TypeChecker {
             Expr::Constructor(name, args) => self.check_constructor(name, args, expr.span),
             Expr::FString(parts) => {
                 for part in parts {
-                    if let FStringPart::Expr { expr, .. } = part {
-                        self.check_expr(expr);
+                    if let FStringPart::Expr { expr, format } = part {
+                        let part_ty = self.check_expr(expr);
+                        if matches!(format, FStringFormat::Display) {
+                            self.record_error_message_display(expr.span, &part_ty);
+                        }
                     }
                 }
                 ResolvedType::Str

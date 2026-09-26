@@ -82,6 +82,24 @@ pub fn qualified_type_not_declared(spelling: &str, module: &str, member: &str, s
     ))
 }
 
+/// A module-qualified type annotation (`web.Html`) named a built-in type its module provides.
+///
+/// The module does provide the member -- `from std.web import Html` binds it -- but as a compiler-owned type backed by
+/// a Rust re-export rather than as a declaration, and a module-qualified annotation resolves only a type or trait the
+/// module declares. `module` is the import spelling of the module, so the hint's `from ... import` line is one the
+/// author can paste.
+pub fn qualified_type_names_surface_type(spelling: &str, module: &str, member: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "`{spelling}` cannot be written through its module: `{module}` provides `{member}` as a built-in type, \
+             which a module-qualified annotation cannot name"
+        ),
+        span,
+    )
+    .with_hint(format!("Import the type directly with `from {module} import {member}`"))
+    .with_note("A module-qualified annotation resolves only a type or trait the module declares")
+}
+
 /// A module-qualified type annotation (`name.Type`) has a root that is bound to something other than a module.
 ///
 /// Only a module binding can qualify a type name. A value, type, or trait in root position is a different construct

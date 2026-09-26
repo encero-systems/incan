@@ -1196,7 +1196,10 @@ impl TypeChecker {
     }
 
     /// Resolve one operator dunder on a user type or generic placeholder.
-    fn resolve_operator_dunder(
+    ///
+    /// Also resolves the `message()` an `Error` adopter displays through (`check_expr/error_display.rs`), which, like a
+    /// dunder, is a method call the program never wrote.
+    pub(in crate::typechecker::check_expr) fn resolve_operator_dunder(
         &mut self,
         receiver_ty: &ResolvedType,
         method: &str,
