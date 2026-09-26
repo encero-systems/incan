@@ -88,6 +88,6 @@ mod traits;
 use helpers::{
     assert_check_ok, check_str, check_str_err, check_str_warnings, check_str_with_library_index,
     check_str_with_library_index_err, has_private_field_error, has_unknown_symbol_error,
-    library_index_with_mylib_exports, parse_program, shadowed_trait_name, synthetic_artifact_root,
-    typecheck_info_for_module,
+    library_index_with_mylib_exports, library_index_with_rust_abi_item, parse_program, shadowed_trait_name,
+    synthetic_artifact_root, typecheck_info_for_module,
 };

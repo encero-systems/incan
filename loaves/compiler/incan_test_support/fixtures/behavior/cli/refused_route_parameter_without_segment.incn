@@ -1,0 +1,12 @@
+# behavior: a route handler with a scalar parameter that no {segment} of the path binds is refused at check time
+# expect-diagnostic: INCAN-T0108
+
+import std.async
+from std.web import route, POST
+
+@route("/things", methods=[POST])
+async def create(id: int) -> str:
+    return str(id)
+
+async def main() -> None:
+    println(await create(7))

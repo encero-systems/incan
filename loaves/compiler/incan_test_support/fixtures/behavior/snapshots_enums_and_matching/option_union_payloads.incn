@@ -1,0 +1,50 @@
+# behavior: a const passed to a union parameter and a Some(...) over a literal, a const or a newtype passed, bound or returned as Option[union] are wrapped into the union (#1724)
+# expect-stdout:
+#   text
+#   PLAIN
+#   path p
+#   LOCAL
+#   RETURNED
+#   missing
+#   frozen text
+#   number
+
+@derive(Clone)
+type LocalPath = newtype str
+
+const FROZEN_TEXT: FrozenStr = "frozen text"
+
+def kind(value: FrozenStr | int) -> str:
+    if isinstance(value, str):
+        return "text"
+    return "number"
+
+def describe(value: Option[LocalPath | str]) -> str:
+    if value is not None:
+        if isinstance(value, str):
+            return value.upper()
+        if isinstance(value, LocalPath):
+            return f"path {value.0}"
+    return "missing"
+
+def frozen_option_union_kind(value: Option[FrozenStr | int]) -> str:
+    if isinstance(value, str):
+        return str(value)
+    return "number"
+
+def make_local() -> Option[LocalPath | str]:
+    local: Option[LocalPath | str] = Some("local")
+    return local
+
+def make_return() -> Option[LocalPath | str]:
+    return Some("returned")
+
+def main() -> None:
+    println(kind(FROZEN_TEXT))
+    println(describe(Some("plain")))
+    println(describe(Some(LocalPath("p"))))
+    println(describe(make_local()))
+    println(describe(make_return()))
+    println(describe(None))
+    println(frozen_option_union_kind(Some(FROZEN_TEXT)))
+    println(frozen_option_union_kind(Some(1)))

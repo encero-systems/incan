@@ -1,0 +1,41 @@
+# behavior: list(source) and a comprehension over a Generator source materialize the yielded values, beside the generator's own take, map, filter and collect (RFC 006, RFC 088, #1464)
+# retires: loaves/compiler/incan_emit/src/ownership.rs::generator_sources_are_consumed_through_the_iterator_trait
+# expect-stdout:
+#   3
+#   0 1 2
+#   0 2 4
+#   0 2 4
+#   6
+#   2
+#   0 1
+
+def numbers(limit: int) -> Generator[int]:
+    for value in range(limit):
+        yield value
+
+def double(value: int) -> int:
+    return value * 2
+
+def is_even(value: int) -> bool:
+    return value % 2 == 0
+
+def materialized(source: Generator[int]) -> list[int]:
+    return list(source)
+
+def doubled(source: Generator[int]) -> list[int]:
+    return [value * 2 for value in source]
+
+def evens(source: Generator[int]) -> list[int]:
+    return [value for value in source if value % 2 == 0]
+
+def joined(values: list[int]) -> str:
+    return " ".join([str(value) for value in values])
+
+def main() -> None:
+    println(len(materialized(numbers(3))))
+    println(joined(materialized((value for value in range(3)))))
+    println(joined(doubled(numbers(3))))
+    println(joined(evens(numbers(5))))
+    println(len(numbers(6).map(double).filter(is_even).collect()))
+    println(len(numbers(6).take(2).collect()))
+    println(joined(list(numbers(2))))

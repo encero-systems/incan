@@ -20,8 +20,8 @@ use incan_frontend::api_metadata::{
 use incan_frontend::ast::{self, TypeConstraintKey};
 use incan_frontend::library_exports::CheckedPresetValue;
 use incan_frontend::library_manifest::{
-    FunctionExport, LibraryManifest, MethodExport, ParamDefaultCallArgExport, ParamDefaultCallSignatureExport,
-    ParamDefaultExport, ParamExport, ParamKindExport,
+    FieldExport, FunctionExport, LibraryManifest, MethodExport, ParamDefaultCallArgExport,
+    ParamDefaultCallSignatureExport, ParamDefaultExport, ParamExport, ParamKindExport,
 };
 use incan_frontend::library_manifest_index::LibraryManifestIndexEntry;
 use incan_frontend::partial_projection::{PartialPresetRef, merge_named_partial_args};
@@ -1415,6 +1415,112 @@ impl AstLowering {
                 .or_else(|| Self::api_method_export_for_pub_type(manifest, type_name, method_name))
         })?;
         Some(self.callable_signature_from_pub_method_export(library, &method))
+    }
+
+    /// Lower the declared type of one field on a public dependency's model or class in the owning library's context.
+    ///
+    /// The checker types a field read through its expanded `ResolvedType`, which no longer names the alias the
+    /// provider declared, so a `pub type X = Union[...]` field arrives at lowering as a structural union that would be
+    /// re-owned by the consumer. Provider field metadata is the same source the helper-call and method-call paths lower
+    /// their signatures from, so lowering the declared field type through it keeps the union owned by the provider
+    /// crate (`IrType::ExternalUnion`). Lookup follows the method-signature precedent: the exact checked API
+    /// declaration when the receiver carries its provider-local source path, then the compact export lists, then
+    /// checked API declarations by public name. A receiver that lowering cannot attribute to one public dependency
+    /// yields `None`.
+    pub(in crate::lower) fn declared_field_type_for_imported_pub_type(
+        &self,
+        library: &str,
+        receiver_ty: &IrType,
+        field_name: &str,
+    ) -> Option<IrType> {
+        let type_name = Self::nominal_receiver_type_name(receiver_ty)?;
+        let manifest_index = self.provider_plan.as_deref()?.library_manifest_index();
+        let LibraryManifestIndexEntry::Loaded { manifest, .. } = manifest_index.get(library)? else {
+            return None;
+        };
+        let exact_field = Self::public_dependency_type_path(receiver_ty, library).and_then(|target_path| {
+            let api = manifest.contract_metadata.api.as_ref()?;
+            Self::api_field_export_for_target_path(api, &target_path, field_name)
+        });
+        let field = exact_field.or_else(|| {
+            manifest
+                .exports
+                .models
+                .iter()
+                .find(|model| model.name == type_name)
+                .and_then(|model| model.fields.iter().find(|field| field.name == field_name))
+                .cloned()
+                .or_else(|| {
+                    manifest
+                        .exports
+                        .classes
+                        .iter()
+                        .find(|class| class.name == type_name)
+                        .and_then(|class| class.fields.iter().find(|field| field.name == field_name))
+                        .cloned()
+                })
+                .or_else(|| Self::api_field_export_for_pub_type(manifest, type_name, field_name))
+        })?;
+        Some(self.lower_pub_manifest_type_ref(library, &field.ty))
+    }
+
+    /// Resolve one checked API field from a module-qualified public type target path.
+    fn api_field_export_for_target_path(
+        api: &incan_frontend::api_metadata::CheckedApiMetadataPackage,
+        target_path: &[String],
+        field_name: &str,
+    ) -> Option<FieldExport> {
+        let type_name = target_path.last()?;
+        let path = if target_path
+            .first()
+            .is_some_and(|segment| segment == API_CRATE_ROOT_SEGMENT)
+        {
+            &target_path[1..]
+        } else {
+            target_path
+        };
+        let module_path = path.get(..path.len().saturating_sub(1))?;
+        let module = api.modules.iter().find(|module| module.module_path == module_path)?;
+        module
+            .declarations
+            .iter()
+            .find_map(|declaration| Self::api_field_export_for_declaration(declaration, type_name, field_name))
+    }
+
+    /// Resolve a field of a public type that is exposed only through facade aliases or checked API declarations.
+    ///
+    /// The compact export list may carry the type as an alias entry while checked API metadata still records the
+    /// original declaration and its fields; backend field lookup must read that same metadata or a field read plans
+    /// differently between direct provider modules and public facades.
+    fn api_field_export_for_pub_type(
+        manifest: &LibraryManifest,
+        type_name: &str,
+        field_name: &str,
+    ) -> Option<FieldExport> {
+        let api = manifest.contract_metadata.api.as_ref()?;
+        for alias in manifest.exports.aliases.iter().filter(|alias| alias.name == type_name) {
+            if let Some(field) = Self::api_field_export_for_target_path(api, &alias.target_path, field_name) {
+                return Some(field);
+            }
+        }
+        api.modules
+            .iter()
+            .flat_map(|module| module.declarations.iter())
+            .find_map(|declaration| Self::api_field_export_for_declaration(declaration, type_name, field_name))
+    }
+
+    /// Return the requested field of one checked API model or class declaration.
+    fn api_field_export_for_declaration(
+        declaration: &ApiDeclaration,
+        type_name: &str,
+        field_name: &str,
+    ) -> Option<FieldExport> {
+        let fields = match declaration {
+            ApiDeclaration::Model(model) if model.name == type_name => model.fields.as_slice(),
+            ApiDeclaration::Class(class) if class.name == type_name => class.fields.as_slice(),
+            _ => return None,
+        };
+        fields.iter().find(|field| field.name == field_name).cloned()
     }
 
     /// Decode the exact provider-local source path carried by a canonical public dependency type.
@@ -4331,8 +4437,9 @@ mod tests {
     use incan_frontend::library_exports::CheckedPresetValue;
     use incan_frontend::library_manifest::{
         AliasExport, CompiledProviderMetadata, ExportIdentity, ExportIdentityKind, ExportIdentityProjection,
-        FunctionExport, LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION, LibraryExports, LibraryIdentityGraph,
-        LibraryManifest, ParamDefaultExport, ParamExport, ParamKindExport, ProviderModuleClaim, TypeRef,
+        FieldExport, FieldVisibilityExport, FunctionExport, LEGACY_LIBRARY_IDENTITY_GRAPH_SCHEMA_VERSION,
+        LibraryExports, LibraryIdentityGraph, LibraryManifest, ModelExport, ParamDefaultExport, ParamExport,
+        ParamKindExport, ProviderModuleClaim, TypeRef,
     };
     use incan_frontend::library_manifest_index::{
         LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
@@ -4845,6 +4952,166 @@ mod tests {
                 "consume".to_string()
             ]),
             "module-qualified calls must use provider claims rather than the compiler's legacy stdlib registry"
+        );
+        Ok(())
+    }
+
+    /// One public field declaration as a source-backed provider manifest records it.
+    fn pub_field_export(name: &str, ty: TypeRef) -> FieldExport {
+        FieldExport {
+            name: name.to_string(),
+            canonical: None,
+            ty,
+            surface_type_name: None,
+            visibility: FieldVisibilityExport::Public,
+            has_default: false,
+            default: None,
+            alias: None,
+            description: None,
+        }
+    }
+
+    /// One public model declaration with the given fields and nothing else.
+    fn pub_model_export(name: &str, fields: Vec<FieldExport>) -> ModelExport {
+        ModelExport {
+            name: name.to_string(),
+            type_params: Vec::new(),
+            traits: Vec::new(),
+            trait_adoptions: Vec::new(),
+            derives: Vec::new(),
+            fields,
+            properties: Vec::new(),
+            methods: Vec::new(),
+        }
+    }
+
+    /// Regression for #1697: a field read on a dependency-owned model keeps the field's union owned by the provider.
+    ///
+    /// The checker records the field with the provider's `pub type ColumnExpr = Union[...]` alias expanded, so the
+    /// checked type reaches lowering as a structural union over provider-qualified members. The declared field type
+    /// read from the provider manifest is the `ExternalUnion` carrier; retaining it onto the checked type is the
+    /// fact the match lowering consumes, and that carrier resolves the consumer's bare constructor patterns to the
+    /// provider-qualified variants. A field the provider does not declare keeps the checked type, and the
+    /// native-only retention used for decorator surfaces still ignores a carrier without a native representation.
+    #[test]
+    fn pub_model_field_read_keeps_dependency_owned_union_carrier_issue1697() -> Result<(), String> {
+        let named = |name: &str| TypeRef::Named {
+            origin: None,
+            name: name.to_string(),
+        };
+        let column_expr = TypeRef::Applied {
+            origin: None,
+            name: crate::types::IR_UNION_TYPE_NAME.to_string(),
+            args: vec![named("IntLiteralExpr"), named("StringLiteralExpr")],
+        };
+        let mut manifest = LibraryManifest::new("querykit", "0.1.0");
+        manifest.exports.models.push(pub_model_export(
+            "IntLiteralExpr",
+            vec![pub_field_export("value", named("int"))],
+        ));
+        manifest.exports.models.push(pub_model_export(
+            "StringLiteralExpr",
+            vec![pub_field_export("value", named("str"))],
+        ));
+        manifest.exports.models.push(pub_model_export(
+            "AggregateMeasure",
+            vec![pub_field_export("expr", column_expr.clone())],
+        ));
+        manifest.exports.models.push(pub_model_export(
+            "Projection",
+            vec![pub_field_export(
+                "columns",
+                TypeRef::Applied {
+                    origin: None,
+                    name: incan_lang::lang::types::collections::as_str(
+                        incan_lang::lang::types::collections::CollectionTypeId::List,
+                    )
+                    .to_string(),
+                    args: vec![column_expr],
+                },
+            )],
+        ));
+        let index = LibraryManifestIndex::from_entries(HashMap::from([(
+            "querykit".to_string(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(manifest),
+                metadata: LibraryArtifactMetadata::from_crate_root(
+                    "querykit",
+                    "querykit",
+                    std::env::temp_dir().join("incan_issue1697_querykit"),
+                ),
+            },
+        )]));
+        let mut lowering = AstLowering::new();
+        lowering.set_provider_plan(Some(Arc::new(ProviderPlan::for_library_index(index))));
+        for model in ["AggregateMeasure", "Projection"] {
+            lowering.import_aliases.insert(
+                model.to_string(),
+                vec!["pub".to_string(), "querykit".to_string(), model.to_string()],
+            );
+        }
+
+        // ---- The checked field type: the alias expanded, members spelled through the provider ----
+        let checked_union = crate::lower::types::union_ir_type(vec![
+            IrType::Struct("querykit::IntLiteralExpr".to_string()),
+            IrType::Struct("querykit::StringLiteralExpr".to_string()),
+        ]);
+        let measure = IrType::Struct("querykit::AggregateMeasure".to_string());
+
+        // ---- The declared field type names the owner; retention puts it in the union position ----
+        let declared = lowering
+            .declared_field_type_for_imported_pub_type("querykit", &measure, "expr")
+            .ok_or("expected the provider's `expr` field declaration")?;
+        assert!(
+            matches!(&declared, IrType::ExternalUnion { library, .. } if library == "querykit"),
+            "the declared field type must be the provider-owned union carrier, got {declared:?}"
+        );
+        let retained = AstLowering::retain_provider_owned_union_representation(checked_union.clone(), &declared);
+        assert_eq!(
+            retained, declared,
+            "the checked union position takes the provider-owned carrier"
+        );
+
+        // ---- The carrier resolves the consumer's constructor patterns to provider-qualified variants ----
+        let wrapper = retained
+            .union_type_name()
+            .ok_or("the retained carrier must still be a union")?;
+        assert_eq!(
+            retained.union_variant_index_for_member(&IrType::Struct("IntLiteralExpr".to_string())),
+            Some(0),
+            "a bare constructor pattern names a member of the provider's union"
+        );
+        assert_eq!(
+            retained.union_variant_path(1),
+            Some(format!("querykit::{wrapper}::V1")),
+            "every narrowing arm is spelled through the provider-qualified wrapper"
+        );
+
+        // ---- A `List` field carries the owner into its element position ----
+        let projection = IrType::Struct("querykit::Projection".to_string());
+        let declared_columns = lowering
+            .declared_field_type_for_imported_pub_type("querykit", &projection, "columns")
+            .ok_or("expected the provider's `columns` field declaration")?;
+        let retained_columns = AstLowering::retain_provider_owned_union_representation(
+            IrType::List(Box::new(checked_union.clone())),
+            &declared_columns,
+        );
+        assert_eq!(
+            retained_columns,
+            IrType::List(Box::new(declared.clone())),
+            "the loop element of a `List[ColumnExpr]` field is the provider-owned carrier"
+        );
+
+        // ---- No declaration, no change; the native-only retention keeps ignoring an unprojected carrier ----
+        assert_eq!(
+            lowering.declared_field_type_for_imported_pub_type("querykit", &measure, "label"),
+            None,
+            "a field the provider does not declare has no declared type to retain"
+        );
+        assert_eq!(
+            AstLowering::retain_native_union_representation(checked_union.clone(), &declared),
+            checked_union,
+            "decorator-surface retention admits only carriers with a native representation"
         );
         Ok(())
     }
