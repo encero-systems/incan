@@ -1,6 +1,6 @@
 //! Generic functions and methods: `Self` substitution at call sites (#237, #388), bounds enforced at call sites,
 //! explicit call type arguments and RFC 054 inference placeholders, the #1373 hints, local inference after factory
-//! calls, `Type[...]` tokens as values, and reflection magic methods.
+//! calls, `Type[...]` tokens as values, reflection magic methods, and the arithmetic a type parameter admits (#1715).
 
 use super::*;
 
@@ -927,5 +927,120 @@ def run() -> int:
         errs.iter()
             .any(|e| e.message.contains("not supported for this call form")),
         "expected unsupported call-site type args diagnostic, got {errs:?}"
+    );
+}
+
+// ---- #1715: `/`, `//`, `%` and `**` have no bound a type parameter could carry ----
+
+#[test]
+fn numeric_only_operators_on_a_type_parameter_are_refused_with_the_operator_named_issue1715() {
+    // The program from #1715 plus the two operators that share its root: each is refused once, at the operator,
+    // naming the operator, the parameter and the trait hook a bound could define instead.
+    let source = r#"
+def modulo[T](a: T, b: T) -> T:
+    return a % b
+
+def divide[T](a: T, b: T) -> T:
+    return a / b
+
+def floor[T](a: T, b: T) -> T:
+    return a // b
+
+def power[T](a: T, b: T) -> T:
+    return a ** b
+
+def main() -> None:
+    println(modulo(8, 3))
+    println(divide(8.0, 2.0))
+"#;
+    let errors = check_str_err(source, "arithmetic without a bound on a type parameter must be refused");
+    let refused = errors
+        .iter()
+        .filter(|error| error.stable_code() == Some("INCAN-T0109"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        refused.iter().map(|error| error.message.as_str()).collect::<Vec<_>>(),
+        vec![
+            "Operator '%' cannot be applied to values of type parameter 'T'",
+            "Operator '/' cannot be applied to values of type parameter 'T'",
+            "Operator '//' cannot be applied to values of type parameter 'T'",
+            "Operator '**' cannot be applied to values of type parameter 'T'",
+        ],
+        "one report per operator, in source order; got {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+    const HOOKS: [&str; 4] = ["'__mod__'", "'__div__'", "'__floordiv__'", "'__pow__'"];
+    let hooks = refused
+        .iter()
+        .map(|error| {
+            error
+                .hints
+                .iter()
+                .find_map(|hint| HOOKS.into_iter().find(|hook| hint.contains(*hook)))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        hooks,
+        vec![
+            Some("'__mod__'"),
+            Some("'__div__'"),
+            Some("'__floordiv__'"),
+            Some("'__pow__'")
+        ],
+        "each hint names its operator's trait hook, got {:?}",
+        refused.iter().map(|error| &error.hints).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn inferred_bound_operators_and_concrete_numeric_operands_are_accepted_issue1715() {
+    // `+`, `-` and `*` keep their RFC 023 inferred bounds; the four numeric-only operators are accepted on the
+    // concrete numeric types, which is the first remedy the diagnostic names.
+    assert_check_ok(
+        r#"
+def add[T](a: T, b: T) -> T:
+    return a + b
+
+def subtract[T](a: T, b: T) -> T:
+    return a - b
+
+def multiply[T](a: T, b: T) -> T:
+    return a * b
+
+def modulo(a: int, b: int) -> int:
+    return a % b
+
+def divide(a: float, b: float) -> float:
+    return a / b
+
+def main() -> None:
+    println(f"{add(2, 3)} {subtract(3, 2)} {multiply(2, 3)}")
+    println(modulo(8, 3))
+    println(divide(8.0, 2.0))
+"#,
+    );
+}
+
+#[test]
+fn a_bound_trait_defining_the_operator_hook_resolves_it_on_a_type_parameter_issue1715() {
+    // The second remedy the diagnostic names: the operator resolves through the bound trait's RFC 028 hook, so the
+    // refusal does not apply.
+    assert_check_ok(
+        r#"
+trait Remainder[Rhs, Output]:
+  def __mod__(self, other: Rhs) -> Output: ...
+
+model Cents with Remainder[Cents, Cents]:
+  value: int
+
+  def __mod__(self, other: Cents) -> Cents:
+    return Cents(value=self.value % other.value)
+
+def modulo[T with Remainder[T, T]](a: T, b: T) -> T:
+    return a % b
+
+def main() -> None:
+    println(modulo(Cents(value=8), Cents(value=3)).value)
+"#,
     );
 }

@@ -53,6 +53,7 @@ pub mod stdlib_loader;
 mod trait_bound_relations;
 mod type_info;
 mod validate_rust_module;
+mod web_routes;
 
 pub use const_eval::ConstValue;
 pub use type_info::{
@@ -224,6 +225,32 @@ impl MemberBindingKind {
     }
 }
 
+/// One imported dependency member as import resolution proved it: the declaration it binds and the name the
+/// declaring module binds that declaration under.
+///
+/// `declared_name` is the written item name for a direct import and the last re-export hop's target name for a facade
+/// chain. It differs from `identity.declaration_name` exactly when the declaring module binds one declaration under
+/// a second name (`pub scale_alias = alias scale`); a facade's `… import calculate as facade_calculate` is not that,
+/// so a consumer of `facade_calculate` resolves to `declared_name == "calculate"`. Lowering reads the pair to spell a
+/// projected import the way its declaring module does (#1710).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedDependencyMember {
+    /// Canonical identity of the declaration the import binds.
+    pub identity: CanonicalSymbolId,
+    /// The name the declaring module binds `identity` under.
+    pub declared_name: String,
+}
+
+impl ResolvedDependencyMember {
+    /// Pair an identity with the name the walk looked it up by in the module that answered.
+    fn declared_as(identity: CanonicalSymbolId, declared_name: &str) -> Self {
+        Self {
+            identity,
+            declared_name: declared_name.to_string(),
+        }
+    }
+}
+
 /// Canonical nominal identity for one type exported through a compiled public-library dependency.
 ///
 /// Local aliases and provider-qualified internal signature spellings map to this value. Admitted artifacts compare
@@ -373,6 +400,37 @@ pub struct CAbiRawCallResult {
     pub slots_by_parameter: HashMap<String, String>,
 }
 
+/// A Rust associated call whose owner type arguments the call itself left open (#1720).
+///
+/// `HashMap.new()` on `rust::std::collections::HashMap` names neither `K` nor `V`, and nothing at the call fixes
+/// them: no explicit `[str, int]`, no expected type, no argument that mentions them. Rust would still fill them
+/// from a later reader of the value; the checker keeps this record only long enough to learn whether one exists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenRustGenericCall {
+    /// The receiver as the source spells it (`HashMap`), for the diagnostic.
+    pub owner: String,
+    /// The associated function called (`new`).
+    pub method: String,
+    /// The owner's type parameters the call left open, in declaration order (`K`, `V`).
+    pub type_params: Vec<String>,
+}
+
+/// A local bound to an [`OpenRustGenericCall`] that no later statement has read yet (#1720).
+///
+/// Dropped on the first read of the name; whatever is left when the declaring block ends is refused, because a
+/// binding nothing reads gives Rust nothing to infer the arguments from and the build would stop on the call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenRustGenericBinding {
+    /// The local's name.
+    pub name: String,
+    /// Identity of the statement block that declared the binding, so the block's end reports only its own.
+    pub block: usize,
+    /// Span of the call expression the binding received.
+    pub span: Span,
+    /// The call whose open parameters the binding carries.
+    pub call: OpenRustGenericCall,
+}
+
 impl Drop for TypeCompatibilityDepthGuard<'_> {
     fn drop(&mut self) {
         self.depth.set(self.depth.get().saturating_sub(1));
@@ -402,6 +460,10 @@ pub struct TypeChecker {
     pub warnings: Vec<CompileError>,
     /// Track which bindings are mutable for mutation checks.
     pub mutable_bindings: HashSet<String>,
+    /// The method whose body is being checked while its receiver is a plain `self`, so a write through `self`
+    /// inside it can be refused with the declaration to change (#1723). `None` outside a method body, and inside a
+    /// `mut self` method.
+    current_immutable_self_method: Option<String>,
     /// Iterator bindings consumed by terminal RFC 088 methods in the current local checking flow.
     pub consumed_iterator_bindings: HashMap<String, Span>,
     /// Resource bindings transferred to an owning C ABI parameter in the current local checking flow.
@@ -420,6 +482,16 @@ pub struct TypeChecker {
     pub unbound_c_abi_raw_call_results: HashMap<(usize, usize), CAbiRawCallResult>,
     /// Raw C result bindings whose enum outcome may establish branch-local output validity.
     pub c_abi_raw_call_results: Vec<CAbiRawCallResult>,
+    /// Rust associated calls in the current statement whose owner type arguments were left open, keyed by call
+    /// span, waiting for the statement to say whether a local receives the value (#1720). Cleared when the
+    /// statement ends: a value nested somewhere else may still be fixed by its context.
+    open_rust_generic_calls: HashMap<(usize, usize), OpenRustGenericCall>,
+    /// Locals bound to open Rust associated calls that nothing has read yet (#1720).
+    open_rust_generic_bindings: Vec<OpenRustGenericBinding>,
+    /// Identity of the statement block being checked, and the count that mints those identities. A block's
+    /// identity keys the bindings it declared so its end reports only those.
+    current_statement_block: usize,
+    statement_block_serial: usize,
     /// Slot identities currently readable in the active control-flow path.
     pub available_c_abi_output_slots: HashSet<String>,
     /// Slot identities already consumed by `take()` in the active checking flow.
@@ -482,7 +554,9 @@ pub struct TypeChecker {
     dependency_import_type_alias_transaction: Option<HashMap<String, Option<TypeAliasTarget>>>,
     /// Whether source annotation names should be validated during the semantic check pass.
     validate_source_type_names: bool,
-    /// Unbound source annotation diagnostics already emitted in the current program check.
+    /// Source annotation diagnostics already emitted in the current program check, keyed by spelling and span:
+    /// unbound names, and bare tuple annotations (#1717), which the collection pass and the body check can both
+    /// meet.
     unknown_source_type_names_emitted: HashSet<(String, usize, usize)>,
     /// The callable whose signature and body annotations are being checked, when one is active.
     ///
@@ -710,6 +784,7 @@ impl TypeChecker {
             errors: Vec::new(),
             warnings: Vec::new(),
             mutable_bindings: HashSet::new(),
+            current_immutable_self_method: None,
             consumed_iterator_bindings: HashMap::new(),
             transferred_c_resource_bindings: HashMap::new(),
             unbound_c_abi_span_constructors: HashMap::new(),
@@ -718,6 +793,10 @@ impl TypeChecker {
             pending_c_abi_output_slots: HashMap::new(),
             unbound_c_abi_output_slot_constructors: HashMap::new(),
             unbound_c_abi_raw_call_results: HashMap::new(),
+            open_rust_generic_calls: HashMap::new(),
+            open_rust_generic_bindings: Vec::new(),
+            current_statement_block: 0,
+            statement_block_serial: 0,
             c_abi_raw_call_results: Vec::new(),
             available_c_abi_output_slots: HashSet::new(),
             consumed_c_abi_output_slots: HashMap::new(),
@@ -5036,6 +5115,20 @@ impl TypeChecker {
             return decimal_ty;
         }
         if let Type::Simple(name) = &ty.node
+            && self.is_bare_builtin_tuple_annotation(name)
+        {
+            // The same annotation can be resolved by the collection pass and again by the body check; one report
+            // per occurrence, keyed the way unknown annotation names are.
+            if self
+                .unknown_source_type_names_emitted
+                .insert((name.clone(), ty.span.start, ty.span.end))
+            {
+                self.errors
+                    .push(errors::tuple_annotation_requires_element_types(name, ty.span));
+            }
+            return ResolvedType::Unknown;
+        }
+        if let Type::Simple(name) = &ty.node
             && let Some(sym) = self.lookup_symbol(name.as_str())
             && let SymbolKind::RustItem(info) = &sym.kind
             && info.binding == RustImportBindingKind::CrateRoot
@@ -5053,6 +5146,17 @@ impl TypeChecker {
         );
         self.record_mutable_rust_type_argument_projection(ty);
         self.expand_type_aliases(resolved)
+    }
+
+    /// Return whether a simple annotation is the builtin tuple family written without element types (#1717).
+    ///
+    /// `Tuple` and `tuple` name a family of types, one per element list; the bare word names no type, and the
+    /// shared resolver would otherwise hand lowering a `Tuple` nominal that no backend can spell. Only the prelude
+    /// builtin counts: a source declaration that shadows the spelling with its own `Tuple` type is a nominal like
+    /// any other and resolves as one.
+    fn is_bare_builtin_tuple_annotation(&self, name: &str) -> bool {
+        collection_type_id(name) == Some(CollectionTypeId::Tuple)
+            && matches!(self.lookup_type_info(name), Some(TypeInfo::Builtin))
     }
 
     /// Return the nominal type a module-qualified spelling was proven to name, for the shared type resolver.
@@ -7384,12 +7488,31 @@ impl TypeChecker {
     /// A symbol kind, name, module key, and span are insufficient proof: absent canonical data must stay absent rather
     /// than being reconstructed into a plausible but invented declaration.
     pub fn dependency_member_identity(&self, module: &ImportPath, item_name: &str) -> Option<CanonicalSymbolId> {
+        self.dependency_member_resolution(module, item_name)
+            .map(|member| member.identity)
+    }
+
+    /// Resolve an imported member to its declaring identity and to the name its declaring module binds it under.
+    ///
+    /// The identity half is [`Self::dependency_member_identity`]. The name half is what a facade chain loses: a
+    /// re-export may publish a declaration under a new name (`pub from provider import calculate as
+    /// facade_calculate`), and a consumer of `facade_calculate` binds exactly the projection a direct import of
+    /// `calculate` binds. The written item name therefore says nothing about how the declaring module spells the
+    /// declaration, and lowering must not read a re-export rename as an `alias` declaration, which is a second name
+    /// the declaring module itself binds to one identity. The walk knows the answer at its last hop: the item name it
+    /// stopped at is the declaring module's own spelling, `calculate` for a re-export rename and `scale_alias` for
+    /// `pub scale_alias = alias scale` (#1710).
+    pub fn dependency_member_resolution(
+        &self,
+        module: &ImportPath,
+        item_name: &str,
+    ) -> Option<ResolvedDependencyMember> {
         // Resolve through the consumer's own module graph first. `dependency_source_import_candidates` already
         // orders a granted SDK provider ahead of ordinary candidates for a `std.*` path, so provider precedence is
         // preserved without keying on the spelling here.
         let current_module_path = self.current_module_path.as_deref().unwrap_or_default();
-        if let Some(identity) = self.dependency_member_identity_from(current_module_path, module, item_name, 0) {
-            return Some(identity);
+        if let Some(member) = self.dependency_member_resolution_from(current_module_path, module, item_name, 0) {
+            return Some(member);
         }
 
         // Fall back to the provider registry keyed by the spelled path. A compiled provider is reachable by the path
@@ -7400,20 +7523,22 @@ impl TypeChecker {
         // render` inside `pkg.app` selects the sibling `pkg.helpers`, but a root `helpers` declaring the same member
         // answered instead -- a module the import did not select.
         self.sdk_provider_member_identity(module, item_name)
+            .map(|identity| ResolvedDependencyMember::declared_as(identity, item_name))
     }
 
     /// Resolve one imported member to its declaring identity, using `from_module_path` as the resolution base.
     ///
     /// The base is the *consumer's* module for a direct import and the *facade's* module when following a re-export,
     /// because a facade's own relative import paths resolve against where the facade lives, not where the consumer
-    /// does.
-    fn dependency_member_identity_from(
+    /// does. Every arm that stops the walk answers by a direct lookup of `item_name` in the module it stopped at, so
+    /// that name is the declaring module's spelling the result carries.
+    fn dependency_member_resolution_from(
         &self,
         from_module_path: &[String],
         module: &ImportPath,
         item_name: &str,
         depth: usize,
-    ) -> Option<CanonicalSymbolId> {
+    ) -> Option<ResolvedDependencyMember> {
         if depth >= Self::MAX_REEXPORT_DEPTH {
             return None;
         }
@@ -7438,7 +7563,8 @@ impl TypeChecker {
                     .dependency_direct_member_identities
                     .get(&key)
                     .and_then(|identities| identities.get(item_name))
-                    .cloned();
+                    .cloned()
+                    .map(|identity| ResolvedDependencyMember::declared_as(identity, item_name));
             }
 
             // Otherwise the member arrived here as a re-export. Follow it to the declaration it names, resolving
@@ -7447,8 +7573,11 @@ impl TypeChecker {
             // reaches the same provider registry and source metadata the binding itself came from, in the same order.
             let (target_module, target_name) = self.dependency_member_reexports.get(&key)?.get(item_name)?;
             return self
-                .dependency_member_identity_from(&owner, target_module, target_name, depth + 1)
-                .or_else(|| self.stdlib_reexport_identity(target_module, target_name));
+                .dependency_member_resolution_from(&owner, target_module, target_name, depth + 1)
+                .or_else(|| {
+                    self.stdlib_reexport_identity(target_module, target_name)
+                        .map(|identity| ResolvedDependencyMember::declared_as(identity, target_name))
+                });
         }
         // A chain that ends in a compiler-owned stdlib module has no dependency candidate to stop at; the stdlib
         // cache holds that module's declaration identities. Only a chain reaches here with a stdlib path: a direct
@@ -7456,7 +7585,10 @@ impl TypeChecker {
         if depth > 0 && module.parent_levels == 0 && !module.is_absolute {
             let module_path = canonicalize_source_module_segments(&module.segments);
             if module_path.first().map(String::as_str) == Some(incan_lang::lang::stdlib::STDLIB_ROOT) {
-                return self.stdlib_cache.cached_identity(&module_path, item_name);
+                return self
+                    .stdlib_cache
+                    .cached_identity(&module_path, item_name)
+                    .map(|identity| ResolvedDependencyMember::declared_as(identity, item_name));
             }
         }
         None
@@ -8406,7 +8538,8 @@ impl TypeChecker {
             // - a concrete tuple type: `Tuple[T1, T2, ...]`
             // - a supertype for any tuple when used without args: `Tuple`
             //
-            // This matches snapshot tests that use `tuple[int, str]` and `Tuple` as "any tuple".
+            // A checked annotation never produces the bare form any more (`resolve_type_checked` refuses it, #1717);
+            // the arm remains for the shared resolver's unchecked callers, which still spell "any tuple" this way.
             (ResolvedType::Tuple(_), ResolvedType::Named(name))
                 if collection_type_id(name.as_str()) == Some(CollectionTypeId::Tuple) =>
             {

@@ -631,9 +631,37 @@ impl AstLowering {
     /// The caller must already have joined the declaration through its selected binding. This does not compare names,
     /// select overloads, or change ordinary inferred leaves; it restores only admitted native unions at matching typed
     /// positions after frontend alias expansion erased their representation.
-    pub fn retain_native_union_representation(mut inferred: IrType, declared: &IrType) -> IrType {
+    pub fn retain_native_union_representation(inferred: IrType, declared: &IrType) -> IrType {
+        Self::retain_declared_union_carriers(inferred, declared, &|declared: &IrType| {
+            matches!(declared, IrType::ExternalUnion { native: Some(_), .. })
+        })
+    }
+
+    /// Retain every provider-owned union carrier a dependency's declaration names onto the checked type of a value.
+    ///
+    /// The checker types a value read through a dependency-owned declaration (a `pub model` field, for instance) with
+    /// the provider's union alias expanded to its members, which spells the union as a structural, consumer-local
+    /// wrapper. The declaration lowered in the provider's context names the owning crate for every union position,
+    /// whether or not the provider published a native representation for it, so both `ExternalUnion` forms are
+    /// admitted here. Every other position keeps the checked inference, which already carries call-site and generic
+    /// substitutions the declaration cannot.
+    pub fn retain_provider_owned_union_representation(inferred: IrType, declared: &IrType) -> IrType {
+        Self::retain_declared_union_carriers(inferred, declared, &|declared: &IrType| {
+            matches!(declared, IrType::ExternalUnion { .. })
+        })
+    }
+
+    /// Walk an inferred and a declared type in parallel, replacing each union position whose declared carrier `admits`.
+    ///
+    /// Only positions where the inferred type is a union and the declared type passes `admits` change; a structural
+    /// mismatch between the two shapes stops the walk at that position and leaves the inferred type as it was.
+    fn retain_declared_union_carriers(
+        mut inferred: IrType,
+        declared: &IrType,
+        admits: &dyn Fn(&IrType) -> bool,
+    ) -> IrType {
         match (&mut inferred, declared) {
-            (target, IrType::ExternalUnion { native: Some(_), .. }) if target.is_union() => {
+            (target, carrier) if target.is_union() && admits(carrier) => {
                 *target = declared.clone();
             }
             (IrType::List(left), IrType::List(right))
@@ -642,23 +670,23 @@ impl AstLowering {
             | (IrType::Ref(left), IrType::Ref(right))
             | (IrType::RefMut(left), IrType::RefMut(right))
             | (IrType::TypeToken(left), IrType::TypeToken(right)) => {
-                **left = Self::retain_native_union_representation(std::mem::take(left.as_mut()), right);
+                **left = Self::retain_declared_union_carriers(std::mem::take(left.as_mut()), right, admits);
             }
             (IrType::Dict(left, value), IrType::Dict(right, other))
             | (IrType::Result(left, value), IrType::Result(right, other)) => {
-                **left = Self::retain_native_union_representation(std::mem::take(left.as_mut()), right);
-                **value = Self::retain_native_union_representation(std::mem::take(value.as_mut()), other);
+                **left = Self::retain_declared_union_carriers(std::mem::take(left.as_mut()), right, admits);
+                **value = Self::retain_declared_union_carriers(std::mem::take(value.as_mut()), other, admits);
             }
             (IrType::Tuple(left), IrType::Tuple(right)) if left.len() == right.len() => {
                 for (left, right) in left.iter_mut().zip(right) {
-                    *left = Self::retain_native_union_representation(std::mem::take(left), right);
+                    *left = Self::retain_declared_union_carriers(std::mem::take(left), right, admits);
                 }
             }
             (IrType::NamedGeneric(left_name, left), IrType::NamedGeneric(right_name, right))
                 if left_name == right_name && left.len() == right.len() =>
             {
                 for (left, right) in left.iter_mut().zip(right) {
-                    *left = Self::retain_native_union_representation(std::mem::take(left), right);
+                    *left = Self::retain_declared_union_carriers(std::mem::take(left), right, admits);
                 }
             }
             (
@@ -669,9 +697,9 @@ impl AstLowering {
                 },
             ) if params.len() == declared_params.len() => {
                 for (param, declared) in params.iter_mut().zip(declared_params) {
-                    *param = Self::retain_native_union_representation(std::mem::take(param), declared);
+                    *param = Self::retain_declared_union_carriers(std::mem::take(param), declared, admits);
                 }
-                **ret = Self::retain_native_union_representation(std::mem::take(ret.as_mut()), declared_ret);
+                **ret = Self::retain_declared_union_carriers(std::mem::take(ret.as_mut()), declared_ret, admits);
             }
             _ => {}
         }

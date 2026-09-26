@@ -1,0 +1,24 @@
+# behavior: a tuple pattern over a tuple[...]-typed value binds its names with the element types
+# retires: loaves/compiler/incan_ir/src/lower/expr/patterns.rs::tuple_pattern_over_a_written_tuple_annotation_binds_its_names_issue1714
+# expect-stdout:
+#   42 hello
+#   zero
+#   43 HELLO
+
+"""Issue #1714: the names a tuple pattern binds are usable, typed as the tuple's elements."""
+
+def describe(pair: tuple[int, str]) -> str:
+    """Bind both items and use them with their element types."""
+    match pair:
+        (0, _) => return "zero"
+        (number, word) => return f"{number + 1} {word.upper()}"
+
+def main() -> None:
+    """The issue's program, then the same bindings through a function parameter."""
+    pair: tuple[int, str] = (42, "hello")
+    match pair:
+        (0, _) => println("zero")
+        (number, word) => println(f"{number} {word}")
+    zero: tuple[int, str] = (0, "zero")
+    println(describe(zero))
+    println(describe(pair))

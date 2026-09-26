@@ -8,6 +8,12 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 
 incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use ::std::env::args;
+const INTS: incan_std_core::frozen::FrozenList<i64> = incan_std_core::frozen::FrozenList::new(
+    &[7],
+);
+const WORDS: incan_std_core::frozen::FrozenList<&'static str> = incan_std_core::frozen::FrozenList::new(
+    &["x"],
+);
 fn key_list(values: std::collections::HashMap<String, i64>) -> Vec<String> {
     return ((values).keys().cloned()).collect::<Vec<_>>();
 }
@@ -53,7 +59,7 @@ fn thawed_text(frozen: incan_std_core::frozen::FrozenList<&'static str>) -> Vec<
         .collect::<Vec<_>>();
 }
 fn from_generator(source: incan_std_core::iter::Generator<i64>) -> Vec<i64> {
-    return (source).into_iter().collect::<Vec<_>>();
+    return ::std::iter::Iterator::collect::<Vec<_>>(source);
 }
 fn from_iterator<
     __IncanTrait0: crate::__incan_std::derives::collection::Iterator<(i64, String)>,
@@ -120,13 +126,8 @@ fn main() {
         "{}", ::std::convert::identity(byte_values(b"ab".to_vec()).len() as i64)
     );
     let _ = println!("{}", ::std::convert::identity(counted().len() as i64));
-    let _ = println!(
-        "{}", ::std::convert::identity(thawed(FrozenList(vec![7])).len() as i64)
-    );
-    let _ = println!(
-        "{}", ::std::convert::identity(thawed_text(FrozenList(vec!["x".to_string()]))
-        .len() as i64)
-    );
+    let _ = println!("{}", ::std::convert::identity(thawed(INTS).len() as i64));
+    let _ = println!("{}", ::std::convert::identity(thawed_text(WORDS).len() as i64));
     let _ = println!("{}", reused(vec!["p".to_string(), "q".to_string()]));
     let _ = println!(
         "{}",

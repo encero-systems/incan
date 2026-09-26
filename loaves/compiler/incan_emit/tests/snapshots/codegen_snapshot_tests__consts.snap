@@ -112,5 +112,5 @@ fn main() {
         | { __incan_static_value.canonical_forms.len() }) } }
     );
     let _ = println!("{}", D.len());
-    let _ = println!("{}", T);
+    let _ = println!("{} {}", T.0, T.1);
 }

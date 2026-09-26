@@ -133,10 +133,10 @@ def counter() -> int:
 **Error:**
 
 ```bash
-Cannot mutate self - method takes immutable self
+Method 'increment' assigns to 'self.value' but takes 'self'
 ```
 
-**Problem:** Method modifies `self` but doesn't declare `mut self`.
+**Problem:** Method modifies `self` but doesn't declare `mut self`. The same report (`INCAN-T0102`) covers a call that changes a field, such as `self.items.append(x)` or `self.items.pop()`, and a call to one of the type's own `mut self` methods.
 
 **Solution:**
 

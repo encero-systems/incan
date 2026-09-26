@@ -834,7 +834,7 @@ This is also why a separate dedicated interop crate is not the initial recommend
 ### Emission
 
 - [x] Emit calls and coercions from resolved provenance: `InteropCoerce` emits `.to_string()`, `.to_vec()`, `as f32`, borrow `&`, identity per `CoercionPolicy`; adapter calls emit `adapter(inner)` for `via` and `adapter(inner)?` for `try`.
-- [x] Capability bounds emit as Rust `where`-style predicates (`Send`, `Sync`, `'static`, `Fn<T>`, `FnMut<T>`, `FnOnce<T>`).
+- [x] Capability bounds emit as Rust `where`-style predicates (`Send`, `Sync`, `'static`). The callable markers `Fn[...]`, `FnMut[...]` and `FnOnce[...]` do not emit `Fn<T>`, which Rust does not accept: each lowers to the canonical `std.traits.callable` bound of its arity (`Callable1<T, R>`) with the return type inferred at the call site (#1716). A marker names at most two parameters, and only on a function or method's type parameter; `incan check` refuses the other shapes (`INCAN-T0106`). All three markers lower to the same `Fn`-backed bound, so a value that is only `FnMut` or `FnOnce` is not admitted under `FnMut[...]`/`FnOnce[...]`.
 
 ### Stdlib / runtime
 

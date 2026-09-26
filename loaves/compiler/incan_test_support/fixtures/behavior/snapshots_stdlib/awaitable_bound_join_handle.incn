@@ -1,0 +1,18 @@
+# behavior: a generic parameter bounded by Awaitable[T] admits a spawned task's JoinHandle and awaits it to the task's join result (#1711)
+# retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_awaitable_bound_lowers_to_runtime_trait_codegen
+# expect-stdout:
+#   9
+
+import std.async
+from std.async.task import spawn, JoinHandle, TaskJoinError
+
+async def wait_for[T, F with Awaitable[T]](task: F) -> T:
+    return await task
+
+async def nine() -> int:
+    return 9
+
+async def main() -> None:
+    match await wait_for[Result[int, TaskJoinError], JoinHandle[int]](spawn(nine())):
+        Ok(value) => println(value)
+        Err(error) => println(f"join failed: {error.message()}")

@@ -981,3 +981,64 @@ def has_manifest(files: Dict[str, str]) -> bool:
         named_errors.iter().map(|error| &error.message).collect::<Vec<_>>()
     );
 }
+
+// ---- #1717: a tuple annotation spells its element types ----
+
+#[test]
+fn bare_tuple_annotation_is_refused_with_the_parameterized_spelling_issue1717() {
+    // The program from #1717, plus the lowercase spelling and a parameter position: each bare occurrence is refused
+    // once, with a hint in the author's casing.
+    let source = r#"
+def first(pair: tuple) -> int:
+    return pair[0]
+
+def main() -> None:
+    pair: tuple[int, str] = (1, "one")
+    multiple: Tuple = ("a", pair, "b", 42)
+    println("ok")
+"#;
+    let errors = check_str_err(source, "a bare tuple annotation must be refused");
+    let refused = errors
+        .iter()
+        .filter(|error| error.stable_code() == Some("INCAN-T0104"))
+        .map(|error| (error.message.clone(), error.hints.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        refused.iter().map(|(message, _)| message.as_str()).collect::<Vec<_>>(),
+        vec![
+            "Tuple annotation 'tuple' is missing its element types",
+            "Tuple annotation 'Tuple' is missing its element types",
+        ],
+        "one report per bare occurrence, in source order"
+    );
+    assert!(
+        refused[0].1.iter().any(|hint| hint.contains("'tuple[int, str]'"))
+            && refused[1].1.iter().any(|hint| hint.contains("'Tuple[int, str]'")),
+        "the hint keeps the author's casing, got: {:?}",
+        refused.iter().map(|(_, hints)| hints).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn parameterized_tuple_annotations_and_a_shadowing_tuple_type_are_accepted_issue1717() {
+    assert_check_ok(
+        r#"
+def main() -> None:
+    pair: tuple[int, str] = (1, "one")
+    triple: Tuple[int, int, int] = (1, 2, 3)
+    nested: tuple[tuple[int, str], tuple[int, int, int]] = (pair, triple)
+    println(nested[0][0])
+"#,
+    );
+    // A source type that takes the spelling for itself is an ordinary nominal, not the builtin family.
+    assert_check_ok(
+        r#"
+model Tuple:
+    left: int
+    right: int
+
+def sum(pair: Tuple) -> int:
+    return pair.left + pair.right
+"#,
+    );
+}

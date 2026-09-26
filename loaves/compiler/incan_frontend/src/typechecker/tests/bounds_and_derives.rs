@@ -491,8 +491,11 @@ def main() -> None:
     Ok(())
 }
 
+/// An aliased `std.serde.json` import derives, bounds and dispatches like the direct one. The checker records the
+/// alias's declaring identity (#1431), and lowering builds the dispatch path from that declaration name, never from
+/// the alias spelling (#1712).
 #[test]
-fn test_aliased_partial_serde_derive_adopts_trait_for_methods_and_bounds() {
+fn test_aliased_partial_serde_derive_adopts_trait_for_methods_and_bounds() -> Result<(), String> {
     let source = r#"
 from std.serde.json import Serialize as JsonSerialize
 
@@ -506,7 +509,44 @@ def encode[T with JsonSerialize](value: T) -> str:
 def main() -> str:
   return encode(Payload(value=1))
 "#;
-    assert_check_ok(source);
+    let ast = parse_program(source, "aliased serde derive");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| format!("aliased serde derive should typecheck: {errs:?}"))?;
+
+    let json_module = vec!["std".to_string(), "serde".to_string(), "json".to_string()];
+    let identity = checker
+        .type_info()
+        .resolved_import_identity("JsonSerialize")
+        .ok_or("no resolved import identity recorded for the aliased stdlib trait import")?;
+    if identity.origin != SymbolOrigin::Module(json_module.clone())
+        || identity.declaration_name != "Serialize"
+        || identity.kind != SemanticSourceTargetKind::Trait
+    {
+        return Err(format!(
+            "the alias identity must name the declaring stdlib module and declaration: {identity:?}"
+        ));
+    }
+    let dispatch = checker
+        .type_info()
+        .calls
+        .resolved_method_calls
+        .values()
+        .find(|call| call.method == "to_json")
+        .map(|call| call.dispatch.clone())
+        .ok_or("the bounded `value.to_json()` call must resolve to a trait dispatch")?;
+    let ResolvedMethodDispatch::Trait {
+        trait_name,
+        module_path,
+        ..
+    } = dispatch;
+    if trait_name != "JsonSerialize" || module_path != Some(json_module) {
+        return Err(format!(
+            "the dispatch keeps the call site's spelling beside the declaring module: {trait_name} in {module_path:?}"
+        ));
+    }
+    Ok(())
 }
 
 #[test]
