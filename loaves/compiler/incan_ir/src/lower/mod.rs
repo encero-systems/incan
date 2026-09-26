@@ -4134,6 +4134,7 @@ mod tests {
     mod builtin_str_arguments;
     mod derive_vocabulary_imports;
     mod method_decorator_receivers;
+    mod pattern_alternatives_and_private_rests;
     mod unary_operand_grouping;
 
     fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {

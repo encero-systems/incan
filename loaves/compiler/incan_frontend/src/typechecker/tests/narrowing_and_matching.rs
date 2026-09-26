@@ -705,6 +705,90 @@ def describe(a: Account) -> str:
     Ok(())
 }
 
+/// A partial pattern whose unnamed fields include a private field it may not name, one outside a method of the owning
+/// model, is recorded as such (#1740), so lowering covers its rest without naming that field. Inside the owner's own
+/// method the same field is nameable, and a rest of public fields is never recorded as private.
+#[test]
+fn partial_constructor_pattern_records_a_rest_holding_a_private_field_issue1740()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+pub model Account:
+  pub kind: str
+  pub tier: int
+  _secret: int
+
+  def shares_secret_with(self, other: Account) -> bool:
+    match other:
+      Account(_secret=0) =>
+        return true
+      _ =>
+        return false
+
+pub model Plan:
+  pub name: str
+  pub seats: int
+
+def describe(account: Account) -> str:
+  match account:
+    Account(kind="premium") =>
+      return "premium"
+    _ =>
+      return "other"
+
+def plan_name(plan: Plan) -> str:
+  match plan:
+    Plan(name="team") =>
+      return "team"
+    _ =>
+      return "other"
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+
+    let name_span = |pattern: &str, name: &str| -> Result<Span, Box<dyn std::error::Error>> {
+        let start = source
+            .find(pattern)
+            .ok_or_else(|| format!("fixture must spell `{pattern}`"))?;
+        Ok(Span::new(start, start + name.len()))
+    };
+    let outside = name_span("Account(kind=\"premium\")", "Account")?;
+    assert_eq!(
+        info.pattern_rest_fields(outside),
+        Some(["tier".to_string(), "_secret".to_string()].as_slice()),
+        "the rest still lists every unnamed field in declaration order"
+    );
+    assert!(
+        info.pattern_rest_has_private_fields(outside),
+        "outside the owner's methods, a rest holding a private field is recorded as one"
+    );
+
+    let inside = name_span("Account(_secret=0)", "Account")?;
+    assert_eq!(
+        info.pattern_rest_fields(inside),
+        Some(["kind".to_string(), "tier".to_string()].as_slice())
+    );
+    assert!(
+        !info.pattern_rest_has_private_fields(inside),
+        "inside the owner's method the rest holds only public fields"
+    );
+
+    let public_rest = name_span("Plan(name=\"team\")", "Plan")?;
+    assert_eq!(
+        info.pattern_rest_fields(public_rest),
+        Some(["seats".to_string()].as_slice())
+    );
+    assert!(
+        !info.pattern_rest_has_private_fields(public_rest),
+        "a rest of public fields is not recorded as private"
+    );
+    Ok(())
+}
+
 #[test]
 fn test_pattern_alternation_rejects_missing_binding() {
     let source = r#"

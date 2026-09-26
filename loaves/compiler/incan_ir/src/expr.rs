@@ -644,9 +644,18 @@ pub enum Pattern {
     Var(String),
     Literal(IrExpr),
     Tuple(Vec<Pattern>),
+    /// A named-field pattern over a model, class or struct-like variant.
     Struct {
         name: String,
+        /// The fields the pattern spells, each with its sub-pattern, in the order they are printed.
         fields: Vec<(String, Pattern)>,
+        /// Whether the pattern ends in a rest marker covering every field it does not spell.
+        ///
+        /// Lowering sets it when the source pattern leaves unnamed a field it may not name, such as a private field of
+        /// a model matched outside the model's own methods (#1740): that field cannot be spelled even as a wildcard,
+        /// because the generated code for another module's model does not expose it. Every other partial pattern
+        /// spells its omitted fields as wildcards and leaves this `false`.
+        rest: bool,
     },
     Enum {
         name: String,

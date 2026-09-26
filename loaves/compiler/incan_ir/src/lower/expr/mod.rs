@@ -9,6 +9,7 @@
 mod calls;
 mod comprehensions;
 mod helpers;
+mod pattern_alternatives;
 mod patterns;
 
 use std::collections::HashMap;

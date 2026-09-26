@@ -288,6 +288,8 @@ You can use canonical field names or aliases in destructuring keys (when aliases
 
 Private fields may only appear in a destructuring pattern inside methods declared on the owning model. External patterns cannot use either the canonical name or an alias to expose them.
 
+An external pattern names public fields only, and the fields it leaves unnamed, private ones included, match whatever they hold. Over the `SealedEnvelope` model above, `SealedEnvelope(envelope_id="a1") =>` selects its arm for an envelope with that id and any `body`, both in the declaring module and in a module that imports the model.
+
 ## Reflection helpers
 
 Models (and classes) provide:
