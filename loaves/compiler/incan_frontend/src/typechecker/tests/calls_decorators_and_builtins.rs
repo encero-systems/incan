@@ -506,8 +506,11 @@ async def fetch() -> int:
     assert_check_ok(source);
 }
 
+/// A checked program and the checker that holds the facts it recorded for lowering.
+type CheckedDecoratorProgram = (crate::ast::Program, TypeChecker);
+
 /// Check `source`, returning the checker so a test can read the facts it recorded for lowering.
-fn checked_decorator_program(source: &str) -> Result<(crate::ast::Program, TypeChecker), Box<dyn std::error::Error>> {
+fn checked_decorator_program(source: &str) -> Result<CheckedDecoratorProgram, Box<dyn std::error::Error>> {
     let tokens = lexer::lex(source).map_err(|errs| format!("lex failed: {errs:?}"))?;
     let ast = parser::parse(&tokens).map_err(|errs| format!("parse failed: {errs:?}"))?;
     let mut checker = TypeChecker::new();

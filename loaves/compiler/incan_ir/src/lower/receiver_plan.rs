@@ -104,10 +104,11 @@ mod tests {
 
     use super::{MethodDecoratorReceiverRole, MethodDecoratorReceiverSlot, plan_shared_method_decorator_receivers};
 
+    /// A parsed program with its function declarations' spans keyed by function name.
+    type ProgramWithFunctionSpans = (ast::Program, HashMap<String, (usize, usize)>);
+
     /// Parse `source` and return its declarations' spans keyed by function name.
-    fn parse_with_function_spans(
-        source: &str,
-    ) -> Result<(ast::Program, HashMap<String, (usize, usize)>), Box<dyn std::error::Error>> {
+    fn parse_with_function_spans(source: &str) -> Result<ProgramWithFunctionSpans, Box<dyn std::error::Error>> {
         let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
         let program = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
         let spans = program
