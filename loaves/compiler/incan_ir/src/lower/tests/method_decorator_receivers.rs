@@ -111,21 +111,21 @@ fn factory_slot_plans_the_decorator_shape_it_returns() -> Result<(), String> {
 class Box:
     value: int
 
-def labelled(name: str) -> ((Box, int) -> str) -> (Box, int) -> int:
+def labeled(name: str) -> ((Box, int) -> str) -> (Box, int) -> int:
     return as_int
 
 def as_int(func: (Box, int) -> str) -> (Box, int) -> int:
     return func
 "#,
     )?;
-    let labelled_span = spans.get("labelled").copied().ok_or("missing span for `labelled`")?;
-    let slots = HashMap::from([(labelled_span, shared(MethodDecoratorReceiverRole::Factory))]);
+    let labeled_span = spans.get("labeled").copied().ok_or("missing span for `labeled`")?;
+    let slots = HashMap::from([(labeled_span, shared(MethodDecoratorReceiverRole::Factory))]);
     let planned = crate::lower::receiver_plan::plan_shared_method_decorator_receivers(&program, &slots)
         .ok_or("expected a planned program")?;
-    let labelled = function_named(&planned, "labelled")?;
-    assert_eq!(labelled.params[0].node.ty.node.to_string(), "str");
+    let labeled = function_named(&planned, "labeled")?;
+    assert_eq!(labeled.params[0].node.ty.node.to_string(), "str");
     assert_eq!(
-        labelled.return_type.node.to_string(),
+        labeled.return_type.node.to_string(),
         "((&Box, int) -> str) -> (&Box, int) -> int"
     );
     Ok(())

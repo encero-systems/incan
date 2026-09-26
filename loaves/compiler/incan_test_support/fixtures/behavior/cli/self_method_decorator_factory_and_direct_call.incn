@@ -9,7 +9,7 @@
 class Box:
     pub value: int
 
-    @labelled("count")
+    @labeled("count")
     def label(self, value: int) -> str:
         return f"{value}"
 
@@ -22,7 +22,7 @@ def as_int(func: (Box, int) -> str) -> (Box, int) -> int:
     return parse
 
 
-def labelled(name: str) -> ((Box, int) -> str) -> (Box, int) -> int:
+def labeled(name: str) -> ((Box, int) -> str) -> (Box, int) -> int:
     return as_int
 
 

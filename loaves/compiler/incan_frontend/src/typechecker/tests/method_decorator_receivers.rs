@@ -112,7 +112,7 @@ fn factory_is_planned_with_the_decorator_it_returns() -> Result<(), Box<dyn std:
 class Box:
   pub value: int
 
-  @labelled("x")
+  @labeled("x")
   def label(self, value: int) -> str:
     return "value"
 
@@ -122,12 +122,12 @@ def parse(box: Box, value: int) -> int:
 def as_int(func: (Box, int) -> str) -> (Box, int) -> int:
   return parse
 
-def labelled(name: str) -> ((Box, int) -> str) -> (Box, int) -> int:
+def labeled(name: str) -> ((Box, int) -> str) -> (Box, int) -> int:
   return as_int
 "#;
     let (ast, checker) = checked(source)?;
     assert_eq!(
-        receiver_slot_of(&ast, &checker, "labelled"),
+        receiver_slot_of(&ast, &checker, "labeled"),
         shared(MethodDecoratorReceiverRole::Factory)
     );
     assert_eq!(
