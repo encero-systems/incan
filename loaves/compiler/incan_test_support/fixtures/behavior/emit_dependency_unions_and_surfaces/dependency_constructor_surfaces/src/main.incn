@@ -21,7 +21,7 @@ from pub::modulelib import hyperquant
 def main() -> None:
     println(PublicVault(secret=42).reveal())
     println(PublicVault(secret=7, label="named").reveal())
-    println(DecoyVault(unrelated=True).reveal())
+    println(DecoyVault(unrelated=true).reveal())
     println(Envelope(label="public").describe())
     columns = Columns[int, str](sql="q1", sample="sample")
     println(columns.describe())

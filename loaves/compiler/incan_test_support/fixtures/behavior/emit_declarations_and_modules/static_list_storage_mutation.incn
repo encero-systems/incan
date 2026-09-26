@@ -8,7 +8,7 @@
 #   true
 
 static items: list[int] = [1]
-static active_flags: list[bool] = [True, False]
+static active_flags: list[bool] = [true, false]
 
 
 def push(value: int) -> None:

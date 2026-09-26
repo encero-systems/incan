@@ -20,6 +20,6 @@ def state() -> str:
 
 def main() -> None:
     println(state())
-    println(lit(True))
+    println(lit(true))
     println(lit(2.5))
     println(lit(3))

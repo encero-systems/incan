@@ -64,4 +64,4 @@ def main() -> None:
     text = "a/b.txt"
     println(Path.new(text).is_relative())
     println(Path.new("c/d.txt").is_relative())
-    println(Path.new("e").exists() == False)
+    println(not Path.new("e").exists())

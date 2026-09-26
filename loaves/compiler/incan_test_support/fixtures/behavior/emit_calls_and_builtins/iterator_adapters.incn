@@ -30,10 +30,7 @@ def twice(n: int) -> list[int]:
 
 
 def render(items: list[int]) -> str:
-    mut parts: list[str] = []
-    for item in items:
-        parts.append(str(item))
-    return " ".join(parts)
+    return " ".join([str(item) for item in items])
 
 
 def main() -> None:

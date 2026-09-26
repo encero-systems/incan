@@ -26,6 +26,7 @@
 
 from std.testing import assert_eq, assert_ne, assert_is_some, assert_is_none, assert_is_ok, assert_is_err, assert_raises
 
+
 @derive(Eq)
 model Pair:
     x: int
@@ -55,7 +56,7 @@ def main() -> None:
     assert_eq(left, right, "")
     println("plain and messaged assert_eq passed")
     encoded = 4
-    assert_eq(encoded > 0, True)
+    assert_eq(encoded > 0, true)
     println("comparison operand passed")
     value = "alpha"
     target = "beta"

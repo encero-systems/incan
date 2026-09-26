@@ -10,7 +10,4 @@ pub model Basket:
 
 
 pub def column_names(columns: list[Column]) -> str:
-    mut names: list[str] = []
-    for column in columns:
-        names.append(column_name(column))
-    return " ".join(names)
+    return " ".join([column_name(column) for column in columns])

@@ -13,6 +13,6 @@ def describe(flags: dict[str, Option[bool | int]], key: str) -> str:
 
 
 def main() -> None:
-    println(describe({"count": 1, "ok": True}, "count"))
-    println(describe({"count": 1, "ok": True}, "ok"))
+    println(describe({"count": 1, "ok": true}, "count"))
+    println(describe({"count": 1, "ok": true}, "ok"))
     println(describe({"count": None}, "count"))

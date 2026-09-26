@@ -10,10 +10,7 @@ def count_pairs[K, V](items: list[tuple[K, V]]) -> int:
 
 
 def render(items: list[tuple[str, int]]) -> list[str]:
-    mut out: list[str] = []
-    for pair in items:
-        out.append(f"{pair[0]}={pair[1]}")
-    return out
+    return [f"{key}={value}" for key, value in items]
 
 
 def main() -> None:

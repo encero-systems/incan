@@ -7,9 +7,9 @@
 #   2
 
 def main() -> None:
-    flags_src: list[bool] = [True]
+    flags_src: list[bool] = [true]
     mut flags = flags_src
-    flags.append(False)
+    flags.append(false)
     println(len(flags))
     println(flags[1])
     mut current = 1

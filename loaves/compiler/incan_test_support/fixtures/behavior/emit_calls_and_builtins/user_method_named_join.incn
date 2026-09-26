@@ -16,5 +16,5 @@ model Dataset:
 def main() -> None:
     dataset = Dataset(name="left")
     other = Dataset(name="right")
-    println(dataset.join(other, True))
-    println(dataset.join(other, False))
+    println(dataset.join(other, true))
+    println(dataset.join(other, false))
