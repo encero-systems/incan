@@ -139,7 +139,7 @@ Seeded catalog codes:
 - `INCAN-T0001`: Type checking error.
 - `INCAN-T0101`: Unreachable code — statements that follow a `return` in the same block. Reported as a warning, so the program still compiles.
 - `INCAN-T0102`: A method assigns to a field, or calls a method that changes one, while its receiver is a plain `self`; declare `mut self`.
-- `INCAN-T0103`: A `print` or `println` argument is a tuple, list, dict, set, `Option`, `Result` or union value, or an f-string `{value}` interpolates a union value; the value has no printed form.
+- `INCAN-T0103`: A value displayed by `print`, `println`, `str` or an f-string `{value}` has no printed form: a union value, a generator, a function, `bytes`, or a model or class that defines no `__str__`.
 - `INCAN-T0104`: A `list`, `dict`, `set`, `tuple`, `Option`, `Result`, frozen collection or `Generator` annotation names no type arguments, alone or nested in another annotation.
 - `INCAN-T0105`: A Rust associated call such as `HashMap.new()` leaves the owner's type arguments open and nothing later fixes them; write `HashMap.new[str, int]()` or annotate the binding.
 - `INCAN-T0106`: An `Fn`, `FnMut` or `FnOnce` marker from `std.rust` names more than two parameters, or bounds a nominal declaration; write at most two, or use `Callable1[int, R]` from `std.traits.callable`.

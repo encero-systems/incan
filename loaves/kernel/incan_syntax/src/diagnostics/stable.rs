@@ -273,21 +273,21 @@ const VALUE_WITHOUT_PRINTED_FORM: DiagnosticCatalogEntry = DiagnosticCatalogEntr
     title: "Value with no printed form",
     severity: "error",
     phase: "typecheck",
-    summary: "A `print` or `println` argument is a tuple, list, dict, set, `Option`, `Result` or union value, or an f-string interpolates a union value; none of these has a printed form.",
-    explanation: "`print` and `println` write each argument's display form. Tuples, lists, dicts, sets, `Option` and `Result` values have none, so a program that prints one directly has no output to promise and cannot be built. An f-string renders these values through their structure (`[1, 2, 3]`, `Some(1)`, `Ok(2)`), so interpolating the value prints it, and so does printing its elements or its length. A union value has no printed form in either position until it is narrowed to one of its members with `match` or `isinstance`.",
+    summary: "A displayed value (a `print` or `println` argument, the argument of `str(...)`, or an f-string `{value}` part) has no printed form: a union value, a generator, a function, `bytes`, or a model or class value whose type defines no `__str__`.",
+    explanation: "`print`, `println`, `str` and an f-string `{value}` share one display rule. Scalars and `str` display their own text; a type that defines `__str__` displays what it returns; a tuple, list, dict, set, `Option` or `Result` displays its structure (`(10, 20)`, `[1, 2, 3]`, `Some(1)`, `Err(\"bad\")`). Every other value has no printed form, and displaying one in any of the four positions is refused: a union value until it is narrowed to one member, a generator until its items are collected, a function until it is called, `bytes` until they are decoded, and a model or class until its type defines `__str__`. `{value:?}` still renders a model's or class's structure.",
     examples: &[
-        "coords: tuple[int, int] = (10, 20)\nprint(coords)",
-        "items: list[int] = [1, 2, 3]\nprintln(items)",
-        "def show(value: int | str) -> None:\n    println(f\"{value}\")",
+        "def show(value: int | str) -> None:\n    println(value)",
+        "model Point:\n    x: int\n    y: int\n\ndef main() -> None:\n    println(Point(x=1, y=2))",
     ],
     common_causes: &[
-        "Printing a collection, an `Option` or a `Result` directly as a shortcut for printing its contents.",
-        "Printing or interpolating a union value before narrowing it.",
+        "Printing a union value before narrowing it.",
+        "Printing a model or class that defines no `__str__`.",
+        "Printing a generator instead of its collected items.",
     ],
     fixes: &[
-        "Interpolate the value: `println(f\"{items}\")`.",
-        "Print the elements or the length: `print(coords[0], coords[1])`, `println(len(items))`.",
-        "Narrow a union value first: `match value:` with a type pattern per member, then print the member.",
+        "Narrow a union first: `match value:` with a type pattern per member, then display the member.",
+        "Define `__str__(self) -> str` on the type, or interpolate its structure with `f\"{point:?}\"`.",
+        "Collect a generator first: `println(list(numbers))`.",
     ],
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/strings/"),
 };
@@ -783,19 +783,24 @@ mod tests {
             errors::SelfMutation::MutatingCall { callee: "pop" },
             Span::default(),
         );
-        let print_tuple = errors::print_argument_has_no_printed_form(
-            "print",
-            Some("coords"),
-            errors::UnprintableValue::Tuple { arity: 2 },
+        let print_union = errors::value_has_no_printed_form(
+            errors::DisplayPosition::Print { builtin: "print" },
+            Some("value"),
+            errors::UnprintableValue::Union,
             Span::default(),
         );
-        let print_list = errors::print_argument_has_no_printed_form(
-            "println",
+        let str_of_model = errors::value_has_no_printed_form(
+            errors::DisplayPosition::Str,
             None,
-            errors::UnprintableValue::List,
+            errors::UnprintableValue::Nominal { type_name: "Account" },
             Span::default(),
         );
-        let interpolated_union = errors::interpolated_union_has_no_printed_form(Some("value"), Span::default());
+        let interpolated_union = errors::value_has_no_printed_form(
+            errors::DisplayPosition::Interpolation,
+            Some("value"),
+            errors::UnprintableValue::Union,
+            Span::default(),
+        );
         let bare_tuple = errors::tuple_annotation_requires_element_types("Tuple", Span::default());
         let bare_option = errors::collection_annotation_requires_type_arguments("Option", Span::default());
         let open_generics = errors::rust_owner_type_args_not_inferred(
@@ -810,12 +815,9 @@ mod tests {
             code_for_error(&self_mutation, DiagnosticPhase::Typecheck),
             "INCAN-T0102"
         );
-        assert_eq!(code_for_error(&print_tuple, DiagnosticPhase::Typecheck), "INCAN-T0103");
-        assert_eq!(code_for_error(&print_list, DiagnosticPhase::Typecheck), "INCAN-T0103");
-        assert_eq!(
-            code_for_error(&interpolated_union, DiagnosticPhase::Typecheck),
-            "INCAN-T0103"
-        );
+        for display in [&print_union, &str_of_model, &interpolated_union] {
+            assert_eq!(code_for_error(display, DiagnosticPhase::Typecheck), "INCAN-T0103");
+        }
         assert_eq!(code_for_error(&bare_tuple, DiagnosticPhase::Typecheck), "INCAN-T0104");
         assert_eq!(code_for_error(&bare_option, DiagnosticPhase::Typecheck), "INCAN-T0104");
         assert_eq!(
@@ -837,7 +839,12 @@ mod tests {
             "the remedy must spell both the call and the binding form, got {:?}",
             open_generics.hints
         );
-        assert_eq!(print_list.message, "'println' cannot print a list");
+        assert_eq!(print_union.message, "'print' cannot print the union value 'value'");
+        assert_eq!(str_of_model.message, "'str' cannot convert an Account value to text");
+        assert_eq!(
+            interpolated_union.message,
+            "f-string cannot interpolate the union value 'value'"
+        );
         assert_eq!(
             bare_option.message,
             "Option annotation 'Option' is missing its value type"

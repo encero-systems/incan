@@ -2478,6 +2478,24 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_ir/src/lower/tests/display_operands.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": "",
+      "tests": {
+        "print_arguments_render_structural_values_like_interpolation_issue1748": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/display_positions_render_collections_alike.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (a structural `print`/`println` argument is handed to the emitter as the one-part f-string rendering, a scalar stays as written); retires with `incan_ir`. The behavior, `print(items)` printing `[1, 2, 3]` like `f\"{items}\"`, is carried by the named fixture (#1748)."
+        },
+        "str_of_a_structural_value_is_its_interpolation_issue1748": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/display_positions_render_collections_alike.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (`str(items)` becomes the one-part f-string rendering, `str(count)` keeps the builtin conversion); retires with `incan_ir`. The behavior, `str(items)` printing `[1, 2, 3]`, is carried by the named fixture (#1748)."
+        }
+      }
+    },
     "loaves/compiler/incan_ir/src/lower/tests/unary_operand_grouping.rs": {
       "disposition": "retire",
       "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",

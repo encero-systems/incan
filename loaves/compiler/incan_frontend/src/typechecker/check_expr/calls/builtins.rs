@@ -26,57 +26,19 @@ impl TypeChecker {
         }
     }
 
-    /// Type-check the arguments of a `print`/`println` call and refuse any that has no printed form (#1725, #1748).
+    /// Type-check the arguments of a `print`/`println` call and refuse any that has no printed form (#1748).
     ///
-    /// Every argument is checked as usual so its own diagnostics still surface. `print` writes each argument's display
-    /// form, and a tuple, list, dict, set, `Option`, `Result` or union value has none, so such an argument is refused
-    /// with the call's own spelling (`builtin`): the program could not be built. The refusal names the argument when
-    /// the source spells it as a plain name, and its kind shapes the remedy (the elements of a tuple, an f-string for a
-    /// collection, `Option` or `Result`, narrowing for a union). Any other argument type stays as permissive as before.
+    /// Every argument is checked as usual so its own diagnostics still surface. An argument displays under the rule
+    /// `str(...)` and an f-string `{value}` share (see [`Self::check_display_operand`]): a tuple, list, dict, set,
+    /// `Option` or `Result` prints its structure, and only a value with no printed form is refused, with the call's
+    /// own spelling (`builtin`) in the message.
     fn check_print_call_args(&mut self, builtin: &str, args: &[CallArg]) {
         for arg in args {
             let arg_expr = Self::call_arg_expr(arg);
             self.call_argument_depth += 1;
             let arg_ty = self.check_expr(arg_expr);
             self.call_argument_depth -= 1;
-            let Some(value) = Self::unprintable_value(&self.expand_type_aliases(arg_ty)) else {
-                continue;
-            };
-            let name = match &arg_expr.node {
-                Expr::Ident(name) => Some(name.as_str()),
-                _ => None,
-            };
-            self.errors.push(errors::print_argument_has_no_printed_form(
-                builtin,
-                name,
-                value,
-                arg_expr.span,
-            ));
-        }
-    }
-
-    /// Classify a value type that `print`/`println` has no printed form for, or return `None` when it prints.
-    ///
-    /// The set matches what the f-string path renders through its structure (a tuple, list, dict, set, `Option` or
-    /// `Result`) plus the anonymous union, which has a printed form in neither position. The frozen collections print
-    /// their elements, and nominal, scalar and type-parameter values keep their own printed form, so they stay out.
-    fn unprintable_value(ty: &ResolvedType) -> Option<errors::UnprintableValue> {
-        match ty {
-            ResolvedType::Tuple(elements) => Some(errors::UnprintableValue::Tuple { arity: elements.len() }),
-            ResolvedType::Generic(_, _) if ty.is_union() => Some(errors::UnprintableValue::Union),
-            ResolvedType::Generic(name, elements) => match collection_type_id(name.as_str())? {
-                CollectionTypeId::Tuple => Some(errors::UnprintableValue::Tuple { arity: elements.len() }),
-                CollectionTypeId::List => Some(errors::UnprintableValue::List),
-                CollectionTypeId::Dict => Some(errors::UnprintableValue::Dict),
-                CollectionTypeId::Set => Some(errors::UnprintableValue::Set),
-                CollectionTypeId::Option => Some(errors::UnprintableValue::Option),
-                CollectionTypeId::Result => Some(errors::UnprintableValue::Result),
-                CollectionTypeId::FrozenList
-                | CollectionTypeId::FrozenDict
-                | CollectionTypeId::FrozenSet
-                | CollectionTypeId::Generator => None,
-            },
-            _ => None,
+            self.check_display_operand(errors::DisplayPosition::Print { builtin }, arg_expr, &arg_ty);
         }
     }
 
@@ -441,7 +403,11 @@ impl TypeChecker {
                     }
                 }
                 BuiltinFnId::Str => {
-                    self.check_call_args(args);
+                    // `str(value)` displays its argument under the rule `print` and an f-string share (#1748).
+                    let arg_types = self.check_call_arg_types(args);
+                    if let ([arg], [arg_ty]) = (args, arg_types.as_slice()) {
+                        self.check_display_operand(errors::DisplayPosition::Str, Self::call_arg_expr(arg), arg_ty);
+                    }
                     Some(ResolvedType::Str)
                 }
                 BuiltinFnId::Int => {

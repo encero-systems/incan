@@ -26,6 +26,7 @@ mod comps;
 mod control_flow;
 mod match_;
 mod ops;
+mod printed_form;
 
 impl TypeChecker {
     /// Type-check a local partial expression and return its projected callable type.
@@ -95,25 +96,19 @@ impl TypeChecker {
         ResolvedType::Function(Self::local_partial_params(projected, &partial.args), ret)
     }
 
-    /// Type-check every interpolated expression of an f-string and refuse a union value in display position (#1748).
+    /// Type-check every interpolated expression of an f-string and refuse a `{value}` part with no printed form
+    /// (#1748).
     ///
-    /// A `{value}` interpolation renders a tuple, list, dict, set, `Option` or `Result` through its structure, so
-    /// those stay accepted; a union value has no printed form until it is narrowed to one of its members, so the
-    /// program could not be built and the interpolation is refused. A `{value:?}` interpolation asks for the structure
-    /// explicitly and is left alone.
+    /// A `{value}` part displays under the rule `print`/`println` arguments and `str(...)` share (see
+    /// [`Self::check_display_operand`]). A `{value:?}` part asks for the value's structure and is left alone.
     fn check_fstring_parts(&mut self, parts: &[FStringPart]) {
         for part in parts {
             let FStringPart::Expr { expr, format } = part else {
                 continue;
             };
             let ty = self.check_expr(expr);
-            if matches!(format, FStringFormat::Display) && self.expand_type_aliases(ty).is_union() {
-                let name = match &expr.node {
-                    Expr::Ident(name) => Some(name.as_str()),
-                    _ => None,
-                };
-                self.errors
-                    .push(errors::interpolated_union_has_no_printed_form(name, expr.span));
+            if matches!(format, FStringFormat::Display) {
+                self.check_display_operand(errors::DisplayPosition::Interpolation, expr, &ty);
             }
         }
     }

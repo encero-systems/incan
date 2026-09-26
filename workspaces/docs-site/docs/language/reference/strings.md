@@ -66,30 +66,60 @@ Membership uses the method, not the `in` operator: `s.contains("x")`.
 
 ## F-strings
 
-An f-string interpolates any expression between `{` and `}`; the value is formatted through `Display`. A format spec after `:` selects another formatting:
+An f-string interpolates any expression between `{` and `}`. A format spec after `:` selects the formatting:
 
 | Spec | Formatting |
 | --- | --- |
-| `{value}` | `Display` |
+| `{value}` | The value's [display](#display) text |
 | `{value:?}` | `Debug`: the value's structure, for example `Point { x: 10, y: 20 }` |
 
-A `{value}` interpolation of a tuple, list, dict, set, `Option` or `Result` renders the value's structure: `(10, 20)` for a tuple, `[1, 2, 3]` for a list, `{1, 2}` for a set, `{"a": 1}` for a dict, `Some(1)` or `None` for an `Option`, and `Ok(2)` or `Err("bad")` for a `Result`. A `str` element or payload is quoted. The order of a set's or a dict's entries is unspecified. A `{value}` interpolation of a union value (`int | str`) is refused at check time with `INCAN-T0103`; a member bound by narrowing interpolates as that member's type (see [Union types](./union_types.md)).
+See [String representation](./derives/string_representation.md) for how a type provides `Display` and `Debug`.
 
-`print` and `println` write the display form of each argument. An argument whose type is a tuple, list, dict, set, `Option`, `Result` or union is refused at check time with `INCAN-T0103`.
+## Display
+
+`print(value)`, `println(value)`, `str(value)` and an f-string `{value}` part display a value under one rule: all four render the same text for the same value.
+
+| Value | Displayed text |
+| --- | --- |
+| `str` | The text itself, unquoted |
+| `int` and the exact-width integers | Decimal digits |
+| `bool` | `true` or `false` |
+| `float` | Python's spelling, below |
+| A type that defines `__str__` | What `__str__` returns |
+| A value enum | The variant's value |
+| Tuple | `(10, 20)` |
+| `list` | `[1, 2, 3]` |
+| `dict` | `{"a": 1}` |
+| `set` | `{1, 2}` |
+| `Option` | `Some(1)` or `None` |
+| `Result` | `Ok(2)` or `Err("bad")` |
+
+Inside a tuple, list, dict, set, `Option` or `Result`, a `str` element or payload is quoted (`["a", "b"]`), and the entry order of a set or a dict is unspecified.
+
+A `float` renders as Python spells it: always visibly a float. An integral value keeps its decimal point (`100.0`, never `100`), the shortest digits that round-trip are used (`1.5`, `0.30000000000000004`), positional notation holds while the magnitude is at least `1e-4` and below `1e16` (`10000000000.0`) and switches to an exponent with an explicit sign and at least two digits outside that range (`1e+16`, `1.5e-07`), and the non-finite values are `inf`, `-inf`, and `nan`. The exact `f32`/`f64` carriers keep Rust's own `Display`.
+
+A value with no printed form is refused at check time with `INCAN-T0103`, in every display position: a union value (`int | str`), a `Generator`, a function, `bytes`, and a model or class whose type defines no `__str__` and adopts neither `Display` nor `Error`. A member bound by narrowing a union displays as its own type (see [Union types](./union_types.md)).
 
 ```incan
-items: list[int] = [1, 2, 3]
-maybe: Option[int] = Some(1)
-println(f"{items} {maybe}")  # [1, 2, 3] Some(1)
-println(len(items))          # 3
-println(items)               # refused: INCAN-T0103
+model Point:
+    x: int
+    y: int
+
+def main() -> None:
+    items: list[int] = [1, 2, 3]
+    print(items)                # [1, 2, 3]
+    println(str(items))         # [1, 2, 3]
+    println(f"{items}")         # [1, 2, 3]
+    maybe: Option[int] = None
+    println(maybe)              # None
+    point = Point(x=1, y=2)
+    println(f"{point:?}")       # Point { x: 1, y: 2 }
+    println(point)              # refused: INCAN-T0103
+    println(str(point))         # refused: INCAN-T0103
+    println(f"{point}")         # refused: INCAN-T0103
 ```
 
-The how-to [Printing a collection](../how-to/error_messages.md#printing-a-collection) covers the refused cases.
-
-A `float` in a `Display` position — an f-string `{value}`, `str(value)`, or `print`/`println` — renders as Python spells it: always visibly a float. An integral value keeps its decimal point (`100.0`, never `100`), the shortest digits that round-trip are used (`1.5`, `0.30000000000000004`), positional notation holds while the magnitude is at least `1e-4` and below `1e16` (`10000000000.0`) and switches to an exponent with an explicit sign and at least two digits outside that range (`1e+16`, `1.5e-07`), and the non-finite values are `inf`, `-inf`, and `nan`. The exact `f32`/`f64` carriers keep Rust's own `Display`.
-
-See [String representation](./derives/string_representation.md) for how a type provides `Display` and `Debug`.
+The how-to [Displaying a value with no printed form](../how-to/error_messages.md#displaying-a-value-with-no-printed-form) covers the refused cases.
 
 ## See also
 

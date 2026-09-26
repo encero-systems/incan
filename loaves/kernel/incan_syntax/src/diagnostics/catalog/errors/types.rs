@@ -2488,153 +2488,103 @@ pub fn collection_annotation_requires_type_arguments(spelling: &str, span: Span)
     ))
 }
 
-// -- Printing ----------------------------------------------------------------
+// -- Display -----------------------------------------------------------------
 
-/// What a `print`/`println` argument, or an f-string interpolation, is when it has no printed form (#1725, #1748).
-///
-/// A tuple, list, dict, set, `Option` or `Result` has no display form of its own; an f-string renders its structure
-/// instead. A union value has a printed form in neither position until it is narrowed to one of its members.
+/// Where a value is displayed: every position shares one display rule (#1748).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnprintableValue {
-    /// A tuple with `arity` elements; the arity shapes the element-by-element remedy.
-    Tuple {
-        /// The number of elements the tuple type declares.
-        arity: usize,
+pub enum DisplayPosition<'a> {
+    /// An argument of `print` or `println`.
+    Print {
+        /// The spelling the call used (`print` or `println`).
+        builtin: &'a str,
     },
-    /// A `list` value.
-    List,
-    /// A `dict` value.
-    Dict,
-    /// A `set` value.
-    Set,
-    /// An `Option` value.
-    Option,
-    /// A `Result` value.
-    Result,
-    /// A value of an anonymous union type (`int | str`).
-    Union,
+    /// The argument of `str(...)`.
+    Str,
+    /// An f-string `{value}` part.
+    Interpolation,
 }
 
-impl UnprintableValue {
-    /// Return the value's kind as a noun, first with its indefinite article (`a list`) and then without (`list`).
-    fn noun(self) -> (&'static str, &'static str) {
-        match self {
-            Self::Tuple { .. } => ("a tuple", "tuple"),
-            Self::List => ("a list", "list"),
-            Self::Dict => ("a dict", "dict"),
-            Self::Set => ("a set", "set"),
-            Self::Option => ("an Option", "Option"),
-            Self::Result => ("a Result", "Result"),
-            Self::Union => ("a union value", "union value"),
-        }
-    }
-
-    /// Return what an f-string `{value}` interpolation prints for this kind, or `None` for a union value, which an
-    /// f-string cannot interpolate either.
-    fn interpolated_rendering(self) -> Option<&'static str> {
-        match self {
-            Self::Tuple { .. } => Some("the elements in parentheses"),
-            Self::List => Some("the elements in brackets"),
-            Self::Dict => Some("the entries in braces"),
-            Self::Set => Some("the elements in braces"),
-            Self::Option => Some("Some(...) or None"),
-            Self::Result => Some("Ok(...) or Err(...)"),
-            Self::Union => None,
-        }
-    }
-}
-
-/// Report a `print`/`println` argument that has no printed form (#1725, #1748).
+/// A value with no printed form in any display position (#1748).
 ///
-/// `print` and `println` write each argument's display form, and a tuple, list, dict, set, `Option`, `Result` or union
-/// value has none, so the call could not be built. `builtin` is the spelling the call used (`print` or `println`);
-/// `name` is the argument when the source spells it as a plain name (`coords`), and `None` for any other expression
-/// (a call, an index, a literal), where the message names the kind of value instead. `value` shapes the remedy: a
-/// tuple prints element by element, a collection or an `Option`/`Result` prints through an f-string, which renders
-/// its structure, and a union value prints once it is narrowed to one member. `INCAN-T0103` is its stable code.
-pub fn print_argument_has_no_printed_form(
-    builtin: &str,
+/// A tuple, list, dict, set, `Option` or `Result` renders through its structure in every display position, and a
+/// scalar, a `str` or a type that defines `__str__` renders through its own text. What remains has no printed form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnprintableValue<'a> {
+    /// A value of an anonymous union type (`int | str`), which prints once it is narrowed to one member.
+    Union,
+    /// A `Generator` value, whose items exist only as it is consumed.
+    Generator,
+    /// A function or closure value.
+    Function,
+    /// A `bytes` value, which has no text of its own.
+    Bytes,
+    /// A model or class value whose type defines no `__str__`.
+    Nominal {
+        /// The type as the checker names it.
+        type_name: &'a str,
+    },
+}
+
+impl UnprintableValue<'_> {
+    /// Name the value for a message: `the union value 'x'` when the source spells it as a plain name, otherwise the
+    /// kind with its indefinite article (`a union value`).
+    fn describe(self, name: Option<&str>) -> String {
+        let kind = match self {
+            Self::Union => "union value".to_string(),
+            Self::Generator => "generator".to_string(),
+            Self::Function => "function".to_string(),
+            Self::Bytes => "bytes value".to_string(),
+            Self::Nominal { type_name } => format!("{type_name} value"),
+        };
+        match name {
+            Some(name) => format!("the {kind} '{name}'"),
+            None if kind.starts_with(['A', 'E', 'I', 'O', 'U', 'a', 'e', 'i', 'o', 'u']) => format!("an {kind}"),
+            None => format!("a {kind}"),
+        }
+    }
+}
+
+/// Report a displayed value that has no printed form (#1748).
+///
+/// `print`/`println` arguments, the argument of `str(...)` and f-string `{value}` parts share one display rule, so the
+/// same value is refused in all three; `position` words the message for the position the source used. `name` is the
+/// operand when the source spells it as a plain name, `None` for any other expression. The hint names what does
+/// display: a narrowed union member, a collected generator's list, a called function's result, decoded bytes, or a
+/// type's `__str__` (and its `{value:?}` structure meanwhile). `INCAN-T0103` is its stable code.
+pub fn value_has_no_printed_form(
+    position: DisplayPosition<'_>,
     name: Option<&str>,
-    value: UnprintableValue,
+    value: UnprintableValue<'_>,
     span: Span,
 ) -> CompileError {
-    let (with_article, bare) = value.noun();
-    let message = match name {
-        Some(name) => format!("'{builtin}' cannot print the {bare} '{name}'"),
-        None => format!("'{builtin}' cannot print {with_article}"),
+    let what = value.describe(name);
+    let message = match position {
+        DisplayPosition::Print { builtin } => format!("'{builtin}' cannot print {what}"),
+        DisplayPosition::Str => format!("'str' cannot convert {what} to text"),
+        DisplayPosition::Interpolation => format!("f-string cannot interpolate {what}"),
     };
-    // An f-string prints the value's structure; the spelling names the argument when the source does.
-    let interpolation = |lead: &str, rendering: &str| match name {
-        Some(name) => format!("{lead}: {builtin}(f\"{{{name}}}\") prints {rendering}"),
-        None => format!("{lead} in an f-string, which prints {rendering}"),
-    };
-    let hints = match (value, value.interpolated_rendering()) {
-        (UnprintableValue::Tuple { arity }, Some(rendering)) => {
-            let elements = |tuple: &str| {
-                (0..arity.max(1))
-                    .map(|index| format!("{tuple}[{index}]"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            };
-            let by_element = match name {
-                Some(name) => format!(
-                    "Print the elements instead: {builtin}({}), or unpack them first and print the names",
-                    elements(name)
-                ),
-                None => format!(
-                    "Bind the tuple to a name first, then print its elements: pair = ..., {builtin}({}), or unpack it and print the names",
-                    elements("pair")
-                ),
-            };
-            vec![by_element, interpolation("Or interpolate it", rendering)]
+    let hint = match value {
+        UnprintableValue::Union => {
+            "Narrow it to one member first, with match or isinstance, and display that member".to_string()
         }
-        (UnprintableValue::List | UnprintableValue::Dict | UnprintableValue::Set, Some(rendering)) => vec![
-            interpolation("Interpolate it instead", rendering),
-            "Or print its length with len(...), or loop over it and print each item".to_string(),
-        ],
-        (UnprintableValue::Option, Some(rendering)) => vec![
-            interpolation("Interpolate it instead", rendering),
-            "Or match on it and print the value it holds".to_string(),
-        ],
-        (UnprintableValue::Result, Some(rendering)) => vec![
-            interpolation("Interpolate it instead", rendering),
-            "Or match on it and print the value or the error".to_string(),
-        ],
-        (UnprintableValue::Union, _) | (_, None) => {
-            vec!["Narrow it to one member first, with match or isinstance, and print that member".to_string()]
+        UnprintableValue::Generator => {
+            "Collect its items first with list(...); a list displays its elements".to_string()
         }
-    };
-    let mut error = CompileError::type_error(message, span).with_stable_code("INCAN-T0103");
-    for hint in hints {
-        error = error.with_hint(hint);
-    }
-    error.with_note(match value {
-        UnprintableValue::Tuple { .. } => "Tuples have no printed form; each element prints on its own",
-        UnprintableValue::List | UnprintableValue::Dict | UnprintableValue::Set => {
-            "Collections have no printed form of their own; an f-string renders their structure"
+        UnprintableValue::Function => "Call it and display the result".to_string(),
+        UnprintableValue::Bytes => {
+            "Decode it to text first with decode(), or display its length with len(...)".to_string()
         }
-        UnprintableValue::Option | UnprintableValue::Result => {
-            "Option and Result values have no printed form of their own; an f-string renders their structure"
+        UnprintableValue::Nominal { type_name } => {
+            let structure = format!("f\"{{{}:?}}\"", name.unwrap_or("value"));
+            format!(
+                "Define __str__(self) -> str on '{type_name}' to give it a printed form, or interpolate its structure with {structure}"
+            )
         }
-        UnprintableValue::Union => "A union value has no printed form until it is narrowed to one of its members",
-    })
-}
-
-/// Report an f-string that interpolates a union value in display position (#1748).
-///
-/// An f-string renders a collection, an `Option` or a `Result` through its structure, but a union value has no
-/// printed form in either display position until it is narrowed to one of its members, so the program could not be
-/// built. `name` is the interpolated expression when the source spells it as a plain name, `None` otherwise. It
-/// shares `INCAN-T0103` with the `print` refusal: both report a value with no printed form.
-pub fn interpolated_union_has_no_printed_form(name: Option<&str>, span: Span) -> CompileError {
-    let message = match name {
-        Some(name) => format!("f-string cannot interpolate the union value '{name}'"),
-        None => "f-string cannot interpolate a union value".to_string(),
     };
     CompileError::type_error(message, span)
         .with_stable_code("INCAN-T0103")
-        .with_hint("Narrow it to one member first, with match or isinstance, and interpolate that member")
-        .with_note("A union value has no printed form until it is narrowed to one of its members")
+        .with_hint(hint)
+        .with_note("print, println, str and an f-string {value} display a value alike, and none of them has a printed form for this one")
 }
 
 pub fn tuple_field_assignment(span: Span) -> CompileError {

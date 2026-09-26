@@ -226,32 +226,40 @@ while let Some(user) = current:
     current = next_user(user)
 ```
 
-### Printing a Collection
+### Displaying a Value With No Printed Form
 
 **Error:**
 
 ```bash
-'println' cannot print the list 'items'
+'println' cannot print the Point value 'point'
 ```
 
-**Problem:** `print` and `println` write each argument's display form, and a tuple, list, dict, set, `Option`, `Result` or union value has none (`INCAN-T0103`).
+**Problem:** `print`, `println`, `str` and an f-string `{value}` share one display rule (see [Display](../reference/strings.md#display)). A union value, a generator, a function, `bytes`, and a model or class without `__str__` have no printed form in any of them (`INCAN-T0103`). Lists, tuples, dicts, sets, `Option` and `Result` do print: `println(items)` prints `[1, 2, 3]`.
 
-**Solution:**
+**Solution:** Give the value a printed form, or display something that has one.
 
 ```incan
-items: list[int] = [1, 2, 3]
+model Point:
+    x: int
+    y: int
 
-# Wrong
-println(items)  # ❌ a list has no printed form
+    # Right - define __str__ to give the model a printed form
+    def __str__(self) -> str:
+        return f"({self.x}, {self.y})"
 
-# Right - an f-string renders the structure
-println(f"{items}")  # ✅ [1, 2, 3]
+def show(value: int | str) -> None:
+    # Right - narrow a union and print the member
+    match value:
+        int(n) => println(n)
+        str(s) => println(s)
 
-# Or print what you need from it
-println(len(items))
+def main() -> None:
+    point = Point(x=1, y=2)
+    println(point)          # ✅ (1, 2)
+    println(f"{point:?}")   # ✅ the structure: Point { x: 1, y: 2 }
+    evens = (n * 2 for n in [1, 2, 3])
+    println(list(evens))    # ✅ collect a generator first: [2, 4, 6]
 ```
-
-A union value (`int | str`) prints in neither position until you narrow it with `match` or `isinstance`; see [Union types](../reference/union_types.md).
 
 ### Collection Annotation Without Type Arguments
 

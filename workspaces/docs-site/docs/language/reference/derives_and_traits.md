@@ -907,7 +907,7 @@ model User:
 def main() -> None:
     u = User(name="Alice")
     println(u.__class_name__())
-    println(", ".join([f.name for f in u.__fields__()]))
+    println([f.name for f in u.__fields__()])
 ```
 
 ## Stdlib derive boundaries

@@ -49,7 +49,7 @@ def classify(value: int | str | None) -> str:
 
 Do not reuse one binding name across alternatives that infer different types. `int(item) | str(item)` is rejected because `item` would be both `int` and `str` in the same branch.
 
-`print(value)`, `println(value)` and an f-string `{value}` over a union value are refused at check time with `INCAN-T0103`. A member bound by narrowing prints as its own type:
+A union value has no printed form: `print(value)`, `println(value)`, `str(value)` and an f-string `{value}` over it are refused at check time with `INCAN-T0103` (see [Display](./strings.md#display)). A member bound by narrowing displays as its own type:
 
 ```incan
 def show(value: int | str) -> None:
