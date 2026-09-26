@@ -361,3 +361,40 @@ def main() -> None:
     );
     Ok(())
 }
+
+/// #1820: a module-qualified trait annotation (`json.Serialize`) on a parameter or a declared return lowers like the
+/// alias does: the parameter gets a hidden generic bounded by the trait as written plus the serde capability, and the
+/// return becomes the two-bound Rust type. The annotation used to lower as a bare trait path in type position, which
+/// rustc refuses (E0782).
+#[test]
+fn module_qualified_trait_annotations_lower_like_the_alias_issue1820() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+from std.serde import json
+
+@derive(json)
+model Payload:
+  value: int
+
+def describe(value: json.Serialize) -> str:
+  return json_stringify(value)
+
+def make() -> json.Serialize:
+  return Payload(value=2)
+
+def main() -> None:
+  println(describe(Payload(value=1)))
+  println(json_stringify(make()))
+  println(make().to_json())
+"#,
+    )?;
+    assert_eq!(
+        bound_paths(&lowered_function(&ir, "describe")?.type_params),
+        vec![vec!["json.Serialize".to_string(), SERDE_SERIALIZE.to_string()]]
+    );
+    assert_eq!(
+        lowered_function(&ir, "make")?.return_type,
+        IrType::RustDisplay(format!("impl {STDLIB_SERIALIZE_PATH} + {SERDE_SERIALIZE}"))
+    );
+    Ok(())
+}

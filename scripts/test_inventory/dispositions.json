@@ -4668,6 +4668,10 @@
         "json_protocol_returns_carry_the_trait_and_its_serde_capability_issue1820": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/bare_json_protocol_bounds.incn",
           "notes": "Asserts the recorded return types on the legacy IR (a declared `-> Serialize` on a function, an inherent method, a trait impl method and a trait method lowers to `impl <stdlib trait> + ::serde::Serialize` with the method's capture list); retires with `incan_ir`. The behavior, `json_stringify(make())` and `make().to_json()` over a `-> Serialize` function, is carried by the named fixture (#1820)."
+        },
+        "module_qualified_trait_annotations_lower_like_the_alias_issue1820": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/bare_json_protocol_bounds.incn",
+          "notes": "Asserts the recorded shapes on the legacy IR (a `json.Serialize` parameter lowers to a hidden generic bounded by the trait and `::serde::Serialize`, and a `json.Serialize` return to the two-bound Rust type); retires with `incan_ir`. The behavior, `json_stringify` over a `json.Serialize` parameter and `to_json` over a `json.Serialize` return, is carried by the named fixture (#1820)."
         }
       },
       "twin": ""

@@ -17,6 +17,7 @@ use incan_lang::lang::keywords::{self, KeywordId};
 use incan_lang::lang::stdlib;
 use incan_lang::lang::trait_bounds;
 use incan_lang::lang::traits as core_traits;
+use incan_semantics_core::SemanticSourceTargetKind;
 
 const SERDE_SERIALIZE_DERIVE: &str = "serde::Serialize";
 const SERDE_DESERIALIZE_DERIVE: &str = "serde::Deserialize";
@@ -300,38 +301,63 @@ impl AstLowering {
                 .is_some_and(|info| info.traits.type_params.contains_key(name))
     }
 
-    /// Lower an annotation like `Collection[int]` to a Rust trait bound shape.
-    pub(in crate::lower) fn lower_trait_annotation_bound(
+    /// Return whether a module-qualified annotation (`json.Serialize`) names a trait, by the identity the checker
+    /// recorded for the qualified spelling.
+    ///
+    /// A bare or aliased trait name is known to lowering by its visible spelling ([`Self::is_known_trait_name`]); a
+    /// qualified spelling is known only through the checked reference, which names the declaration and its kind.
+    fn qualified_annotation_names_trait(&self, segments: &[String]) -> bool {
+        self.type_info
+            .as_ref()
+            .and_then(|info| info.qualified_type_reference(&segments.join(".")))
+            .is_some_and(|reference| reference.identity.kind == SemanticSourceTargetKind::Trait)
+    }
+
+    /// Return the trait spelling of an annotation that names a trait directly, generic or not, bare or
+    /// module-qualified (`Serialize`, `Collection[int]`, `json.Serialize`), with its type arguments.
+    fn trait_annotation_spelling<'a>(
         &self,
-        ty: &ast::Type,
+        ty: &'a ast::Type,
         type_param_names: Option<&HashSet<&str>>,
-    ) -> Option<IrTraitBound> {
+    ) -> Option<(String, &'a [Spanned<ast::Type>])> {
         match ty {
             ast::Type::Simple(name)
                 if !type_param_names.is_some_and(|params| params.contains(name.as_str()))
                     && self.is_known_trait_name(name) =>
             {
-                let trait_path = self
-                    .rust_mapped_builtin_trait_path(name)
-                    .map(str::to_string)
-                    .or_else(|| self.source_owned_builtin_trait_path(name))
-                    .unwrap_or_else(|| name.clone());
-                Some(IrTraitBound::with_type_args_classified(trait_path, Vec::new()))
+                Some((name.clone(), &[]))
             }
-            ast::Type::Generic(base, args) if self.is_known_trait_name(base) => {
-                let trait_path = self
-                    .rust_mapped_builtin_trait_path(base)
-                    .map(str::to_string)
-                    .or_else(|| self.source_owned_builtin_trait_path(base))
-                    .unwrap_or_else(|| base.clone());
-                let type_args = args
-                    .iter()
-                    .map(|arg| self.lower_type_with_type_params(&arg.node, type_param_names))
-                    .collect();
-                Some(IrTraitBound::with_type_args_classified(trait_path, type_args))
+            ast::Type::Generic(base, args) if self.is_known_trait_name(base) => Some((base.clone(), args.as_slice())),
+            ast::Type::Dotted(segments) if self.qualified_annotation_names_trait(segments) => {
+                Some((segments.join("."), &[]))
+            }
+            ast::Type::DottedGeneric(segments, args) if self.qualified_annotation_names_trait(segments) => {
+                Some((segments.join("."), args.as_slice()))
             }
             _ => None,
         }
+    }
+
+    /// Lower an annotation that names a trait (`Collection[int]`, `json.Serialize`) to a Rust trait bound shape.
+    ///
+    /// A module-qualified spelling lowers as written, like the same spelling in a `with` bound, and resolves through
+    /// the module's import.
+    pub(in crate::lower) fn lower_trait_annotation_bound(
+        &self,
+        ty: &ast::Type,
+        type_param_names: Option<&HashSet<&str>>,
+    ) -> Option<IrTraitBound> {
+        let (spelling, args) = self.trait_annotation_spelling(ty, type_param_names)?;
+        let trait_path = self
+            .rust_mapped_builtin_trait_path(&spelling)
+            .map(str::to_string)
+            .or_else(|| self.source_owned_builtin_trait_path(&spelling))
+            .unwrap_or(spelling);
+        let type_args = args
+            .iter()
+            .map(|arg| self.lower_type_with_type_params(&arg.node, type_param_names))
+            .collect();
+        Some(IrTraitBound::with_type_args_classified(trait_path, type_args))
     }
 
     /// Lower a callable parameter type, synthesizing a hidden Rust generic when the source annotation names a trait.
@@ -348,12 +374,10 @@ impl AstLowering {
         if let Some(bound) = self.lower_trait_annotation_bound(ty, type_param_names) {
             let hidden_name = format!("__IncanTrait{}", *hidden_counter);
             *hidden_counter += 1;
-            let annotated_trait = match ty {
-                ast::Type::Simple(name) | ast::Type::Generic(name, _) => Some(name.as_str()),
-                _ => None,
-            };
             let mut bounds = vec![bound];
-            if let Some(capability) = annotated_trait.and_then(|name| self.json_protocol_capability_bound(name)) {
+            if let Some((spelling, _)) = self.trait_annotation_spelling(ty, type_param_names)
+                && let Some(capability) = self.json_protocol_capability_bound(&spelling)
+            {
                 bounds.push(capability);
             }
             hidden_type_params.push(IrTypeParam {

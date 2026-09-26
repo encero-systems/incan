@@ -46,10 +46,10 @@ impl AstLowering {
 
     /// Return the `std.serde.json` protocol traits a newtype derives, as trait impl targets.
     ///
-    /// A model or enum turns every derived protocol trait into a trait impl; a newtype received only the serde
-    /// derive, so `UserId(7).to_json()` and a `T with Serialize` bound over a newtype passed the checker and failed
-    /// in rustc. Only the JSON protocol traits are taken here; a trait both derived and adopted with `with` is refused
-    /// by the checker, so no target duplicates an adoption's impl.
+    /// Each target is one protocol trait named in the newtype's `@derive(...)`, directly or through a module derive
+    /// such as `@derive(json)`, spelled as the derive resolves it; its impl gives the newtype the trait's methods, as
+    /// the same derive gives a model. Traits outside `std.serde.json` are not returned. A trait both derived and
+    /// adopted with `with` is refused by the checker, so no target duplicates an adoption's impl.
     pub(in crate::lower) fn derived_json_protocol_impl_targets(
         &mut self,
         decorators: &[Spanned<ast::Decorator>],

@@ -1,9 +1,10 @@
-# behavior: std.serde.json Serialize and Deserialize, bare and module-qualified, bound functions, a generic model and a generic class and type a function's return, and to_json, from_json and json_stringify work through each for models and derived newtypes (#1820)
+# behavior: std.serde.json Serialize and Deserialize, bare and module-qualified, bound functions, a generic model and a generic class and type a parameter and a function's return, and to_json, from_json and json_stringify work through each for models and derived newtypes (#1820)
 # retires: loaves/compiler/incan_ir/src/lower/tests/json_protocol_bounds.rs::json_protocol_bounds_carry_the_trait_and_its_serde_capability_issue1820
 # retires: loaves/compiler/incan_ir/src/lower/tests/json_protocol_bounds.rs::deserialize_bound_carries_the_trait_and_its_serde_capability_issue1820
 # retires: loaves/compiler/incan_ir/src/lower/tests/json_protocol_bounds.rs::json_protocol_bounds_carry_the_serde_capability_on_owners_and_trait_parameters_issue1820
 # retires: loaves/compiler/incan_ir/src/lower/tests/json_protocol_bounds.rs::derived_json_protocol_newtypes_implement_the_stdlib_trait_issue1820
 # retires: loaves/compiler/incan_ir/src/lower/tests/json_protocol_bounds.rs::json_protocol_returns_carry_the_trait_and_its_serde_capability_issue1820
+# retires: loaves/compiler/incan_ir/src/lower/tests/json_protocol_bounds.rs::module_qualified_trait_annotations_lower_like_the_alias_issue1820
 # expect-stdout:
 #   {"value":1}
 #   {"value":1}
@@ -16,6 +17,8 @@
 #   9
 #   {"value":5}
 #   {"value":5}
+#   {"value":6}
+#   {"value":7}
 
 from std.serde import json
 from std.serde.json import Deserialize, Serialize
@@ -62,6 +65,14 @@ def make() -> Serialize:
     return Payload(value=5)
 
 
+def describe(value: json.Serialize) -> str:
+    return json_stringify(value)
+
+
+def make_qualified() -> json.Serialize:
+    return Payload(value=7)
+
+
 def main() -> None:
     println(encode(Payload(value=1)))
     println(stringify(Payload(value=1)))
@@ -80,3 +91,5 @@ def main() -> None:
         Err(error) => println(error)
     println(json_stringify(make()))
     println(make().to_json())
+    println(describe(Payload(value=6)))
+    println(make_qualified().to_json())
