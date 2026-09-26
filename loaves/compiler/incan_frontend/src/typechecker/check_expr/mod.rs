@@ -423,6 +423,7 @@ impl TypeChecker {
                 self.check_method_call_with_expected(base, method, type_args, args, expr.span, Some(expected_ty))
             }
             (Expr::Tuple(items), Some(ResolvedType::Unit)) if items.is_empty() => ResolvedType::Unit,
+            (Expr::Tuple(items), Some(expected_ty)) => self.check_tuple_with_expected(items, expected_ty),
             (Expr::Closure(params, body), Some(ResolvedType::Function(expected_params, expected_ret))) => {
                 self.check_closure_with_expected(params, body, expected_params, expected_ret, expr.span)
             }

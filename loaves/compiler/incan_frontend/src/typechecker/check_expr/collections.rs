@@ -5,59 +5,161 @@
 
 use crate::ast::*;
 use crate::diagnostics::errors;
-use crate::symbols::ResolvedType;
+use crate::symbols::{ResolvedType, TypeInfo};
 use crate::typechecker::helpers::{collection_type_id, dict_ty, list_ty, set_ty};
 use incan_lang::lang::types::collections::CollectionTypeId;
 
 use super::TypeChecker;
 
 impl TypeChecker {
-    /// Extract the element type from an expected `List[T]` destination, if one is already known.
-    fn list_expected_element_type(expected: Option<&ResolvedType>) -> Option<ResolvedType> {
-        match expected {
-            Some(ResolvedType::Generic(name, args))
+    /// Return the type a collection literal builds for the destination type `expected`, looking through the `Option`
+    /// and union wrappers the destination puts around it; `is_kind` accepts the literal's own kind of type.
+    ///
+    /// `Option[list[int]]` gives `list[int]`: an `[]` assigned to it is a `list[int]`, which the destination wraps in
+    /// `Some`. A union gives its one member of the literal's kind when every other member is a type no collection
+    /// literal of another kind builds (see [`Self::never_built_by_other_literal`]), so `list[int] | str` gives
+    /// `list[int]`. A union with two members of the kind (`list[int] | list[str]`), or with a member a literal might
+    /// build (a type parameter, a newtype, a trait), gives nothing, and the literal is checked on its own.
+    fn collection_literal_destination<'ty>(
+        &self,
+        expected: &'ty ResolvedType,
+        is_kind: &dyn Fn(&ResolvedType) -> bool,
+    ) -> Option<&'ty ResolvedType> {
+        if is_kind(expected) {
+            return Some(expected);
+        }
+        if let Some(inner) = expected.option_inner_type() {
+            return self.collection_literal_destination(inner, is_kind);
+        }
+        let mut destination = None;
+        for member in expected.union_members()? {
+            match self.collection_literal_destination(member, is_kind) {
+                Some(found) if destination.is_none() => destination = Some(found),
+                Some(_) => return None,
+                None if self.never_built_by_other_literal(member) => {}
+                None => return None,
+            }
+        }
+        destination
+    }
+
+    /// Return whether no value of `ty` is built by a collection literal of a kind `ty` is not: a scalar, a tuple, a
+    /// builtin list, dict, set, `Result` or generator, a model, class or enum, or an `Option` or union of such types.
+    ///
+    /// A type parameter, a newtype (which may accept its underlying collection), a trait, a frozen collection and an
+    /// unknown type may be built by such a literal, so they answer `false`.
+    fn never_built_by_other_literal(&self, ty: &ResolvedType) -> bool {
+        match ty {
+            ResolvedType::Int
+            | ResolvedType::Float
+            | ResolvedType::Numeric(_)
+            | ResolvedType::Bool
+            | ResolvedType::Str
+            | ResolvedType::Bytes
+            | ResolvedType::FrozenStr
+            | ResolvedType::FrozenBytes
+            | ResolvedType::Unit
+            | ResolvedType::Tuple(_) => true,
+            ResolvedType::Named(name) => self.names_model_class_or_enum(name),
+            ResolvedType::Generic(name, args) => match collection_type_id(name.as_str()) {
+                Some(CollectionTypeId::Option) => args.iter().all(|arg| self.never_built_by_other_literal(arg)),
+                Some(
+                    CollectionTypeId::List
+                    | CollectionTypeId::Dict
+                    | CollectionTypeId::Set
+                    | CollectionTypeId::Tuple
+                    | CollectionTypeId::Result
+                    | CollectionTypeId::Generator,
+                ) => true,
+                Some(CollectionTypeId::FrozenList | CollectionTypeId::FrozenDict | CollectionTypeId::FrozenSet) => {
+                    false
+                }
+                None if ty.is_union() => args.iter().all(|arg| self.never_built_by_other_literal(arg)),
+                None => self.names_model_class_or_enum(name),
+            },
+            _ => false,
+        }
+    }
+
+    /// Return whether `name` resolves to a model, class or enum declaration.
+    fn names_model_class_or_enum(&self, name: &str) -> bool {
+        matches!(
+            self.lookup_type_info(name),
+            Some(TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Enum(_))
+        )
+    }
+
+    /// Return the element type of a `list[T]` type.
+    fn list_element_type(ty: &ResolvedType) -> Option<&ResolvedType> {
+        match ty {
+            ResolvedType::Generic(name, args)
                 if collection_type_id(name.as_str()) == Some(CollectionTypeId::List) && args.len() == 1 =>
             {
-                Some(args[0].clone())
+                args.first()
             }
             _ => None,
         }
     }
 
-    /// Extract key/value types from an expected `Dict[K, V]` destination, if one is already known.
-    fn dict_expected_entry_types(expected: Option<&ResolvedType>) -> (Option<ResolvedType>, Option<ResolvedType>) {
-        match expected {
-            Some(ResolvedType::Generic(name, args))
+    /// Return the key and value types of a `dict[K, V]` type.
+    fn dict_entry_types(ty: &ResolvedType) -> Option<(&ResolvedType, &ResolvedType)> {
+        match ty {
+            ResolvedType::Generic(name, args)
                 if collection_type_id(name.as_str()) == Some(CollectionTypeId::Dict) && args.len() == 2 =>
             {
-                (Some(args[0].clone()), Some(args[1].clone()))
+                Some((&args[0], &args[1]))
             }
-            _ => (None, None),
+            _ => None,
+        }
+    }
+
+    /// Return the element types of a tuple type, spelled either `tuple[...]` or as a tuple literal's own type.
+    fn tuple_element_types(ty: &ResolvedType) -> Option<&[ResolvedType]> {
+        match ty {
+            ResolvedType::Tuple(items) => Some(items.as_slice()),
+            ResolvedType::Generic(name, items)
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Tuple) =>
+            {
+                Some(items.as_slice())
+            }
+            _ => None,
+        }
+    }
+
+    /// Extract the element type from the list type an expected destination gives a list literal, if one is known.
+    ///
+    /// The destination may wrap the list in `Option` or a union (see [`Self::collection_literal_destination`]), so
+    /// `[]` and `[None]` take the element type of an `Option[list[...]]` or `list[...] | str` destination too.
+    fn list_expected_element_type(&self, expected: Option<&ResolvedType>) -> Option<ResolvedType> {
+        let destination =
+            self.collection_literal_destination(expected?, &|ty| Self::list_element_type(ty).is_some())?;
+        Self::list_element_type(destination).cloned()
+    }
+
+    /// Extract key/value types from the dict type an expected destination gives a dict literal, if one is known.
+    ///
+    /// The destination may wrap the dict in `Option` or a union, as for a list literal.
+    fn dict_expected_entry_types(
+        &self,
+        expected: Option<&ResolvedType>,
+    ) -> (Option<ResolvedType>, Option<ResolvedType>) {
+        let destination = expected.and_then(|expected| {
+            self.collection_literal_destination(expected, &|ty| Self::dict_entry_types(ty).is_some())
+        });
+        match destination.and_then(Self::dict_entry_types) {
+            Some((key, value)) => (Some(key.clone()), Some(value.clone())),
+            None => (None, None),
         }
     }
 
     /// Extract the element type from a statically known list spread operand.
     fn list_spread_element_type(ty: &ResolvedType) -> Option<ResolvedType> {
-        match ty {
-            ResolvedType::Generic(name, args)
-                if collection_type_id(name.as_str()) == Some(CollectionTypeId::List) && args.len() == 1 =>
-            {
-                Some(args[0].clone())
-            }
-            _ => None,
-        }
+        Self::list_element_type(ty).cloned()
     }
 
     /// Extract key/value types from a statically known dict spread operand.
     fn dict_spread_entry_types(ty: &ResolvedType) -> Option<(ResolvedType, ResolvedType)> {
-        match ty {
-            ResolvedType::Generic(name, args)
-                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Dict) && args.len() == 2 =>
-            {
-                Some((args[0].clone(), args[1].clone()))
-            }
-            _ => None,
-        }
+        Self::dict_entry_types(ty).map(|(key, value)| (key.clone(), value.clone()))
     }
 
     /// Merge one observed collection member type into the literal's candidate member type.
@@ -143,7 +245,7 @@ impl TypeChecker {
         elems: &[ListEntry],
         expected: Option<&ResolvedType>,
     ) -> ResolvedType {
-        let hinted_elem_ty = Self::list_expected_element_type(expected);
+        let hinted_elem_ty = self.list_expected_element_type(expected);
         let mut elem_ty = hinted_elem_ty.clone().unwrap_or(ResolvedType::Unknown);
         let first_member = match elems.first() {
             Some(ListEntry::Element(value)) => Some(&value.node),
@@ -207,6 +309,45 @@ impl TypeChecker {
         ResolvedType::Tuple(elem_types)
     }
 
+    /// Type-check a tuple literal against the tuple type its destination expects.
+    ///
+    /// The destination's tuple type of the literal's length (found through `Option` and union wrappers, see
+    /// [`Self::collection_literal_destination`]) gives each element its expected type, as a list literal's element
+    /// type does, so `None`, `Ok(...)`, `Err(...)`, an empty collection and an integer literal in a float slot are
+    /// checked against it. Each element of the literal's type is the expected element type when the element is
+    /// compatible with it and that type is fully known, which is what `(None, 1)` needs to be an `Option[str]` in a
+    /// `tuple[Option[str], int]`; otherwise it is the element's own type, and the destination's own check reports a
+    /// mismatch. Without a tuple destination of that length the literal is checked on its own.
+    pub(in crate::typechecker::check_expr) fn check_tuple_with_expected(
+        &mut self,
+        elems: &[Spanned<Expr>],
+        expected: &ResolvedType,
+    ) -> ResolvedType {
+        let arity = elems.len();
+        let Some(expected_elems) = self
+            .collection_literal_destination(expected, &|ty| {
+                Self::tuple_element_types(ty).is_some_and(|items| items.len() == arity)
+            })
+            .and_then(Self::tuple_element_types)
+            .map(<[ResolvedType]>::to_vec)
+        else {
+            return self.check_tuple(elems);
+        };
+        let elem_types = elems
+            .iter()
+            .zip(expected_elems)
+            .map(|(elem, expected_elem)| {
+                let elem_ty = self.check_expr_with_expected(elem, Some(&expected_elem));
+                if self.is_fully_known_type(&expected_elem) && self.types_compatible(&elem_ty, &expected_elem) {
+                    expected_elem
+                } else {
+                    elem_ty
+                }
+            })
+            .collect();
+        ResolvedType::Tuple(elem_types)
+    }
+
     /// Type-check a list literal.
     pub(in crate::typechecker::check_expr) fn check_list(&mut self, elems: &[ListEntry]) -> ResolvedType {
         self.check_list_with_expected(elems, None)
@@ -223,7 +364,7 @@ impl TypeChecker {
         entries: &[DictEntry],
         expected: Option<&ResolvedType>,
     ) -> ResolvedType {
-        let (hinted_key_ty, hinted_value_ty) = Self::dict_expected_entry_types(expected);
+        let (hinted_key_ty, hinted_value_ty) = self.dict_expected_entry_types(expected);
         let mut key_ty = hinted_key_ty.clone().unwrap_or(ResolvedType::Unknown);
         let mut val_ty = hinted_value_ty.clone().unwrap_or(ResolvedType::Unknown);
 
@@ -278,5 +419,32 @@ impl TypeChecker {
         }
 
         set_ty(elem_ty)
+    }
+
+    /// Return whether `ty` has no part left for inference to fill: no unknown type, type parameter, `Self` or call-site
+    /// `_`.
+    ///
+    /// A tuple literal takes an expected element type only when it is fully known, so a `tuple[T, int]` destination
+    /// does not turn an element's own type into the placeholder `T`.
+    fn is_fully_known_type(&self, ty: &ResolvedType) -> bool {
+        if self.is_generic_placeholder_type(ty) {
+            return false;
+        }
+        match ty {
+            ResolvedType::Unknown | ResolvedType::CallSiteInfer | ResolvedType::SelfType => false,
+            ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
+                args.iter().all(|arg| self.is_fully_known_type(arg))
+            }
+            ResolvedType::FrozenList(inner)
+            | ResolvedType::FrozenSet(inner)
+            | ResolvedType::TypeToken(inner)
+            | ResolvedType::Ref(inner)
+            | ResolvedType::RefMut(inner) => self.is_fully_known_type(inner),
+            ResolvedType::FrozenDict(key, value) => self.is_fully_known_type(key) && self.is_fully_known_type(value),
+            ResolvedType::Function(params, ret) => {
+                params.iter().all(|param| self.is_fully_known_type(&param.ty)) && self.is_fully_known_type(ret)
+            }
+            _ => true,
+        }
     }
 }

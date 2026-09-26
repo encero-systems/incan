@@ -8,6 +8,7 @@
 
 mod calls;
 mod comprehensions;
+mod float_literals;
 mod helpers;
 mod patterns;
 
@@ -1254,6 +1255,7 @@ impl AstLowering {
                 existing => Self::merge_inferred_ir_type(existing, inferred),
             };
         }
+        Self::write_float_typed_int_literal_as_float(&mut lowered, &expr.node);
         if matches!(expr.node, ast::Expr::Ident(_))
             && let IrType::TypeToken(inner) = &lowered.ty
         {

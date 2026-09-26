@@ -1,0 +1,31 @@
+# behavior: the None, Ok, Err and integer elements of an annotated tuple literal take the annotation's element types
+# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::annotated_tuple_literal_types_its_elements_issue1847
+# retires: loaves/compiler/incan_ir/src/lower/tests/expected_literal_types.rs::tuple_literal_keeps_its_annotated_element_types_issue1847
+# expect-stdout:
+#   1
+#   missing
+#   ok 1
+#   err bad
+#   1.0 2
+#   inner missing 2
+
+def main() -> None:
+    pair: tuple[Option[str], int] = (None, 1)
+    println(pair[1])
+    match pair[0]:
+        Some(text) => println(text)
+        None => println("missing")
+    ok_pair: tuple[Result[int, int], int] = (Ok(1), 0)
+    match ok_pair[0]:
+        Ok(value) => println(f"ok {value}")
+        Err(code) => println(f"err {code}")
+    err_pair: tuple[Result[int, str], int] = (Err("bad"), 2)
+    match err_pair[0]:
+        Ok(value) => println(f"ok {value}")
+        Err(reason) => println(f"err {reason}")
+    floats: tuple[float, int] = (1, 2)
+    println(f"{floats[0]} {floats[1]}")
+    nested: tuple[tuple[Option[int], int], int] = ((None, 1), 2)
+    match nested[0][0]:
+        Some(value) => println(value)
+        None => println(f"inner missing {nested[1]}")
