@@ -5716,13 +5716,21 @@ impl TypeChecker {
             _ => {}
         }
 
-        // Option[T] helpers.
-        //
-        // NOTE: `Dict.get(k)` is backed by Rust `HashMap::get`, which returns `Option<&V>`.
-        // We model that as `Option[&V]` internally, so helpers like `.copied()` can typecheck in the same way they do
-        // in Rust.
+        // Option[T] helpers. `copied` applies to an `Option` of a Rust reference (a Rust API's result); `dict.get`
+        // answers with the value itself, so it has nothing to copy.
         if base_ty.is_option() {
             let inner = base_ty.option_inner_type().cloned().unwrap_or(ResolvedType::Unknown);
+            if matches!(method, "copied" | "cloned")
+                && !matches!(inner, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
+                && matches!(&base.node, Expr::MethodCall(_, name, _, _) if name == "get")
+            {
+                self.errors.push(
+                    errors::missing_method(&base_ty.to_string(), method, span).with_hint(format!(
+                        "`get` returns the stored value itself, so `.{method}()` has nothing to do; remove it"
+                    )),
+                );
+                return ResolvedType::Unknown;
+            }
             match option_methods::from_str(method) {
                 Some(option_methods::OptionMethodId::Copied) => {
                     // Rust: `Option<&T>::copied() -> Option<T>` (for `T: Copy`).
@@ -5901,10 +5909,12 @@ impl TypeChecker {
                     match id {
                         M::Keys => return list_ty(key),
                         M::Values => return list_ty(val),
-                        // `Dict.get(k)` is backed by Rust `HashMap::get`, which returns `Option<&V>`.
-                        // Model this as an internal reference so chained Rust-idiom helpers (like `.copied()`)
-                        // typecheck consistently with codegen.
-                        M::Get => return option_ty(ResolvedType::Ref(Box::new(val.clone()))),
+                        // `dict.get(k)` answers with the stored value, static or not. Lowering reads the entry in
+                        // place when the result is only read and copies it otherwise (`check_expr/dict_lookups.rs`).
+                        M::Get => {
+                            self.note_dict_lookup_value(span, &val);
+                            return option_ty(val.clone());
+                        }
                         M::Insert => return ResolvedType::Unit,
                         M::ContainsKey => {
                             self.validate_dict_contains_key_call(&key, args, &arg_types, span);

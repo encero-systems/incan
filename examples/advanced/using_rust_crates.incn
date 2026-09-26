@@ -49,14 +49,13 @@ def word_frequency(text: str) -> HashMap[str, int]:
     Count word occurrences using Rust's HashMap.
     
     This demonstrates iterating over string methods and using HashMap.
-    The .get().copied().unwrap_or(0) pattern is a Rust idiom explained below.
+    `get` returns the stored count, or None for a word not seen yet.
     """
     mut counts = HashMap.new()
     
     for word in text.split_whitespace():
-        # Rust idiom: .get() returns Option<&V>, .copied() converts to Option<V>,
-        # .unwrap_or(0) provides default. Like Python's dict.get(key, 0)
-        current = counts.get(word).copied().unwrap_or(0)
+        # .unwrap_or(0) provides the default, like Python's dict.get(key, 0)
+        current = counts.get(word).unwrap_or(0)
         counts.insert(word.to_string(), current + 1)
     
     return counts
@@ -145,9 +144,9 @@ def main() -> None:
     println("\n3. Word Frequency (HashMap):")
     text = "the quick brown fox jumps over the lazy dog the fox"
     freq = word_frequency(text)
-    println(f"   'the' appears {freq.get('the').copied().unwrap_or(0)} times")
-    println(f"   'fox' appears {freq.get('fox').copied().unwrap_or(0)} times")
-    println(f"   'cat' appears {freq.get('cat').copied().unwrap_or(0)} times")
+    println(f"   'the' appears {freq.get('the').unwrap_or(0)} times")
+    println(f"   'fox' appears {freq.get('fox').unwrap_or(0)} times")
+    println(f"   'cat' appears {freq.get('cat').unwrap_or(0)} times")
     
     # Example 4: Time measurement
     println("\n4. Time Measurement (Instant):")

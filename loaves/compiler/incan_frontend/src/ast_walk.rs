@@ -52,6 +52,16 @@ where
     any_expr_in_body_impl(body, &mut pred)
 }
 
+/// Returns `true` if `expr` or any expression nested in it satisfies `pred`.
+///
+/// Use this for a single expression slot, such as a match arm's `=> expr` body or its guard.
+pub fn any_expr_in_expr<F>(expr: &Expr, mut pred: F) -> bool
+where
+    F: FnMut(&Expr) -> bool,
+{
+    expr_has(expr, &mut pred)
+}
+
 /// Checks whether a top-level declaration contains any matching expression.
 ///
 /// This helper is responsible for declaration-specific expression slots (for example defaults, decorators, and

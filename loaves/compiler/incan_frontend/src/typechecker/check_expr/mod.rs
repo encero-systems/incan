@@ -24,6 +24,7 @@ mod calls;
 mod collections;
 mod comps;
 mod control_flow;
+mod dict_lookups;
 mod match_;
 mod ops;
 

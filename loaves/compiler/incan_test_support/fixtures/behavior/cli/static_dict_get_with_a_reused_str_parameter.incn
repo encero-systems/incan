@@ -1,0 +1,98 @@
+# behavior: a str parameter handed to get, insert, a membership test and append on module statics is still readable after each call, also when the same name is the key of an index assignment or part of the receiver's path, a str literal inserted into a static dict is stored as its key, and get returns the stored value on a static dict, a local bound to one, a dict parameter and a generic dict, read in place when only read
+# retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::dict_get_copies_only_a_kept_value
+# retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::local_dict_get_answers_with_the_stored_value
+# retires: loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs::static_collection_arguments_stay_readable_issue1793
+# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::a_dict_get_whose_result_is_only_read_stays_in_place
+# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::arguments_read_after_a_static_method_call_are_kept_readable_issue1793
+# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::arguments_read_again_by_the_generated_code_are_kept_readable_issue1793
+# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::dict_get_answers_with_the_stored_value
+# expect-stdout:
+#   a=1
+#   b missing
+#   c recorded 2
+#   d listed
+#   2
+#   a counted 3
+#   true
+#   2
+#   4
+#   2
+#   x
+
+static counts: dict[str, int] = {}
+static names: list[str] = []
+static graph: dict[str, list[str]] = {}
+
+
+def lookup(name: str) -> str:
+    match counts.get(name):
+        Some(value) => return f"{name}={value}"
+        None => return f"{name} missing"
+
+
+def record(name: str) -> str:
+    counts.insert(name, 2)
+    if name in counts:
+        return f"{name} recorded {len(counts)}"
+    return f"{name} lost"
+
+
+def listed(name: str) -> str:
+    names.append(name)
+    if name in names:
+        return f"{name} listed"
+    return f"{name} lost"
+
+
+def count_of(name: str) -> Option[int]:
+    return counts.get(name)
+
+
+def bump(name: str) -> None:
+    counts[name] = counts.get(name).unwrap_or(0) + 1
+
+
+def linked(node: str) -> bool:
+    return graph[node].contains(node)
+
+
+def aliased(name: str) -> int:
+    live = counts
+    found: Option[int] = live.get(name)
+    return found.unwrap_or(0)
+
+
+def size[V](table: dict[str, list[V]], key: str) -> int:
+    match table.get(key):
+        Some(items) => return len(items)
+        None => return 0
+
+
+def pick[V](table: dict[str, V], key: str) -> Option[V]:
+    return table.get(key)
+
+
+def total(table: dict[str, int], keys: list[str]) -> int:
+    mut sum = 0
+    for key in keys:
+        sum += table.get(key).unwrap_or(0)
+    return sum
+
+
+def main() -> None:
+    counts.insert("a", 1)
+    println(lookup("a"))
+    println(lookup("b"))
+    println(record("c"))
+    println(listed("d"))
+    println(count_of("c").unwrap_or(0))
+    bump("a")
+    bump("a")
+    counted = count_of("a").unwrap_or(0)
+    println(f"a counted {counted}")
+    graph.insert("a", ["a", "b"])
+    println(linked("a"))
+    println(aliased("c"))
+    println(total({"x": 1, "y": 3}, ["x", "y", "z"]))
+    println(size({"a": [1, 2]}, "a"))
+    println(pick({"a": "x"}, "a").unwrap_or("none"))

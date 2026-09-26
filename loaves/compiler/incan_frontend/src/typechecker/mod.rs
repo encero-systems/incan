@@ -466,6 +466,9 @@ pub struct TypeChecker {
     current_immutable_self_method: Option<String>,
     /// Iterator bindings consumed by terminal RFC 088 methods in the current local checking flow.
     pub consumed_iterator_bindings: HashMap<String, Span>,
+    /// `dict.get(key)` calls whose value type cannot be copied, with that type's name; refused at the end of checking
+    /// unless the lookup turned out to be only read (see `check_expr/dict_lookups.rs`).
+    pending_uncopyable_dict_lookups: Vec<(Span, String)>,
     /// Resource bindings transferred to an owning C ABI parameter in the current local checking flow.
     pub transferred_c_resource_bindings: HashMap<String, Span>,
     /// Checked span constructors waiting for the enclosing direct assignment to name their only legal owner.
@@ -786,6 +789,7 @@ impl TypeChecker {
             mutable_bindings: HashSet::new(),
             current_immutable_self_method: None,
             consumed_iterator_bindings: HashMap::new(),
+            pending_uncopyable_dict_lookups: Vec::new(),
             transferred_c_resource_bindings: HashMap::new(),
             unbound_c_abi_span_constructors: HashMap::new(),
             c_abi_span_bindings: HashMap::new(),
@@ -6503,6 +6507,7 @@ impl TypeChecker {
         self.type_info = TypeCheckInfo::default();
         self.warnings.clear();
         self.errors.clear();
+        self.pending_uncopyable_dict_lookups.clear();
         self.testing_marker_import_bindings.clear();
         self.surface_function_import_bindings.clear();
         self.surface_type_import_bindings.clear();
@@ -6549,6 +6554,7 @@ impl TypeChecker {
                 self.check_declaration(decl);
             }
         }
+        self.refuse_copying_dict_lookups_of_uncopyable_values();
 
         self.type_info
             .c_abi

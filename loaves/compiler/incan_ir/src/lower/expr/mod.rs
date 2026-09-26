@@ -10,6 +10,7 @@ mod calls;
 mod comprehensions;
 mod helpers;
 mod patterns;
+mod static_method_args;
 
 use std::collections::HashMap;
 
@@ -1657,11 +1658,8 @@ impl AstLowering {
                                     .then_some(MethodKind::Collection(CollectionMethodKind::Contains))
                             });
                             let contains_call = if let Some(kind) = contains_kind {
-                                IrExprKind::KnownMethodCall {
-                                    receiver: Box::new(collection),
-                                    kind,
-                                    args: contains_args,
-                                }
+                                self.known_method_call(r.span, collection, kind, contains_args, IrType::Bool)
+                                    .0
                             } else {
                                 let arg_policy = self.regular_method_call_arg_policy(
                                     r.span,
@@ -1958,14 +1956,7 @@ impl AstLowering {
                     })
                     .flatten()
                 {
-                    (
-                        IrExprKind::KnownMethodCall {
-                            receiver: Box::new(receiver),
-                            kind,
-                            args: args_ir,
-                        },
-                        expr_ty,
-                    )
+                    self.known_method_call(expr_span, receiver, kind, args_ir, expr_ty)
                 } else {
                     let imported_type_method_signature = match &o.node {
                         ast::Expr::Ident(name) => match self.import_aliases.get(name).cloned() {
@@ -2027,6 +2018,7 @@ impl AstLowering {
                     // Rust ABI slot because no inherent owner is statically nameable there.
                     let (emitted_method_name, dispatch) =
                         self.project_resolved_method_target(expr_span, &method_name, &receiver, dispatch);
+                    Self::keep_rust_collection_static_args_readable(&receiver, &mut args_ir);
                     (
                         IrExprKind::MethodCall {
                             receiver: Box::new(receiver),

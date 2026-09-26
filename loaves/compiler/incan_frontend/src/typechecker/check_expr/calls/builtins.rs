@@ -4,7 +4,7 @@ use super::TypeChecker;
 use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned, Type};
 use crate::diagnostics::errors;
 use crate::symbols::{CallableParam, FunctionInfo, ResolvedType};
-use crate::typechecker::helpers::{collection_type_id, dict_ty, list_ty, option_ty, result_ty, set_ty};
+use crate::typechecker::helpers::{collection_type_id, dict_ty, is_frozen_str, list_ty, option_ty, result_ty, set_ty};
 use incan_lang::lang::builtins::{self as core_builtins, BuiltinFnId};
 use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::constructors::{self as surface_constructors, ConstructorId};
@@ -155,6 +155,25 @@ impl TypeChecker {
             .then_some(expected_inner)
     }
 
+    /// Return the string type a `Some(payload)` checked against `Option[expected_inner]` converts a `FrozenStr` payload
+    /// to.
+    ///
+    /// `FrozenStr` (which is also what a `const` declared `str` carries) reads anywhere `str` is expected, but the two
+    /// are stored differently, so a `FrozenStr` payload placed in an `Option[str]` or an `Option[FrozenStr]` is
+    /// converted to the destination's own string type at the constructor's argument. The destination's inner type,
+    /// with source aliases expanded, must be `str` or `FrozenStr`; any other payload records nothing.
+    fn some_payload_string_destination(
+        &self,
+        payload_ty: &ResolvedType,
+        expected_inner: &ResolvedType,
+    ) -> Option<ResolvedType> {
+        if !is_frozen_str(payload_ty) {
+            return None;
+        }
+        let expected_inner = self.expand_type_aliases(expected_inner.clone());
+        (matches!(expected_inner, ResolvedType::Str) || is_frozen_str(&expected_inner)).then_some(expected_inner)
+    }
+
     // ---- Rust boundary matching and coercion recording ----
 
     /// Type-check an ordinary builtin call, optionally retaining an already-known result context.
@@ -290,16 +309,20 @@ impl TypeChecker {
                             self.call_argument_depth += 1;
                             let ty = self.check_expr_with_expected(expr, Some(expected_inner));
                             self.call_argument_depth -= 1;
-                            if let Some(union) = self.some_payload_union_wrapper(&ty, expected_inner) {
-                                // The constructor is instantiated at the destination's union: record that
-                                // parameter as the call's callable fact so lowering carries it and the payload is
-                                // injected into the wrapper at the argument, as it is for any callable taking the
-                                // union (#1724). The call's type is the instantiation, not `Option[member]`.
+                            // The constructor is instantiated at the destination's union, or at the destination's
+                            // own string type for a `FrozenStr` payload: record that parameter as the call's
+                            // callable fact so lowering carries it and the payload is injected into the wrapper or
+                            // converted at the argument, as it is for any callable taking that type (#1724, #1794).
+                            // The call's type is the instantiation, not `Option[payload]`.
+                            if let Some(destination) = self
+                                .some_payload_union_wrapper(&ty, expected_inner)
+                                .or_else(|| self.some_payload_string_destination(&ty, expected_inner))
+                            {
                                 self.type_info.record_call_site_callable_params_exact(
                                     call_span,
-                                    &[CallableParam::positional(union.clone())],
+                                    &[CallableParam::positional(destination.clone())],
                                 );
-                                return Some(option_ty(union));
+                                return Some(option_ty(destination));
                             }
                             ty
                         }

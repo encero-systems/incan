@@ -87,7 +87,23 @@ static counts: dict[str, int] = {}
 
 def record(name: str) -> None:
     items.append(len(items))
-    counts[name] = counts.get(name, 0) + 1
+    counts[name] = counts.get(name).unwrap_or(0) + 1
+```
+
+### Read through a method
+
+A method that reads a static returns a value: `get` on a `static counts: dict[str, int]`, or on a `dict[str, int]` field of a static, is an `Option[int]`. An argument passed to a method on a static is still readable after the call.
+
+```incan
+static counts: dict[str, int] = {}
+
+def lookup(name: str) -> Option[int]:
+    return counts.get(name)            # Some(count) when name is a key, None otherwise
+
+def describe(name: str) -> str:
+    match counts.get(name):
+        Some(count) => return f"{name}={count}"   # "a=1" after counts.insert("a", 1)
+        None => return f"{name} missing"
 ```
 
 ### Bind a direct alias

@@ -551,7 +551,7 @@ pub mod dict_methods {
             DictMethodId::Get,
             "get",
             &[],
-            "Get a value by key, optionally with a default.",
+            "Return the stored value for a key: `Some(value)` when the key is present, `None` otherwise.",
             RFC::_009,
             Since(0, 1),
         ),
