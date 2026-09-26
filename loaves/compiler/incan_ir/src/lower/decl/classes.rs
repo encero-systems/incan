@@ -98,7 +98,8 @@ impl AstLowering {
                         self.lower_resolved_declaration_type(&emission_ty)
                     },
                     surface_type_name: field.surface_type_name,
-                    visibility: Self::map_visibility(field.visibility),
+                    visibility: self
+                        .default_reachable_field_visibility(&c.name, Self::map_visibility(field.visibility)),
                     is_type_private: matches!(field.visibility, incan_frontend::ast::Visibility::Private),
                     default,
                     alias: field.alias,
@@ -142,7 +143,7 @@ impl AstLowering {
             docstring: c.docstring.clone(),
             fields,
             derives,
-            visibility: self.map_type_visibility(c.visibility),
+            visibility: self.default_reachable_visibility(&c.name, self.map_type_visibility(c.visibility)),
             type_params,
             phantom_type_params,
             derive_rust_modules,

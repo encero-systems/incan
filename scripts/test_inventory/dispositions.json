@@ -1433,6 +1433,20 @@
       "split_target": "",
       "twin": "loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs::named_constructor_arguments_evaluate_in_written_order_issue1462"
     },
+    "loaves/compiler/incan_emit/tests/default_argument_codegen_tests.rs": {
+      "disposition": "retire",
+      "owner": 1561,
+      "twin": "",
+      "split_required": false,
+      "split_target": "",
+      "notes": "generated-Rust spelling of default arguments expanded outside their callable's module; asserts emitted paths, which retire with the Rust-source backend.",
+      "tests": {
+        "same_named_default_consts_resolve_in_their_callables_modules_issue1771": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/same_named_default_consts_across_modules",
+          "notes": "Asserts the emitted `crate::a::SIZE` / `crate::b::SIZE` paths; the behavior, each omitted argument taking its own module's `SIZE`, is carried by the named fixture (#1771)."
+        }
+      }
+    },
     "loaves/compiler/incan_emit/tests/emitter_freeze_tests.rs": {
       "disposition": "unaffected",
       "notes": "emitter freeze gate (#1687); runs the fingerprint checker and goes with the emitter tree.",
@@ -2512,7 +2526,7 @@
       "tests": {
         "private_item_a_default_names_is_published_for_its_callers": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/private_default_items_from_dependency",
-          "notes": "Asserts the recorded shape on the legacy IR (a private const or function a parameter default or method-partial preset names is lowered as a published item); retires with `incan_ir`. The behavior, a consumer omitting a dependency's arguments whose defaults name a private const and call a private function, directly and through a partial, is carried by the named fixture; the same-project case by `cli/private_default_items_across_modules`."
+          "notes": "Asserts the recorded shape on the legacy IR (a private const, static, function, model, class, enum or newtype a parameter default or method-partial preset names is lowered as a published item, with the fields a construction spells); retires with `incan_ir`. The behavior across a package boundary is carried by the named fixture; the same-project case by `cli/private_default_items_across_modules`."
         }
       }
     },

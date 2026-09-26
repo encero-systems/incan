@@ -884,6 +884,8 @@ impl<'a> IrEmitter<'a> {
             out
         };
 
+        let default_owner_module = self.default_owner_module_for_call(func, canonical_path);
+
         // Handle argument passing with signature-based borrow insertion
         let arg_tokens: Vec<TokenStream> = ordered_args
             .iter()
@@ -939,7 +941,10 @@ impl<'a> IrEmitter<'a> {
                     || target_aware_frozen_literal_arg;
                 let arg_plan = ArgumentPassingPlan::for_use_site(a, use_site);
                 let previous_qualify = if *from_default {
-                    Some(self.qualify_internal_canonical_paths.replace(true))
+                    Some((
+                        self.qualify_internal_canonical_paths.replace(true),
+                        self.replace_default_owner_module(default_owner_module.clone()),
+                    ))
                 } else {
                     None
                 };
@@ -1006,8 +1011,9 @@ impl<'a> IrEmitter<'a> {
                     };
                     Ok::<(TokenStream, bool), EmitError>((emitted, emitted_from_value_plan))
                 })();
-                if let Some(previous) = previous_qualify {
-                    self.qualify_internal_canonical_paths.replace(previous);
+                if let Some((previous_qualify, previous_owner)) = previous_qualify {
+                    self.qualify_internal_canonical_paths.replace(previous_qualify);
+                    self.replace_default_owner_module(previous_owner);
                 }
                 let (emitted, emitted_from_value_plan) = emitted?;
 

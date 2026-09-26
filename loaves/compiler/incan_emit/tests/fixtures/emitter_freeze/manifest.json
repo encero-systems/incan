@@ -44,8 +44,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/calls.rs",
-      "sha256": "86e7c157dbd1086cd91ce275d8489904f75e317b704f893c0c1ed7afaf490843",
-      "lines": 2804
+      "sha256": "70d1e44c93a04d5167bf34540fde9c948cf68d3579983b4c3b658bc63230d5f2",
+      "lines": 2810
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/calls/testing_asserts.rs",
@@ -79,8 +79,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
-      "sha256": "8eccbc674a1af6b1253ab39a77a9af77604004e23e8a82826550a1dfab827ff0",
-      "lines": 1532
+      "sha256": "f713ed09cc5702b524c1b19968abc054317922894aaa2b14bc7e4b5e0b430390",
+      "lines": 1540
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/collection_methods.rs",
@@ -114,8 +114,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/mod.rs",
-      "sha256": "513391073130cd9250c415e4d21cf9dcca31d2cf58ac13a5ecd2060a4de5755c",
-      "lines": 4604
+      "sha256": "b778688a567c8b5091c2c6e9f67a1a511eacffaf6ba8fafa9a62b9ace8f31ec1",
+      "lines": 4671
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/native_unions.rs",
@@ -160,14 +160,26 @@
       "policy": "frozen",
       "files": [
         {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/calls.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/mod.rs",
+          "change": "modified"
+        },
+        {
           "path": "loaves/compiler/incan_emit/src/emit/program.rs",
           "change": "modified"
         }
       ],
-      "compatibility_issue": "#1765",
-      "behavior_evidence": "behavior fixtures cli/method_called_through_a_helper_keeps_its_callees.incn and cli/method_partial_over_model_method.incn, emitter test method_called_only_from_a_later_scanned_function_keeps_its_callees_issue1765 (tests/method_reachability_codegen_tests.rs)",
-      "semantic_owner": "#1561: the checked call graph, which records every method a reachable body calls, so retaining a generated method is a reachability query over recorded calls rather than a scan-order walk",
-      "retirement_condition": "the Rust-source backend is deleted (#654); the replacement route does not prune generated Rust items"
+      "compatibility_issue": "#1765, #1771",
+      "behavior_evidence": "behavior fixtures cli/method_called_through_a_helper_keeps_its_callees.incn, cli/method_partial_over_model_method.incn and cli/same_named_default_consts_across_modules; emitter tests method_called_only_from_a_later_scanned_function_keeps_its_callees_issue1765 (tests/method_reachability_codegen_tests.rs) and same_named_default_consts_resolve_in_their_callables_modules_issue1771 (tests/default_argument_codegen_tests.rs)",
+      "semantic_owner": "#1561: the checked call graph, which records every method a reachable body calls, and the checked identity of each item a default names, which carries its declaring module; retaining a generated method and spelling a default are then queries over recorded facts rather than a scan-order walk and a name-keyed module map",
+      "retirement_condition": "the Rust-source backend is deleted (#654); the replacement route neither prunes generated Rust items nor resolves default names by spelling"
     }
   ]
 }

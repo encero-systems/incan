@@ -30,7 +30,7 @@ Arguments bind to normal parameters in this order:
 4. Required parameters that remain unbound are reported as missing.
 5. Unknown named arguments are rejected unless the callee declares `**kwargs`.
 6. Extra positional arguments are rejected unless the callee declares `*args`.
-7. A defaulted parameter that remains unbound takes its declared default. A default that names a const or calls a function declared in the callable's module, private or public, resolves that name in the callable's module, whichever module or package the call is written in. The same holds for the presets of a method partial.
+7. A defaulted parameter that remains unbound takes its declared default. A name in a default resolves in the module that declares the callable, whichever module the call is written in: a const, static or function of that module, and a model, class, enum or newtype of that module that the default constructs or names a variant of, private or public. The same holds for the presets of a method partial. A call from another package omits such an argument under the same rule, except where the default constructs a model or class: that argument is required from another package.
 
 ```incan
 def connect(host: str, port: int) -> str:

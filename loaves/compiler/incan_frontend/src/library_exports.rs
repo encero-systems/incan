@@ -36,6 +36,16 @@ impl<'a> DefaultPathContext<'a> {
         }
     }
 
+    /// Return whether a callee expression names a model or class, whose call is a construction.
+    fn names_model_or_class(self, callee: &Expr) -> bool {
+        let Expr::Ident(name) = callee else {
+            return false;
+        };
+        self.checker
+            .lookup_symbol(name)
+            .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Type(TypeInfo::Model(_) | TypeInfo::Class(_))))
+    }
+
     /// Resolve a default-expression value path to the module that owns it.
     fn canonical_value_path(self, path: Vec<String>) -> Vec<String> {
         let Some(first) = path.first() else {
@@ -1052,6 +1062,11 @@ fn checked_param_default(expr: &Spanned<Expr>, context: DefaultPathContext<'_>) 
                 .collect(),
         ),
         Expr::Call(callee, _type_args, args) => {
+            // A consumer across the package boundary has no constructor for another package's model or class, so a
+            // default that constructs one is not carried there; the parameter stays required for such callers.
+            if context.names_model_or_class(&callee.node) {
+                return CheckedParamDefault::Unsupported;
+            }
             let path = context.canonical_value_path(checked_preset_path(&callee.node));
             if path.is_empty() {
                 return CheckedParamDefault::Unsupported;

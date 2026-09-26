@@ -131,10 +131,7 @@ impl AstLowering {
             ast::Declaration::Static(s) => {
                 let mut value = self.lower_expr_spanned(&s.value)?;
                 self.rewrite_checked_registry_entry_subject(&s.name, s.value.span, &mut value)?;
-                let visibility = match s.visibility {
-                    ast::Visibility::Public => Visibility::Public,
-                    ast::Visibility::Private => Visibility::Private,
-                };
+                let visibility = self.default_reachable_visibility(&s.name, Self::map_visibility(s.visibility));
                 IrDeclKind::Static {
                     visibility,
                     name: s.name.clone(),

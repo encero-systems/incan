@@ -992,6 +992,9 @@ pub struct DependencySymbolMetadata {
     pub ambiguous_type_names: HashSet<String>,
     pub value_module_paths: HashMap<String, Vec<String>>,
     pub ambiguous_value_names: HashSet<String>,
+    /// Every dependency module that declares each value name, so a default argument can name the declaration its
+    /// callable's module owns even when other modules declare the same name.
+    pub value_declaring_modules: HashMap<String, Vec<Vec<String>>>,
     pub enum_type_names: HashSet<String>,
 }
 
@@ -1001,6 +1004,7 @@ pub fn collect_dependency_symbol_metadata(deps: &[(&str, &Program, Option<Vec<St
     let mut ambiguous: HashSet<String> = HashSet::new();
     let mut value_paths: HashMap<String, Vec<String>> = HashMap::new();
     let mut ambiguous_values: HashSet<String> = HashSet::new();
+    let mut value_declaring_modules: HashMap<String, Vec<Vec<String>>> = HashMap::new();
     let mut enum_type_names: HashSet<String> = HashSet::new();
     let mut non_enum_type_names: HashSet<String> = HashSet::new();
 
@@ -1026,6 +1030,10 @@ pub fn collect_dependency_symbol_metadata(deps: &[(&str, &Program, Option<Vec<St
                     | Declaration::Docstring(_) => None,
                 }
             {
+                let declaring = value_declaring_modules.entry(name.clone()).or_default();
+                if !declaring.contains(segs) {
+                    declaring.push(segs.clone());
+                }
                 if let Some(existing) = value_paths.get(name) {
                     if existing != segs {
                         ambiguous_values.insert(name.clone());
@@ -1080,6 +1088,7 @@ pub fn collect_dependency_symbol_metadata(deps: &[(&str, &Program, Option<Vec<St
         ambiguous_type_names: ambiguous,
         value_module_paths: value_paths,
         ambiguous_value_names: ambiguous_values,
+        value_declaring_modules,
         enum_type_names,
     }
 }

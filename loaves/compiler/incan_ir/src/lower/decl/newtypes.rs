@@ -55,7 +55,7 @@ impl AstLowering {
             docstring: n.docstring.clone(),
             fields,
             derives,
-            visibility: self.map_type_visibility(n.visibility),
+            visibility: self.default_reachable_visibility(&n.name, self.map_type_visibility(n.visibility)),
             type_params,
             phantom_type_params,
             derive_rust_modules,

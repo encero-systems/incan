@@ -419,6 +419,10 @@ impl<'a> IrEmitter<'a> {
             return self.emit_rest_aware_call_args(receiver, args, sig);
         }
         let receiver_union_qualifier = Self::pub_library_union_qualifier_for_method_receiver(receiver);
+        let default_owner_module = Self::receiver_type_for_method_dispatch(&receiver.ty)
+            .nominal_type_name()
+            .and_then(|name| self.type_module_paths.get(name))
+            .cloned();
 
         let ordered_args: Vec<(TypedExpr, bool)> = if let Some(sig) = callable_signature.as_ref() {
             if args.iter().any(|arg| arg.name.is_some()) {
@@ -493,7 +497,10 @@ impl<'a> IrEmitter<'a> {
                     }
                 };
                 let previous_qualify = if *from_default {
-                    Some(self.qualify_internal_canonical_paths.replace(true))
+                    Some((
+                        self.qualify_internal_canonical_paths.replace(true),
+                        self.replace_default_owner_module(default_owner_module.clone()),
+                    ))
                 } else {
                     None
                 };
@@ -522,8 +529,9 @@ impl<'a> IrEmitter<'a> {
                     effective_arg_use_site,
                     receiver_union_qualifier.as_deref(),
                 );
-                if let Some(previous) = previous_qualify {
-                    self.qualify_internal_canonical_paths.replace(previous);
+                if let Some((previous_qualify, previous_owner)) = previous_qualify {
+                    self.qualify_internal_canonical_paths.replace(previous_qualify);
+                    self.replace_default_owner_module(previous_owner);
                 }
                 let mut emitted = emitted?;
                 if Self::is_std_path_new_call(receiver, method)

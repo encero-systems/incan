@@ -1,0 +1,9 @@
+[project]
+name = "refused_dependency_default_constructing_a_model"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+shapes = { path = "deps/shapes" }

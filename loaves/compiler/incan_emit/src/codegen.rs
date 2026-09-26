@@ -949,6 +949,7 @@ impl<'a> IrCodegen<'a> {
             metadata.value_module_paths.clone(),
             metadata.ambiguous_value_names.clone(),
         );
+        emitter.set_value_declaring_modules(metadata.value_declaring_modules.clone());
         let mut enum_type_names = metadata.enum_type_names.clone();
         if let Some(plan) = provider_plan {
             for provider in plan.active_sdk_records() {

@@ -5,8 +5,19 @@ def _unit() -> str:
     return "cm"
 
 
+enum _Finish:
+    Matte
+    Gloss
+
+
 pub def build(size: int, label: str = LABEL, unit: str = _unit()) -> str:
     return f"{label} of size {size}{unit}"
 
 
 pub default_build = partial build(size=3)
+
+
+pub def finish(kind: _Finish = _Finish.Gloss) -> str:
+    match kind:
+        _Finish.Matte => return "matte"
+        _Finish.Gloss => return "gloss"

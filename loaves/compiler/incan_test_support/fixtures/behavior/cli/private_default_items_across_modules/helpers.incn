@@ -7,12 +7,31 @@ def _unit() -> str:
     return "bytes"
 
 
+model _Limits:
+    size: int = 16
+
+
+enum _Mode:
+    Fast
+    Slow
+
+
 pub def read(n: int = CHUNK) -> int:
     return n
 
 
 pub def describe(n: int = CHUNK, prefix: str = PREFIX, unit: str = _unit()) -> str:
     return f"{prefix} {n} {unit}"
+
+
+pub def limit(limits: _Limits = _Limits()) -> int:
+    return limits.size
+
+
+pub def speed(mode: _Mode = _Mode.Fast) -> str:
+    match mode:
+        _Mode.Fast => return "fast"
+        _Mode.Slow => return "slow"
 
 
 pub model Greeter:

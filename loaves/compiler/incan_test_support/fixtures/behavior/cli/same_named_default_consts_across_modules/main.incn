@@ -1,0 +1,13 @@
+# behavior: two modules that each declare a const SIZE and a function defaulting to it are both imported, and each call that omits the argument takes the SIZE its own function's module declares
+# retires: loaves/compiler/incan_emit/tests/default_argument_codegen_tests.rs::same_named_default_consts_resolve_in_their_callables_modules_issue1771
+# expect-stdout:
+#   1
+#   2
+
+from a import first
+from b import second
+
+
+def main() -> None:
+    println(first())
+    println(second())
