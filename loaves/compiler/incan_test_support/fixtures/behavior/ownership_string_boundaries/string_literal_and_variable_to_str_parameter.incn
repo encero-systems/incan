@@ -1,0 +1,22 @@
+# behavior: a str parameter accepts a literal, a variable the caller keeps using afterwards, and a variable at its last use, and each call sees the text it was given
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_string_literal_to_string
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_string_var_to_string
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_string_var_read_to_string
+# retires: loaves/compiler/incan_emit/src/ownership.rs::incan_call_string_literal_plans_owned_string
+# expect-stdout:
+#   hi Alice
+#   hi Bob
+#   Bob again
+#   hi Cy
+
+def greet(name: str) -> str:
+    return "hi " + name
+
+
+def main() -> None:
+    println(greet("Alice"))
+    kept = "Bob"
+    println(greet(kept))
+    println(kept + " again")
+    last = "Cy"
+    println(greet(last))

@@ -1,0 +1,27 @@
+# behavior: the two ends of a channel are unpacked into separate locals, two values sent through the sender arrive at the receiver in order, and the sender is still open afterwards
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_assignment_moves_owned_tuple_unpack_field_without_clone
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_external_function_self_field_without_target_borrows_noncopy_receiver_field
+# expect-stdout:
+#   got 1
+#   got 2
+#   false
+
+import std.async
+from std.async.channel import channel
+
+
+async def main() -> None:
+    tx, rx = channel(2)
+    match await tx.send(1):
+        Ok(_) => pass
+        Err(error) => println(error.message())
+    match await tx.send(2):
+        Ok(_) => pass
+        Err(error) => println(error.message())
+    match await rx.recv():
+        Some(value) => println(f"got {value}")
+        None => println("closed")
+    match await rx.recv():
+        Some(value) => println(f"got {value}")
+        None => println("closed")
+    println(tx.is_closed())

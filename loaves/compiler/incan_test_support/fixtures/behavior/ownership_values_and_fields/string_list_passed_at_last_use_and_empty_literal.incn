@@ -1,0 +1,18 @@
+# behavior: a list of strings passed at its last use and an empty list literal both reach a list parameter and are measured by the callee
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_string_list_var_uses_owned_incan_semantics
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_empty_list_to_string_list_skips_collect_conversion
+# expect-stdout:
+#   3
+#   0
+
+def total_length(items: list[str]) -> int:
+    mut total = 0
+    for item in items:
+        total += len(item)
+    return total
+
+
+def main() -> None:
+    names = ["ab", "c"]
+    println(total_length(names))
+    println(total_length([]))

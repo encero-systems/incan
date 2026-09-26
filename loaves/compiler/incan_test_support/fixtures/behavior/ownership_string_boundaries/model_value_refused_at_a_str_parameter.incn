@@ -1,0 +1,15 @@
+# behavior: a model value is not turned into text on its way to a str parameter; the program is refused before it runs
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_incan_function_local_struct_to_string_param_does_not_stringify_implicitly
+# expect-diagnostic: INCAN-T0001
+
+model User:
+    name: str
+
+
+def label(text: str) -> str:
+    return "[" + text + "]"
+
+
+def main() -> None:
+    user = User(name="Ann")
+    println(label(user))

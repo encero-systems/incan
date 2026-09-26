@@ -1,0 +1,16 @@
+# behavior: a float that overflowed to infinity is refused when it is assigned to an f64 destination, after the finite values before it were printed
+# retires: loaves/compiler/incan_emit/src/conversions.rs::exact_float_destinations_require_finite_values_without_rejecting_f32_widening
+# expect-stdout:
+#   1.25
+#   inf
+# expect-exit: 101
+
+def main() -> None:
+    narrow: f32 = 1.25
+    widened: f64 = narrow
+    println(widened)
+    huge: float = 1e308
+    overflowed = huge * 10.0
+    println(overflowed)
+    exact: f64 = overflowed
+    println(exact)

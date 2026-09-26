@@ -1,0 +1,29 @@
+# behavior: a generic function that walks a generic stream through a trait the stream adopts runs for two payload types, and the trait method sees the stream's own item
+# retires: loaves/compiler/incan_emit/src/trait_bound_inference.rs::implementation_bound_matching_is_canonical_and_instantiation_exact
+# expect-stdout:
+#   walked 7
+#   walked seven
+
+# ROUTE GAP CANDIDATE for `trait_bound_inference.rs::implementation_bound_matching_is_canonical_and_instantiation_exact`:
+# `incan check` accepts this program; the route refuses it (rustc E0277 `T: Clone` on `consume`, and with `T with
+# Clone` written there E0599 for the impl-inferred Display bound). Lands in `ownership_numerics_and_bounds/` when a
+# declared model bound and an impl-inferred bound reach a generic caller.
+
+trait Walk:
+    def walk(self) -> str: ...
+
+
+model Stream[R with Clone] with Walk:
+    item: R
+
+    def walk(self) -> str:
+        return f"walked {self.item}"
+
+
+def consume[T](stream: Stream[T]) -> str:
+    return stream.walk()
+
+
+def main() -> None:
+    println(consume(Stream(item=7)))
+    println(consume(Stream(item="seven")))

@@ -1,0 +1,26 @@
+# behavior: a Rust Duration stored in a model field is handed to Rust methods that take the value and that compare against it, and the field is still readable afterwards
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_external_function_field_with_by_value_target_does_not_borrow
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_external_function_field_with_ref_target_borrows
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_external_function_known_field_without_target_does_not_guess_borrow
+# expect-stdout:
+#   3
+#   false
+#   2
+
+# UNVERIFIED CANDIDATE: not executed; a `rust::` import needs a Rust inspection bake, which launches Cargo. The
+# expected lines are reasoned from the program: 1 s plus 2 s, 1 s compared with 2 s, and the field read again. Rows
+# stay open until a Cargo-free bake serves `rust::` under the suite.
+
+from rust::std::time import Duration
+
+
+model Timeout:
+    value: Duration
+
+
+def main() -> None:
+    timeout = Timeout(value=Duration.from_secs(2))
+    base = Duration.from_secs(1)
+    println(base.saturating_add(timeout.value).as_secs())
+    println(base.eq(timeout.value))
+    println(timeout.value.as_secs())

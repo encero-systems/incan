@@ -1,0 +1,28 @@
+# behavior: an Incan str extended in place with a String returned by a Rust function, and two such results joined, produce the concatenated text
+# retires: loaves/compiler/incan_emit/src/conversions.rs::string_addition_recognizes_canonical_rust_string_metadata_issue896
+# retires: loaves/compiler/incan_emit/src/ownership.rs::rust_string_buffer_detection_is_owned_string_only
+# expect-stdout:
+#   el
+#   hello
+
+# UNVERIFIED CANDIDATE for `conversions.rs::string_addition_recognizes_canonical_rust_string_metadata_issue896` and
+# `ownership.rs::rust_string_buffer_detection_is_owned_string_only`: the program is the library of the
+# `cold_library_build_preserves_rust_string_compound_assignment_issue896` CLI test with a main; a `rust::` import
+# needs a Cargo-launching inspection bake. Rows stay open until a Cargo-free bake serves `rust::` under the suite.
+
+from rust::incan_std_core::strings import str_slice_byte_range
+
+
+def append_range(text: str, start: int, end: int) -> str:
+    mut out = ""
+    out += str_slice_byte_range(text, start, end)
+    return out
+
+
+def join_ranges(text: str, start: int, middle: int, end: int) -> str:
+    return str_slice_byte_range(text, start, middle) + str_slice_byte_range(text, middle, end)
+
+
+def main() -> None:
+    println(append_range("hello", 1, 3))
+    println(join_ranges("hello", 0, 2, 5))

@@ -1,0 +1,40 @@
+# behavior: a str literal and a str variable fill a Rust struct's String field and are handed to a Rust function taking a String by value, a str method result is handed to it too, a wrapper's str field is lent to a Rust function taking a borrowed text, and the variable and the wrapper are unchanged afterwards
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_struct_field_string_literal_to_rust_string_target
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_external_function_string_var_with_by_value_target_does_not_borrow
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_external_function_string_literal
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_external_function_string_method_call_result_unknown_target_stays_owned_issue1066
+# retires: loaves/compiler/incan_emit/src/conversions.rs::test_external_function_string_field_without_target_borrows_like_string_variable
+# expect-stdout:
+#   sketch_family
+#   literal
+#   NAME
+#   name
+#   LITERAL
+#   NAME
+#   <tag>
+#   tag
+
+# UNVERIFIED CANDIDATE: not executed; a `rust::` path dependency needs a Rust inspection bake, which launches Cargo.
+# The expected lines are reasoned from the program and the crate (the const-field half is the
+# `build_static_str_const_rust_string_struct_field` CLI test's crate). Rows stay open until a Cargo-free bake serves
+# `rust::` under the suite.
+
+from rust::tiny_option import FunctionOption, describe, option_name, shout
+
+pub const OPTION_NAME: str = "sketch_family"
+
+type Label = newtype str
+
+
+def main() -> None:
+    option = FunctionOption(name=OPTION_NAME, enabled=True)
+    println(option_name(option))
+    println(option_name(FunctionOption(name="literal", enabled=False)))
+    name = "name"
+    println(shout(name))
+    println(name)
+    println(shout("literal"))
+    println(shout(name.upper()))
+    label = Label("tag")
+    println(describe(label.0))
+    println(label.0)

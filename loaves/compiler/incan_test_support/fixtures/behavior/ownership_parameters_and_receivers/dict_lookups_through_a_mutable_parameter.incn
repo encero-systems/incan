@@ -1,0 +1,46 @@
+# behavior: a dict passed as a mut parameter is probed and updated by str and int keys with the caller seeing the counts, a str variable used as a probe stays usable, and a dict comprehension keyed by strings reads each key again in its value
+# retires: loaves/compiler/incan_emit/src/ownership.rs::dict_lookup_key_plan_sees_through_borrowed_receivers
+# retires: loaves/compiler/incan_emit/src/ownership.rs::dict_string_lookup_uses_as_ref_for_owned_probe
+# retires: loaves/compiler/incan_emit/src/ownership.rs::dict_comprehension_marks_noncopy_keys_for_clone
+# expect-stdout:
+#   2 1
+#   true a
+#   2
+#   5 3
+
+def bump(mut counts: dict[str, int], key: str) -> None:
+    if key in counts:
+        counts[key] = counts[key] + 1
+    else:
+        counts[key] = 1
+
+
+def tally(mut hits: dict[int, int], code: int) -> None:
+    if code in hits:
+        hits[code] = hits[code] + 1
+    else:
+        hits[code] = 1
+
+
+def lengths(names: list[str]) -> dict[str, int]:
+    return {name: len(name) for name in names}
+
+
+def main() -> None:
+    mut counts: dict[str, int] = {}
+    bump(counts, "a")
+    bump(counts, "a")
+    bump(counts, "b")
+    a = counts["a"]
+    b = counts["b"]
+    println(f"{a} {b}")
+    probe = "a"
+    println(f"{probe in counts} {probe}")
+    mut hits: dict[int, int] = {}
+    tally(hits, 404)
+    tally(hits, 404)
+    println(hits[404])
+    sizes = lengths(["alice", "bob"])
+    alice = sizes["alice"]
+    bob = sizes["bob"]
+    println(f"{alice} {bob}")
