@@ -406,7 +406,7 @@ const METHOD_DECORATOR_RECEIVER_SPELLING: DiagnosticCatalogEntry = DiagnosticCat
 };
 
 const METHOD_DECORATOR_RECEIVER_NOT_PLANNED: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
-    code: "INCAN-T0112",
+    code: "INCAN-T0116",
     title: "Method decorator chain cannot take the receiver",
     severity: "error",
     phase: "typecheck",
@@ -928,14 +928,14 @@ mod tests {
              place or called directly",
             Span::default(),
         );
-        assert_eq!(code_for_error(&refusal, DiagnosticPhase::Typecheck), "INCAN-T0112");
+        assert_eq!(code_for_error(&refusal, DiagnosticPhase::Typecheck), "INCAN-T0116");
         assert!(
             refusal.message.contains("'parse' cannot take the receiver of 'label'"),
             "the message must name the declaration and the method, got {}",
             refusal.message
         );
-        let Some(entry) = explain("INCAN-T0112") else {
-            return Err("INCAN-T0112 must have a catalog explanation".into());
+        let Some(entry) = explain("INCAN-T0116") else {
+            return Err("INCAN-T0116 must have a catalog explanation".into());
         };
         assert_eq!(entry.severity, "error");
         assert_eq!(entry.phase, "typecheck");

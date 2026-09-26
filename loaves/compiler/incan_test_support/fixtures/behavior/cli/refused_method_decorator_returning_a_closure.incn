@@ -1,5 +1,5 @@
 # behavior: a decorator on a `self` method that returns a closure in the method's place is refused at check time
-# expect-diagnostic: INCAN-T0112
+# expect-diagnostic: INCAN-T0116
 
 class Box:
     value: int

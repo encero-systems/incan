@@ -338,7 +338,7 @@ def keep(func: (mut Box, int) -> int) -> (mut Box, int) -> int:
 - The marker is part of the function type, because it decides how the argument is passed: two function types match only when they mark the same parameters, so a callable of one kind never stands in for the other. A `def` parameter declared `mut` is marked in the function's type, except a parameter of type `int`, `float` or `bool`, or of a Rust type, which the function receives as its own value; a closure checked against a marked shape is marked the same way.
 - The marker follows the method in every shape of the decorator chain and on every function a decorator returns in the method's place; a mismatch is a type error.
 
-For a `self` method, the compiler passes the receiver to the decorator's shapes and to the function returned in the method's place the way the method's wrapper passes it, which their checked types do not say. It can do that only while it sees the whole chain, so a decorator of a `self` method whose shapes name the receiver is refused with `INCAN-T0112` unless:
+For a `self` method, the compiler passes the receiver to the decorator's shapes and to the function returned in the method's place the way the method's wrapper passes it, which their checked types do not say. It can do that only while it sees the whole chain, so a decorator of a `self` method whose shapes name the receiver is refused with `INCAN-T0116` unless:
 
 - the decorator, or the factory that produces it, is a function declared in the method's module and applied by name, not imported from another module and not reached through a value or a method;
 - the shapes that name the receiver are written as callable types, not through a type alias;
@@ -362,7 +362,7 @@ A decorator applied to an `async def` receives an async function value. The deco
 | Decorator argument type mismatch       | `decorator 'X' expects a function of type …, got …` |
 | Decorator factory returns non-callable | `'X(args)' does not return a callable`              |
 | Method decorator receiver written `&Owner` or `&mut Owner` (v0.6 amendment) | `INCAN-T0110`, naming the spelling to write |
-| `self`-method decorator chain the compiler cannot pass the receiver through (v0.6 amendment) | `INCAN-T0112`, naming the rule the chain breaks |
+| `self`-method decorator chain the compiler cannot pass the receiver through (v0.6 amendment) | `INCAN-T0116`, naming the rule the chain breaks |
 | Compiler built-in used on wrong target | Existing compiler diagnostics (unchanged)           |
 
 ## Design details
@@ -399,7 +399,7 @@ If `module_a` decorates with `module_b`'s `app` object, `module_b`'s exported bi
 
 Fully additive and non-breaking. Previously-invalid unknown decorators on functions and methods now desugar rather than error. All existing compiler built-in decorators are unaffected.
 
-The v0.6 amendment is the exception: a method decorator written against v0.3 with a `&Owner` or `&mut Owner` receiver is refused with `INCAN-T0110` and is rewritten as described in that amendment, and a `self`-method decorator chain outside that amendment's rules is refused with `INCAN-T0112`.
+The v0.6 amendment is the exception: a method decorator written against v0.3 with a `&Owner` or `&mut Owner` receiver is refused with `INCAN-T0110` and is rewritten as described in that amendment, and a `self`-method decorator chain outside that amendment's rules is refused with `INCAN-T0116`.
 
 ## Alternatives considered
 

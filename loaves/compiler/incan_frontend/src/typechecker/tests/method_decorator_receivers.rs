@@ -1,6 +1,6 @@
 //! Method-decorator receivers (#1790): a decorator's shapes and the functions it returns in the method's place spell
 //! the receiver the way the method does, the `mut` marker on callable-type parameters, the `INCAN-T0110` refusal of the
-//! `&Owner` spellings, and the `INCAN-T0112` rules for the chains whose receiver the compiler plans.
+//! `&Owner` spellings, and the `INCAN-T0116` rules for the chains whose receiver the compiler plans.
 
 use super::*;
 
@@ -440,7 +440,7 @@ def pick() -> (Counter) -> int:
 }
 
 /// Issue #1790: a direct call of a returned function in its module is passed the receiver the planned way, so it is
-/// accepted; every other use of a planned declaration is refused with `INCAN-T0112`.
+/// accepted; every other use of a planned declaration is refused with `INCAN-T0116`.
 #[test]
 fn planned_declarations_are_used_only_in_the_chain() {
     let chain = r#"
@@ -468,7 +468,7 @@ def as_int(func: (Box, int) -> str) -> (Box, int) -> int:
         ),
     ];
     for (rest, expected) in cases {
-        assert_refused(&boxed_label_program(&format!("{chain}{rest}")), "INCAN-T0112", expected);
+        assert_refused(&boxed_label_program(&format!("{chain}{rest}")), "INCAN-T0116", expected);
     }
     assert_refused(
         &boxed_label_program(
@@ -480,13 +480,13 @@ def as_int(func: (Box, int) -> str) -> (Box, int) -> int:
   return parse
 "#,
         ),
-        "INCAN-T0112",
+        "INCAN-T0116",
         "'parse' is declared `pub`",
     );
 }
 
 /// Issue #1790: a decorator whose shapes name the receiver returns the decorated callable or a function of this
-/// module by name; any other returned value is refused with `INCAN-T0112`.
+/// module by name; any other returned value is refused with `INCAN-T0116`.
 #[test]
 fn unplannable_returns_are_refused() {
     assert_refused(
@@ -496,7 +496,7 @@ def as_int(func: (Box, int) -> str) -> (Box, int) -> int:
   return (box, value) => value
 "#,
         ),
-        "INCAN-T0112",
+        "INCAN-T0116",
         "it returns an expression",
     );
     assert_refused(
@@ -510,14 +510,14 @@ def as_int(func: (Box, int) -> str) -> (Box, int) -> int:
   return chosen
 "#,
         ),
-        "INCAN-T0112",
+        "INCAN-T0116",
         "it returns 'chosen'",
     );
 }
 
 /// Issue #1790: a decorator whose shapes name a `self` method's receiver is a function of the method's module with
 /// its shapes written as callable types; one imported from another module, one reached through a value, and one
-/// whose shapes go through a type alias are refused with `INCAN-T0112`.
+/// whose shapes go through a type alias are refused with `INCAN-T0116`.
 #[test]
 fn decorators_the_receiver_cannot_be_planned_for_are_refused() -> Result<(), String> {
     let provider = parse_program(
@@ -547,9 +547,9 @@ class Box:
     assert!(
         errors
             .iter()
-            .any(|err| err.stable_code() == Some("INCAN-T0112")
+            .any(|err| err.stable_code() == Some("INCAN-T0116")
                 && err.message.contains("it is declared in another module")),
-        "expected INCAN-T0112 for the imported decorator, got {errors:?}"
+        "expected INCAN-T0116 for the imported decorator, got {errors:?}"
     );
 
     assert_refused(
@@ -575,7 +575,7 @@ class Registry:
 
 static REGISTRY: Registry = Registry.new()
 "#,
-        "INCAN-T0112",
+        "INCAN-T0116",
         "it is reached through a value or a method",
     );
     assert_refused(
@@ -587,7 +587,7 @@ def as_int(func: LabelShape) -> LabelShape:
   return func
 "#,
         ),
-        "INCAN-T0112",
+        "INCAN-T0116",
         "written through a type alias",
     );
     Ok(())

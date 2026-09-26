@@ -437,7 +437,7 @@ Method decorators receive an unbound callable shape with the receiver first, spe
 
 `mut` in a function type marks a parameter whose changes the caller sees, as on a `def` parameter; see [`mut` parameters in function types](stdlib_traits/callable.md#mut-parameters-in-function-types). The receiver's marker matches the method in every shape of the decorator chain and on the function returned in the method's place. A receiver written `&Box` or `&mut Box` in those positions is refused with `INCAN-T0110`.
 
-A decorator of a `self` method whose shapes name the receiver is refused with `INCAN-T0112` unless all of these hold:
+A decorator of a `self` method whose shapes name the receiver is refused with `INCAN-T0116` unless all of these hold:
 
 - the decorator, or the factory that produces it, is a function declared in the method's module and applied by name;
 - the shapes that name the receiver are written as callable types, not through a type alias;

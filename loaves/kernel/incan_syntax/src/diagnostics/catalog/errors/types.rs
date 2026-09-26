@@ -376,13 +376,13 @@ pub fn method_decorator_receiver_mut_mismatch(
 /// passes it, and so does every function it returns in the method's place. The compiler arranges that for private
 /// functions of the method's module that are only used in the chain. `subject` names the declaration or use at
 /// fault (`Method decorator '@as_int'`, `Function 'parse'`), `method` the decorated method and `reason` the rule the
-/// chain breaks. `INCAN-T0112` is its stable code.
+/// chain breaks. `INCAN-T0116` is its stable code.
 pub fn method_decorator_receiver_not_planned(subject: &str, method: &str, reason: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("{subject} cannot take the receiver of '{method}': {reason}"),
         span,
     )
-    .with_stable_code("INCAN-T0112")
+    .with_stable_code("INCAN-T0116")
     .with_note(
         "A decorator whose shapes name the receiver of a `self` method is a private function of the module that \
          declares the method's type, writes those shapes as callable types, and returns the decorated callable or a \

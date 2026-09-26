@@ -1,5 +1,5 @@
 # behavior: a decorator imported from another module whose shapes name the receiver of a `self` method is refused at check time
-# expect-diagnostic: INCAN-T0112
+# expect-diagnostic: INCAN-T0116
 
 from helpers import logged
 

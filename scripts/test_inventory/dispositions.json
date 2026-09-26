@@ -3203,7 +3203,7 @@
     },
     "loaves/compiler/incan_frontend/src/typechecker/tests/method_decorator_receivers.rs": {
       "disposition": "keep",
-      "notes": "typechecker unit tests for #1790 method-decorator receivers: the receiver spelled like the method, the `mut` marker as part of the function type, the `INCAN-T0110` refusal of `&Owner` / `&mut Owner` and the `INCAN-T0112` chain rules; typechecker only, no emit/driver dependency. `receiver_written_with_ampersand_is_refused` is the proof of `INCAN-T0110`: no behavior fixture spells a receiver with `&`.",
+      "notes": "typechecker unit tests for #1790 method-decorator receivers: the receiver spelled like the method, the `mut` marker as part of the function type, the `INCAN-T0110` refusal of `&Owner` / `&mut Owner` and the `INCAN-T0116` chain rules; typechecker only, no emit/driver dependency. `receiver_written_with_ampersand_is_refused` is the proof of `INCAN-T0110`: no behavior fixture spells a receiver with `&`.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",

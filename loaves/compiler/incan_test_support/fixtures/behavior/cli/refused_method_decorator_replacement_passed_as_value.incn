@@ -1,5 +1,5 @@
 # behavior: a function a decorator returns in a `self` method's place is refused where it is passed on as a value
-# expect-diagnostic: INCAN-T0112
+# expect-diagnostic: INCAN-T0116
 
 class Box:
     value: int

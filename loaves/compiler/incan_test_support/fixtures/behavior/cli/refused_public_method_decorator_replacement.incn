@@ -1,5 +1,5 @@
 # behavior: a public function a decorator returns in a `self` method's place is refused at check time, since another module could call it
-# expect-diagnostic: INCAN-T0112
+# expect-diagnostic: INCAN-T0116
 
 class Box:
     value: int
