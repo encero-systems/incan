@@ -2403,6 +2403,29 @@ pub fn tuple_index_requires_int_literal(span: Span) -> CompileError {
     .with_hint("Use a literal index so the compiler can validate bounds")
 }
 
+/// Report a collection literal whose own elements leave part of its type open (`[]`, `[None]`, `(None, 1)`, `{}`) at a
+/// destination that holds two or more types of the literal's kind (`list[int] | list[str]`) (#1832).
+///
+/// Neither the destination nor the elements say which of those types the literal is, so it has none to take.
+pub fn collection_literal_has_no_one_member(destination: &str, members: &[String], span: Span) -> CompileError {
+    let quoted = members
+        .iter()
+        .map(|member| format!("'{member}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let example = members.first().map_or("one member", String::as_str);
+    CompileError::type_error(
+        format!(
+            "Cannot tell which member of '{destination}' this literal is: it could be any of {quoted}, and its \
+             elements do not say which"
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Give the literal one member's type first, such as by binding it to a name annotated '{example}'"
+    ))
+}
+
 pub fn tuple_index_out_of_bounds(idx: i64, len: usize, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Tuple index {} is out of bounds for tuple of length {}", idx, len),

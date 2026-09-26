@@ -69,12 +69,12 @@ z: int = y
 
 ## Literal typing
 
-| Literal form | Default type without stronger context | Contextual checks                                                                                                                                                                                     |
-| ------------ | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `42`         | `int`                                 | Checked against the target integer range when assigned to or passed as an exact-width integer. Typed as the expected `float`, `f32` or `f64` when one of those is expected, and must be finite in it. |
-| `1_000_000`  | `int`                                 | Separators do not affect the value.                                                                                                                                                                   |
-| `0.5`        | `float`                               | Checked as `f32` when the expected type is `f32`.                                                                                                                                                     |
-| `19.99d`     | Requires a decimal expected type      | Checked against the expected decimal precision and scale.                                                                                                                                             |
+| Literal form | Default type without stronger context | Contextual checks                                                                                                                                                                                   |
+| ------------ | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `42`         | `int`                                 | Checked against the target integer range when assigned to or passed as an exact-width integer. Typed as `float`, `f32` or `f64` in the positions listed below this table, and must be finite in it. |
+| `1_000_000`  | `int`                                 | Separators do not affect the value.                                                                                                                                                                 |
+| `0.5`        | `float`                               | Checked as `f32` when the expected type is `f32`.                                                                                                                                                   |
+| `19.99d`     | Requires a decimal expected type      | Checked against the expected decimal precision and scale.                                                                                                                                           |
 
 Integer literals are checked against concrete integer targets:
 
@@ -90,15 +90,24 @@ Float literals assigned to `f32` must be representable as finite `f32` values.
 ratio: f32 = 0.5
 ```
 
-An integer literal where a binary float is expected is a float of the same value, wherever the float is expected: a declaration, a reassignment, an argument, a return value, a field, or an element of a tuple or list literal.
+An integer literal is a float of the same value when it is written as:
+
+- the value of a binding, `const` or field declared `float`, `f32` or `f64`: in its declaration, a reassignment, a constructor argument or a field default;
+- an argument for, or the default of, a parameter of an Incan function or method declared with one of those types;
+- the value returned from a function declared to return one of those types;
+- an element of a tuple or list literal, or a value of a dict literal, whose declared element or value type is one of those types.
+
+In every other position an integer literal is an `int`.
 
 ```incan
-scale: float = 2              # 2.0
+scale: float = 2                      # 2.0
 mut total: float = 0.5
-total = 1                     # 1.0
-pair: tuple[float, int] = (3, 4)   # (3.0, 4)
+total = 1                             # 1.0
+pair: tuple[float, int] = (3, 4)      # (3.0, 4)
+weights: dict[str, float] = {"a": 1}  # {"a": 1.0}
 count = 5
-total = count                 # refused: `count` is an `int` value
+total = count                         # refused: `count` is an `int` value
+maybe: Option[float] = 1              # refused: `1` is an `int` here
 ```
 
 ## Decimal types
@@ -162,7 +171,7 @@ single: f32 = 1.25
 double: float = single
 ```
 
-Integer-to-float assignment is not an implicit assignment conversion: an `int` value assigned to a `float` binding is refused. An integer literal is typed by its destination instead (see [Literal typing](#literal-typing)).
+Integer-to-float assignment is not an implicit assignment conversion: an `int` value assigned to a `float` binding is refused. An integer literal in one of the positions listed under [Literal typing](#literal-typing) is a float instead.
 
 ## Resizing methods
 

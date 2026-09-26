@@ -155,6 +155,44 @@ def main() -> None:
     Ok(())
 }
 
+/// #1847: a tuple or list literal declared in a generic body takes its annotation's type, so its `None` elements are
+/// typed with the body's own type parameter rather than one still to be inferred; a literal whose type mentions no
+/// type parameter keeps its own type.
+#[test]
+fn literal_in_a_generic_body_takes_its_annotated_type_issue1847() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+def mk[T](x: T) -> int:
+    pair: tuple[T, Option[T]] = (x, None)
+    items: list[Option[T]] = [None]
+    count: tuple[int, int] = (1, 2)
+    return len(items) + count[0]
+
+
+def main() -> None:
+    println(mk("a"))
+"#,
+    )?;
+    let stmts = body(&ir, "mk")?;
+    for name in ["pair", "items"] {
+        let Some((declared, value)) = stmts.iter().find_map(|stmt| match &stmt.kind {
+            IrStmtKind::Let {
+                name: bound,
+                type_annotation: Some(declared),
+                value,
+                ..
+            } if bound == name => Some((declared, value)),
+            _ => None,
+        }) else {
+            return Err(format!("missing annotated declaration of `{name}`"));
+        };
+        assert_eq!(&value.ty, declared, "`{name}`'s literal takes its annotation's type");
+    }
+    let count = written_value(stmts, "count", 0)?;
+    assert_eq!(count.ty, IrType::Tuple(vec![IrType::Int, IrType::Int]));
+    Ok(())
+}
+
 /// #1832: an empty or `None`-only list literal assigned to an existing `Option[list[...]]` binding is lowered with the
 /// binding's list type, so the emitter wraps it in `Some` and types its `None` elements.
 #[test]

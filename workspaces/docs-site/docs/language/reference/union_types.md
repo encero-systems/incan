@@ -20,7 +20,9 @@ int | str | None    # Option[Union[int, str]]
 
 Concrete member values are assignable to a union that contains that member. A source union is assignable to a target union when every source member is accepted by some target member.
 
-A list, dict or tuple literal assigned where a union or an `Option[...]` is expected takes the type of the union's one member of the literal's kind (for a tuple, of the literal's length) when every other member is a scalar, a tuple, `None`, a `list`, `dict`, `set` or `Result`, or a model, class or enum; an empty or `None`-only literal is then still that member. Otherwise, as when the union has two members of the literal's kind, the literal is typed by its own elements.
+A list, dict or tuple literal assigned where a union or an `Option[...]` is expected takes the type of the union's one member of the literal's kind (for a tuple, of the literal's length) when every other member is a scalar, a tuple, `None`, a `list`, `dict`, `set` or `Result`, or a model, class or enum; an empty or `None`-only literal is then still that member.
+
+When the union has two or more members of the literal's kind, the literal is typed by its own elements. A literal whose elements leave part of its type open (`[]`, `[None]`, `{}`, `(None, 1)`) is then refused with `INCAN-T0001`: nothing says which member it is. With any other member (a type parameter, a newtype, a trait), the literal is typed by its own elements.
 
 ```incan
 mut values: list[int] | str = "none"
@@ -29,6 +31,7 @@ mut names: Option[list[Option[str]]] = None
 names = [None]                # Some([None]), a list[Option[str]]
 mut either: list[int] | list[str] = [1]
 either = ["a"]                # list[str], from its elements
+either = []                   # refused: list[int] or list[str]
 ```
 
 Union values do not expose member-specific methods or operators until narrowed. Use `isinstance(value, T)` or a type pattern in `match`:

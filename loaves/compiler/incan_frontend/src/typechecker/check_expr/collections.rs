@@ -12,35 +12,95 @@ use incan_lang::lang::types::collections::CollectionTypeId;
 use super::TypeChecker;
 
 impl TypeChecker {
-    /// Return the type a collection literal builds for the destination type `expected`, looking through the `Option`
-    /// and union wrappers the destination puts around it; `is_kind` accepts the literal's own kind of type.
+    /// Collect the types of the literal's kind that the destination type `expected` holds, looking through the
+    /// `Option` and union wrappers the destination puts around them; `is_kind` accepts the literal's own kind of type.
     ///
-    /// `Option[list[int]]` gives `list[int]`: an `[]` assigned to it is a `list[int]`, which the destination wraps in
-    /// `Some`. A union gives its one member of the literal's kind when every other member is a type no collection
-    /// literal of another kind builds (see [`Self::never_built_by_other_literal`]), so `list[int] | str` gives
-    /// `list[int]`. A union with two members of the kind (`list[int] | list[str]`), or with a member a literal might
-    /// build (a type parameter, a newtype, a trait), gives nothing, and the literal is checked on its own.
+    /// `Option[list[int]]` holds `list[int]`, `list[int] | str` holds `list[int]`, and `list[int] | list[str]` holds
+    /// both lists. A destination that is not of the kind, and holds none, holds nothing. The answer is `None` when a
+    /// union has a member a literal of this kind might build without being of the kind (a type parameter, a newtype,
+    /// a trait; see [`Self::never_built_by_other_literal`]), since the destination then does not say what the literal
+    /// is.
+    fn collection_literal_kinds<'ty>(
+        &self,
+        expected: &'ty ResolvedType,
+        is_kind: &dyn Fn(&ResolvedType) -> bool,
+    ) -> Option<Vec<&'ty ResolvedType>> {
+        if is_kind(expected) {
+            return Some(vec![expected]);
+        }
+        if let Some(inner) = expected.option_inner_type() {
+            return self.collection_literal_kinds(inner, is_kind);
+        }
+        let Some(members) = expected.union_members() else {
+            return Some(Vec::new());
+        };
+        let mut kinds = Vec::new();
+        for member in members {
+            let found = self.collection_literal_kinds(member, is_kind)?;
+            if found.is_empty() && !self.never_built_by_other_literal(member) {
+                return None;
+            }
+            kinds.extend(found);
+        }
+        Some(kinds)
+    }
+
+    /// Return the type a collection literal builds for the destination type `expected`: the one type of the literal's
+    /// kind the destination holds (see [`Self::collection_literal_kinds`]).
+    ///
+    /// `Option[list[int]]` and `list[int] | str` give `list[int]`: an `[]` assigned to either is a `list[int]`, which
+    /// the destination wraps in `Some` or in the union. A destination holding two types of the kind
+    /// (`list[int] | list[str]`), or none, gives nothing, and the literal is checked on its own.
     fn collection_literal_destination<'ty>(
         &self,
         expected: &'ty ResolvedType,
         is_kind: &dyn Fn(&ResolvedType) -> bool,
     ) -> Option<&'ty ResolvedType> {
-        if is_kind(expected) {
-            return Some(expected);
+        match self.collection_literal_kinds(expected, is_kind)?.as_slice() {
+            [destination] => Some(destination),
+            _ => None,
         }
-        if let Some(inner) = expected.option_inner_type() {
-            return self.collection_literal_destination(inner, is_kind);
+    }
+
+    /// Refuse a collection literal whose own elements leave part of its type open (`[]`, `[None]`, `(None, 1)`, `{}`)
+    /// at a destination holding two or more types of its kind, such as `list[int] | list[str]` (#1832).
+    ///
+    /// Neither the destination nor the elements say which of those types the literal is, so it has none to take; a
+    /// literal whose elements fix its type (`["a"]`) is that type and is not refused. `literal_ty` is the type the
+    /// literal was checked to, and `span` its source span.
+    pub(in crate::typechecker::check_expr) fn refuse_collection_literal_without_one_member(
+        &mut self,
+        literal_ty: &ResolvedType,
+        expected: Option<&ResolvedType>,
+        span: Span,
+    ) {
+        let Some(expected) = expected else {
+            return;
+        };
+        if !has_open_part(literal_ty) {
+            return;
         }
-        let mut destination = None;
-        for member in expected.union_members()? {
-            match self.collection_literal_destination(member, is_kind) {
-                Some(found) if destination.is_none() => destination = Some(found),
-                Some(_) => return None,
-                None if self.never_built_by_other_literal(member) => {}
-                None => return None,
-            }
+        let is_list = Self::list_element_type(literal_ty).is_some();
+        let is_dict = Self::dict_entry_types(literal_ty).is_some();
+        let tuple_arity = Self::tuple_element_types(literal_ty).map(<[ResolvedType]>::len);
+        let is_kind = |ty: &ResolvedType| {
+            (is_list && Self::list_element_type(ty).is_some())
+                || (is_dict && Self::dict_entry_types(ty).is_some())
+                || tuple_arity
+                    .is_some_and(|arity| Self::tuple_element_types(ty).is_some_and(|items| items.len() == arity))
+        };
+        let Some(kinds) = self.collection_literal_kinds(expected, &is_kind) else {
+            return;
+        };
+        if kinds.len() < 2 {
+            return;
         }
-        destination
+        let members = kinds.iter().map(ToString::to_string).collect::<Vec<_>>();
+        self.errors.push(errors::collection_literal_has_no_one_member(
+            &expected.to_string(),
+            &members,
+            span,
+        ));
     }
 
     /// Return whether no value of `ty` is built by a collection literal of a kind `ty` is not: a scalar, a tuple, a
@@ -338,7 +398,7 @@ impl TypeChecker {
             .zip(expected_elems)
             .map(|(elem, expected_elem)| {
                 let elem_ty = self.check_expr_with_expected(elem, Some(&expected_elem));
-                if self.is_fully_known_type(&expected_elem) && self.types_compatible(&elem_ty, &expected_elem) {
+                if !has_open_part(&expected_elem) && self.types_compatible(&elem_ty, &expected_elem) {
                     expected_elem
                 } else {
                     elem_ty
@@ -420,31 +480,28 @@ impl TypeChecker {
 
         set_ty(elem_ty)
     }
+}
 
-    /// Return whether `ty` has no part left for inference to fill: no unknown type, type parameter, `Self` or call-site
-    /// `_`.
-    ///
-    /// A tuple literal takes an expected element type only when it is fully known, so a `tuple[T, int]` destination
-    /// does not turn an element's own type into the placeholder `T`.
-    fn is_fully_known_type(&self, ty: &ResolvedType) -> bool {
-        if self.is_generic_placeholder_type(ty) {
-            return false;
+/// Return whether `ty` has a part only inference or a destination could fill: an unknown type, a call-site `_`, or a
+/// type variable still to be inferred at a call.
+///
+/// A tuple literal takes an expected element type only when it has no open part, so a generic callee's
+/// `tuple[T, int]` parameter does not turn an argument's own element type into `T`. A type parameter written inside
+/// its own generic body is a fixed type there, not an open part: `(x, None)` in a `tuple[T, Option[T]]` binding of
+/// that body takes `Option[T]` for its `None`.
+fn has_open_part(ty: &ResolvedType) -> bool {
+    match ty {
+        ResolvedType::Unknown | ResolvedType::CallSiteInfer | ResolvedType::TypeVar(_) => true,
+        ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => args.iter().any(has_open_part),
+        ResolvedType::FrozenList(inner)
+        | ResolvedType::FrozenSet(inner)
+        | ResolvedType::TypeToken(inner)
+        | ResolvedType::Ref(inner)
+        | ResolvedType::RefMut(inner) => has_open_part(inner),
+        ResolvedType::FrozenDict(key, value) => has_open_part(key) || has_open_part(value),
+        ResolvedType::Function(params, ret) => {
+            params.iter().any(|param| has_open_part(&param.ty)) || has_open_part(ret)
         }
-        match ty {
-            ResolvedType::Unknown | ResolvedType::CallSiteInfer | ResolvedType::SelfType => false,
-            ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
-                args.iter().all(|arg| self.is_fully_known_type(arg))
-            }
-            ResolvedType::FrozenList(inner)
-            | ResolvedType::FrozenSet(inner)
-            | ResolvedType::TypeToken(inner)
-            | ResolvedType::Ref(inner)
-            | ResolvedType::RefMut(inner) => self.is_fully_known_type(inner),
-            ResolvedType::FrozenDict(key, value) => self.is_fully_known_type(key) && self.is_fully_known_type(value),
-            ResolvedType::Function(params, ret) => {
-                params.iter().all(|param| self.is_fully_known_type(&param.ty)) && self.is_fully_known_type(ret)
-            }
-            _ => true,
-        }
+        _ => false,
     }
 }

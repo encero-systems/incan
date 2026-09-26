@@ -1040,6 +1040,8 @@ impl AstLowering {
                     }
                 });
                 let type_annotation = a.ty.as_ref().map(|t| self.lower_type(&t.node));
+                let mut lowered_value = lowered_value;
+                Self::give_literal_its_annotated_type_parameters(&mut lowered_value, type_annotation.as_ref());
                 let ty = type_annotation.clone().unwrap_or_else(|| lowered_value.ty.clone());
 
                 match a.binding {

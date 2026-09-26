@@ -8,7 +8,7 @@
 
 mod calls;
 mod comprehensions;
-mod float_literals;
+mod destination_literals;
 mod helpers;
 mod patterns;
 

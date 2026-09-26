@@ -358,6 +358,7 @@ impl TypeChecker {
     /// This is intentionally narrow: only expression forms that benefit from contextual typing without broad inference
     /// changes should use the hint.
     pub fn check_expr_with_expected(&mut self, expr: &Spanned<Expr>, expected: Option<&ResolvedType>) -> ResolvedType {
+        let errors_before = self.errors.len();
         let ty = match (&expr.node, expected) {
             (_, Some(ResolvedType::TypeVar(_))) => return self.check_expr(expr),
             (Expr::Paren(inner), Some(expected_ty)) => self.check_expr_with_expected(inner, Some(expected_ty)),
@@ -433,6 +434,10 @@ impl TypeChecker {
             _ => return self.check_expr(expr),
         };
 
+        // A literal whose elements already failed to check is not refused a second time for its open type.
+        if matches!(expr.node, Expr::List(_) | Expr::Dict(_) | Expr::Tuple(_)) && self.errors.len() == errors_before {
+            self.refuse_collection_literal_without_one_member(&ty, expected, expr.span);
+        }
         self.record_expr_type(expr.span, ty.clone());
         ty
     }

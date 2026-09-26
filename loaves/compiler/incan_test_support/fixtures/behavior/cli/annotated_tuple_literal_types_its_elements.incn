@@ -1,6 +1,8 @@
-# behavior: the None, Ok, Err and integer elements of an annotated tuple literal take the annotation's element types
+# behavior: the None, Ok, Err and integer elements of an annotated tuple literal take the annotation's element types, in a generic body too
 # retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::annotated_tuple_literal_types_its_elements_issue1847
+# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::annotated_literal_in_a_generic_body_types_its_none_issue1847
 # retires: loaves/compiler/incan_ir/src/lower/tests/expected_literal_types.rs::tuple_literal_keeps_its_annotated_element_types_issue1847
+# retires: loaves/compiler/incan_ir/src/lower/tests/expected_literal_types.rs::literal_in_a_generic_body_takes_its_annotated_type_issue1847
 # expect-stdout:
 #   1
 #   missing
@@ -8,6 +10,12 @@
 #   err bad
 #   1.0 2
 #   inner missing 2
+#   kept alone
+
+def pair_with_nothing[T](value: T) -> tuple[T, Option[T]]:
+    pair: tuple[T, Option[T]] = (value, None)
+    return pair
+
 
 def main() -> None:
     pair: tuple[Option[str], int] = (None, 1)
@@ -29,3 +37,7 @@ def main() -> None:
     match nested[0][0]:
         Some(value) => println(value)
         None => println(f"inner missing {nested[1]}")
+    generic = pair_with_nothing("kept")
+    match generic[1]:
+        Some(text) => println(text)
+        None => println(f"{generic[0]} alone")

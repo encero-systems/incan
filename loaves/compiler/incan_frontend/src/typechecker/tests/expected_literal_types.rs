@@ -1,7 +1,7 @@
 //! A literal takes the type its destination expects: the elements of a tuple literal take the destination's element
 //! types (#1847), a list or dict literal inside an `Option` or union destination takes that destination's collection
-//! type (#1832), and an integer literal in a float slot takes the float type (#1831), for a declaration and a
-//! reassignment alike.
+//! type, or is refused when the destination holds two such types and the literal's elements do not say which (#1832),
+//! and an integer literal in a float slot takes the float type (#1831), for a declaration and a reassignment alike.
 
 use super::*;
 
@@ -75,6 +75,28 @@ def main() -> None:
     assert_eq!(
         recorded_type(&checker, source, "nested:", "(None, 1)")?,
         &ResolvedType::Tuple(vec![option(ResolvedType::Int), ResolvedType::Int])
+    );
+    Ok(())
+}
+
+/// #1847: inside a generic body the body's own type parameter is a fixed type, so `(x, None)` in a
+/// `tuple[T, Option[T]]` binding records `Option[T]` for its `None`, as it does for a concrete element type.
+#[test]
+fn tuple_literal_in_a_generic_body_takes_the_type_parameter_issue1847() -> Result<(), String> {
+    let source = r#"
+def mk[T](x: T) -> int:
+    pair: tuple[T, Option[T]] = (x, None)
+    return 1
+
+
+def main() -> None:
+    println(mk("a"))
+"#;
+    let checker = checked(source)?;
+    let type_parameter = ResolvedType::Named("T".to_string());
+    assert_eq!(
+        recorded_type(&checker, source, "pair:", "(x, None)")?,
+        &ResolvedType::Tuple(vec![type_parameter.clone(), option(type_parameter)])
     );
     Ok(())
 }
@@ -200,6 +222,43 @@ def main() -> None:
                 && error.span == Span::new(element_start, element_start + "\"x\"".len())),
         "expected the element to be refused at its own span, got {errors:?}"
     );
+    Ok(())
+}
+
+/// #1832: an empty or `None`-only literal whose destination holds two or more types of its kind is refused at the
+/// literal, in a declaration and a reassignment, for a list, a dict and a tuple alike: neither the destination nor the
+/// elements say which of those types it is.
+#[test]
+fn literal_at_two_members_of_its_kind_is_refused_issue1832() -> Result<(), String> {
+    for (source, literal) in [
+        (
+            "def main() -> None:\n    mut u: list[int] | list[str] = [1]\n    u = []\n",
+            "[]",
+        ),
+        ("def main() -> None:\n    u: list[int] | list[str] = []\n", "[]"),
+        (
+            "def main() -> None:\n    mut u: list[Option[int]] | list[Option[str]] = [Some(1)]\n    u = [None]\n",
+            "[None]",
+        ),
+        (
+            "def main() -> None:\n    d: dict[str, int] | dict[str, str] = {}\n",
+            "{}",
+        ),
+        (
+            "def main() -> None:\n    p: tuple[Option[str], int] | tuple[Option[int], int] = (None, 1)\n",
+            "(None, 1)",
+        ),
+    ] {
+        let errors = check_str_err(source, "a literal at two members of its kind must be refused");
+        let start = source.rfind(literal).ok_or("missing refused literal")?;
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("Cannot tell which member of")
+                    && error.span == Span::new(start, start + literal.len())),
+            "expected `{literal}` to be refused at its own span in:\n{source}\ngot {errors:?}"
+        );
+    }
     Ok(())
 }
 

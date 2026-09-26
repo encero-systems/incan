@@ -1812,6 +1812,10 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "annotated_literal_in_a_generic_body_types_its_none_issue1847": {
+          "notes": "Asserts a `None` element of an annotated tuple or list literal in a generic body is `None::<T>`, never `None::<()>`; the fixture builds and matches such a tuple.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/annotated_tuple_literal_types_its_elements.incn"
+        },
         "annotated_tuple_literal_types_its_elements_issue1847": {
           "notes": "Asserts the tuple literal's `None` is `None::<String>`, its `Ok(1)` is `Ok::<i64, i64>(1)` and its integer in a float slot is `1.0`; the fixture prints each element.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/annotated_tuple_literal_types_its_elements.incn"
@@ -4672,6 +4676,10 @@
         "list_literal_keeps_its_option_binding_type_issue1832": {
           "notes": "Asserts the legacy IR types `a = []` and `b = [None]` by the `Option[list[...]]` binding's list type; the fixture prints the wrapped values.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/empty_list_assigned_to_optional_binding_is_wrapped.incn"
+        },
+        "literal_in_a_generic_body_takes_its_annotated_type_issue1847": {
+          "notes": "Asserts the legacy IR gives an annotated tuple or list literal in a generic body its annotation's type; the fixture builds and matches such a tuple.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/annotated_tuple_literal_types_its_elements.incn"
         },
         "tuple_literal_keeps_its_annotated_element_types_issue1847": {
           "notes": "Asserts the legacy IR types a tuple literal, and a nested one, by its annotation's element types; the fixture prints each element.",

@@ -47,6 +47,33 @@ def main() -> None:
     Ok(())
 }
 
+/// #1847: inside a generic body, a `None` element of an annotated tuple or list literal is typed with the body's own
+/// type parameter, not `()`.
+#[test]
+fn annotated_literal_in_a_generic_body_types_its_none_issue1847() -> Result<(), String> {
+    let code = generate_collapsed(
+        r#"
+def mk[T](x: T) -> int:
+    pair: tuple[T, Option[T]] = (x, None)
+    items: list[Option[T]] = [None]
+    return len(items)
+
+
+def main() -> None:
+    println(mk("a"))
+"#,
+    )?;
+    assert_contains_all(
+        &code,
+        &[
+            "let _pair: (T, Option<T>) = (x, None::<T>);",
+            "let items: Vec<Option<T>> = vec![None:: < T >];",
+        ],
+    );
+    assert!(!code.contains("None::<()>"), "no `None` may be typed `()`:\n{code}");
+    Ok(())
+}
+
 /// #1832: an empty or `None`-only list literal assigned to an existing `Option[list[...]]` binding is wrapped in
 /// `Some` with its element type, and an empty list assigned to a `list[int] | str` binding is wrapped in the union's
 /// list variant.

@@ -1,4 +1,5 @@
-//! Integer literals the checker typed as binary floats.
+//! Literals lowered in the type their destination gives them: an integer literal the checker typed as a binary float
+//! (#1831), and a collection literal declared in a generic body with its annotation's type parameters (#1847).
 
 use super::super::super::TypedExpr;
 use super::super::super::expr::{IrExprKind, UnaryOp};
@@ -61,5 +62,38 @@ impl AstLowering {
             ty,
             IrType::Float | IrType::Numeric(NumericTypeId::F32 | NumericTypeId::F64)
         )
+    }
+
+    /// Give a tuple, list, dict or set literal declared with an annotation the annotation's type, when the literal's
+    /// own checked type mentions a type parameter of the enclosing generic body.
+    ///
+    /// Inside `def mk[T](x: T)`, `pair: tuple[T, Option[T]] = (x, None)` checks `(x, None)` as `(T, Option[T])`, and
+    /// lowering spells that `T` as a type parameter ([`IrType::Generic`]). The emitter types a `None` element from its
+    /// container's element type and reads a type parameter there as not yet inferred, so it wrote `None::<()>`. The
+    /// annotation spells the body's own `T` as the fixed type it is in that body, so the literal takes the
+    /// annotation's type and its `None` is written `None::<T>`. Only the literal itself is retyped: its nested
+    /// literals take their element types from it. A literal whose type mentions no type parameter, or whose annotation
+    /// is not the same kind of collection (an `Option` or a union around it), is left as it is.
+    pub(in crate::lower) fn give_literal_its_annotated_type_parameters(
+        lowered: &mut TypedExpr,
+        annotation: Option<&IrType>,
+    ) {
+        let Some(annotation) = annotation else {
+            return;
+        };
+        let literal = matches!(
+            lowered.kind,
+            IrExprKind::Tuple(_) | IrExprKind::List(_) | IrExprKind::Dict(_) | IrExprKind::Set(_)
+        );
+        let same_kind = match (&lowered.ty, annotation) {
+            (IrType::Tuple(items), IrType::Tuple(annotated)) => items.len() == annotated.len(),
+            (IrType::List(_), IrType::List(_))
+            | (IrType::Set(_), IrType::Set(_))
+            | (IrType::Dict(_, _), IrType::Dict(_, _)) => true,
+            _ => false,
+        };
+        if literal && same_kind && lowered.ty.contains_generic_parameter() {
+            lowered.ty = annotation.clone();
+        }
     }
 }
