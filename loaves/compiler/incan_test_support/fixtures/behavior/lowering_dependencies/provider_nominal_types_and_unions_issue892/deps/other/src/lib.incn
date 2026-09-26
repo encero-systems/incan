@@ -1,0 +1,15 @@
+pub model Widget:
+    pub value: int
+
+
+pub model Right:
+    pub label: str
+
+
+pub type Choice = Widget | Right
+
+
+pub def choose(flag: bool) -> Choice:
+    if flag:
+        return Widget(value=1)
+    return Right(label="r")

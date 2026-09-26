@@ -1,0 +1,13 @@
+trait Callable1[A, R]:
+    def apply(self, value: A) -> R: ...
+
+
+pub model Doubler with Callable1[int, int]:
+    pub extra: int
+
+    def apply(self, value: int) -> int:
+        return value * 2 + self.extra
+
+
+pub def run_local[F with Callable1[int, int]](func: F, value: int) -> int:
+    return func.apply(value)

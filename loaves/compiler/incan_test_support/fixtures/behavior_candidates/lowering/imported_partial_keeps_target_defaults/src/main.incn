@@ -1,0 +1,11 @@
+# behavior: an imported partial called without its target's defaulted residual argument uses that declaration default, from the package root and from a nested namespace alike
+# expect-stdout:
+#   flat of size 3
+#   idx of size 4
+
+from pub::modulelib import default_build, hyperquant
+
+
+def main() -> None:
+    println(default_build())
+    println(hyperquant.default_index())

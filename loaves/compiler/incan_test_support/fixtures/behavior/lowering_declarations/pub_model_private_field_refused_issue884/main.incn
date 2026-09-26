@@ -1,0 +1,11 @@
+# behavior: a pub model's field without pub is private to its declaring module, so another module reading it is refused at check time (#884)
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::test_lower_pub_model_uses_checked_private_field_visibility_issue884
+# expect-diagnostic: INCAN-T0001
+
+from vault import Vault
+
+
+def main() -> None:
+    vault = Vault(label="keys")
+    println(vault.label)
+    println(vault.secret)

@@ -1,0 +1,14 @@
+# behavior: an imported trait's default method constructs a model of the trait's own module by named fields, and the adopter in another module that imports that model reads the result
+# expect-stdout:
+#   3
+
+from shapes import Counted, Extent
+
+
+model Thing with Counted:
+    pub x: int
+
+
+def main() -> None:
+    made: Extent = Thing(x=1).make()
+    println(made.n)

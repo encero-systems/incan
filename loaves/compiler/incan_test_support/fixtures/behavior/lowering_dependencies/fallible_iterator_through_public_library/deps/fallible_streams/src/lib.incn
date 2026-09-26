@@ -1,0 +1,27 @@
+from std.derives.collection import FallibleIterator
+
+
+pub model NumberStream with FallibleIterator[int, str]:
+    pub items: list[int]
+    pub index: int = 0
+    pub fail_at: Option[int] = None
+
+    def __next__(mut self) -> Result[Option[int], str]:
+        match self.fail_at:
+            Some(index) =>
+                if self.index == index:
+                    return Err("boom")
+            None => pass
+        if self.index >= len(self.items):
+            return Ok(None)
+        item = self.items[self.index]
+        self.index += 1
+        return Ok(Some(item))
+
+
+pub def numbers() -> NumberStream:
+    return NumberStream(items=[1, 2, 3])
+
+
+pub def failing_numbers() -> NumberStream:
+    return NumberStream(items=[1, 2, 3], fail_at=Some(1))

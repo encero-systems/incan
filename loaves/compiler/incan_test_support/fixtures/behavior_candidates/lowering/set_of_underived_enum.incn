@@ -1,0 +1,23 @@
+# behavior: a model field typed set[Tag] over an enum with no derives is constructed from a set literal and serializes
+# expect-stdout:
+#   {"tags":["A"],"id":7}
+
+from std.serde.json import Serialize
+
+
+@derive(Serialize)
+model Payload:
+    tags: set[Tag]
+    id: UserId
+
+
+enum Tag:
+    A
+    B
+
+
+type UserId = newtype int
+
+
+def main() -> None:
+    println(Payload(tags={Tag.A}, id=UserId(7)).to_json())

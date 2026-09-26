@@ -1,0 +1,9 @@
+[project]
+name = "imported_partial_keeps_target_defaults"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+modulelib = { path = "deps/modulelib" }

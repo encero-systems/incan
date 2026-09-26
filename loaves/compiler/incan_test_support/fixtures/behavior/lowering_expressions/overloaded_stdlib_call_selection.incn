@@ -1,0 +1,30 @@
+# behavior: a call to an overloaded stdlib function reaches the overload the checker selected by arity, and a call to a non-overloaded one reaches its only declaration
+# retires: loaves/compiler/incan_ir/src/lower/expr/calls.rs::canonical_path_names_the_overload_a_call_selected
+# retires: loaves/compiler/incan_ir/src/lower/expr/calls.rs::canonical_path_keeps_its_spelling_when_no_overload_was_selected
+# expect-stdout:
+#   absent
+#   7
+#   fallback
+
+from std.environ import EnvironError, get_as, get_optional
+
+const KEY: str = "INCAN_BEHAVIOR_FIXTURE_UNSET_KEY"
+
+
+def read() -> Result[None, EnvironError]:
+    optional: Option[int] = get_as[int](KEY)?
+    match optional:
+        Some(value) => println(value)
+        None => println("absent")
+    defaulted: int = get_as[int](KEY, 7)?
+    println(defaulted)
+    match get_optional(KEY):
+        Some(value) => println(value)
+        None => println("fallback")
+    return Ok(None)
+
+
+def main() -> None:
+    match read():
+        Ok(_) => pass
+        Err(error) => println(error.message())
