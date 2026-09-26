@@ -1261,6 +1261,11 @@ impl SymbolTable {
         &self.symbols
     }
 
+    /// Return the index of the current scope; a scope entered later always has a larger index.
+    pub fn current_scope_index(&self) -> usize {
+        self.current_scope
+    }
+
     /// Get the current scope kind
     pub fn current_scope_kind(&self) -> ScopeKind {
         self.scopes[self.current_scope].kind

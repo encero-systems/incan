@@ -428,6 +428,28 @@ const METHOD_DECORATOR_RECEIVER_NOT_PLANNED: DiagnosticCatalogEntry = Diagnostic
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/language/"),
 };
 
+const TAKEN_LIST_USED_AGAIN: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0119",
+    title: "List used again after a `for` loop took its items",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A `for` loop takes the items out of a list whose item type can be neither copied nor cloned, and the list is used after the loop, inside it, or by a repeat of the loop.",
+    explanation: "A `for` loop over a list reads each item where it stays, so the list keeps its items. When the loop body hands the item on by value, by awaiting it, returning it, assigning it to another name or passing it to a call, a copyable or cloneable item is copied, and an item that can be neither, such as a `JoinHandle[T]`, is taken out of the list instead. The loop then takes every item out of the list, which is only possible when nothing reads the list again: a read of the list after the loop or inside its body, or an enclosing loop that runs the `for` loop again, is refused. A list the loop takes from is a local binding or a parameter not marked `mut`.",
+    examples: &[
+        "from std.async import spawn\n\nasync def work() -> int:\n    return 1\n\nasync def main() -> None:\n    handles = [spawn(work()), spawn(work())]\n    for handle in handles:\n        match await handle:\n            Ok(value) => println(value)\n            Err(_) => println(\"join failed\")\n    println(len(handles))",
+    ],
+    common_causes: &[
+        "Reading the length or the items of a list of task handles after awaiting each handle in a loop.",
+        "Awaiting the handles of a list built outside an enclosing `while` or `loop:`.",
+    ],
+    fixes: &[
+        "Read what the later code needs from the list before the loop, such as `count = len(handles)`.",
+        "Collect the results in a new list inside the loop and use that list afterwards.",
+        "Build the list inside the enclosing loop, so each pass iterates a list of its own.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/stdlib/async/"),
+};
+
 const IMPORT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-I0001",
     title: "Import or module resolution error",
@@ -552,6 +574,7 @@ const CATALOG: &[DiagnosticCatalogEntry] = &[
     OPERATOR_HAS_NO_TYPE_PARAMETER_BOUND,
     METHOD_DECORATOR_RECEIVER_SPELLING,
     METHOD_DECORATOR_RECEIVER_NOT_PLANNED,
+    TAKEN_LIST_USED_AGAIN,
     IMPORT,
     SDK_COMPONENT_DISABLED,
     SDK_COMPONENT_UNAVAILABLE,
@@ -945,6 +968,40 @@ mod tests {
         );
         let Some(entry) = explain("INCAN-T0116") else {
             return Err("INCAN-T0116 must have a catalog explanation".into());
+        };
+        assert_eq!(entry.severity, "error");
+        assert_eq!(entry.phase, "typecheck");
+        Ok(())
+    }
+
+    /// Issue #1844: a list used again after a `for` loop took its items has its own explainable code, and the
+    /// refusal names the list, points back at the loop and says what to write instead.
+    #[test]
+    fn taken_list_reuse_refusal_uses_a_distinct_stable_code() -> Result<(), Box<dyn std::error::Error>> {
+        let refusal = errors::taken_list_used_again(
+            "handles",
+            "JoinHandle[int]",
+            errors::TakenListReuse::AfterLoop,
+            Span::new(90, 97),
+            Span::new(40, 47),
+        );
+        assert_eq!(code_for_error(&refusal, DiagnosticPhase::Typecheck), "INCAN-T0119");
+        assert_eq!(
+            refusal.message,
+            "`handles` is used after the `for` loop that took its items"
+        );
+        assert_eq!(
+            refusal.related_spans().len(),
+            1,
+            "the refusal must point back at the loop"
+        );
+        assert!(
+            refusal.hints.iter().any(|hint| hint.contains("before the loop")),
+            "the refusal must say what to write instead, got {:?}",
+            refusal.hints
+        );
+        let Some(entry) = explain("INCAN-T0119") else {
+            return Err("INCAN-T0119 must have a catalog explanation".into());
         };
         assert_eq!(entry.severity, "error");
         assert_eq!(entry.phase, "typecheck");

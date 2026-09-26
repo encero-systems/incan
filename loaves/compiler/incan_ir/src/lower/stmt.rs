@@ -13,7 +13,7 @@ use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::{IrType, isinstance_type_matches, isinstance_union_variant_indices};
 use super::super::{IrSpan, Mutability, TypedExpr};
 use super::errors::LoweringError;
-use super::{AstLowering, ReturnOperandContext};
+use super::{AstLowering, OwnedLoopItems, ReturnOperandContext};
 use incan_frontend::ast::{self, Spanned};
 use incan_frontend::typechecker::ResolvedOperatorKind;
 use incan_lang::lang::builtins::BuiltinFnId;
@@ -172,6 +172,36 @@ impl AstLowering {
             | ast::Pattern::Group(_)
             | ast::Pattern::Or(_) => {}
         }
+    }
+
+    /// Hand a `for` loop that takes the items of its list the list itself, iterated by value (#1844).
+    ///
+    /// The checker proved that the loop body hands each item on by value, that the item can be neither copied nor
+    /// cloned, and that nothing reads the list again. The list variable therefore moves into the loop and is iterated
+    /// through `into_iter()`, so each pass binds an owned item. The emitter iterates a named place (a variable, field
+    /// or element) through `.iter()`, but a call result as it is, which is why the loop receives the call. An iterable
+    /// that is not a variable is returned unchanged.
+    fn list_iterated_by_value(mut list: TypedExpr) -> TypedExpr {
+        if let IrExprKind::Var { access, .. } = &mut list.kind {
+            *access = VarAccess::Move;
+        } else {
+            return list;
+        }
+        let ty = list.ty.clone();
+        let span = list.span;
+        TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(list),
+                method: "into_iter".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            ty,
+        )
+        .with_span(span)
     }
 
     /// Register all loop bindings before lowering the loop body so body reads resolve to local variables.
@@ -1345,6 +1375,19 @@ impl AstLowering {
                     (ast::Expr::Try(inner), Some(_)) => self.lower_expr_spanned(inner)?,
                     _ => self.lower_expr_spanned(&f.iter)?,
                 };
+                // The checker decided whether this loop takes the items of the list it iterates (#1844).
+                let takes_items = protocol_iteration.is_none()
+                    && matches!(iterable.kind, IrExprKind::Var { .. })
+                    && matches!(iterable.ty, IrType::List(_))
+                    && self
+                        .type_info
+                        .as_ref()
+                        .is_some_and(|info| info.for_loop_takes_items(f.iter.span));
+                let iterable = if takes_items {
+                    Self::list_iterated_by_value(iterable)
+                } else {
+                    iterable
+                };
 
                 // Push a new scope for the for-loop body
                 self.push_scope();
@@ -1365,12 +1408,24 @@ impl AstLowering {
                 self.define_for_pattern_bindings(&f.pattern.node, &loop_var_ty);
                 let mut loop_bindings = HashSet::new();
                 Self::collect_pattern_binding_names(&f.pattern.node, &mut loop_bindings);
-                self.loop_pattern_bindings.push(loop_bindings);
 
                 self.non_linear_context_depth += 1;
+                if takes_items {
+                    self.owned_loop_binding_scopes.push(OwnedLoopItems {
+                        frame: self.remaining_ident_reads.len(),
+                        depth: self.non_linear_context_depth,
+                        names: loop_bindings,
+                    });
+                } else {
+                    self.loop_pattern_bindings.push(loop_bindings);
+                }
                 let body_result = self.lower_statements(&f.body);
+                if takes_items {
+                    let _ = self.owned_loop_binding_scopes.pop();
+                } else {
+                    let _ = self.loop_pattern_bindings.pop();
+                }
                 self.non_linear_context_depth -= 1;
-                let _ = self.loop_pattern_bindings.pop();
                 let body = body_result?;
                 self.pop_scope();
 

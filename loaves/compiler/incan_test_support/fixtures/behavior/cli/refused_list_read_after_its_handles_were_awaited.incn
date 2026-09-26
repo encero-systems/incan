@@ -1,0 +1,17 @@
+# behavior: reading a list of task handles after a for loop awaited each handle is refused at check time, because awaiting took the handles out of the list
+# expect-diagnostic: INCAN-T0119
+
+from std.async import spawn
+
+
+async def work() -> int:
+    return 1
+
+
+async def main() -> None:
+    handles = [spawn(work()), spawn(work())]
+    for handle in handles:
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
+    println(len(handles))

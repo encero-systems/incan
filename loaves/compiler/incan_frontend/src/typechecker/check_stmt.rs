@@ -771,6 +771,7 @@ impl TypeChecker {
             }
             self.consumed_iterator_bindings.remove(&assign.name);
             self.transferred_c_resource_bindings.remove(&assign.name);
+            self.forget_taken_list(&assign.name);
             self.mark_open_rust_generic_binding_read(&assign.name);
             return;
         }
@@ -917,6 +918,7 @@ impl TypeChecker {
                 }
                 self.consumed_iterator_bindings.remove(name);
                 self.transferred_c_resource_bindings.remove(name);
+                self.forget_taken_list(name);
                 self.mark_open_rust_generic_binding_read(name);
                 return;
             }
@@ -1587,6 +1589,7 @@ impl TypeChecker {
                 self.infer_iterator_element_type_from_expr(&for_stmt.iter, &iter_ty)
             }
         };
+        self.plan_for_item_taking(for_stmt, &elem_ty);
 
         self.symbols.enter_scope(ScopeKind::Block);
         // Record the resolved element type at the pattern's own span. Body IR's `lower_for` already reads the loop
@@ -1595,6 +1598,7 @@ impl TypeChecker {
         // bindings would carry `Unknown` even though the element type is fully resolved right here.
         self.record_expr_type(for_stmt.pattern.span, elem_ty.clone());
         self.define_for_pattern_bindings(&for_stmt.pattern, &elem_ty);
+        self.remember_for_pattern_bindings(&for_stmt.pattern.node);
         self.push_loop_context(LoopContextKind::Statement, None);
 
         self.check_statement_block(&for_stmt.body);

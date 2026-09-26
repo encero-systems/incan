@@ -1442,6 +1442,12 @@ pub struct ProtocolArtifacts {
     /// Lowering consumes this so a structural `__iter__` / `__next__` pair can become an explicit loop that calls the
     /// resolved hooks without relying on Rust's `IntoIterator`.
     pub iterations: HashMap<(usize, usize), ProtocolIterationInfo>,
+    /// `for` loops that take the items out of the list binding they iterate, keyed by iterable expression span
+    /// (#1844).
+    ///
+    /// The loop body hands each item on by value and the item type can be neither copied nor cloned, so lowering
+    /// iterates the list by value; the checker refused every later use of the list.
+    pub item_taking_iterations: HashSet<(usize, usize)>,
 }
 
 /// A typechecker-resolved user-defined operator call consumed by IR lowering.
@@ -2602,6 +2608,20 @@ impl TypeCheckInfo {
     /// Record a custom `for` iteration protocol route.
     pub fn record_protocol_iteration(&mut self, span: Span, info: ProtocolIterationInfo) {
         self.protocols.iterations.insert((span.start, span.end), info);
+    }
+
+    /// Record that the `for` loop over the list at `iter_span` takes the list's items (#1844).
+    pub fn record_for_loop_takes_items(&mut self, iter_span: Span) {
+        self.protocols
+            .item_taking_iterations
+            .insert((iter_span.start, iter_span.end));
+    }
+
+    /// Return whether the `for` loop over the list at `iter_span` takes the list's items (#1844).
+    pub fn for_loop_takes_items(&self, iter_span: Span) -> bool {
+        self.protocols
+            .item_taking_iterations
+            .contains(&(iter_span.start, iter_span.end))
     }
 }
 

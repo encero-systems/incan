@@ -5886,6 +5886,7 @@ impl TypeChecker {
         self.in_async_body = func.is_async();
         let previous_consumed_iterator_bindings = std::mem::take(&mut self.consumed_iterator_bindings);
         let previous_transferred_c_resource_bindings = std::mem::take(&mut self.transferred_c_resource_bindings);
+        let previous_for_item_taking = self.enter_for_item_taking_scope();
         let previous_unbound_c_abi_span_constructors = std::mem::take(&mut self.unbound_c_abi_span_constructors);
         let previous_c_abi_span_bindings = std::mem::take(&mut self.c_abi_span_bindings);
         let previous_consumed_c_abi_span_bindings = std::mem::take(&mut self.consumed_c_abi_span_bindings);
@@ -5904,6 +5905,7 @@ impl TypeChecker {
 
         self.consumed_iterator_bindings = previous_consumed_iterator_bindings;
         self.transferred_c_resource_bindings = previous_transferred_c_resource_bindings;
+        self.exit_for_item_taking_scope(previous_for_item_taking);
         self.unbound_c_abi_span_constructors = previous_unbound_c_abi_span_constructors;
         self.c_abi_span_bindings = previous_c_abi_span_bindings;
         self.consumed_c_abi_span_bindings = previous_consumed_c_abi_span_bindings;
@@ -6334,12 +6336,14 @@ impl TypeChecker {
             self.in_async_body = method.is_async();
             let previous_consumed_iterator_bindings = std::mem::take(&mut self.consumed_iterator_bindings);
             let previous_transferred_c_resource_bindings = std::mem::take(&mut self.transferred_c_resource_bindings);
+            let previous_for_item_taking = self.enter_for_item_taking_scope();
             let previous_unbound_c_abi_span_constructors = std::mem::take(&mut self.unbound_c_abi_span_constructors);
             let previous_c_abi_span_bindings = std::mem::take(&mut self.c_abi_span_bindings);
             let previous_consumed_c_abi_span_bindings = std::mem::take(&mut self.consumed_c_abi_span_bindings);
             self.check_statement_block(body);
             self.consumed_iterator_bindings = previous_consumed_iterator_bindings;
             self.transferred_c_resource_bindings = previous_transferred_c_resource_bindings;
+            self.exit_for_item_taking_scope(previous_for_item_taking);
             self.unbound_c_abi_span_constructors = previous_unbound_c_abi_span_constructors;
             self.c_abi_span_bindings = previous_c_abi_span_bindings;
             self.consumed_c_abi_span_bindings = previous_consumed_c_abi_span_bindings;
