@@ -1322,8 +1322,12 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "chained_assignment_types_its_value_and_copies_for_a_static_issue1806": {
+          "notes": "Asserts `a = b = None` over two `Option[int]` targets reads `None` in their type and a module static target gets the value too; the fixture prints both cases.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
+        },
         "chained_assignment_gives_every_target_the_value_issue1806": {
-          "notes": "Asserts every chain target takes the value from one temporary in its own type, with a clone for all but the last; the fixture prints the str, list, Option and union cases.",
+          "notes": "Asserts every chain target gets the value, each in its own type, and no target is written from another; the fixture prints the str, list, Option and union cases.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
         },
         "chained_assignment_in_a_loop_assigns_the_bound_name_issue1806": {
@@ -2511,8 +2515,12 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "chained_assignment_types_its_value_by_the_targets_and_copies_for_a_static_issue1806": {
+          "notes": "Asserts the legacy IR types the chain value by the targets that agree and gives a module static target the value too; the fixture prints both cases.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
+        },
         "chained_assignment_gives_every_target_the_value_issue1806": {
-          "notes": "Asserts the legacy IR reads the chain value temporary for every target, copying or cloning all but the last; the fixture prints the str, list, Option and union cases.",
+          "notes": "Asserts the legacy IR gives every chain target the value from one temporary, left to right; the fixture prints the str, list, Option and union cases.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
         },
         "chained_assignment_into_bound_names_reassigns_them_inside_a_loop_issue1806": {

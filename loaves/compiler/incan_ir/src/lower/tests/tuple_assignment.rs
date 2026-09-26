@@ -392,3 +392,85 @@ def new_names() -> str:
     }
     Ok(())
 }
+
+/// Return the declared type and annotation of the chain's value temporary among `stmts`.
+fn chain_value_type<'a>(stmts: &[&'a IrStmt]) -> Result<(&'a IrType, Option<&'a IrType>), String> {
+    stmts
+        .iter()
+        .copied()
+        .find_map(|stmt| match &stmt.kind {
+            IrStmtKind::Let {
+                name,
+                ty,
+                type_annotation,
+                ..
+            } if name == CHAIN_VALUE => Some((ty, type_annotation.as_ref())),
+            _ => None,
+        })
+        .ok_or_else(|| format!("the chain must read its value into `{CHAIN_VALUE}`: {stmts:?}"))
+}
+
+/// #1806: the chain's temporary has the type its bound targets agree on, so `a = b = None` over two `Option[int]`
+/// targets is an `Option[int]` rather than an `Option` of nothing; when the targets disagree it keeps the value's own
+/// type. A module static before the last target takes an explicit copy, since its assignment takes what it is given.
+#[test]
+fn chained_assignment_types_its_value_by_the_targets_and_copies_for_a_static_issue1806() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+static names: list[str] = []
+
+def reset() -> int:
+    mut a: Option[int] = Some(1)
+    mut b: Option[int] = Some(2)
+    a = b = None
+    return a.unwrap_or(0) + b.unwrap_or(0)
+
+def mixed() -> int:
+    mut maybe: Option[int] = None
+    mut count = 0
+    count = maybe = 5
+    return count
+
+def fill() -> int:
+    names = local = ["a"]
+    return len(local)
+"#,
+    )?;
+
+    let stmts = all_statements(&ir, "reset")?;
+    let option_int = IrType::Option(Box::new(IrType::Int));
+    assert_eq!(
+        chain_value_type(&stmts)?,
+        (&option_int, Some(&option_int)),
+        "`a = b = None` reads `None` as the targets' `Option[int]`"
+    );
+
+    let stmts = all_statements(&ir, "mixed")?;
+    assert_eq!(
+        chain_value_type(&stmts)?,
+        (&IrType::Int, None),
+        "targets that disagree leave the value its own type"
+    );
+
+    let stmts = all_statements(&ir, "fill")?;
+    let static_value = stmts
+        .iter()
+        .find_map(|stmt| match &stmt.kind {
+            IrStmtKind::Assign {
+                target: AssignTarget::Static { name, .. } | AssignTarget::StaticBinding(name),
+                value,
+            } if name == "names" => Some(value),
+            _ => None,
+        })
+        .ok_or_else(|| format!("`names` must be assigned: {stmts:?}"))?;
+    assert!(
+        matches!(&static_value.kind, IrExprKind::MethodCall { method, .. } if method == "clone"),
+        "a static before the last target takes an explicit copy, got {static_value:?}"
+    );
+    assert_eq!(
+        chain_value_reads(&stmts),
+        vec![("local".to_string(), VarAccess::Move)],
+        "the last target takes the value itself"
+    );
+    Ok(())
+}

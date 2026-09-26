@@ -1,8 +1,10 @@
-# behavior: a chained assignment gives its value to every target from left to right, each in its own type: bound names are reassigned (x = y = x + 1 inside a loop advances the loop's x), new names are declared, a str or list value is copied to every target, and an Option or union target wraps the value
+# behavior: a chained assignment gives its value to every target from left to right, each in its own type: bound names are reassigned (x = y = x + 1 inside a loop advances the loop's x), new names are declared, a str or list value reaches every target, an Option or union target wraps the value, None takes the Option targets' type, and a module static target gets the value too
 # retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_assignment_into_bound_names_reassigns_them_inside_a_loop_issue1806
 # retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_assignment_gives_every_target_the_value_issue1806
 # retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_assignment_in_a_loop_assigns_the_bound_name_issue1806
 # retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_assignment_gives_every_target_the_value_issue1806
+# retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_assignment_types_its_value_by_the_targets_and_copies_for_a_static_issue1806
+# retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_assignment_types_its_value_and_copies_for_a_static_issue1806
 # expect-stdout:
 #   5
 #   10 10
@@ -12,6 +14,11 @@
 #   x x
 #   5 5
 #   7 true
+#   0 0
+#   1 1
+
+static names: list[str] = []
+
 
 def count_up(n: int) -> int:
     mut x = 0
@@ -45,3 +52,9 @@ def main() -> None:
     mut n = 0
     n = value = 7
     println(f"{n} {isinstance(value, int)}")
+    mut p: Option[int] = Some(1)
+    mut q: Option[int] = Some(2)
+    p = q = None
+    println(f"{p.unwrap_or(0)} {q.unwrap_or(0)}")
+    names = local = ["a"]
+    println(f"{len(names)} {len(local)}")

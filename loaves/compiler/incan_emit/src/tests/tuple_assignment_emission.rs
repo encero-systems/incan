@@ -119,7 +119,8 @@ def main() -> None:
 "#,
     )?;
     for expected in [
-        "let __incan_chain_value = x + 1;",
+        // The bound target `x` fixes the value's type.
+        "let __incan_chain_value: i64 = x + 1;",
         "x = __incan_chain_value;",
         // `y` is never read, so it is declared as `_y`.
         "let _y = __incan_chain_value;",
@@ -169,5 +170,48 @@ def main() -> None:
             "no target reads another target (`{crossed}`):\n{code}"
         );
     }
+    Ok(())
+}
+
+/// `a = b = None` over two `Option[int]` targets reads `None` as an `Option<i64>` rather than an `Option` of nothing,
+/// and a module static before the last target takes an explicit copy of the value, which the last target then takes.
+#[test]
+fn chained_assignment_types_its_value_and_copies_for_a_static_issue1806() -> Result<(), String> {
+    let code = generate_collapsed(
+        r#"
+static names: list[str] = []
+
+
+def reset() -> int:
+    mut a: Option[int] = Some(1)
+    mut b: Option[int] = Some(2)
+    a = b = None
+    return a.unwrap_or(0) + b.unwrap_or(0)
+
+
+def fill() -> int:
+    names = local = ["a"]
+    return len(local)
+
+
+def main() -> None:
+    println(reset())
+    println(fill())
+"#,
+    )?;
+    let compact: String = code.split_whitespace().collect();
+    assert!(
+        compact.contains("let__incan_chain_value:Option<i64>=None"),
+        "the chain's `None` must take the targets' type:\n{code}"
+    );
+    assert!(!compact.contains("None::<()>"), "no `None` of nothing:\n{code}");
+    assert!(
+        compact.contains("=__incan_chain_value.clone();"),
+        "the static takes an explicit copy:\n{code}"
+    );
+    assert!(
+        compact.contains("letlocal=__incan_chain_value;"),
+        "the last target takes the value itself:\n{code}"
+    );
     Ok(())
 }

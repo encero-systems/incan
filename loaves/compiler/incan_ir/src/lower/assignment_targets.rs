@@ -4,9 +4,9 @@
 //! The tuple statements read their whole right side into one temporary before writing any target, so a swap such as
 //! `a, b = (b, a)` or `items[i], items[j] = (items[j], items[i])` sees the values from before the first write. Each
 //! target then receives its element of the temporary. A chained assignment also reads its value into one temporary and
-//! gives it to each target from left to right, Python's order: a copy to every target but the last, which takes the
-//! value itself. Each target converts the value to its own type (`maybe = 5` wraps an `Option[int]` target), so no
-//! target is written from another target of a different type.
+//! gives it to each target from left to right, Python's order. The temporary has the type the bound targets agree on,
+//! or the value's own type, and each target converts it to its own type (`maybe = 5` wraps an `Option[int]` target), so
+//! no target is written from another target.
 //!
 //! Every target is written the way a single assignment of its shape writes it:
 //!
@@ -19,7 +19,7 @@
 //! The statement lowers to a block in statement position, whose statements the emitter spells inline so the names it
 //! declares stay visible to the statements that follow.
 
-use super::super::expr::{IrExprKind, VarAccess, VarRefKind};
+use super::super::expr::{IrExprKind, MethodCallArgPolicy, VarAccess, VarRefKind};
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::IrType;
 use super::super::{IrSpan, Mutability, TypedExpr};
@@ -61,16 +61,17 @@ impl AstLowering {
 
     /// Lower `x = y = value` (or `let` / `mut x = y = value`).
     ///
-    /// The value is read into one temporary, then each target takes it from left to right: a copy of it (a clone for a
-    /// value that is not `Copy`) for every target but the last, the temporary itself for the last. A plain spelling
-    /// reassigns every target that is already bound and mutable (or a module static) and declares the others, the rule
-    /// a single `x = value` follows; `let` and `mut` spellings declare every target.
+    /// The value is read into one temporary, then each target takes it from left to right: a copy of it for every
+    /// target but the last, the temporary itself for the last. The temporary has the type the already-bound targets
+    /// agree on (so `a = b = None` over two `Option[int]` targets is an `Option[int]`), or the value's own type when
+    /// they disagree or none is bound, and each target converts it to its own type. A plain spelling reassigns every
+    /// target that is already bound and mutable (or a module static) and declares the others, the rule a single
+    /// `x = value` follows; `let` and `mut` spellings declare every target.
     pub(super) fn lower_chained_assignment(
         &mut self,
         chain: &ast::ChainedAssignmentStmt,
     ) -> Result<IrStmt, LoweringError> {
         let value = self.lower_expr_spanned(&chain.value)?;
-        let ty = value.ty.clone();
         let mutability = match chain.binding {
             ast::BindingKind::Mutable => Mutability::Mutable,
             _ => Mutability::Immutable,
@@ -82,26 +83,86 @@ impl AstLowering {
             });
         };
 
-        let mut stmts = vec![self.bind_temporary(CHAIN_VALUE_TEMPORARY, value)];
-        for (index, target) in chain.targets.iter().enumerate() {
-            let access = if ty.is_copy() {
-                VarAccess::Copy
-            } else if index == last {
-                VarAccess::Move
-            } else {
-                VarAccess::Read
-            };
-            let read = TypedExpr::new(
-                IrExprKind::Var {
-                    name: CHAIN_VALUE_TEMPORARY.to_string(),
-                    access,
-                    ref_kind: VarRefKind::Value,
-                },
-                ty.clone(),
-            );
-            stmts.push(self.assign_or_declare_name(chain.binding, target, ty.clone(), mutability, read));
+        let agreed_ty = self.chain_target_type(chain);
+        let ty = agreed_ty.clone().unwrap_or_else(|| value.ty.clone());
+        self.define_local_binding(CHAIN_VALUE_TEMPORARY.to_string(), ty.clone(), false);
+        let mut stmts = vec![IrStmt::new(IrStmtKind::Let {
+            name: CHAIN_VALUE_TEMPORARY.to_string(),
+            ty: ty.clone(),
+            type_annotation: agreed_ty,
+            mutability: Mutability::Immutable,
+            value,
+        })];
+        for (index, name) in chain.targets.iter().enumerate() {
+            let place = self.bound_name_assign_target(chain.binding, name);
+            let read = Self::chain_value_read(&ty, index == last, place.as_ref());
+            stmts.push(match place {
+                Some(target) => IrStmt::new(IrStmtKind::Assign { target, value: read }),
+                None => self.declare_name(name, ty.clone(), mutability, read),
+            });
         }
         Ok(Self::statement_block(stmts))
+    }
+
+    /// Return the type every already-bound target of a chain has, or `None` when they disagree, one is unknown, or
+    /// none is bound. New names take whatever the temporary's type is, so they do not constrain it.
+    fn chain_target_type(&self, chain: &ast::ChainedAssignmentStmt) -> Option<IrType> {
+        let mut agreed: Option<IrType> = None;
+        for name in &chain.targets {
+            if self.bound_name_assign_target(chain.binding, name).is_none() {
+                continue;
+            }
+            let ty = self.lookup_var(name);
+            match &agreed {
+                _ if ty == IrType::Unknown => return None,
+                None => agreed = Some(ty),
+                Some(existing) if *existing == ty => {}
+                Some(_) => return None,
+            }
+        }
+        agreed
+    }
+
+    /// Read the chain's value temporary for one target.
+    ///
+    /// A `Copy` value is copied to every target. Otherwise every target but the last reads the temporary without taking
+    /// it, and the last takes it. A module static before the last gets an explicit `.clone()`: a static's assignment
+    /// takes the value it is given whatever the read says, and the temporary is still needed by the targets after it.
+    fn chain_value_read(ty: &IrType, is_last: bool, place: Option<&AssignTarget>) -> TypedExpr {
+        let access = if ty.is_copy() {
+            VarAccess::Copy
+        } else if is_last {
+            VarAccess::Move
+        } else {
+            VarAccess::Read
+        };
+        let read = TypedExpr::new(
+            IrExprKind::Var {
+                name: CHAIN_VALUE_TEMPORARY.to_string(),
+                access,
+                ref_kind: VarRefKind::Value,
+            },
+            ty.clone(),
+        );
+        let static_place = matches!(
+            place,
+            Some(AssignTarget::Static { .. } | AssignTarget::StaticBinding(_))
+        );
+        if access != VarAccess::Read || !static_place {
+            return read;
+        }
+        TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(read),
+                method: "clone".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            ty.clone(),
+        )
     }
 
     /// Give `value` to one named target: assign it when the statement reassigns the name, otherwise declare the name.
@@ -116,6 +177,11 @@ impl AstLowering {
         if let Some(target) = self.bound_name_assign_target(binding, name) {
             return IrStmt::new(IrStmtKind::Assign { target, value });
         }
+        self.declare_name(name, ty, mutability, value)
+    }
+
+    /// Declare `name` with `value` in the current scope, recording a `mut` declaration as mutable.
+    fn declare_name(&mut self, name: &str, ty: IrType, mutability: Mutability, value: TypedExpr) -> IrStmt {
         self.define_local_binding(name.to_string(), ty.clone(), false);
         if matches!(mutability, Mutability::Mutable) {
             self.mutable_vars.insert(name.to_string(), true);
