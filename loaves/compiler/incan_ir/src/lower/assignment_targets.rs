@@ -3,8 +3,10 @@
 //!
 //! The tuple statements read their whole right side into one temporary before writing any target, so a swap such as
 //! `a, b = (b, a)` or `items[i], items[j] = (items[j], items[i])` sees the values from before the first write. Each
-//! target then receives its element of the temporary. A chained assignment gives its value to the last target and each
-//! earlier target reads the one after it.
+//! target then receives its element of the temporary. A chained assignment also reads its value into one temporary and
+//! gives it to each target from left to right, Python's order: a copy to every target but the last, which takes the
+//! value itself. Each target converts the value to its own type (`maybe = 5` wraps an `Option[int]` target), so no
+//! target is written from another target of a different type.
 //!
 //! Every target is written the way a single assignment of its shape writes it:
 //!
@@ -30,6 +32,9 @@ use incan_frontend::ast::{self, Spanned};
 /// Consecutive tuple assignments reuse the name; each temporary shadows the previous one, which is no longer read.
 const TUPLE_ASSIGN_TEMPORARY: &str = "__incan_tuple_assign";
 
+/// Name of the temporary a chained assignment reads its value into, reused the same way.
+const CHAIN_VALUE_TEMPORARY: &str = "__incan_chain_value";
+
 impl AstLowering {
     /// Lower `a, b = value` (or `let` / `mut a, b = value`).
     ///
@@ -46,7 +51,7 @@ impl AstLowering {
             _ => Mutability::Immutable,
         };
 
-        let mut stmts = vec![self.bind_tuple_temporary(&temporary, value)];
+        let mut stmts = vec![self.bind_temporary(&temporary, value)];
         for (index, (name, element_ty)) in unpack.names.iter().zip(element_types).enumerate() {
             let element = self.tuple_temporary_element(&temporary, index, element_ty.clone());
             stmts.push(self.assign_or_declare_name(unpack.binding, name, element_ty, mutability, element));
@@ -56,9 +61,10 @@ impl AstLowering {
 
     /// Lower `x = y = value` (or `let` / `mut x = y = value`).
     ///
-    /// The last target takes the value and each earlier target reads the one after it. A plain spelling reassigns every
-    /// target that is already bound and mutable (or a module static) and declares the others, the rule a single
-    /// `x = value` follows; `let` and `mut` spellings declare every target.
+    /// The value is read into one temporary, then each target takes it from left to right: a copy of it (a clone for a
+    /// value that is not `Copy`) for every target but the last, the temporary itself for the last. A plain spelling
+    /// reassigns every target that is already bound and mutable (or a module static) and declares the others, the rule
+    /// a single `x = value` follows; `let` and `mut` spellings declare every target.
     pub(super) fn lower_chained_assignment(
         &mut self,
         chain: &ast::ChainedAssignmentStmt,
@@ -69,24 +75,31 @@ impl AstLowering {
             ast::BindingKind::Mutable => Mutability::Mutable,
             _ => Mutability::Immutable,
         };
-        let Some((last, earlier)) = chain.targets.split_last() else {
+        let Some(last) = chain.targets.len().checked_sub(1) else {
             return Err(LoweringError {
                 message: "empty chained assignment".to_string(),
                 span: IrSpan::default(),
             });
         };
 
-        let mut stmts = vec![self.assign_or_declare_name(chain.binding, last, ty.clone(), mutability, value)];
-        for (target, source) in earlier.iter().zip(chain.targets.iter().skip(1)).rev() {
-            let source_read = TypedExpr::new(
+        let mut stmts = vec![self.bind_temporary(CHAIN_VALUE_TEMPORARY, value)];
+        for (index, target) in chain.targets.iter().enumerate() {
+            let access = if ty.is_copy() {
+                VarAccess::Copy
+            } else if index == last {
+                VarAccess::Move
+            } else {
+                VarAccess::Read
+            };
+            let read = TypedExpr::new(
                 IrExprKind::Var {
-                    name: source.clone(),
-                    access: if ty.is_copy() { VarAccess::Copy } else { VarAccess::Move },
+                    name: CHAIN_VALUE_TEMPORARY.to_string(),
+                    access,
                     ref_kind: VarRefKind::Value,
                 },
                 ty.clone(),
             );
-            stmts.push(self.assign_or_declare_name(chain.binding, target, ty.clone(), mutability, source_read));
+            stmts.push(self.assign_or_declare_name(chain.binding, target, ty.clone(), mutability, read));
         }
         Ok(Self::statement_block(stmts))
     }
@@ -125,7 +138,7 @@ impl AstLowering {
         let value = self.lower_expr_spanned(&assign.value)?;
         let element_types = Self::tuple_element_types(&value.ty, assign.targets.len());
 
-        let mut stmts = vec![self.bind_tuple_temporary(TUPLE_ASSIGN_TEMPORARY, value)];
+        let mut stmts = vec![self.bind_temporary(TUPLE_ASSIGN_TEMPORARY, value)];
         for (index, (target, element_ty)) in assign.targets.iter().zip(element_types).enumerate() {
             let place = self.tuple_assign_place(target)?;
             let element = self.tuple_temporary_element(TUPLE_ASSIGN_TEMPORARY, index, element_ty);
@@ -159,8 +172,8 @@ impl AstLowering {
 
     /// Lower one tuple-assignment target to the place a single assignment of the same shape writes.
     ///
-    /// The checker accepts only names, fields and elements as targets (parentheses around one are transparent); any
-    /// other expression is refused there, so reaching it here is a lowering error rather than a silent skip.
+    /// The checker accepts only names, fields and elements as targets and refuses any other expression, a parenthesized
+    /// target included, so reaching one here is a lowering error rather than a silent skip.
     fn tuple_assign_place(&mut self, target: &Spanned<ast::Expr>) -> Result<AssignTarget, LoweringError> {
         match &target.node {
             ast::Expr::Ident(name) => Ok(self.resolve_named_assign_target(name)),
@@ -169,7 +182,6 @@ impl AstLowering {
                 object: Box::new(self.lower_expr_spanned(object)?),
                 index: Box::new(self.lower_expr_spanned(index)?),
             }),
-            ast::Expr::Paren(inner) => self.tuple_assign_place(inner),
             _ => Err(LoweringError {
                 message: "a tuple assignment target must be a name, a field or an element".to_string(),
                 span: IrSpan::default(),
@@ -177,8 +189,8 @@ impl AstLowering {
         }
     }
 
-    /// Declare the temporary that holds a tuple statement's right side and return its `let`.
-    fn bind_tuple_temporary(&mut self, temporary: &str, value: TypedExpr) -> IrStmt {
+    /// Declare the temporary that holds a statement's right side and return its `let`.
+    fn bind_temporary(&mut self, temporary: &str, value: TypedExpr) -> IrStmt {
         let ty = value.ty.clone();
         self.define_local_binding(temporary.to_string(), ty.clone(), false);
         IrStmt::new(IrStmtKind::Let {

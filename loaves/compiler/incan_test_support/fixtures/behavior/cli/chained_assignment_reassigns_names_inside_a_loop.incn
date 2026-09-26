@@ -1,10 +1,17 @@
-# behavior: a chained assignment into names that are already bound reassigns them, so x = y = x + 1 inside a loop advances the loop's x, and a name the chain binds first is declared
+# behavior: a chained assignment gives its value to every target from left to right, each in its own type: bound names are reassigned (x = y = x + 1 inside a loop advances the loop's x), new names are declared, a str or list value is copied to every target, and an Option or union target wraps the value
 # retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_assignment_into_bound_names_reassigns_them_inside_a_loop_issue1806
+# retires: loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs::chained_assignment_gives_every_target_the_value_issue1806
 # retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_assignment_in_a_loop_assigns_the_bound_name_issue1806
+# retires: loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs::chained_assignment_gives_every_target_the_value_issue1806
 # expect-stdout:
 #   5
 #   10 10
 #   7 7
+#   z z
+#   1 1 1
+#   x x
+#   5 5
+#   7 true
 
 def count_up(n: int) -> int:
     mut x = 0
@@ -22,3 +29,19 @@ def main() -> None:
     println(f"{total} {last}")
     first = second = 7
     println(f"{first} {second}")
+    mut a = "x"
+    mut b = "y"
+    a = b = "z"
+    println(f"{a} {b}")
+    xs = ys = zs = [1]
+    println(f"{len(xs)} {len(ys)} {len(zs)}")
+    left = right = "x"
+    println(f"{left} {right}")
+    mut maybe: Option[int] = None
+    mut count = 0
+    count = maybe = 5
+    println(f"{count} {maybe.unwrap_or(0)}")
+    mut value: int | str = "s"
+    mut n = 0
+    n = value = 7
+    println(f"{n} {isinstance(value, int)}")

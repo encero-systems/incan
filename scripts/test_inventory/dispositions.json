@@ -1322,6 +1322,10 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "chained_assignment_gives_every_target_the_value_issue1806": {
+          "notes": "Asserts every chain target takes the value from one temporary in its own type, with a clone for all but the last; the fixture prints the str, list, Option and union cases.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
+        },
         "chained_assignment_in_a_loop_assigns_the_bound_name_issue1806": {
           "notes": "Asserts the loop assigns `x` from the chain instead of shadowing it; the fixture runs the loop and prints 5.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
@@ -2507,6 +2511,10 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "chained_assignment_gives_every_target_the_value_issue1806": {
+          "notes": "Asserts the legacy IR reads the chain value temporary for every target, copying or cloning all but the last; the fixture prints the str, list, Option and union cases.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"
+        },
         "chained_assignment_into_bound_names_reassigns_them_inside_a_loop_issue1806": {
           "notes": "Asserts the legacy IR assigns bound chain targets instead of declaring shadows; the fixture runs two loops and a new-name chain.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_assignment_reassigns_names_inside_a_loop.incn"

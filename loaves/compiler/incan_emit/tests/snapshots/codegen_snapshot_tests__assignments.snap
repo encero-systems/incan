@@ -43,9 +43,10 @@ fn test_multiple_targets() {
     let mut x: i64 = value;
     let mut y: i64 = value;
     let mut z: i64 = value;
-    z = 5;
-    y = z;
-    x = y;
+    let __incan_chain_value = 5;
+    x = __incan_chain_value;
+    y = __incan_chain_value;
+    z = __incan_chain_value;
 }
 fn main() {
     std::panic::set_hook(

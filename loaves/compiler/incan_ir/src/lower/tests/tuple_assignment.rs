@@ -242,8 +242,37 @@ def trade(mut grid: Grid, start: int) -> int:
     Ok(())
 }
 
-/// #1806: `x = y = x + 1` inside a loop updates the loop's `x`, and `y`, first bound by the chain, is declared.
-/// Lowering declared every target with a fresh `let`, so `x` was shadowed for one iteration only.
+/// Describe each assignment and each declaration among `stmts` as `(name, access)` when its value reads the chain's
+/// value temporary, in order.
+fn chain_value_reads(stmts: &[&IrStmt]) -> Vec<(String, VarAccess)> {
+    stmts
+        .iter()
+        .copied()
+        .filter_map(|stmt| {
+            let (name, value) = match &stmt.kind {
+                IrStmtKind::Assign {
+                    target: AssignTarget::Var { name, .. },
+                    value,
+                } => (name, value),
+                IrStmtKind::Let { name, value, .. } => (name, value),
+                _ => return None,
+            };
+            match &value.kind {
+                IrExprKind::Var {
+                    name: source, access, ..
+                } if source == CHAIN_VALUE => Some((name.clone(), *access)),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// The temporary a chained assignment reads its value into.
+const CHAIN_VALUE: &str = "__incan_chain_value";
+
+/// #1806: `x = y = x + 1` inside a loop updates the loop's `x`, and `y`, first bound by the chain, is declared. Lowering
+/// declared every target with a fresh `let`, so `x` was shadowed for one iteration only. Every target takes the value
+/// from one temporary, left to right.
 #[test]
 fn chained_assignment_into_bound_names_reassigns_them_inside_a_loop_issue1806() -> Result<(), String> {
     let ir = lower_checked_source(
@@ -265,14 +294,14 @@ def both(n: int) -> int:
 
     let body = loop_statements(&ir, "count_up")?;
     assert!(!declares(&body, "x"), "the loop must not bind a fresh `x`: {body:?}");
+    assert_eq!(
+        chain_value_reads(&body),
+        vec![("x".to_string(), VarAccess::Copy), ("y".to_string(), VarAccess::Copy)],
+        "`x` is assigned and `y` declared from the chain's value, left to right"
+    );
     assert!(
         declares(&body, "y"),
         "`y` is first bound by the chain and is declared: {body:?}"
-    );
-    assert_eq!(
-        name_assignments(&body),
-        vec![("x".to_string(), Some("y".to_string()))],
-        "`x` is assigned from the chain's value"
     );
 
     let body = loop_statements(&ir, "both")?;
@@ -283,10 +312,83 @@ def both(n: int) -> int:
     assert_eq!(
         name_assignments(&body),
         vec![
-            ("last".to_string(), None),
-            ("total".to_string(), Some("last".to_string()))
+            ("total".to_string(), Some(CHAIN_VALUE.to_string())),
+            ("last".to_string(), Some(CHAIN_VALUE.to_string()))
         ],
-        "the last target takes the value and each earlier target reads the next one"
+        "every target takes the chain's value, left to right"
     );
+    Ok(())
+}
+
+/// #1806: a target never reads another target. `count = maybe = 5` gives `5` to the `int` and to the `Option[int]`, and
+/// `n = u = 7` to the `int` and to the `int | str`, each converted by its own target; a value that is not `Copy` is
+/// cloned for every target but the last, which takes the temporary itself.
+#[test]
+fn chained_assignment_gives_every_target_the_value_issue1806() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+def option_target() -> int:
+    mut maybe: Option[int] = None
+    mut count = 0
+    count = maybe = 5
+    return count
+
+def union_target() -> int:
+    mut u: int | str = "s"
+    mut n = 0
+    n = u = 7
+    return n
+
+def strings() -> str:
+    mut a = "x"
+    mut b = "y"
+    a = b = "z"
+    return a + b
+
+def lists() -> int:
+    x = y = z = [1]
+    return len(x) + len(y) + len(z)
+
+def new_names() -> str:
+    first = second = "x"
+    return first + second
+"#,
+    )?;
+
+    for (name, targets) in [("option_target", ["count", "maybe"]), ("union_target", ["n", "u"])] {
+        let stmts = all_statements(&ir, name)?;
+        assert_eq!(
+            chain_value_reads(&stmts),
+            targets
+                .iter()
+                .map(|target| (target.to_string(), VarAccess::Copy))
+                .collect::<Vec<_>>(),
+            "`{name}` gives the value to each target, left to right"
+        );
+    }
+    for (name, targets) in [
+        ("strings", vec!["a", "b"]),
+        ("lists", vec!["x", "y", "z"]),
+        ("new_names", vec!["first", "second"]),
+    ] {
+        let stmts = all_statements(&ir, name)?;
+        let last = targets.len() - 1;
+        assert_eq!(
+            chain_value_reads(&stmts),
+            targets
+                .iter()
+                .enumerate()
+                .map(|(index, target)| {
+                    let access = if index == last {
+                        VarAccess::Move
+                    } else {
+                        VarAccess::Read
+                    };
+                    (target.to_string(), access)
+                })
+                .collect::<Vec<_>>(),
+            "`{name}` clones the value for every target but the last"
+        );
+    }
     Ok(())
 }

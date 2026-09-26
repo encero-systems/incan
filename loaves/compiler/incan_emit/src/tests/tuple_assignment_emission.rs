@@ -101,7 +101,8 @@ def main() -> None:
     Ok(())
 }
 
-/// `x = y = x + 1` in a loop declares the chain's new `y` and assigns the loop's `x` from it; no `let x` shadows `x`.
+/// `x = y = x + 1` in a loop assigns the loop's `x` and declares the chain's new `y` from one temporary; no `let x`
+/// shadows `x`.
 #[test]
 fn chained_assignment_in_a_loop_assigns_the_bound_name_issue1806() -> Result<(), String> {
     let code = generate_collapsed(
@@ -117,11 +118,56 @@ def main() -> None:
     println(count_up(5))
 "#,
     )?;
-    assert!(
-        code.contains("let y = x + 1;"),
-        "the chain declares its new `y`:\n{code}"
-    );
-    assert!(code.contains("x = y;"), "the loop's `x` is assigned from `y`:\n{code}");
-    assert!(!code.contains("let x = y"), "the loop must not shadow `x`:\n{code}");
+    for expected in [
+        "let __incan_chain_value = x + 1;",
+        "x = __incan_chain_value;",
+        // `y` is never read, so it is declared as `_y`.
+        "let _y = __incan_chain_value;",
+    ] {
+        assert!(code.contains(expected), "missing `{expected}` in:\n{code}");
+    }
+    assert!(!code.contains("let x ="), "the loop must not shadow `x`:\n{code}");
+    Ok(())
+}
+
+/// Every target of a chain takes the value in its own type, and a value that is not `Copy` is cloned for every target
+/// but the last: no target is written from another target.
+#[test]
+fn chained_assignment_gives_every_target_the_value_issue1806() -> Result<(), String> {
+    let code = generate_collapsed(
+        r#"
+def option_target() -> int:
+    mut maybe: Option[int] = None
+    mut count = 0
+    count = maybe = 5
+    return count + maybe.unwrap_or(0)
+
+
+def strings() -> str:
+    mut a = "x"
+    mut b = "y"
+    a = b = "z"
+    return f"{a} {b}"
+
+
+def main() -> None:
+    println(option_target())
+    println(strings())
+"#,
+    )?;
+    for expected in [
+        "count = __incan_chain_value;",
+        "maybe = Some(__incan_chain_value);",
+        "a = __incan_chain_value.clone();",
+        "b = __incan_chain_value;",
+    ] {
+        assert!(code.contains(expected), "missing `{expected}` in:\n{code}");
+    }
+    for crossed in ["count = maybe;", "a = b;"] {
+        assert!(
+            !code.contains(crossed),
+            "no target reads another target (`{crossed}`):\n{code}"
+        );
+    }
     Ok(())
 }
