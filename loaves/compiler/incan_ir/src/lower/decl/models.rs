@@ -56,7 +56,7 @@ impl AstLowering {
                 name: f.node.name.clone(),
                 ty: self.lower_type_with_type_params(&f.node.ty.node, Some(&type_param_names)),
                 surface_type_name: self.qualified_field_surface_type_name(&f.node.ty.node, f.span),
-                visibility: Self::map_visibility(visibility),
+                visibility: self.default_reachable_field_visibility(&m.name, Self::map_visibility(visibility)),
                 is_type_private: self.type_info.as_ref().is_some_and(|info| {
                     info.declarations
                         .model_type_private_fields
@@ -98,7 +98,7 @@ impl AstLowering {
             docstring: m.docstring.clone(),
             fields,
             derives,
-            visibility: self.map_type_visibility(m.visibility),
+            visibility: self.default_reachable_visibility(&m.name, self.map_type_visibility(m.visibility)),
             type_params,
             phantom_type_params,
             derive_rust_modules,

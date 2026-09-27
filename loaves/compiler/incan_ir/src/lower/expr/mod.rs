@@ -8,10 +8,14 @@
 
 mod calls;
 mod comprehensions;
+mod default_owner_paths;
 mod error_display;
 mod helpers;
 mod pattern_alternatives;
 mod patterns;
+mod pub_default_constructions;
+mod stdlib_defaults;
+mod union_owner;
 
 use std::collections::HashMap;
 
@@ -1326,6 +1330,12 @@ impl AstLowering {
                 _ => {}
             }
         }
+        // A const read in a parameter default reaches callers in other modules as a path to its declaring module.
+        if let ast::Expr::Ident(name) = &expr.node
+            && let Some(spelled) = self.default_owner_const_path(name, expr.span, &lowered)
+        {
+            lowered = spelled;
+        }
         // Apply any rusttype method return coercion recorded by the typechecker (e.g. &str → String).
         lowered = self.wrap_with_rust_return_coercion(lowered, expr.span)?;
         // Apply RFC 017 implicit validated-newtype coercions at typechecker-approved destination sites.
@@ -2070,6 +2080,7 @@ impl AstLowering {
                     // Rust ABI slot because no inherent owner is statically nameable there.
                     let (emitted_method_name, dispatch) =
                         self.project_resolved_method_target(expr_span, &method_name, &receiver, dispatch);
+                    Self::retain_argument_union_owners(&mut args_ir, callable_signature.as_ref());
                     (
                         IrExprKind::MethodCall {
                             receiver: Box::new(receiver),

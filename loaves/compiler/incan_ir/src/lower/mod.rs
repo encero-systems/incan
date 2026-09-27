@@ -262,6 +262,16 @@ pub struct AstLowering {
     /// Return statements need this source-owned context to widen a checked-C scalar result only when the
     /// typechecker has already accepted a lossless conversion to an ordinary Incan numeric type.
     pub callable_return_types: Vec<IrType>,
+    /// Module items -- consts, statics, functions and nominal types -- that a parameter default or method-partial
+    /// preset of the module names; their generated items are published because the default is expanded at call
+    /// sites outside the module.
+    pub default_named_items: HashSet<String>,
+    /// Module models and classes that a parameter default or method-partial preset constructs; their fields are
+    /// reachable within the crate because the construction is spelled at call sites outside the module.
+    pub default_constructed_types: HashSet<String>,
+    /// Models and classes of other modules in the crate that a parameter default or method-partial preset of the
+    /// module constructs, each as its declaring module's Rust path and its name.
+    pub default_constructed_foreign_types: HashSet<(Vec<String>, String)>,
     /// Module-level symbol aliases mapped from alias name to canonical target name.
     pub symbol_aliases: HashMap<String, String>,
     /// Imported overload bindings that must be reexported because a public alias projects them.
@@ -329,6 +339,12 @@ pub struct AstLowering {
     /// declarations from another package's -- see [`AstLowering::produced_library_identity`]. It is `None` when no
     /// project owns the compilation, and every package identity is then genuinely foreign.
     pub registry_package_identity: Option<String>,
+    /// Rust module path below the crate root of each source module compiled into this crate, keyed by the origin the
+    /// checked identities of that module's declarations carry. Names in parameter defaults are spelled through it.
+    pub source_module_rust_paths: HashMap<SymbolOrigin, Vec<String>>,
+    /// Number of source parameter defaults being lowered; names read in them are spelled through their declaring
+    /// modules.
+    pub param_default_depth: usize,
 }
 
 impl AstLowering {
@@ -634,7 +650,24 @@ impl AstLowering {
     /// Parameter defaults participate in the callable surface used by direct calls, decorated wrappers, aliases,
     /// imports, and stdlib source rehydration. Dropping a lowering error here silently changes that callable surface,
     /// so every source-backed default must either lower successfully or report the original lowering failure.
+    ///
+    /// A caller that omits the argument receives the default at its own call site, so the consts and functions the
+    /// default names are spelled through the modules that declare them (#1771).
     pub(in crate::lower) fn lower_param_default_expr(
+        &mut self,
+        default_expr: Option<&ast::Spanned<ast::Expr>>,
+    ) -> Result<Option<TypedExpr>, LoweringError> {
+        self.param_default_depth += 1;
+        let lowered = self.lower_foreign_param_default_expr(default_expr);
+        self.param_default_depth -= 1;
+        lowered
+    }
+
+    /// Lower a parameter default read from another module's source, such as a stdlib declaration, as written.
+    ///
+    /// The checked facts of the module being lowered do not cover that source's spans, so its names are not spelled
+    /// through their declaring modules; see [`Self::lower_param_default_expr`].
+    pub(in crate::lower) fn lower_foreign_param_default_expr(
         &mut self,
         default_expr: Option<&ast::Spanned<ast::Expr>>,
     ) -> Result<Option<TypedExpr>, LoweringError> {
@@ -733,6 +766,9 @@ impl AstLowering {
             rust_import_aliases: HashMap::new(),
             callable_param_scopes: Vec::new(),
             callable_return_types: Vec::new(),
+            default_named_items: HashSet::new(),
+            default_constructed_types: HashSet::new(),
+            default_constructed_foreign_types: HashSet::new(),
             symbol_aliases: HashMap::new(),
             overload_alias_reexport_targets: HashSet::new(),
             source_type_alias_targets: HashMap::new(),
@@ -751,6 +787,8 @@ impl AstLowering {
             declared_trait_names: HashSet::new(),
             local_function_declared_returns: HashMap::new(),
             registry_package_identity: None,
+            source_module_rust_paths: HashMap::new(),
+            param_default_depth: 0,
         }
     }
 
@@ -2218,6 +2256,7 @@ impl AstLowering {
         let mut errors: Vec<LoweringError> = Vec::new();
         self.import_aliases = decorator_resolution::collect_import_aliases(program);
         self.rust_import_aliases = decorator_resolution::collect_rust_import_aliases(program);
+        self.collect_default_named_items(program);
         ir_program.function_reexports = self.collect_function_reexports(program);
         (self.imported_alias_targets, self.imported_module_bindings) = self.collect_imported_bindings(program);
         self.seed_imported_stdlib_trait_decls(program)?;
@@ -3346,7 +3385,8 @@ impl AstLowering {
                     self.lower_declaration(&ast::Declaration::Function(f.clone()), span)?,
                 ]);
             }
-            let lowered = self.lower_function_named(f, emitted_name, self.map_callable_visibility(f.visibility))?;
+            let visibility = self.default_reachable_visibility(&f.name, self.map_callable_visibility(f.visibility));
+            let lowered = self.lower_function_named(f, emitted_name, visibility)?;
             return Ok(vec![IrDecl::new(IrDeclKind::Function(lowered)).with_span(span.into())]);
         };
         let incan_frontend::symbols::ResolvedType::Function(callable_params, callable_ret) = binding.ty else {
@@ -4234,6 +4274,9 @@ mod tests {
     use incan_lang::lang::trait_bounds;
 
     mod builtin_str_arguments;
+    mod default_named_items;
+    mod default_owner_paths;
+    mod dependency_call_arguments;
     mod derive_vocabulary_imports;
     mod error_message_display;
     mod for_item_taking;
@@ -4241,10 +4284,12 @@ mod tests {
     mod json_protocol_bounds;
     mod list_count_forms;
     mod method_decorator_receivers;
+    mod method_partial_forwarding;
     mod newtype_automatic_derives;
     mod pattern_alternatives_and_private_rests;
     mod pub_method_results;
     mod reexported_projections;
+    mod stdlib_const_defaults;
     mod tuple_assignment;
     mod unary_operand_grouping;
     mod web_surface;

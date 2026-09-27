@@ -691,6 +691,8 @@ impl AstLowering {
     }
 
     /// Lower a method either as-is or as original adapter plus public decorated wrapper.
+    ///
+    /// A generated method-partial helper is lowered as-is, then its forwarding call is typed by the owner.
     fn lower_decorated_or_plain_methods(
         &mut self,
         owner: &str,
@@ -719,6 +721,9 @@ impl AstLowering {
             Ok(vec![original, adapter, wrapper])
         } else {
             let mut lowered = self.lower_method_with_type_params(&method.node, type_param_names)?;
+            if self.is_generated_method_partial_wrapper(owner, method) {
+                self.type_method_partial_forwarding_receiver(owner, &mut lowered);
+            }
             if magic_methods::from_str(&method.node.name).is_none()
                 && let Some(identity) = self.emitted_method_identity(owner, method)?
             {

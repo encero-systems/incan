@@ -19,12 +19,18 @@ use crate::symbols::{
     ValueEnumBacking, ValueEnumValue, VariableInfo, register_binding, resolve_type,
 };
 use crate::typechecker::{PartialProjectionTargetKind, TypeChecker};
-use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
+use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOrigin};
 
 #[derive(Clone, Copy)]
 struct DefaultPathContext<'a> {
     checker: &'a TypeChecker,
     owner_module_path: Option<&'a [String]>,
+    /// Whether a default that constructs one of the package's exported models or classes is carried to consumers.
+    ///
+    /// A consumer receives a function's or method's parameter default as its own construction of the type. A field
+    /// default reaches a consumer only as a value of the constructor it fills, which has no construction form, so a
+    /// field default that constructs a type is not carried.
+    carries_constructions: bool,
 }
 
 impl<'a> DefaultPathContext<'a> {
@@ -33,7 +39,111 @@ impl<'a> DefaultPathContext<'a> {
         Self {
             checker,
             owner_module_path: non_root_module_path(checker.current_module_path.as_deref()),
+            carries_constructions: false,
         }
+    }
+
+    /// Build the path context for the parameter defaults of the functions and methods one source module exports.
+    fn for_callable_parameters(checker: &'a TypeChecker) -> Self {
+        Self {
+            carries_constructions: true,
+            ..Self::for_checker(checker)
+        }
+    }
+
+    /// Return whether a callee expression names a model or class, whose call is a construction.
+    fn names_model_or_class(self, callee: &Expr) -> bool {
+        let Expr::Ident(name) = callee else {
+            return false;
+        };
+        self.checker
+            .lookup_symbol(name)
+            .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Type(TypeInfo::Model(_) | TypeInfo::Class(_))))
+    }
+
+    /// Return whether the package's consumers can construct the model or class a callee expression names.
+    ///
+    /// A consumer constructs the type through the package's public path, which exists for a type this module declares
+    /// `pub` and for one it imports from another module of the package. A private type, and a type of another
+    /// package or of the stdlib, has no such path.
+    fn names_exported_type(self, callee: &Expr) -> bool {
+        let Expr::Ident(name) = callee else {
+            return false;
+        };
+        match self.checker.import_binding_path(name) {
+            Some(path) => !path_is_already_absolute(path),
+            None => self.checker.declares_public(name),
+        }
+    }
+
+    /// Return whether a default's call of `callee` can be carried to the package's consumers.
+    ///
+    /// A consumer calls a function or constructs a newtype through the package's path to it: one this module declares,
+    /// a public symbol alias of one this module declares, or one it imports from another module of the package, named
+    /// directly or, for a function, through that module (`helpers.scale`). A builtin such as `abs`, `len` or `Some`, a
+    /// callable of another package or of the stdlib, and a partial, whose presets a consumer does not apply, have no
+    /// such path. A member of a type, such as a static method or an enum variant with a payload, is left to the
+    /// consumer's check, which refuses what it cannot materialize.
+    fn call_is_carried(self, callee: &Spanned<Expr>) -> bool {
+        match &callee.node {
+            Expr::Ident(name) => {
+                let identity = self.checker.type_info().resolved_identity(callee.span);
+                if self.checker.type_info().partial_projection(name).is_some()
+                    || identity.is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Partial)
+                {
+                    return false;
+                }
+                let symbol_kind = self.checker.lookup_symbol(name).map(|symbol| &symbol.kind);
+                let is_function = matches!(
+                    symbol_kind,
+                    Some(SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_))
+                ) || identity
+                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function);
+                let is_newtype = matches!(symbol_kind, Some(SymbolKind::Type(TypeInfo::Newtype(_))));
+                if !is_function && !is_newtype {
+                    return false;
+                }
+                match self.checker.import_binding_path(name) {
+                    Some(path) => !path_is_already_absolute(path),
+                    None => {
+                        is_newtype
+                            || self.checker.local_function_decls.contains_key(name)
+                            || (self.checker.declares_public(name)
+                                && identity.is_some_and(|identity| self.declares(identity)))
+                    }
+                }
+            }
+            Expr::Field(base, _) => {
+                let Expr::Ident(base_name) = &base.node else {
+                    return false;
+                };
+                let names_module = self
+                    .checker
+                    .lookup_symbol(base_name)
+                    .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Module(_)));
+                if !names_module {
+                    return true;
+                }
+                self.checker
+                    .import_binding_path(base_name)
+                    .is_some_and(|path| !path_is_already_absolute(path))
+                    && self
+                        .checker
+                        .type_info()
+                        .resolved_identity(callee.span)
+                        .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Function)
+            }
+            _ => false,
+        }
+    }
+
+    /// Return whether `identity` names a declaration of the module being exported.
+    fn declares(self, identity: &CanonicalSymbolId) -> bool {
+        let module_path = match &identity.origin {
+            SymbolOrigin::Module(module_path) | SymbolOrigin::Package { module_path, .. } => module_path,
+            SymbolOrigin::RustCrate(_) | SymbolOrigin::Builtin => return false,
+        };
+        self.checker.current_module_path.as_deref() == Some(module_path.as_slice())
     }
 
     /// Resolve a default-expression value path to the module that owns it.
@@ -1054,6 +1164,17 @@ fn checked_param_default(expr: &Spanned<Expr>, context: DefaultPathContext<'_>) 
                 .collect(),
         ),
         Expr::Call(callee, _type_args, args) => {
+            // A consumer constructs a model or class, or calls a function, through the package's public path to it, so
+            // a default that constructs or calls anything without such a path is not carried; the parameter stays
+            // required for such callers.
+            let carried = if context.names_model_or_class(&callee.node) {
+                context.carries_constructions && context.names_exported_type(&callee.node)
+            } else {
+                context.call_is_carried(callee)
+            };
+            if !carried {
+                return CheckedParamDefault::Unsupported;
+            }
             let path = context.canonical_value_path(checked_preset_path(&callee.node));
             if path.is_empty() {
                 return CheckedParamDefault::Unsupported;
@@ -1214,7 +1335,7 @@ fn checked_function_export(
         _ => return None,
     };
 
-    let default_context = DefaultPathContext::for_checker(checker);
+    let default_context = DefaultPathContext::for_callable_parameters(checker);
     Some(CheckedFunctionExport {
         name: function.name.clone(),
         emitted_name,
@@ -1826,7 +1947,7 @@ fn attach_method_defaults(
     checker: &TypeChecker,
 ) {
     let mut used = vec![false; ast_methods.len()];
-    let default_context = DefaultPathContext::for_checker(checker);
+    let default_context = DefaultPathContext::for_callable_parameters(checker);
     for entry in entries {
         let Some(idx) = matching_ast_method_index(entry, ast_methods, &used, checker) else {
             continue;

@@ -27,6 +27,7 @@ use incan_frontend::library_manifest_index::LibraryManifestIndexEntry;
 use incan_frontend::partial_projection::{PartialPresetRef, merge_named_partial_args};
 use incan_frontend::provider::{ProviderModuleResolution, ProviderRecord};
 use incan_frontend::symbols::{CallableParam, NewtypePrimitiveConstraint, ResolvedType};
+use incan_frontend::typechecker::stdlib_loader::StdlibSourceDeclaration;
 use incan_frontend::typechecker::{
     FixedUnpackPlan, IdentKind, ResolvedOperatorKind, RustArgCoercionKind, ValidatedNewtypeCoercionMode,
     ValidatedNewtypeCoercionStep,
@@ -64,7 +65,7 @@ fn manifest_param_mutability(param: &ParamExport) -> Mutability {
 /// typechecker resolved one overload, which is also the only case where substituting is safe: a non-overloaded
 /// function is exported under its own name, and replacing its path segment would defeat the emitter's
 /// compiled-provider metadata lookup, which is keyed on the source-shaped path.
-fn canonical_path_naming_selected_overload(mut path: Vec<String>, selected: Option<&str>) -> Vec<String> {
+pub(super) fn canonical_path_naming_selected_overload(mut path: Vec<String>, selected: Option<&str>) -> Vec<String> {
     if let (Some(selected), Some(declaration)) = (selected, path.last_mut()) {
         *declaration = selected.to_string();
     }
@@ -371,10 +372,14 @@ impl AstLowering {
 
     /// Rebuild a callable signature directly from a stdlib method declaration so default expressions survive import
     /// metadata boundaries.
+    ///
+    /// A default naming a const of the declaring module is spelled through that const's canonical path, because it is
+    /// expanded at the caller rather than in the declaring module (#1771).
     fn callable_signature_from_stdlib_method_decl(
         &mut self,
-        method: &ast::MethodDecl,
+        source: &StdlibSourceDeclaration<ast::MethodDecl>,
     ) -> Result<FunctionSignature, LoweringError> {
+        let method = &source.declaration;
         Ok(FunctionSignature {
             params: method
                 .params
@@ -393,7 +398,7 @@ impl AstLowering {
                         is_self: false,
                         kind: param.node.kind,
                         default: self
-                            .lower_param_default_expr(param.node.default.as_ref())?
+                            .lower_stdlib_param_default(param.node.default.as_ref(), &source.default_const_paths)?
                             .map(FunctionParamDefault::source),
                     })
                 })
@@ -404,10 +409,14 @@ impl AstLowering {
 
     /// Rebuild a callable signature directly from a stdlib function declaration so default expressions survive import
     /// metadata boundaries.
+    ///
+    /// A default naming a const of the declaring module is spelled through that const's canonical path, because it is
+    /// expanded at the caller rather than in the declaring module (#1771).
     fn callable_signature_from_stdlib_function_decl(
         &mut self,
-        func: &ast::FunctionDecl,
+        source: &StdlibSourceDeclaration<ast::FunctionDecl>,
     ) -> Result<FunctionSignature, LoweringError> {
+        let func = &source.declaration;
         Ok(FunctionSignature {
             params: func
                 .params
@@ -426,7 +435,7 @@ impl AstLowering {
                         is_self: false,
                         kind: param.node.kind,
                         default: self
-                            .lower_param_default_expr(param.node.default.as_ref())?
+                            .lower_stdlib_param_default(param.node.default.as_ref(), &source.default_const_paths)?
                             .map(FunctionParamDefault::source),
                     })
                 })
@@ -832,7 +841,11 @@ impl AstLowering {
     }
 
     /// Resolve a public dependency callable by exact checked source path when a module namespace selected it.
-    fn pub_function_export_for_path(&self, library: &str, public_path: &[String]) -> Option<FunctionExport> {
+    pub(in crate::lower) fn pub_function_export_for_path(
+        &self,
+        library: &str,
+        public_path: &[String],
+    ) -> Option<FunctionExport> {
         let function_name = public_path.last()?;
         if public_path.len() == 1 {
             return self.pub_function_export(library, function_name);
@@ -856,17 +869,25 @@ impl AstLowering {
     }
 
     /// Resolve public callable aliases through the manifest identity graph before falling back to public-name scans.
+    ///
+    /// A public partial resolves to its own checked declaration, whose parameters are the partial's surface with the
+    /// residual defaults of its target filled in (#1760); its target is the fallback for a partial the checked API does
+    /// not declare where the identity graph says it lives.
     fn api_function_export_for_public_name(
         manifest: &incan_frontend::library_manifest::LibraryManifest,
         function_name: &str,
     ) -> Option<FunctionExport> {
-        let target_path = manifest
+        let entry = manifest
             .contract_metadata
             .identity_graph
-            .entry_for_public_name(function_name)
-            .and_then(|entry| entry.target_path())?;
+            .entry_for_public_name(function_name)?;
         let api = manifest.contract_metadata.api.as_ref()?;
-        Self::api_function_export_for_target_path(api, target_path)
+        if entry.kind == incan_frontend::library_manifest::ExportIdentityKind::Partial
+            && let Some(partial) = Self::api_function_export_for_target_path(api, &entry.source_path)
+        {
+            return Some(partial);
+        }
+        Self::api_function_export_for_target_path(api, entry.target_path()?)
     }
 
     /// Resolve one checked API function from a module-qualified public callable target path.
@@ -896,11 +917,14 @@ impl AstLowering {
         {
             return Self::api_function_export_for_target_path(api, &alias.target_path);
         }
-        Self::api_function_export_for_declaration(declaration, function_name)
+        Self::api_function_export_for_declaration(api, declaration, function_name)
     }
 
     /// Convert one checked API declaration into the function export requested by backend call planning.
+    ///
+    /// A partial is completed from its target in `api`, so the parameters it leaves open carry their defaults (#1760).
     fn api_function_export_for_declaration(
+        api: &incan_frontend::api_metadata::CheckedApiMetadataPackage,
         declaration: &ApiDeclaration,
         function_name: &str,
     ) -> Option<FunctionExport> {
@@ -913,7 +937,7 @@ impl AstLowering {
                 .as_ref()
                 .map(function_export_from_api_projected),
             ApiDeclaration::Partial(partial) if partial.name == function_name => {
-                let partial = incan_frontend::api_metadata::partial_export_from_api(partial);
+                let partial = incan_frontend::api_metadata::partial_export_with_target_defaults(api, partial);
                 Some(FunctionExport {
                     name: partial.name,
                     emitted_name: None,
@@ -1045,6 +1069,8 @@ impl AstLowering {
     }
 
     /// Lower an exported default call while preserving the public dependency canonical path for nested call planning.
+    ///
+    /// A call that constructs one of the dependency's models or classes lowers as the consumer's own construction.
     fn lower_pub_default_call(
         &mut self,
         library: &str,
@@ -1052,6 +1078,9 @@ impl AstLowering {
         args: &[ParamDefaultCallArgExport],
         signature: Option<&ParamDefaultCallSignatureExport>,
     ) -> Option<TypedExpr> {
+        if self.pub_default_path_names_constructed_type(library, path) {
+            return self.lower_pub_default_construction(library, path, args);
+        }
         let function_name = path.last()?.clone();
         let canonical_path = self.pub_default_canonical_path(library, path);
         let function = self.pub_function_export(library, &function_name);
@@ -1179,7 +1208,7 @@ impl AstLowering {
         }
         if let Some(method) = self
             .stdlib_cache
-            .lookup_type_method_decl(module_path, type_name, method_name)
+            .lookup_type_method_source(module_path, type_name, method_name)
         {
             return self.callable_signature_from_stdlib_method_decl(&method).map(Some);
         }
@@ -1196,7 +1225,7 @@ impl AstLowering {
     }
 
     /// Return the generated Rust crate that owns one compiled SDK module's nominal artifact types.
-    fn sdk_provider_crate_for_module(&self, module_path: &[String]) -> Option<String> {
+    pub(in crate::lower) fn sdk_provider_crate_for_module(&self, module_path: &[String]) -> Option<String> {
         let provider = self
             .provider_plan
             .as_deref()?
@@ -1857,7 +1886,11 @@ impl AstLowering {
     }
 
     /// Build an artifact-qualified value path such as `provider::__incan_std::logging::Level::WARN`.
-    fn compiled_provider_path_expr(&self, provider_crate: &str, path: &[String]) -> Option<TypedExpr> {
+    pub(in crate::lower) fn compiled_provider_path_expr(
+        &self,
+        provider_crate: &str,
+        path: &[String],
+    ) -> Option<TypedExpr> {
         if path.is_empty() {
             return None;
         }
@@ -1994,7 +2027,7 @@ impl AstLowering {
                 && let Some(function) = module
                     .declarations
                     .iter()
-                    .find_map(|declaration| Self::api_function_export_for_declaration(declaration, function_name))
+                    .find_map(|declaration| Self::api_function_export_for_declaration(api, declaration, function_name))
             {
                 let signature =
                     self.callable_signature_from_compiled_provider_function_export(&provider_crate, &function);
@@ -2003,7 +2036,7 @@ impl AstLowering {
                 ));
             }
         }
-        let Some(func) = self.stdlib_cache.lookup_function_decl(module_path, function_name) else {
+        let Some(func) = self.stdlib_cache.lookup_function_source(module_path, function_name) else {
             return Ok(None);
         };
         self.callable_signature_from_stdlib_function_decl(&func).map(Some)
@@ -3846,13 +3879,15 @@ impl AstLowering {
         } else {
             IrType::Unknown
         };
+        Self::retain_argument_union_owners(&mut args_ir, callable_signature.as_ref());
+        let canonical_path = imported_callee_path.or_else(|| self.default_owner_callee_path(f, selected_overload_name));
         Ok((
             IrExprKind::Call {
                 func: Box::new(func),
                 type_args: lowered_type_args,
                 args: args_ir,
                 callable_signature,
-                canonical_path: imported_callee_path,
+                canonical_path,
             },
             ret_ty,
         ))
@@ -3960,7 +3995,14 @@ impl AstLowering {
     }
 
     /// Lower one checked provider preset without reinterpreting its canonical references as consumer-local fields.
-    fn lower_external_partial_preset(&mut self, library: &str, value: &CheckedPresetValue) -> Option<TypedExpr> {
+    ///
+    /// A model literal of one of the dependency's models or classes lowers as a construction through the dependency's
+    /// public path (#1771).
+    pub(in crate::lower) fn lower_external_partial_preset(
+        &mut self,
+        library: &str,
+        value: &CheckedPresetValue,
+    ) -> Option<TypedExpr> {
         match value {
             CheckedPresetValue::Int(value) => Some(TypedExpr::new(IrExprKind::Int(*value), IrType::Int)),
             CheckedPresetValue::Float(value) => Some(TypedExpr::new(IrExprKind::Float(*value), IrType::Float)),
@@ -4001,6 +4043,9 @@ impl AstLowering {
             }
             CheckedPresetValue::ConstRef(path) => self.lower_pub_default_const_ref(library, path),
             CheckedPresetValue::ModelLiteral { name, fields } => {
+                if let Some(construction) = self.lower_pub_preset_construction(library, name, fields) {
+                    return Some(construction);
+                }
                 let fields = fields
                     .iter()
                     .map(|(field, value)| Some((field.clone(), self.lower_external_partial_preset(library, value)?)))
@@ -4175,6 +4220,12 @@ impl AstLowering {
                 }
             })
             .collect::<Result<Vec<_>, LoweringError>>()?;
+        let mut fields = fields;
+        let owner_ty = match &struct_ty {
+            IrType::Unknown => IrType::Struct(struct_name.clone()),
+            known => known.clone(),
+        };
+        self.retain_constructor_field_union_owners(&owner_ty, &mut fields);
         let (argument_stmts, fields) = self.sequence_reordered_constructor_arguments(call_span, fields);
         let construction = IrExprKind::Struct {
             name: name.to_string(),

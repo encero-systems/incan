@@ -36,6 +36,10 @@ use crate::symbols::{ImplementationTraitBoundInfo, ImplementationTraitBoundOrigi
 use crate::typechecker::{ConstValue, TypeChecker};
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
+mod partial_defaults;
+
+pub use partial_defaults::{manifest_partial_with_target_defaults, partial_export_with_target_defaults};
+
 /// Schema version of checked API metadata packages and modules.
 ///
 /// Version 2 adds the `mut` marker: `is_mut` on a callable parameter and the `MutParam` type reference inside a

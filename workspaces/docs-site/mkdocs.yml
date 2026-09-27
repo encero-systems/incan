@@ -244,6 +244,7 @@ nav:
           - Checked C interop: language/explanation/checked_c_interop.md
           - Rust-shaped confidence: language/explanation/rust_shaped_confidence.md
           - Control flow: language/explanation/control_flow.md
+          - Functions and calls: language/explanation/functions_and_calls.md
           - Callable presets: language/explanation/callable_presets.md
           - Closures: language/explanation/closures.md
           - Consts: language/explanation/consts.md

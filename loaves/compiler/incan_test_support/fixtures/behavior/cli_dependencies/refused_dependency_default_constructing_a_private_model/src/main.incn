@@ -1,0 +1,8 @@
+# behavior: a consumer that omits an argument whose dependency default constructs one of the dependency's private models is refused at check time for the missing argument
+# expect-diagnostic: INCAN-T0001
+
+from pub::shapes import limit
+
+
+def main() -> None:
+    println(limit())
