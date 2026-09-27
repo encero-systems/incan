@@ -105,7 +105,7 @@ enum Maybe[U]:
 
 ### Bounds you write and bounds the compiler infers
 
-A bound you write on a type's parameter, such as `model Stream[R with Clone]`, is part of that type's contract, so every generic declaration that uses the type with its own type parameter repeats it. A bound that only a body needs is different. Formatting a value in an f-string needs `Display`, comparing with `==` needs `PartialEq`, and returning a field of a generic model needs `Clone`. The compiler infers these from the body, so a generic caller never spells them.
+A bound you write on a type's parameter, such as `model Stream[R with Clone]`, is part of that type's contract, so every generic declaration that uses the type with its own type parameter repeats it. A bound that only a body needs is different. Formatting a value in an f-string needs `Display`, comparing with `==` needs `PartialEq`, and returning a field of a generic model needs `Clone`. The compiler infers these from the body, so neither the declaration nor a generic caller in the same project spells them.
 
 Inference reaches through method calls. A method's requirements include those of every other method of the same model, because they share one implementation block:
 
@@ -125,9 +125,17 @@ def first[U](held: Holder[U]) -> U:
 
 `first` writes no bound on `U`, yet it needs `Display` (from `show`) and `Clone` (from `get`), and the compiler supplies both.
 
+Reading an element works the same way. A generic function or method that reads an element of a `list[T]` by index or of a `dict[K, T]` by key, or slices a `list[T]`, produces a value of its own, so the compiler gives the generated function the `Clone` capability on `T` that the copy needs; every Incan type has it.
+
+A compiled library (`.incnlib`) publishes the bounds its functions declare, not the ones the compiler inferred, so a generic caller in another package declares an inferred bound itself. With a library function `def first[K](items: list[K]) -> K: return items[0]`, a caller in another package writes `def head[T with Clone](items: list[T]) -> T: return first(items)`.
+
 For the rationale behind explicit call-site generics (`f[T](...)` / `obj.m[T](...)`), see:
 
 - [Why call-site type arguments exist](call_site_type_arguments.md)
+
+### `mut` parameters of trait methods
+
+A trait method's `mut` parameter behaves like a function's: a list, model or class object the method changes is the caller's value. With a default `def replace(self, mut items: list[int]) -> int` that appends one element and returns `len(items)`, `widget.replace(items)` with `mut items: list[int] = [1, 2]` returns `3` and leaves `items` with 3 elements, and `widget.replace([5])` returns `2`. A call through a type parameter's bound, such as `grower.grow(items)` in `def run[T with Grower](grower: T, items: list[int]) -> int`, may run any adopter's method, so it counts as changing the parameter, and the immutable `items` is refused with `INCAN-T0117`. The rules are in [`mut` parameters](../reference/functions.md#mut-parameters).
 
 ## Trait dispatch is not overloading
 

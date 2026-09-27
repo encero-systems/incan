@@ -6,4 +6,5 @@ mod lowering_through_emission;
 mod mut_marker_publication;
 mod packages;
 mod reexported_projections;
+mod trait_parameters_and_element_bounds;
 mod tuple_assignment_emission;

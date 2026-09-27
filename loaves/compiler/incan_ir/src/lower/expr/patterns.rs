@@ -718,14 +718,19 @@ impl AstLowering {
                         }
                     }
                     Pattern::Struct {
-                        name: name.node.clone(),
+                        name: self
+                            .active_trait_default_qualified_pattern_name(&name.node)
+                            .unwrap_or_else(|| name.node.clone()),
                         fields: named_fields,
                         rest,
                     }
                 } else {
+                    // An expanded source-module trait default names its module's enum by that module's path (#1759).
                     Pattern::Enum {
                         name: String::new(),
-                        variant: name.node.clone(),
+                        variant: self
+                            .active_trait_default_qualified_pattern_name(&name.node)
+                            .unwrap_or_else(|| name.node.clone()),
                         fields: positional_fields,
                     }
                 }

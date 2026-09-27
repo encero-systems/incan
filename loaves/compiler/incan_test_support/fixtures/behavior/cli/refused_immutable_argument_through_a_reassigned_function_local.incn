@@ -1,0 +1,17 @@
+# behavior: an immutable binding passed through a local that is reassigned from a function that only reads its mut list parameter to one that appends to it is refused at check time
+# expect-diagnostic: INCAN-T0117
+
+def reads(mut items: list[int]) -> int:
+    return len(items)
+
+
+def extend(mut items: list[int]) -> int:
+    items.append(9)
+    return len(items)
+
+
+def main() -> None:
+    fixed: list[int] = [1]
+    mut step = reads
+    step = extend
+    println(step(fixed))

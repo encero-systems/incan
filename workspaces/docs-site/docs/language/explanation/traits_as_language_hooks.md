@@ -120,6 +120,14 @@ That’s why the stdlib defines traits for:
 - operators (`+`, `-`, `*`, `/`, etc.)
 - conversions (`from`, `into`, `try_from`, `try_into`)
 
+## Hooks and protocol traits
+
+Dunder hooks are the implementation methods of a protocol. Explicit trait adoption names the capability when a bound, diagnostic, or reference page needs stable vocabulary.
+
+The standard library provides default Incan implementations of the iterator adapters and terminals. The compiler may recognize the canonical methods and lower them through backend-native iterator chains when the generated behavior is equivalent.
+
+`Bool` is available for types whose domain has a clear truth value. It should not replace explicit checks for optionality, errors, emptiness, or named state. Prefer patterns such as `value is Some(x)`, `result is Ok(x)`, `len(items) > 0`, `name != ""`, or `connection.is_open` when those are what the code actually means.
+
 ## See also
 
 - [Stdlib traits overview](../reference/stdlib_traits/index.md)

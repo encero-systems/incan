@@ -1,6 +1,6 @@
 # Derives and traits (reference)
 
-This page specifies derives (the automatic derives, the derive catalog and `@derive(...)`), the method decorators `@staticmethod` and `@classmethod`, generic methods and call-site type arguments, and trait authoring. Each derive's own contract is on its derive page, listed in the [derive catalog](#derive-catalog).
+This page specifies derives (the automatic derives, the derive catalog and `@derive(...)`), the method decorators `@staticmethod` and `@classmethod`, generic methods, inferred bounds and call-site type arguments, and trait authoring, including the `mut` parameters of trait methods. Each derive's own contract is on its derive page, listed in the [derive catalog](#derive-catalog).
 
 ## Automatic derives
 
@@ -54,6 +54,7 @@ model Wrapped:
 ## `@derive(...)`
 
 - `@derive(...)` names derives from the catalog. `json` needs `from std.serde import json`, and `Serialize` and `Deserialize` need their import from `std.serde.json`.
+- `@derive(...)` also names a trait imported by name (`from codec import Encode`, then `@derive(Encode)`), or a module that declares `__derives__` (`import codec`, then `@derive(codec)`, which names each trait in the module's `__derives__` list). A model or class adopts each such trait as a `with` clause adopts it: the trait's methods, default methods included, are called on the type (`item.tag()`), and the type satisfies a bound on the trait.
 - `Eq` implies `PartialEq`, and `Ord` implies `PartialOrd`, `Eq` and `PartialEq`.
 - `@rust.derive(...)` names Rust derives (see [Decorators](language.md#decorators)).
 - The dunders that define what a derive provides, and the pairs that conflict, are in [Custom behavior](derives/custom_behavior.md).
@@ -76,14 +77,14 @@ Each of these is refused (`INCAN-T0001`):
 
 - Applies to methods of `class`, `model`, `enum` and `newtype` declarations.
 - The method has no `self` or `mut self` parameter; one is refused (`INCAN-T0001`).
-- It is called on the type, `TypeName.method(...)`, and not through an instance.
+- It is called on the type, `TypeName.method(...)`. A call through an instance is refused (`INCAN-T0001`).
 - A static method and a field may share a name: `TimeDelta.days(7)` calls the method and `delta.days` reads the field.
 - A generic static method may return `Self`; `Box[int].make(1)` fixes the owner's type arguments.
 - It combines with `@rust.extern` for Rust-backed static methods.
 
 ```incan
 class Temperature:
-    celsius: float
+    pub celsius: float
 
     @staticmethod
     def from_fahrenheit(f: float) -> Temperature:
@@ -102,7 +103,7 @@ def main() -> None:
 
 ```incan
 class Box[T with Clone]:
-    value: T
+    pub value: T
 
     @classmethod
     def make(cls, value: T) -> Self:
@@ -154,7 +155,21 @@ def wrap[T](value: T) -> int:                           # refused: Stream(item=v
     return 1
 ```
 
-A bound that a called function's or method's body needs, such as `Display` for a value formatted in an f-string, is inferred. A generic caller does not declare it.
+A bound that a function's or method's body needs is inferred: `Display` for a value formatted in an f-string, and `Clone` for an element of a `list[T]` read by index, a slice of a `list[T]`, or a value of a `dict[K, V]` read by key. Neither the declaration nor a generic caller declares it.
+
+```incan
+def first[K](items: list[K]) -> K:                   # accepted
+    return items[0]
+
+def rest[K](items: list[K]) -> list[K]:              # accepted
+    return items[1:]
+
+def lookup[V](table: dict[str, V], key: str) -> V:   # accepted
+    return table[key]
+
+def head[T](items: list[T]) -> T:                    # accepted
+    return first(items)
+```
 
 ### Call-site type arguments
 
@@ -193,6 +208,8 @@ def main() -> None:
 - `@requires(...)` names fields of model and class adopters.
 - When two adopted traits require the same method name, each method names its trait with `for TraitName` (see [Method-level trait targets](#method-level-trait-targets)).
 - A bound `T with Trait[...]` is satisfied by a type that adopts that trait instantiation, directly or through a supertrait.
+- A default method's body resolves the names it uses in the trait's module: a type, an enum variant or a function that the trait's module declares or imports, private functions included, whether or not the adopting module imports it.
+- A trait imported through a module that re-exports it (`pub from shapes import Measured` in `geometry`, then `from geometry import Measured`) is the trait its declaring module declares: `with Measured` adopts `shapes.Measured`, its default methods included.
 
 ```incan
 trait Describable:
@@ -253,10 +270,11 @@ model Source with Reader[str], Reader[int]:
     def read(self, key: int) -> str:
         return str(key)
 
-source = Source(name="events")
-by_name = source.read("latest")   # accepted: selects Reader[str]
-by_index = source.read(0)         # accepted: selects Reader[int]
-by_key = source.read(key=0)       # accepted: selects Reader[int]
+def main() -> None:
+    source = Source(name="events")
+    by_name = source.read("latest")   # accepted: selects Reader[str]
+    by_index = source.read(0)         # accepted: selects Reader[int]
+    by_key = source.read(key=0)       # accepted: selects Reader[int]
 ```
 
 #### Dispatch from an expected return type
@@ -264,10 +282,11 @@ by_key = source.read(key=0)       # accepted: selects Reader[int]
 When the arguments do not select one instantiation, the expected result type does: an annotated binding, a parameter the result is passed to, or an annotated return. With no expected type, the call is refused as ambiguous (`INCAN-T0001`).
 
 ```incan
-reading = Reading(value=1)
-as_float: float = reading.convert()   # accepted: selects Convert[float]
-as_int: int = reading.convert()       # accepted: selects Convert[int]
-value = reading.convert()             # refused: no expected result type (INCAN-T0001)
+def main() -> None:
+    reading = Reading(value=1)
+    as_float: float = reading.convert()   # accepted: selects Convert[float]
+    as_int: int = reading.convert()       # accepted: selects Convert[int]
+    value = reading.convert()             # refused: no expected result type (INCAN-T0001)
 ```
 
 #### Generic bounds with trait type arguments
@@ -290,7 +309,8 @@ model Event with Serializable[JsonFormat]:
 def encode[F, T with Serializable[F]](value: T, format: F) -> bytes:
     return value.serialize(format)
 
-encoded = encode[JsonFormat, Event](Event(message="created"), JsonFormat(name="json"))   # accepted
+def main() -> None:
+    encoded = encode[JsonFormat, Event](Event(message="created"), JsonFormat(name="json"))   # accepted
 ```
 
 #### Enum adopters
@@ -311,9 +331,10 @@ enum Token with Label[str], Label[int]:
     def label(self) -> int:
         return 1
 
-token: Token = Token.Number(1)
-text: str = token.label()
-code: int = token.label()
+def main() -> None:
+    token: Token = Token.Number(1)
+    text: str = token.label()   # accepted
+    code: int = token.label()   # accepted
 ```
 
 #### Method-level trait targets
@@ -342,8 +363,11 @@ model BadReading with Convert[int], Convert[int]:   # refused: identical instant
     value: int
 
 model Parser:
-    def parse(self, value: str) -> str: ...
-    def parse(self, value: int) -> str: ...          # refused: same name without distinct instantiations (INCAN-T0001)
+    def parse(self, value: str) -> str:
+        return value
+
+    def parse(self, value: int) -> str:              # refused: same name without distinct instantiations (INCAN-T0001)
+        return str(value)
 
 trait ReadsInt:
     def read(self, value: int) -> int: ...
@@ -352,8 +376,11 @@ trait ReadsStr:
     def read(self, value: str) -> str: ...
 
 model Source with ReadsInt, ReadsStr:
-    def read(self, value: int) -> int: ...
-    def read(self, value: str) -> str: ...           # refused: unrelated traits share the name without `for` targets (INCAN-T0001)
+    def read(self, value: int) -> int:
+        return value
+
+    def read(self, value: str) -> str:               # refused: unrelated traits share the name without `for` targets (INCAN-T0001)
+        return value
 ```
 
 ### `@requires(...)` (adopter contract)
@@ -361,7 +388,7 @@ model Source with ReadsInt, ReadsStr:
 `@requires(field_a: TypeA, field_b: TypeB)` on a trait names fields that every model or class adopter declares, with compatible types.
 
 - An adopter that lacks a required field, or declares it with an incompatible type, is refused (`INCAN-T0001`).
-- A default method of the trait reads `self.field` only for a field named in `@requires(...)`; changing one needs `mut self`.
+- A default method of the trait reads `self.field` only for a field named in `@requires(...)`; another field is refused (`INCAN-T0001`). Changing a field needs `mut self`; a change through `self` is refused (`INCAN-T0102`).
 - An adopter of a subtrait meets the `@requires(...)` of every supertrait.
 
 ```incan
@@ -377,6 +404,39 @@ class Service with Loggable:   # accepted: declares name: str
 trait Counter:
     def bump(mut self) -> None:
         self.count += 1
+```
+
+### `mut` parameters of trait methods
+
+A `mut` parameter of a trait method, required or default, and of each method that implements it, follows the rules of [`mut` parameters](functions.md#mut-parameters):
+
+- A parameter of type `int`, `float` or `bool`, or an alias of one, is the method's own copy.
+- A parameter of any other type, except a Rust type, `*args` and `**kwargs`, shows the method's changes to the caller. The body does not rebind it or hold it in another name or value (`INCAN-T0001`). The argument of a call that changes it is a `mut` binding or parameter, `self` in a `mut self` method, a field of one of those, or a temporary; another argument is refused (`INCAN-T0117`).
+- A method call through a type parameter's bound, on `self` in a default method, or on a trait-typed value changes such a parameter, whichever method runs.
+
+```incan
+trait Grower:
+    def grow(self, mut items: list[int]) -> int:
+        items.append(1)
+        return len(items)
+
+    def size(self, mut items: list[int]) -> int:
+        return len(items)
+
+model Plant with Grower:
+    id: int
+
+def run[T with Grower](grower: T, items: list[int]) -> int:
+    return grower.size(items)            # refused: a call through a bound changes the parameter (INCAN-T0117)
+
+def main() -> None:
+    plant = Plant(id=1)
+    mut kept: list[int] = [1, 2]
+    fixed: list[int] = [1, 2]
+    println(plant.grow(kept))            # accepted
+    println(plant.grow([5]))             # accepted
+    println(plant.grow(fixed))           # refused: fixed is not declared mut (INCAN-T0117)
+    println(plant.size(fixed))           # accepted: size does not change the parameter
 ```
 
 ## See also

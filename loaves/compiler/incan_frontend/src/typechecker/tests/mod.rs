@@ -75,6 +75,7 @@ mod list_method_forms;
 mod match_literals_and_payload_coverage;
 mod method_decorator_receivers;
 mod models_enums_and_newtypes;
+mod mut_parameters;
 mod narrowing_and_matching;
 mod numerics_const_and_static;
 mod partials_and_callable_aliases;

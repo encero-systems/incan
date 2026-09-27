@@ -44,7 +44,7 @@ h: (str) -> int = double          # refused: INCAN-T0001
 
 ### `mut` parameters
 
-`mut` on a parameter lets the function change the value. Changes to a collection, model or class object reach the caller, and such a parameter is marked in the function type, `(mut T, ...) -> R`. An `int`, `float` or `bool` parameter is the function's own copy, so its changes stay local, and such a parameter is not marked in the function type.
+`mut` on a parameter makes it a mutable binding in the function's body. A parameter of type `int`, `float` or `bool`, also through a type alias, is the function's own copy: the body may change and rebind it, its changes stay local, and it is not marked in the function type. A parameter of any other type, except a Rust type and `*args` or `**kwargs`, is marked: the function's changes to it reach the caller, and the function type marks it, `(mut T, ...) -> R`.
 
 | Declaration                                     | Function type                  |
 | ----------------------------------------------- | ------------------------------ |
@@ -52,24 +52,68 @@ h: (str) -> int = double          # refused: INCAN-T0001
 | `def append(mut xs: list[int], x: int) -> None` | `(mut list[int], int) -> None` |
 | `def bump(mut n: int) -> int`                   | `(int) -> int`                 |
 
-| Rule                | Contract                                                                                                                                                                 |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Where it is written | On a parameter of an arrow-form function type. In a tuple type, a parenthesized type, or the parameter list of `Callable[...]` it is syntax error `INCAN-P0001`.         |
-| Copied scalars      | On an `int`, `float` or `bool` parameter, also through a type alias, the marker is refused with `INCAN-T0001`.                                                           |
+| Rule                | Contract |
+| ------------------- | -------- |
+| Where it is written | On a parameter of an arrow-form function type. In a tuple type, a parenthesized type, or the parameter list of `Callable[...]` it is syntax error `INCAN-P0001`. |
+| Copied scalars      | On an `int`, `float` or `bool` parameter of a function type, also through a type alias, the marker is refused with `INCAN-T0001`. |
 | Type identity       | The marker is part of the function type. Two function types match only when they mark the same parameters; a mismatch in either direction is refused with `INCAN-T0001`. |
-| `def` parameters    | A `def` parameter declared `mut` is marked, except a parameter of type `int`, `float` or `bool`, a parameter of a Rust type, and `*args` or `**kwargs`.                  |
-| Arguments           | The argument for a marked parameter is a mutable place: a `mut` binding or parameter, a static, `self` in a `mut self` method, or a field or element of one. An immutable binding, a literal or another temporary is refused with `INCAN-T0117`. |
-| Libraries           | A published function keeps its marked parameters: a consumer sees the function type the producer checked.                                                              |
-| Closures            | A closure checked against a function type has each parameter that type marks marked in its own type.                                                                     |
-| Display             | Diagnostics and hovers spell the marker, as in `(mut Counter, int) -> int`.                                                                                              |
+| `def` parameters    | A `def` parameter declared `mut` is marked, except a parameter of type `int`, `float` or `bool`, a parameter of a Rust type, and `*args` or `**kwargs`. |
+| Rebinding           | The body does not assign a new value to a marked parameter: `items = []` and `label += "!"` are refused with `INCAN-T0001`. |
+| Holding             | The body does not hold a marked parameter in another name or value. Each form in the table below is refused with `INCAN-T0001`. Passing the parameter as an argument to any other call is accepted, `rows.append(items)` included. |
+| Changing calls      | A call changes a marked parameter in the cases that [Changing calls](#changing-calls) lists. |
+| Arguments           | For a marked parameter that the call changes, the argument is a `mut` binding or parameter, `self` in a `mut self` method, a field of one of those, or a temporary such as a literal or a call result. An immutable binding or a field of one, an element of a list or a value of a dict, a static, and the variable of a `for` loop are refused with `INCAN-T0117`. For a marked parameter that the call does not change, any argument is accepted. |
+| Libraries           | A published function keeps its marked parameters: a consumer sees the function type the producer checked. |
+| Closures            | A closure checked against a function type has each parameter that type marks marked in its own type. |
+| Display             | Diagnostics and hovers spell the marker, as in `(mut Counter, int) -> int`. |
+
+A marked parameter is held, and refused with `INCAN-T0001`, by each of these:
+
+| Form | Example |
+| --- | --- |
+| A new binding, or an assignment to an existing name | `other = items`, `let other = items`, `mut other: list[int] = items` |
+| A tuple, list, set or dict literal, or a comprehension | `(items, 1)`, `[items]`, `{"k": items}`, `[items for _ in rows]` |
+| A field or element store | `holder.items = items`, `table["k"] = items` |
+| An argument of a model, class, newtype or enum-variant construction, of `Some`, `Ok` or `Err`, or a `partial` preset | `Holder(items=items)`, `Wrap.Held(items)`, `Some(items)`, `partial extend(items=items)` |
+| The value of a `match` arm, an `if` branch, a `break` or a `yield` | `0 => items`, `break items`, `yield items` |
+| A `match` arm pattern that binds the whole value to a name | `match items: xs => ...` |
+| A closure that returns it, changes it, or passes it to a parameter that a call may change | `() => items`, `() => items.append(1)` |
+
+#### Changing calls
+
+A call changes a marked parameter when:
+
+- the body that runs assigns to the parameter's elements or fields, passes it to a marked parameter that a call it makes changes, or calls on it a method that takes `mut self`, a `list` method other than `clone`, `contains`, `count` and `index`, a `dict` method other than `keys`, `values`, `get` and `contains_key`, or a `set` method other than `contains`;
+- the body that runs changes an element through the variable of a `for` loop over the parameter, over a field of it, or over the variable of an enclosing such loop, for a list whose elements are not `int`, `float` or `bool` (`for row in items: row.append(3)`);
+- the call is a method call through a type parameter's bound, on `self` in a trait's default method, or on a trait-typed value;
+- the callee is known only by a function type that marks the parameter, such as a parameter of function type or a function of a compiled library;
+- the call goes through a local bound to a function, and the local is reassigned in the module.
+
+```incan
+def extend(mut items: list[int]) -> None:
+    items.append(9)
+
+def reset(mut items: list[int]) -> None:
+    items = []                          # refused: rebinds a marked parameter (INCAN-T0001)
+
+def keep(mut items: list[int]) -> int:
+    other = items                       # refused: holds a marked parameter in another name (INCAN-T0001)
+    return len(other)
+
+def main() -> None:
+    mut kept: list[int] = [1]
+    fixed: list[int] = [1]
+    extend(kept)                        # accepted
+    extend([1])                         # accepted
+    extend(fixed)                       # refused: fixed is not declared mut (INCAN-T0117)
+```
 
 ```incan
 step: (mut Counter) -> int = grow   # accepted
-step: (Counter) -> int = grow       # refused: INCAN-T0001, the marker differs
-twice: (mut int) -> int = bump      # refused: INCAN-T0001, `mut` cannot mark an `int` parameter
+step: (Counter) -> int = grow       # refused: the function type does not mark the parameter (INCAN-T0001)
+twice: (mut int) -> int = bump      # refused: `mut` cannot mark the `int` parameter (INCAN-T0001)
 ```
 
-A `mut self` method's decorators spell the receiver with this marker; see [Method decorators](language.md#method-decorators). A worked program: [Pass a function that changes its argument](../how-to/decorators.md#task-pass-a-function-that-changes-its-argument).
+A `mut self` method's decorators spell the receiver with this marker; see [Method decorators](language.md#method-decorators). A worked program: [Pass a function that changes its argument](../how-to/decorators.md#task-pass-a-function-that-changes-its-argument). The `mut` parameters of trait methods are in [Derives and traits](derives_and_traits.md#mut-parameters-of-trait-methods).
 
 ### Rest-aware function values
 

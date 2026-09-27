@@ -1,0 +1,6 @@
+pub trait Picker:
+    def pick[K](self, items: list[K]) -> K:
+        return items[0]
+
+    def tail[K](self, items: list[K]) -> list[K]:
+        return items[1:]

@@ -1,0 +1,12 @@
+# behavior: an immutable binding passed to a mut list-of-lists parameter that the function changes through the variable of a for loop over it is refused at check time
+# expect-diagnostic: INCAN-T0117
+
+def grow(mut items: list[list[int]]) -> int:
+    for row in items:
+        row.append(3)
+    return len(items[0])
+
+
+def main() -> None:
+    live: list[list[int]] = [[1]]
+    println(grow(live))

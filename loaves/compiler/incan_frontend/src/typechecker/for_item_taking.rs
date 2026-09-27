@@ -448,9 +448,7 @@ impl TypeChecker {
             SemanticSourceTargetKind::Parameter => !self
                 .type_info
                 .declarations
-                .mut_param_markers
-                .get(&(definition.span.start, definition.span.end))
-                .copied()
+                .mut_param_marker(definition.span, &definition.name)
                 .unwrap_or(false),
             _ => false,
         };
