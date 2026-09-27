@@ -25,6 +25,7 @@
 //! let ir_program = lowering.lower_program(&ast_program)?;
 //! ```
 
+mod assignment_targets;
 mod decl;
 mod errors;
 mod expr;
@@ -4179,6 +4180,7 @@ mod tests {
     mod pattern_alternatives_and_private_rests;
     mod pub_method_results;
     mod reexported_projections;
+    mod tuple_assignment;
     mod unary_operand_grouping;
     mod web_surface;
 

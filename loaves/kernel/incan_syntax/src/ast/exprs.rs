@@ -94,6 +94,32 @@ pub enum Expr {
     Embedded(Box<EmbeddedFragmentExpr>),
 }
 
+impl Spanned<Expr> {
+    /// Return whether this expression is built only from literals, parentheses, prefix operators and empty builtin
+    /// collection constructors, such as `None`, `-1`, `[]`, `[None]`, `{}`, `(None)` or `list()`.
+    ///
+    /// A call counts only when `is_builtin_constructor_call` confirms, for the call's span, that it resolved to a
+    /// builtin collection constructor; a user function, closure or parameter spelled `list`, `set`, `dict` or `Vec` is
+    /// an ordinary call and does not count. Such an expression evaluates to an equal value every time and does
+    /// nothing else, so a chained assignment may evaluate it once per target (#1806).
+    pub fn is_literal_construction(&self, is_builtin_constructor_call: &dyn Fn(Span) -> bool) -> bool {
+        let part = |item: &Spanned<Expr>| item.is_literal_construction(is_builtin_constructor_call);
+        match &self.node {
+            Expr::Literal(_) => true,
+            Expr::Paren(inner) | Expr::Unary(_, inner) => part(inner),
+            Expr::Tuple(items) | Expr::Set(items) => items.iter().all(part),
+            Expr::List(entries) => entries
+                .iter()
+                .all(|entry| matches!(entry, ListEntry::Element(item) if part(item))),
+            Expr::Dict(entries) => entries
+                .iter()
+                .all(|entry| matches!(entry, DictEntry::Pair(key, value) if part(key) && part(value))),
+            Expr::Call(_, _, args) => args.is_empty() && is_builtin_constructor_call(self.span),
+            _ => false,
+        }
+    }
+}
+
 /// One entry in a list literal.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ListEntry {

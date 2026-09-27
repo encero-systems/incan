@@ -252,6 +252,34 @@ def shadow_vs_reassign() -> int:
     return x  # still returns 11, as the x = 13 was assigned to a new x local to the if-block
 ```
 
+### Assigning several targets
+
+Tuple unpacking and chained assignment follow the same rule as `x = value` for every name they assign: a name that is already bound is reassigned, and a new name is declared. That is what makes a loop like this advance, because each pass updates the `a` and `b` declared before the loop instead of creating fresh ones inside it:
+
+```incan
+def fibonacci(n: int) -> int:
+    mut a = 0
+    mut b = 1
+    for _ in range(n):
+        a, b = (b, a + b)
+    return a
+```
+
+The right side is evaluated once, before any target is written, so `a, b = (b, a)` exchanges the two values, and so does a swap of fields or list elements:
+
+```incan
+model Grid:
+    width: int
+    height: int
+
+    def turn(mut self) -> None:
+        self.width, self.height = (self.height, self.width)
+```
+
+A chained assignment gives each target the value in that target's own type. Over an `int` target and an `Option[int]` target, `x = limit = 5` gives `x` the value `5` and `limit` the value `Some(5)`. A value built only from literals and empty constructors, such as `[]` or `None`, has no type of its own, so it is checked against each target separately and built once for each: `names = counts = []` gives a `list[str]` and a `list[int]` target each their own empty list. Any other value is built once and shared, which is why a chain over targets of different types needs a value whose type is fully known.
+
+A type annotation declares one binding, so it cannot sit on a chain: `x: T = y = value` is refused, since the annotation could apply to only one of its targets. The exact rules are in [Assignments](../reference/assignments.md).
+
 ## Closures and capturing
 
 Incan closures use arrow syntax:
