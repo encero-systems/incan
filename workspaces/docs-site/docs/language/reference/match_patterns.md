@@ -1,54 +1,162 @@
 # Match patterns (reference)
 
-This page specifies what a literal pattern matches and when the arms of a `match` cover its subject. Every refusal on this page is reported at check time with `INCAN-T0001`.
+This page specifies the patterns of `match`, `if let`, and `while let`: each pattern form, what it matches and binds, the refusals with their codes, and when the arms of a `match` cover its subject.
+
+## Where patterns appear
+
+| Construct | Form | Guard | Alternation | Coverage |
+| --- | --- | --- | --- | --- |
+| `match` arm | `case p:` or `p =>` | `if condition` after `p` | Accepted | Required |
+| `if let` | `if let p = value:` | None | Accepted | Not required |
+| `while let` | `while let p = value:` | None | Refused (`INCAN-P0001`) | Not required |
+
+- A guard runs only when its arm's pattern matched, and the arm is taken only when the guard is true. A false guard continues matching with the next arm.
+- The names a pattern binds are in scope in its arm's guard and body, or in the body of its `if let` or `while let`.
+
+## Pattern forms
+
+| Form | Syntax | Matches | Binds |
+| --- | --- | --- | --- |
+| Wildcard | `_` | Any value | Nothing |
+| Binding | `name` | Any value | `name`, to the value |
+| Literal | `0`, `1.5`, `"a"`, `true`, `None` | The value equal to the literal | Nothing |
+| Tuple | `(p,)`, `(p1, p2, …)` | A tuple with one element per sub-pattern, each matching its sub-pattern | The names its sub-patterns bind |
+| Group | `(p)` | The values `p` matches | The names `p` binds |
+| Variant | `Variant(p1, …)`, `Enum.Variant(p1, …)`, `Enum.Variant` | That variant, each payload value matching its sub-pattern | The names its sub-patterns bind |
+| Record | `Type(field=p, …)` | A value of the model or class `Type` whose named fields match their sub-patterns | The names its sub-patterns bind |
+| Type | `T(p)` | A union value of member type `T` that matches `p` | The names `p` binds |
+| Alternation | <code>p1 &#124; p2 &#124; …</code> | The values any alternative matches | The names every alternative binds |
 
 ## Literal patterns
 
-A literal pattern matches the values equal to the literal. The literal is checked against the type of the position it matches: the subject itself, or the payload, field, or tuple element the pattern sits in.
-
-| Literal form | Positions it matches | Additional rule |
+| Literal | Positions it matches | Additional rule |
 | --- | --- | --- |
 | Integer, such as `0`, `-1`, `255` | An integer type: `int` and every exact-width integer | The value lies in the type's range. |
-| Float, such as `1.5` | A float type: `float` or `f32` | For `f32`, the value is representable as a finite `f32`. |
+| Float, such as `1.5` | A float type: `float`, `f32`, or `f64` | For `f32` and `f64`, the value is finite in the type. |
 | String, such as `"a"` | `str` | |
 | `true`, `false` | `bool` | |
 | `None` | `Option[T]` | |
-| Decimal, such as `1.5d` | None | Refused in every pattern position. |
-| Bytes, such as `b"ab"` | None | Refused in every pattern position. |
+| Decimal, such as `1.5d` | None | |
+| Bytes, such as `b"ab"` | None | |
 
-An integer literal is an `int` and never matches a float position.
+A literal's position is the subject, or the payload, element, or field the literal sits in. An integer literal is an `int` and never matches a float position.
 
-A literal of a type its position does not admit, an integer or float literal outside its position's range, and a decimal or bytes literal are refused.
+Refused (`INCAN-T0001`): a literal in a position its type does not admit, an integer or float literal outside its position's range, and every decimal and bytes literal.
 
 ```incan
-def classify(pair: tuple[int, int]) -> str:
-    match pair:
-        (0, "a") => return "x"      # refused: "a" is a str in an int position
-        _ => return "y"
-
 def small(byte: u8) -> str:
     match byte:
         255 => return "max"         # accepted
         300 => return "over"        # refused: 300 does not fit in u8
+        "a" => return "a"           # refused: "a" is a str in a u8 position
         _ => return "other"
 
 def ratio(value: float) -> str:
     match value:
-        1.5 => return "one and a half"   # accepted
-        1 => return "one"                # refused: 1 is an int, value is a float
+        1.5 => return "half"        # accepted
+        1 => return "one"           # refused: 1 is an int in a float position
         _ => return "other"
+```
 
-def tagged(value: bytes) -> str:
+## Variant patterns
+
+- The subject is an enum declared in Incan, an `Option` (`Some(p)`; `None` is a literal), or a `Result` (`Ok(p)`, `Err(p)`).
+- `Variant` is a variant of the subject's type or a variant alias. `Enum.Variant` qualifies it with the subject's enum, and a variant without a payload is written `Enum.Variant`.
+- Sub-patterns are positional, one per payload value.
+
+Refused (`INCAN-T0001`): a variant the subject's enum does not declare, a qualifier other than the subject's enum, and a named sub-pattern.
+
+```incan
+enum Shape:
+    Circle(float)
+    Empty
+
+def area(shape: Shape) -> float:
+    match shape:
+        Circle(r) => return 3.0 * r * r      # accepted
+        Shape.Empty => return 0.0            # accepted
+        Square(side) => return 0.0           # refused: Shape declares no Square
+        Circle(radius=r) => return 0.0       # refused: named sub-pattern
+```
+
+## Record patterns
+
+- `Type` is the subject's model or class.
+- Sub-patterns are named: `field=p`. A field is named by its name or its alias.
+- A private field is a field without `pub` on a `pub model` or on a class. A pattern names a private field only inside a method declared on the type that declares the field.
+- The fields a pattern leaves unnamed, private ones included, match any value.
+
+Refused (`INCAN-T0001`): a type other than the subject's, a positional sub-pattern, a field the type does not declare, a field named twice, and a private field named outside a method of its declaring type.
+
+```incan
+pub model Account:
+    pub kind: str
+    pub tier: int
+    secret: str
+
+    def is_open(self) -> bool:
+        match self:
+            Account(secret="") => return true        # accepted: a method of Account
+            _ => return false
+
+def kind_of(account: Account) -> str:
+    match account:
+        Account(kind="premium") => return "premium"  # accepted: tier and secret match any value
+        Account(secret="x") => return "x"            # refused: secret is private to Account
+        Account("basic") => return "basic"           # refused: positional sub-pattern
+        _ => return "other"
+```
+
+## Type patterns
+
+- The subject is a union (see [Union types](union_types.md)) or an `Option` of one.
+- `T` is a member type of the subject, or a type alias whose members are all member types of the subject; `p` then matches a value of those member types.
+- The sub-pattern is positional.
+
+Refused (`INCAN-T0001`): a named sub-pattern.
+
+```incan
+def describe(value: int | str) -> str:
     match value:
-        b"ab" => return "ab"        # refused: bytes literals have no pattern form
+        int(n) => return f"{n}"     # accepted
+        str(s) => return s          # accepted
+```
+
+## Alternations
+
+- An alternation is a whole pattern or a part of a larger pattern. Each alternative follows the rules of its own form.
+- Every alternative binds the same names, each at the same type.
+- Alternatives are tried in order, and the first one that matches binds the names.
+- A guard after an alternation runs once, for the alternative that matched. A false guard continues matching with the next arm; the arm's later alternatives are not tried.
+
+Refused (`INCAN-T0001`): alternatives that bind different names, and alternatives that bind one name at different types. Refused (`INCAN-P0001`): an alternation in a `while let` pattern.
+
+```incan
+def tag(pair: tuple[int, str]) -> str:
+    match pair:
+        (0, "a") | (1, "b") => return "known"      # accepted
+        (0, name) | (1, name) => return name       # accepted
+        (2, name) | (3, _) => return "partial"     # refused: only the first alternative binds name
+        (n, _) | (_, n) => return "mixed"          # refused: n is an int in one alternative and a str in the other
         _ => return "other"
 ```
 
 ## Coverage
 
-The unguarded arms of a `match` cover every value of its subject, or the `match` is refused. A guarded arm never counts toward coverage.
+The unguarded arms of a `match` cover its subject. A guarded arm never counts toward coverage, an alternation counts as one arm per alternative, and a group counts as the pattern it groups. An arm whose pattern is `_` or a binding covers any subject. Otherwise:
 
-**Enums, `Option`, and `Result`.** Each variant is covered when the arms that name it cover every value of its payload. A generic enum's payload types are those of the subject's type arguments. The refusal names each variant left uncovered.
+| Subject type | The unguarded arms cover it when |
+| --- | --- |
+| `bool` | They match `true` and `false`. |
+| An enum, `Option[T]`, or `Result[T, E]` | For each variant, the arms that name it cover every value of its payload. A generic enum's payload types are those of the subject's type arguments. |
+| A union | For each member type, the arms that name it cover every value of it. |
+| A tuple | They cover every combination of element values, element by element. |
+| A model or class | They cover every combination of field values, field by field. |
+| A number, `str`, `FrozenStr`, `bytes`, or `FrozenBytes` | One of them matches any value. |
+
+The same rules apply to a payload, element, or field at any depth.
+
+Refused (`INCAN-T0001`): a `match` whose unguarded arms do not cover its subject.
 
 ```incan
 def first(value: Option[int]) -> int:
@@ -56,44 +164,19 @@ def first(value: Option[int]) -> int:
         Some(0) => return 0
         None => return -1
 
-def describe(value: Result[Option[int], str]) -> str:
-    match value:                    # accepted: Ok(Some(n)) and Ok(None) cover Ok
+def show(value: Result[Option[int], str]) -> str:
+    match value:                    # accepted
         Ok(Some(n)) => return f"{n}"
         Ok(None) => return "empty"
         Err(message) => return message
 
-enum Shape[T]:
-    Filled(T)
-    Empty
-
-def area(shape: Shape[int]) -> int:
-    match shape:                    # refused: Empty is not covered
-        Filled(n) => return n
-```
-
-**Every other subject.** A scalar, a string, a tuple, a model, or a class is covered when the arms together cover every value of it. A `bool` is covered by `true` and `false`, and an enum value by its variants. A tuple element or a field of a model or class is covered in the same way, position by position. A numeric, string, or bytes value, whether it is the subject or a position inside it, is covered only by an arm that matches any value there (`_` or a name), so literal arms over it need such an arm beside them.
-
-```incan
 def label(code: int) -> str:
     match code:                     # refused: codes other than 0 and 1 are not covered
         0 => return "zero"
         1 => return "one"
 
-def label_all(code: int) -> str:
-    match code:                     # accepted
-        0 => return "zero"
-        _ => return "other"
-
 def corner(point: tuple[bool, int]) -> str:
     match point:                    # refused: (true, n) with n other than 0 is not covered
         (true, 0) => return "origin"
         (false, _) => return "left"
-
-def corner_all(point: tuple[bool, int]) -> str:
-    match point:                    # accepted
-        (true, 0) => return "origin"
-        (true, _) => return "right"
-        (false, _) => return "left"
 ```
-
-Union subjects follow [Union types](union_types.md): the arms cover every member type, or include `_`.

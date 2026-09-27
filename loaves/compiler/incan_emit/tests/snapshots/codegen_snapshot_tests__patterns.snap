@@ -125,8 +125,16 @@ fn test_pattern_tuple() {
         }
         (
             _,
-            __incan_match_str_0,
-        ) if incan_std_core::strings::str_eq(&__incan_match_str_0, &"answer") => {
+            _,
+        ) if match (&pair) {
+            (
+                _,
+                __incan_match_member_0,
+            ) if incan_std_core::strings::str_eq(&__incan_match_member_0, &"answer") => {
+                true
+            }
+            _ => false,
+        } => {
             let _ = println!("{}", "second is answer");
         }
         _ => {

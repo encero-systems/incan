@@ -1,0 +1,308 @@
+# behavior: a pattern alternation with str literals below its top, or a str literal beside a wildcard, selects its arm when an alternative matches; under a guard the first matching alternative decides and the guard runs once
+# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::or_pattern_with_nested_str_literals_lowers_one_arm_per_alternative_issue1739
+# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::nested_nameless_alternation_becomes_one_membership_test_issue1739
+# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::nested_nameless_alternations_never_multiply_the_arm_issue1739
+# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::alternations_that_need_no_guard_of_their_own_stay_one_arm_issue1739
+# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::if_let_or_pattern_with_nested_str_literals_lowers_one_arm_per_alternative_issue1739
+# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::guard_shared_by_split_arms_never_consumes_what_it_reads_issue1739
+# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::alternatives_binding_a_name_at_different_positions_each_bind_it_issue1739
+# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::overlapping_alternatives_under_a_guard_take_the_first_match_only_issue1739
+# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::top_level_alternation_of_a_str_literal_and_a_wildcard_splits_issue1739
+# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::guard_after_a_whole_alternation_never_consumes_what_it_reads_issue1739
+# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::while_let_plans_its_pattern_like_a_match_arm_issue1739
+# retires: loaves/compiler/incan_emit/tests/match_arm_ownership_codegen_tests.rs::or_pattern_with_nested_str_literals_prints_one_guarded_arm_per_alternative_issue1739
+# retires: loaves/compiler/incan_emit/tests/match_arm_ownership_codegen_tests.rs::guarded_alternations_print_first_match_and_membership_tests_issue1739
+# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::nested_nameless_alternation_over_a_temporary_binds_its_position_issue1739
+# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::overlapping_alternatives_over_a_temporary_test_bound_positions_issue1739
+# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::first_match_reads_through_a_whole_binding_alternation_issue1739
+# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::guarded_alternation_leaves_a_result_scrutinee_whole_issue1739
+# retires: loaves/compiler/incan_emit/tests/match_arm_ownership_codegen_tests.rs::first_match_tests_read_places_and_split_over_temporaries_issue1739
+# retires: loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs::nested_str_literal_over_a_place_leaves_the_place_whole_issue1739
+# expect-stdout:
+#   known
+#   known
+#   other
+#   a or b
+#   neither
+#   friend
+#   stranger carol
+#   nobody
+#   1: a or nothing
+#   2: a or nothing
+#   3: something else
+#   only on or unset
+#   off is first
+#   confirmed
+#   unconfirmed
+#   low a
+#   answered
+#   early
+#   late
+#   if-let known
+#   if-let other
+#   q
+#   z
+#   b
+#   declined
+#   guard ran 1 time
+#   accepted a
+#   guard ran 2 times
+#   any a
+#   any zz
+#   short
+#   a or long
+#   small
+#   other
+#   1 stage passed
+#   1: a or nothing
+#   4: something else
+#   declined
+#   guard ran 3 times
+#   other
+#   2
+#   5
+#   other
+#   3
+#   ok value
+#   still ok
+#   other value
+#   error 7
+#   retrying
+#   error timeout
+#   giving up
+#   value 3
+
+"""Issue #1739: str literals below the top of a pattern alternation, and the guard of an alternation."""
+
+static guard_calls: int = 0
+
+def classify(pair: tuple[int, str]) -> str:
+    """The issue's program: a top-level alternation of tuples, each with a str literal."""
+    match pair:
+        (0, "a") | (1, "b") => return "known"
+        _ => return "other"
+
+def either_letter(pair: tuple[int, str]) -> str:
+    """Alternatives that differ only at the literal position."""
+    match pair:
+        (_, "a") | (_, "b") => return "a or b"
+        _ => return "neither"
+
+def greet(name: Option[str]) -> str:
+    """An alternation of Option payloads, beside a binding arm and None."""
+    match name:
+        Some("alice") | Some("bob") => return "friend"
+        Some(other) => return f"stranger {other}"
+        None => return "nobody"
+
+def tagged(n: int, tag: Option[str]) -> tuple[int, Option[str]]:
+    """Pair a number with an optional tag."""
+    return (n, tag)
+
+def describe_tag(pair: tuple[int, Option[str]]) -> str:
+    """A nested alternation with a str literal inside a constructor, under a guard."""
+    match pair:
+        (n, Some("a") | None) if n > 0 => return f"{n}: a or nothing"
+        (n, _) => return f"{n}: something else"
+
+def four_flags(a: Option[str], b: Option[str], c: Option[str], d: Option[str]) -> tuple[Option[str], Option[str], Option[str], Option[str]]:
+    """Group four optional flags."""
+    return (a, b, c, d)
+
+def count_set(flags: tuple[Option[str], Option[str], Option[str], Option[str]]) -> str:
+    """Four nested alternations in one arm."""
+    match flags:
+        (Some("on") | None, Some("on") | None, Some("on") | None, Some("on") | None) => return "only on or unset"
+        (Some(first), _, _, _) => return f"{first} is first"
+        _ => return "mixed"
+
+def approved_by(reviewer: str) -> bool:
+    """Whether a reviewer is named at all."""
+    return len(reviewer) > 0
+
+def confirm(pair: tuple[int, str], reviewer: str) -> str:
+    """A guard shared by both alternatives reads a str that nothing else in the function reads."""
+    match pair:
+        (1, "yes") | (1, "y") if approved_by(reviewer) => return "confirmed"
+        _ => return "unconfirmed"
+
+def low(pair: tuple[int, str]) -> str:
+    """Alternations that stay whole: plain values beside a literal, and literals sharing one position."""
+    match pair:
+        (0 | 1, "a") => return "low a"
+        (_, "yes" | "no") => return "answered"
+        _ => return "other"
+
+def word(value: str) -> str:
+    """A top-level alternation of str literals."""
+    match value:
+        "a" | "b" => return "early"
+        _ => return "late"
+
+def check(pair: tuple[int, str]) -> str:
+    """The issue's alternation in an if-let."""
+    if let (0, "a") | (1, "b") = pair:
+        return "if-let known"
+    return "if-let other"
+
+def either_side(pair: tuple[str, str]) -> str:
+    """Alternatives that bind `x` at different positions; the first one that matches binds it."""
+    match pair:
+        (x, "a") | ("b", x) => return x
+        _ => return "none"
+
+def counted_accept(name: str) -> bool:
+    """Accept only `a`, counting every evaluation."""
+    guard_calls += 1
+    return name == "a"
+
+def first_alternative_decides(pair: tuple[str, str]) -> str:
+    """Alternatives that can match the same value, under a guard that counts its evaluations."""
+    match pair:
+        (x, "a") | ("b", x) if counted_accept(x) => return f"accepted {x}"
+        _ => return "declined"
+
+def any_word(value: str) -> str:
+    """A top-level alternation of a str literal and a wildcard."""
+    match value:
+        "a" | _ => return f"any {value}"
+
+def long_word(value: str) -> str:
+    """The same alternation under a guard."""
+    match value:
+        "a" | _ if len(value) > 3 => return "a or long"
+        _ => return "short"
+
+def consume(value: str) -> bool:
+    """Whether a label is non-empty."""
+    return len(value) > 0
+
+def small_or_other(n: int, label: str) -> str:
+    """A guard after an alternation that stays whole, reading a str that nothing else in the function reads."""
+    match n:
+        1 | 2 if consume(label) => return "small"
+        _ => return "other"
+
+def stage(step: int) -> tuple[int, str]:
+    """The pair a loop sees at each step."""
+    if step == 0:
+        return (0, "a")
+    return (1, "b")
+
+def count_stages() -> int:
+    """A while-let over a pattern with a nested str literal."""
+    mut step = 0
+    while let (0, "a") = stage(step):
+        step += 1
+    return step
+
+def describe_tag_parts(n: int, tag: Option[str]) -> str:
+    """The nested alternation over a tuple built in the match."""
+    match (n, tag):
+        (count, Some("a") | None) if count > 0 => return f"{count}: a or nothing"
+        (count, _) => return f"{count}: something else"
+
+def first_alternative_decides_parts(left: str, right: str) -> str:
+    """Overlapping alternatives under a counting guard, over a tuple built in the match."""
+    match (left, right):
+        (x, "a") | ("b", x) if counted_accept(x) => return f"accepted {x}"
+        _ => return "declined"
+
+def result_pair(result: Result[int, int], count: int) -> tuple[Result[int, int], int]:
+    """Pair a result with a count."""
+    return (result, count)
+
+def sign_of(pair: tuple[Result[int, int], int]) -> str:
+    """A later alternative that binds `n` through its own alternation is taken only when the earlier one did not match."""
+    match pair:
+        (Ok(1), n) | (Ok(n) | Err(n), _) if n != 0 => return f"{n}"
+        _ => return "other"
+
+def sign_of_parts(result: Result[int, int], count: int) -> str:
+    """The same alternation over a tuple built in the match."""
+    match (result, count):
+        (Ok(1), n) | (Ok(n) | Err(n), _) if n != 0 => return f"{n}"
+        _ => return "other"
+
+def ok_after_match(res: Result[Option[str], int], verbose: bool) -> str:
+    """A guarded alternation over a Result leaves the Result whole for the next match."""
+    match res:
+        Ok(None) | Ok(_) if verbose => println("ok value")
+        _ => println("other value")
+    match res:
+        Ok(_) => return "still ok"
+        Err(code) => return f"error {code}"
+
+def retry_after(res: Result[int, str], retry: bool) -> str:
+    """A guarded alternation with a nested str literal leaves the Result whole for the next match."""
+    match res:
+        Err("timeout") | Err(_) if retry => println("retrying")
+        _ => println("giving up")
+    match res:
+        Ok(value) => return f"value {value}"
+        Err(reason) => return f"error {reason}"
+
+def main() -> None:
+    """Run every form and print what each selected."""
+    println(classify((0, "a")))
+    second: tuple[int, str] = (1, "b")
+    println(classify(second))
+    crossed: tuple[int, str] = (0, "b")
+    println(classify(crossed))
+    with_b: tuple[int, str] = (5, "b")
+    println(either_letter(with_b))
+    with_c: tuple[int, str] = (5, "c")
+    println(either_letter(with_c))
+    println(greet(Some("bob")))
+    println(greet(Some("carol")))
+    println(greet(None))
+    println(describe_tag(tagged(1, Some("a"))))
+    println(describe_tag(tagged(2, None)))
+    println(describe_tag(tagged(3, Some("z"))))
+    println(count_set(four_flags(Some("on"), None, None, Some("on"))))
+    println(count_set(four_flags(Some("off"), None, None, None)))
+    short_yes: tuple[int, str] = (1, "y")
+    println(confirm(short_yes, "ada"))
+    zero_yes: tuple[int, str] = (0, "yes")
+    println(confirm(zero_yes, "ada"))
+    low_a: tuple[int, str] = (1, "a")
+    println(low(low_a))
+    said_no: tuple[int, str] = (7, "no")
+    println(low(said_no))
+    println(word("b"))
+    println(word("c"))
+    hit: tuple[int, str] = (1, "b")
+    println(check(hit))
+    miss: tuple[int, str] = (1, "a")
+    println(check(miss))
+    right_literal: tuple[str, str] = ("q", "a")
+    println(either_side(right_literal))
+    left_literal: tuple[str, str] = ("b", "z")
+    println(either_side(left_literal))
+    both_literals: tuple[str, str] = ("b", "a")
+    println(either_side(both_literals))
+    println(first_alternative_decides(both_literals))
+    println(f"guard ran {guard_calls} time")
+    first_only: tuple[str, str] = ("a", "a")
+    println(first_alternative_decides(first_only))
+    println(f"guard ran {guard_calls} times")
+    println(any_word("a"))
+    println(any_word("zz"))
+    println(long_word("a"))
+    println(long_word("abcd"))
+    println(small_or_other(2, "label"))
+    println(small_or_other(5, "label"))
+    println(f"{count_stages()} stage passed")
+    println(describe_tag_parts(1, None))
+    println(describe_tag_parts(4, Some("z")))
+    println(first_alternative_decides_parts("b", "a"))
+    println(f"guard ran {guard_calls} times")
+    println(sign_of(result_pair(Ok(1), 0)))
+    println(sign_of(result_pair(Ok(2), 0)))
+    println(sign_of(result_pair(Ok(1), 5)))
+    println(sign_of_parts(Ok(1), 0))
+    println(sign_of_parts(Err(3), 0))
+    println(ok_after_match(Ok(None), true))
+    println(ok_after_match(Err(7), false))
+    println(retry_after(Err("timeout"), true))
+    println(retry_after(Ok(3), true))
