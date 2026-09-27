@@ -86,15 +86,12 @@ pub(super) fn decorators_named<'a>(
         .filter(move |d| resolve_decorator_id(&d.node, symbols) == Some(id))
 }
 
-/// Extract positional identifier names from decorator arguments.
-pub(super) fn positional_idents(args: &[DecoratorArg]) -> impl Iterator<Item = (&str, Span)> + '_ {
+/// Extract the derive names positional decorator arguments spell, bare or module-qualified
+/// ([`decorator_resolution::derive_argument_name`]).
+pub(super) fn positional_derive_names(args: &[DecoratorArg]) -> impl Iterator<Item = (String, Span)> + '_ {
     args.iter().filter_map(|arg| match arg {
         DecoratorArg::Positional(expr) => {
-            if let Expr::Ident(name) = &expr.node {
-                Some((name.as_str(), expr.span))
-            } else {
-                None
-            }
+            decorator_resolution::derive_argument_name(&expr.node).map(|name| (name, expr.span))
         }
         _ => None,
     })
@@ -1747,11 +1744,7 @@ impl TypeChecker {
             .flat_map(|dec| {
                 dec.node.args.iter().filter_map(|arg| match arg {
                     DecoratorArg::Positional(expr) => {
-                        if let Expr::Ident(name) = &expr.node {
-                            Some((name.clone(), expr.span))
-                        } else {
-                            None
-                        }
+                        decorator_resolution::derive_argument_name(&expr.node).map(|name| (name, expr.span))
                     }
                     DecoratorArg::Named(name, _) => {
                         // Named args not valid for derive, but report error on them.
@@ -1802,8 +1795,8 @@ impl TypeChecker {
     /// Extract derive names from @derive decorators.
     pub fn extract_derive_names(&self, decorators: &[Spanned<Decorator>]) -> Vec<String> {
         decorators_named(decorators, &self.symbols, DecoratorId::Derive)
-            .flat_map(|dec| positional_idents(&dec.node.args))
-            .map(|(name, _)| name.to_string())
+            .flat_map(|dec| positional_derive_names(&dec.node.args))
+            .map(|(name, _)| name)
             .collect()
     }
 
@@ -1930,19 +1923,24 @@ impl TypeChecker {
             return false;
         }
 
-        if let Some((canonical, info)) = self.resolve_qualified_trait(name) {
-            self.define_hidden_trait_symbol(&canonical, info, span);
+        // A module named through another module (`serde.json` after `from std import serde`) derives its traits as
+        // the module imported by name does.
+        if name.contains('.')
+            && let Some(module_path) = self.module_path_for_imported_name(name)
+            && self.lookup_derivable_traits(&module_path).is_some()
+        {
             return true;
         }
 
-        // Allow custom derives imported from stdlib modules backed by rust.module(...).
-        let resolved = self
-            .import_binding_path(name)
-            .map(<[String]>::to_vec)
-            .unwrap_or_else(|| vec![name.to_string()]);
+        // Allow custom derives imported from stdlib modules backed by rust.module(...), whether the trait was imported
+        // by name or is named through its module (`json.Serialize`, #1885).
+        let resolved = self.derive_trait_path(name);
         if resolved.len() >= 2
             && self.imported_trait_is_derivable(&resolved[..resolved.len() - 1], &resolved[resolved.len() - 1])
         {
+            if let Some((canonical, info)) = self.resolve_qualified_trait(name) {
+                self.define_hidden_trait_symbol(&canonical, info, span);
+            }
             return true;
         }
 

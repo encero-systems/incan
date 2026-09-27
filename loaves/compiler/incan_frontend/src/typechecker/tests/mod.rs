@@ -74,6 +74,7 @@ mod forward_declared_types;
 mod generic_model_bounds;
 mod generics_and_type_tokens;
 mod imports_and_stdlib_modules;
+mod json_protocol_requirements;
 mod list_method_forms;
 mod match_literals_and_payload_coverage;
 mod method_decorator_receivers;

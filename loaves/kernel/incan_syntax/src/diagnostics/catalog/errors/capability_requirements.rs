@@ -2,8 +2,9 @@
 //!
 //! Each diagnostic here refuses at check time a program that the checker used to accept and the generated program's
 //! build then refused: a field whose type cannot satisfy its declaration's automatic derives (`INCAN-T0113`, #1754), a
-//! set element or dict key whose type does not implement `Eq` and `Hash` (`INCAN-T0114`, #1758), and an argument that
-//! is not a task where a task is required (`INCAN-T0115`, #1772).
+//! set element or dict key whose type does not implement `Eq` and `Hash` (`INCAN-T0114`, #1758), an argument that is
+//! not a task where a task is required (`INCAN-T0115`, #1772), and a member whose type has no JSON form for the
+//! `std.serde.json` trait its declaration provides (`INCAN-T0001`, #1886, #1867).
 
 use crate::ast::Span;
 use crate::diagnostics::CompileError;
@@ -15,13 +16,26 @@ pub const HASHED_COLLECTION_MEMBER_CODE: &str = "INCAN-T0114";
 /// Stable code of [`argument_is_not_a_task`].
 pub const TASK_ARGUMENT_CODE: &str = "INCAN-T0115";
 
-/// The member of a nominal declaration whose type must support the declaration's automatic derives.
+/// The member of a nominal declaration whose type must support a derive the declaration carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DerivedMember<'a> {
     /// A named field of a `model` or `class`.
     Field(&'a str),
     /// A payload of an `enum` variant, named by the variant.
     VariantPayload(&'a str),
+    /// The underlying type of a newtype.
+    Underlying,
+}
+
+/// Describe a member for a diagnostic: `Field 'x' of model 'M'`, or its variant payload or underlying type.
+fn member_description(owner_kind: &str, owner_name: &str, member: DerivedMember<'_>) -> String {
+    match member {
+        DerivedMember::Field(field) => format!("Field '{field}' of {owner_kind} '{owner_name}'"),
+        DerivedMember::VariantPayload(variant) => {
+            format!("A payload of variant '{variant}' of {owner_kind} '{owner_name}'")
+        }
+        DerivedMember::Underlying => format!("The underlying value of {owner_kind} '{owner_name}'"),
+    }
 }
 
 /// Render a list of derive names as prose: `Clone`, `Clone and Debug`, `Clone, Debug and Eq`.
@@ -50,12 +64,7 @@ pub fn member_type_lacks_automatic_derives(
     span: Span,
 ) -> CompileError {
     let missing = derive_list(missing);
-    let member_text = match member {
-        DerivedMember::Field(field) => format!("Field '{field}' of {owner_kind} '{owner_name}'"),
-        DerivedMember::VariantPayload(variant) => {
-            format!("A payload of variant '{variant}' of {owner_kind} '{owner_name}'")
-        }
-    };
+    let member_text = member_description(owner_kind, owner_name, member);
     let subject = if member_type == holder_type {
         "which".to_string()
     } else {
@@ -75,6 +84,45 @@ pub fn member_type_lacks_automatic_derives(
     .with_note(
         "A model, class or enum always derives Clone and Debug, and a derive holds only when every field type supports it",
     )
+}
+
+/// Report a member whose type has no JSON form for the `std.serde.json` trait its declaration provides (#1886,
+/// #1867).
+///
+/// A `model`, `class`, `enum` or newtype that derives or adopts `Serialize` (or `Deserialize`) serializes (or parses)
+/// every field, variant payload or underlying value, so each of those types must provide the trait too. `member_type`
+/// is the member's type as written and `holder_type` the type inside it that provides no JSON form: a `model` or
+/// `class` that neither derives nor adopts the trait.
+pub fn member_type_lacks_json_protocol(
+    owner_kind: &str,
+    owner_name: &str,
+    member: DerivedMember<'_>,
+    member_type: &str,
+    holder_type: &str,
+    protocol: &str,
+    span: Span,
+) -> CompileError {
+    let member_text = member_description(owner_kind, owner_name, member);
+    let subject = if member_type == holder_type {
+        "which".to_string()
+    } else {
+        format!("whose '{holder_type}'")
+    };
+    CompileError::type_error(
+        format!("{member_text} has type '{member_type}', {subject} does not provide '{protocol}'"),
+        span,
+    )
+    .with_hint(format!(
+        "Derive or adopt '{protocol}' on '{holder_type}', or give '{owner_name}' a {member_kind} of another type",
+        member_kind = match member {
+            DerivedMember::Field(_) => "field",
+            DerivedMember::VariantPayload(_) => "payload",
+            DerivedMember::Underlying => "underlying type",
+        }
+    ))
+    .with_note(format!(
+        "The {owner_kind} '{owner_name}' provides '{protocol}', which needs '{protocol}' of every field, variant payload and underlying value"
+    ))
 }
 
 /// The position in a hashed collection whose type must implement `Eq` and `Hash`.

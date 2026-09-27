@@ -52,6 +52,7 @@ def main() -> None:
 | a return type `-> Serialize` | a returned value whose type provides `Serialize` | `to_json()` and `json_stringify` over the result |
 
 - A type argument, argument or returned value whose type does not provide the trait is refused (`INCAN-T0001`). A builtin type such as `int` does not provide `Serialize`.
+- `Serialize` or `Deserialize` written inside another type in a signature or a local annotation, such as `-> Option[Serialize]` or `items: list[Serialize]`, is refused (`INCAN-T0001`). `items: list[T]` for a type parameter `T with Serialize` is accepted.
 - In a `model` or `class` whose type parameter is bounded `T with Serialize`, a field of type `T`, or of a collection of `T`, serializes.
 
 ```incan

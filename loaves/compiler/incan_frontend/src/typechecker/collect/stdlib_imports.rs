@@ -521,7 +521,7 @@ impl TypeChecker {
     ///
     /// Checked providers keep authority over their own metadata. Only the existing inventoryless or source-bootstrap
     /// adapters may seed source stub facts; this does not import those declarations into the consumer's namespace.
-    fn cache_stdlib_module_import_semantics(&mut self, module: &ImportPath) {
+    pub(in crate::typechecker) fn cache_stdlib_module_import_semantics(&mut self, module: &ImportPath) {
         let provider_owned = matches!(
             self.provider_plan.resolve_module(&module.segments),
             ProviderModuleResolution::Active(provider) if provider.manifest.is_some()

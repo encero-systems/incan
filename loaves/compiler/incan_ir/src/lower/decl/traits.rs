@@ -48,16 +48,41 @@ impl AstLowering {
     }
 
     /// Map a supertrait name and resolved type arguments to IR for Rust trait bounds (RFC 042).
-    fn lower_supertrait_from_resolved(&self, trait_name: &str, type_args: &[ResolvedType]) -> (String, Vec<IrType>) {
-        let path = self.supertrait_rust_path(trait_name);
+    fn lower_supertrait_from_resolved(
+        &self,
+        trait_name: &str,
+        type_args: &[ResolvedType],
+    ) -> Vec<(String, Vec<IrType>)> {
         let ir_args = type_args.iter().map(|ty| self.lower_resolved_type(ty)).collect();
-        (path, ir_args)
+        self.lower_supertrait(trait_name, ir_args)
     }
 
-    /// Preserve an imported Rust supertrait's absolute path across aliases and dependency-module lowering.
+    /// Lower one supertrait to the Rust supertraits it stands for: the trait itself, then the serde capability a
+    /// `std.serde.json` protocol trait carries beside it wherever it is required (#1845).
+    ///
+    /// `trait Loggable with Serialize` promises its adopters' values to `json_stringify` as well as `to_json()`, as a
+    /// `T with Serialize` bound does, so the Rust trait requires both.
+    fn lower_supertrait(&self, trait_name: &str, type_args: Vec<IrType>) -> Vec<(String, Vec<IrType>)> {
+        let mut lowered = vec![(self.supertrait_rust_path(trait_name), type_args)];
+        if let Some(capability) = self.json_protocol_capability_bound(trait_name) {
+            lowered.push((capability.trait_path, Vec::new()));
+        }
+        lowered
+    }
+
+    /// Return the Rust path of one supertrait: an imported Rust trait's absolute path, the Rust trait a builtin maps
+    /// to, or the trait as written.
+    ///
+    /// A `std.serde.json` protocol trait, recognized by its resolved identity under any spelling, lowers as written,
+    /// as its `with` bound does ([`Self::rust_mapped_builtin_trait_path`]): the bare `Serialize` used to lower to
+    /// `serde::Serialize` by its spelling alone, which does not provide the `to_json()` a call through the subtrait
+    /// dispatches to (#1845). Its serde capability is added beside it by [`Self::lower_supertrait`].
     fn supertrait_rust_path(&self, trait_name: &str) -> String {
         if let Some(path) = self.rust_import_aliases.get(trait_name) {
             return format!("::{}", path.join("::"));
+        }
+        if self.stdlib_json_protocol_for_adopted_trait(trait_name).is_some() {
+            return trait_name.to_string();
         }
         trait_bounds::incan_to_rust(trait_name)
             .map(str::to_string)
@@ -72,15 +97,14 @@ impl AstLowering {
     ) -> Vec<(String, Vec<IrType>)> {
         t.traits
             .iter()
-            .map(|bound| {
-                let path = self.supertrait_rust_path(&bound.node.name);
+            .flat_map(|bound| {
                 let ir_args = bound
                     .node
                     .type_args
                     .iter()
                     .map(|ty| self.lower_type_with_type_params(&ty.node, Some(type_param_names)))
                     .collect();
-                (path, ir_args)
+                self.lower_supertrait(&bound.node.name, ir_args)
             })
             .collect()
     }
@@ -265,7 +289,7 @@ impl AstLowering {
             .and_then(|info| info.traits.direct_supertraits.get(&t.name))
         {
             ti.iter()
-                .map(|(name, args)| self.lower_supertrait_from_resolved(name, args))
+                .flat_map(|(name, args)| self.lower_supertrait_from_resolved(name, args))
                 .collect()
         } else {
             self.lower_supertraits_from_ast(t, &type_param_names)

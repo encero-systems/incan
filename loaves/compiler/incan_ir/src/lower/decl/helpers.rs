@@ -1,6 +1,6 @@
 //! Shared helpers: type parameter lowering, trait-bound mapping, and derive extraction.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::super::super::decl::{
     IrRustAttrArg, IrRustAttribute, IrRustLintAllow, IrTraitBound, IrTraitBoundOrigin, IrTypeParam, StructField,
@@ -419,8 +419,9 @@ impl AstLowering {
                     // Extract derive arguments: @derive(Serialize, Deserialize)
                     for arg in &decorator.node.args {
                         if let ast::DecoratorArg::Positional(expr) = arg {
-                            // Handle simple identifier expressions
-                            if let ast::Expr::Ident(name) = &expr.node {
+                            // A bare or module-qualified derive name (`Serialize`, `json.Serialize`).
+                            if let Some(name) = decorator_resolution::derive_argument_name(&expr.node) {
+                                let name = &name;
                                 if derives::from_str(name) == Some(DeriveId::Descriptor) {
                                     // `Descriptor` is a compiler-checked structural-snapshot opt-in, not a Rust
                                     // derive macro. The checked registry fact retains it; generated Rust must not
@@ -544,9 +545,10 @@ impl AstLowering {
                 let ast::DecoratorArg::Positional(expr) = arg else {
                     continue;
                 };
-                let ast::Expr::Ident(name) = &expr.node else {
+                let Some(name) = decorator_resolution::derive_argument_name(&expr.node) else {
                     continue;
                 };
+                let name = &name;
                 if derives::from_str(name).is_some() {
                     continue;
                 }
@@ -696,13 +698,32 @@ impl AstLowering {
     /// also satisfy the matching Rust-side serde capability when codegen expands those methods. The adoption is keyed
     /// on the trait's canonical identity, so a source trait that only shares the spelling (a local `Serialize`, or a
     /// `Serialize` exported by some other module) forwards nothing (#1431).
+    ///
+    /// Adopting a trait adopts its supertraits, so a `std.serde.json` trait reached through the adopted trait's
+    /// supertrait closure (`model Payload with Loggable` for `trait Loggable with Serialize`) forwards its derive too:
+    /// the adopter implements it, and the subtrait requires its capability (#1845).
     pub(in crate::lower) fn extend_derives_with_adopted_serde_traits(
         &self,
         derives: &mut Vec<String>,
         trait_bounds: &[Spanned<ast::TraitBound>],
     ) {
-        for bound in trait_bounds {
-            let Some(protocol) = self.stdlib_json_protocol_for_adopted_trait(&bound.node.name) else {
+        let mut pending = trait_bounds
+            .iter()
+            .map(|bound| bound.node.name.clone())
+            .collect::<VecDeque<_>>();
+        let mut visited = HashSet::new();
+        while let Some(trait_name) = pending.pop_front() {
+            if !visited.insert(trait_name.clone()) {
+                continue;
+            }
+            if let Some(supertraits) = self
+                .type_info
+                .as_ref()
+                .and_then(|info| info.traits.direct_supertraits.get(&trait_name))
+            {
+                pending.extend(supertraits.iter().map(|(supertrait, _)| supertrait.clone()));
+            }
+            let Some(protocol) = self.stdlib_json_protocol_for_adopted_trait(&trait_name) else {
                 continue;
             };
             let derive = match protocol {
@@ -801,7 +822,7 @@ impl AstLowering {
         decorator_resolution::resolve_decorator_path(
             &ast::Decorator {
                 path: ast::ImportPath {
-                    segments: vec![derive_name.to_string()],
+                    segments: derive_name.split('.').map(str::to_string).collect(),
                     is_absolute: false,
                     parent_levels: 0,
                 },
@@ -814,9 +835,10 @@ impl AstLowering {
         )
     }
 
-    /// Return the imported module path for a whole-module derive argument.
+    /// Return the imported module path for a whole-module derive argument, named by its import (`json`) or through
+    /// another imported module (`serde.json`).
     fn module_path_for_derive_name(&self, derive_name: &str) -> Option<Vec<String>> {
-        self.import_aliases.get(derive_name).cloned()
+        self.imported_module_path(derive_name)
     }
 
     /// Convert AST decorator arguments into their IR representation for Rust attribute emission.

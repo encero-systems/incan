@@ -1020,10 +1020,7 @@ impl TypeChecker {
                 }
                 continue;
             }
-            let resolved = self
-                .import_binding_path(derive_name)
-                .map(<[String]>::to_vec)
-                .unwrap_or_else(|| vec![derive_name.to_string()]);
+            let resolved = self.derive_trait_path(derive_name);
             if resolved.len() >= 2 {
                 let module_segments = &resolved[..resolved.len() - 1];
                 let trait_name = &resolved[resolved.len() - 1];
@@ -1054,6 +1051,24 @@ impl TypeChecker {
             }
         }
         out
+    }
+
+    /// Return the module path and trait name a derive argument names, last segment the trait.
+    ///
+    /// A name imported on its own resolves through its import binding (`Serialize` to `std.serde.json.Serialize`); a
+    /// module-qualified name resolves its module through the module's import (`json.Serialize`,
+    /// `serde.json.Serialize`), as the same spelling does after `with` (#1885). Anything else is the name alone.
+    pub fn derive_trait_path(&self, derive_name: &str) -> Vec<String> {
+        if let Some(path) = self.import_binding_path(derive_name) {
+            return path.to_vec();
+        }
+        if let Some((module_name, trait_name)) = derive_name.rsplit_once('.')
+            && let Some(mut path) = self.module_path_for_imported_name(module_name)
+        {
+            path.push(trait_name.to_string());
+            return path;
+        }
+        vec![derive_name.to_string()]
     }
 
     /// Resolve a module-qualified trait name through the imported-module metadata table.
@@ -1120,9 +1135,21 @@ impl TypeChecker {
     }
 
     /// Resolve an imported name or alias to a module path.
+    ///
+    /// A dotted name walks from its first segment: when that segment is an imported module, the remaining segments
+    /// are submodules of it, so `serde.json` after `from std import serde` names `std.serde.json` (#1887). A dotted
+    /// name whose first segment is not an imported module is the path it spells.
     pub fn module_path_for_imported_name(&self, name: &str) -> Option<Vec<String>> {
-        if name.contains('.') {
-            return Some(name.split('.').map(str::to_string).collect());
+        if let Some((head, rest)) = name.split_once('.') {
+            let mut path = self
+                .lookup_symbol(head)
+                .and_then(|symbol| match &symbol.kind {
+                    SymbolKind::Module(info) => Some(info.path.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| vec![head.to_string()]);
+            path.extend(rest.split('.').map(str::to_string));
+            return Some(path);
         }
         if let Some(symbol) = self.lookup_symbol(name)
             && let SymbolKind::Module(info) = &symbol.kind

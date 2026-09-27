@@ -17,6 +17,7 @@ use incan_frontend::ast::{self, Spanned};
 use incan_frontend::symbols::ResolvedType;
 use incan_lang::lang::callables;
 use incan_lang::lang::decorators::{self, DecoratorId};
+use incan_lang::lang::derives;
 use incan_lang::lang::keywords::{self, KeywordId};
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
 use incan_lang::lang::stdlib::StdlibJsonTraitId;
@@ -355,6 +356,52 @@ impl AstLowering {
         }
     }
 
+    /// Keep the first of each trait impl target that names the same trait with the same type arguments.
+    ///
+    /// One adopter can reach a trait more than once: through two adoptions that share a supertrait, or through an
+    /// adoption whose supertrait it also derives (`trait Loggable with Serialize` beside `@derive(Serialize)`). Each
+    /// would lower to its own `impl`, which Rust refuses (E0119, #1845). Two spellings name the same trait when they
+    /// resolve to the same declaration ([`Self::canonical_trait_identity`]), so `Serialize` and `json.Serialize` count
+    /// once.
+    pub(in crate::lower) fn distinct_trait_impl_targets(
+        &self,
+        targets: Vec<(String, Vec<IrType>)>,
+    ) -> Vec<(String, Vec<IrType>)> {
+        let mut seen = HashSet::new();
+        targets
+            .into_iter()
+            .filter(|(trait_name, trait_args)| {
+                let (module_path, source_name) = self.canonical_trait_identity(trait_name);
+                seen.insert((module_path, source_name, format!("{trait_args:?}")))
+            })
+            .collect()
+    }
+
+    /// Drop the impl targets a Rust derive of the adopter already implements: a builtin trait (`Clone`, `Eq`, `Ord`,
+    /// ...) reached through a supertrait of an adopted trait, when `derives`, the adopter's derives with its automatic
+    /// ones, name it.
+    ///
+    /// `trait Keyed with Eq` beside `@derive(Eq)`, or `trait Copyable with Clone` on a model (which always derives
+    /// `Clone`), used to lower to an empty `impl Eq` or `impl Clone` beside the derived one (E0119, #1845). Only the
+    /// builtin trait's own identity counts: a trait that merely shares the name keeps its impl.
+    pub(in crate::lower) fn without_derived_builtin_trait_targets(
+        &self,
+        targets: Vec<(String, Vec<IrType>)>,
+        derived: &[String],
+    ) -> Vec<(String, Vec<IrType>)> {
+        targets
+            .into_iter()
+            .filter(|(trait_name, _)| {
+                let (_, source_name) = self.canonical_trait_identity(trait_name);
+                let Some(derive) = source_name.as_deref().and_then(derives::from_str) else {
+                    return true;
+                };
+                let builtin = self.rust_mapped_builtin_trait_path(trait_name).is_some();
+                !(builtin && derived.iter().any(|name| name == derives::as_str(derive)))
+            })
+            .collect()
+    }
+
     /// Expand a direct adopted trait into the full set of Rust impl targets required by its supertrait chain.
     pub(in crate::lower) fn trait_impl_targets_for_adopted_trait(
         &self,
@@ -554,7 +601,8 @@ impl AstLowering {
     /// spelling was imported through a facade re-export, where the written import path only names the facade. A
     /// trait a compiled SDK provider declares carries the provider's package identity there, which projects back to
     /// its public `std.*` declaration path. The syntactic import alias remains the fallback for spellings the frontend
-    /// recorded no identity for, such as a module-qualified `json.Serialize`, whose alias resolves the module exactly.
+    /// recorded no identity for, such as a module-qualified `json.Serialize` or `serde.json.Serialize`, whose first
+    /// segment's import resolves the module exactly.
     pub(in crate::lower) fn canonical_trait_identity(
         &self,
         visible_name: &str,
@@ -579,10 +627,10 @@ impl AstLowering {
         {
             return (Some(module_path.to_vec()), Some(source_name.clone()));
         }
-        if let Some((module_name, source_name)) = visible_name.rsplit_once('.')
-            && let Some(module_path) = self.import_aliases.get(module_name)
+        if let Some((module_spelling, source_name)) = visible_name.rsplit_once('.')
+            && let Some(module_path) = self.imported_module_path(module_spelling)
         {
-            return (Some(module_path.clone()), Some(source_name.to_string()));
+            return (Some(module_path), Some(source_name.to_string()));
         }
         if let Some(path) = self.active_trait_default_type_path(visible_name)
             && path.len() >= 4
@@ -604,6 +652,15 @@ impl AstLowering {
             module_path,
             Some(visible_name.rsplit('.').next().unwrap_or(visible_name).to_string()),
         )
+    }
+
+    /// Resolve the module a qualifier spells through its first segment's import: `json` after `from std.serde import
+    /// json`, and `serde.json` after `from std import serde`, both name `std.serde.json` (#1887).
+    pub(in crate::lower) fn imported_module_path(&self, module_spelling: &str) -> Option<Vec<String>> {
+        let mut segments = module_spelling.split('.');
+        let mut module_path = self.import_aliases.get(segments.next()?)?.clone();
+        module_path.extend(segments.map(str::to_string));
+        Some(module_path)
     }
 
     /// Lower a property return type into the comparable IR shape used for trait override matching.

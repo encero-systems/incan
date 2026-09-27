@@ -3042,30 +3042,20 @@ impl AstLowering {
                                 Err(e) => errors.push(e),
                             }
 
-                            // Generate trait impls for each trait this model implements
+                            // Generate trait impls for each trait this model adopts or derives, each once (#1845)
+                            let mut impl_targets = Vec::new();
                             for trait_ref in &m.traits {
-                                for (trait_name, trait_type_args) in self.trait_impl_targets_for_adopted_trait_bound(
+                                impl_targets.extend(self.trait_impl_targets_for_adopted_trait_bound(
                                     &trait_ref.node,
                                     &struct_ir.name,
                                     &m.type_params,
-                                ) {
-                                    match self.lower_trait_impl(TraitImplLoweringInput {
-                                        type_name: &struct_ir.name,
-                                        type_params: &m.type_params,
-                                        trait_name: &trait_name,
-                                        trait_type_args,
-                                        impl_methods: &model_methods,
-                                        impl_properties: &m.properties,
-                                        impl_associated_types: &[],
-                                    }) {
-                                        Ok(trait_impl) => {
-                                            ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
-                                        }
-                                        Err(e) => errors.push(e),
-                                    }
-                                }
+                                ));
                             }
-                            for (trait_name, trait_type_args) in self.derive_trait_impl_targets(&m.decorators) {
+                            impl_targets.extend(self.derive_trait_impl_targets(&m.decorators));
+                            let impl_targets = self.distinct_trait_impl_targets(impl_targets);
+                            for (trait_name, trait_type_args) in
+                                self.without_derived_builtin_trait_targets(impl_targets, &struct_ir.derives)
+                            {
                                 match self.lower_trait_impl(TraitImplLoweringInput {
                                     type_name: &struct_ir.name,
                                     type_params: &m.type_params,
@@ -3142,30 +3132,20 @@ impl AstLowering {
                                 Err(e) => errors.push(e),
                             }
 
-                            // Generate trait impls for each trait this class implements
+                            // Generate trait impls for each trait this class adopts or derives, each once (#1845)
+                            let mut impl_targets = Vec::new();
                             for trait_ref in &c.traits {
-                                for (trait_name, trait_type_args) in self.trait_impl_targets_for_adopted_trait_bound(
+                                impl_targets.extend(self.trait_impl_targets_for_adopted_trait_bound(
                                     &trait_ref.node,
                                     &struct_ir.name,
                                     &c.type_params,
-                                ) {
-                                    match self.lower_trait_impl(TraitImplLoweringInput {
-                                        type_name: &struct_ir.name,
-                                        type_params: &c.type_params,
-                                        trait_name: &trait_name,
-                                        trait_type_args,
-                                        impl_methods: &all_methods,
-                                        impl_properties: &all_properties,
-                                        impl_associated_types: &[],
-                                    }) {
-                                        Ok(trait_impl) => {
-                                            ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
-                                        }
-                                        Err(e) => errors.push(e),
-                                    }
-                                }
+                                ));
                             }
-                            for (trait_name, trait_type_args) in self.derive_trait_impl_targets(&c.decorators) {
+                            impl_targets.extend(self.derive_trait_impl_targets(&c.decorators));
+                            let impl_targets = self.distinct_trait_impl_targets(impl_targets);
+                            for (trait_name, trait_type_args) in
+                                self.without_derived_builtin_trait_targets(impl_targets, &struct_ir.derives)
+                            {
                                 match self.lower_trait_impl(TraitImplLoweringInput {
                                     type_name: &struct_ir.name,
                                     type_params: &c.type_params,
@@ -3264,31 +3244,25 @@ impl AstLowering {
                                     Err(e) => errors.push(e),
                                 }
                             }
+                            // Each trait the newtype adopts is implemented once, and a derived `std.serde.json`
+                            // trait like a model's (#1820) unless an adoption already implements it (#1845).
+                            let mut adopted_targets = Vec::new();
                             for trait_ref in &n.traits {
-                                for (trait_name, trait_type_args) in self.trait_impl_targets_for_adopted_trait_bound(
+                                adopted_targets.extend(self.trait_impl_targets_for_adopted_trait_bound(
                                     &trait_ref.node,
                                     &struct_ir.name,
                                     &n.type_params,
-                                ) {
-                                    match self.lower_trait_impl(TraitImplLoweringInput {
-                                        type_name: &struct_ir.name,
-                                        type_params: &n.type_params,
-                                        trait_name: &trait_name,
-                                        trait_type_args,
-                                        impl_methods: &n.methods,
-                                        impl_properties: &[],
-                                        impl_associated_types: &n.associated_types,
-                                    }) {
-                                        Ok(trait_impl) => {
-                                            ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
-                                        }
-                                        Err(e) => errors.push(e),
-                                    }
-                                }
+                                ));
                             }
-                            // A derived `std.serde.json` trait is implemented like a model's (#1820).
-                            for (trait_name, trait_type_args) in self.derived_json_protocol_impl_targets(&n.decorators)
-                            {
+                            let adopted_targets = self.without_derived_builtin_trait_targets(
+                                self.distinct_trait_impl_targets(adopted_targets),
+                                &struct_ir.derives,
+                            );
+                            let adopted_count = adopted_targets.len();
+                            let mut impl_targets = adopted_targets;
+                            impl_targets.extend(self.derived_json_protocol_impl_targets(&n.decorators));
+                            let impl_targets = self.distinct_trait_impl_targets(impl_targets);
+                            for (index, (trait_name, trait_type_args)) in impl_targets.into_iter().enumerate() {
                                 match self.lower_trait_impl(TraitImplLoweringInput {
                                     type_name: &struct_ir.name,
                                     type_params: &n.type_params,
@@ -3299,10 +3273,12 @@ impl AstLowering {
                                     impl_associated_types: &n.associated_types,
                                 }) {
                                     Ok(mut trait_impl) => {
-                                        self.require_json_protocol_capability_on_impl_params(
-                                            &mut trait_impl,
-                                            &trait_name,
-                                        );
+                                        if index >= adopted_count {
+                                            self.require_json_protocol_capability_on_impl_params(
+                                                &mut trait_impl,
+                                                &trait_name,
+                                            );
+                                        }
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
                                     }
                                     Err(e) => errors.push(e),
@@ -3337,29 +3313,20 @@ impl AstLowering {
                             }
                         }
 
+                        // Each trait the enum adopts or derives is implemented once (#1845).
+                        let mut impl_targets = Vec::new();
                         for trait_ref in &e.traits {
-                            for (trait_name, trait_type_args) in self.trait_impl_targets_for_adopted_trait_bound(
+                            impl_targets.extend(self.trait_impl_targets_for_adopted_trait_bound(
                                 &trait_ref.node,
                                 &enum_ir.name,
                                 &e.type_params,
-                            ) {
-                                match self.lower_trait_impl(TraitImplLoweringInput {
-                                    type_name: &enum_ir.name,
-                                    type_params: &e.type_params,
-                                    trait_name: &trait_name,
-                                    trait_type_args,
-                                    impl_methods: &e.methods,
-                                    impl_properties: &[],
-                                    impl_associated_types: &[],
-                                }) {
-                                    Ok(trait_impl) => {
-                                        ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
-                                    }
-                                    Err(e) => errors.push(e),
-                                }
-                            }
+                            ));
                         }
-                        for (trait_name, trait_type_args) in self.derive_trait_impl_targets(&e.decorators) {
+                        impl_targets.extend(self.derive_trait_impl_targets(&e.decorators));
+                        let impl_targets = self.distinct_trait_impl_targets(impl_targets);
+                        for (trait_name, trait_type_args) in
+                            self.without_derived_builtin_trait_targets(impl_targets, &enum_ir.derives)
+                        {
                             match self.lower_trait_impl(TraitImplLoweringInput {
                                 type_name: &enum_ir.name,
                                 type_params: &e.type_params,

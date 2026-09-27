@@ -4093,11 +4093,10 @@
     },
     "loaves/compiler/incan_emit/tests/default_argument_codegen_tests.rs": {
       "disposition": "retire",
+      "notes": "generated-Rust spelling of default arguments expanded outside their callable's module or package; asserts emitted paths, which retire with the Rust-source backend.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "generated-Rust spelling of default arguments expanded outside their callable's module or package; asserts emitted paths, which retire with the Rust-source backend.",
       "tests": {
         "default_const_of_a_function_reached_through_an_alias_is_kept_issue1771": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/same_named_default_consts_across_modules",
@@ -4127,7 +4126,8 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/same_named_default_consts_across_modules",
           "notes": "Asserts the emitted `crate::a::SIZE` / `crate::b::SIZE` paths and that both pruned modules keep their `SIZE`; the behavior, each omitted argument taking its own module's `SIZE`, is carried by the named fixture (#1771)."
         }
-      }
+      },
+      "twin": ""
     },
     "loaves/compiler/incan_emit/tests/emitter_freeze_tests.rs": {
       "disposition": "unaffected",
@@ -4355,11 +4355,11 @@
     },
     "loaves/compiler/incan_emit/tests/method_reachability_codegen_tests.rs": {
       "disposition": "retire",
+      "notes": "generated-Rust retention of a method whose caller is found used after its owner's impl was scanned (#1765); asserts the emitted Rust item, which retires with the Rust-source backend. The behavior is carried by the named fixture.",
       "owner": 1561,
-      "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/method_called_through_a_helper_keeps_its_callees.incn",
       "split_required": false,
       "split_target": "",
-      "notes": "generated-Rust retention of a method whose caller is found used after its owner's impl was scanned (#1765); asserts the emitted Rust item, which retires with the Rust-source backend. The behavior is carried by the named fixture."
+      "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/method_called_through_a_helper_keeps_its_callees.incn"
     },
     "loaves/compiler/incan_emit/tests/nested_list_loop_tests.rs": {
       "disposition": "keep",
@@ -5127,6 +5127,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/json_protocol_requirements.rs": {
+      "disposition": "keep",
+      "notes": "checker tests of the `std.serde.json` trait spellings and of what providing one requires of a type's members and type arguments (#1885, #1886, #1867, #1887); typechecker only, no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/list_method_forms.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -5201,11 +5209,11 @@
     },
     "loaves/compiler/incan_frontend/src/typechecker/tests/pub_imports_partial_defaults.rs": {
       "disposition": "keep",
+      "notes": "typechecker facts for calls through a public partial imported from a dependency: a leftover parameter may be omitted exactly when the target's default can be filled in (#1760); no emit/driver dependency.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "typechecker facts for calls through a public partial imported from a dependency: a leftover parameter may be omitted exactly when the target's default can be filled in (#1760); no emit/driver dependency."
+      "twin": ""
     },
     "loaves/compiler/incan_frontend/src/typechecker/tests/pub_imports_symbols_and_identity.rs": {
       "disposition": "keep",
@@ -5289,11 +5297,11 @@
     },
     "loaves/compiler/incan_frontend/src/typechecker/tests/stdlib_default_const_paths.rs": {
       "disposition": "keep",
+      "notes": "typechecker stdlib loader facts: the canonical path of each const a stdlib parameter default names (#1771); no emit/driver dependency.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "typechecker stdlib loader facts: the canonical path of each const a stdlib parameter default names (#1771); no emit/driver dependency."
+      "twin": ""
     },
     "loaves/compiler/incan_frontend/src/typechecker/tests/stdlib_surfaces.rs": {
       "disposition": "keep",
@@ -5966,25 +5974,24 @@
     },
     "loaves/compiler/incan_ir/src/lower/tests/default_named_items.rs": {
       "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "tests": {
         "private_item_a_default_names_is_published_for_its_callers": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/private_default_items_from_dependency",
           "notes": "Asserts the recorded shape on the legacy IR (a private const, static, function, model, class, enum or newtype a parameter default or method-partial preset names is lowered as a published item, with the fields a construction spells); retires with `incan_ir`. The behavior across a package boundary is carried by the named fixture; the same-project case by `cli/private_default_items_across_modules`."
         }
-      }
+      },
+      "twin": ""
     },
     "loaves/compiler/incan_ir/src/lower/tests/default_owner_paths.rs": {
       "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "tests": {
         "crate_root_and_unmapped_module_defaults_issue1771": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/same_named_default_consts_across_modules",
@@ -5994,15 +6001,15 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/same_named_default_consts_across_modules",
           "notes": "Asserts the recorded shape on the legacy IR (a const a default or method-partial preset reads lowers to a crate path to its declaring module, a function it calls carries that module's canonical callee path); retires with `incan_ir`. The behavior is carried by the named fixture (#1771)."
         }
-      }
+      },
+      "twin": ""
     },
     "loaves/compiler/incan_ir/src/lower/tests/dependency_call_arguments.rs": {
       "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "tests": {
         "dependency_default_constructing_a_public_model_calls_the_type_issue1771": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/public_construction_default_from_dependency",
@@ -6016,7 +6023,8 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/some_member_into_dependency_option_union",
           "notes": "Asserts the recorded shape on the legacy IR (a `Some(member)` whose destination is a dependency's `Option[union]` is instantiated at the dependency-owned union as a call argument, a list element, a model field at construction and by assignment, an annotated binding, a `match` arm and a returned value); retires with `incan_ir`. The behavior is carried by the named fixture (#1743)."
         }
-      }
+      },
+      "twin": ""
     },
     "loaves/compiler/incan_ir/src/lower/tests/derive_vocabulary_imports.rs": {
       "disposition": "retire",
@@ -6215,6 +6223,10 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "a_trait_reached_twice_is_implemented_once_issue1845": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/json_protocol_supertraits.incn",
+          "notes": "Asserts the recorded impls and derives on the legacy IR (a trait reached through a supertrait and a derive, through two adoptions, or as a builtin supertrait the adopter's derives implement, is implemented once, and an adopter reaching `Serialize` only through a supertrait derives its capability); retires with `incan_ir`. The behavior, a model deriving `Serialize` beside the subtrait, a class adopting only the subtrait, a model adopting two traits that share a supertrait, and adopters of traits whose supertrait is `Eq` or `Clone`, is carried by the named fixture (#1845)."
+        },
         "derived_json_protocol_newtypes_implement_the_stdlib_trait_issue1820": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/bare_json_protocol_bounds.incn",
           "notes": "Asserts the recorded impls on the legacy IR (a newtype deriving `Serialize` or `Deserialize` gets the stdlib trait impl, and a generic newtype's impl requires its parameter's serde capability); retires with `incan_ir`. The behavior, `UserId(7).to_json()` and a bounded `json_stringify` and `from_json` over a derived newtype, is carried by the named fixture (#1820)."
@@ -6235,9 +6247,21 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/bare_json_protocol_bounds.incn",
           "notes": "Asserts the recorded return types on the legacy IR (a declared `-> Serialize` on a function, an inherent method, a trait impl method and a trait method lowers to `impl <stdlib trait> + ::serde::Serialize` with the method's capture list); retires with `incan_ir`. The behavior, `json_stringify(make())` and `make().to_json()` over a `-> Serialize` function, is carried by the named fixture (#1820)."
         },
+        "json_protocol_supertraits_carry_the_trait_and_its_serde_capability_issue1845": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/json_protocol_supertraits.incn",
+          "notes": "Asserts the recorded supertraits on the legacy IR (a `std.serde.json` `Serialize` supertrait, bare, aliased or module-qualified, lowers to the stdlib trait as written plus `::serde::Serialize`); retires with `incan_ir`. The behavior, `to_json` through a default method of the subtrait and `json_stringify` through a bound on it, is carried by the named fixture (#1845)."
+        },
         "module_qualified_trait_annotations_lower_like_the_alias_issue1820": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/bare_json_protocol_bounds.incn",
           "notes": "Asserts the recorded shapes on the legacy IR (a `json.Serialize` parameter lowers to a hidden generic bounded by the trait and `::serde::Serialize`, and a `json.Serialize` return to the two-bound Rust type); retires with `incan_ir`. The behavior, `json_stringify` over a `json.Serialize` parameter and `to_json` over a `json.Serialize` return, is carried by the named fixture (#1820)."
+        },
+        "qualified_json_derives_implement_the_stdlib_traits_issue1885": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/qualified_json_derives.incn",
+          "notes": "Asserts the recorded impls and derives on the legacy IR (a model, a class, an enum and a newtype deriving `json.Serialize` or `json.Deserialize`, and a model deriving `serde.json.Serialize`, implement the stdlib trait and derive its serde capability); retires with `incan_ir`. The behavior, `to_json`, `from_json` and a `json.Serialize` bound over types that derive the qualified spellings, is carried by the named fixture (#1885)."
+        },
+        "serde_json_spelling_through_the_serde_module_lowers_like_json_serialize_issue1887": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/serde_module_qualified_json_traits",
+          "notes": "Asserts the recorded shapes on the legacy IR (after `from std import serde`, a `serde.json.Serialize` bound and parameter carry the trait plus `::serde::Serialize`, a return is the two-bound Rust type, `to_json` dispatches through the stdlib trait, and a `with serde.json.Serialize` adopter implements the trait and derives its capability); retires with `incan_ir`. The behavior, `to_json`, `json_stringify` and `from_json` through `serde.json` bounds, a parameter and a return over a derived model, is carried by the named fixture (#1887)."
         }
       },
       "twin": ""
@@ -6296,17 +6320,17 @@
     },
     "loaves/compiler/incan_ir/src/lower/tests/method_partial_forwarding.rs": {
       "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "tests": {
         "method_partial_forwards_on_a_receiver_typed_by_its_model_issue1765": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/method_partial_over_model_method.incn",
           "notes": "Asserts the recorded shape on the legacy IR (a model method partial's generated forwarding call has its `self` receiver typed by the model, directly and through a method alias); retires with `incan_ir`. The behavior, `user.short()` printing the preset and `short(prefix=\"other\")` overriding it, is carried by the named fixture (#1765)."
         }
-      }
+      },
+      "twin": ""
     },
     "loaves/compiler/incan_ir/src/lower/tests/newtype_automatic_derives.rs": {
       "disposition": "retire",
@@ -6488,17 +6512,17 @@
     },
     "loaves/compiler/incan_ir/src/lower/tests/stdlib_const_defaults.rs": {
       "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
       "tests": {
         "omitted_stdlib_default_names_the_const_through_its_declaring_module_issue1771": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/stdlib_const_default_omitted.incn",
           "notes": "Asserts the recorded shape on the legacy IR (an omitted stdlib default naming a const is a path to the const's declaring module, typed as the const); retires with `incan_ir`. The behavior, `reader_digest(reader, \"sha256\")` without `chunk_size` printing the sha256 digest, is carried by the named fixture (#1771)."
         }
-      }
+      },
+      "twin": ""
     },
     "loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs": {
       "disposition": "retire",

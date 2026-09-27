@@ -1379,6 +1379,23 @@ pub fn trait_typed_local_annotation_unsupported(annotation: &str, span: Span) ->
     .with_note("Trait annotations are currently supported on callable boundaries and `with` adoption clauses")
 }
 
+/// Emitted when a trait is written inside another type in a callable signature or a local annotation, such as
+/// `Option[Serialize]` or `list[Serialize]` (#1866).
+///
+/// A trait stands for the types that adopt it only as a whole parameter or return type, where the value is one hidden
+/// adopting type. Inside another type it has no value representation, so the annotation is refused rather than
+/// generated as a bare trait.
+pub fn trait_type_nested_in_annotation_unsupported(trait_type: &str, annotation: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Trait '{trait_type}' cannot be used inside the type '{annotation}'"),
+        span,
+    )
+    .with_hint(format!(
+        "Use a type that adopts '{trait_type}', or a type parameter bounded by it (`T with {trait_type}`) in its place"
+    ))
+    .with_note("A trait names the types that adopt it only as a whole parameter or return type")
+}
+
 /// Emitted when two supertraits require the same field with incompatible types (RFC 042).
 pub fn supertrait_requires_conflict(
     trait_name: &str,

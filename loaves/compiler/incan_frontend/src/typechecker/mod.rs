@@ -53,6 +53,7 @@ mod derive_requirements;
 mod for_item_taking;
 mod hash_key_inference;
 mod helpers;
+mod json_member_requirements;
 mod mut_arguments;
 mod mut_marker;
 mod nominal_type_param_bounds;
@@ -3038,11 +3039,16 @@ impl TypeChecker {
             TypeInfo::Newtype(n) => (n.trait_adoptions.as_slice(), Some(n.derives.as_slice())),
             _ => return false,
         };
+        // The trait the bound names, as a module and a trait name: an adoption that records the module it came from is
+        // compared by that identity, so a type declared in another module satisfies `serde.json.Serialize` whatever the
+        // declaring module called the trait (`json.Serialize` through its own import, #1887).
+        let bound_identity = self.resolve_bound_trait_path(trait_name);
         for t in adopted {
             if self.trait_name_matches(&t.name, trait_name)
                 || t.source_name
                     .as_deref()
                     .is_some_and(|source_name| self.trait_name_matches(source_name, trait_name))
+                || adoption_names_bound_identity(t, bound_identity.as_ref())
             {
                 return true;
             }
@@ -4967,6 +4973,12 @@ impl TypeChecker {
             _ => None,
         })?;
         module_path.extend(nested_module.iter().cloned());
+        if !nested_module.is_empty() {
+            // A spelling through a submodule (`serde.json.Serialize` after `from std import serde`) proves the member
+            // the way `from std.serde import json` then `json.Serialize` does, so it retains that submodule's facts
+            // the same way an import of the submodule would (#1887).
+            self.cache_stdlib_module_import_semantics(&ImportPath::simple(module_path.clone()));
+        }
 
         // ---- Public library module: the checked manifest owns both the identity and the qualified type name ----
         if module_path.len() >= 2 && module_path.first().is_some_and(|part| part == "pub") {
@@ -8870,6 +8882,23 @@ fn numeric_lossless_compatible(actual: &ResolvedType, expected: &ResolvedType) -
         return false;
     };
     numeric_type_losslessly_widens_to(actual_id, expected_id)
+}
+
+/// Whether a trait adoption that records its trait's module names the trait a bound resolved to.
+///
+/// `bound` is the bound's `(module path, trait name)` in the checking module. The adoption's trait name is its source
+/// name when it has one (`Serialize` for an adoption the declaring module spelled `json.Serialize`), so the comparison
+/// does not depend on which names the checking module has imported. An adoption without a recorded module, or a bound
+/// that does not resolve, answers `false` and is left to the name comparisons.
+fn adoption_names_bound_identity(adoption: &TypeBoundInfo, bound: Option<&(Vec<String>, String)>) -> bool {
+    let (Some(module_path), Some((bound_module, bound_trait))) = (adoption.module_path.as_ref(), bound) else {
+        return false;
+    };
+    let trait_name = adoption
+        .source_name
+        .as_deref()
+        .unwrap_or_else(|| adoption.name.rsplit('.').next().unwrap_or(adoption.name.as_str()));
+    module_path == bound_module && trait_name == bound_trait
 }
 
 /// Map an ordinary or exact numeric type to its canonical numeric id for compatibility checks.

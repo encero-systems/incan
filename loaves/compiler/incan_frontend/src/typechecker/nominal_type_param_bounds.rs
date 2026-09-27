@@ -24,7 +24,7 @@ use std::collections::HashMap;
 
 use crate::api_metadata::ApiDeclaration;
 use crate::ast::{ClassDecl, Declaration, EnumDecl, FieldDecl, ModelDecl, NewtypeDecl, Span, Spanned, TypeParam};
-use crate::diagnostics::errors;
+use crate::diagnostics::errors::{self, TypeArgumentOrigin};
 use crate::library_manifest::TypeParamExport;
 use crate::symbols::{ResolvedType, TypeBoundInfo, TypeInfo, resolve_type};
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
@@ -456,6 +456,84 @@ impl TypeChecker {
                 self.collect_unbounded_nominal_type_arguments(value, missing);
             }
             _ => {}
+        }
+    }
+
+    /// Refuse a construction of a bounded nominal whose concrete type argument does not satisfy a bound the nominal
+    /// declares (#1867).
+    ///
+    /// `bindings` map the nominal's type parameters to the type arguments the construction wrote (`Boxed[int](1)`) or
+    /// the checker inferred from its arguments (`Boxed(1)`). `newtype Boxed[T with Serialize]` declares that every
+    /// `Boxed[...]` needs a `Serialize` argument, and the generated type carries that requirement, so `int` is refused
+    /// here as it is for a bounded function's type argument. An argument that is still open, holds a type parameter
+    /// (whose bounds [`Self::refuse_unbounded_nominal_type_arguments`] judges) or is unknown is left alone.
+    pub(in crate::typechecker) fn refuse_unsatisfied_nominal_type_arguments(
+        &mut self,
+        type_name: &str,
+        bindings: &HashMap<String, ResolvedType>,
+        origin: TypeArgumentOrigin,
+        span: Span,
+    ) {
+        let Some(declared) = self.declared_nominal_bounds(type_name).cloned() else {
+            return;
+        };
+        for (type_param, bounds) in &declared {
+            let Some(argument) = bindings.get(type_param) else {
+                continue;
+            };
+            if !Self::is_settled_type_argument(argument) || self.active_type_param_name(argument).is_some() {
+                continue;
+            }
+            for bound in bounds {
+                if self.type_satisfies_explicit_bound_info(argument, bound, bindings) {
+                    continue;
+                }
+                let error = errors::generic_bound_not_satisfied(
+                    type_name,
+                    type_param,
+                    &self.type_bound_display(bound, bindings),
+                    self.generic_bound_target(&bound.name),
+                    &argument.to_string(),
+                    origin,
+                    span,
+                );
+                // A construction with written type arguments is judged by them first and then again by what its
+                // value implies; the construction is reported once.
+                if !self
+                    .errors
+                    .iter()
+                    .any(|existing| existing.span == error.span && existing.message == error.message)
+                {
+                    self.errors.push(error);
+                }
+            }
+        }
+    }
+
+    /// Return whether a type argument is fully known: no open, inferred-later or unknown part anywhere inside it.
+    fn is_settled_type_argument(ty: &ResolvedType) -> bool {
+        match ty {
+            ResolvedType::Unknown
+            | ResolvedType::CallSiteInfer
+            | ResolvedType::TypeVar(_)
+            | ResolvedType::SelfType
+            | ResolvedType::Never => false,
+            ResolvedType::Generic(_, items) | ResolvedType::Tuple(items) => {
+                items.iter().all(Self::is_settled_type_argument)
+            }
+            ResolvedType::FrozenList(inner)
+            | ResolvedType::FrozenSet(inner)
+            | ResolvedType::TypeToken(inner)
+            | ResolvedType::Ref(inner)
+            | ResolvedType::RefMut(inner) => Self::is_settled_type_argument(inner),
+            ResolvedType::FrozenDict(key, value) => {
+                Self::is_settled_type_argument(key) && Self::is_settled_type_argument(value)
+            }
+            ResolvedType::Function(params, result) => {
+                params.iter().all(|param| Self::is_settled_type_argument(&param.ty))
+                    && Self::is_settled_type_argument(result)
+            }
+            _ => true,
         }
     }
 

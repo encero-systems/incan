@@ -3435,6 +3435,7 @@ impl TypeChecker {
         }
 
         // Define fields in scope
+        let mut json_members = Vec::new();
         for field in active_model_fields {
             let ty = self.resolve_type_checked(&field.node.ty);
             self.validate_direct_recursive_model_field(&model.name, &ty, field.span);
@@ -3445,6 +3446,7 @@ impl TypeChecker {
                 &ty,
                 field.span,
             );
+            json_members.push((DerivedMember::Field(&field.node.name), ty.clone(), field.span));
             self.symbols.define(Symbol {
                 name: field.node.name.clone(),
                 kind: SymbolKind::Field(FieldInfo {
@@ -3484,6 +3486,8 @@ impl TypeChecker {
                 }
             }
         }
+        let adoptions = self.nominal_trait_adoptions(&model.name);
+        self.refuse_members_without_json_form("model", &model.name, &adoptions, &json_members);
 
         // Check methods
         let active_model_methods = model
@@ -3879,6 +3883,7 @@ impl TypeChecker {
         }
 
         // Define fields
+        let mut json_members = Vec::new();
         for field in active_class_fields {
             let ty = self.resolve_type_checked(&field.node.ty);
             self.refuse_member_without_automatic_derives(
@@ -3888,6 +3893,7 @@ impl TypeChecker {
                 &ty,
                 field.span,
             );
+            json_members.push((DerivedMember::Field(&field.node.name), ty.clone(), field.span));
             self.symbols.define(Symbol {
                 name: field.node.name.clone(),
                 kind: SymbolKind::Field(FieldInfo {
@@ -3923,6 +3929,8 @@ impl TypeChecker {
                 }
             }
         }
+        let adoptions = self.nominal_trait_adoptions(&class.name);
+        self.refuse_members_without_json_form("class", &class.name, &adoptions, &json_members);
 
         // Check methods
         let active_class_methods = class
@@ -4396,6 +4404,15 @@ impl TypeChecker {
                 .push(errors::interop_block_requires_rusttype(&nt.name, nt.underlying.span));
         }
         self.validate_newtype_from_underlying_hook(nt, &underlying);
+        if !nt.is_rusttype {
+            let adoptions = self.nominal_trait_adoptions(&nt.name);
+            self.refuse_members_without_json_form(
+                "newtype",
+                &nt.name,
+                &adoptions,
+                &[(DerivedMember::Underlying, underlying.clone(), nt.underlying.span)],
+            );
+        }
 
         let mut resolved_trait_adoptions = Vec::new();
         for trait_ref in &nt.traits {
@@ -4766,6 +4783,7 @@ impl TypeChecker {
             .iter()
             .filter(|variant| self.member_binding_is_active(variant.span))
             .collect::<Vec<_>>();
+        let mut json_members = Vec::new();
         for variant in active_variants {
             for field_ty in &variant.node.fields {
                 let resolved = self.resolve_type_checked(field_ty);
@@ -4780,8 +4798,15 @@ impl TypeChecker {
                     &resolved,
                     field_ty.span,
                 );
+                json_members.push((
+                    DerivedMember::VariantPayload(&variant.node.name),
+                    resolved,
+                    field_ty.span,
+                ));
             }
         }
+        let adoptions = self.nominal_trait_adoptions(&en.name);
+        self.refuse_members_without_json_form("enum", &en.name, &adoptions, &json_members);
 
         let active_methods = en
             .methods
@@ -5864,6 +5889,7 @@ impl TypeChecker {
         let resolved_param_types = self.resolve_callable_parameter_types_and_check_defaults(&func.params);
         let return_type = self.resolve_type_checked(&func.return_type);
         self.refuse_unbounded_nominal_type_arguments(&return_type, func.return_type.span);
+        self.refuse_trait_type_nested_in_annotation(&return_type, func.return_type.span);
         self.check_route_handler_signature(func, &return_type, &resolved_param_types);
 
         // Define parameters after checking defaults so a declaration-owned default cannot resolve a callable-frame
@@ -5969,6 +5995,7 @@ impl TypeChecker {
             .map(|param| {
                 let param_ty = self.resolve_type_checked(&param.node.ty);
                 self.refuse_unbounded_nominal_type_arguments(&param_ty, param.node.ty.span);
+                self.refuse_trait_type_nested_in_annotation(&param_ty, param.node.ty.span);
                 if param.node.kind != ParamKind::Normal {
                     return param_ty;
                 }
@@ -6339,6 +6366,7 @@ impl TypeChecker {
 
         let return_type = self.resolve_type_checked(&method.return_type);
         self.refuse_unbounded_nominal_type_arguments(&return_type, method.return_type.span);
+        self.refuse_trait_type_nested_in_annotation(&return_type, method.return_type.span);
         self.type_info.declarations.method_bindings_by_span.insert(
             (method_span.start, method_span.end),
             FunctionBindingInfo {

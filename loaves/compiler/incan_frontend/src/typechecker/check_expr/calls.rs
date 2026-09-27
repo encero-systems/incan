@@ -4,6 +4,7 @@
 //! handling, generic inference, builtin dispatch, and Rust boundary validation to focused child modules.
 
 use crate::ast::{CallArg, Expr, ImportPath, ParamKind, Span, Spanned, Type};
+use crate::diagnostics::errors::TypeArgumentOrigin;
 use crate::diagnostics::{CompileError, errors};
 use crate::resolved_type_subst::substitute_resolved_type;
 use crate::symbols::{
@@ -412,6 +413,14 @@ impl TypeChecker {
                         }
                         let explicit_constructor_context =
                             self.explicit_constructor_type_context(name, &type_info, type_args, span);
+                        if let Some((_, type_bindings)) = &explicit_constructor_context {
+                            self.refuse_unsatisfied_nominal_type_arguments(
+                                name,
+                                type_bindings,
+                                TypeArgumentOrigin::Explicit,
+                                span,
+                            );
+                        }
                         let explicit_constructor_ty = explicit_constructor_context.as_ref().map(|(ty, _)| ty.clone());
                         if let TypeInfo::Model(model) = &type_info
                             && model

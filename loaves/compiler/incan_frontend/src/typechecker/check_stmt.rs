@@ -151,6 +151,51 @@ impl TypeChecker {
         }
     }
 
+    /// Return the first trait type written inside another type, as a type argument or a tuple item (`Serialize` in
+    /// `Option[Serialize]`), never the annotation itself.
+    ///
+    /// A trait stands for the types that adopt it only where the whole annotation is the trait: a parameter lowers to
+    /// a hidden type parameter bounded by it and a return to one hidden adopting type. Inside another type it has no
+    /// value representation, and the generated Rust would name a bare trait there (E0782, #1866). A reference or a
+    /// type token wraps the annotation without nesting it. A function type is not searched: its parameters are how a
+    /// decorator names the trait receiver of the method it decorates (`(Service) -> int`).
+    pub(in crate::typechecker) fn trait_type_nested_in(&self, ty: &ResolvedType) -> Option<ResolvedType> {
+        self.find_trait_type(ty, false)
+    }
+
+    /// Search `ty` for a trait type, reporting the type itself only when it is `nested` inside the annotation.
+    fn find_trait_type(&self, ty: &ResolvedType, nested: bool) -> Option<ResolvedType> {
+        match ty {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _)
+                if nested && self.lookup_semantic_trait_info(name).is_some() =>
+            {
+                Some(ty.clone())
+            }
+            ResolvedType::Generic(_, items) | ResolvedType::Tuple(items) => {
+                items.iter().find_map(|item| self.find_trait_type(item, true))
+            }
+            ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => self.find_trait_type(inner, true),
+            ResolvedType::FrozenDict(key, value) => self
+                .find_trait_type(key, true)
+                .or_else(|| self.find_trait_type(value, true)),
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) | ResolvedType::TypeToken(inner) => {
+                self.find_trait_type(inner, nested)
+            }
+            _ => None,
+        }
+    }
+
+    /// Refuse a callable parameter, return or local annotation that writes a trait inside another type (#1866).
+    pub(in crate::typechecker) fn refuse_trait_type_nested_in_annotation(&mut self, ty: &ResolvedType, span: Span) {
+        if let Some(trait_type) = self.trait_type_nested_in(ty) {
+            self.errors.push(errors::trait_type_nested_in_annotation_unsupported(
+                &trait_type.to_string(),
+                &ty.to_string(),
+                span,
+            ));
+        }
+    }
+
     /// Validate a statement and its subexpressions.
     ///
     /// Handles assignments (including mutability checks), control flow (`if`, `while`, `for`), returns, and expression
@@ -860,6 +905,8 @@ impl TypeChecker {
                     &ann_ty.to_string(),
                     ty_ann.span,
                 ));
+            } else {
+                self.refuse_trait_type_nested_in_annotation(&ann_ty, ty_ann.span);
             }
             // Check value matches annotation
             if !self.types_compatible(&value_ty, &ann_ty)
