@@ -330,6 +330,50 @@ def field_assignment() -> Holder:
     Ok(())
 }
 
+/// Issue #1840: taking a dependency function through its imported module binding is an ordinary first-class
+/// function reference, with the same canonical target as a direct call through that binding.
+#[test]
+fn pub_dependency_module_member_function_value_keeps_canonical_identity_issue1840() -> Result<(), String> {
+    let index = provider_index(&[(
+        &["lib"],
+        "pub def calculate(value: int) -> int:\n    return value * 2\n",
+    )])?;
+    let ir = lower_consumer(
+        r#"
+import pub::modulelib as cl
+
+def main() -> int:
+    calculate = cl.calculate
+    return calculate(2)
+"#,
+        index,
+    )?;
+    let main = ir
+        .declarations
+        .iter()
+        .find_map(|decl| match &decl.kind {
+            IrDeclKind::Function(function) if function.name == "main" => Some(function),
+            _ => None,
+        })
+        .ok_or("missing lowered `main`")?;
+    assert!(
+        main.body.iter().any(|stmt| matches!(
+            &stmt.kind,
+            IrStmtKind::Let {
+                name,
+                value: TypedExpr {
+                    kind: IrExprKind::Var { name: target, .. },
+                    ..
+                },
+                ..
+            } if name == "calculate" && target != "calculate"
+        )),
+        "the local function value must name the dependency function's canonical projection: {:?}",
+        main.body
+    );
+    Ok(())
+}
+
 /// #1771: a dependency default that constructs one of the dependency's public models is carried as a call whose callee
 /// is the type, reached through the dependency's public path, so a consumer that never imports the type constructs it
 /// from the dependency's constructor metadata. A default that calls a helper function stays an ordinary call.

@@ -12,7 +12,9 @@
 //! type, which already carries the provider-owned union.
 
 use super::super::super::decl::FunctionParam;
-use super::super::super::expr::{IrCallArg, IrCallArgKind, IrDictEntry, IrExprKind, IrListEntry};
+use super::super::super::expr::{
+    IrCallArg, IrCallArgKind, IrDictEntry, IrExprKind, IrListEntry, MethodCallArgPolicy, VarAccess, VarRefKind,
+};
 use super::super::super::types::{IrType, Mutability};
 use super::super::super::{FunctionSignature, TypedExpr};
 use super::super::AstLowering;
@@ -62,6 +64,9 @@ impl AstLowering {
     /// the destination; anything else is left alone. A `match` or block that now yields the destination in every arm
     /// is typed as the destination.
     pub(in crate::lower) fn retain_union_owners_at(expr: &mut TypedExpr, destination: &IrType) {
+        if Self::convert_provider_option_union(expr, destination) {
+            return;
+        }
         if let IrType::Option(owned) = destination
             && matches!(expr.kind, IrExprKind::Call { .. })
         {
@@ -113,6 +118,61 @@ impl AstLowering {
             }
             _ => {}
         }
+    }
+
+    /// Map a provider-owned `Option[union]` result into the consumer's structurally matching `Option[union]` (#1835).
+    ///
+    /// The closure return site already owns canonical union widening. Representing the container conversion in IR
+    /// keeps `None` unchanged while converting only the present provider wrapper, for function and method results.
+    fn convert_provider_option_union(expr: &mut TypedExpr, destination: &IrType) -> bool {
+        let (IrType::Option(source), IrType::Option(target)) = (&expr.ty, destination) else {
+            return false;
+        };
+        if !matches!(source.as_ref(), IrType::ExternalUnion { .. })
+            || matches!(target.as_ref(), IrType::ExternalUnion { .. })
+            || !Self::same_union_members(source, target)
+        {
+            return false;
+        }
+        let source = source.as_ref().clone();
+        let target = target.as_ref().clone();
+        let receiver = expr.clone();
+        let binding = "__incan_option_union_value".to_string();
+        let body = TypedExpr::new(
+            IrExprKind::Var {
+                name: binding.clone(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            source.clone(),
+        );
+        let closure = TypedExpr::new(
+            IrExprKind::Closure {
+                params: vec![(binding, source.clone())],
+                body: Box::new(body),
+                captures: Vec::new(),
+                annotate_param_types: false,
+            },
+            IrType::Function {
+                params: vec![source],
+                ret: Box::new(target),
+            },
+        );
+        expr.kind = IrExprKind::MethodCall {
+            receiver: Box::new(receiver),
+            method: "map".to_string(),
+            dispatch: None,
+            type_args: Vec::new(),
+            args: vec![IrCallArg {
+                name: None,
+                kind: IrCallArgKind::Positional,
+                expr: closure,
+            }],
+            callable_signature: None,
+            arg_policy: MethodCallArgPolicy::Default,
+        };
+        expr.ty = destination.clone();
+        true
     }
 
     /// Give each named field of a dependency model's construction the provider-owned union the field declares.

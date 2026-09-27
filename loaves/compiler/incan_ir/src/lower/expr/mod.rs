@@ -1376,6 +1376,15 @@ impl AstLowering {
                 _ => {}
             }
         }
+        // An imported trait default is expanded in its adopter, but a constant it reads stays owned by the trait's
+        // declaring module (#1873).
+        if let ast::Expr::Ident(name) = &expr.node
+            && let Some(path) = self.active_source_trait_default_const_path(name)
+        {
+            let ty = lowered.ty.clone();
+            lowered = Self::crate_path_expr(path.iter().map(String::as_str));
+            lowered.ty = ty;
+        }
         // A const read in a parameter default reaches callers in other modules as a path to its declaring module.
         if let ast::Expr::Ident(name) = &expr.node
             && let Some(spelled) = self.default_owner_const_path(name, expr.span, &lowered)
@@ -2284,6 +2293,33 @@ impl AstLowering {
 
             // ---- Field access ----
             ast::Expr::Field(o, f) => {
+                // A dependency function reached through a module binding is a reference to the declaration, not a
+                // field read from a runtime module value. Calls already project this checked identity; taking the
+                // member as a first-class value must use the same compiler-owned projection (#1840). A function of a
+                // module of this crate is spelled through its module path below, which reaches the same declaration.
+                let names_dependency_function = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.resolved_identity(expr_span))
+                    .is_some_and(|identity| {
+                        matches!(identity.origin, incan_semantics_core::SymbolOrigin::Package { .. })
+                    });
+                if names_dependency_function && let Some(name) = self.emitted_function_reference_name(expr_span) {
+                    let ty = self
+                        .type_info
+                        .as_ref()
+                        .and_then(|info| info.expr_type(expr_span))
+                        .map(|ty| self.lower_resolved_type(ty))
+                        .unwrap_or(IrType::Unknown);
+                    return Ok(TypedExpr::new(
+                        IrExprKind::Var {
+                            name,
+                            access: VarAccess::Copy,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        ty,
+                    ));
+                }
                 if let Some(value) = self
                     .type_info
                     .as_ref()

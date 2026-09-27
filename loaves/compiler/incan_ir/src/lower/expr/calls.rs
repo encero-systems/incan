@@ -3499,6 +3499,9 @@ impl AstLowering {
         // Check if this is a struct/model/class constructor call
         if let ast::Expr::Ident(name) = &f.node {
             let constructor_name = self.symbol_aliases.get(name).cloned().unwrap_or_else(|| name.clone());
+            if let Some(canonical_name) = self.default_owner_constructor_name(name, f.span) {
+                return self.lower_constructor_call(&canonical_name, type_args, args, call_span);
+            }
             if let Some(type_path) = self.active_trait_default_value_type_path(name) {
                 let canonical_name = type_path.join("::");
                 return self.lower_constructor_call(&canonical_name, type_args, args, call_span);

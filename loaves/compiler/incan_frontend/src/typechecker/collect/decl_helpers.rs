@@ -240,12 +240,10 @@ fn method_info_from_decl(
         .params
         .iter()
         .map(|p| {
-            CallableParam::named_with_default(
-                p.node.name.clone(),
-                resolve_declared_type(checker, &p.node.ty, &active_type_params, owner_name, owner_self_ty),
-                p.node.kind,
-                p.node.default.is_some(),
-            )
+            let ty = resolve_declared_type(checker, &p.node.ty, &active_type_params, owner_name, owner_self_ty);
+            let is_mut = checker.def_param_shows_changes_to_caller(&p.node, &ty);
+            CallableParam::named_with_default(p.node.name.clone(), ty, p.node.kind, p.node.default.is_some())
+                .with_mut(is_mut)
         })
         .collect();
     let return_type = resolve_declared_type(

@@ -176,6 +176,8 @@ pub struct AstLowering {
     pub imported_trait_decls: HashMap<String, bool>,
     /// Canonical helper paths needed when expanding default methods from imported traits.
     pub trait_default_function_paths: HashMap<String, HashMap<String, Vec<String>>>,
+    /// Canonical defining-module const paths used by imported trait defaults.
+    pub trait_default_const_paths: HashMap<String, HashMap<String, Vec<String>>>,
     /// Canonical defining-module type paths used by imported trait defaults.
     ///
     /// Unlike value calls, type annotations live in a distinct namespace. Keeping this map scoped to expansion of one
@@ -184,6 +186,8 @@ pub struct AstLowering {
     pub trait_default_type_paths: HashMap<String, HashMap<String, Vec<String>>>,
     /// Active default-method helper paths while lowering one expanded trait default body.
     pub active_trait_default_function_paths: Vec<HashMap<String, Vec<String>>>,
+    /// Active defining-module const paths while lowering one expanded trait default body.
+    pub active_trait_default_const_paths: Vec<HashMap<String, Vec<String>>>,
     /// Active defining-module type paths while lowering one expanded trait default body.
     pub active_trait_default_type_paths: Vec<HashMap<String, Vec<String>>>,
     /// Whether the current expanded default body came from an imported source module.
@@ -758,8 +762,10 @@ impl AstLowering {
             trait_decls: HashMap::new(),
             imported_trait_decls: HashMap::new(),
             trait_default_function_paths: HashMap::new(),
+            trait_default_const_paths: HashMap::new(),
             trait_default_type_paths: HashMap::new(),
             active_trait_default_function_paths: Vec::new(),
+            active_trait_default_const_paths: Vec::new(),
             active_trait_default_type_paths: Vec::new(),
             active_imported_trait_defaults: Vec::new(),
             active_trait_type_substitutions: Vec::new(),
@@ -1116,6 +1122,17 @@ impl AstLowering {
         (path.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT)
             && path.first().map(String::as_str) != Some(stdlib::INCAN_STD_NAMESPACE))
         .then_some(path)
+    }
+
+    /// Return the crate path of a constant read by the currently-expanded imported source trait default.
+    pub fn active_source_trait_default_const_path(&self, name: &str) -> Option<Vec<String>> {
+        if self.scopes.iter().rev().any(|scope| scope.contains_key(name)) {
+            return None;
+        }
+        self.active_trait_default_const_paths
+            .iter()
+            .rev()
+            .find_map(|paths| paths.get(name).cloned())
     }
 
     /// Return the defining-module path for a type annotation in the currently-expanded trait default.
@@ -1767,6 +1784,7 @@ impl AstLowering {
                 default_type_paths.entry(binding).or_insert(path);
             }
             let default_function_paths = Self::source_module_function_paths(module_ast, &module_path, &module_graph);
+            let default_const_paths = Self::source_module_const_paths(module_ast, &module_path);
             for decl in &module_ast.declarations {
                 let ast::Declaration::Trait(tr) = &decl.node else {
                     continue;
@@ -1787,6 +1805,10 @@ impl AstLowering {
                     if !default_function_paths.is_empty() {
                         self.trait_default_function_paths
                             .insert(trait_key.clone(), default_function_paths.clone());
+                    }
+                    if !default_const_paths.is_empty() {
+                        self.trait_default_const_paths
+                            .insert(trait_key.clone(), default_const_paths.clone());
                     }
                     self.register_trait_decl(trait_key, trait_decl.clone(), true);
                 }
@@ -1895,6 +1917,23 @@ impl AstLowering {
             paths.insert(binding, path);
         }
         paths
+    }
+
+    /// Return the crate path of every constant one source module declares, keyed by its source name.
+    fn source_module_const_paths(module_ast: &ast::Program, module_path: &[String]) -> HashMap<String, Vec<String>> {
+        module_ast
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.node {
+                ast::Declaration::Const(konst) => Some(konst.name.clone()),
+                _ => None,
+            })
+            .map(|name| {
+                let mut path = module_path.to_vec();
+                path.push(name.clone());
+                (name, path)
+            })
+            .collect()
     }
 
     /// Return each `from <module> import <name> [as <binding>]` item of one source module whose module is a known
@@ -4344,6 +4383,11 @@ impl AstLowering {
             self.trait_default_function_paths
                 .entry(alias.clone())
                 .or_insert(function_paths);
+        }
+        if let Some(const_paths) = self.trait_default_const_paths.get(source_key).cloned() {
+            self.trait_default_const_paths
+                .entry(alias.clone())
+                .or_insert(const_paths);
         }
         self.register_trait_decl(alias, decl, imported);
     }

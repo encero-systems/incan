@@ -7,6 +7,7 @@ use crate::diagnostics::errors::{self, TypeArgumentOrigin};
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map_call_site};
 use crate::symbols::{CallableParam, FunctionInfo, MethodInfo, ResolvedType, TypeInfo};
 use incan_lang::lang::callables;
+use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_semantics_core::CanonicalSymbolId;
 
@@ -853,20 +854,44 @@ impl TypeChecker {
                 // Inferred `Eq` and `Hash` bounds are the callee's hashed type parameter (#1758): a concrete type
                 // argument is refused only when it is known to lack them, and the caller's own type parameter unless
                 // its declaration carries them.
-                let inferred = details.iter().filter(|bound| bound.inferred).collect::<Vec<_>>();
-                if !inferred.is_empty() {
+                let inferred_hash = details
+                    .iter()
+                    .filter(|bound| bound.inferred && is_hash_key_bound(bound))
+                    .collect::<Vec<_>>();
+                if !inferred_hash.is_empty() {
                     match self.active_type_param_name(actual_ty) {
                         Some(placeholder) => self.refuse_type_parameter_without_hash_bounds(
                             func_name,
                             type_param,
                             placeholder,
-                            &inferred,
+                            &inferred_hash,
                             bindings,
                             call_span,
                         ),
                         None => self.refuse_unhashable_type_argument(func_name, type_param, actual_ty, call_span),
                     }
                 }
+                if let Some(placeholder) = self.active_type_param_name(actual_ty) {
+                    for bound in details
+                        .iter()
+                        .filter(|bound| bound.inferred && !is_hash_key_bound(bound))
+                    {
+                        if !self.active_type_param_satisfies_bound_info(placeholder, bound, bindings) {
+                            self.errors.push(errors::generic_bound_not_satisfied(
+                                func_name,
+                                type_param,
+                                &self.type_bound_display(bound, bindings),
+                                self.generic_bound_target(&bound.name),
+                                placeholder,
+                                actual_origin,
+                                call_span,
+                            ));
+                        }
+                    }
+                }
+                // Every type argument is judged by the bounds its callee declares. An inferred bound is a Rust
+                // requirement of the callee's generated body: the caller's own type parameter must carry it (above),
+                // and rustc proves it for a concrete type argument.
                 for bound in details.iter().filter(|bound| !bound.inferred) {
                     if !self.type_satisfies_explicit_bound_info(actual_ty, bound, bindings) {
                         let error = self
@@ -907,6 +932,14 @@ impl TypeChecker {
             }
         }
     }
+}
+
+/// Whether an inferred bound is the builtin `Eq` or `Hash` a hashed type parameter needs (#1758).
+fn is_hash_key_bound(bound: &crate::symbols::TypeBoundInfo) -> bool {
+    matches!(
+        bound.name.rsplit("::").next().and_then(derives::from_str),
+        Some(DeriveId::Eq | DeriveId::Hash)
+    )
 }
 
 /// Return whether a type-parameter binding leaves the parameter open: unknown, or naming a type parameter still to be

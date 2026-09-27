@@ -37,25 +37,30 @@ use incan_frontend::ast::{Declaration, ImportKind, Program};
 use incan_frontend::diagnostics::CompileError;
 use incan_frontend::library_manifest::{
     ExportIdentityKind, ImplementationAssociatedTypeExport, ImplementationTraitBoundExport,
-    ImplementationTraitBoundOriginExport, ImplementationTypeParamExport, LibraryManifest, TypeBoundExport, TypeRef,
+    ImplementationTraitBoundOriginExport, ImplementationTypeParamExport, LibraryManifest, TypeBoundExport,
+    TypeParamExport, TypeRef,
 };
 use incan_frontend::library_manifest_index::LibraryManifestIndex;
 use incan_frontend::module::canonicalize_source_module_segments;
 use incan_frontend::provider::{ProviderPlan, SDK_PROVIDER_BUILD_ENV};
 use incan_frontend::typechecker::TypeCheckInfo;
 use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
-use incan_lang::lang::{rust_keywords, stdlib};
+use incan_lang::lang::{rust_keywords, stdlib, trait_bounds};
 use oven_model::compiler_suite_env::OVEN_LOAF_ENV;
 
 use crate::emit::CallableNameResolution;
 use crate::{EmitError, EmitService, IrEmitter};
-use incan_ir::decl::{IrTraitBoundOrigin, IrTypeParam, Visibility};
+use incan_ir::decl::{
+    FunctionParamDefault, IrImportItem, IrImportOrigin, IrImportQualifier, IrStaticProvenance, IrTraitBoundOrigin,
+    IrTypeParam, Visibility,
+};
 use incan_ir::scanners::{
     check_for_this_import as scan_check_for_this_import, collect_rust_crates as scan_collect_rust_crates,
     detect_serde_usage,
 };
 use incan_ir::types::{IrType, manifest_type_ref_from_ir};
-use incan_ir::{AstLowering, FunctionRegistry, IrProgram, LoweringErrors};
+use incan_ir::{AstLowering, FunctionRegistry, IrDecl, IrDeclKind, IrExpr, IrExprKind, IrProgram, LoweringErrors};
+use incan_semantics_core::CanonicalSymbolId;
 
 mod capability_bridge;
 mod dependency_metadata;
@@ -203,6 +208,31 @@ struct CapturedImplementationBoundRequirement {
     target_visibility: CapturedImplementationTargetVisibility,
 }
 
+/// Inferred bounds on one exported model or class's inherent implementation and methods.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CapturedInherentBounds {
+    module_path: Vec<String>,
+    target_type: String,
+    owner_type_params: Vec<IrTypeParam>,
+    methods: Vec<(String, Vec<IrTypeParam>)>,
+}
+
+/// Inferred bounds on one exported free function or trait method.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CapturedCallableBounds {
+    Function {
+        module_path: Vec<String>,
+        name: String,
+        type_params: Vec<IrTypeParam>,
+    },
+    TraitMethod {
+        module_path: Vec<String>,
+        trait_name: String,
+        method_name: String,
+        type_params: Vec<IrTypeParam>,
+    },
+}
+
 /// Visibility of an implementation target resolved within the IR program that owns the implementation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CapturedImplementationTargetVisibility {
@@ -214,6 +244,9 @@ enum CapturedImplementationTargetVisibility {
 #[derive(Debug, Clone, Default)]
 pub struct IrGenerationMetadata {
     implementation_bound_requirements: Vec<CapturedImplementationBoundRequirement>,
+    inherent_bounds: Vec<CapturedInherentBounds>,
+    /// Inferred free-function and trait-method bounds resolved from the exact emitted IR.
+    callable_bounds: Vec<CapturedCallableBounds>,
     emitted_declaration_types: Vec<crate::emit::native_unions::EmittedDeclarationTypes>,
     native_unions: Vec<incan_frontend::library_manifest::NativeUnionExport>,
     provider_plan: Option<Arc<ProviderPlan>>,
@@ -325,6 +358,69 @@ impl IrGenerationMetadata {
                 ));
             }
         }
+        for captured in &self.inherent_bounds {
+            if let Some(api) = manifest.contract_metadata.api.as_mut() {
+                for module in &mut api.modules {
+                    if module.module_path != captured.module_path {
+                        continue;
+                    }
+                    for declaration in &mut module.declarations {
+                        match declaration {
+                            ApiDeclaration::Model(model) if model.name == captured.target_type => {
+                                merge_inferred_type_params(&mut model.type_params, &captured.owner_type_params)?;
+                                merge_inferred_method_type_params(&mut model.methods, &captured.methods)?;
+                            }
+                            ApiDeclaration::Class(class) if class.name == captured.target_type => {
+                                merge_inferred_type_params(&mut class.type_params, &captured.owner_type_params)?;
+                                merge_inferred_method_type_params(&mut class.methods, &captured.methods)?;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            let mut source_path = captured.module_path.clone();
+            source_path.push(captured.target_type.clone());
+            let public_exports = manifest
+                .contract_metadata
+                .identity_graph
+                .exports
+                .iter()
+                .filter(|identity| identity.source_path == source_path)
+                .map(|identity| (identity.public_name.clone(), identity.kind))
+                .collect::<Vec<_>>();
+            for (public_name, kind) in public_exports {
+                match kind {
+                    ExportIdentityKind::Model => {
+                        if let Some(model) = manifest
+                            .exports
+                            .models
+                            .iter_mut()
+                            .find(|model| model.name == public_name)
+                        {
+                            merge_inferred_type_params(&mut model.type_params, &captured.owner_type_params)?;
+                            merge_inferred_method_type_params(&mut model.methods, &captured.methods)?;
+                        }
+                    }
+                    ExportIdentityKind::Class => {
+                        if let Some(class) = manifest
+                            .exports
+                            .classes
+                            .iter_mut()
+                            .find(|class| class.name == public_name)
+                        {
+                            merge_inferred_type_params(&mut class.type_params, &captured.owner_type_params)?;
+                            merge_inferred_method_type_params(&mut class.methods, &captured.methods)?;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for captured in &self.callable_bounds {
+            apply_callable_bounds_to_manifest(manifest, captured)?;
+        }
         for captured in &self.emitted_declaration_types {
             captured.apply(manifest);
         }
@@ -332,6 +428,239 @@ impl IrGenerationMetadata {
         crate::emit::native_unions::preserve_native_aliases(manifest, self.provider_plan.as_deref())?;
         Ok(())
     }
+}
+
+/// Merge compiler-inferred bounds into matching manifest type parameters without replacing source-declared bounds.
+///
+/// The emitted IR carries every bound a type parameter needs, the source-declared ones included, spelled as the Rust
+/// trait each lowers to and without the declaration's module path. A bound naming a trait the parameter already
+/// declares is that declaration, not an inferred requirement, so it is not published a second time: its IR spelling
+/// would not resolve like the declared bound in a consumer, where a trait method's bound over its trait's own type
+/// parameter (`Callable1[E, F]`) keeps `E` as a nominal name the adopter's type arguments never replace.
+fn merge_inferred_type_params(target: &mut [TypeParamExport], inferred: &[IrTypeParam]) -> Result<(), String> {
+    for inferred_param in inferred {
+        let Some(target_param) = target.iter_mut().find(|param| param.name == inferred_param.name) else {
+            continue;
+        };
+        for bound in &inferred_param.bounds {
+            if declares_bound_trait(&target_param.bounds, &bound.trait_path) {
+                continue;
+            }
+            let exported = inferred_type_bound_export(bound)?;
+            if !target_param.bounds.iter().any(|existing| {
+                existing.name == exported.name
+                    && existing.type_args == exported.type_args
+                    && existing.source_name == exported.source_name
+                    && existing.module_path == exported.module_path
+            }) {
+                target_param.bounds.push(exported);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Return whether a source-declared bound among `bounds` names the trait an emitted bound's Rust path lowers from.
+fn declares_bound_trait(bounds: &[TypeBoundExport], rust_trait_path: &str) -> bool {
+    let trait_name = match trait_bounds::rust_to_incan(rust_trait_path) {
+        Some(incan_name) => incan_name,
+        None => bound_trait_leaf(rust_trait_path),
+    };
+    bounds
+        .iter()
+        .filter(|bound| !bound.inferred)
+        .any(|bound| bound_trait_leaf(bound.source_name.as_deref().unwrap_or(&bound.name)) == trait_name)
+}
+
+/// Return a bound's trait name without the module or crate path it is spelled with.
+fn bound_trait_leaf(path: &str) -> &str {
+    path.rsplit(['.', ':']).next().unwrap_or(path)
+}
+
+/// Map each import alias a program binds to the name of the item it imports.
+fn import_alias_names(program: &IrProgram) -> HashMap<String, String> {
+    program
+        .declarations
+        .iter()
+        .filter_map(|declaration| match &declaration.kind {
+            IrDeclKind::Import { items, .. } => Some(items),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|item| Some((item.alias.clone()?, item.name.clone())))
+        .collect()
+}
+
+/// Spell each bound of `type_params` by the imported item's own name where the source wrote an import alias, so a
+/// declared bound written through the alias (`T with RustSerialize`) is recognized as the declaration it restates.
+fn unaliased_type_params(type_params: &[IrTypeParam], aliases: &HashMap<String, String>) -> Vec<IrTypeParam> {
+    type_params
+        .iter()
+        .map(|param| {
+            let mut param = param.clone();
+            for bound in &mut param.bounds {
+                if let Some(name) = aliases.get(&bound.trait_path) {
+                    bound.trait_path = name.clone();
+                }
+            }
+            param
+        })
+        .collect()
+}
+
+/// Merge inferred type-parameter bounds into the corresponding exported methods.
+fn merge_inferred_method_type_params(
+    methods: &mut [impl InferredMethodExport],
+    inferred: &[(String, Vec<IrTypeParam>)],
+) -> Result<(), String> {
+    for method in methods {
+        let method_name = method.method_name().to_string();
+        for (_, type_params) in inferred.iter().filter(|(name, _)| name == &method_name) {
+            merge_inferred_type_params(method.method_type_params_mut(), type_params)?;
+        }
+    }
+    Ok(())
+}
+
+/// Shared access to method metadata in checked API and public manifest exports.
+trait InferredMethodExport {
+    /// The method's source name, which inferred bounds are keyed by.
+    fn method_name(&self) -> &str;
+    /// The method's exported type parameters, whose bounds inference extends in place.
+    fn method_type_params_mut(&mut self) -> &mut [TypeParamExport];
+}
+
+impl InferredMethodExport for incan_frontend::api_metadata::ApiMethod {
+    fn method_name(&self) -> &str {
+        &self.name
+    }
+
+    fn method_type_params_mut(&mut self) -> &mut [TypeParamExport] {
+        &mut self.type_params
+    }
+}
+
+impl InferredMethodExport for incan_frontend::library_manifest::MethodExport {
+    fn method_name(&self) -> &str {
+        &self.name
+    }
+
+    fn method_type_params_mut(&mut self) -> &mut [TypeParamExport] {
+        &mut self.type_params
+    }
+}
+
+/// Convert an inferred IR trait requirement into the checked manifest shape.
+fn inferred_type_bound_export(bound: &incan_ir::decl::IrTraitBound) -> Result<TypeBoundExport, String> {
+    Ok(TypeBoundExport {
+        name: bound.trait_path.clone(),
+        source_name: None,
+        module_path: None,
+        type_args: bound
+            .type_args
+            .iter()
+            .map(manifest_type_ref_from_ir)
+            .collect::<Result<Vec<_>, _>>()?,
+        implementation_type_params: Vec::new(),
+        inferred: true,
+    })
+}
+
+/// Publish inferred free-function and trait-method bounds to checked API and public export surfaces (#1826).
+fn apply_callable_bounds_to_manifest(
+    manifest: &mut LibraryManifest,
+    captured: &CapturedCallableBounds,
+) -> Result<(), String> {
+    match captured {
+        CapturedCallableBounds::Function {
+            module_path,
+            name,
+            type_params,
+        } => {
+            if let Some(api) = manifest.contract_metadata.api.as_mut() {
+                for module in &mut api.modules {
+                    if module.module_path == *module_path {
+                        for declaration in &mut module.declarations {
+                            if let ApiDeclaration::Function(function) = declaration
+                                && function.name == *name
+                            {
+                                merge_inferred_type_params(&mut function.type_params, type_params)?;
+                            }
+                        }
+                    }
+                }
+            }
+            let mut source_path = module_path.clone();
+            source_path.push(name.clone());
+            let public_names = manifest
+                .contract_metadata
+                .identity_graph
+                .exports
+                .iter()
+                .filter(|identity| identity.kind == ExportIdentityKind::Function && identity.source_path == source_path)
+                .map(|identity| identity.public_name.clone())
+                .collect::<Vec<_>>();
+            for public_name in public_names {
+                if let Some(function) = manifest
+                    .exports
+                    .functions
+                    .iter_mut()
+                    .find(|function| function.name == public_name)
+                {
+                    merge_inferred_type_params(&mut function.type_params, type_params)?;
+                }
+            }
+        }
+        CapturedCallableBounds::TraitMethod {
+            module_path,
+            trait_name,
+            method_name,
+            type_params,
+        } => {
+            if let Some(api) = manifest.contract_metadata.api.as_mut() {
+                for module in &mut api.modules {
+                    if module.module_path == *module_path {
+                        for declaration in &mut module.declarations {
+                            if let ApiDeclaration::Trait(trait_decl) = declaration
+                                && trait_decl.name == *trait_name
+                            {
+                                for method in &mut trait_decl.methods {
+                                    if method.name == *method_name {
+                                        merge_inferred_type_params(&mut method.type_params, type_params)?;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let mut source_path = module_path.clone();
+            source_path.push(trait_name.clone());
+            let public_names = manifest
+                .contract_metadata
+                .identity_graph
+                .exports
+                .iter()
+                .filter(|identity| identity.kind == ExportIdentityKind::Trait && identity.source_path == source_path)
+                .map(|identity| identity.public_name.clone())
+                .collect::<Vec<_>>();
+            for public_name in public_names {
+                if let Some(trait_export) = manifest
+                    .exports
+                    .traits
+                    .iter_mut()
+                    .find(|trait_export| trait_export.name == public_name)
+                {
+                    for method in &mut trait_export.methods {
+                        if method.name == *method_name {
+                            merge_inferred_type_params(&mut method.type_params, type_params)?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Return the adopted-trait surface for a manifest declaration that can own implementations.
@@ -509,6 +838,10 @@ pub struct IrCodegen<'a> {
     prechecked_dependency_type_info: HashMap<Vec<String>, TypeCheckInfo>,
     /// Bound-bearing implementation headers resolved from the exact IR emitted for this compilation.
     implementation_bound_requirements: Vec<CapturedImplementationBoundRequirement>,
+    /// Inferred inherent-implementation and method bounds resolved from the exact emitted IR.
+    inherent_bounds: Vec<CapturedInherentBounds>,
+    /// Inferred free-function and trait-method bounds resolved from the exact emitted IR.
+    callable_bounds: Vec<CapturedCallableBounds>,
     /// Authoritative checked-API path for a library root while collecting manifest metadata.
     metadata_root_module_path: Option<Vec<String>>,
     /// Checked API supplied by the publication caller, joined only to the same emitted source module.
@@ -576,6 +909,164 @@ fn merge_native_union_capture(
 }
 
 impl<'a> IrCodegen<'a> {
+    /// Retain canonical imports for source statics read by defaults that an external call materializes in this module.
+    ///
+    /// A dependency's default expression is checked and lowered with its declaration, then copied into the caller's
+    /// callable signature. The caller therefore needs an explicit projection import even though its own source never
+    /// names the static (#1842). Every emitted module is such a caller, the crate root and each source module alike,
+    /// so `dependency_programs` holds every other lowered module of the compilation keyed by its module path, and
+    /// `externally_reachable_items` is the reachability set this module is emitted with.
+    fn add_external_default_static_imports<'p>(
+        program: &mut IrProgram,
+        dependency_programs: impl IntoIterator<Item = (&'p [String], &'p IrProgram)>,
+        externally_reachable_items: &mut HashSet<String>,
+    ) {
+        use incan_ir::{Visitor, walk_expr};
+
+        let mut statics = HashMap::new();
+        let mut callables = HashMap::new();
+        for (module_path, dependency) in dependency_programs {
+            for decl in &dependency.declarations {
+                match &decl.kind {
+                    IrDeclKind::Static {
+                        name,
+                        provenance: IrStaticProvenance::Source(identity),
+                        ..
+                    } => {
+                        statics.insert((module_path.to_vec(), name.clone()), identity.clone());
+                    }
+                    IrDeclKind::Function(function) => {
+                        callables.insert(
+                            (module_path.to_vec(), function.name.clone()),
+                            incan_ir::FunctionSignature {
+                                params: function.params.clone(),
+                                return_type: function.return_type.clone(),
+                            },
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        struct StaticReads(Vec<String>);
+        impl Visitor for StaticReads {
+            fn expr(&mut self, expr: &mut IrExpr) {
+                if let IrExprKind::StaticRead { name, .. } = &expr.kind
+                    && !self.0.contains(name)
+                {
+                    self.0.push(name.clone());
+                }
+                walk_expr(expr, self);
+            }
+        }
+
+        struct ExternalDefaults<'a> {
+            statics: &'a HashMap<(Vec<String>, String), CanonicalSymbolId>,
+            callables: &'a HashMap<(Vec<String>, String), incan_ir::FunctionSignature>,
+            imports: Vec<(Vec<String>, String, CanonicalSymbolId)>,
+        }
+        impl Visitor for ExternalDefaults<'_> {
+            fn expr(&mut self, expr: &mut IrExpr) {
+                if let IrExprKind::Call {
+                    callable_signature: signature,
+                    canonical_path: Some(canonical_path),
+                    ..
+                } = &mut expr.kind
+                    && let Some((callable_name, module_path)) = canonical_path.split_last()
+                {
+                    let resolved_signature = signature.clone().or_else(|| {
+                        self.callables
+                            .get(&(module_path.to_vec(), callable_name.clone()))
+                            .cloned()
+                    });
+                    if signature.is_none() {
+                        *signature = resolved_signature.clone();
+                    }
+                    let params = resolved_signature.map(|signature| signature.params).unwrap_or_default();
+                    for default in params.into_iter().filter_map(|param| param.default) {
+                        let FunctionParamDefault::Source(mut default) = default else {
+                            continue;
+                        };
+                        let mut reads = StaticReads(Vec::new());
+                        reads.expr(&mut default);
+                        for name in reads.0 {
+                            let key = (module_path.to_vec(), name.clone());
+                            let Some(identity) = self.statics.get(&key) else {
+                                continue;
+                            };
+                            if !self.imports.iter().any(|(_, _, imported)| imported == identity) {
+                                self.imports.push((module_path.to_vec(), name, identity.clone()));
+                            }
+                        }
+                    }
+                }
+                walk_expr(expr, self);
+            }
+        }
+
+        /// Visit every expression a function evaluates: its source parameter defaults, then its body.
+        fn visit_function(function: &mut incan_ir::IrFunction, visitor: &mut impl Visitor) {
+            for param in &mut function.params {
+                if let Some(FunctionParamDefault::Source(default)) = &mut param.default {
+                    visitor.expr(default);
+                }
+            }
+            for stmt in &mut function.body {
+                visitor.stmt(stmt);
+            }
+        }
+
+        let mut visitor = ExternalDefaults {
+            statics: &statics,
+            callables: &callables,
+            imports: Vec::new(),
+        };
+        for stmt in &mut program.module_init {
+            visitor.stmt(stmt);
+        }
+        for decl in &mut program.declarations {
+            match &mut decl.kind {
+                IrDeclKind::Function(function) => visit_function(function, &mut visitor),
+                IrDeclKind::Impl(implementation) => {
+                    for method in &mut implementation.methods {
+                        visit_function(method, &mut visitor);
+                    }
+                }
+                IrDeclKind::Trait(declaration) => {
+                    for method in &mut declaration.methods {
+                        visit_function(method, &mut visitor);
+                    }
+                }
+                IrDeclKind::Struct(declaration) => {
+                    for default in declaration.fields.iter_mut().filter_map(|field| field.default.as_mut()) {
+                        visitor.expr(default);
+                    }
+                }
+                IrDeclKind::Const { value, .. } | IrDeclKind::Static { value, .. } => visitor.expr(value),
+                _ => {}
+            }
+        }
+        for (path, name, identity) in visitor.imports {
+            externally_reachable_items.insert(name.clone());
+            program.declarations.push(IrDecl::new(IrDeclKind::Import {
+                visibility: Visibility::Private,
+                origin: IrImportOrigin::Standard,
+                qualifier: IrImportQualifier::Crate,
+                path,
+                alias: None,
+                items: vec![IrImportItem {
+                    name,
+                    alias: None,
+                    canonical: Some(identity),
+                    is_static: true,
+                    force_reexport: false,
+                    rust_trait_import: None,
+                }],
+            }));
+        }
+    }
+
     /// Create a new IR-based code generator
     pub fn new() -> Self {
         Self {
@@ -605,6 +1096,8 @@ impl<'a> IrCodegen<'a> {
             prechecked_main_type_info: None,
             prechecked_dependency_type_info: HashMap::new(),
             implementation_bound_requirements: Vec::new(),
+            inherent_bounds: Vec::new(),
+            callable_bounds: Vec::new(),
             metadata_root_module_path: None,
             publication_api: None,
             publication_identities: Default::default(),
@@ -742,6 +1235,100 @@ impl<'a> IrCodegen<'a> {
                         .cmp(&right.requirement.trait_source_name),
                 )
         });
+    }
+
+    /// Capture inferred inherent-implementation headers and method generics for compiled-library consumers (#1819).
+    fn capture_inherent_bounds(&mut self, module_path: Vec<String>, program: &IrProgram) {
+        let aliases = import_alias_names(program);
+        for declaration in &program.declarations {
+            let IrDeclKind::Impl(implementation) = &declaration.kind else {
+                continue;
+            };
+            if implementation.trait_name.is_some() {
+                continue;
+            }
+            let public_target = program.declarations.iter().any(|candidate| match &candidate.kind {
+                IrDeclKind::Struct(target) => {
+                    target.name == implementation.target_type && !matches!(target.visibility, Visibility::Private)
+                }
+                _ => false,
+            });
+            if !public_target {
+                continue;
+            }
+            let source_method_name = |emitted_name: &str| {
+                program
+                    .member_projections
+                    .iter()
+                    .find_map(|(owner, source_name, identity)| {
+                        (owner == &implementation.target_type
+                            && incan_semantics_core::encode_incan_symbol_identity(identity) == emitted_name)
+                            .then(|| source_name.clone())
+                    })
+                    .unwrap_or_else(|| emitted_name.to_string())
+            };
+            let captured = CapturedInherentBounds {
+                module_path: module_path.clone(),
+                target_type: implementation.target_type.clone(),
+                owner_type_params: unaliased_type_params(&implementation.type_params, &aliases),
+                methods: implementation
+                    .methods
+                    .iter()
+                    .map(|method| {
+                        (
+                            source_method_name(&method.name),
+                            unaliased_type_params(&method.type_params, &aliases),
+                        )
+                    })
+                    .collect(),
+            };
+            if !self.inherent_bounds.contains(&captured) {
+                self.inherent_bounds.push(captured);
+            }
+        }
+        self.inherent_bounds.sort_by(|left, right| {
+            left.module_path
+                .cmp(&right.module_path)
+                .then(left.target_type.cmp(&right.target_type))
+        });
+    }
+
+    /// Capture inferred bounds on exported free functions and trait methods (#1826).
+    fn capture_callable_bounds(&mut self, module_path: Vec<String>, program: &IrProgram) {
+        let aliases = import_alias_names(program);
+        for declaration in &program.declarations {
+            match &declaration.kind {
+                IrDeclKind::Function(function) if !matches!(function.visibility, Visibility::Private) => {
+                    let name = program
+                        .function_registry
+                        .source_name(&function.name)
+                        .unwrap_or(&function.name)
+                        .to_string();
+                    let captured = CapturedCallableBounds::Function {
+                        module_path: module_path.clone(),
+                        name,
+                        type_params: unaliased_type_params(&function.type_params, &aliases),
+                    };
+                    if !self.callable_bounds.contains(&captured) {
+                        self.callable_bounds.push(captured);
+                    }
+                }
+                IrDeclKind::Trait(trait_decl) if !matches!(trait_decl.visibility, Visibility::Private) => {
+                    for method in &trait_decl.methods {
+                        let captured = CapturedCallableBounds::TraitMethod {
+                            module_path: module_path.clone(),
+                            trait_name: trait_decl.name.clone(),
+                            method_name: method.name.clone(),
+                            type_params: unaliased_type_params(&method.type_params, &aliases),
+                        };
+                        if !self.callable_bounds.contains(&captured) {
+                            self.callable_bounds.push(captured);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Return the transitive local source dependency subset needed to typecheck one program.
@@ -1595,6 +2182,8 @@ impl<'a> IrCodegen<'a> {
             code,
             IrGenerationMetadata {
                 implementation_bound_requirements: std::mem::take(&mut self.implementation_bound_requirements),
+                inherent_bounds: std::mem::take(&mut self.inherent_bounds),
+                callable_bounds: std::mem::take(&mut self.callable_bounds),
                 emitted_declaration_types: std::mem::take(&mut self.emitted_declaration_types),
                 native_unions: std::mem::take(&mut self.native_unions),
                 provider_plan: self.provider_plan.clone(),
@@ -1606,6 +2195,8 @@ impl<'a> IrCodegen<'a> {
     fn try_generate_internal(&mut self, program: &'a Program) -> Result<String, GenerationError> {
         self.current_program = Some(program);
         self.implementation_bound_requirements.clear();
+        self.inherent_bounds.clear();
+        self.callable_bounds.clear();
 
         // Scan for emission-relevant features
         self.update_serde_requirement(program);
@@ -1787,6 +2378,13 @@ impl<'a> IrCodegen<'a> {
             .iter()
             .map(|(_, dep_ir)| dep_ir)
             .collect::<Vec<_>>();
+        Self::add_external_default_static_imports(
+            &mut ir_program,
+            dependency_ir_programs
+                .iter()
+                .map(|(module_path, dep_ir)| (module_path.as_slice(), dep_ir)),
+            &mut self.externally_reachable_items,
+        );
         crate::trait_bound_inference::propagate_trait_bounds_from_programs(&mut ir_program, &dependency_programs);
         let root_module_path = self.metadata_root_module_path.clone().unwrap_or_else(|| {
             ir_program
@@ -1798,8 +2396,12 @@ impl<'a> IrCodegen<'a> {
         self.native_union_origins
             .insert(root_module_path.clone(), lowering.native_publication_origins());
         self.capture_implementation_bound_requirements(root_module_path.clone(), &ir_program);
+        self.capture_inherent_bounds(root_module_path.clone(), &ir_program);
+        self.capture_callable_bounds(root_module_path.clone(), &ir_program);
         for (module_path, dependency_program) in &dependency_ir_programs {
             self.capture_implementation_bound_requirements(module_path.clone(), dependency_program);
+            self.capture_inherent_bounds(module_path.clone(), dependency_program);
+            self.capture_callable_bounds(module_path.clone(), dependency_program);
         }
         let source_module_paths = dependency_ir_programs
             .iter()
@@ -1994,9 +2596,21 @@ impl<'a> IrCodegen<'a> {
             dep_lowering.seed_struct_field_aliases(global_aliases.clone());
             let mut dep_ir = dep_lowering.lower_program(dep_ast)?;
             crate::trait_bound_inference::infer_trait_bounds(&mut dep_ir);
-            dependency_ir_programs.push(dep_ir);
+            let dep_module_path = dep_identity_path.unwrap_or_else(|| vec![dep_name.to_string()]);
+            dependency_ir_programs.push((dep_module_path, dep_ir));
         }
-        let dependency_programs = dependency_ir_programs.iter().collect::<Vec<_>>();
+        let mut reachable_items = self.externally_reachable_items.clone();
+        Self::add_external_default_static_imports(
+            &mut ir_program,
+            dependency_ir_programs
+                .iter()
+                .map(|(module_path, dep_ir)| (module_path.as_slice(), dep_ir)),
+            &mut reachable_items,
+        );
+        let dependency_programs = dependency_ir_programs
+            .iter()
+            .map(|(_, dep_ir)| dep_ir)
+            .collect::<Vec<_>>();
         crate::trait_bound_inference::propagate_trait_bounds_from_programs(&mut ir_program, &dependency_programs);
 
         // Best-effort: treat registered dependency module names as internal roots.
@@ -2016,7 +2630,7 @@ impl<'a> IrCodegen<'a> {
             let inner = svc.inner_mut();
             self.apply_canonical_emission_context(inner);
             inner.set_internal_module_roots(internal_roots);
-            inner.set_externally_reachable_items(self.externally_reachable_items.clone());
+            inner.set_externally_reachable_items(reachable_items);
             self.apply_capability_bridge_configs(inner, &ordinal_bridge, &string_try_from_bridge);
             Ok(svc.emit_program(&ir_program)?)
         } else {
@@ -2027,7 +2641,7 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_emit_zen(true);
             }
             emitter.set_needs_serde(self.needs_serde);
-            emitter.set_externally_reachable_items(self.externally_reachable_items.clone());
+            emitter.set_externally_reachable_items(reachable_items);
             self.apply_capability_bridge_configs(&mut emitter, &ordinal_bridge, &string_try_from_bridge);
             Ok(emitter.emit_program(&ir_program)?)
         }
@@ -2147,12 +2761,19 @@ impl<'a> IrCodegen<'a> {
         );
         for idx in 0..lowered_modules.len() {
             let (left, rest) = lowered_modules.split_at_mut(idx);
-            let Some((_, current_ir, tail)) = rest
+            let Some((current_path, current_ir, tail)) = rest
                 .split_first_mut()
-                .map(|((name, _path, ir), tail)| (name.clone(), ir, tail))
+                .map(|((_name, path, ir), tail)| (path.clone(), ir, tail))
             else {
                 continue;
             };
+            Self::add_external_default_static_imports(
+                current_ir,
+                left.iter()
+                    .chain(tail.iter())
+                    .map(|(_, module_path, ir)| (module_path.as_slice(), ir)),
+                dependency_reachable_items.entry(current_path).or_default(),
+            );
             let external_programs: Vec<&incan_ir::IrProgram> = left
                 .iter()
                 .map(|(_, _, ir)| ir)
@@ -2338,6 +2959,8 @@ impl<'a> IrCodegen<'a> {
             generated,
             IrGenerationMetadata {
                 implementation_bound_requirements: std::mem::take(&mut self.implementation_bound_requirements),
+                inherent_bounds: std::mem::take(&mut self.inherent_bounds),
+                callable_bounds: std::mem::take(&mut self.callable_bounds),
                 emitted_declaration_types: std::mem::take(&mut self.emitted_declaration_types),
                 native_unions: std::mem::take(&mut self.native_unions),
                 provider_plan: self.provider_plan.clone(),
@@ -2461,12 +3084,19 @@ impl<'a> IrCodegen<'a> {
         );
         for idx in 0..lowered_modules.len() {
             let (left, rest) = lowered_modules.split_at_mut(idx);
-            let Some((_, current_ir, tail)) = rest
+            let Some((current_path, current_ir, tail)) = rest
                 .split_first_mut()
                 .map(|((path, ir), tail)| (path.clone(), ir, tail))
             else {
                 continue;
             };
+            Self::add_external_default_static_imports(
+                current_ir,
+                left.iter()
+                    .chain(tail.iter())
+                    .map(|(module_path, ir)| (module_path.as_slice(), ir)),
+                dependency_reachable_items.entry(current_path).or_default(),
+            );
             let external_programs: Vec<&incan_ir::IrProgram> = left
                 .iter()
                 .map(|(_, ir)| ir)
@@ -2759,6 +3389,313 @@ pub model Stream[R] with Walk:
             })),
             "the checked root adoption must receive its inferred implementation header"
         );
+    }
+
+    /// Issue #1819: compiled-library metadata publishes the inferred inherent impl header and method-generic bounds
+    /// that its generated Rust requires.
+    #[test]
+    fn compiled_library_inherent_method_bounds_reach_manifest_issue1819() -> Result<(), Box<dyn std::error::Error>> {
+        use incan_frontend::api_metadata::{
+            CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
+        };
+        use incan_frontend::library_exports::collect_checked_public_exports;
+        use incan_frontend::typechecker::TypeChecker;
+
+        let source = r#"
+pub model Holder[V]:
+    pub value: V
+
+    def show(self) -> str:
+        return f"{self.value}"
+
+    def render[T](self, value: T) -> str:
+        return f"{value}"
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lex errors: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parse errors: {errors:?}"))?;
+        let module_path = vec!["holders".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(module_path.clone()));
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("check errors: {errors:?}"))?;
+        let exports = collect_checked_public_exports(&ast, &checker);
+        let mut manifest = LibraryManifest::from_checked_exports("holders", "0.1.0", &exports);
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![collect_checked_api_metadata(&ast, &checker, module_path.clone())],
+            public_namespaces: Vec::new(),
+        });
+
+        let (_, metadata) = IrCodegen::new().try_generate_with_metadata(&ast, &module_path)?;
+        metadata.apply_to_library_manifest(&mut manifest)?;
+        let holder = manifest
+            .exports
+            .models
+            .iter()
+            .find(|model| model.name == "Holder")
+            .ok_or("missing Holder export")?;
+        let owner_bounds = holder
+            .type_params
+            .iter()
+            .find(|param| param.name == "V")
+            .ok_or("missing Holder.V")?;
+        assert!(
+            owner_bounds
+                .bounds
+                .iter()
+                .any(|bound| bound.name == incan_lang::lang::trait_bounds::rust::DISPLAY && bound.inferred),
+            "Holder.V must publish the inferred Display impl-header bound: {owner_bounds:?}"
+        );
+        let render_bounds = holder
+            .methods
+            .iter()
+            .find(|method| method.name == "render")
+            .and_then(|method| method.type_params.iter().find(|param| param.name == "T"))
+            .ok_or("missing Holder.render.T")?;
+        assert!(
+            render_bounds
+                .bounds
+                .iter()
+                .any(|bound| bound.name == incan_lang::lang::trait_bounds::rust::DISPLAY && bound.inferred),
+            "Holder.render.T must publish its inferred Display bound: {render_bounds:?}"
+        );
+        Ok(())
+    }
+
+    /// Issue #1826: inferred bounds on compiled free functions and trait methods survive publication, and a consumer
+    /// must declare the forwarded bound instead of reaching rustc with an under-bounded generic signature.
+    #[test]
+    fn compiled_callable_bounds_reach_consumer_issue1826() -> Result<(), Box<dyn std::error::Error>> {
+        use incan_frontend::api_metadata::{
+            CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
+        };
+        use incan_frontend::library_exports::collect_checked_public_exports;
+        use incan_frontend::library_manifest_index::{
+            LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
+        };
+        use incan_frontend::typechecker::TypeChecker;
+
+        let source = r#"
+pub def first[K](items: list[K]) -> K:
+    return items[0]
+
+pub trait Picker:
+    def pick[K](self, items: list[K]) -> K:
+        return items[0]
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lex errors: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parse errors: {errors:?}"))?;
+        let module_path = vec!["lib".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(module_path.clone()));
+        checker.set_current_package_identity(Some("picks".to_string()));
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("producer check errors: {errors:?}"))?;
+        let exports = collect_checked_public_exports(&ast, &checker);
+        let mut manifest = LibraryManifest::from_checked_exports("picks", "0.1.0", &exports);
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![collect_checked_api_metadata(&ast, &checker, module_path.clone())],
+            public_namespaces: Vec::new(),
+        });
+        let mut codegen = IrCodegen::new();
+        codegen.set_prechecked_type_info(checker.type_info().clone(), HashMap::new());
+        let (_, metadata) = codegen.try_generate_with_metadata(&ast, &module_path)?;
+        metadata.apply_to_library_manifest(&mut manifest)?;
+
+        let clone_bound = |type_params: &[TypeParamExport], name: &str| {
+            type_params.iter().any(|param| {
+                param.name == name
+                    && param
+                        .bounds
+                        .iter()
+                        .any(|bound| bound.name == incan_lang::lang::trait_bounds::rust::CLONE && bound.inferred)
+            })
+        };
+        let first = manifest
+            .exports
+            .functions
+            .iter()
+            .find(|function| function.name == "first")
+            .ok_or("missing first export")?;
+        assert!(clone_bound(&first.type_params, "K"), "first.K lost Clone: {first:?}");
+        let pick = manifest
+            .exports
+            .traits
+            .iter()
+            .find(|trait_export| trait_export.name == "Picker")
+            .and_then(|trait_export| trait_export.methods.iter().find(|method| method.name == "pick"))
+            .ok_or("missing Picker.pick export")?;
+        assert!(
+            clone_bound(&pick.type_params, "K"),
+            "Picker.pick.K lost Clone: {pick:?}"
+        );
+
+        let index = LibraryManifestIndex::from_entries(HashMap::from([(
+            "picks".to_string(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(manifest),
+                metadata: LibraryArtifactMetadata::from_crate_root(
+                    "picks",
+                    "picks",
+                    std::env::temp_dir().join("issue1826_picks"),
+                ),
+            },
+        )]));
+        let consumer_source = r#"
+from pub::picks import first, Picker
+
+def head[T](items: list[T]) -> T:
+    return first(items)
+
+def chosen[T, P with Picker](picker: P, items: list[T]) -> T:
+    return picker.pick(items)
+"#;
+        let consumer_tokens =
+            lexer::lex(consumer_source).map_err(|errors| format!("consumer lex errors: {errors:?}"))?;
+        let consumer =
+            parser::parse(&consumer_tokens).map_err(|errors| format!("consumer parse errors: {errors:?}"))?;
+        let mut consumer_checker = TypeChecker::new();
+        consumer_checker.set_library_manifest_index(index);
+        let Err(errors) = consumer_checker.check_program(&consumer) else {
+            return Err("an under-bounded consumer must be refused before Rust emission".into());
+        };
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains(incan_lang::lang::traits::as_str(
+                    incan_lang::lang::traits::TraitId::Clone
+                ))),
+            "consumer diagnostic must name Clone: {errors:?}"
+        );
+        Ok(())
+    }
+
+    /// Issue #1826: source-declared bounds are not republished as inferred ones. The emitted IR spells a bound over a
+    /// trait's own type parameter (`Callable1[E, F]`) with `E` as a nominal name, which an adopter's type arguments
+    /// never replace, and a bound declared through an import alias by the alias, which a consumer cannot resolve; a
+    /// consumer calling a default through an adopter must see only the declared bound the adoption instantiates.
+    #[test]
+    fn declared_trait_method_bounds_are_not_republished_as_inferred_issue1826() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use incan_frontend::api_metadata::{
+            CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, collect_checked_api_metadata,
+        };
+        use incan_frontend::library_exports::collect_checked_public_exports;
+        use incan_frontend::library_manifest_index::{
+            LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
+        };
+        use incan_frontend::typechecker::TypeChecker;
+
+        let source = r#"
+from std.traits.callable import Callable1
+from std.traits.callable import Callable1 as Mapper
+
+
+pub def apply[F with Mapper[int, int]](f: F, value: int) -> int:
+    return f(value)
+
+
+pub trait Failing[E]:
+    def failure(self) -> E: ...
+
+    def describe[F with Clone, Describe with (Clone, Callable1[E, F])](self, f: Describe) -> F:
+        return f(self.failure())
+
+
+pub model Lookup with Failing[str]:
+    pub key: str
+
+    def failure(self) -> str:
+        return self.key
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lex errors: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parse errors: {errors:?}"))?;
+        let module_path = vec!["lib".to_string()];
+        let mut checker = TypeChecker::new();
+        checker.set_current_module_path(Some(module_path.clone()));
+        checker.set_current_package_identity(Some("failing".to_string()));
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("producer check errors: {errors:?}"))?;
+        let exports = collect_checked_public_exports(&ast, &checker);
+        let mut manifest = LibraryManifest::from_checked_exports("failing", "0.1.0", &exports);
+        manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+            schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+            package: None,
+            modules: vec![collect_checked_api_metadata(&ast, &checker, module_path.clone())],
+            public_namespaces: Vec::new(),
+        });
+        let mut codegen = IrCodegen::new();
+        codegen.set_prechecked_type_info(checker.type_info().clone(), HashMap::new());
+        let (_, metadata) = codegen.try_generate_with_metadata(&ast, &module_path)?;
+        metadata.apply_to_library_manifest(&mut manifest)?;
+
+        let describe = manifest
+            .exports
+            .traits
+            .iter()
+            .find(|trait_export| trait_export.name == "Failing")
+            .and_then(|trait_export| trait_export.methods.iter().find(|method| method.name == "describe"))
+            .ok_or("missing Failing.describe export")?;
+        let republished = describe
+            .type_params
+            .iter()
+            .flat_map(|param| param.bounds.iter().filter(|bound| bound.inferred))
+            .collect::<Vec<_>>();
+        assert!(
+            republished.is_empty(),
+            "declared bounds must not be republished as inferred: {republished:?}"
+        );
+        let apply = manifest
+            .exports
+            .functions
+            .iter()
+            .find(|function| function.name == "apply")
+            .ok_or("missing apply export")?;
+        let aliased = apply
+            .type_params
+            .iter()
+            .flat_map(|param| param.bounds.iter().filter(|bound| bound.inferred))
+            .collect::<Vec<_>>();
+        assert!(
+            aliased.is_empty(),
+            "a bound declared through an import alias must not be republished as inferred: {aliased:?}"
+        );
+
+        let index = LibraryManifestIndex::from_entries(HashMap::from([(
+            "failing".to_string(),
+            LibraryManifestIndexEntry::Loaded {
+                manifest: Box::new(manifest),
+                metadata: LibraryArtifactMetadata::from_crate_root(
+                    "failing",
+                    "failing",
+                    std::env::temp_dir().join("issue1826_failing"),
+                ),
+            },
+        )]));
+        let consumer_source = r#"
+from pub::failing import Lookup
+
+
+def main() -> None:
+    lookup = Lookup(key="missing")
+    println(lookup.describe((error) => len(error)))
+"#;
+        let consumer_tokens =
+            lexer::lex(consumer_source).map_err(|errors| format!("consumer lex errors: {errors:?}"))?;
+        let consumer =
+            parser::parse(&consumer_tokens).map_err(|errors| format!("consumer parse errors: {errors:?}"))?;
+        let mut consumer_checker = TypeChecker::new();
+        consumer_checker.set_library_manifest_index(index);
+        consumer_checker
+            .check_program(&consumer)
+            .map_err(|errors| format!("the adopter's default must check against its declared bounds: {errors:?}"))?;
+        Ok(())
     }
 
     #[test]
@@ -5017,6 +5954,253 @@ def main() -> None:
             !facade_code.contains("provider::COUNTER") && !main_code.contains("facade::COUNTER"),
             "static import/reexport fell back to a source spelling:\nfacade:\n{facade_code}\nconsumer:\n{main_code}"
         );
+        Ok(())
+    }
+
+    /// Issue #1839: a public static re-export wins over an earlier private import of the same projection, and a later
+    /// private import keeps the imported-static initializer needed by reads in the facade itself.
+    #[test]
+    fn static_reexport_and_repeat_import_keep_projection_and_initializer_issue1839()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let provider = parse_program_result("pub static counter: int = 1\n")?;
+        let provider_path = vec!["sprov".to_string()];
+
+        let facade =
+            parse_program_result("from sprov import counter\npub from sprov import counter as counter_alias\n")?;
+        let main = parse_program_result(
+            "from facade import counter_alias\n\n\ndef main() -> None:\n  println(counter_alias)\n",
+        )?;
+        let facade_path = vec!["facade".to_string()];
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("sprov", &provider, provider_path.clone());
+        codegen.add_module_with_path_segments("facade", &facade, facade_path.clone());
+        let (main_code, modules) =
+            codegen.try_generate_multi_file_nested(&main, &[provider_path.clone(), facade_path.clone()])?;
+        let provider_code = modules.get(&provider_path).ok_or("missing generated provider module")?;
+        let facade_code = modules.get(&facade_path).ok_or("missing generated facade module")?;
+        let projection = provider_code
+            .lines()
+            .find_map(|line| {
+                line.trim_start()
+                    .strip_prefix("pub static __incan_v1_")
+                    .and_then(|tail| tail.split(':').next())
+                    .map(|payload| format!("__incan_v1_{payload}"))
+            })
+            .ok_or("provider static did not emit an incan-v1 projection")?;
+        assert!(
+            facade_code.contains(&format!("pub use crate::sprov::{projection} as COUNTER_ALIAS;")),
+            "the facade must bind the projection publicly through its alias:\n{facade_code}"
+        );
+        let projection_imports = facade_code
+            .lines()
+            .filter(|line| line.contains(&projection) && line.contains("use"))
+            .collect::<Vec<_>>();
+        assert!(
+            projection_imports
+                .first()
+                .is_some_and(|line| line.trim_start().starts_with("pub use")),
+            "the public static binder must precede the private repeat: {projection_imports:?}\n{facade_code}"
+        );
+        assert!(
+            main_code.contains(&projection),
+            "the consumer must reach the provider projection through the facade:\n{main_code}"
+        );
+
+        let facade = parse_program_result(
+            "pub from sprov import counter as counter_alias\nfrom sprov import counter\n\n\npub def read() -> int:\n  return counter\n",
+        )?;
+        let main = parse_program_result("from facade import read\n\n\ndef main() -> None:\n  println(read())\n")?;
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("sprov", &provider, provider_path.clone());
+        codegen.add_module_with_path_segments("facade", &facade, facade_path.clone());
+        let (_, modules) = codegen.try_generate_multi_file_nested(&main, &[provider_path, facade_path.clone()])?;
+        let facade_code = modules.get(&facade_path).ok_or("missing generated facade module")?;
+        assert!(
+            facade_code.contains("__incan_init_imported_static_counter"),
+            "the repeated private import must retain the static initializer import:\n{facade_code}"
+        );
+        Ok(())
+    }
+
+    /// Return Cargo's build-script and unit output directories under one target profile's `build` directory.
+    fn build_output_directories(build_directory: &std::path::Path) -> Result<Vec<std::path::PathBuf>, std::io::Error> {
+        let mut outputs = Vec::new();
+        for package in std::fs::read_dir(build_directory)? {
+            let package = package?;
+            for fingerprint in std::fs::read_dir(package.path())? {
+                let output = fingerprint?.path().join("out");
+                if output.is_dir() {
+                    outputs.push(output);
+                }
+            }
+        }
+        Ok(outputs)
+    }
+
+    /// Find the newest artifact whose file name satisfies `predicate` in any of `directories`.
+    fn newest_artifact(
+        directories: &[std::path::PathBuf],
+        predicate: impl Fn(&str) -> bool,
+    ) -> Result<Option<std::path::PathBuf>, std::io::Error> {
+        let mut matches = Vec::new();
+        for directory in directories {
+            for entry in std::fs::read_dir(directory)? {
+                let entry = entry?;
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else {
+                    continue;
+                };
+                if predicate(name) {
+                    let modified = entry.metadata().and_then(|metadata| metadata.modified()).ok();
+                    matches.push((modified, entry.path()));
+                }
+            }
+        }
+        matches.sort_by_key(|(modified, _)| *modified);
+        Ok(matches.pop().map(|(_, path)| path))
+    }
+
+    /// Compile a generated multi-file project as one library crate against the runtime this test binary links, so the
+    /// assertion is rustc's. Each source module is written beside the crate root and declared from it, the layout a
+    /// project build gives top-level modules.
+    fn compile_generated_project(
+        main_code: &str,
+        modules: &HashMap<Vec<String>, String>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let mut crate_root = main_code.to_string();
+        for (path, code) in modules {
+            let [name] = path.as_slice() else {
+                return Err(format!("only top-level modules are laid out here, not `{}`", path.join(".")).into());
+            };
+            crate_root.push_str(&format!("\nmod {name};\n"));
+            std::fs::write(directory.path().join(format!("{name}.rs")), code)?;
+        }
+        let input = directory.path().join("main.rs");
+        std::fs::write(&input, &crate_root)?;
+        let capability = oven_model::compiler_suite_env::OvenCompilerSuiteCapability::from_environment(
+            oven_model::compiler_suite_env::OVEN_COMPILER_SUITE_CAPABILITY_ENV,
+        )?;
+        let rustc = capability
+            .as_ref()
+            .map(|capability| capability.rustc.clone())
+            .unwrap_or_else(|| {
+                std::env::var_os("RUSTC")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| "rustc".into())
+            });
+        let mut command = std::process::Command::new(rustc);
+        command.args([
+            "--edition=2024",
+            "--crate-type=lib",
+            "--crate-name=generated_project_fixture",
+            "-A",
+            "warnings",
+        ]);
+        if let Some(capability) = capability {
+            for path in capability.dependency_search_paths {
+                command.arg("-L").arg(format!("dependency={}", path.display()));
+            }
+            for (name, path) in capability.externs {
+                command.arg("--extern").arg(format!("{name}={}", path.display()));
+            }
+        } else {
+            let executable = std::env::current_exe()?;
+            let target_profile = executable
+                .ancestors()
+                .find(|ancestor| ancestor.join("build").is_dir())
+                .ok_or("test executable has no target profile directory")?;
+            let mut directories = build_output_directories(&target_profile.join("build"))?;
+            let deps = target_profile.join("deps");
+            if deps.is_dir() {
+                directories.push(deps);
+            }
+            for directory in &directories {
+                command.arg("-L").arg(format!("dependency={}", directory.display()));
+            }
+            let stdlib = newest_artifact(&directories, |name| {
+                name.starts_with("libincan_std_core-") && name.ends_with(".rlib")
+            })?
+            .ok_or("generated-Rust proof requires a compiled incan_std_core artifact")?;
+            command
+                .arg("--extern")
+                .arg(format!("incan_std_core={}", stdlib.display()));
+            let derive = newest_artifact(&directories, |name| {
+                name.trim_start_matches("lib").starts_with("incan_derive-")
+                    && std::path::Path::new(name)
+                        .extension()
+                        .and_then(|extension| extension.to_str())
+                        == Some(std::env::consts::DLL_EXTENSION)
+            })?
+            .ok_or("generated-Rust proof requires a compiled incan_derive artifact")?;
+            command
+                .arg("--extern")
+                .arg(format!("incan_derive={}", derive.display()));
+        }
+        let output = directory.path().join("libgenerated_project_fixture.rlib");
+        let result = command.arg(&input).arg("-o").arg(output).output()?;
+        let sources = modules
+            .iter()
+            .map(|(path, code)| format!("// ---- {} ----\n{code}", path.join(".")))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            result.status.success(),
+            "{}\n// ---- crate root ----\n{crate_root}\n{sources}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        Ok(())
+    }
+
+    /// Issue #1842: a default evaluated at a caller in another module keeps the static projection and initializer of
+    /// the module that declares the callable. The caller may be the crate root or another source module, whose IR is
+    /// emitted on its own; both projects must build.
+    #[test]
+    fn cross_module_default_reading_static_keeps_projection_issue1842() -> Result<(), Box<dyn std::error::Error>> {
+        let helpers =
+            parse_program_result("pub static COUNT: int = 3\n\npub def take(n: int = COUNT) -> int:\n  return n\n")?;
+        let helpers_path = vec!["helpers".to_string()];
+        let static_projection = |helpers_code: &str| {
+            helpers_code
+                .lines()
+                .find_map(|line| {
+                    line.trim_start()
+                        .strip_prefix("pub static __incan_v1_")
+                        .and_then(|tail| tail.split(':').next())
+                        .map(|payload| format!("__incan_v1_{payload}"))
+                })
+                .ok_or("helper static did not emit an incan-v1 projection")
+        };
+
+        // ---- The crate root calls the helper ----
+        let main = parse_program_result("from helpers import take\n\n\ndef main() -> None:\n  println(take())\n")?;
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("helpers", &helpers, helpers_path.clone());
+        let (main_code, modules) =
+            codegen.try_generate_multi_file_nested(&main, std::slice::from_ref(&helpers_path))?;
+        let projection = static_projection(modules.get(&helpers_path).ok_or("missing generated helpers module")?)?;
+        assert!(
+            main_code.contains(&projection) && main_code.contains("__incan_init_imported_static_count"),
+            "the caller must bind and initialize the default's static projection:\n{main_code}"
+        );
+        compile_generated_project(&main_code, &modules)?;
+
+        // ---- Another source module calls the helper ----
+        let caller = parse_program_result("from helpers import take\n\n\npub def run() -> int:\n  return take()\n")?;
+        let main = parse_program_result("from caller import run\n\n\ndef main() -> None:\n  println(run())\n")?;
+        let caller_path = vec!["caller".to_string()];
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("helpers", &helpers, helpers_path.clone());
+        codegen.add_module_with_path_segments("caller", &caller, caller_path.clone());
+        let (main_code, modules) =
+            codegen.try_generate_multi_file_nested(&main, &[helpers_path.clone(), caller_path.clone()])?;
+        let projection = static_projection(modules.get(&helpers_path).ok_or("missing generated helpers module")?)?;
+        let caller_code = modules.get(&caller_path).ok_or("missing generated caller module")?;
+        assert!(
+            caller_code.contains(&projection) && caller_code.contains("__incan_init_imported_static_count"),
+            "a source-module caller must bind and initialize the default's static projection:\n{caller_code}"
+        );
+        compile_generated_project(&main_code, &modules)?;
         Ok(())
     }
 

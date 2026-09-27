@@ -1557,11 +1557,16 @@ impl AstLowering {
                 // Otherwise, expand a default method body into the impl (RFC 000: defaults may assume adopter fields).
                 if trait_method.node.body.is_some() {
                     let helper_paths = self.trait_default_function_paths.get(trait_name).cloned();
+                    let const_paths = self.trait_default_const_paths.get(trait_name).cloned();
                     let type_paths = self.trait_default_type_paths.get(trait_name).cloned();
                     let has_helper_paths = helper_paths.is_some();
+                    let has_const_paths = const_paths.is_some();
                     let has_type_paths = type_paths.is_some();
                     if let Some(helper_paths) = helper_paths {
                         self.active_trait_default_function_paths.push(helper_paths);
+                    }
+                    if let Some(const_paths) = const_paths {
+                        self.active_trait_default_const_paths.push(const_paths);
                     }
                     if let Some(type_paths) = type_paths {
                         self.active_trait_default_type_paths.push(type_paths);
@@ -1579,6 +1584,9 @@ impl AstLowering {
                     self.active_imported_trait_defaults.pop();
                     if has_type_paths {
                         self.active_trait_default_type_paths.pop();
+                    }
+                    if has_const_paths {
+                        self.active_trait_default_const_paths.pop();
                     }
                     if has_helper_paths {
                         self.active_trait_default_function_paths.pop();

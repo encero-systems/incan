@@ -159,6 +159,45 @@ fn imported_trait_default_type_path_follows_the_declaring_module_issue1759() -> 
     Ok(())
 }
 
+/// Issue #1873: a constant read by an imported trait default keeps the trait module as its owner when the default is
+/// expanded into an adopter in another module.
+#[test]
+fn imported_trait_default_const_follows_the_declaring_module_issue1873() -> Result<(), String> {
+    let shapes = r#"
+const LIMIT: int = 7
+
+pub trait Measured:
+    def limit(self) -> int:
+        return LIMIT
+"#;
+    let main = r#"
+from shapes import Measured
+
+model Box with Measured:
+    value: int
+"#;
+    let ir = lower_main_with_dependency(main, "shapes", &["shapes"], shapes)?;
+    let limit = trait_impl_method(&ir, "Box", "Measured", "limit")?;
+    let Some(IrStmt {
+        kind: IrStmtKind::Return(Some(value)),
+        ..
+    }) = limit.body.last()
+    else {
+        return Err(format!("`limit` must return the module constant: {:?}", limit.body));
+    };
+    assert!(
+        matches!(&value.kind,
+            IrExprKind::Field { object, field } if field == "LIMIT"
+                && matches!(&object.kind,
+                    IrExprKind::Field { object, field } if field == "shapes"
+                        && matches!(&object.kind, IrExprKind::Var { name, .. } if name == "crate")
+                )
+        ),
+        "the imported default must read `crate::shapes::LIMIT`: {value:?}"
+    );
+    Ok(())
+}
+
 /// #1759: the type paths are a fact of the trait's module, so a module without traits contributes none and a trait
 /// module lists its models, classes, enums and newtypes, and not its traits or transparent aliases.
 #[test]

@@ -90,3 +90,47 @@ fn dependency_method_union_results_convert_into_the_consumers_unions_issue1797()
     );
     Ok(())
 }
+
+/// #1835: a dependency function or method returning a union that contains `None` converts the present payload from
+/// the provider's union wrapper into the consumer's union wrapper when passed as a whole `Option[union]` argument.
+#[test]
+fn dependency_optional_union_results_convert_into_consumer_options_issue1835() -> TestResult {
+    let provider = r#"
+pub def read() -> int | str | None:
+    return 1
+
+pub model Reader:
+    def read(self) -> int | str | None:
+        return "method"
+"#;
+    let consumer = r#"
+from pub::optional_values import read, Reader
+
+def show(value: Option[int | str]) -> None:
+    println(value)
+
+def main() -> None:
+    show(read())
+    show(Reader().read())
+"#;
+    let (manifest, provider_code) = publish_package("optional_values", provider, &[])?;
+    let wrapper = provider_code
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("pub enum __IncanUnion"))
+        .and_then(|tail| tail.split_whitespace().next())
+        .map(|hash| format!("__IncanUnion{hash}"))
+        .ok_or_else(|| format!("the provider defines no union wrapper:\n{provider_code}"))?;
+    let consumer = parse(consumer)?;
+    let mut codegen = IrCodegen::new();
+    codegen.set_provider_plan(Arc::new(provider_plan_of(&[&manifest])?));
+    let code = codegen.try_generate(&consumer)?;
+    let compacted = compact(&code);
+    let converted =
+        format!(".map(|__incan_option_union_value|match__incan_option_union_value{{::optional_values::{wrapper}::V0");
+    assert_eq!(
+        compacted.matches(&converted).count(),
+        2,
+        "both dependency Option results must map their provider union into the consumer union:\n{code}"
+    );
+    Ok(())
+}
