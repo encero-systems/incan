@@ -715,6 +715,10 @@ pub struct ExpressionArtifacts {
     /// The binding is typechecked like an ordinary immutable `Logger` value, but lowering must materialize it as a
     /// module-local `std.logging.get_logger(...)` call so source metadata can become the logger name.
     pub ambient_logger_bindings: HashSet<(usize, usize)>,
+    /// Values of chained assignments that each target gets its own evaluation of, keyed by the value span (#1806).
+    pub chained_values_written_per_target: HashSet<(usize, usize)>,
+    /// Values of chained assignments whose already-bound targets all have one type, keyed by the value span (#1806).
+    pub chained_values_of_agreeing_targets: HashSet<(usize, usize)>,
     /// RFC 017 validated-newtype coercion decisions keyed by source expression span.
     ///
     /// Lowering consumes these decisions when an expression is used at an approved implicit-coercion site, such as a

@@ -423,3 +423,24 @@ fn test_parse_for_tuple_unpack_binding() {
     assert_eq!(items[0].node, Pattern::Binding("idx".to_string()));
     assert_eq!(items[1].node, Pattern::Binding("name".to_string()));
 }
+
+#[test]
+fn test_parse_refuses_an_annotated_chained_assignment_issue1806() -> Result<(), Vec<CompileError>> {
+    // An annotation declares one binding, so `x: Option[int] = y = 5` is refused rather than dropping the annotation.
+    let Err(errors) = parse_str("def f() -> None:\n  x: Option[int] = y = 5\n") else {
+        return Err(vec![CompileError::new(
+            "parser test internal error: an annotated chain must not parse".to_string(),
+            Span::default(),
+        )]);
+    };
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("A type annotation applies to one assignment target")),
+        "expected the annotated-chain refusal, got {errors:?}"
+    );
+
+    // Without the annotation the chain parses, and an annotated single assignment still parses.
+    parse_str("def f() -> None:\n  x = y = 5\n  z: int = 5\n")?;
+    Ok(())
+}

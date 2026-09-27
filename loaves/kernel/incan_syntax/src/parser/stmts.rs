@@ -916,7 +916,9 @@ impl<'a> Parser<'a> {
         Ok(Spanned::new(Pattern::Binding(name), span))
     }
 
-    /// Parse a named assignment or tuple-unpacking statement.
+    /// Parse a named assignment, chained assignment or tuple-unpacking statement.
+    ///
+    /// A type annotation declares one binding, so an annotated chain (`x: T = y = value`) is refused.
     fn assignment_stmt(&mut self) -> Result<Statement, CompileError> {
         let binding = if self.match_token(&TokenKind::Keyword(KeywordId::Let)) {
             BindingKind::Let
@@ -963,6 +965,9 @@ impl<'a> Parser<'a> {
         let mut target_spans = vec![name.span];
         while let TokenKind::Ident(_) = &self.peek().kind {
             if self.peek_next().kind == TokenKind::Operator(OperatorId::Eq) {
+                if let Some(annotation) = &ty {
+                    return Err(errors::annotated_chained_assignment(annotation.span));
+                }
                 let target = self.identifier_spanned()?;
                 targets.push(target.node);
                 target_spans.push(target.span);

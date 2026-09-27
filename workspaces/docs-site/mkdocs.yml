@@ -175,6 +175,7 @@ nav:
           - Language reference (generated): language/reference/language.md
           - Feature inventory (generated): language/reference/feature_inventory.md
           - Code style guide: language/reference/code_style.md
+          - Assignments: language/reference/assignments.md
           - Functions and calls: language/reference/functions.md
           - Generators: language/reference/generators.md
           - Symbol aliases: language/reference/symbol_aliases.md
