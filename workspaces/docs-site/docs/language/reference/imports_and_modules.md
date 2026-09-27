@@ -1,529 +1,198 @@
 # Imports and modules (reference)
 
-This page is the reference for import syntax, path rules, and prelude contents.
+This page specifies import forms, module paths and files, what an import binds, re-exports, package namespaces, the `std` root, soft keywords, and Rust crate imports. Refusals of an import are reported with `INCAN-I0001`, and syntax errors with `INCAN-P0001`, unless a rule below names another code.
 
-If you want the conceptual overview, see: [Imports and modules](imports_and_modules.md).
+## Import forms
 
-## Import syntax
+| Form | Binds |
+| --- | --- |
+| `from M import a, b as c` | `a` and `c` |
+| `from M import (a, b as c,)` | The same; the list may span lines and end with a comma |
+| `import M`, `import M as x` | The module `M`, as the last segment of its path, or as `x` |
+| `import M::item`, `import M.item`, `import M::item as x` | The declaration `item` of `M` when `M::item` is not a module; otherwise the module `M::item` |
 
-Incan supports two styles that can be mixed freely.
-
-### Python-style: `from module import ...`
-
-```incan
-# Import multiple items at once
-from models import User, Product, Order
-
-# Import with aliases
-from utils import format_currency as fmt, validate_email as check_email
-```
-
-### Parenthesized import lists (single-line or multi-line)
-
-Use parentheses when the list is long or for readability. This works for both regular modules and `rust::` imports.
+- `.` and `::` are interchangeable between path segments. After `pub`, the separator is `::`; `pub.` is refused (`INCAN-P0001`). After `rust`, `.` is accepted with a warning.
+- `import a.b.c` binds `c`.
+- Refused (`INCAN-P0001`): a wildcard, `from M import *`, and an empty list, `from M import ()`.
 
 ```incan
-from some_lib import (
-  module_a as A,
-  module_b,
-  module_c as C,
-  module_d,
-)
-
-from rust::polars import (
-  A,
-  B as b,
-  pandas as pd,
-  foo,
-)
+from models import User, Product as Item      # accepted
+from utils import (
+    format_currency as fmt,
+    validate_email,
+)                                             # accepted
+import db.models                              # accepted: binds models
+import db::models::User                       # accepted: binds User
+from models import *                          # refused: wildcard (INCAN-P0001)
 ```
 
-Trailing commas are allowed in parenthesized lists.
+## Module paths
 
-### Rust-style: `import module::item`
+| Path | Resolves from |
+| --- | --- |
+| `models`, `db.models`, `db::models` | The importing file's directory, then the source root |
+| `..common`, `super::common` | The parent of the importing file's directory |
+| `...common`, `super::super::common` | Two directories above the importing file's directory |
+| `crate.config`, `crate::config` | The source root |
+| `pub::pkg`, `pub::pkg.sub` | The dependency package `pkg` (see [Package namespaces](#package-namespaces)) |
+| `std.name` | The Incan standard library (see [The `std` root](#the-std-root)) |
+| `rust::crate::item` | The Rust crate `crate`; `rust::std::...` is the Rust standard library |
+
+- A run of `n` leading dots climbs `n - 1` directories. Each `super` climbs one. A single leading `.` is refused (`INCAN-P0001`).
+- The source root is the `[build] source-root` of `loaf.toml`; else the project's `src/` directory, when present; else the project root, the directory that holds `loaf.toml`.
+- Modules may import each other in a cycle. A module that imports itself is refused (`INCAN-T0001`).
+
+A module path `a.b` names the first of these files that exists: `a/b.incn`, `a/b.incan`, `a/b/mod.incn`, `a/b/mod.incan`, `a/b/__init__.incn`, `a/b/__init__.incan`.
 
 ```incan
-# Import a specific item
-import models::User
+# store/relative.incn
+from ..db.schema import Database          # accepted: db/schema.incn, beside store/
+from super::db::schema import Database    # accepted: the same module
 
-# Import with an alias
-import utils::format_currency as fmt
+# app/store/nested.incn
+from ...db.schema import Database         # accepted: db/schema.incn, two directories above app/store/
 ```
 
-### Module bindings: `import module` and `module.Member`
+## Bindings
+
+### Module bindings
+
+`import models` binds the module. Its public functions are called through the binding, `models.parse(path)`, and its public types and traits are named through it in any annotation: `models.Config` is the declaration `from models import Config` binds.
+
+Refused (`INCAN-T0001`): a qualified annotation whose root is not a module binding, or whose member is not a type or trait the module declares. The C namespace bound by `from std.interop import c` is not a module binding; its spellings, such as `c.i32`, follow [Checked C bindings](../how-to/checked_c_bindings.md).
 
 ```incan
 import models
-from std import toml
 
-def load(path: str) -> Result[models.Config, toml.TomlError]:
+def load(path: str) -> models.Config:     # accepted
     return models.parse(path)
 ```
 
-A plain `import module` binds the module itself. Its public functions are called through the binding (`models.parse(path)`), and its public types are named through it in annotations: `models.Config` in any annotation position (a parameter, a return type, a local binding, a field, or a generic argument) denotes the same declaration as `from models import Config` followed by `Config`, and values checked against either spelling are interchangeable. The root must be a module binding and the member must be a type or trait the module declares; any other qualified spelling in type position is a compile-time error at the annotation. The C interop namespace bound by `from std.interop import c` is not a module binding; its carrier spellings such as `c.i32` belong to checked C bindings and are not refused by this rule.
+### Collisions
 
-### Imported names and core builtin functions
-
-An explicit import creates a normal binding in the importing module. If it has the same spelling as an ordinary ambient core builtin function, the import wins for unqualified calls. This lets a domain library use a natural name without an alias solely to avoid a builtin collision. The output spellings `print` and `println` are immutable language functions rather than fallback bindings, so a declaration or import cannot replace either one.
+- An import binds its local name in the module scope, beside the module's declarations.
+- A second binding of a name in the same scope is refused: a repeated import of the same declaration as a duplicate, and an import of a different declaration as ambiguous. The first binding stays in effect.
+- `std` and `rust` cannot be bound as local names, by a declaration or an import (`INCAN-T0001` on a declaration). `import rust::std` without `as` binds `std` and is refused.
 
 ```incan
-# aggregates.incn
-pub def sum(value: int) -> int:
-  return value + 1
+import codecs.prelude as codecs_prelude
+import compression.prelude as compression_prelude   # accepted: distinct local names
+import models as std                                # refused: std is reserved
+```
 
+### Builtin functions
+
+- An import with the name of a builtin function, such as `sum`, is what an unqualified call of that name calls.
+- `std.builtins.<name>` always calls the builtin function `name`.
+- `print` and `println` cannot be bound by a declaration, an import, a local, a parameter or a type parameter. Fields and methods may use those names.
+
+```incan
 # report.incn
 from aggregates import sum
 
 def report() -> int:
-  local_total = sum(41)                     # calls aggregates.sum: 42
-  builtin_total = std.builtins.sum([1, 2])  # calls the core builtin: 3
-  return local_total + builtin_total
+    local_total = sum(41)                     # accepted: calls aggregates.sum
+    builtin_total = std.builtins.sum([1, 2])  # accepted: calls the builtin
+    return local_total + builtin_total
 ```
 
-`std.builtins.<name>` is the explicit escape hatch when an ordinary unqualified builtin-function name is shadowed. It always selects the core builtin function; it does not import a source module or create generated runtime code.
+The builtin functions and types are listed in the [language reference](language.md#builtin-functions).
 
-Imports share the ordinary lexical namespace with declarations. A second declaration or import cannot silently replace an existing same-scope binding with the same local spelling. Repeating an import of the same proven declaration is a duplicate binding; importing different declarations under the same local spelling is ambiguous. Use an explicit alias when both imported targets are intentional:
+## Re-exports
+
+`pub from M import X [as Y]` publishes `X`, as `X` or `Y`, from the importing module.
+
+- Accepted in a source file under a directory named `src`, for any module-level declaration kind: functions, models, classes, traits, enums, newtypes, type aliases, consts, statics, aliases and partial presets.
+- A re-export of an alias, or of a dependency's re-export, publishes the declaration it names: a call through each re-exported name calls that declaration.
+
+Refused (`INCAN-P0001`): `pub from` in a file outside a `src` directory, and `pub import`.
+
+In a project that depends on the library `calc_lib`:
 
 ```incan
-import codecs.prelude as codecs_prelude
-import compression.prelude as compression_prelude
+# calc_lib/src/lib.incn
+pub from helpers import calculate as facade_calculate
 ```
-
-The first valid registration remains the active lookup binding while the compiler reports the later collision, so invalid source cannot change the meaning of subsequent references.
-
-## Published library namespaces
-
-`incan build --lib` preserves the checked module hierarchy below a library's configured source root (normally `src/`). A source directory becomes a public package namespace automatically; there is no `pub module` declaration.
-
-Given this producer layout:
-
-```text
-src/
-├── lib.incn
-└── hyperquant/
-    ├── index.incn
-    └── search.incn
-```
-
-public declarations in the immediate source files are available through the directory namespace:
 
 ```incan
-from pub::hees_ai import hyperquant
-
-index = hyperquant.build_index()
-matches = hyperquant.search(index)
+# src/facade.incn
+pub from pub::calc_lib import facade_calculate as b_calculate
 ```
-
-The exact source module remains importable when a consumer wants a narrower boundary:
 
 ```incan
-from pub::hees_ai.hyperquant.index import HyperquantIndex, build_index
-from pub::hees_ai::hyperquant::search import search
-```
-
-Dots and `::` are both accepted after the `pub::package` root. Formatting uses dots for the nested package path. Direct module imports are also supported:
-
-```incan
-import pub::hees_ai.hyperquant as hq
-```
-
-Only declarations explicitly marked `pub` participate in the package namespace. Private declarations and private implementation imports remain unavailable to consumers. An explicit `pub from ... import ...` inside a source module can publish a facade alias for public callables, types, constants, statics, and traits.
-
-The directory namespace exposes declarations from its own source unit, when present, and its immediate child source files. Deeper directories remain child namespaces. If separate child files publish the same name, the parent member is ambiguous and the compiler requires the exact child path:
-
-```incan
-from pub::codecs.encoding.base64 import encode
-from pub::codecs.encoding.hex import encode as encode_hex
-```
-
-This permits sibling APIs to use natural names without making the package unpublishable. Within an automatic directory namespace, a declaration from that directory's own source unit takes precedence over a child namespace with the same name, while the child remains available through its full path. At the package root, an explicit flat export from `src/lib.incn` and an automatic child namespace with the same name are ambiguous; consumers must select the exact nested path.
-
-Explicit package-root exports in `src/lib.incn` remain compatible:
-
-```incan
-pub from hyperquant.index import HyperquantIndex
-```
-
-Consumers can therefore use either the flat facade (`from pub::hees_ai import HyperquantIndex`) or the preserved module hierarchy. The generated `.incnlib` checked API is authoritative for public declarations, visibility, compiler resolution, diagnostics, and editor completion; consumers do not inspect or re-typecheck the producer source. Codegraph import records preserve the canonical nested package path written by the consumer. The source-module paths recorded by the checked API and the compiled module set determine the matching generated Rust file and facade layout.
-
-## Import path rules
-
-### Child directory imports
-
-You can use dots (Python-style) or `::` (Rust-style):
-
-```incan
-# Python-style: dots for nested paths
-from db.models import User, Product
-
-# Rust-style: :: for nested paths
-import db::models::User
-```
-
-### Parent directory imports
-
-Navigate to parent directories using `..` (Python-style) or `super` (Rust-style):
-
-```incan
-# Python-style: .. for parent
-from ..common import Logger
-from ...shared.utils import format_date
-
-# Rust-style: super keyword
-import super::common::Logger
-import super::super::shared::utils::format_date
-```
-
-| Prefix                    | Meaning                               |
-| ------------------------- | ------------------------------------- |
-| `..` or `super::`         | Parent directory (one level up)       |
-| `...` or `super::super::` | Grandparent directory (two levels up) |
-
-### Absolute imports (project root)
-
-Import from the project root using `crate`:
-
-```incan
-from crate.config import Settings
-import crate::lib::database::Connection
-```
-
-The compiler finds the project root by looking for `Cargo.toml` or a `src/` directory.
-
-## Exported aliases
-
-Modules can export an alias for an existing public symbol:
-
-```incan
-# stats.incn
-pub def avg(x: int, y: int) -> int:
-  return (x + y) // 2
-
-pub mean = avg
-```
-
-Consumers import the alias like any other public symbol:
-
-```incan
-from stats import mean
-
-def main() -> int:
-  return mean(10, 20)
-```
-
-An import alias is local to the importing module:
-
-```incan
-from stats import mean as average_value
-```
-
-For the full alias contract, including method aliases and rejected forms, see [Symbol aliases](symbol_aliases.md).
-
-### Path summary
-
-| Incan path     | Meaning                | Rust equivalent |
-| -------------- | ---------------------- | --------------- |
-| `models`       | Same directory         | `models`        |
-| `db.models`    | Child `db/models.incn` | `db::models`    |
-| `..common`     | Parent’s `common.incn` | `super::common` |
-| `super::utils` | Parent’s `utils.incn`  | `super::utils`  |
-| `crate.config` | Root’s `config.incn`   | `crate::config` |
-
-## The prelude
-
-The prelude is a set of types and traits automatically available in every Incan file without explicit imports.
-
-### Types always available
-
-| Incan type     | Rust type       | Description                |
-| -------------- | --------------- | -------------------------- |
-| `int`          | `i64`           | 64-bit signed integer      |
-| `float`        | `f64`           | 64-bit floating point      |
-| `bool`         | `bool`          | Boolean                    |
-| `str`          | `String`        | UTF-8 string               |
-| `bytes`        | `Vec<u8>`       | Byte array                 |
-| `List[T]`      | `Vec<T>`        | Dynamic array              |
-| `Dict[K, V]`   | `HashMap<K, V>` | Hash map                   |
-| `Set[T]`       | `HashSet<T>`    | Hash set                   |
-| `Option[T]`    | `Option<T>`     | Optional value (Some/None) |
-| `Result[T, E]` | `Result<T, E>`  | Success or error (Ok/Err)  |
-
-### Type aliases and naming conventions
-
-Many types have a canonical (generated-reference) name and a lowercase alias used in examples:
-
-- Canonical: `List[T]`, `Dict[K, V]`, `Set[T]`
-- Aliases: `list[T]`, `dict[K, V]`, `set[T]`
-- Rust interop alias: `Vec[T]` (accepted as `List[T]`)
-
-When passing a direct `list[T]` to an external Rust function or method that expects `Vec<U>`, Incan emits element-level `.into()` conversions and leaves Rust to validate the required `From<T>` implementation.
-
-The generated language reference shows the canonical name and aliases in one place: [Language reference (generated)](language.md).
-
-### Built-in functions (always available)
-
-```incan
-# Output
-println(value)      # Print one line
-print(value)        # Alias for the same line-oriented output function
-
-# Collections
-len(collection)     # Get length
-
-# Iteration
-range(n)            # Iterator 0..n
-range(start, end)   # Iterator start..end
-range(start, end, step)  # Iterator start..end with a custom step (Python-like)
-range(start..end)   # Iterator start..end (Rust-style range literal)
-range(start..=end)  # Iterator start..=end (inclusive end)
-enumerate(iter)     # Iterator with indices
-zip(left, right)    # Lazy Iterator of pairs; stops at the shorter input
-
-# Type conversion (Python-like)
-dict()              # Empty Dict
-dict(mapping)       # Convert to Dict
-list()              # Empty List
-list(iterable)      # Convert to List
-set()               # Empty Set
-set(iterable)       # Convert to Set
-```
-
-Every core builtin function is also reachable through `std.builtins.<name>`. For ordinary fallback builtins, this is an explicit escape path for code that needs the core function when an inner scope or an imported DSL gives the unqualified name a different meaning:
-
-```incan
-def total(values: list[int]) -> int:
-  return std.builtins.sum(values)
-```
-
-Source declarations, imports, local bindings, value parameters, and generic type parameters cannot use the immutable `print` or `println` spellings. Fields and methods may still use those names because member selection cannot replace a bare builtin function.
-
-`std.builtins` is typechecker-only. It has no source stub or emitted runtime module, and builtin types such as `int`, `List[T]`, and `Result[T, E]` remain root prelude types.
-
-`print` and `println` are the exception to shadowing: both spellings select the same immutable output builtin and cannot be declared or imported as another binding.
-
-## Special import: `import this`
-
-`import this` is always available and prints the Incan “Zen” design principles when imported:
-
-```bash
-incan run -c "import this"
-```
-
---8<-- "_snippets/language/zen_of_incan.md"
-
-## Incan standard library (`std.*`)
-
-<!-- TODO: move this to its own section -->
-
-Incan's standard library lives under the `std` namespace. Import modules and items from it just like any other module. The compiler activates features (e.g. async runtime, web framework) automatically based on which `std.*` modules you import — no manual feature flags needed.
-
-### Available modules
-
-| Module           | Description                                   | Activates feature |
-| ---------------- | --------------------------------------------- | ----------------- |
-| `std.web`        | Web framework (routes, responses, extractors) | `web` (Axum)      |
-| `std.testing`    | Test fixtures and assertions                  | —                 |
-| `std.async`      | Async utilities (activates `async`/`await`)   | —                 |
-| `std.serde.json` | JSON serialization/deserialization            | `json`            |
-| `std.reflection` | Reflection helpers (`FieldInfo`, etc.)        | —                 |
-| `std.derives.*`  | Derive helpers (`string`, `comparison`, ...)  | —                 |
-| `std.traits.*`   | Core traits (`ops`, `convert`, `error`, ...)  | —                 |
-| `std.math`       | Math constants and functions                  | —                 |
-| `std.builtins`   | Explicit core builtin-function escape path    | —                 |
-
-### Soft keywords
-
-Some language keywords are **import-activated** (soft keywords). They behave like identifiers by default and only become reserved keywords after importing a particular `std.*` namespace.
-
-Currently:
-
-- `async` and `await` are activated by importing `std.async` (for example `import std.async` or `from std.async.time import sleep`).
-
-If you forget the import, you’ll get a targeted diagnostic telling you what to add.
-
-Example:
-
-```incan
-async def work() -> None:
-    await sleep(1.0)
-```
-
-```text
-error: `async` is only available after importing `std.async`
-
-hint: Add `import std.async` or `from std.async import ...`
-```
-
-### Import examples
-
-```incan
-# Import items from the web framework
-from std.web import App, route, Response, Json, GET, POST
-
-# Import test fixtures
-from std.testing import fixture
-
-# Import async time helpers (also activates `async`/`await`)
-from std.async.time import sleep
-
-# Import JSON helpers
-from std.serde.json import json_stringify, json_parse
-
-async def do_work() -> None:
-    await sleep(0.5)
-```
-
-### Reserved root namespaces
-
-The names `std` and `rust` are reserved at the root level. You cannot shadow them with local modules or aliases:
-
-```incan
-# ERROR: 'std' is a reserved root namespace
-import models as std
-```
-
-## Stdlib module: `std.math`
-
-See the stdlib reference page: [Standard library reference: `std.math`](stdlib/math.md).
-
-You must import `std.math` before use:
-
-```incan
-import std.math
+# src/main.incn
+from facade import b_calculate
 
 def main() -> None:
-    println(f"pi={math.PI}")
+    println(b_calculate(41))    # accepted: calls calc_lib's helpers.calculate
 ```
 
-### Available constants
+`incan build --lib` refuses a library entrypoint that re-exports from an unknown module, re-exports a name its module does not export, or exports one name twice.
 
-| Constant        | Description                 |
-| --------------- | --------------------------- |
-| `math.PI`       | π (3.14159...)              |
-| `math.E`        | Euler’s number (2.71828...) |
-| `math.TAU`      | τ = 2π (6.28318...)         |
-| `math.INFINITY` | Positive infinity           |
-| `math.NAN`      | Not a Number                |
+## Package namespaces
 
-### Available functions
+`incan build --lib` publishes the library's modules under `pub::package`, following its source files below the source root.
 
-| Function                                       | Description                   |
-| ---------------------------------------------- | ----------------------------- |
-| `math.sqrt(x)`                                 | Square root                   |
-| `math.abs(x)`                                  | Absolute value                |
-| `math.floor(x)`                                | Largest integer ≤ x           |
-| `math.ceil(x)`                                 | Smallest integer ≥ x          |
-| `math.round(x)`                                | Round to nearest integer      |
-| `math.pow(x, y)`                               | x raised to power y           |
-| `math.exp(x)`                                  | e^x                           |
-| `math.log(x)`                                  | Natural logarithm (ln)        |
-| `math.log10(x)`                                | Base-10 logarithm             |
-| `math.log2(x)`                                 | Base-2 logarithm              |
-| `math.sin(x)`, `math.cos(x)`, `math.tan(x)`    | Trig (radians)                |
-| `math.asin(x)`, `math.acos(x)`, `math.atan(x)` | Inverse trig                  |
-| `math.sinh(x)`, `math.cosh(x)`, `math.tanh(x)` | Hyperbolic                    |
-| `math.atan2(y, x)`                             | Two-argument arctangent       |
-| `math.hypot(x, y)`                             | Euclidean distance √(x² + y²) |
-
-## Stdlib module: `std.async`
-
-See generated/curated stdlib signatures: [Standard library reference: `std.async`](stdlib/async.md).
-
-`std.async` includes runtime support for asynchronous programming and activates the `async`/`await` soft keywords when imported.
-
-You can import time helpers directly:
+- Each source module path, and each directory prefix of one, is a namespace: `src/hyperquant/index.incn` gives `pub::pkg.hyperquant` and `pub::pkg.hyperquant.index`.
+- A namespace exposes the `pub` declarations of its own module and of its immediate child modules. Deeper modules stay in their own namespaces.
+- Only `pub` declarations are exposed. Private declarations and imports are not.
+- A name that two modules of one namespace declare is ambiguous there, and importing or accessing it through that namespace is refused; the exact module path selects one.
+- A declared member takes precedence over a child namespace with the same name.
+- At the package root, a re-export in `src/lib.incn` and a child namespace with the same name are ambiguous; the exact path selects one.
 
 ```incan
-from std.async.time import sleep, timeout
+from pub::hees_ai import hyperquant                            # accepted: the namespace
+from pub::hees_ai.hyperquant.index import build_index          # accepted
+import pub::hees_ai.hyperquant as hq                           # accepted
+from pub::codecs.encoding.base64 import encode                 # accepted
+from pub::codecs.encoding import encode                        # refused: base64 and hex both declare encode
 ```
 
-Or import a complete surface from the prelude:
+## The `std` root
+
+- `from std import name` binds the standard-library module `std.name`. A name that is not a standard-library module is refused, naming the module that declares it when that is known.
+- `import std.fs` and every other bare `std...` path name the Incan standard library; the Rust standard library is `rust::std`.
+- An unknown `std.*` module is refused.
 
 ```incan
-from std.async.prelude import *
+from std import toml                   # accepted: the module std.toml
+from std import math as arithmetic     # accepted: the module std.math, as arithmetic
+from std import Debug                  # refused: Debug is declared in std.derives.string
+from std.derives.string import Debug   # accepted
 ```
 
-### Time helpers
+The standard-library modules are listed in the [language reference](language.md#standard-library-namespaces).
 
-| Function                | Description                      |
-| ----------------------- | -------------------------------- |
-| `sleep`, `sleep_ms`     | Delay the current task           |
-| `timeout`, `timeout_ms` | Bound async work with a deadline |
+## Soft keywords
 
-### Concurrency helpers
+- `async` and `await` are keywords only after an import whose path begins with `std.async`, such as `import std.async` or `from std.async.time import sleep`, from the next declaration on. `from std import async` does not activate them. `race for` requires the same import.
+- A library's vocabulary keywords are keywords after an import of its provider namespace.
 
-| API                                       | Description                  |
-| ----------------------------------------- | ---------------------------- |
-| `spawn`, `spawn_blocking`                 | Start async or blocking work |
-| `channel`, `unbounded_channel`, `oneshot` | Message passing primitives   |
-| `race_timeout`                            | Timeout-based race utility   |
-| `yield_now`                               | Yield to scheduler           |
+Refused (`INCAN-P0001`): `async` or `await` as a keyword before the import.
 
-## Rust standard library access
-
-To import from Rust’s standard library, use the `rust::` prefix:
-
-```incan
-import rust::std::fs
-import rust::std::env
-import rust::std::path::Path
-import rust::std::time
-```
-
-!!! warning "The `std` root is reserved"
-    Bare `import std::fs` refers to **Incan’s** standard library, not Rust’s. Always use the `rust::std::` prefix when you need Rust’s stdlib.
-
-Note: using these requires understanding the underlying Rust types. Prefer Incan built-ins (`read_file`, `write_file`, etc.) where available.
-
-## Rust crates vs Incan modules (important)
-
-- **External crates**: Prefer `rust::...` imports (e.g. `import rust::serde_json`), which also enables automatic dependency management for generated `Cargo.toml`.
-- **Incan project modules** (multi-file projects): imports like `from db.schema import Database` refer to modules in the current crate and are emitted as `crate::db::schema::Database` in generated Rust so they compile reliably from submodules.
-
-### Version and feature annotations (Rust crates only)
-
-Rust crate imports support optional version and feature annotations using `@` and `with`:
+## Rust crate imports
 
 ```text
 import rust::CRATE [@ "VERSION"] [with ["FEATURE", ...]]
 from rust::CRATE [@ "VERSION"] [with ["FEATURE", ...]] import ITEMS
 ```
 
-Examples:
+- `@ "VERSION"` is a Cargo SemVer requirement. `with [...]` selects crate features, with or without `@`.
+- Without `@`, a known crate takes its default version; an unknown crate without `@` is refused.
+- Annotations are refused on a crate that `loaf.toml` configures.
+- Across files, one crate's versions match, and its features are unioned.
+- Annotations apply to `rust::` imports only.
+
+These refusals are reported when the project builds or locks.
 
 ```incan
-# Version only
 import rust::my_crate @ "1.0"
-
-# Version with features
 import rust::tokio @ "1.0" with ["full"]
 from rust::sqlx @ "0.7" with ["runtime-tokio", "postgres"] import Pool
 ```
 
-Rules:
+## `import this`
 
-- `@ "VERSION"` uses [Cargo SemVer syntax](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html).
-- `with [...]` requires `@` (you cannot specify features without a version).
-- If the crate is configured in `loaf.toml`, inline annotations are **not allowed**.
-- When the same crate is imported in multiple files, versions must match and features are unioned.
+`import this` prints the Zen of Incan when the program starts:
 
-These annotations only apply to `rust::` imports. Incan module imports (`from models import User`) do not support version or feature annotations.
-
-See: [Rust interop](../how-to/rust_interop.md) for practical guidance and examples.
-
-## Current status and limitations
-
-Supported:
-
-- Python-style imports: `from module import item1, item2`
-- Rust-style imports: `import module::item`
-- Nested paths
-- Parent navigation (`..` / `super`)
-- Root imports (`crate`)
-- Aliases (`as`)
-- Public re-exports in source modules: `pub from module import Item` (allowed in files under `src/`)
-
-Limitations (current):
-
-1. No wildcard imports (`from module import *`)
-2. No circular imports
+--8<-- "_snippets/language/zen_of_incan.md"

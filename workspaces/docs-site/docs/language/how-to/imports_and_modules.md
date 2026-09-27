@@ -24,6 +24,8 @@ from models import User
 import utils::format_currency
 ```
 
+When an import list gets long, put it in parentheses, one name per line, with a trailing comma; this works for `rust::` imports too.
+
 ## Nested projects
 
 Recommended structure:
