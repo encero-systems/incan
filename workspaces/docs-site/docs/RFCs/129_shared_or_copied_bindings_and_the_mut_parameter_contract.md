@@ -272,7 +272,7 @@ The compiler may infer a borrow, move, or copy only when it preserves the source
 
 ### Syntax and the alias keyword
 
-The selected writable spelling is `mut local = place`; an explicit clone is `mut local = place.clone()`. This proposal does not add `&`, `&mut`, or lifetime annotations to ordinary source. The existing `alias` marker names declarations, such as functions and methods, rather than local runtime storage. Whether it should also provide an explicit local alias spelling remains open; it must not be documented as already doing so.
+The selected writable spelling is `mut local = place`; an explicit clone is `mut local = place.clone()`. This proposal does not add `&`, `&mut`, or lifetime annotations to ordinary source. The existing `alias` marker keeps its declaration-level roles for top-level symbols, same-type methods, and enum variants. Model-field alias metadata remains a separate naming and wire-mapping feature. This RFC does not extend `alias` into function or method bodies: local writable borrowing is inferred from `mut local = place`, so no second explicit local alias spelling is introduced.
 
 Explicit declarations and assignment are distinct even where `let` is optional for introducing an unused name. If bare and explicit-`let` declarations eventually receive different copy or borrow meanings, that difference must be stated as a change to optional-`let` semantics, not hidden behind the existing wording.
 
@@ -380,12 +380,13 @@ The completed design and implementation must demonstrate:
 - **Aliases do not follow replacement parents.** Invalidating replacement is rejected while a later use still needs the borrow.
 - **Duckborrowing must preserve observable sharing.** A conflict must not be repaired by silently cloning.
 - **Lists and custom objects follow the same naming and assignment principles.** The proposal does not invent a special rebinding rule for lists.
+- **No local `alias` extension.** The keyword keeps its existing declaration-level roles, and field alias metadata remains separate. Function and method bodies use inferred borrowing rather than a new `alias` form.
 - **The RFC remains Draft.** The decisions below are not settled by choosing writable borrowing.
 
 ## Unresolved questions
 
 - **Bare bindings and explicit `let`.** Does a first `name = place` or `let name = place` create a read-only borrow or an independent value? Does explicit `let` request independence, or remain optional with identical meaning when introducing an unused name? Explicit shadowing and assignment to an existing binding are already distinct.
-- **Read-only and explicit alias spelling.** What access does a read-only local permit, including nested mutation? Should the existing declaration-oriented `alias` marker gain a runtime-place form? No such extension is assumed here.
+- **Read-only access.** What access does a read-only local permit, including nested mutation? Resolve this through the local binding and borrowing rules; no runtime-place form of the `alias` keyword is proposed.
 - **Scalar and imported-type local aliases.** Should `mut quantity = order.quantity` borrow a scalar field or take a local copy? The scalar parameter rule is unchanged; local aliasing needs its own decision. Imported types must respect their mutation and ownership contracts.
 - **Nested cloning and value transfer.** Which types support `.clone()`, how are generic bounds inferred, and what independence is guaranteed for nested mutable members or imported shared handles? What happens when assignment through an alias takes another place as its right-hand side? The clone spelling must not imply unsupported deep-copy guarantees.
 - **Storage, returns, and whole parameters.** Do fields, collection elements, ordinary arguments, returns, and yields own independent values, move values, or permit checked sharing, and where is explicit cloning required? Should whole caller-visible parameters eventually support replacement, including through aliases? Until resolved, aliasing must not bypass their rebinding prohibition.
