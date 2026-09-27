@@ -182,7 +182,7 @@ def touch_lock(lock: Mutex[int]) -> None:
     return
 
 def launch() -> JoinHandle[int]:
-    return spawn(work)
+    return spawn(work())
 
 def touch_arm(arm_value: RaceArm[int]) -> None:
     return

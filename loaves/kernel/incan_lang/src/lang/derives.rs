@@ -144,6 +144,30 @@ pub fn as_str(id: DeriveId) -> &'static str {
     info_for(id).canonical
 }
 
+/// Derives that bring other derives with them: `Eq` needs `PartialEq`, and `Ord` needs `PartialOrd`, `Eq` and
+/// `PartialEq`.
+///
+/// Lowering adds the implied derives to a declaration's derive list, applying the rows in this order, and the
+/// typechecker reads the same table when it asks whether a declared type implements a derive, so the two never
+/// disagree about what `@derive(Ord)` provides.
+pub const DERIVE_IMPLICATIONS: &[(DeriveId, &[DeriveId])] = &[
+    (DeriveId::Eq, &[DeriveId::PartialEq]),
+    (
+        DeriveId::Ord,
+        &[DeriveId::PartialOrd, DeriveId::Eq, DeriveId::PartialEq],
+    ),
+];
+
+/// Return the derives that `id` brings with it, per [`DERIVE_IMPLICATIONS`]; empty for a derive that implies nothing.
+#[must_use]
+pub fn implied_derives(id: DeriveId) -> &'static [DeriveId] {
+    DERIVE_IMPLICATIONS
+        .iter()
+        .find(|(derive, _)| *derive == id)
+        .map(|(_, implied)| *implied)
+        .unwrap_or(&[])
+}
+
 /// Return the full metadata entry for a derive.
 ///
 /// The lookup is exhaustive over the closed enum, so adding a derive requires updating this match at compile time.
@@ -180,5 +204,20 @@ const fn info(
         since,
         stability: Stability::Stable,
         examples: &[],
+    }
+}
+
+#[cfg(test)]
+mod implication_tests {
+    use super::*;
+
+    #[test]
+    fn ord_implies_the_equality_and_partial_ordering_derives() {
+        assert_eq!(
+            implied_derives(DeriveId::Ord),
+            &[DeriveId::PartialOrd, DeriveId::Eq, DeriveId::PartialEq]
+        );
+        assert_eq!(implied_derives(DeriveId::Eq), &[DeriveId::PartialEq]);
+        assert!(implied_derives(DeriveId::Hash).is_empty());
     }
 }

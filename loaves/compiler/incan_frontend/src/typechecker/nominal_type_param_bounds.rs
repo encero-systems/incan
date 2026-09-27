@@ -93,6 +93,7 @@ pub(in crate::typechecker) fn builtin_bound(name: &str) -> TypeBoundInfo {
         type_args: Vec::new(),
         module_path: None,
         implementation_type_params: Vec::new(),
+        inferred: false,
     }
 }
 
@@ -232,6 +233,7 @@ impl TypeChecker {
                         type_args: Vec::new(),
                         module_path: self.trait_bound_module_path(&bound.name),
                         implementation_type_params: Vec::new(),
+                        inferred: false,
                     })
                     .collect();
                 (param.name.clone(), bounds)
@@ -393,6 +395,7 @@ impl TypeChecker {
                             .collect(),
                         module_path: self.trait_bound_module_path(&bound.name),
                         implementation_type_params: Vec::new(),
+                        inferred: false,
                     })
                     .collect();
                 (param.name.clone(), bounds)

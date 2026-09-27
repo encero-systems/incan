@@ -1,69 +1,70 @@
-# Derives: Copying and Default (Reference)
+# Derives: Copying and Default (reference)
 
-This page documents `Clone`, `Copy`, and `Default`, plus field defaults in constructors.
-
-See also:
-
-- [Derives & traits](../derives_and_traits.md)
-
----
+This page specifies `Clone`, `Copy` and `Default`, and field defaults at construction. The derive catalog and the automatic derives are in [Derives and traits](../derives_and_traits.md).
 
 ## Clone
 
-- **Enables**: `.clone()`
-- **Meaning**: explicit duplication
-
----
+- **Provides**: `.clone()`, which returns a deep copy, and `T with Clone` bounds.
+- **Provided by**: every `model`, `class` and `enum`; a `newtype` as listed under [Automatic derives](../derives_and_traits.md#automatic-derives); `@derive(Clone)`.
+- **Behavior**: every field is cloned.
+- **Dunder**: none.
+- **Requires**: every field type implements `Clone` (`INCAN-T0113` for a field of a `model`, `class` or `enum`).
 
 ## Copy
 
-- **Meaning**: marker trait for implicit copying
-- **Intended use**: small value types (no heap ownership)
+- **Provides**: an assignment or an argument copies the value, and the original stays usable.
+- **Provided by**: `@derive(Copy)`; a `newtype` whose underlying type is `Copy`.
+- **Behavior**: every field is copied.
+- **Dunder**: none.
+- **Requires**: every field type is `Copy`: `int`, `float`, `bool`, an exact-width numeric type, or a type that derives `Copy`.
 
-Copy vs Clone (rule of thumb):
+## Default
 
-| Trait | Copy happens when | Use for |
-| --- | --- | --- |
-| `Clone` | you call `.clone()` | any type |
-| `Copy` | assignment/pass-by-value | small, simple value types |
+- **Provides**: `Type.default()`, and `T with Default` bounds, under which `T.default()` constructs a value.
+- **Provided by**: `@derive(Default)`.
+- **Behavior**: each field takes its declared default, or its type's default when it declares none.
+- **Dunder**: none.
+- **Requires**: each field that declares no default has a type that implements `Default`.
 
----
+| Type | Default |
+| --- | --- |
+| `int` and the exact-width integers | `0` |
+| `float`, `f32`, `f64` | `0.0` |
+| `bool` | `false` |
+| `str` | `""` |
+| `list[T]` | `[]` |
+| `dict[K, V]` | `{}` |
+| `set[T]` | an empty set |
+| `Option[T]` | `None` |
+| A type that derives `Default` | its `default()` |
 
-## Field defaults (construction)
+```incan
+@derive(Default)
+model Settings:
+    theme: str = "dark"
+    font_size: int = 14
+    retries: int
 
-Field defaults are written on fields:
+def make[T with Default]() -> T:
+    return T.default()
+
+def main() -> None:
+    a = Settings.default()      # accepted: theme is "dark", font_size 14, retries 0
+    b: Settings = make()        # accepted
+```
+
+## Field defaults
+
+- A field declares a default with `name: Type = value`.
+- A construction may omit a field that declares a default; the field takes that default.
+- A construction that omits a field without a default is refused (`INCAN-T0001`).
 
 ```incan
 model Settings:
     theme: str = "dark"
-    font_size: int = 14
+    font_size: int
+
+def main() -> None:
+    a = Settings(font_size=14)  # accepted: theme is "dark"
+    b = Settings()              # refused: font_size declares no default
 ```
-
-Rules:
-
-- If a field has a default, you may omit it in construction and the default is used.
-- If a field has no default, it must be provided when constructing the type.
-
----
-
-## Default
-
-- **Enables**: `Type.default()`
-- **Semantics**:
-  - fields with explicit defaults use those defaults
-  - otherwise, the default of the field type is used
-
-Common type defaults:
-
-| Type | Default |
-| --- | --- |
-| `int` | `0` |
-| `float` | `0.0` |
-| `bool` | `false` |
-| `str` | `""` |
-| `List[T]` | `[]` |
-| `Dict[K, V]` | `{}` |
-| `Set[T]` | `set()` |
-| `Option[T]` | `None` |
-
-

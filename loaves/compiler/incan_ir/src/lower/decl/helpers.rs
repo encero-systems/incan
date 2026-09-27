@@ -450,29 +450,14 @@ impl AstLowering {
             }
         }
 
-        fn has(derives: &[String], name: &str) -> bool {
-            derives.iter().any(|d| d == name)
-        }
-
-        // Add prerequisite derives automatically
-        // Eq requires PartialEq
-        let eq = derives::as_str(DeriveId::Eq);
-        let partial_eq = derives::as_str(DeriveId::PartialEq);
-        if has(&derives, eq) && !has(&derives, partial_eq) {
-            derives.push(partial_eq.to_string());
-        }
-        // Ord requires PartialOrd and Eq (and thus PartialEq)
-        let ord = derives::as_str(DeriveId::Ord);
-        let partial_ord = derives::as_str(DeriveId::PartialOrd);
-        if has(&derives, ord) {
-            if !has(&derives, partial_ord) {
-                derives.push(partial_ord.to_string());
+        // Add prerequisite derives automatically, rule by rule in the registry's order (`Eq` brings `PartialEq`; `Ord`
+        // brings `PartialOrd`, `Eq` and `PartialEq`). The typechecker's derive relation reads the same table.
+        for (derive, implied) in derives::DERIVE_IMPLICATIONS {
+            if !derives.iter().any(|d| d == derives::as_str(*derive)) {
+                continue;
             }
-            if !has(&derives, eq) {
-                derives.push(eq.to_string());
-            }
-            if !has(&derives, partial_eq) {
-                derives.push(partial_eq.to_string());
+            for implied_derive in *implied {
+                Self::push_unique(&mut derives, derives::as_str(*implied_derive).to_string());
             }
         }
 
@@ -597,10 +582,30 @@ impl AstLowering {
         self.stdlib_cache.lookup_trait_meta(module_path, trait_name).is_some()
     }
 
-    /// Append a string only when it is not already present.
+    /// Append a derive unless one naming the same derive is already present, under this spelling or another
+    /// ([`Self::same_derive`]): naming a derive twice fails the build with E0119.
     fn push_unique(items: &mut Vec<String>, value: String) {
-        if !items.iter().any(|item| item == &value) {
+        if !items.iter().any(|item| Self::same_derive(item, &value)) {
             items.push(value);
+        }
+    }
+
+    /// Whether two derive spellings name the same derive: equal, or a Rust `std`/`core`/`alloc` path whose last segment
+    /// is the other spelling.
+    pub(in crate::lower) fn same_derive(left: &str, right: &str) -> bool {
+        Self::derive_identity(left) == Self::derive_identity(right)
+    }
+
+    /// Return the spelling a derive is compared by: a path into Rust's `std`, `core` or `alloc` names its last segment,
+    /// which is how the prelude spells the same derive; any other spelling is itself, without a leading `::`.
+    fn derive_identity(derive: &str) -> &str {
+        let path = derive.trim_start_matches("::");
+        let from_rust_std = ["std::", "core::", "alloc::"]
+            .iter()
+            .any(|prefix| path.starts_with(prefix));
+        match path.rsplit_once("::") {
+            Some((_, leaf)) if from_rust_std => leaf,
+            _ => path,
         }
     }
 

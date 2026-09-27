@@ -75,10 +75,10 @@ impl AstLowering {
         let clone = derives::as_str(DeriveId::Clone);
 
         // Models always get Debug and Clone by default
-        if !derives.iter().any(|d| d == debug) {
+        if !derives.iter().any(|d| Self::same_derive(d, debug)) {
             derives.push(debug.to_string());
         }
-        if !derives.iter().any(|d| d == clone) {
+        if !derives.iter().any(|d| Self::same_derive(d, clone)) {
             derives.push(clone.to_string());
         }
         // Models always get FieldInfo for reflection.

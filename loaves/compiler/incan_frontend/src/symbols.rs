@@ -1949,6 +1949,10 @@ pub struct TypeBoundInfo {
     pub module_path: Option<Vec<String>>,
     /// Compiler-resolved generic header attached to this exact adopted-trait implementation.
     pub implementation_type_params: Vec<ImplementationTypeParamInfo>,
+    /// An `Eq` or `Hash` bound the compiler inferred because the callable's body hashes the type parameter (#1758),
+    /// rather than one the source declared. A call is refused for it only when its type argument is known to lack the
+    /// derive, since a type from another module may carry it through a `@rust.derive(...)` no manifest records.
+    pub inferred: bool,
 }
 
 /// One implementation-header type parameter retained from checked library metadata.

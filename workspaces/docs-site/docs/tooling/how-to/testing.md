@@ -123,7 +123,7 @@ module tests:
         assert_eq(production_value(), 42)
 ```
 
-Inline test modules support the same runner features as conventional test files, including explicit `@test` discovery, fixture injection, parametrization, marker selection, and strict marker registries. Oven Alpha rejects `--timeout` rather than silently pretending to enforce it; native timeout enforcement is not yet part of the supported Alpha envelope.
+Inline test modules support the same runner features as conventional test files, including explicit `@test` discovery, fixture injection, parametrization, marker selection, and strict marker registries. `--timeout` and `@timeout(...)` apply to them as well.
 
 ```incan
 def bounded_discount(percent: int) -> int:
@@ -310,7 +310,7 @@ When a generated Rust test harness is new or its compatibility inputs change, `i
 
 `-m` matches marker names from decorators such as `@slow` and `@mark("smoke")`, plus default marks from `TEST_MARKS`. Use `TEST_MARKERS` with `--strict-markers` to make unknown marker names a collection error.
 
-`--timeout` and `@timeout` are not yet supported by the Oven Alpha executor. The command fails clearly when either would request timeout enforcement, rather than running without a timeout. Fixtures therefore have no separate per-fixture timeout configuration in this Alpha.
+`--timeout <DURATION>` sets a time limit for each test batch, such as `5s`, and `@timeout("...")` sets it for one test. A batch that runs past its limit is stopped and fails. Fixtures have no timeout of their own.
 
 Conditional markers are evaluated during collection:
 

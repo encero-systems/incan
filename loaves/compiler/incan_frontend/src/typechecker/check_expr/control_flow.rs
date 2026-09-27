@@ -52,8 +52,8 @@ impl TypeChecker {
         self.await_output_type_from_type(ty)
     }
 
-    /// Return whether this expression is a direct async call in an `await` operand.
-    fn expr_is_async_call_realization(&mut self, expr: &Spanned<Expr>) -> bool {
+    /// Return whether this expression is a direct async call, the shape `await` and a task argument both admit.
+    pub(in crate::typechecker::check_expr) fn expr_is_async_call_realization(&mut self, expr: &Spanned<Expr>) -> bool {
         if self
             .type_info
             .rust

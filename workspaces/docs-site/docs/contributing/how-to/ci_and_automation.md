@@ -59,6 +59,8 @@ Build the docs site:
 make docs-build
 ```
 
+Before a release, compare `incan --help` and each command's `--help` with the [CLI reference](../../tooling/reference/cli_reference.md).
+
 ## Build a toolchain release archive
 
 Use the release packager from the repository root after building the target `incan` and `incan-lsp` binaries and the host-runnable SDK provider builder:

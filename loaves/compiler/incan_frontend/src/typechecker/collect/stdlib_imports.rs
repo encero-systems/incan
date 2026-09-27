@@ -4077,6 +4077,7 @@ impl TypeChecker {
                     type_args: Vec::new(),
                     module_path: None,
                     implementation_type_params: Vec::new(),
+                    inferred: false,
                 })
                 .collect();
         }
@@ -4095,6 +4096,7 @@ impl TypeChecker {
                 implementation_type_params: Self::implementation_type_params_from_manifest(
                     &bound.implementation_type_params,
                 ),
+                inferred: bound.inferred,
             })
             .collect()
     }
@@ -4391,6 +4393,7 @@ impl TypeChecker {
                             implementation_type_params: Self::implementation_type_params_from_manifest(
                                 &bound.implementation_type_params,
                             ),
+                            inferred: bound.inferred,
                         })
                         .collect(),
                 )
@@ -4533,6 +4536,7 @@ impl TypeChecker {
                                 implementation_type_params: Self::implementation_type_params_from_manifest(
                                     &bound.implementation_type_params,
                                 ),
+                                inferred: bound.inferred,
                             })
                             .collect(),
                     )

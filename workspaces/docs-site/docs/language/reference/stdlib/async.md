@@ -1,8 +1,31 @@
 # `std.async`
 
-`std.async` provides task spawning, timeouts, races, channels, and synchronization primitives. Import individual modules for narrow dependencies or use `std.async.prelude` for the common surface.
+`std.async` provides task spawning, timeouts, races, channels, and synchronization primitives. Each module is importable on its own, and `std.async.prelude` re-exports the common surface.
 
 All APIs that accept a future require the future to produce the declared result type. Public spawned tasks and race arms also require transferable, runtime-owned values through the `Send` and `Static` bounds shown in the signatures.
+
+## Task arguments
+
+A parameter bounded by `RuntimeFuture[T]` (`task` of `spawn`, `timeout`, `timeout_ms` and `race_timeout`, `awaitable` of `arm`) takes a task: a direct call of an `async def` written as the argument, a `JoinHandle[T]`, or another awaitable value. Any other argument is refused with `INCAN-T0115`, including a function value, a value of a type that is not awaitable, and a name bound to the result of an `async def` call.
+
+```incan
+import std.async
+from std.async.task import spawn
+
+async def work() -> int:
+    return 41
+
+def compute() -> int:
+    return 41
+
+async def main() -> None:
+    first = spawn(work())   # accepted: a direct call of an async def
+    second = spawn(work)    # refused: a function value is not a task (INCAN-T0115)
+    third = spawn(compute)  # refused: a function value is not a task (INCAN-T0115)
+    fourth = spawn(41)      # refused: an int is not awaitable (INCAN-T0115)
+    pending = work()
+    fifth = spawn(pending)  # refused: a name bound to a call's result is not a task (INCAN-T0115)
+```
 
 ## Cancellation terms
 
@@ -38,7 +61,7 @@ pub model Duration:
     pub nanos: int
 ```
 
-`Duration` is a value object for application APIs. The timing functions above accept primitive seconds or milliseconds rather than `Duration`.
+The timing functions take seconds or milliseconds, not a `Duration`.
 
 | Signature | Result |
 | --- | --- |
@@ -49,7 +72,7 @@ pub model Duration:
 
 The integer constructors preserve the full positive `int` value without converting through `float`. Their results satisfy `secs >= 0` and `0 <= nanos < 1_000_000_000`.
 
-`from_secs_f64` converts the input to integer seconds, then converts `(secs - float(whole_seconds)) * 1_000_000_000` to integer nanoseconds. Large positive inputs can saturate either integer conversion, so this constructor does not guarantee normalized nanoseconds. Unlike the timer functions, it does not clamp positive infinity to zero.
+`from_secs_f64` sets `secs` to the input's whole seconds and `nanos` to `(input - float(secs)) * 1_000_000_000`, each converted to `int` with saturation. For a large positive input either conversion saturates, and `nanos` can fall outside `0 <= nanos < 1_000_000_000`. Positive infinity is not treated as zero.
 
 ### `TimeoutError`
 
@@ -86,6 +109,8 @@ from std.async.task import JoinHandle, TaskJoinError, spawn, spawn_blocking, yie
 
 Awaiting a handle produces `Result[T, TaskJoinError]`. Dropping it detaches the task. `handle.abort() -> None` requests cancellation of async work; for `spawn_blocking`, abort can only prevent work that is still queued.
 
+`JoinHandle[T]` implements neither `Clone` nor `Debug`. A `model` or `class` field or an `enum` variant payload of this type, directly or inside a `list`, `dict`, `Option`, `Result` or tuple, is refused at check time with `INCAN-T0113` (see [Automatic derives](../derives_and_traits.md#automatic-derives)).
+
 ### `TaskJoinError`
 
 | Method | Returns |
@@ -105,9 +130,9 @@ from std.async.race import RaceArm, arm, race, race_timeout
 | --- | --- |
 | `arm[T with Send, R with (Send, Static), TaskFuture with RuntimeFuture[T], OnWin with RuntimeRaceCallback[T, R]](awaitable: TaskFuture, on_win: OnWin) -> RaceArm[R]` | Packages one future and a callback. The callback receives the future's value only if this arm wins. |
 | `async race[R with (Send, Static)](*arms: RaceArm[R]) -> R` | Polls arms concurrently and returns the winning callback result. Losing arms are dropped. Ready ties use source order. At least one arm is required. |
-| `async race_timeout[T with (Send, Static), TaskFuture with RuntimeFuture[T]](seconds: float, task: TaskFuture) -> Option[T]` | Returns `Some(value)` before the deadline or `None` at the deadline. Negative values, NaN, and either infinity are treated as zero. Expiry or cancellation drops `task`; spawn it first when it must continue. |
+| `async race_timeout[T with (Send, Static), TaskFuture with RuntimeFuture[T]](seconds: float, task: TaskFuture) -> Option[T]` | Returns `Some(value)` before the deadline or `None` at the deadline. Negative values, NaN, and either infinity are treated as zero. Expiry or cancellation drops `task`. |
 
-`RaceArm[R]` is the packaged branch type consumed by `race`.
+`RaceArm[R]` is the packaged branch type consumed by `race`. It implements neither `Clone` nor `Debug`; as a `model` or `class` field or an `enum` variant payload it is refused with `INCAN-T0113`.
 
 ## `std.async.channel`
 
@@ -117,9 +142,6 @@ from std.async.channel import Receiver, RecvError, Sender, SenderPermit, SendErr
 from std.async.channel import OneshotReceiver, OneshotSender
 ```
 
-!!! warning "Explicit channel type arguments"
-    Current native coverage verifies inference-based constructor calls such as `channel(4)`, `unbounded_channel()`, and `oneshot()`, including their wrapper methods. Explicit constructor type application such as `channel[str](4)` remains a compiler limitation. Let subsequent sends, receives, or annotations infer `T`.
-
 ### Constructors
 
 | Signature | Returns | Constraints |
@@ -127,6 +149,8 @@ from std.async.channel import OneshotReceiver, OneshotSender
 | `channel[T](buffer: int) -> Tuple[Sender[T], Receiver[T]]` | A bounded multi-producer, single-consumer channel. | `buffer <= 0` is normalized to capacity `1`. Sends wait when the buffer is full. |
 | `unbounded_channel[T]() -> Tuple[Sender[T], Receiver[T]]` | An unbounded multi-producer, single-consumer channel. | Producers can grow memory without a capacity limit. |
 | `oneshot[T]() -> Tuple[OneshotSender[T], OneshotReceiver[T]]` | A channel that carries at most one value. | The sender is consumed by its single send operation. |
+
+The constructors infer `T` from the channel's sends, receives or an annotation. An explicit type argument, as in `channel[str](4)`, is refused (`INCAN-T0001`).
 
 ### `Sender[T]`
 
@@ -148,11 +172,13 @@ from std.async.channel import OneshotReceiver, OneshotSender
 
 ### `Receiver[T]`
 
+`Receiver[T]` does not implement `Clone`, and neither do `OneshotSender[T]` and `OneshotReceiver[T]`; as a `model` or `class` field or an `enum` variant payload each is refused with `INCAN-T0113`.
+
 | Method | Result | Cancellation |
 | --- | --- | --- |
 | `async recv(self) -> Option[T]` | Returns the next value, or `None` after the channel is closed and drained. | Cancel-safe; cancellation does not remove a message. |
 | `try_recv(self) -> Option[T]` | Returns an available value immediately, otherwise `None`. `None` does not distinguish empty from closed. | Synchronous. |
-| `close(self) -> bool` | Prevents further sends. Returns `false` when another cloned receiver currently owns the receiver state in `recv`. | Synchronous. |
+| `close(self) -> bool` | Prevents further sends and returns `true`. Returns `false`, closing nothing, while a `recv` on another handle to the same receiver holds the receiver state. | Synchronous. |
 
 ### One-shot types
 
@@ -176,7 +202,7 @@ from std.async.sync import MutexGuard, RwLockReadGuard, RwLockWriteGuard, Semaph
 from std.async.sync import SemaphoreAcquireError
 ```
 
-`Mutex[T]` and `RwLock[T]` require `T with Clone` because guard reads return cloned values.
+`Mutex[T]` and `RwLock[T]` require `T with Clone`; a guard's `get` returns a clone of the guarded value.
 
 ### Mutex
 
@@ -208,7 +234,7 @@ from std.async.sync import SemaphoreAcquireError
 | `Semaphore.new(permits: int) -> Semaphore` | Creates a cloneable semaphore. Negative values are normalized to zero permits. | Synchronous. |
 | `async Semaphore.acquire(self) -> Result[SemaphorePermit, SemaphoreAcquireError]` | Waits for one permit. The permit is returned automatically when dropped. Returns an error if the semaphore closes. | Cancellation loses queue position but does not acquire a permit. |
 | `Semaphore.try_acquire(self) -> Option[SemaphorePermit]` | Returns a permit immediately or `None`. | Synchronous. |
-| `Semaphore.available_permits(self) -> int` | Current unreserved permit count. | Synchronous. |
+| `Semaphore.available_permits(self) -> int` | The number of unreserved permits at the time of the call. | Synchronous. |
 
 `SemaphoreAcquireError.message() -> str` returns `"failed to acquire semaphore permit: semaphore closed"`. Its `source() -> Option[str]` returns `None`.
 
@@ -217,7 +243,7 @@ from std.async.sync import SemaphoreAcquireError
 | Method | Result | Cancellation |
 | --- | --- | --- |
 | `Barrier.new(count: int) -> Barrier` | Creates a cloneable reusable barrier. Counts less than or equal to zero are normalized to one participant. | Synchronous. |
-| `async Barrier.wait(self) -> int` | Waits for the generation to fill and returns a unique slot in `0..count`. The slot supports leader selection but is not a chronological arrival index. | Cancellation before release withdraws the participant and frees its slot; the remaining participants still need a full active generation. |
+| `async Barrier.wait(self) -> int` | Waits for the generation to fill and returns a slot in `0..count`, unique within the generation. Slots do not follow arrival order. | Cancellation before release withdraws the participant and frees its slot; the remaining participants still need a full active generation. |
 
 ## `std.async.prelude`
 

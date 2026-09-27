@@ -339,7 +339,7 @@
     },
     "loaves/compiler/incan_driver/src/cargo_policy.rs": {
       "disposition": "retire",
-      "notes": "Two tests die with the Cargo command line (arg ordering, `INCAN_CARGO_ARGS`); the `INCAN_LOCKED/FROZEN/OFFLINE` env defaults, the `--no-locked/--no-offline/--no-frozen` negations and frozen ⇒ locked+offline survive as Oven lock-policy inputs (maintainer ruling, 2026-09-20) and are twinned by re-point CLI tests.",
+      "notes": "Two tests die with the Cargo command line (arg ordering, `INCAN_CARGO_ARGS`); the `INCAN_LOCKED/FROZEN/OFFLINE` env defaults, the `--no-locked/--no-offline/--no-frozen` negations and frozen \u21d2 locked+offline survive as Oven lock-policy inputs (maintainer ruling, 2026-09-20) and are twinned by re-point CLI tests.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -354,7 +354,7 @@
         },
         "cargo_policy_resolves_env_defaults_and_frozen_implication": {
           "twin": "loaves/toolchain/incan-cli/tests/cli_workspace_and_lock_tests.rs::build_lock_policy_env_defaults_refuse_a_missing_lock",
-          "notes": "`INCAN_LOCKED=1` and `INCAN_FROZEN=1` (frozen ⇒ locked) refuse a project without `oven.lock` and create none; the `INCAN_CARGO_ARGS` half dies with the Cargo command line."
+          "notes": "`INCAN_LOCKED=1` and `INCAN_FROZEN=1` (frozen \u21d2 locked) refuse a project without `oven.lock` and create none; the `INCAN_CARGO_ARGS` half dies with the Cargo command line."
         },
         "cargo_policy_uses_cli_extra_args_before_env_extra_args": {
           "twin": "dies",
@@ -552,7 +552,7 @@
       "tests": {
         "explicitly_baked_project_reuses_release_json_authority_without_cargo": {
           "twin": "dies",
-          "dies": "the `sealed project output … no longer matches this source tree` warning after an edit dies (maintainer ruling, 2026-09-20: a stale bake is re-baked transparently, no explicit rebake — the DX requirement is recorded on #1142, slice 8, with its re-point CLI test). The other observables are carried: `reused sealed project Loaf` on `build --locked` after a bake by `rfc031_pub_import_integration_tests.rs`; `oven.lock is out of date` after a manifest edit by `cli_workspace_and_lock_tests.rs` and `cli_interop_target_tests.rs`; `incan test tests --fail-on-empty` on a baked `std.json` project (#1056) by no other test — folded into the #1142 requirement as well."
+          "dies": "the `sealed project output \u2026 no longer matches this source tree` warning after an edit dies (maintainer ruling, 2026-09-20: a stale bake is re-baked transparently, no explicit rebake \u2014 the DX requirement is recorded on #1142, slice 8, with its re-point CLI test). The other observables are carried: `reused sealed project Loaf` on `build --locked` after a bake by `rfc031_pub_import_integration_tests.rs`; `oven.lock is out of date` after a manifest edit by `cli_workspace_and_lock_tests.rs` and `cli_interop_target_tests.rs`; `incan test tests --fail-on-empty` on a baked `std.json` project (#1056) by no other test \u2014 folded into the #1142 requirement as well."
         }
       },
       "twin": "dies"
@@ -566,7 +566,7 @@
       "tests": {
         "a_package_projects_a_call_into_its_own_sibling_module": {
           "twin": "dies",
-          "dies": "asserts the RFC 120 `__incan_v1_` projected wrapper name, not the source spelling `c.bumped()`, in a package's generated `lib.rs` (#1174 emitted-name recoverability); the emitted-name projection and the legacy `incan_ir` lowering that required it die with generated Rust. The package-calls-its-own-sibling behavior is reachable only through a `--lib`/SDK component build, which is not a run the fixture format can express. The surviving observable — a package whose library calls a sibling module's method builds — is carried by the SDK provider prewarm every suite root performs."
+          "dies": "asserts the RFC 120 `__incan_v1_` projected wrapper name, not the source spelling `c.bumped()`, in a package's generated `lib.rs` (#1174 emitted-name recoverability); the emitted-name projection and the legacy `incan_ir` lowering that required it die with generated Rust. The package-calls-its-own-sibling behavior is reachable only through a `--lib`/SDK component build, which is not a run the fixture format can express. The surviving observable \u2014 a package whose library calls a sibling module's method builds \u2014 is carried by the SDK provider prewarm every suite root performs."
         },
         "generated_application_artifact_matches_baseline": {
           "twin": "dies",
@@ -4178,7 +4178,7 @@
         },
         "string_len_spelling_emit_shared_runtime_semantics": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections/string_length_counts_scalars.incn",
-          "notes": "twinned by a program counting the scalars of `héllo` through `len()` and `.len()`; the `str_len` helper spelling dies."
+          "notes": "twinned by a program counting the scalars of `h\u00e9llo` through `len()` and `.len()`; the `str_len` helper spelling dies."
         }
       },
       "twin": ""
@@ -4684,6 +4684,14 @@
     "loaves/compiler/incan_frontend/src/typechecker/tests/capabilities.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/capability_requirements.rs": {
+      "disposition": "keep",
+      "notes": "typechecker refusals of types lacking a capability the program needs (#1754 automatic derives, #1758 set elements and dict keys, #1772 a function value passed as a task); no emit/driver dependency.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -5636,6 +5644,32 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_ir/src/lower/tests/newtype_automatic_derives.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, derive lists). Retire with `incan_ir` (#654); the typechecker's derive relation that decides a newtype's automatic derives stays covered by typechecker/tests/capability_requirements.rs (keep).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "newtype_automatic_derives_follow_the_underlying_type_issue1754": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/model_field_of_newtype_over_str.incn",
+          "notes": "Asserts the derive list lowering gives a newtype (Clone when the underlying type implements it, Debug unless it lacks it, Copy for Copy types). The behavior, a model holding a newtype over str building and reading it back, is carried by the named fixture (#1754)."
+        },
+        "ord_derive_adds_its_prerequisites_in_table_order": {
+          "twin": "dies",
+          "dies": "asserts the textual order of the lowered derive list (`Ord`, `PartialOrd`, `Eq`, `PartialEq`), a generated-Rust spelling that dies with the Rust-source backend (#654); the implication itself is the incan_lang registry table, tested there (keep)."
+        },
+        "rust_derive_path_of_an_automatic_derive_is_emitted_once_issue1754": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/cli/rust_derived_clone_path_on_newtype_and_model.incn`: a newtype with `@rust.derive(\"std::clone::Clone\")` builds and a model holds it. Waits for the Cargo-free bake that `rust::` programs need: a `std::` path in `@rust.derive(...)` is a Rust derive probe, which needs source-current project inspection authority, and under the suite the program stops at `no source-current project inspection authority is available`. A bare `@rust.derive(Clone)` needs no probe but is already the automatic spelling, so it does not exercise the rule. Asserts that a `@rust.derive` path to a derive a newtype already carries joins the derive list once (#1754)."
+        },
+        "rust_derive_paths_of_automatic_and_implied_derives_are_emitted_once_issue1754": {
+          "twin": "",
+          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/cli/rust_derived_clone_path_on_newtype_and_model.incn`: a model with `@rust.derive(\"std::clone::Clone\")` builds. Waits for the Cargo-free bake that `rust::` programs need, for the same Rust derive probe as the newtype case above. Asserts that a model, class or enum names each automatic or implied derive once whatever `@rust.derive` path also names it (#1754)."
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_ir/src/lower/tests/pattern_alternatives_and_private_rests.rs": {
       "disposition": "retire",
       "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
@@ -6083,6 +6117,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/kernel/incan_lang/src/lang/derives.rs": {
+      "disposition": "keep",
+      "notes": "language registry (derive vocabulary and the implication table lowering and the typechecker share, #1754); below the emitter.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/kernel/incan_lang/src/lang/highlighting.rs": {
       "disposition": "keep",
       "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level.",
@@ -6102,6 +6144,14 @@
     "loaves/kernel/incan_lang/src/lang/stdlib.rs": {
       "disposition": "keep",
       "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/kernel/incan_lang/src/lang/surface/types.rs": {
+      "disposition": "keep",
+      "notes": "language registry (surface type derive support for Clone, Debug, Eq and Hash, #1754, #1758); below the emitter.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -7066,13 +7116,13 @@
           "disposition": "retire",
           "twin": "dies",
           "notes": "libtest harness of the generated test crate",
-          "dies": "merges `[dependencies]` and `[dev-dependencies]` into the generated test-runner crate's Cargo dependency set (`promoted_oven_test_dependencies`); the generated crate dies with #654. Its user-visible half — a test file using a `[rust-dev-dependencies]` crate through `incan test` — is untwinned: no CLI test uses `rust-dev-dependencies`; it goes with #1337's interop spec (slice 7)."
+          "dies": "merges `[dependencies]` and `[dev-dependencies]` into the generated test-runner crate's Cargo dependency set (`promoted_oven_test_dependencies`); the generated crate dies with #654. Its user-visible half \u2014 a test file using a `[rust-dev-dependencies]` crate through `incan test` \u2014 is untwinned: no CLI test uses `rust-dev-dependencies`; it goes with #1337's interop spec (slice 7)."
         },
         "merge_test_runner_dependencies_unifies_normal_and_dev_features": {
           "disposition": "retire",
           "twin": "dies",
           "notes": "libtest harness of the generated test crate",
-          "dies": "unions Cargo feature lists and refuses a version conflict inside the generated test-runner crate's Cargo dependency set; the generated crate dies with #654. Its user-visible half — a normal/dev version conflict surfacing as an `incan test` failure naming the crate — is untwinned and goes with #1337's interop spec (slice 7)."
+          "dies": "unions Cargo feature lists and refuses a version conflict inside the generated test-runner crate's Cargo dependency set; the generated crate dies with #654. Its user-visible half \u2014 a normal/dev version conflict surfacing as an `incan test` failure naming the crate \u2014 is untwinned and goes with #1337's interop spec (slice 7)."
         },
         "native_test_outputs_do_not_alias_distinct_execution_groups": {
           "disposition": "retire",

@@ -1,39 +1,30 @@
-# Derives: String representation (Reference)
+# Derives: String representation (reference)
 
-This page documents `Debug` and `Display` derives and their behavior.
+This page specifies `Debug` and `Display`. The derive catalog and the automatic derives are in [Derives and traits](../derives_and_traits.md).
 
-See also:
+## Debug
 
-- [Derives & traits](../derives_and_traits.md)
+- **Provides**: `{value:?}` formatting.
+- **Provided by**: every `model`, `class` and `enum`; a `newtype` whose underlying type implements `Debug`.
+- **Behavior**: a model or class formats as its type name followed by its fields in declaration order, each as `name: value`, in braces. A `str` value is quoted.
+- **Dunder**: none.
+- **Requires**: every field type implements `Debug` (see [Automatic derives](../derives_and_traits.md#automatic-derives), `INCAN-T0113`).
 
----
+## Display
 
-## Debug (Automatic)
+- **Provides**: `{value}` formatting, `str(value)`, and `print(value)` and `println(value)`.
+- **Provided by**: a `__str__(self) -> str` method; for an enum that declares values, such as `enum Level(str)`, each variant's value; for a type that adopts `Error` and has no `__str__`, its `message()` (see [Displaying an error](../stdlib_traits/error.md#displaying-an-error)). `@derive(Display)` provides nothing.
+- **Behavior**: the value displays as the string `__str__` returns.
+- **Dunder**: `__str__(self) -> str`.
+- **Requires**: none.
 
-- **Format**: `{value:?}`
-- **User override**: not supported
-- **Intended behavior**: structured output (type name + fields)
+## Formats
 
 ```incan
 model Point:
     x: int
     y: int
 
-def main() -> None:
-    p = Point(x=10, y=20)
-    println(f"{p:?}")  # Point { x: 10, y: 20 }
-```
-
----
-
-## Display (Automatic, customizable with `__str__`)
-
-- **Format**: `{value}`
-- **Default behavior**: types have a default Display representation (similar to Python’s default `__str__`)
-- **Custom behavior**: define `__str__(self) -> str`
-- **Conflict rule**: if you define `__str__`, do not also `@derive(Display)`
-
-```incan
 model User:
     name: str
     email: str
@@ -41,20 +32,18 @@ model User:
     def __str__(self) -> str:
         return f"{self.name} <{self.email}>"
 
+enum Level(str):
+    WARN = "warn"
+
 def main() -> None:
+    p = Point(x=10, y=20)
     u = User(name="Alice", email="alice@example.com")
-    println(f"{u}")    # Alice <alice@example.com>
-    println(f"{u:?}")  # User { name: "Alice", email: "alice@example.com" }
+    println(f"{p:?} {u:?} {u} {Level.WARN}")
 ```
 
----
-
-## Debug vs Display (quick guide)
-
-| Aspect | Debug (`{:?}`) | Display (`{}`) |
-| --- | --- | --- |
-| Purpose | developers/logs | users/output |
-| Customizable | no | yes (`__str__`) |
-
-
-
+| Expression | Output |
+| --- | --- |
+| `f"{p:?}"` | `Point { x: 10, y: 20 }` |
+| `f"{u:?}"` | `User { name: "Alice", email: "alice@example.com" }` |
+| `f"{u}"` | `Alice <alice@example.com>` |
+| `f"{Level.WARN}"` | `warn` |

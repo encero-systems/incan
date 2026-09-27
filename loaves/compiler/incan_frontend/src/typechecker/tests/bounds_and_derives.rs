@@ -193,8 +193,10 @@ def accept_user_id(value: UserId) -> UserId:
     assert_check_ok(source);
 }
 
+/// A model always derives `Clone` (the reference's automatic derives), so it satisfies an explicit `Clone` bound
+/// without `@derive(Clone)`; the derive relation answers the bound as lowering realizes it (#1754).
 #[test]
-fn test_explicit_clone_bound_rejects_non_clone_model() {
+fn test_explicit_clone_bound_accepts_a_model_through_its_automatic_derive() {
     let source = r#"
 model Token:
   value: int
@@ -205,14 +207,7 @@ def identity[T with Clone](value: T) -> T:
 def main() -> Token:
   return identity(Token(value=1))
 "#;
-    let Err(errs) = check_str(source) else {
-        panic!("non-clone model should fail explicit Clone bound");
-    };
-    assert!(
-        errs.iter().any(|e| e.message.contains("violates generic bound")),
-        "Expected explicit generic bound error; got: {:?}",
-        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
-    );
+    assert_check_ok(source);
 }
 
 /// GitHub #193: `@derive(Clone)` must allow `.clone()` on the concrete type (not only through unconstrained `T`).
@@ -981,8 +976,10 @@ def main() -> bool:
     assert_check_ok(source);
 }
 
+/// A newtype carries the automatic `Clone` of its underlying type, as lowering derives it (#1754), but no other derive:
+/// an undecorated newtype over an `Eq` type is not `Eq`.
 #[test]
-fn test_nested_newtype_does_not_inherit_underlying_derives_for_generic_bounds() {
+fn test_nested_newtype_inherits_only_the_automatic_derives_for_generic_bounds() {
     let source = r#"
 @derive(Clone, Eq)
 type BaseId = newtype str
@@ -997,17 +994,23 @@ def main() -> ChildId:
 "#;
     let errors = check_str_err(
         source,
-        "an undecorated nested newtype must not inherit its underlying type's derives",
+        "an undecorated nested newtype must not inherit its underlying type's Eq derive",
     );
-    for trait_id in [TraitId::Clone, TraitId::Eq] {
+    let violation = |trait_id: TraitId| {
         let trait_name = builtin_traits::as_str(trait_id);
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.message.contains("violates generic bound") && error.message.contains(trait_name)),
-            "expected missing {trait_name} bound diagnostic, got: {errors:?}"
-        );
-    }
+        errors.iter().any(|error| {
+            error.message.contains("violates generic bound")
+                && error.message.contains(&format!("requires '{trait_name}'"))
+        })
+    };
+    assert!(
+        violation(TraitId::Eq),
+        "expected missing Eq bound diagnostic, got: {errors:?}"
+    );
+    assert!(
+        !violation(TraitId::Clone),
+        "the automatic Clone must satisfy the Clone bound, got: {errors:?}"
+    );
 }
 
 #[test]

@@ -9,8 +9,8 @@ mod extension_traits;
 pub mod metadata;
 
 pub use capabilities::{
-    RUST_CALLABLE_CAPABILITY_BOUNDS, RUST_CAPABILITY_BOUNDS, is_rust_callable_capability_bound,
-    is_rust_capability_bound,
+    RUST_CALLABLE_CAPABILITY_BOUNDS, RUST_CAPABILITY_BOUNDS, RUST_FUTURE_CAPABILITY_BOUNDS,
+    is_rust_callable_capability_bound, is_rust_capability_bound, is_rust_future_capability_bound,
 };
 pub use coercions::{CoercionPolicy, admitted_builtin_coercion};
 pub use extension_traits::fallback_rust_trait_methods;

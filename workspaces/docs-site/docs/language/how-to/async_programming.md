@@ -121,7 +121,7 @@ Run an operation with a time limit:
 from std.async.time import timeout
 
 async def demo() -> None:
-    result = await timeout(5.0, slow_operation)
+    result = await timeout(5.0, slow_operation())
     match result:
         case Ok(value): println(f"Success: {value}")
         case Err(e): println("Operation timed out")
@@ -188,7 +188,7 @@ async def background_work() -> int:
     return 42
 
 # Spawn returns immediately
-handle = spawn(background_work)
+handle = spawn(background_work())
 
 # Do other work...
 println("Working on other things...")
@@ -199,6 +199,29 @@ println(f"Background task returned: {result}")
 ```
 
 Spawned tasks are durable once spawned. Dropping `handle` detaches the task and loses the result; it does not cancel the task. Use `handle.abort()` when an async task should be cancelled.
+
+Write the call of the async function directly as the argument, `spawn(background_work())`. The function itself, `spawn(background_work)`, is refused with `INCAN-T0115`, and so is a name bound to the call first (`pending = background_work()` then `spawn(pending)`): the name has the call's result type, not a task. A function that is not `async def` is refused too; either declare it `async def` or run it with `spawn_blocking`. `timeout`, `timeout_ms` and `race_timeout` take their task the same way.
+
+Keep each handle in its own local variable, or pass it as a parameter, and await it there:
+
+```incan
+from std.async.task import spawn, JoinHandle
+
+async def fetch(id: int) -> int:
+    return id * 10
+
+async def wait_for(handle: JoinHandle[int]) -> int:
+    match await handle:
+        Ok(value) => return value
+        Err(_) => return -1
+
+async def main() -> None:
+    first = spawn(fetch(1))
+    second = spawn(fetch(2))
+    println(await wait_for(first) + await wait_for(second))
+```
+
+A handle cannot be a `model` or `class` field or an `enum` payload (`INCAN-T0113`): those derive `Clone` and `Debug` automatically, and a handle supports neither ([Automatic derives](../reference/derives_and_traits.md#automatic-derives)). A `list[JoinHandle[T]]` cannot be grown with `append`, which requires an element type that implements `Clone`; spawn each task into its own variable instead.
 
 ### spawn_blocking
 
@@ -608,7 +631,7 @@ Simplified timeout returning Option:
 ```incan
 from std.async.race import race_timeout
 
-match await race_timeout(2.0, slow_operation):
+match await race_timeout(2.0, slow_operation()):
     case Some(result): println(f"Got: {result}")
     case None: println("Timed out, using default")
 ```
@@ -703,7 +726,7 @@ async def cancellable_work() -> str:
     await sleep(10.0)
     return "done"
 
-handle = spawn(cancellable_work)
+handle = spawn(cancellable_work())
 # This detaches the task and loses the result; the task keeps running.
 _ = handle
 ```
@@ -717,7 +740,7 @@ Use `handle.abort()` when an async task should be cancelled. For blocking work c
 ```incan
 from std.async.time import timeout
 
-result = await timeout(1.0, slow_task)
+result = await timeout(1.0, slow_task())
 match result:
     case Ok(value): process(value)
     case Err(e): println(f"Timed out: {e}")

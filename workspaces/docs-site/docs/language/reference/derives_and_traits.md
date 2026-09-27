@@ -1,93 +1,76 @@
-# Derives and Traits
+# Derives and traits (reference)
 
-<!--
-Link index
-
-Use reference-style links like:
-- [Debug][derive-debug]
-- [Error Handling Guide][guide-error-handling]
-
-So we can change the destination in one place if we move/rename sections.
--->
-
-<!-- Built-in derives (anchors in this page) -->
-[derive-debug]: #debug-automatic
-[derive-display]: #display-custom-with-__str__
-[derive-eq]: #eq-equality
-[derive-ord]: #ord-ordering
-[derive-hash]: #hash
-[derive-clone]: #clone
-[derive-copy]: #copy
-[derive-default]: #default
-[derive-serialize]: #serialize
-[derive-deserialize]: #deserialize
-[derive-validate]: #validate-models-only
-
-<!-- Related sections (anchors in this page) -->
-[auto-derives]: #automatic-derives
-
-<!-- Other docs -->
-[traits-doc]: #traits-authoring
-[guide-error-handling]: ../explanation/error_handling.md
-
-This page is the reference for derives, dunder overrides, method decorators, generic methods and trait authoring.
+This page specifies derives (the automatic derives, the derive catalog and `@derive(...)`), the method decorators `@staticmethod` and `@classmethod`, generic methods and call-site type arguments, and trait authoring. Each derive's own contract is on its derive page, listed in the [derive catalog](#derive-catalog).
 
 ## Automatic derives
 
-These derives are part of every declaration of the kind, without `@derive(...)`:
+These derives belong to every declaration of the kind, without `@derive(...)`:
 
-| Construct | Automatic derives                                                                                                  |
-| --------- | ------------------------------------------------------------------------------------------------------------------ |
-| `model`   | `Debug`, `Clone`                                                                                                   |
-| `class`   | `Debug`, `Clone`                                                                                                   |
-| `enum`    | `Debug`, `Clone`; `PartialEq` when every payload type is a number, `bool`, `str` or `bytes`, or a `list`, `set`, `dict`, `Option`, `Result` or tuple of those |
-| `newtype` | `Debug`; `Clone` and `Copy` when the underlying type is `Copy`                                                     |
+| Construct | Automatic derives |
+| --- | --- |
+| `model` | `Debug`, `Clone` |
+| `class` | `Debug`, `Clone` |
+| `enum` | `Debug`, `Clone`; `PartialEq` when every payload type is a number, `bool`, `str` or `bytes`, or a `list`, `set`, `dict`, `Option`, `Result` or tuple of those |
+| `newtype` | `Debug` when the underlying type implements it; `Clone` as listed below; `Copy` when the underlying type is `Copy` |
 
-An automatic derive satisfies a generic bound on the same trait.
+- An automatic derive satisfies a generic bound on the same trait.
+- Writing an automatic derive in `@derive(...)` is accepted and adds nothing.
+- A newtype carries `Clone` when its underlying type is a `Copy` type; a builtin scalar; a builtin collection, `Option`, `Result`, tuple, `model`, `class` or `enum` whose type arguments implement `Clone`; a newtype that carries `Clone`; a standard-library type that implements `Clone`, such as `Mutex[T]` over such a `T`; or one of the newtype's own type parameters, in which case the newtype is `Clone` for type arguments that are. Over any other underlying type, including a `rust::` type and a `rusttype`, it carries `Clone` only through `@derive(Clone)` or `@rust.derive(Clone)`.
+- A `model` or `class` field, or an `enum` payload, whose type does not implement both `Clone` and `Debug` is refused at the declaration (`INCAN-T0113`). `JoinHandle[T]` and `RaceArm[R]` implement neither; `Receiver[T]`, `OneshotSender[T]` and `OneshotReceiver[T]` lack `Clone`; a newtype lacks what its underlying type lacks unless it derives it; a `list`, `dict`, `set`, `Option`, `Result`, tuple or generic declaration lacks what a type argument lacks.
 
-## Derive catalog (quick index)
+```incan
+import std.async
+from std.async.task import JoinHandle
 
-| Derive                            | Provides                              | Dunder     | Detail                                                  |
-| --------------------------------- | ------------------------------------- | ---------- | ------------------------------------------------------- |
-| [Debug][derive-debug]             | `{value:?}` formatting                | —          | Automatic                                               |
-| [Display][derive-display]         | `{value}` formatting, `str(value)`    | `__str__`  | From `__str__`                                          |
-| [Eq][derive-eq]                   | `==`, `!=`                            | `__eq__`   | Adds `PartialEq`                                        |
-| [Ord][derive-ord]                 | `<`, `<=`, `>`, `>=`                  | `__lt__`   | Adds `Eq`, `PartialEq`, `PartialOrd`                    |
-| [Hash][derive-hash]               | Hashing                               | `__hash__` | A `set` element or `dict` key needs `Eq` and `Hash`     |
-| [Clone][derive-clone]             | `.clone()`                            | —          | Automatic for model, class and enum                     |
-| [Copy][derive-copy]               | Implicit copies                       | —          | Every field type is `Copy`                              |
-| [Default][derive-default]         | `Type.default()`                      | —          |                                                         |
-| [json][derive-serialize]          | `Serialize` and `Deserialize`         | —          | From `std.serde`                                        |
-| [Validate][derive-validate]       | `Type.new(...)` validated construction | —         | Models only                                             |
+type Handle = newtype JoinHandle[int]   # accepted: a newtype carries only the derives its underlying type has
 
-`PartialEq` and `PartialOrd` may also be requested directly with `@derive(PartialEq)` and `@derive(PartialOrd)`.
+model Pending:
+    handle: JoinHandle[int]   # refused: JoinHandle[int] implements neither Clone nor Debug (INCAN-T0113)
 
-Detail pages:
+model Wrapped:
+    handle: Handle            # refused: Handle carries neither Clone nor Debug (INCAN-T0113)
+```
 
-- Derives: [String representation](derives/string_representation.md), [Comparison](derives/comparison.md), [Copying/default](derives/copying_default.md), [Serialization](derives/serialization.md), [Validation](derives/validation.md), [Custom behavior](derives/custom_behavior.md)
-- Stdlib traits: [Overview](stdlib_traits/index.md), [Collection protocols](stdlib_traits/collection_protocols.md), [Indexing and slicing](stdlib_traits/indexing_and_slicing.md), [Callable objects](stdlib_traits/callable.md), [Awaitable values](stdlib_traits/awaitable.md), [Operator traits](stdlib_traits/operators.md), [Conversion traits](stdlib_traits/conversions.md)
+## Derive catalog
 
-## Conflicts & precedence
+| Derive | Provides | Dunder | Reference |
+| --- | --- | --- | --- |
+| `Debug` | `{value:?}` | — | [String representation](derives/string_representation.md#debug) |
+| `Display` | `{value}`, `str(value)`, `print(value)` | `__str__` | [String representation](derives/string_representation.md#display) |
+| `Eq` | `==`, `!=`; with `Hash`, use as a `set` element or `dict` key | `__eq__`, `__ne__` | [Comparison](derives/comparison.md#eq) |
+| `PartialEq` | `==`, `!=` | `__eq__`, `__ne__` | [Comparison](derives/comparison.md#partialeq) |
+| `Ord` | `<`, `<=`, `>`, `>=` | `__lt__`, `__le__`, `__gt__`, `__ge__` | [Comparison](derives/comparison.md#ord) |
+| `PartialOrd` | `<`, `<=`, `>`, `>=` | `__lt__`, `__le__`, `__gt__`, `__ge__` | [Comparison](derives/comparison.md#partialord) |
+| `Hash` | with `Eq`, use as a `set` element or `dict` key | — | [Comparison](derives/comparison.md#hash) |
+| `Clone` | `.clone()` | — | [Copying and Default](derives/copying_default.md#clone) |
+| `Copy` | copying on assignment and argument passing | — | [Copying and Default](derives/copying_default.md#copy) |
+| `Default` | `Type.default()` | — | [Copying and Default](derives/copying_default.md#default) |
+| `json`, `Serialize`, `Deserialize` | JSON serialization | — | [Serialization](derives/serialization.md) |
+| `Validate` | `Type.new(...)`, validated construction | — | [Validation](derives/validation.md) |
+| `Descriptor` | registry descriptors | — | [Registry](stdlib/registry.md#descriptor-contract) |
 
-- A dunder defines its capability: `__str__` defines `Display`, `__eq__` defines equality, `__lt__` defines `<`, and `__hash__` defines hashing.
-- A dunder and the matching `@derive(...)` on one type are refused (`INCAN-T0001`).
-- An automatic derive is never written in `@derive(...)`.
+`Debug`, `Display`, `Eq`, `Ord`, `Hash`, `Clone`, `Copy` and `Default` are also traits under `std.derives.*` (see [`std.derives`](stdlib/derives.md)). A model or class also provides `__class_name__()` and `__fields__()` without a derive (see [Reflection](reflection.md)).
 
-## Derive refusals
+## `@derive(...)`
 
-Each of these is refused at check time with `INCAN-T0001`:
+- `@derive(...)` names derives from the catalog. `json` needs `from std.serde import json`, and `Serialize` and `Deserialize` need their import from `std.serde.json`.
+- `Eq` implies `PartialEq`, and `Ord` implies `PartialOrd`, `Eq` and `PartialEq`.
+- `@rust.derive(...)` names Rust derives (see [Decorators](language.md#decorators)).
+- The dunders that define what a derive provides, and the pairs that conflict, are in [Custom behavior](derives/custom_behavior.md).
 
-| Declaration | Refused because |
+Each of these is refused (`INCAN-T0001`):
+
+| Declaration | Rule |
 | --- | --- |
 | `@derive(Debg)` | The name is not a derive. |
 | `@derive(User)` where `User` is a model, class, enum or function | The name is not a derive. |
 | `@derive(module)` for a module that declares no `__derives__` | The module provides no derives. |
-| `@derive(Eq)` together with `__eq__` (and the other dunder pairs) | See [Conflicts & precedence](#conflicts-precedence). |
-| `@derive(Copy)` on a type with a field that is not `Copy` | See [Copy][derive-copy]. |
+| `@derive(Eq)` on a type that defines `__eq__` | See [Custom behavior](derives/custom_behavior.md). |
+| `@derive(Copy)` on a type with a field that is not `Copy` | See [Copy](derives/copying_default.md#copy). |
 
 ## Decorators (`@staticmethod`, `@classmethod`, `@requires`) {#decorators-staticmethod-requires}
 
-`@derive(...)` is covered [above](#derive-catalog-quick-index). `@rust.extern` and `@rust.allow(...)` are covered in the Rust interop reference, and user-defined decorators in the [language reference](language.md#decorators).
+`@derive(...)` is specified [above](#derive). `@rust.extern`, `@rust.allow(...)` and user-defined decorators are in [Decorators](language.md#decorators).
 
 ### `@staticmethod`
 
@@ -126,7 +109,7 @@ class Box[T with Clone]:
         return cls(value=value)
 
 def main() -> None:
-    boxed = Box[int].make(1)   # Self is Box[int]
+    boxed = Box[int].make(1)   # accepted: Self is Box[int]
     println(str(boxed.value))
 ```
 
@@ -144,7 +127,7 @@ See [`@requires(...)` (adopter contract)](#requires-adopter-contract).
 model Shelf[U]:
     item: U
 
-    def swap[T with Clone](self, value: T) -> T:   # U belongs to Shelf, T to swap
+    def swap[T with Clone](self, value: T) -> T:   # accepted: T is scoped to swap
         return value
 
 trait Echo:
@@ -189,11 +172,15 @@ Rules:
 - Brackets are accepted on direct calls of Incan functions and methods, and on a type-associated Rust call `Type.method[T](...)` whose receiver declares only type parameters. They are refused (`INCAN-T0001`) on builtin calls such as `len[int](...)`, on functions imported from Rust, on a callee reached through a variable (`read = session.read_csv; read[Order](...)`), and on a Rust receiver with const parameters.
 
 ```incan
-rows_inferred = session.read_csv(str("orders.csv"))                    # T inferred
-rows_typed = session.read_csv[Order](str("orders.csv"))                # T is Order
-parsed = decode_rows(str("orders.csv"))                                # T and E inferred
-parsed_typed = decode_rows[Order, CsvDecodeError](str("orders.csv"))   # T and E explicit
-parsed_partial = decode_rows[Order, _](str("orders.csv"))              # T explicit, E inferred
+def pair[A, B](first: A, second: B) -> tuple[A, B]:
+    return (first, second)
+
+def main() -> None:
+    a = pair(1, "x")              # accepted: A and B inferred
+    b = pair[int, str](1, "x")    # accepted
+    c = pair[int, _](1, "x")      # accepted: B inferred
+    d = pair[int](1, "x")         # refused: pair has two type parameters (INCAN-T0001)
+    e = len[int]([1])             # refused: brackets on a builtin call (INCAN-T0001)
 ```
 
 ## Traits (authoring)
@@ -267,9 +254,9 @@ model Source with Reader[str], Reader[int]:
         return str(key)
 
 source = Source(name="events")
-by_name = source.read("latest")   # Reader[str]
-by_index = source.read(0)         # Reader[int]
-by_key = source.read(key=0)       # Reader[int]
+by_name = source.read("latest")   # accepted: selects Reader[str]
+by_index = source.read(0)         # accepted: selects Reader[int]
+by_key = source.read(key=0)       # accepted: selects Reader[int]
 ```
 
 #### Dispatch from an expected return type
@@ -278,8 +265,8 @@ When the arguments do not select one instantiation, the expected result type doe
 
 ```incan
 reading = Reading(value=1)
-as_float: float = reading.convert()   # Convert[float]
-as_int: int = reading.convert()       # Convert[int]
+as_float: float = reading.convert()   # accepted: selects Convert[float]
+as_int: int = reading.convert()       # accepted: selects Convert[int]
 value = reading.convert()             # refused: no expected result type (INCAN-T0001)
 ```
 
@@ -303,7 +290,7 @@ model Event with Serializable[JsonFormat]:
 def encode[F, T with Serializable[F]](value: T, format: F) -> bytes:
     return value.serialize(format)
 
-bytes = encode[JsonFormat, Event](Event(message="created"), JsonFormat(name="json"))   # accepted
+encoded = encode[JsonFormat, Event](Event(message="created"), JsonFormat(name="json"))   # accepted
 ```
 
 #### Enum adopters
@@ -392,211 +379,10 @@ trait Counter:
         self.count += 1
 ```
 
-## Debug (Automatic)
-
-- Automatic on every model, class, enum and newtype.
-- `{value:?}` renders it; no dunder overrides it.
-
-```incan
-model Point:
-    x: int
-    y: int
-
-def main() -> None:
-    p = Point(x=10, y=20)
-    println(f"{p:?}")  # Point { x: 10, y: 20 }
-```
-
-## Display (Custom with `__str__`)
-
-- `{value}`, `str(value)` and `print`/`println` render `Display`.
-- A type has `Display` when it defines `__str__(self) -> str`.
-
-```incan
-model User:
-    name: str
-    email: str
-
-    def __str__(self) -> str:
-        return f"{self.name} <{self.email}>"
-
-def main() -> None:
-    u = User(name="Alice", email="alice@example.com")
-    println(f"{u}")    # Alice <alice@example.com>
-    println(f"{u:?}")  # User { name: "Alice", email: "alice@example.com" }
-```
-
-## Eq (Equality)
-
-- `@derive(Eq)` provides `==` and `!=` by comparing every field.
-- `__eq__(self, other: Self) -> bool` defines equality instead.
-
-```incan
-model User:
-    id: int
-    name: str
-
-    def __eq__(self, other: User) -> bool:
-        return self.id == other.id
-```
-
-## Ord (ordering)
-
-- `@derive(Ord)` provides `<`, `<=`, `>` and `>=`, comparing fields in declaration order.
-- `__lt__(self, other: Self) -> bool` defines `<`. `__le__`, `__gt__` and `__ge__` define `<=`, `>` and `>=`; an operator whose dunder is missing is refused (`INCAN-T0001`).
-
-```incan
-model Task:
-    priority: int
-    name: str
-
-    def __lt__(self, other: Task) -> bool:
-        return self.priority < other.priority
-```
-
-## Hash
-
-- `@derive(Hash)` makes a type hashable. A `set` element type or `dict` key type needs both `Eq` and `Hash`.
-- `__hash__(self) -> int` defines hashing instead. When `a == b`, `a.__hash__() == b.__hash__()` must hold.
-
-```incan
-@derive(Eq, Hash)
-model UserId:
-    id: int
-```
-
-## Clone
-
-- `.clone()` returns a deep copy.
-- Automatic on every model, class and enum, and on a newtype whose underlying type is `Copy`.
-
-## Copy
-
-- A `Copy` value is copied, not moved, when it is assigned or passed.
-- `@derive(Copy)` requires every field type to be `Copy`.
-
-## Default
-
-- `@derive(Default)` provides `Type.default()`. Each field takes its declared default, or its type's default when it declares none.
-- A normal construction takes each omitted field's declared default; a field without a default is required.
-- `T with Default` is a generic bound; `T.default()` constructs the value.
-
-```incan
-@derive(Default)
-model Settings:
-    theme: str = "dark"
-    font_size: int = 14
-
-def make[T with Default]() -> T:
-    return T.default()
-
-def main() -> None:
-    a = Settings()                 # accepted: every omitted field has a default
-    b = Settings(font_size=16)     # accepted
-    c = Settings.default()         # accepted
-    d: Settings = make()           # accepted
-```
-
-## Serialize
-
-- `@derive(Serialize)` (from `std.serde.json`) provides `json_stringify(value) -> str`.
-- A type that adopts `std.serde.json.Serialize` (`with Serialize`) provides `value.to_json() -> str`.
-- `@derive(json)` (from `std.serde`) adopts both `Serialize` and `Deserialize`. After `from std.serde import json`, the traits are also named `json.Serialize` and `json.Deserialize`.
-
-```incan
-from std.serde.json import Serialize
-
-@derive(Serialize)
-model User:
-    name: str
-    age: int
-
-model Account with Serialize:
-    id: int
-
-def main() -> None:
-    println(json_stringify(User(name="Alice", age=30)))
-    println(Account(id=1).to_json())
-```
-
-```incan
-from std.serde import json
-
-@derive(json)
-model User:
-    name: str
-    age: int
-
-def encode[T with json.Serialize](value: T) -> str:
-    return value.to_json()
-```
-
-## Deserialize
-
-- `@derive(Deserialize)` (from `std.serde.json`) provides `T.from_json(input: str) -> Result[T, str]`.
-- A type that adopts `Deserialize` with `with Deserialize` has `@derive(Deserialize)` or defines `from_json(input: str)`.
-
-```incan
-from std.serde.json import Deserialize
-
-@derive(Deserialize)
-model User:
-    name: str
-    age: int
-
-def main() -> None:
-    result: Result[User, str] = User.from_json("{\"name\":\"Alice\",\"age\":30}")
-```
-
-## Validate (Models only)
-
-- `@derive(Validate)` applies to models. The model defines `validate(self) -> Result[Self, E]`.
-- `TypeName.new(...)` constructs the model and returns `validate`'s result.
-- `TypeName(...)` on a `Validate` model is refused (`INCAN-T0001`).
-
-```incan
-@derive(Validate)
-model EmailUser:
-    email: str
-
-    def validate(self) -> Result[EmailUser, str]:
-        if "@" not in self.email:
-            return Err("invalid email")
-        return Ok(self)
-
-def make_user(email: str) -> Result[EmailUser, str]:
-    return EmailUser.new(email=email)
-```
-
-See [Derives: Validation](derives/validation.md).
-
-## Reflection (automatic)
-
-Every model and class provides:
-
-- `__fields__() -> FrozenList[FieldInfo]`
-- `__class_name__() -> str`
-
-Field metadata (`[alias="..."]`, `[description="..."]`) applies to models only. For a class, `FieldInfo.alias` and `FieldInfo.description` are `None` and `FieldInfo.wire_name` equals `FieldInfo.name`. `FieldInfo` needs an import only where the type is written. See [Reflection (Reference)](reflection.md) for `FieldInfo`.
-
-```incan
-model User:
-    name: str
-
-def main() -> None:
-    u = User(name="Alice")
-    println(u.__class_name__())                  # User
-    println([f.name for f in u.__fields__()])    # ["name"]
-```
-
-## Standard-library derive traits
-
-`Clone`, `Default`, `Debug`, `Eq`, `Ord` and `Hash` are traits declared in the standard library under `std.derives.*`. See [Standard library reference: `std.derives.*`](stdlib/derives.md).
-
 ## See also
 
 - [The Incan Book: Traits and derives](../tutorials/book/11_traits_and_derives.md)
 - [Derives and traits (explanation)](../explanation/derives_and_traits.md)
 - [How derives work](../explanation/how_derives_work.md)
 - [Why call-site type arguments exist](../explanation/call_site_type_arguments.md)
-- [Error Handling Guide][guide-error-handling]
+- [Error handling (explanation)](../explanation/error_handling.md)

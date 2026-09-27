@@ -7,7 +7,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 // __INCAN_INSERT_MODS__
 
 incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Box<T>(pub T);
 impl<T> incan_std_core::reflection::HasTypeClassName for Box<T> {
     fn __class_name__() -> &'static str {
