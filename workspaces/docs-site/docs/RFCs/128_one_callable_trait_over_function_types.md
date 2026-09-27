@@ -49,7 +49,7 @@ Both gaps close when the bound spells a function type. `(A, B, C) -> R` already 
 - Keep the RFC 041 markers, remove their parameter limit, and narrow `INCAN-T0106` to a marker on a nominal declaration.
 - Remove `Callable0`, `Callable1`, and `Callable2`, with diagnostics that name the replacement spelling and a migration of every use in the standard library, examples, and documentation.
 - Keep one identity for the callable capability across package boundaries, so a function, a closure, or an adopting model satisfies a bound declared in another package.
-- State which promises of RFC 068, RFC 041, RFC 115, and, if the shorthand is retired, RFC 035 this RFC replaces, without editing those RFCs.
+- State which promises of RFC 068, RFC 041, RFC 115, and RFC 035 this RFC replaces, without editing those RFCs.
 
 ## Non-Goals
 
@@ -318,6 +318,10 @@ Receiver access and invocation multiplicity must also be checked. `mut` is requi
 
 `Callable0`, `Callable1`, and `Callable2` must not resolve. An import, bound, adoption, or annotation that names one of them must be refused with a diagnostic that shows the replacement built from the written type arguments: `Callable1[int, str]` becomes `Callable[(int) -> str]`.
 
+### Retired function-type shorthand
+
+The RFC 035 `Callable[Params, R]` function-type shorthand must be retired without a deprecation period. A legacy function-type annotation such as `Callable[int, str]` must be refused with a diagnostic directing the author to `(int) -> str`, preserving its function-type meaning. It must not be silently migrated to the trait annotation `Callable[(int) -> str]`. The diagnostic must use the annotation context to distinguish legacy shorthand from a malformed new trait bound.
+
 ### Diagnostics
 
 - A `Callable` with no type argument, with more than one, or with one that is not a function type must be refused under one new stable `INCAN-T` code. The message must show the corrected spelling built from the written arguments: `Callable[int, str]` becomes `Callable[(int) -> str]`. For a single argument that is not a function type, such as `Callable[int]`, either `Callable[(int) -> R]` or `Callable[() -> int]` may be meant, so the message must offer both.
@@ -364,7 +368,7 @@ Closed RFCs remain historical records and are not edited. This RFC replaces the 
 - **RFC 068:** the "Callable object" row of its protocol table, which names "fixed-arity callable traits such as `Callable0[R]`, `Callable1[A, R]`, and `Callable2[A, B, R]`" as the nominal capability, and the Design Decisions bullet that lists "fixed-arity callable traits" among the capabilities generic code can name. The capability is `Callable[(A, B) -> R]`, one trait for every arity. RFC 068's `__call__` hook, its structural resolution of call syntax, its rule that bounds require adoption, and its rule that a hook must type-check against the trait it claims all remain, the last one now against the derived signature.
 - **RFC 041:** its recorded lowering of the markers, under which each marker becomes the fixed-arity callable trait of its arity, a marker names at most two parameters, and all three markers lower to the same bound. The markers now carry a shared signature without an arity limit while preserving their distinct read-only, mutable, and consuming invocation guarantees in source checking. The Incan-facing marker names, their use in `with` clauses, and the refusal of a marker on a nominal declaration's type parameter remain.
 - **RFC 115:** the statement that callback parameters "use the canonical fixed-arity callable traits" with "explicit `Callable1` / `Callable2` adopters", the `Callable1[...]` and `Callable2[...]` spellings in its combinator signatures, the paragraph that relies on RFC 068's fixed-arity traits and on "the backend's callable-value bridge", and the non-normative note that a backend may bridge function and closure values to the canonical fixed-arity traits. The combinator set, their semantics, their `Clone` requirements, and the promise that callbacks accept functions, capturing closures, compatible enum variant constructors, and adopting models, without narrowing them to function pointers, remain.
-- **RFC 035**, if the shorthand is retired (Unresolved questions): the `Callable[Params, R]` type-position shorthand and its desugaring table. First-class function values and the arrow function type, which RFC 035 already calls canonical, remain.
+- **RFC 035**: the `Callable[Params, R]` type-position shorthand and its desugaring table. First-class function values and the arrow function type, which RFC 035 already calls canonical, remain.
 
 ### Compatibility and migration
 
@@ -373,6 +377,8 @@ This is a breaking change on the 0.6 line. The removed names get no aliases and 
 - `Callable0[R]` to `Callable[() -> R]`, `Callable1[A, R]` to `Callable[(A) -> R]`, `Callable2[A, B, R]` to `Callable[(A, B) -> R]`, and `from std.traits.callable import Callable1, Callable2` to `from std.traits.callable import Callable`.
 - In the standard library: `std.traits.callable` itself, the standard and trait preludes, the feature inventory in `std.features`, and the `FallibleIterator` combinators and their state models in `std.derives.collection`.
 - Examples, test programs, and documentation that name the old traits, including the callable, traits, and collection-protocol reference pages, the Rust interop how-to, the CLI reference entry for `INCAN-T0106`, and the release notes.
+
+Uses of the retired function-type shorthand in standard-library signatures, examples, tests, documentation, and active RFCs must migrate to arrow function types. Closed RFC 035 remains unchanged as a historical record; its first-class named function behavior remains valid.
 
 Published library artifacts whose metadata names the old traits must be rebuilt against a toolchain that implements this RFC.
 
@@ -388,9 +394,9 @@ Published library artifacts whose metadata names the old traits must be rebuilt 
 
 ## Drawbacks
 
-- Every use of `Callable0`, `Callable1`, and `Callable2` must be rewritten, and, if the shorthand is retired, every use of `Callable[A, R]` in a type position as well.
+- Every use of `Callable0`, `Callable1`, and `Callable2` must be rewritten, and every use of `Callable[A, R]` in a type position as well.
 - `Callable` is a compiler-known trait. `std.traits.callable` documents it but cannot state its requirement in source, which makes it a special case beside the ordinary source traits.
-- Until the shorthand question is settled, `Callable[...]` means a function type in a type position and a trait in a bound, which is exactly the kind of position-dependent meaning the language otherwise avoids.
+- Retiring the shipped RFC 035 shorthand requires migration of existing function-type annotations as well as callable bounds.
 - Rich signatures require consistent argument binding, compatibility, and metadata across all callable forms. Backend adapters must preserve nominal identity and receiver effects, including through stored and nested values.
 
 ## Implementation architecture
@@ -434,7 +440,7 @@ This RFC is done when:
 - explicit nominal generic arguments, combined trait bounds, supertraits, and callable objects nested in options or lists retain their types and capabilities across packages;
 - signature metadata reflects parameter kinds, omission support, return types, generic substitutions, and receiver binding without invoking the callable or evaluating defaults, and attempts to overwrite it are refused under the finalized metadata API;
 - the reference pages for callable objects, traits, and collection protocols, the Rust interop how-to, the CLI reference, and the release notes describe `Callable[(A, B) -> R]` and the removal;
-- if the shorthand is retired, a type-position `Callable[A, R]` is refused with its arrow spelling and no use remains.
+- a type-position `Callable[A, R]` is refused with its arrow spelling and no use remains.
 
 ## Design Decisions
 
@@ -447,13 +453,13 @@ This RFC is done when:
 - **The markers keep their spelling and guarantees.** They share signature types but retain read-only, mutable, and consuming invocation distinctions. There is no parameter limit; nominal owners use `Callable[...]`.
 - **Identity and receivers.** Callable objects remain their original types. `mut self` is supported and requires mutable access; bound receivers remain part of the access contract.
 - **Shared signatures and metadata.** Named, optional, keyword-only, and variadic parameters use declaration rules. `__signature__` is compiler-derived and read-only.
+- **Legacy shorthand is retired.** Function types use arrow syntax; `Callable[...]` consistently names the callable trait. RFC 035 is explicitly superseded only for its shorthand, with migration diagnostics preserving the old function-type meaning.
 - **Inherited features.** `Callable` expresses whatever function types express, including the `mut` parameter marker of #1790 once it lands, with no rule of its own.
 - **Compiler-known.** `std.traits.callable` declares and documents `Callable`; the checker supplies its requirement.
 - **One identity.** A callable value satisfies the same bound in every package; a backend that breaks this is not acceptable.
 
 ## Unresolved questions
 
-- **Should the RFC 035 `Callable[Params, R]` type-position shorthand be retired?** With `Callable` a trait, RFC 042 already gives `Callable[(A) -> R]` a meaning in annotation position, and the shorthand gives `Callable[A, R]` another, so the same name would mean two things depending on position and argument count. Recommendation: retire it in the same release, with no deprecation period, so `(A) -> R` is the only spelling of a function type; refuse a type-position `Callable[A, R]` with a diagnostic that shows the arrow form; migrate its uses in `std.result` (six signatures), `std.regex` (three), the feature inventory, two examples, test programs, about ten documentation pages, and the open draft RFCs that use it.
 - **What concrete API and availability policy does `__signature__` expose?** The shared model, read-only behavior, and receiver treatment are settled. The metadata types, how programs query them, and whether runtime metadata is always available or explicitly retained still need a concrete contract before this RFC advances. This is distinct from compiler and checked-library metadata, which must always retain the information needed for checking.
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.
