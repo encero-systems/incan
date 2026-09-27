@@ -223,7 +223,7 @@ async def main() -> None:
     println(await wait_for(first) + await wait_for(second))
 ```
 
-A handle cannot be a `model` or `class` field or an `enum` payload (`INCAN-T0113`): those derive `Clone` and `Debug` automatically, and a handle supports neither ([Automatic derives](../reference/derives_and_traits.md#automatic-derives)). A `list[JoinHandle[T]]` cannot be grown with `append`, which requires an element type that implements `Clone`; build the list of handles as a literal instead, as in the next section.
+A handle cannot be a `model` or `class` field or an `enum` payload (`INCAN-T0113`): those derive `Clone` and `Debug` automatically, and a handle supports neither ([Automatic derives](../reference/derives_and_traits.md#automatic-derives)). To keep several handles together, put them in a list, as in the next section.
 
 ### Await every task in a list
 
@@ -248,6 +248,29 @@ async def main() -> None:
 Awaiting a handle uses it up, so the loop takes the handles out of `handles`, and the compiler refuses a read of `handles` inside or after the loop with `INCAN-T0119`. Keep what the rest of the function needs in a list of its own, like `results` above, or read it before the loop, such as `count = len(handles)`. A closure that reads `handles` is refused too when it is made before the loop, so read the value it needs into a binding of its own first.
 
 To reuse the name, assign it a new list after the loop, outside any branch and where no `break` or `continue` after the loop can skip the assignment. When an enclosing `while` or `loop:` awaits a fresh set of tasks on each pass, build the list inside that loop, or assign it a new list at the start of each pass, before anything in the pass reads it.
+
+When the number of tasks is known only at run time, grow the list with `append`, passing the `spawn(...)` call itself as the argument:
+
+```incan
+from std.async import spawn
+from std.async.task import JoinHandle
+
+async def double(n: int) -> int:
+    return n * 2
+
+async def main() -> None:
+    mut handles: list[JoinHandle[int]] = []
+    for n in range(3):
+        handles.append(spawn(double(n)))
+    mut results: list[int] = []
+    for handle in handles:
+        match await handle:
+            Ok(value) => results.append(value)
+            Err(error) => println(f"task failed: {error.message()}")
+    println(len(results))
+```
+
+Do not bind the handle to a name first: `append` needs an element type that implements `Clone` for a value read from a name, a field or a list element, and a handle does not implement `Clone`, so `first = spawn(double(1))` followed by `handles.append(first)` is refused with `INCAN-T0001`. The same holds for a handle received as a parameter.
 
 A list of lists of handles works the same way, one group at a time:
 

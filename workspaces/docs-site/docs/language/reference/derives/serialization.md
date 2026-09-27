@@ -42,10 +42,61 @@ def main() -> None:
     parsed: Result[User, str] = User.from_json(text)        # accepted
 ```
 
+## Bounds and trait types
+
+| Position | Accepts | Provides |
+| --- | --- | --- |
+| `T with Serialize`, for `value: T` | a type argument that provides `Serialize` | `value.to_json() -> str`, `json_stringify(value) -> str` |
+| `T with Deserialize` | a type argument that provides `Deserialize` | `T.from_json(input: str) -> Result[T, str]` |
+| a parameter `value: Serialize` | an argument whose type provides `Serialize` | `value.to_json() -> str`, `json_stringify(value) -> str` |
+| a return type `-> Serialize` | a returned value whose type provides `Serialize` | `to_json()` and `json_stringify` over the result |
+
+- A type argument, argument or returned value whose type does not provide the trait is refused (`INCAN-T0001`). A builtin type such as `int` does not provide `Serialize`.
+- In a `model` or `class` whose type parameter is bounded `T with Serialize`, a field of type `T`, or of a collection of `T`, serializes.
+
+```incan
+from std.serde.json import Deserialize, Serialize
+
+@derive(Serialize, Deserialize)
+model Payload:
+    value: int
+
+@derive(Serialize, Deserialize)
+type UserId = newtype int
+
+@derive(Serialize)
+model Envelope[T with Serialize]:
+    payload: T
+
+def encode[T with Serialize](value: T) -> str:
+    return value.to_json()
+
+def stringify[T with Serialize](value: T) -> str:
+    return json_stringify(value)
+
+def decode[T with Deserialize](text: str) -> Result[T, str]:
+    return T.from_json(text)
+
+def describe(value: Serialize) -> str:
+    return json_stringify(value)
+
+def make() -> Serialize:
+    return Payload(value=5)
+
+def main() -> None:
+    a = encode(Payload(value=1))                        # accepted
+    b = stringify(UserId(8))                            # accepted
+    c = decode[UserId]("9")                             # accepted
+    d = describe(Payload(value=6))                      # accepted
+    e = make().to_json()                                # accepted
+    f = Envelope(payload=Payload(value=3)).to_json()    # accepted
+    g = encode(1)                                       # refused: int does not provide Serialize (INCAN-T0001)
+```
+
 ## Field names
 
 - A model field's JSON key is its alias when it declares one (`type_ as "type": str`, or `type_ [alias="type"]: str`), and its name otherwise.
-- A class field's JSON key is its name.
+- A class field's JSON key is its name. An alias on a class field is refused (`INCAN-T0001`).
 
 ## Type mapping
 

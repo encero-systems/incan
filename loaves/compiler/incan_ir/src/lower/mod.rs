@@ -2987,6 +2987,28 @@ impl AstLowering {
                                     }
                                 }
                             }
+                            // A derived `std.serde.json` trait is implemented like a model's (#1820).
+                            for (trait_name, trait_type_args) in self.derived_json_protocol_impl_targets(&n.decorators)
+                            {
+                                match self.lower_trait_impl(TraitImplLoweringInput {
+                                    type_name: &struct_ir.name,
+                                    type_params: &n.type_params,
+                                    trait_name: &trait_name,
+                                    trait_type_args,
+                                    impl_methods: &n.methods,
+                                    impl_properties: &[],
+                                    impl_associated_types: &n.associated_types,
+                                }) {
+                                    Ok(mut trait_impl) => {
+                                        self.require_json_protocol_capability_on_impl_params(
+                                            &mut trait_impl,
+                                            &trait_name,
+                                        );
+                                        ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
+                                    }
+                                    Err(e) => errors.push(e),
+                                }
+                            }
                         }
                         Err(e) => errors.push(e),
                     }
@@ -3204,6 +3226,7 @@ impl AstLowering {
                 }),
         );
         if errors.is_empty() {
+            self.attach_json_protocol_capability_to_trait_returns(&mut ir_program);
             super::borrow_inference::infer_shared_helpers(
                 &mut ir_program,
                 &self
@@ -4215,6 +4238,7 @@ mod tests {
     mod error_message_display;
     mod for_item_taking;
     mod import_paths;
+    mod json_protocol_bounds;
     mod list_count_forms;
     mod method_decorator_receivers;
     mod newtype_automatic_derives;
