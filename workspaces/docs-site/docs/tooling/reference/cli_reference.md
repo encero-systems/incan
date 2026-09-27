@@ -148,14 +148,15 @@ Explains a diagnostic code. `--format text|json` (default `text`); `json` prints
 | `INCAN-T0001` | Type checking error. |
 | `INCAN-T0101` | Unreachable code: statements after a `return` in the same block. A warning. |
 | `INCAN-T0102` | A method assigns to a field, or calls a method that changes one, through a plain `self` receiver. |
-| `INCAN-T0103` | A `print` or `println` argument is a tuple, which has no printed form. |
-| `INCAN-T0104` | A `Tuple` or `tuple` annotation names no element types. |
+| `INCAN-T0103` | A value displayed by `print`, `println`, `str` or an f-string `{value}`, or given as the type argument of a `Display` bound, has no printed form: a union value, a `Generator`, a function, `bytes`, or a `model`, `class`, `enum` or `newtype` whose type provides no `Display`. See [Display](../../language/reference/strings.md#display). |
+| `INCAN-T0104` | A `list`, `dict`, `set`, `tuple`, `Option`, `Result`, frozen collection or `Generator` annotation names no type arguments, alone or nested in another annotation. |
 | `INCAN-T0105` | A Rust associated call such as `HashMap.new()` leaves the owner's type arguments open, and nothing later fixes them. |
 | `INCAN-T0106` | An `Fn`, `FnMut` or `FnOnce` marker from `std.rust` names more than two parameters, or bounds a type parameter of a nominal declaration. |
 | `INCAN-T0107` | A `@route` handler's return type is not a response type: `str`, `bytes`, `None`, `Json[...]`, `Html`, `Response`, a wrapper deriving `IntoResponse`, or a `Result` of these. |
 | `INCAN-T0108` | A `@route` handler parameter that no `{segment}` of the path binds and no extractor supplies: `Json[...]`, `Query[...]`, `Path[...]`, `Body`, `Request`, a `str` or `bytes` body, or a wrapper deriving `FromRequestParts`. |
 | `INCAN-T0109` | `/`, `//`, `%` or `**` applied to values of a type parameter. |
 | `INCAN-T0110` | A method decorator's shape, or a function a decorator returns in the method's place, writes the receiver as `&Owner` or `&mut Owner` instead of `Owner` for a `self` method or `mut Owner` for a `mut self` method. |
+| `INCAN-T0111` | A name the source declares or binds starts with `__incan_`, the prefix reserved for the compiler. See [Reserved name prefix](../../language/reference/imports_and_modules.md#reserved-name-prefix). |
 | `INCAN-T0112` | A `@route` handler's `Json[T]`, `Query[T]` or `Path[T]` parameter, or `Json[T]` return, carries a model or class with no JSON form (no `@derive(json)` and no adopted `std.serde.json` trait), directly or inside a collection. |
 | `INCAN-T0113` | A `model` or `class` field, or an `enum` variant payload, whose type does not implement `Clone` and `Debug`, such as a `JoinHandle[T]` field. |
 | `INCAN-T0114` | A `set` element type or `dict` key type that does not implement `Eq` and `Hash`, in an annotation, a literal, a comprehension, a `set(...)` call, or as the type argument of a generic call that uses its type parameter as a set element or dict key. |

@@ -1,0 +1,28 @@
+# behavior: print, str and an f-string display a list, a tuple, an Option, a Result and a dict alike, through their structure
+# retires: loaves/compiler/incan_ir/src/lower/tests/display_operands.rs::print_arguments_render_structural_values_like_interpolation_issue1748
+# retires: loaves/compiler/incan_ir/src/lower/tests/display_operands.rs::str_of_a_structural_value_is_its_interpolation_issue1748
+# expect-stdout:
+#   [1, 2, 3]
+#   [1, 2, 3]
+#   [1, 2, 3]
+#   (10, 20)
+#   Some(1)
+#   None
+#   Err("bad")
+#   {"a": 1}
+
+def main() -> None:
+    items: list[int] = [1, 2, 3]
+    print(items)
+    println(str(items))
+    println(f"{items}")
+    coords: tuple[int, int] = (10, 20)
+    print(coords)
+    present: Option[int] = Some(1)
+    absent: Option[int] = None
+    println(present)
+    println(absent)
+    outcome: Result[int, str] = Err("bad")
+    println(outcome)
+    counts: dict[str, int] = {"a": 1}
+    println(counts)

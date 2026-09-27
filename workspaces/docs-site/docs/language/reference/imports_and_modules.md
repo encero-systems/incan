@@ -1,6 +1,6 @@
 # Imports and modules (reference)
 
-This page specifies import forms, module paths and files, what an import binds, re-exports, package namespaces, the `std` root, soft keywords, and Rust crate imports. Refusals of an import are reported with `INCAN-I0001`, syntax errors with `INCAN-P0001`, and refusals made when a project builds or locks with `INCAN-C0001`, unless a rule below names another code.
+This page specifies import forms, module paths and files, what an import binds, the reserved name prefix, re-exports, package namespaces, the `std` root, soft keywords, and Rust crate imports. Refusals of an import are reported with `INCAN-I0001`, syntax errors with `INCAN-P0001`, and refusals made when a project builds or locks with `INCAN-C0001`, unless a rule below names another code.
 
 ## Import forms
 
@@ -21,8 +21,8 @@ from utils import (
     format_currency as fmt,
     validate_email,
 )                                             # accepted
-import db.models                              # accepted: binds models
-import db::models::User                       # accepted: binds User
+import db.models                              # accepted
+import db::models::User                       # accepted
 from models import *                          # refused: wildcard (INCAN-P0001)
 ```
 
@@ -46,13 +46,13 @@ A module path `a.b` names the first of these files that exists: `a/b.incn`, `a/b
 
 ```incan
 # store/relative.incn
-from ..db.schema import Database          # accepted: db/schema.incn, beside store/
+from ..db.schema import Database          # accepted
 
 # store/parent.incn
-from super::db::schema import Database    # accepted: the same module
+from super::db::schema import Database    # accepted
 
 # app/store/nested.incn
-from ...db.schema import Database         # accepted: db/schema.incn, two directories above app/store/
+from ...db.schema import Database         # accepted
 ```
 
 ## Bindings
@@ -78,7 +78,7 @@ def load(path: str) -> models.Config:     # accepted
 
 ```incan
 import codecs.prelude as codecs_prelude
-import compression.prelude as compression_prelude   # accepted: distinct local names
+import compression.prelude as compression_prelude   # accepted
 import models as std                                # refused: std is reserved
 ```
 
@@ -93,7 +93,7 @@ model Response:
     body: str
 
     @staticmethod
-    def make(body: str) -> Response:          # accepted: the model Response
+    def make(body: str) -> Response:          # accepted
         return Response(body=body)
 ```
 
@@ -108,12 +108,38 @@ model Response:
 from aggregates import sum
 
 def report() -> int:
-    local_total = sum(41)                     # accepted: calls aggregates.sum
-    builtin_total = std.builtins.sum([1, 2])  # accepted: calls the builtin
+    local_total = sum(41)                     # accepted
+    builtin_total = std.builtins.sum([1, 2])  # accepted
     return local_total + builtin_total
 ```
 
 The builtin functions and types are listed in the [language reference](language.md#builtin-functions).
+
+### Reserved name prefix
+
+Names that start with `__incan_` are reserved for the compiler. A name the source declares or binds with that prefix is refused (`INCAN-T0111`), public or private:
+
+- a module-level function, constant, static, type, trait, alias or partial;
+- a field, property, method, method alias, method partial, enum variant or variant alias;
+- a parameter or type parameter;
+- a local, pattern or closure binding;
+- an import alias, or an imported name bound without an alias.
+
+A method named `__incan_new` is exempt: it is a type's constructor hook.
+
+```incan
+from helpers import total as __incan_total   # refused: reserved prefix (INCAN-T0111)
+
+pub def __incan_original_target() -> int:     # refused: reserved prefix (INCAN-T0111)
+    return 2
+
+class Counter:
+    value: int = 0
+
+    @staticmethod
+    def __incan_new() -> Self:                # accepted
+        return Counter(value=5)
+```
 
 ## Re-exports
 
@@ -141,7 +167,7 @@ pub from pub::calc_lib import facade_calculate as b_calculate
 from facade import b_calculate
 
 def main() -> None:
-    println(b_calculate(41))    # accepted: calls calc_lib's helpers.calculate
+    println(b_calculate(41))    # accepted
 ```
 
 `incan build --lib` refuses (`INCAN-C0001`) a library entrypoint that re-exports from an unknown module, re-exports a name its module does not export, or exports one name twice.
@@ -158,7 +184,7 @@ def main() -> None:
 - At the package root, a re-export in `src/lib.incn` and a child namespace with the same name are ambiguous; the exact path selects one.
 
 ```incan
-from pub::hees_ai import hyperquant                            # accepted: the namespace
+from pub::hees_ai import hyperquant                            # accepted
 from pub::hees_ai.hyperquant.index import build_index          # accepted
 import pub::hees_ai.hyperquant as hq                           # accepted
 from pub::codecs.encoding.base64 import encode                 # accepted
@@ -172,8 +198,8 @@ from pub::codecs.encoding import encode                        # refused: base64
 - An unknown `std.*` module is refused.
 
 ```incan
-from std import toml                   # accepted: the module std.toml
-from std import math as arithmetic     # accepted: the module std.math, as arithmetic
+from std import toml                   # accepted
+from std import math as arithmetic     # accepted
 from std import Debug                  # refused: Debug is declared in std.derives.string
 from std.derives.string import Debug   # accepted
 ```

@@ -923,18 +923,18 @@ union_provider = { path = "../union_provider" }
     )?;
     fs::write(
         &consumer_main,
-        r#"from pub::union_provider import add as __incan_vocab_helper_union_provider_add
-from pub::union_provider import col as __incan_vocab_helper_union_provider_col
-from pub::union_provider import desc as __incan_vocab_helper_union_provider_desc
-from pub::union_provider import frame as __incan_vocab_helper_union_provider_frame
+        r#"from pub::union_provider import add as vocab_helper_union_provider_add
+from pub::union_provider import col as vocab_helper_union_provider_col
+from pub::union_provider import desc as vocab_helper_union_provider_desc
+from pub::union_provider import frame as vocab_helper_union_provider_frame
 
 
 def main() -> None:
-    __incan_vocab_helper_union_provider_frame().filter(
-        __incan_vocab_helper_union_provider_add(__incan_vocab_helper_union_provider_col("amount"), 5),
+    vocab_helper_union_provider_frame().filter(
+        vocab_helper_union_provider_add(vocab_helper_union_provider_col("amount"), 5),
     )
-    __incan_vocab_helper_union_provider_frame().order_by([
-        __incan_vocab_helper_union_provider_desc(__incan_vocab_helper_union_provider_col("amount")),
+    vocab_helper_union_provider_frame().order_by([
+        vocab_helper_union_provider_desc(vocab_helper_union_provider_col("amount")),
     ])
     return
 "#,

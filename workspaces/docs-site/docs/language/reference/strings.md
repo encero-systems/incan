@@ -66,22 +66,106 @@ Membership uses the method, not the `in` operator: `s.contains("x")`.
 
 ## F-strings
 
-An f-string interpolates any expression between `{` and `}`; the value is formatted through `Display`. A format spec after `:` selects another formatting:
+An f-string interpolates any expression between `{` and `}`. A format spec after `:` selects the formatting:
 
 | Spec | Formatting |
 | --- | --- |
-| `{value}` | `Display` |
+| `{value}` | The value's display text (see [Display](#display)) |
 | `{value:?}` | `Debug`: the value's structure, for example `Point { x: 10, y: 20 }` |
 
-A `float` in a `Display` position — an f-string `{value}`, `str(value)`, or `print`/`println` — always renders as a float. An integral value keeps its decimal point (`100.0`, never `100`), the shortest digits that round-trip are used (`1.5`, `0.30000000000000004`), positional notation holds while the magnitude is at least `1e-4` and below `1e16` (`10000000000.0`) and switches to an exponent with an explicit sign and at least two digits outside that range (`1e+16`, `1.5e-07`), and the non-finite values are `inf`, `-inf`, and `nan`. An `f32` or `f64` renders the shortest digits that round-trip in positional notation, with no forced decimal point (`100`, `1.5`); the non-finite values are `inf`, `-inf`, and `NaN`.
-
-A value whose type adopts `Error` and has no `Display` of its own renders its `message()` in a `Display` position: an f-string `{value}`, `str(value)`, and `print`/`println`. `{value:?}` keeps `Debug`. See [Error trait](./stdlib_traits/error.md#displaying-an-error).
-
 See [String representation](./derives/string_representation.md) for how a type provides `Display` and `Debug`.
+
+## Display
+
+`print(value)`, `println(value)`, `str(value)` and an f-string `{value}` part render the same text for the same value.
+
+| Value | Displayed text |
+| --- | --- |
+| `str`, `FrozenStr` | The text itself, unquoted |
+| `int` and the exact-width integers | Decimal digits |
+| `bool` | `true` or `false` |
+| `float` | Decimal digits with a decimal point or an exponent, below |
+| `f32`, `f64` | The shortest digits that round-trip, below |
+| A `model`, `class`, `enum` or `newtype` that defines `__str__` | What `__str__` returns |
+| An enum that declares values | The variant's value |
+| A type that adopts `Error` and has no `__str__` | What `message()` returns (see [Displaying an error](./stdlib_traits/error.md#displaying-an-error)) |
+| Tuple | `(10, 20)` |
+| `list` | `[1, 2, 3]` |
+| `dict` | `{"a": 1}` |
+| `set` | `{1, 2}` |
+| `Option` | `Some(1)` or `None` |
+| `Result` | `Ok(2)` or `Err("bad")` |
+| `FrozenList`, `FrozenSet`, `FrozenDict` | As `list`, `set` and `dict`: `[1, 2, 3]`, `{1, 2}`, `{"a": 1}` |
+| `FrozenBytes` | A byte literal, `b"abc"`, with `\`, `"` and every byte outside printable ASCII escaped (`\"`, `\\`, `\x00`) |
+
+- Inside a tuple, list, dict, set, frozen collection, `Option` or `Result`, every element or payload displays as its `{value:?}` structure: a `str` is quoted (`["a", "b"]`), a `float` keeps its decimal point and uses an unsigned exponent from `1e16` up and below `1e-4` (`[100.0, 1e16]`), a model or class shows its fields even when its type defines `__str__` (`[Point { x: 1, y: 2 }]`), and an enum value shows its variant (`[Red]`). The entry order of a set or a dict is unspecified.
+- A `float` always shows a decimal point or an exponent. An integral value keeps its decimal point (`100.0`); the shortest digits that round-trip are used (`1.5`, `0.30000000000000004`); positional notation holds while the magnitude is at least `1e-4` and below `1e16` (`10000000000.0`), and outside that range the value uses an exponent with an explicit sign and at least two digits (`1e+16`, `1.5e-07`); the non-finite values are `inf`, `-inf` and `nan`.
+- An `f32` or `f64` displays the shortest digits that round-trip in positional notation, with no forced decimal point (`100`, `1.5`); its non-finite values are `inf`, `-inf` and `NaN`.
+
+Refused in every display position (`INCAN-T0103`):
+
+- a union value (`int | str`); a member bound by narrowing displays as its own type (see [Union types](./union_types.md#narrowing));
+- a `Generator`;
+- a function;
+- `bytes`;
+- a `model`, `class`, `enum` or `newtype` value whose type provides no `Display`: it defines no `__str__`, is not an enum that declares values, and does not adopt `Error`. `@derive(Display)` provides nothing.
+
+```incan
+model Point:
+    x: int
+    y: int
+
+enum Color:
+    Red
+
+enum Level(str):
+    WARN = "warn"
+
+def main() -> None:
+    items: list[int] = [1, 2, 3]
+    print(items)              # accepted
+    println(str(items))       # accepted
+    println(f"{Level.WARN}")  # accepted
+    point = Point(x=1, y=2)
+    println(f"{point:?}")     # accepted
+    println(point)            # refused: Point defines no __str__ (INCAN-T0103)
+    println(str(Color.Red))   # refused: Color declares no values (INCAN-T0103)
+```
+
+| Expression | Output |
+| --- | --- |
+| `print(items)`, `str(items)`, `f"{items}"` | `[1, 2, 3]` |
+| `f"{Level.WARN}"` | `warn` |
+| `f"{point:?}"` | `Point { x: 1, y: 2 }` |
+
+### `Display` bounds
+
+A type argument for a type parameter bounded by `Display` (`def show[T with Display](value: T)`) satisfies the bound when it provides `Display` by the rule above. `int`, `float`, `bool`, `str`, `FrozenStr` and `FrozenBytes` satisfy it.
+
+- Refused (`INCAN-T0103`): a type argument whose values have no printed form, as listed above.
+- Refused (`INCAN-T0001`): a tuple, list, dict, set, `Option` or `Result` type argument. Each displays its structure in a display position but does not provide `Display`.
+
+```incan
+model Point:
+    x: int
+
+enum Level(str):
+    WARN = "warn"
+
+def show[T with Display](value: T) -> str:
+    return f"{value}"
+
+def main() -> None:
+    a = show(1)               # accepted
+    b = show(Level.WARN)      # accepted
+    c = show(Point(x=1))      # refused: Point defines no __str__ (INCAN-T0103)
+    d = show([1, 2])          # refused: list does not provide Display (INCAN-T0001)
+```
 
 ## See also
 
 - [String processing](../how-to/string_processing.md) — recipes for splitting, joining, cleaning and encoding text.
+- [Displaying a value with no printed form](../how-to/error_messages.md#displaying-a-value-with-no-printed-form) — what to display instead when a value is refused with `INCAN-T0103`.
 - [Binary-text encoding](../how-to/binary_text_encoding.md) — moving bytes through text formats and decoding at boundaries.
 - [Rust types for Python developers](../how-to/rust_types_for_python_devs.md) — how `str` and `bytes` differ from Python's.
 - [Strings and formatting (tutorial)](../tutorials/book/07_strings_and_formatting.md)

@@ -3464,13 +3464,7 @@ impl AstLowering {
         {
             let args_ir = self.lower_builtin_call_args(builtin, args)?;
             let result_ty = self.lowered_builtin_call_type(builtin, call_span);
-            return Ok((
-                IrExprKind::BuiltinCall {
-                    func: builtin,
-                    args: args_ir,
-                },
-                result_ty,
-            ));
+            return Ok(self.builtin_call_with_display_operands(builtin, args_ir, result_ty));
         }
 
         if let Some(constructor) = self
@@ -3702,13 +3696,7 @@ impl AstLowering {
         {
             let args_ir = self.lower_builtin_call_args(builtin, args)?;
             let result_ty = self.lowered_builtin_call_type(builtin, call_span);
-            return Ok((
-                IrExprKind::BuiltinCall {
-                    func: builtin,
-                    args: args_ir,
-                },
-                result_ty,
-            ));
+            return Ok(self.builtin_call_with_display_operands(builtin, args_ir, result_ty));
         }
 
         // Regular function call (user-defined or unknown)

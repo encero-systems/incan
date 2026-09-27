@@ -1146,14 +1146,6 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections/compression_auto_decode.incn",
           "notes": "twinned by a program gzip-compressing bytes and decoding them through `decompress_auto`; the `let mut adapter = reader;` spelling dies."
         },
-        "generated_decorator_function_collision_keeps_distinct_identifiers_and_calls": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_functions_and_aliases/decorator_generated_name_collisions.incn",
-          "notes": "twinned by a program with a private function spelled `__incan_original_target` beside a decorated `target`, printing both. The `pub` function of the retired test fails to compile (#1769): `pub def __incan_original_target() -> int` beside `@preserve() pub def target()` emits `pub use <projection> as __incan_original_target;` next to the decorator's `fn __incan_original_target` (E0255); `incan check` accepts it."
-        },
-        "generated_decorator_static_collision_keeps_distinct_identifiers_and_reads": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_functions_and_aliases/decorator_generated_name_collisions.incn",
-          "notes": "twinned by a program with a private static spelled `__incan_decorated_target` beside a decorated `target`, printing both. The `pub` static of the retired test fails to compile (#1769): `pub static __incan_decorated_target: int = 41` beside `@preserve() pub def target()` emits `pub use <projection> as __INCAN_DECORATED_TARGET;` next to the decorator's own `static __INCAN_DECORATED_TARGET` (E0255); `incan check` accepts it."
-        },
         "generated_use_analysis_keeps_only_selected_same_name_rust_extension_trait_import": {
           "twin": "dies",
           "dies": "a hand-built legacy IR program over a synthetic `demo` crate, asserting `use` pruning of same-named extension traits; legacy IR and generated text, no program to run."
@@ -4985,6 +4977,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/display_rule.rs": {
+      "disposition": "keep",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/error_display.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -5727,9 +5727,9 @@
           "twin": "dies",
           "dies": "fail-closed guard of the retiring crate: the test hand-strips or omits the checker's facts (no type info at all for a class) and asserts lowering refuses to guess; no checked program reaches lowering without them, so there is nothing a program can show."
         },
-        "decorated_function_original_name_collision_uses_distinct_registry_keys": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/decorated_function_beside_original_named_function.incn",
-          "notes": "The registry keys die with the crate; the fixture declares `__incan_original_target` beside a decorated `target` and calls both."
+        "decorated_function_original_uses_a_generated_registry_key": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/refused_function_named_like_a_decorated_original.incn",
+          "notes": "Asserts that a decorated function's generated original registers under a generated key and never as a source declaration; the registry keys die with the crate. The collision those keys guarded can no longer be written: a source name with the `__incan_` prefix is refused (INCAN-T0111), which the fixture proves on the colliding program."
         },
         "decorator_declared_result_type_follows_the_resolved_declaration_issue1453": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/decorator_declared_surface_issue1453.incn",
@@ -5961,6 +5961,24 @@
         }
       },
       "twin": ""
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/display_operands.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": "",
+      "tests": {
+        "print_arguments_render_structural_values_like_interpolation_issue1748": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/display_positions_render_collections_alike.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (a structural `print`/`println` argument is handed to the emitter as the one-part f-string rendering, a scalar stays as written); retires with `incan_ir`. The behavior, `print(items)` printing `[1, 2, 3]` like `f\"{items}\"`, is carried by the named fixture (#1748)."
+        },
+        "str_of_a_structural_value_is_its_interpolation_issue1748": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/display_positions_render_collections_alike.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (`str(items)` becomes the one-part f-string rendering, `str(count)` keeps the builtin conversion); retires with `incan_ir`. The behavior, `str(items)` printing `[1, 2, 3]`, is carried by the named fixture (#1748)."
+        }
+      }
     },
     "loaves/compiler/incan_ir/src/lower/tests/error_message_display.rs": {
       "disposition": "retire",

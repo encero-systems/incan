@@ -83,6 +83,7 @@ def main() -> None:
 ## Narrowing
 
 - A union value has no member-specific methods or operators. Calling one, or applying an operator, is refused (`INCAN-T0001`).
+- A union value has no printed form. `print(value)`, `println(value)`, `str(value)` and an f-string `{value}` over it are refused (`INCAN-T0103`); a narrowed member displays as its own type (see [Display](strings.md#display)).
 - In an `if isinstance(value, T):` branch, `value` has type `T`. In the `else` branch and in each following `elif` branch, it has the members no earlier branch tested.
 - An `Option` union narrows through `is None` and `is not None` as well.
 - Narrowing ends with the conditional statement: after it, `value` has the union type again.
@@ -101,6 +102,12 @@ def label(value: str | None) -> str:
     if value is not None:
         return value.upper()                     # accepted
     return "missing"
+
+def show(value: int | str) -> None:
+    match value:
+        int(n) => println(n)                     # accepted
+        str(s) => println(s)                     # accepted
+    println(value)                               # refused: a union value has no printed form
 ```
 
 ## Matching

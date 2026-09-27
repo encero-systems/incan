@@ -10,6 +10,7 @@ mod calls;
 mod comprehensions;
 mod default_owner_paths;
 mod destination_literals;
+mod display_operands;
 mod error_display;
 mod helpers;
 mod pattern_alternatives;
@@ -1944,13 +1945,8 @@ impl AstLowering {
                 {
                     let args_ir = self.lower_builtin_call_args(builtin, args)?;
                     let result_ty = self.lowered_builtin_call_type(builtin, expr_span);
-                    return Ok(TypedExpr::new(
-                        IrExprKind::BuiltinCall {
-                            func: builtin,
-                            args: args_ir,
-                        },
-                        result_ty,
-                    ));
+                    let (kind, ty) = self.builtin_call_with_display_operands(builtin, args_ir, result_ty);
+                    return Ok(TypedExpr::new(kind, ty));
                 }
 
                 if matches!(&o.node, ast::Expr::Ident(name)
