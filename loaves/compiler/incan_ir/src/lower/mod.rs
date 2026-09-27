@@ -4655,6 +4655,7 @@ mod tests {
     mod pattern_alternatives_and_private_rests;
     mod pub_method_results;
     mod reexported_projections;
+    mod static_method_args;
     mod stdlib_const_defaults;
     mod tuple_assignment;
     mod unary_operand_grouping;

@@ -1244,8 +1244,18 @@ impl AstLowering {
             }
 
             ast::Statement::FieldAssignment(fa) => {
+                // Through static storage the value is evaluated before the path (see `ast_path_reads_static_storage`),
+                // so its reads are counted first.
+                let early_value = if self.ast_path_reads_static_storage(&fa.object) {
+                    Some(self.lower_expr_spanned(&fa.value)?)
+                } else {
+                    None
+                };
                 let target = self.field_assign_target(&fa.object, &fa.field, fa.target_span)?;
-                let mut value = self.lower_expr_spanned(&fa.value)?;
+                let mut value = match early_value {
+                    Some(value) => value,
+                    None => self.lower_expr_spanned(&fa.value)?,
+                };
                 // A `Some(member)` stored in a dependency model's field takes the union the provider declares (#1743).
                 if let AssignTarget::Field { object, .. } = &target {
                     self.retain_field_assignment_union_owner(object, &fa.field, &mut value);
@@ -1254,16 +1264,28 @@ impl AstLowering {
             }
 
             ast::Statement::IndexAssignment(ia) => {
-                let object = self.lower_expr_spanned(&ia.object)?;
-                let index = self.lower_expr_spanned(&ia.index)?;
-                let value = self.lower_expr_spanned(&ia.value)?;
-
-                if let Some(resolved_operator) = self
+                let resolved_index_assign = self
                     .type_info
                     .as_ref()
                     .and_then(|info| info.resolved_operator_call(stmt_span).cloned())
-                    && resolved_operator.kind == ResolvedOperatorKind::IndexAssign
-                {
+                    .filter(|resolved_operator| resolved_operator.kind == ResolvedOperatorKind::IndexAssign);
+                // A plain assignment through static storage evaluates the value before the path and the index (see
+                // `ast_path_reads_static_storage`), so its reads are counted first: `counts[name] =
+                // counts.get(name).unwrap_or(0) + 1` reads `name` last as the key (#1793). An `__setitem__` call
+                // evaluates its arguments in order.
+                let early_value = if resolved_index_assign.is_none() && self.ast_path_reads_static_storage(&ia.object) {
+                    Some(self.lower_expr_spanned(&ia.value)?)
+                } else {
+                    None
+                };
+                let object = self.lower_expr_spanned(&ia.object)?;
+                let index = self.lower_expr_spanned(&ia.index)?;
+                let value = match early_value {
+                    Some(value) => value,
+                    None => self.lower_expr_spanned(&ia.value)?,
+                };
+
+                if let Some(resolved_operator) = resolved_index_assign {
                     let dispatch = self
                         .type_info
                         .as_ref()

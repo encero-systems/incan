@@ -486,6 +486,12 @@ pub struct TypeChecker {
     current_immutable_self_method: Option<String>,
     /// Iterator bindings consumed by terminal RFC 088 methods in the current local checking flow.
     pub consumed_iterator_bindings: HashMap<String, Span>,
+    /// `dict.get(key)` calls whose value type cannot be copied, with that type's name; refused at the end of checking
+    /// unless the lookup turned out to be only read (see `check_expr/dict_lookups.rs`).
+    pending_uncopyable_dict_lookups: Vec<(Span, String)>,
+    /// Locals bound directly to a module static (`live = counts`), which read the static's storage like the static
+    /// itself does.
+    static_alias_bindings: HashSet<SymbolId>,
     /// Resource bindings transferred to an owning C ABI parameter in the current local checking flow.
     pub transferred_c_resource_bindings: HashMap<String, Span>,
     /// Lists whose items a `for` loop of the current body takes, and that body's `for` pattern bindings (#1844).
@@ -847,6 +853,8 @@ impl TypeChecker {
             mut_params: mut_arguments::MutParamFacts::default(),
             current_immutable_self_method: None,
             consumed_iterator_bindings: HashMap::new(),
+            pending_uncopyable_dict_lookups: Vec::new(),
+            static_alias_bindings: HashSet::new(),
             transferred_c_resource_bindings: HashMap::new(),
             for_item_taking: for_item_taking::ForItemTaking::default(),
             unbound_c_abi_span_constructors: HashMap::new(),
@@ -6635,6 +6643,8 @@ impl TypeChecker {
         self.type_info = TypeCheckInfo::default();
         self.warnings.clear();
         self.errors.clear();
+        self.pending_uncopyable_dict_lookups.clear();
+        self.static_alias_bindings.clear();
         self.testing_marker_import_bindings.clear();
         self.surface_function_import_bindings.clear();
         self.surface_type_import_bindings.clear();
@@ -6700,6 +6710,7 @@ impl TypeChecker {
             }
         }
         self.resolve_mut_arguments();
+        self.refuse_copying_dict_lookups_of_uncopyable_values();
 
         self.type_info
             .c_abi

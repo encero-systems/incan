@@ -565,6 +565,23 @@ const IMMUTABLE_ARGUMENT_TO_MUT_PARAMETER: DiagnosticCatalogEntry = DiagnosticCa
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/functions/"),
 };
 
+const KEPT_DICT_LOOKUP_VALUE_CANNOT_BE_COPIED: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0118",
+    title: "Dict lookup of a value that cannot be copied",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A `dict.get(key)` result is a copy of the stored value, and the dict's value type cannot be copied.",
+    explanation: "`get(key)` returns `Some` holding a copy of the value stored for the key, or `None` when the key is absent. A value type that cannot be copied, such as a `Generator`, a Rust type without `Clone`, or a type that holds one, has no copy, so the lookup is refused.",
+    examples: &[
+        "def numbers() -> Generator[int]:\n    yield 1\n\ndef pick(streams: dict[str, Generator[int]], key: str) -> Option[Generator[int]]:\n    return streams.get(key)",
+    ],
+    common_causes: &[
+        "Returning or binding the result of `get` on a dict of generators or of Rust values without `Clone`.",
+    ],
+    fixes: &["Store a value type that can be copied, or keep the value outside the dict."],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/language/"),
+};
+
 const TAKEN_LIST_USED_AGAIN: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-T0119",
     title: "List used again after a `for` loop took its items",
@@ -719,6 +736,7 @@ const CATALOG: &[DiagnosticCatalogEntry] = &[
     HASHED_MEMBER_LACKS_EQ_HASH,
     ARGUMENT_IS_NOT_A_TASK,
     IMMUTABLE_ARGUMENT_TO_MUT_PARAMETER,
+    KEPT_DICT_LOOKUP_VALUE_CANNOT_BE_COPIED,
     TAKEN_LIST_USED_AGAIN,
     IMPORT,
     SDK_COMPONENT_DISABLED,
@@ -1145,6 +1163,37 @@ mod tests {
             element.hints
         );
         Ok(())
+    }
+
+    #[test]
+    fn kept_dict_lookup_of_a_value_that_cannot_be_copied_uses_its_stable_code() {
+        let refusal = errors::kept_dict_lookup_value_cannot_be_copied("Generator[int]", Span::default());
+        assert_eq!(code_for_error(&refusal, DiagnosticPhase::Typecheck), "INCAN-T0118");
+        let Some(entry) = explain("INCAN-T0118") else {
+            panic!("INCAN-T0118 must have a catalog explanation");
+        };
+        assert_eq!(entry.severity, "error");
+        assert_eq!(entry.phase, "typecheck");
+        assert!(
+            refusal.message.contains("Generator[int]"),
+            "the refusal names the value type"
+        );
+        assert!(
+            refusal
+                .hints
+                .iter()
+                .any(|hint| hint.contains("`len`, `print` or `println`") && hint.contains("f-string")),
+            "the hint names the uses that count as reading, got {:?}",
+            refusal.hints
+        );
+        assert!(
+            refusal.hints.iter().any(|hint| {
+                hint.contains("a Rust method with a shared receiver whose result is not kept")
+                    && hint.contains("an Incan method taking `self` does not count")
+            }),
+            "the hint names exactly which method calls count as reading, got {:?}",
+            refusal.hints
+        );
     }
 
     #[test]

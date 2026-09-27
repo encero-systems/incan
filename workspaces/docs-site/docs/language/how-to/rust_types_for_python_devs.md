@@ -32,13 +32,13 @@ counts: HashMap[str, int] = HashMap.new()
 
 ## Method naming conventions you may see
 
-| Python habit              | Rust / interop pattern             | Notes              |
-| ------------------------- | ---------------------------------- | ------------------ |
-| `dict.get(key)`           | `map.get(&key)`                    | Returns `Option`   |
-| `dict[key]`               | `map[&key]`                        | Panics if missing  |
-| `dict.get(key, default)`  | `map.get(&key).copied().unwrap_or(default)` | Copy a scalar value or use the default |
-| `str(x)`                  | `x.to_string()`                    | Convert to string  |
-| `len(x)`                  | `x.len()`                          | Length             |
+| Python habit | Incan | Notes |
+| --- | --- | --- |
+| `dict.get(key)` | `d.get(key)` | Returns `Option` holding the stored value |
+| `dict[key]` | `d[key]` | Panics if missing |
+| `dict.get(key, default)` | `d.get(key).unwrap_or(default)` | The stored value or the default |
+| `str(x)` | `str(x)` | Convert to string |
+| `len(x)` | `len(x)` | Length |
 
 ## Option and Result: unwrap-like patterns
 
@@ -47,7 +47,7 @@ Rust APIs often return `Option`/`Result` instead of raising exceptions.
 `unwrap()` is a “this must exist” assertion (it panics if missing), so prefer `unwrap_or(...)` or `match` when the value can be absent.
 
 ```incan
-value = my_dict.get("key").copied().unwrap_or(0)
+value = my_dict.get("key").unwrap_or(0)
 
 match my_dict.get("key"):
     case Some(v): println(v)

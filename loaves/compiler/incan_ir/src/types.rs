@@ -640,11 +640,16 @@ pub fn isinstance_union_variant_indices(union_ty: &IrType, target_ty: &IrType) -
 
 /// Return whether a concrete value type can inhabit a normalized union member type.
 ///
+/// A `str` member admits every string storage form. A `FrozenStr` member also admits a `'static` string: that is the
+/// storage of a `const` declared `str`, which carries `FrozenStr` at the source level, and the value converts into the
+/// member without allocating (#1794). Admission stays directional otherwise: an owned `str` is not a `FrozenStr`.
+///
 /// A member spelled by its declaring crate module (see [`crate_qualified_member_local_name`]) is inhabited by a value
 /// spelled by that nominal's module-local name.
 pub fn union_member_type_matches(member: &IrType, value_ty: &IrType) -> bool {
     member == value_ty
         || (matches!(member, IrType::String) && is_string_storage_type(value_ty))
+        || (matches!(member, IrType::FrozenStr) && matches!(value_ty, IrType::StaticStr))
         || crate_qualified_type_matches(member, value_ty)
 }
 
@@ -995,6 +1000,7 @@ mod tests {
 
         assert!(union_member_type_matches(&IrType::String, &IrType::FrozenStr));
         assert!(!union_member_type_matches(&IrType::FrozenStr, &IrType::String));
+        assert!(!union_member_type_matches(&IrType::FrozenStr, &IrType::StrRef));
 
         let mixed_storage_union = IrType::NamedGeneric(
             IR_UNION_TYPE_NAME.to_string(),
@@ -1004,6 +1010,25 @@ mod tests {
             isinstance_union_variant_indices(&mixed_storage_union, &IrType::String),
             Some(vec![0, 1])
         );
+    }
+
+    /// #1794: a `const` declared `str` is stored as a `'static` string and carries `FrozenStr` at the source level, so
+    /// a `FrozenStr` member of a union admits it, whichever position the member takes.
+    #[test]
+    fn frozen_str_union_member_admits_a_static_str_const_issue1794() {
+        assert!(union_member_type_matches(&IrType::FrozenStr, &IrType::StaticStr));
+        let frozen_or_int = IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), vec![IrType::Int, IrType::FrozenStr]);
+        assert_eq!(
+            frozen_or_int.union_variant_index_for_member(&IrType::StaticStr),
+            Some(1)
+        );
+        let frozen_or_str =
+            IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), vec![IrType::FrozenStr, IrType::String]);
+        assert_eq!(
+            frozen_or_str.union_variant_index_for_member(&IrType::StaticStr),
+            Some(0)
+        );
+        assert_eq!(frozen_or_str.union_variant_index_for_member(&IrType::String), Some(1));
     }
 
     /// `set(generator)` collects through the `Iterator` trait, a frozen source clones its borrowed items, and a

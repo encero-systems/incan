@@ -16,6 +16,7 @@ mod helpers;
 mod pattern_alternatives;
 mod patterns;
 mod pub_default_constructions;
+mod static_method_args;
 mod stdlib_defaults;
 mod union_owner;
 
@@ -1801,11 +1802,8 @@ impl AstLowering {
                                     .then_some(MethodKind::Collection(CollectionMethodKind::Contains))
                             });
                             let contains_call = if let Some(kind) = contains_kind {
-                                IrExprKind::KnownMethodCall {
-                                    receiver: Box::new(collection),
-                                    kind,
-                                    args: contains_args,
-                                }
+                                self.known_method_call(r.span, collection, kind, contains_args, IrType::Bool)
+                                    .0
                             } else {
                                 let arg_policy = self.regular_method_call_arg_policy(
                                     r.span,
@@ -2100,14 +2098,7 @@ impl AstLowering {
                     if kind == MethodKind::Collection(CollectionMethodKind::Count) && args_ir.is_empty() {
                         (Self::lower_list_item_count(receiver), expr_ty)
                     } else {
-                        (
-                            IrExprKind::KnownMethodCall {
-                                receiver: Box::new(receiver),
-                                kind,
-                                args: args_ir,
-                            },
-                            expr_ty,
-                        )
+                        self.known_method_call(expr_span, receiver, kind, args_ir, expr_ty)
                     }
                 } else {
                     let imported_type_method_signature = match &o.node {
@@ -2186,6 +2177,7 @@ impl AstLowering {
                     let (emitted_method_name, dispatch) =
                         self.project_resolved_method_target(expr_span, &method_name, &receiver, dispatch);
                     Self::retain_argument_union_owners(&mut args_ir, callable_signature.as_ref());
+                    Self::keep_rust_collection_static_args_readable(&receiver, &mut args_ir);
                     (
                         IrExprKind::MethodCall {
                             receiver: Box::new(receiver),

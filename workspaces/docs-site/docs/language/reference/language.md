@@ -670,7 +670,7 @@ Class, model, trait, enum, newtype, field, alias and module declarations accept 
 |---|---|---|---|---|---|---|
 | Keys | `keys` |  | Return an iterable/list of keys. | RFC 009 | 0.1 | Stable |
 | Values | `values` |  | Return an iterable/list of values. | RFC 009 | 0.1 | Stable |
-| Get | `get` |  | Get a value by key, optionally with a default. | RFC 009 | 0.1 | Stable |
+| Get | `get` |  | `get(key)` returns `Some(value)` when the key is present and `None` otherwise; `get(key, default)` returns the value, or `default` when the key is absent. The result is a copy of the stored value, and a value type that cannot be copied is refused with `INCAN-T0118`. | RFC 009 | 0.1 | Stable |
 | Insert | `insert` |  | Insert or overwrite a key/value pair. | RFC 009 | 0.1 | Stable |
 | ContainsKey | `contains_key` |  | Return true if the dict contains a key. | RFC 009 | 0.6 | Stable |
 

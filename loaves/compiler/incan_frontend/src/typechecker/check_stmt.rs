@@ -745,11 +745,18 @@ impl TypeChecker {
         }
     }
 
+    /// Validate an assignment statement, then remember a local bound directly to a module static (see
+    /// [`Self::note_static_alias_binding`]).
+    fn check_assignment(&mut self, assign: &AssignmentStmt, span: Span) {
+        self.check_assignment_binding(assign, span);
+        self.note_static_alias_binding(assign);
+    }
+
     /// Validate assignment statements, including declarations, reassignments, and local annotation compatibility.
     ///
     /// This is the frontend boundary for rejecting unsupported local type annotations before lowering. In particular,
     /// trait-typed locals must not proceed to codegen because Rust has no valid bare trait type for `let` annotations.
-    fn check_assignment(&mut self, assign: &AssignmentStmt, span: Span) {
+    fn check_assignment_binding(&mut self, assign: &AssignmentStmt, span: Span) {
         let target_span = assign.name_span;
         let annotated_ty = assign.ty.as_ref().map(|ty_ann| self.resolve_type_checked(ty_ann));
         // `let` and `mut` are declaration forms: they introduce a binding that may deliberately shadow an active
@@ -1596,6 +1603,7 @@ impl TypeChecker {
                 self.check_statement_block(&while_stmt.body);
                 let _ = self.pop_loop_context();
                 self.symbols.exit_scope();
+                self.note_dict_lookup_let(value, pattern, &while_stmt.body);
             }
         }
     }
@@ -1865,6 +1873,7 @@ impl TypeChecker {
                 self.check_pattern(pattern, &value_ty);
                 self.check_statement_block(body);
                 self.symbols.exit_scope();
+                self.note_dict_lookup_let(value, pattern, body);
                 None
             }
         }

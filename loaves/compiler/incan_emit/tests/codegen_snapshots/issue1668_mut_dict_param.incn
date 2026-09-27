@@ -10,7 +10,7 @@ def seen(mut files: Dict[str, int], key: str) -> bool:
 
 
 def lookup(mut files: Dict[str, int], key: str) -> int:
-    return files.get(key).copied().unwrap_or(0)
+    return files.get(key).unwrap_or(0)
 
 
 def tally(mut counts: Dict[int, int], id: int) -> bool:

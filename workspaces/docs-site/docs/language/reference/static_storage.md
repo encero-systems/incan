@@ -31,6 +31,9 @@ pub static name: Type = expr
 
 ## Operations
 
+- `get(key)` on a static `dict[K, V]`, or on a `dict[K, V]` field of a static, returns `Option[V]`: `Some` holding a copy of the stored value when the key is present, `None` otherwise.
+- An argument passed to a method on a static is readable after the call.
+
 ```incan
 static counter: int = 0
 static items: list[int] = []
@@ -48,6 +51,9 @@ def bump() -> None:
 def record(name: str) -> None:
     items.append(len(items))     # accepted
     counts[name] = counts.get(name, 0) + 1   # accepted
+
+def lookup(name: str) -> Option[int]:
+    return counts.get(name)      # accepted
 ```
 
 ## Aliases
@@ -91,6 +97,7 @@ import counters::hits
 | An initializer that assigns to a static through a function it calls | `INCAN-T0001` |
 | An assignment to an imported static's name, `hits = 0` | `INCAN-T0001` |
 | An assignment or compound assignment to a `const` | `INCAN-T0001` |
+| `get` on a static dict, or on a dict field of a static, whose value type cannot be copied, such as a `Generator` | `INCAN-T0118` |
 
 ```incan
 static counter = 0               # refused: a static needs a type annotation

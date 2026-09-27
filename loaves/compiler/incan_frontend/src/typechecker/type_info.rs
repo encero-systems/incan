@@ -721,6 +721,12 @@ pub struct ExpressionArtifacts {
     /// The checker accepts a value of an `Option`'s payload type there (`box.count = 5` for an `Option[int]` field),
     /// and lowering wraps such a value in the `Some` layers the destination adds.
     pub option_destination_types: HashMap<(usize, usize), ResolvedType>,
+    /// Spans of `dict.get(key)` calls whose result is only read, so no copy of the stored value is needed.
+    ///
+    /// `get` answers with `Option[V]` on every dict. A lookup whose result feeds a `match` or `if let` that only reads
+    /// its bindings (see `check_expr/dict_lookups.rs`) is lowered to read the entry in place; every other lookup of a
+    /// dict that is not static storage is completed with a copy of the entry.
+    pub read_only_dict_lookups: HashSet<(usize, usize)>,
     /// Values of chained assignments that each target gets its own evaluation of, keyed by the value span (#1806).
     pub chained_values_written_per_target: HashSet<(usize, usize)>,
     /// Values of chained assignments whose already-bound targets all have one type, keyed by the value span (#1806).
@@ -2295,6 +2301,19 @@ impl TypeCheckInfo {
     /// Record that an identifier resolved to the ambient `std.logging` logger binding.
     pub fn record_ambient_logger_binding(&mut self, span: Span) {
         self.expressions.ambient_logger_bindings.insert((span.start, span.end));
+    }
+
+    /// Return whether the `dict.get(key)` call at `span` only has its result read (see
+    /// [`ExpressionArtifacts::read_only_dict_lookups`]).
+    pub fn is_read_only_dict_lookup(&self, span: Span) -> bool {
+        self.expressions
+            .read_only_dict_lookups
+            .contains(&(span.start, span.end))
+    }
+
+    /// Record that the `dict.get(key)` call at `span` only has its result read.
+    pub fn record_read_only_dict_lookup(&mut self, span: Span) {
+        self.expressions.read_only_dict_lookups.insert((span.start, span.end));
     }
 
     /// Return static-binding metadata for `name`, if the checker recorded one.

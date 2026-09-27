@@ -54,8 +54,8 @@ where
 
 /// Returns `true` if `expr` or any expression nested in it satisfies `pred`.
 ///
-/// Use this when a caller already holds one expression slot, such as a parameter default, and needs no statement or
-/// declaration traversal around it.
+/// Use this when a caller already holds one expression slot, such as a parameter default or a match arm's `=> expr`
+/// body or guard, and needs no statement or declaration traversal around it.
 pub fn any_expr_in_expr<F>(expr: &Expr, mut pred: F) -> bool
 where
     F: FnMut(&Expr) -> bool,

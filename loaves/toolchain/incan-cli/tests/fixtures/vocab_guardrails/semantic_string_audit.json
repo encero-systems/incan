@@ -369,8 +369,8 @@
     {
       "path": "loaves/compiler/incan_emit/src/trait_bound_inference.rs",
       "category": "clone/as_ref/self and reflection trait-bound inference compatibility",
-      "expected_count": 4,
-      "expected_fingerprint": "0x7b05117f4d9db0da"
+      "expected_count": 5,
+      "expected_fingerprint": "0xf6d0bb81c55383f5"
     },
     {
       "path": "loaves/compiler/incan_frontend/src/provider/features.rs",
@@ -398,9 +398,9 @@
     },
     {
       "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/access.rs",
-      "category": "method/type access, contextual Rust receiver specialization, public modules, checked registry, and C output-slot boundary classification",
-      "expected_count": 51,
-      "expected_fingerprint": "0x4ff4ae22e446964c"
+      "category": "method/type access, contextual Rust receiver specialization, public modules, checked registry, C output-slot boundary classification, and the copy completing a dict get read from static storage",
+      "expected_count": 53,
+      "expected_fingerprint": "0x97792d11cf8c8cf5"
     },
     {
       "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/basics.rs",
@@ -431,6 +431,12 @@
       "category": "async guard method control-flow policy",
       "expected_count": 3,
       "expected_fingerprint": "0x2893f90138d3e39f"
+    },
+    {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/dict_lookups.rs",
+      "category": "kept dict lookups: the one-argument dict get, the len and print reads that keep a lookup, and self-rooted receivers",
+      "expected_count": 5,
+      "expected_fingerprint": "0x0a580fc42e7c4629"
     },
     {
       "path": "loaves/compiler/incan_frontend/src/typechecker/check_expr/mod.rs",

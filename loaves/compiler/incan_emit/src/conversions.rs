@@ -226,6 +226,8 @@ pub enum Conversion {
     RequireFiniteF32,
     /// Validate an Incan-owned exact `f64` destination, preserving lossless `f32` widening.
     RequireFiniteF64,
+    /// Wrap a `'static` string in the `FrozenStr` a frozen destination stores.
+    ToFrozenStr,
 }
 
 impl Conversion {
@@ -240,6 +242,7 @@ impl Conversion {
             Conversion::Clone => quote! { #tokens.clone() },
             Conversion::RequireFiniteF32 => quote! { incan_std_core::num::require_finite_f32(#tokens) },
             Conversion::RequireFiniteF64 => quote! { incan_std_core::num::require_finite_f64(#tokens) },
+            Conversion::ToFrozenStr => quote! { incan_std_core::frozen::FrozenStr::new(#tokens) },
         }
     }
 }
@@ -286,6 +289,30 @@ fn exact_float_boundary_conversion(
         ) => Some(Conversion::RequireFiniteF64),
         _ => None,
     }
+}
+
+/// Select the `FrozenStr` materialization for a `'static` string stored at a `FrozenStr` destination.
+///
+/// A `const` declared `str` is emitted as a `&'static str` but carries `FrozenStr` at the source level, so the checker
+/// admits it wherever `FrozenStr` is expected: a return, a binding, an argument, a field, a collection slot, or a union
+/// member or `Some` payload retargeted to `FrozenStr`. The value is wrapped without copying (#1794). Rust-facing call,
+/// method and match boundaries keep their Rust API shape.
+fn frozen_str_boundary_conversion(
+    expr: &IrExpr,
+    target_ty: Option<&IrType>,
+    context: ConversionContext,
+) -> Option<Conversion> {
+    let incan_destination = matches!(
+        context,
+        ConversionContext::IncanFunctionArg
+            | ConversionContext::IncanFunctionArgInReturn
+            | ConversionContext::StructField
+            | ConversionContext::CollectionElement
+            | ConversionContext::Assignment
+            | ConversionContext::ReturnValue
+    );
+    (incan_destination && matches!(target_ty, Some(IrType::FrozenStr)) && matches!(expr.ty, IrType::StaticStr))
+        .then_some(Conversion::ToFrozenStr)
 }
 
 /// Numeric coercions for binary operations (int/float promotion).
@@ -853,7 +880,9 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
     {
         return determine_conversion(expr, target_ty, context);
     }
-    if let Some(conversion) = exact_float_boundary_conversion(expr, target_ty, context) {
+    if let Some(conversion) = exact_float_boundary_conversion(expr, target_ty, context)
+        .or_else(|| frozen_str_boundary_conversion(expr, target_ty, context))
+    {
         return conversion;
     }
     if matches!(expr.kind, IrExprKind::InteropCoerce { .. }) {

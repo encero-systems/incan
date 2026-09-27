@@ -25,6 +25,7 @@ mod calls;
 mod collections;
 mod comps;
 mod control_flow;
+mod dict_lookups;
 mod error_display;
 mod list_methods;
 mod match_;
