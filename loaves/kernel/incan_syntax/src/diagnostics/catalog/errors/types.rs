@@ -2505,6 +2505,80 @@ pub fn list_clone_requires_clone(elem_type: &str, span: Span) -> CompileError {
     .with_hint("Add @derive(Clone) to the element type or clone a list of Copy elements")
 }
 
+/// Where a list whose items a `for` loop takes out is used again (#1844).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TakenListReuse {
+    /// A read of the list after the loop.
+    AfterLoop,
+    /// A read of the list inside the body of the loop that takes its items.
+    InsideLoop,
+    /// An enclosing loop that runs the `for` loop again over the list it already emptied.
+    RepeatedLoop,
+    /// A closure that captured the list before the loop, and can still read it.
+    CapturedBeforeLoop,
+    /// A read that a repeat of an enclosing loop reaches after the loop took the items, before the enclosing loop
+    /// assigns the list a new one.
+    ReadBeforeRefill,
+}
+
+/// Report a list used again after a `for` loop took its items out (#1844).
+///
+/// The loop body hands each item on by value and `item_ty` can be neither copied nor cloned, so the loop takes the
+/// items out of `list`. `use_span` is the use: the read, the read inside the capturing closure, or, when an enclosing
+/// loop repeats the loop, the loop's iterable. `related_span` is the loop's iterable, or, for the repeat, the list's
+/// definition outside the enclosing loop. `INCAN-T0119` is its stable code.
+pub fn taken_list_used_again(
+    list: &str,
+    item_ty: &str,
+    reuse: TakenListReuse,
+    use_span: Span,
+    related_span: Span,
+) -> CompileError {
+    let loop_label = format!("the `for` loop takes the items of `{list}` here");
+    let (message, related_label, hint) = match reuse {
+        TakenListReuse::AfterLoop => (
+            format!("`{list}` is used after the `for` loop that took its items"),
+            loop_label,
+            format!(
+                "Read what the later code needs from `{list}` before the loop, or collect the results in a new list \
+                 inside it"
+            ),
+        ),
+        TakenListReuse::InsideLoop => (
+            format!("`{list}` is used inside the `for` loop that takes its items"),
+            loop_label,
+            format!("Read what the loop needs from `{list}` before the loop starts"),
+        ),
+        TakenListReuse::RepeatedLoop => (
+            format!("the `for` loop that takes the items of `{list}` runs again when the enclosing loop repeats"),
+            format!("`{list}` is defined outside the enclosing loop"),
+            format!("Build `{list}` inside the enclosing loop, so each pass iterates a list of its own"),
+        ),
+        TakenListReuse::CapturedBeforeLoop => (
+            format!("a closure captures `{list}` before the `for` loop that takes its items"),
+            loop_label,
+            format!("Read what the closure needs from `{list}` into a binding of its own before the loop"),
+        ),
+        TakenListReuse::ReadBeforeRefill => (
+            format!(
+                "`{list}` is used where a repeat of the enclosing loop reaches it after the `for` loop took its items"
+            ),
+            loop_label,
+            format!(
+                "Assign `{list}` a new list before this use in each pass, or read what it needs before the enclosing loop"
+            ),
+        ),
+    };
+    CompileError::type_error(message, use_span)
+        .with_stable_code("INCAN-T0119")
+        .with_related_span(related_span, related_label)
+        .with_note(format!(
+            "The loop body hands each `{item_ty}` item on by value, and a `{item_ty}` can be neither copied nor \
+             cloned, so the loop takes the items out of `{list}`"
+        ))
+        .with_hint(hint)
+}
+
 pub fn string_index_assignment_not_allowed(span: Span) -> CompileError {
     CompileError::type_error("Strings are immutable - cannot assign to index".to_string(), span)
 }
