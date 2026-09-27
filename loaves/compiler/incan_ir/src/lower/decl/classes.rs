@@ -119,10 +119,10 @@ impl AstLowering {
             && c.fields
                 .iter()
                 .any(|f| self.type_uses_direct_rust_import(&f.node.ty.node));
-        if !has_opaque_rust_field && !derives.iter().any(|d| d == debug) {
+        if !has_opaque_rust_field && !derives.iter().any(|d| Self::same_derive(d, debug)) {
             derives.push(debug.to_string());
         }
-        if !derives.iter().any(|d| d == clone) {
+        if !derives.iter().any(|d| Self::same_derive(d, clone)) {
             derives.push(clone.to_string());
         }
         // Classes always get FieldInfo for reflection.

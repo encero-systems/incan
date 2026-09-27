@@ -1,29 +1,19 @@
-# Derives: Validation (Reference)
+# Derives: Validation (reference)
 
-This page documents `Validate` for models.
+This page specifies `Validate`. The derive catalog and the automatic derives are in [Derives and traits](../derives_and_traits.md).
 
-See also:
+## Validate
 
-- [Derives & traits](../derives_and_traits.md)
-- [Error handling](../../explanation/error_handling.md)
+- **Provides**: `TypeName.new(...) -> Result[TypeName, E]`, validated construction.
+- **Provided by**: `@derive(Validate)` on a model.
+- **Behavior**: `new` constructs the model from its arguments, calls `validate(self)`, and returns its result.
+- **Dunder**: none.
+- **Requires**: the model defines `validate(self) -> Result[Self, E]`.
 
----
+Rules:
 
-## Validate (models only)
-
-- **Derive**: `@derive(Validate)`
-- **Requirement**: a `validate(self) -> Result[Self, E]` method must exist on the model
-- **API**: `TypeName.new(...) -> Result[TypeName, E]`
-
-Rule:
-
-- If a model derives `Validate`, you must construct it via `TypeName.new(...)` (validated construction). Raw construction via `TypeName(...)` is a compile-time error.
-
-Semantics:
-
-- `TypeName.new(...)` constructs the model, then calls `validate(self)`.
-
-### Example
+- `new` takes the model's fields that declare no default; each field that declares a default takes it. Passing a field that declares a default to `new` is refused (`INCAN-T0001`).
+- Constructing the model directly, `TypeName(...)`, is refused (`INCAN-T0001`).
 
 ```incan
 @derive(Validate)
@@ -37,12 +27,15 @@ model EmailUser:
         return Ok(self)
 
 def make_user(email: str) -> Result[EmailUser, str]:
-    # Validated construction (required for @derive(Validate))
-    return EmailUser.new(email=email)
+    return EmailUser.new(email=email)                   # accepted
+
+def make_inactive(email: str) -> Result[EmailUser, str]:
+    return EmailUser.new(email=email, is_active=false)  # refused: is_active declares a default
+
+def make_raw(email: str) -> EmailUser:
+    return EmailUser(email=email)                       # refused: direct construction of a Validate model
 ```
 
-### Defaults and parameters
+## See also
 
-`TypeName.new(...)` is generated from the model’s required fields (fields without defaults). Fields with defaults use their declared default values.
-
-Additional constructors can be expressed as helper functions or associated functions on the model.
+- [Error handling (explanation)](../../explanation/error_handling.md)

@@ -917,6 +917,7 @@ impl TypeChecker {
                         .collect(),
                     module_path,
                     implementation_type_params: Vec::new(),
+                    inferred: false,
                 }
             })
             .collect()
@@ -1012,6 +1013,7 @@ impl TypeChecker {
                             type_args: Vec::new(),
                             module_path: Some(module_path.clone()),
                             implementation_type_params: Vec::new(),
+                            inferred: false,
                         });
                     }
                 }
@@ -1035,6 +1037,7 @@ impl TypeChecker {
                             type_args: Vec::new(),
                             module_path: Some(module_segments.to_vec()),
                             implementation_type_params: Vec::new(),
+                            inferred: false,
                         });
                     }
                 } else if self.lookup_trait_info(derive_name).is_some() {
@@ -1044,6 +1047,7 @@ impl TypeChecker {
                         type_args: Vec::new(),
                         module_path: None,
                         implementation_type_params: Vec::new(),
+                        inferred: false,
                     });
                 }
             }
@@ -1756,6 +1760,7 @@ impl TypeChecker {
                                 .collect(),
                             module_path: self.trait_bound_module_path(&bound.name),
                             implementation_type_params: Vec::new(),
+                            inferred: false,
                         })
                         .collect(),
                 )

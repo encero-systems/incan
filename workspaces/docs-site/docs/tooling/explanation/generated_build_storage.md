@@ -21,6 +21,8 @@ Normal `incan build`, `incan run`, and `incan test` generate caller-owned Rust s
 | Incan compiler repository build                         | Repository `target/`                                                                                                                            | Ordinary Cargo development state, outside the installed compiler's generated-cache manager                                                                                                                              |
 | Legacy Rust `CompilationPlan` executor output           | Caller-selected plan output directory                                                                                                           | Caller-owned compatibility API; contained below that output and not used by CLI build, run, test, lock, or library paths                                                                                                |
 
+`incan inspect rust` locates generated output for tooling: it reports generated project paths and files as a structured report, where `--emit-rust` prints source for a person to read.
+
 The cache reports recursive logical file lengths. These are useful for deterministic category comparisons but are not the same as allocated or uniquely reclaimable filesystem blocks on APFS, sparse, compressed, cloned, or hardlinked storage.
 
 ## Compatibility and bounded growth

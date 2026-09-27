@@ -116,6 +116,8 @@ incan inspect backend-selection --receipt .incan/backend/receipt.json --format j
 
 `inspect backend-selection` reads the receipt, calls `verify_identity()` on it (and, transitively, on the selection it embeds), and refuses to render a receipt whose recorded identity does not match its own content — the same tamper/staleness detection Oven's `inspect oven` performs on its receipt.
 
+`incan inspect representation` reads coverage from the representation's declared index, never from its content, so a declaration covered with an empty body stays distinct from one the publisher refused. It reports two states rather than refusing them, because both are answers a reader needs: a package that links without publishing a representation reports `none published`, which tells the reader the non-linking route cannot execute it, and a representation whose version this build cannot interpret still reports that version, the one fact an unsupported artifact can give.
+
 ## Provenance for Oven and other clients
 
 Oven and other clients can key provenance on the pre-execution `BackendSelection.identity` and attach the post-execution `BackendExecutionReceipt` to their own outputs, without reading private HIR or Body IR structures: the receipt is a public, versioned projection of "what backend produced this," independent of how either backend represents a program internally. `diagnostic_contract_version` on the receipt ties it to the diagnostics schema (`incan_syntax::diagnostics::stable::DIAGNOSTIC_SCHEMA_VERSION`, in `loaves/kernel/incan_syntax/src/diagnostics/stable.rs`) in force when it was produced, so a consumer can tell whether a receipt's diagnostics are still interpretable under its own contract version.

@@ -114,6 +114,7 @@ pub fn substitute_method_info(info: &MethodInfo, map: &HashMap<String, ResolvedT
                                 &bound.implementation_type_params,
                                 map,
                             ),
+                            inferred: bound.inferred,
                         })
                         .collect(),
                 )
@@ -189,6 +190,7 @@ mod tests {
                 ],
                 module_path: Some(vec!["std".to_string(), "traits".to_string(), "callable".to_string()]),
                 implementation_type_params: Vec::new(),
+                inferred: false,
             }],
         );
         let method = MethodInfo {

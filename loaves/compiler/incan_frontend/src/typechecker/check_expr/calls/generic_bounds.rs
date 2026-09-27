@@ -69,6 +69,9 @@ impl TypeChecker {
 
     /// Validate generic function call type arguments, contextual return bindings, value arguments, and explicit
     /// type-parameter bounds.
+    ///
+    /// Bounds and hashed type parameters (#1758) are checked against what the call instantiates the callee with: the
+    /// inferred bindings, with any binding a literal argument leaves open closed from the literal's elements.
     pub(in crate::typechecker::check_expr::calls) fn validate_function_call(
         &mut self,
         func_name: &str,
@@ -117,7 +120,25 @@ impl TypeChecker {
             &mut type_bindings,
             call_span,
         );
+        self.refuse_non_task_arguments(
+            func_name,
+            &contextual_params,
+            args,
+            &arg_types,
+            &info.type_param_bound_details,
+            &mut type_bindings,
+        );
         self.infer_type_param_bindings_from_source_callables(&info.type_param_bound_details, &mut type_bindings);
+        let instantiation =
+            self.bindings_closed_by_literal_arguments(&info.type_params, &params_with_explicit, args, &type_bindings);
+        let callee_identity = self.called_function_identity(func_name);
+        self.refuse_unhashable_type_arguments(
+            func_name,
+            callee_identity.as_ref(),
+            &info.type_params,
+            &instantiation,
+            call_span,
+        );
         let resolved_params = Self::substitute_callable_params(&contextual_params, &type_bindings);
         self.type_info
             .record_call_site_callable_params(call_span, &resolved_params);
@@ -125,7 +146,7 @@ impl TypeChecker {
             func_name,
             &info.type_param_bounds,
             &info.type_param_bound_details,
-            &type_bindings,
+            &instantiation,
             Self::type_argument_origin(explicit_type_args),
             call_span,
         );
@@ -245,8 +266,9 @@ impl TypeChecker {
     ///   expected return type to bind still-open method type parameters before argument checking.
     /// - Validates value arguments against the specialized formals, then runs [`Self::infer_type_param_bindings`] so
     ///   remaining type parameters are filled from argument types.
-    /// - Enforces explicit `with` bounds, requires every method type parameter to be concretely bound when brackets
-    ///   were present, and records `TypeCheckInfo::calls.call_site_monomorph_type_args` for lowering.
+    /// - Enforces explicit `with` bounds and the hashed type parameters (#1758) against the bindings closed by literal
+    ///   arguments, requires every method type parameter to be concretely bound when brackets were present, and records
+    ///   `TypeCheckInfo::calls.call_site_monomorph_type_args` for lowering.
     ///
     /// # Parameters
     ///
@@ -320,7 +342,24 @@ impl TypeChecker {
             &mut type_bindings,
             call_site_span,
         );
+        self.refuse_non_task_arguments(
+            method,
+            &contextual_params,
+            args,
+            &arg_types,
+            &method_info.type_param_bound_details,
+            &mut type_bindings,
+        );
         self.infer_type_param_bindings_from_source_callables(&method_info.type_param_bound_details, &mut type_bindings);
+        let instantiation =
+            self.bindings_closed_by_literal_arguments(&method_info.type_params, &params, args, &type_bindings);
+        self.refuse_unhashable_type_arguments(
+            method,
+            method_info.identity.as_ref(),
+            &method_info.type_params,
+            &instantiation,
+            call_site_span,
+        );
         let resolved_params = Self::substitute_callable_params(&contextual_params, &type_bindings);
         self.type_info
             .record_call_site_callable_params_exact(call_site_span, &resolved_params);
@@ -332,7 +371,7 @@ impl TypeChecker {
             method,
             &method_info.type_param_bounds,
             &method_info.type_param_bound_details,
-            &type_bindings,
+            &instantiation,
             Self::type_argument_origin(explicit_type_args),
             call_site_span,
         );
@@ -652,6 +691,11 @@ impl TypeChecker {
     }
 
     /// Emit diagnostics when inferred concrete generic bindings violate explicit `with` bounds.
+    ///
+    /// An `Eq` or `Hash` bound the provider inferred from its body (a compiled library's hashed type parameter, #1758)
+    /// is refused with `INCAN-T0114`: a concrete type argument only when it is known to lack the derive, as for a
+    /// callee of this checker's own modules, and the caller's own type parameter unless its declaration carries the
+    /// bound.
     fn emit_explicit_bound_errors(
         &mut self,
         func_name: &str,
@@ -668,7 +712,24 @@ impl TypeChecker {
             if let Some(details) = bound_details_by_param.get(type_param)
                 && !details.is_empty()
             {
-                for bound in details {
+                // Inferred `Eq` and `Hash` bounds are the callee's hashed type parameter (#1758): a concrete type
+                // argument is refused only when it is known to lack them, and the caller's own type parameter unless
+                // its declaration carries them.
+                let inferred = details.iter().filter(|bound| bound.inferred).collect::<Vec<_>>();
+                if !inferred.is_empty() {
+                    match self.active_type_param_name(actual_ty) {
+                        Some(placeholder) => self.refuse_type_parameter_without_hash_bounds(
+                            func_name,
+                            type_param,
+                            placeholder,
+                            &inferred,
+                            bindings,
+                            call_span,
+                        ),
+                        None => self.refuse_unhashable_type_argument(func_name, type_param, actual_ty, call_span),
+                    }
+                }
+                for bound in details.iter().filter(|bound| !bound.inferred) {
                     if !self.type_satisfies_explicit_bound_info(actual_ty, bound, bindings) {
                         self.errors.push(errors::generic_bound_not_satisfied(
                             func_name,

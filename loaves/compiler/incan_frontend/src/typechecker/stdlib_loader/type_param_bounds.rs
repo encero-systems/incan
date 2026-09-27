@@ -85,6 +85,7 @@ pub(super) fn extract_type_param_bounds(
                             type_args: Vec::new(),
                             module_path: Some(trait_module),
                             implementation_type_params: Vec::new(),
+                            inferred: false,
                         })
                     })
                     .collect();
