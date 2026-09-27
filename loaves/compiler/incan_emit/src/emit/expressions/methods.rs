@@ -1457,8 +1457,8 @@ impl<'a> IrEmitter<'a> {
                 .collect::<Result<_, _>>()?
         };
 
-        let type_ident = format_ident!("{}", type_name);
-        let m = format_ident!("{}", variant);
+        let type_ident = Self::rust_ident(type_name);
+        let m = Self::rust_ident(variant);
         Ok(quote! { #type_ident::#m(#(#arg_tokens),*) })
     }
 

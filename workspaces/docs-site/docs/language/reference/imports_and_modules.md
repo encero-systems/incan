@@ -1,6 +1,6 @@
 # Imports and modules (reference)
 
-This page specifies import forms, module paths and files, what an import binds, re-exports, package namespaces, the `std` root, soft keywords, and Rust crate imports. Refusals of an import are reported with `INCAN-I0001`, and syntax errors with `INCAN-P0001`, unless a rule below names another code.
+This page specifies import forms, module paths and files, what an import binds, re-exports, package namespaces, the `std` root, soft keywords, and Rust crate imports. Refusals of an import are reported with `INCAN-I0001`, syntax errors with `INCAN-P0001`, and refusals made when a project builds or locks with `INCAN-C0001`, unless a rule below names another code.
 
 ## Import forms
 
@@ -47,6 +47,8 @@ A module path `a.b` names the first of these files that exists: `a/b.incn`, `a/b
 ```incan
 # store/relative.incn
 from ..db.schema import Database          # accepted: db/schema.incn, beside store/
+
+# store/parent.incn
 from super::db::schema import Database    # accepted: the same module
 
 # app/store/nested.incn
@@ -72,12 +74,27 @@ def load(path: str) -> models.Config:     # accepted
 
 - An import binds its local name in the module scope, beside the module's declarations.
 - A second binding of a name in the same scope is refused: a repeated import of the same declaration as a duplicate, and an import of a different declaration as ambiguous. The first binding stays in effect.
-- `std` and `rust` cannot be bound as local names, by a declaration or an import (`INCAN-T0001` on a declaration). `import rust::std` without `as` binds `std` and is refused.
+- `std` and `rust` cannot be bound as local names, by a declaration or an import (`INCAN-T0001` on a declaration). The exception is an import that binds the root of its own path, such as `import std.web as std`. `import rust::std` without `as` binds `std` and is refused.
 
 ```incan
 import codecs.prelude as codecs_prelude
 import compression.prelude as compression_prelude   # accepted: distinct local names
 import models as std                                # refused: std is reserved
+```
+
+### Standard-library type names
+
+- A standard-library type name, such as `Response` from `std.web`, names that type after an import that binds it.
+- A module-level `model`, `class`, `enum`, `trait`, `newtype` or `type` declaration of the same name is the type that name refers to throughout the module: in annotations, including the method signatures of the declaration itself, and in calls that construct the type.
+- Refused (`INCAN-T0001`): the name in an annotation of a module that neither declares nor imports it.
+
+```incan
+model Response:
+    body: str
+
+    @staticmethod
+    def make(body: str) -> Response:          # accepted: the model Response
+        return Response(body=body)
 ```
 
 ### Builtin functions
@@ -127,7 +144,7 @@ def main() -> None:
     println(b_calculate(41))    # accepted: calls calc_lib's helpers.calculate
 ```
 
-`incan build --lib` refuses a library entrypoint that re-exports from an unknown module, re-exports a name its module does not export, or exports one name twice.
+`incan build --lib` refuses (`INCAN-C0001`) a library entrypoint that re-exports from an unknown module, re-exports a name its module does not export, or exports one name twice.
 
 ## Package namespaces
 
@@ -183,7 +200,7 @@ from rust::CRATE [@ "VERSION"] [with ["FEATURE", ...]] import ITEMS
 - Across files, one crate's versions match, and its features are unioned.
 - Annotations apply to `rust::` imports only.
 
-These refusals are reported when the project builds or locks.
+These refusals are reported when the project builds or locks (`INCAN-C0001`).
 
 ```incan
 import rust::my_crate @ "1.0"

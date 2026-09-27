@@ -24,7 +24,7 @@ This section owns Incan source: syntax, semantics, patterns, and the mental mode
 <div class="inc-route-grid">
   <a class="inc-route-card" href="tutorials/guided_project/"><span class="inc-eyebrow">Tutorial</span><strong>Learn by completing an outcome</strong><span>Use a staged, release-envelope executable project when you want the reasoning and sequence together.</span></a>
   <a class="inc-route-card" href="how-to/error_handling_recipes/"><span class="inc-eyebrow">How-to</span><strong>Solve a focused task</strong><span>Use recipes for errors, files, JSON, async work, modules, tests, collections, and Rust interop.</span></a>
-  <a class="inc-route-card" href="reference/language/"><span class="inc-eyebrow">Reference</span><strong>Look up the contract</strong><span>Use generated syntax, type, built-in, derive, and standard-library surfaces when you know what to find.</span></a>
+  <a class="inc-route-card" href="reference/language/"><span class="inc-eyebrow">Reference</span><strong>Look up the contract</strong><span>Use generated syntax, type, built-in, derive, and standard-library surfaces when you know what to find: exact syntax and signatures, behavior stated without a walkthrough, and what holds across versions.</span></a>
   <a class="inc-route-card" href="explanation/how_incan_works/"><span class="inc-eyebrow">Explanation</span><strong>Understand why it works this way</strong><span>Read the mental models behind compilation, errors, modules, models, traits, and Rust-shaped confidence.</span></a>
 </div>
 

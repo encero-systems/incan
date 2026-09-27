@@ -185,6 +185,7 @@ nav:
           - File I/O reference (Path/File APIs): language/reference/file_io.md
           - Imports and modules: language/reference/imports_and_modules.md
           - Static storage: language/reference/static_storage.md
+          - Frozen collections: language/reference/frozen_collections.md
           - Numeric semantics: language/reference/numeric_semantics.md
           - Match patterns: language/reference/match_patterns.md
           - Project lifecycle: language/reference/project_lifecycle.md

@@ -21,7 +21,7 @@ After `from std.serde import json`, the traits are also named `json.Serialize` a
 
 ## Deserialize
 
-- **Provides**: `T.from_json(input: str) -> Result[T, str]`, and `T with Deserialize` bounds.
+- **Provides**: `T.from_json(json_str: str) -> Result[T, str]`, and `T with Deserialize` bounds.
 - **Provided by**: `@derive(json)` or `@derive(Deserialize)`; adopting `Deserialize` and defining `from_json`.
 - **Behavior**: the input is read by the [type mapping](#type-mapping). Input that does not match returns `Err`.
 - **Requires**: every field type deserializes. A type that adopts `Deserialize` without deriving it defines `from_json`, or it is refused (`INCAN-T0001`).
@@ -47,7 +47,7 @@ def main() -> None:
 | Position | Accepts | Provides |
 | --- | --- | --- |
 | `T with Serialize`, for `value: T` | a type argument that provides `Serialize` | `value.to_json() -> str`, `json_stringify(value) -> str` |
-| `T with Deserialize` | a type argument that provides `Deserialize` | `T.from_json(input: str) -> Result[T, str]` |
+| `T with Deserialize` | a type argument that provides `Deserialize` | `T.from_json(json_str: str) -> Result[T, str]` |
 | a parameter `value: Serialize` | an argument whose type provides `Serialize` | `value.to_json() -> str`, `json_stringify(value) -> str` |
 | a return type `-> Serialize` | a returned value whose type provides `Serialize` | `to_json()` and `json_stringify` over the result |
 
@@ -97,6 +97,7 @@ def main() -> None:
 
 - A model field's JSON key is its alias when it declares one (`type_ as "type": str`, or `type_ [alias="type"]: str`), and its name otherwise.
 - A class field's JSON key is its name. An alias on a class field is refused (`INCAN-T0001`).
+- A name is the key as written, including a name such as `impl` or `dyn` (see [Identifier](../glossary.md#identifier)): `Slot(impl=1)` serializes as `{"impl":1}`.
 
 ## Type mapping
 

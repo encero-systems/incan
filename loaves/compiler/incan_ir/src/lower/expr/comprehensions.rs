@@ -1,7 +1,7 @@
 //! Comprehension and generator-expression lowering.
 
 use super::super::super::TypedExpr;
-use super::super::super::expr::{IrExprKind, IrGeneratorClause};
+use super::super::super::expr::{BuiltinFn, IrExprKind, IrGeneratorClause};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
@@ -9,6 +9,36 @@ use incan_frontend::ast;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 impl AstLowering {
+    /// Hand a comprehension over a frozen collection of Incan text the owned `list[str]` it iterates.
+    ///
+    /// A `const` `FrozenList[str]` or `FrozenSet[str]` stores its text as `'static` slices, while the comprehension
+    /// binds each item as the owned `str` the checker typed it as. Iterating the source's `list(...)` conversion, the
+    /// conversion `list(source)` performs anywhere, yields exactly those owned items (#1757). Every other source is
+    /// returned unchanged.
+    fn owned_text_comprehension_source(source: TypedExpr) -> TypedExpr {
+        let is_frozen_text = match &source.ty {
+            IrType::NamedGeneric(name, items) => {
+                matches!(
+                    collections::from_str(name),
+                    Some(CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet)
+                ) && matches!(items.first(), Some(IrType::String | IrType::StaticStr | IrType::StrRef))
+            }
+            _ => false,
+        };
+        if !is_frozen_text {
+            return source;
+        }
+        let span = source.span;
+        TypedExpr::new(
+            IrExprKind::BuiltinCall {
+                func: BuiltinFn::CollectionConstructor(CollectionTypeId::List),
+                args: vec![source],
+            },
+            IrType::List(Box::new(IrType::String)),
+        )
+        .with_span(span)
+    }
+
     /// Lower a generator expression `(expr for ... if ...)`.
     pub(in crate::lower) fn lower_generator_expr(
         &mut self,
@@ -21,7 +51,7 @@ impl AstLowering {
                 ast::ComprehensionClause::For { pattern, iter } => {
                     clauses.push(IrGeneratorClause::For {
                         pattern: self.lower_pattern(&pattern.node),
-                        iterable: Box::new(self.lower_expr_spanned(iter)?),
+                        iterable: Box::new(Self::owned_text_comprehension_source(self.lower_expr_spanned(iter)?)),
                     });
                 }
                 ast::ComprehensionClause::If(condition) => {
@@ -51,7 +81,7 @@ impl AstLowering {
         &mut self,
         comp: &ast::ListComp,
     ) -> Result<(IrExprKind, IrType), LoweringError> {
-        let iter_expr = self.lower_expr_spanned(&comp.iter)?;
+        let iter_expr = Self::owned_text_comprehension_source(self.lower_expr_spanned(&comp.iter)?);
         let pattern = self.lower_pattern(&comp.pattern.node);
 
         // Build the filter predicate if present
@@ -87,7 +117,7 @@ impl AstLowering {
         &mut self,
         comp: &ast::DictComp,
     ) -> Result<(IrExprKind, IrType), LoweringError> {
-        let iter_expr = self.lower_expr_spanned(&comp.iter)?;
+        let iter_expr = Self::owned_text_comprehension_source(self.lower_expr_spanned(&comp.iter)?);
         let pattern = self.lower_pattern(&comp.pattern.node);
 
         self.non_linear_context_depth += 1;

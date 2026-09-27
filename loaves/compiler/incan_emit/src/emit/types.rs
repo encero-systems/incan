@@ -135,11 +135,23 @@ impl<'a> IrEmitter<'a> {
                 quote! { Result<#o, #e> }
             }
             IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) => {
-                if name == surface_types::as_str(SurfaceTypeId::FieldInfo) {
-                    return quote! { incan_std_core::reflection::FieldInfo };
-                }
-                if name == surface_types::as_str(SurfaceTypeId::ValidationError) {
-                    return quote! { incan_std_core::validation::ValidationError };
+                // Migration note (rust_source_backend_deprecation.md):
+                // - Compatibility issue: #1770 -- a program's own `model FieldInfo` was spelled as the runtime
+                //   reflection type at every use, so `FieldInfo(label="custom")` built a struct without that field
+                //   (E0560).
+                // - Behavior evidence: the `user_model_named_like_a_stdlib_type` behavior fixture.
+                // - Semantic owner: the checked name binding (a module declaration is the program's own type; a stdlib
+                //   surface type is reached only through an import, #1795); this arm only keeps the runtime spelling
+                //   for a name the program does not declare.
+                // - Retirement condition: the Rust-source backend is deleted (#654); the replacement route resolves
+                //   nominal types through their canonical identities and has no bare-name spellings.
+                if !self.local_nominal_type_names.contains(name) {
+                    if name == surface_types::as_str(SurfaceTypeId::FieldInfo) {
+                        return quote! { incan_std_core::reflection::FieldInfo };
+                    }
+                    if name == surface_types::as_str(SurfaceTypeId::ValidationError) {
+                        return quote! { incan_std_core::validation::ValidationError };
+                    }
                 }
                 if *self.qualify_internal_canonical_paths.borrow()
                     && let Some(path) = self.emit_dependency_type_path(name)
@@ -190,7 +202,7 @@ impl<'a> IrEmitter<'a> {
                 quote! { fn(#(#ps),*) -> #r }
             }
             IrType::Generic(name) => {
-                let n = format_ident!("{}", name);
+                let n = Self::rust_ident(name);
                 quote! { #n }
             }
             IrType::Ref(inner) => {
@@ -229,7 +241,7 @@ impl<'a> IrEmitter<'a> {
         let params: Vec<TokenStream> = type_params
             .iter()
             .map(|tp| {
-                let name = format_ident!("{}", &tp.name);
+                let name = Self::rust_ident(&tp.name);
                 if tp.bounds.is_empty() {
                     quote! { #name }
                 } else {
@@ -247,7 +259,7 @@ impl<'a> IrEmitter<'a> {
         let params: Vec<TokenStream> = type_params
             .iter()
             .map(|tp| {
-                let name = format_ident!("{}", &tp.name);
+                let name = Self::rust_ident(&tp.name);
                 if tp.bounds.is_empty() {
                     quote! { #name }
                 } else {
@@ -279,7 +291,7 @@ impl<'a> IrEmitter<'a> {
         let params: Vec<TokenStream> = type_params
             .iter()
             .map(|tp| {
-                let name = format_ident!("{}", &tp.name);
+                let name = Self::rust_ident(&tp.name);
                 let bounds: Vec<TokenStream> = tp
                     .bounds
                     .iter()
@@ -306,7 +318,7 @@ impl<'a> IrEmitter<'a> {
         let names: Vec<TokenStream> = type_params
             .iter()
             .map(|tp| {
-                let name = format_ident!("{}", &tp.name);
+                let name = Self::rust_ident(&tp.name);
                 quote! { #name }
             })
             .collect();
@@ -352,7 +364,7 @@ impl<'a> IrEmitter<'a> {
                 .assoc_types
                 .iter()
                 .map(|(name, ty)| {
-                    let name_ident = format_ident!("{}", name);
+                    let name_ident = Self::rust_ident(name);
                     let ty_tokens = self.emit_type(ty);
                     quote! { #name_ident = #ty_tokens }
                 })
@@ -445,16 +457,16 @@ impl<'a> IrEmitter<'a> {
                 // The name may be a bare struct or a qualified enum variant such as `Predicate::KeyValue`; a
                 // qualified one must emit as a path, because `format_ident!` cannot carry `::`.
                 let n: TokenStream = if name.contains("::") {
-                    let idents: Vec<_> = name.split("::").map(|segment| format_ident!("{}", segment)).collect();
+                    let idents: Vec<_> = name.split("::").map(Self::rust_ident).collect();
                     quote! { #(#idents)::* }
                 } else {
-                    let ident = format_ident!("{}", name);
+                    let ident = Self::rust_ident(name);
                     quote! { #ident }
                 };
                 let fs: Vec<_> = fields
                     .iter()
                     .map(|(fname, fpat)| {
-                        let fn_ident = format_ident!("{}", fname);
+                        let fn_ident = Self::rust_ident(fname);
                         let fp = self.emit_pattern_with_mutable_bindings(fpat, mutable_bindings);
                         quote! { #fn_ident: #fp }
                     })

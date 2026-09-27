@@ -9,12 +9,12 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/decls/functions.rs",
-      "sha256": "8726cb75e2f03ca72e0538852be0ca087f5ff97b61d9712c365a3f25ee05c50c",
+      "sha256": "0f8b77b3091103eeb1261c925d72db8e3bcec5a94d5c231a65d13d6e79840d19",
       "lines": 2015
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/decls/impls.rs",
-      "sha256": "b5961286436896cc851b4d1be99000db3cfcbe60d6436db28d10bf9df0ef12cc",
+      "sha256": "8cef7245a290620bc56552e76eef8aead63d62ffad64be5d7ea5bc5d79348ece",
       "lines": 787
     },
     {
@@ -29,7 +29,7 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/decls/structures.rs",
-      "sha256": "d9514b14572a88ba3f060f3d834747aff16d2776aa79a878847277d3badfb640",
+      "sha256": "db2f024f2c47b7355872e0f013ff4e11c45c1f7a003462db7df10b63732ec593",
       "lines": 1211
     },
     {
@@ -39,8 +39,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/builtins.rs",
-      "sha256": "6fb988693e4c1754557bf7de28640785126f2f327ccf5a975fcf856475d8eff3",
-      "lines": 1086
+      "sha256": "2360d74b81ca7462d09c845a3de3f46e8637d37fa1a075fb05f068111d841861",
+      "lines": 1098
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/calls.rs",
@@ -64,8 +64,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/indexing.rs",
-      "sha256": "48e1d2d710f6791f35fbbfc7d51a1a6c608bda924936a1ec7a49803ccdfccbdf",
-      "lines": 473
+      "sha256": "758e24689612f2e943f00bc23abd389d5cea02edc957d395cde4b9ce9bb16d18",
+      "lines": 495
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/interop_coercions.rs",
@@ -79,7 +79,7 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
-      "sha256": "8eccbc674a1af6b1253ab39a77a9af77604004e23e8a82826550a1dfab827ff0",
+      "sha256": "901a6cc95b34b9e99ad9a88e6700f2075eea4bc4cda53c0a594d668533fac07a",
       "lines": 1532
     },
     {
@@ -104,7 +104,7 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/mod.rs",
-      "sha256": "e29a9a54647d32a4cc3b24577d2601e906bf22543f4fa45489d80ffd37ee68e8",
+      "sha256": "fac1e99bacfc356b252ca3195e56bad87c23acc68b67bd87f0530b2b2726aa5c",
       "lines": 4408
     },
     {
@@ -134,8 +134,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/types.rs",
-      "sha256": "ea37083add98071e9717a5b56a985946632fd4c6feebb72024aee52d2422025f",
-      "lines": 694
+      "sha256": "966cfa5ec528f766fa1ce9e810390e6619365fb869e8dd448743c03b5a5e17e1",
+      "lines": 706
     }
   ],
   "changes": [
@@ -240,6 +240,49 @@
       "behavior_evidence": "behavior fixture cli/trait_default_method_mutable_parameter.incn (combined-branch run); emitter unit tests trait_method_mut_parameter_keeps_one_shape_across_slot_impl_and_wrapper_issue1773 and mut_arguments_follow_the_checker_facts_issue1773 in incan_emit/src/tests/trait_parameters_and_element_bounds.rs; codegen_snapshot_tests and stdlib_generated_rust_snapshot_tests unchanged",
       "semantic_owner": "#1561: the checked parameter marker lowering already carries (FunctionParam mutability, Mutable = the caller sees the change); after the cutover Body IR states the parameter-passing shape and the trait slot, implementation and wrapper read it from there",
       "retirement_condition": "#654: the Rust-source backend is deleted; the replacement route passes a mut parameter from the recorded parameter fact and needs no separate trait-method or wrapper spelling"
+    },
+    {
+      "kind": "change",
+      "pr": 1815,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/decls/functions.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/decls/impls.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/decls/structures.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/builtins.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/indexing.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/mod.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/types.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1744, #1757, #1770, #1775",
+      "behavior_evidence": "behavior fixtures cli/set_constructor_over_generator.incn (#1744), cli/const_frozen_collection_reads.incn (#1757), cli/user_model_named_field_info.incn (#1770) and cli/host_keyword_identifiers.incn (#1775); emitter tests in incan_emit src/tests/emitted_spellings.rs; lowering tests in incan_ir lower/tests/collection_sources_and_static_reads.rs and the IR test set_constructor_source_plans_a_generator_through_the_iterator_trait_issue1744",
+      "semantic_owner": "#1561: the facts lowering hands emission -- the Set constructor plan IrType::set_constructor_source decides (#1744); the checked FrozenDict[K, V] index type on the Index node and the planner key probe plan_dict_lookup_key (#1757); the program own nominal declarations, which a stdlib surface name never shadows (#1770); and source identifiers, spelled through the one rust_ident escape (#1775)",
+      "retirement_condition": "the Rust-source backend is deleted (#654); the replacement route evaluates these reads from the same checked facts and emits no Rust identifiers"
     }
   ]
 }

@@ -1050,6 +1050,28 @@ impl AstLowering {
         })
     }
 
+    /// Whether the checked annotation of a new binding names the type of the value it is bound to.
+    ///
+    /// The checker records both types with transparent type aliases expanded, so `items: Ints = ITEMS` under
+    /// `type Ints = list[int]` names the type of `static ITEMS: list[int]` as `items: list[int] = ITEMS` does (#1777).
+    /// Without the checker's facts the lowered types are compared as written.
+    fn annotation_names_value_type(
+        &self,
+        stmt_span: ast::Span,
+        value: &Spanned<ast::Expr>,
+        annotated: &IrType,
+        value_ty: &IrType,
+    ) -> bool {
+        let checked = self
+            .type_info
+            .as_ref()
+            .and_then(|info| Some((info.assignment_binding_type(stmt_span)?, info.expr_type(value.span)?)));
+        match checked {
+            Some((binding_ty, checked_value_ty)) => binding_ty == checked_value_ty,
+            None => annotated == value_ty,
+        }
+    }
+
     /// Lower a single statement to IR.
     ///
     /// Handles all statement types including:
@@ -1098,7 +1120,24 @@ impl AstLowering {
                 if let Some(annotation) = &type_annotation {
                     Self::retain_union_owners_at(&mut lowered_value, annotation);
                 }
-                let ty = type_annotation.clone().unwrap_or_else(|| lowered_value.ty.clone());
+                // A new binding read straight from a module static aliases the static's storage, so reads and
+                // mutations through the local stay live. The alias is the static's storage binding, not a value of
+                // the annotated type, so a checked annotation that names the static's own type is not spelled on
+                // the binding, and the binding takes the static's type as the unannotated form does; one that names
+                // another type asks for a conversion, so that binding reads the value instead (#1777).
+                let new_binding_static_alias = rhs_direct_static.clone().filter(|_| {
+                    type_annotation.as_ref().is_none_or(|annotated| {
+                        self.annotation_names_value_type(stmt_span, &a.value, annotated, &lowered_value.ty)
+                    })
+                });
+                let (ty, new_binding_annotation) = if new_binding_static_alias.is_some() {
+                    (lowered_value.ty.clone(), None)
+                } else {
+                    (
+                        type_annotation.clone().unwrap_or_else(|| lowered_value.ty.clone()),
+                        type_annotation,
+                    )
+                };
 
                 match a.binding {
                     ast::BindingKind::Reassign => {
@@ -1143,13 +1182,9 @@ impl AstLowering {
                                 });
                             }
                         }
-                        if rhs_direct_static.is_some() {
-                            self.define_local_binding(a.name.clone(), ty.clone(), true);
-                        } else {
-                            self.define_local_binding(a.name.clone(), ty.clone(), false);
-                        }
+                        self.define_local_binding(a.name.clone(), ty.clone(), new_binding_static_alias.is_some());
                         self.define_local_callable_signature(a.name.clone(), local_callable_signature);
-                        let value = if let Some(static_name) = rhs_direct_static.clone() {
+                        let value = if let Some(static_name) = new_binding_static_alias {
                             self.make_static_binding_expr(static_name, ty.clone())
                         } else {
                             lowered_value.clone()
@@ -1158,7 +1193,7 @@ impl AstLowering {
                         IrStmtKind::Let {
                             name: a.name.clone(),
                             ty,
-                            type_annotation,
+                            type_annotation: new_binding_annotation,
                             mutability: Mutability::Immutable,
                             value,
                         }
@@ -1166,9 +1201,9 @@ impl AstLowering {
                     ast::BindingKind::Mutable => {
                         // New mutable binding
                         self.mutable_vars.insert(a.name.clone(), true);
-                        self.define_local_binding(a.name.clone(), ty.clone(), rhs_direct_static.is_some());
+                        self.define_local_binding(a.name.clone(), ty.clone(), new_binding_static_alias.is_some());
                         self.define_local_callable_signature(a.name.clone(), local_callable_signature);
-                        let value = if let Some(static_name) = rhs_direct_static.clone() {
+                        let value = if let Some(static_name) = new_binding_static_alias {
                             self.make_static_binding_expr(static_name, ty.clone())
                         } else {
                             lowered_value.clone()
@@ -1176,16 +1211,16 @@ impl AstLowering {
                         IrStmtKind::Let {
                             name: a.name.clone(),
                             ty,
-                            type_annotation,
+                            type_annotation: new_binding_annotation,
                             mutability: Mutability::Mutable,
                             value,
                         }
                     }
                     ast::BindingKind::Let => {
                         // New immutable binding
-                        self.define_local_binding(a.name.clone(), ty.clone(), rhs_direct_static.is_some());
+                        self.define_local_binding(a.name.clone(), ty.clone(), new_binding_static_alias.is_some());
                         self.define_local_callable_signature(a.name.clone(), local_callable_signature);
-                        let value = if let Some(static_name) = rhs_direct_static.clone() {
+                        let value = if let Some(static_name) = new_binding_static_alias {
                             self.make_static_binding_expr(static_name, ty.clone())
                         } else {
                             lowered_value
@@ -1193,7 +1228,7 @@ impl AstLowering {
                         IrStmtKind::Let {
                             name: a.name.clone(),
                             ty,
-                            type_annotation,
+                            type_annotation: new_binding_annotation,
                             mutability: Mutability::Immutable,
                             value,
                         }

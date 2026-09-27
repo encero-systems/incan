@@ -4619,6 +4619,7 @@ mod tests {
     use incan_lang::lang::trait_bounds;
 
     mod builtin_str_arguments;
+    mod collection_sources_and_static_reads;
     mod default_named_items;
     mod default_owner_paths;
     mod dependency_call_arguments;

@@ -127,6 +127,37 @@ fn grouped_unary_operand(operand: TypedExpr) -> TypedExpr {
     )
 }
 
+/// Return the value type `V` of a `FrozenDict[K, V]`, the frozen form a `const` dict carries.
+fn frozen_dict_value_type(ty: &IrType) -> Option<IrType> {
+    match ty {
+        IrType::NamedGeneric(name, args) if collection_types::from_str(name) == Some(CollectionTypeId::FrozenDict) => {
+            match args.as_slice() {
+                [_, value_ty] => Some(value_ty.clone()),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Group a `const` `FrozenDict` lookup whose value type is `Copy`, so the lookup is one operand wherever it is placed.
+///
+/// The frozen dict hands out a borrow of its baked value. The Rust-emission backend reads a `Copy` value out of that
+/// borrow with a prefix dereference, and a prefix operator binds looser than the method call a conversion appends: a
+/// `str` value bound to a `str` annotation, passed as a `str` argument or converted with `str(...)` re-associates as
+/// `*lookup.to_string()`, which dereferences the converted text rather than the lookup (#1757). The grouping form is
+/// the one [`grouped_unary_operand`] uses, a block with no statements and a value, in the value's own type. A value
+/// that is not `Copy` is cloned out of the borrow by a method call, which binds as written, so it is left as it is.
+fn grouped_frozen_dict_lookup(lookup: TypedExpr) -> IrExprKind {
+    if !lookup.ty.is_copy() {
+        return lookup.kind;
+    }
+    IrExprKind::Block {
+        stmts: Vec::new(),
+        value: Some(Box::new(lookup)),
+    }
+}
+
 impl AstLowering {
     /// Select the physical method target while retaining any checked trait evidence needed after lowering.
     pub fn project_resolved_method_target(
@@ -2222,6 +2253,16 @@ impl AstLowering {
                         },
                         elem_ty,
                     )
+                } else if let Some(value_ty) = frozen_dict_value_type(&obj.ty) {
+                    // A `const` `FrozenDict[K, V]` lookup yields its value type (#1757).
+                    let lookup = TypedExpr::new(
+                        IrExprKind::Index {
+                            object: Box::new(obj),
+                            index: Box::new(idx),
+                        },
+                        value_ty.clone(),
+                    );
+                    (grouped_frozen_dict_lookup(lookup), value_ty)
                 } else {
                     let elem_ty = match &obj.ty {
                         IrType::List(e) => (**e).clone(),

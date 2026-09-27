@@ -946,36 +946,37 @@ impl TypeChecker {
         valid
     }
 
-    /// Validate `dict.contains_key(key)` (#1668): exactly one positional probe whose type is compatible with the key
-    /// type, so a mistyped probe fails here instead of as a rustc `Borrow` error in the generated `contains_key`. The
-    /// probe has no parameter name, so a named or unpacked argument is refused with the ordinary call diagnostics.
+    /// Validate `dict.contains_key(key)` (#1668) and `frozen_dict.contains_key(key)` (#1757): exactly one positional
+    /// probe whose type is compatible with the key type, so a mistyped probe fails here instead of as a rustc `Borrow`
+    /// error in the generated `contains_key`. The probe has no parameter name, so a named or unpacked argument is
+    /// refused with the ordinary call diagnostics. `callee` names the receiver family in those diagnostics.
     fn validate_dict_contains_key_call(
         &mut self,
+        callee: &str,
         key_ty: &ResolvedType,
         args: &[CallArg],
         arg_types: &[ResolvedType],
         span: Span,
     ) {
-        const CALLEE: &str = "Dict.contains_key";
         let [arg] = args else {
-            self.errors.push(errors::builtin_arity(CALLEE, 1, args.len(), span));
+            self.errors.push(errors::builtin_arity(callee, 1, args.len(), span));
             return;
         };
         let expr = match arg {
             CallArg::Positional(expr) => expr,
             CallArg::Named(name, _) => {
                 self.errors
-                    .push(errors::unknown_keyword_argument(CALLEE, &name.node, name.span));
+                    .push(errors::unknown_keyword_argument(callee, &name.node, name.span));
                 return;
             }
             CallArg::PositionalUnpack(expr) => {
                 self.errors
-                    .push(errors::call_unpack_without_rest(CALLEE, "*", expr.span));
+                    .push(errors::call_unpack_without_rest(callee, "*", expr.span));
                 return;
             }
             CallArg::KeywordUnpack(expr) => {
                 self.errors
-                    .push(errors::call_unpack_without_rest(CALLEE, "**", expr.span));
+                    .push(errors::call_unpack_without_rest(callee, "**", expr.span));
                 return;
             }
         };
@@ -984,7 +985,7 @@ impl TypeChecker {
             && !self.types_compatible(actual, key_ty)
         {
             self.errors.push(errors::call_argument_type_mismatch(
-                CALLEE,
+                callee,
                 None,
                 &key_ty.to_string(),
                 &actual.to_string(),
@@ -4398,6 +4399,20 @@ impl TypeChecker {
                 }
                 ResolvedType::Str
             }
+            // A `const` `FrozenDict[K, V]` is read like a dict: `table[key]` is the value, or a `KeyError` at run
+            // time. A text key (`str` or `FrozenStr`) accepts any text probe (#1757).
+            ResolvedType::FrozenDict(key_ty, value_ty) => {
+                let is_text = |ty: &ResolvedType| matches!(ty, ResolvedType::Str) || is_frozen_str(ty);
+                let text_probe_for_text_key = is_text(&index_ty) && is_text(&key_ty);
+                if !text_probe_for_text_key && !self.types_compatible(&index_ty, &key_ty) {
+                    self.errors.push(errors::index_type_mismatch(
+                        &key_ty.to_string(),
+                        &index_ty.to_string(),
+                        index.span,
+                    ));
+                }
+                *value_ty
+            }
             ResolvedType::Tuple(elems) => {
                 // Guardrail: tuple indexing must be an integer literal so we can bounds-check.
                 let Expr::Literal(Literal::Int(raw_idx)) = &index.node else {
@@ -5869,12 +5884,29 @@ impl TypeChecker {
                     }
                 }
             }
-            ResolvedType::FrozenDict(_, _) => {
+            ResolvedType::FrozenDict(key_ty, _) => {
                 if let Some(id) = frozen_dict_methods::from_str(method) {
                     use frozen_dict_methods::FrozenDictMethodId as M;
                     match id {
                         M::Len => return ResolvedType::Int,
-                        M::IsEmpty | M::ContainsKey => return ResolvedType::Bool,
+                        M::IsEmpty => return ResolvedType::Bool,
+                        M::ContainsKey => {
+                            // The probe follows the key rule of `table[key]`: a text key (`str` or `FrozenStr`)
+                            // takes any text probe (#1757).
+                            let is_text = |ty: &ResolvedType| matches!(ty, ResolvedType::Str) || is_frozen_str(ty);
+                            let probe_key_ty = match arg_types.first() {
+                                Some(probe_ty) if is_text(probe_ty) && is_text(key_ty) => probe_ty.clone(),
+                                _ => (**key_ty).clone(),
+                            };
+                            self.validate_dict_contains_key_call(
+                                "FrozenDict.contains_key",
+                                &probe_key_ty,
+                                args,
+                                &arg_types,
+                                span,
+                            );
+                            return ResolvedType::Bool;
+                        }
                     }
                 }
             }
@@ -6078,7 +6110,7 @@ impl TypeChecker {
                         M::Get => return option_ty(ResolvedType::Ref(Box::new(val.clone()))),
                         M::Insert => return ResolvedType::Unit,
                         M::ContainsKey => {
-                            self.validate_dict_contains_key_call(&key, args, &arg_types, span);
+                            self.validate_dict_contains_key_call("Dict.contains_key", &key, args, &arg_types, span);
                             return ResolvedType::Bool;
                         }
                     }

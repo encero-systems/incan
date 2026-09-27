@@ -1,6 +1,6 @@
 # Glossary
 
-This page defines common terms used throughout the docs.
+This page defines the terms the docs use.
 
 ## Type
 
@@ -19,33 +19,37 @@ def add(a: int, b: int) -> int:
 
 ## Module
 
-A module is a `.incn` file that contains code and definitions (functions, models, constants, etc.).
+A module is one `.incn` or `.incan` source file and the declarations it contains (functions, models, constants, and so on).
 
 ## Import
 
-An import brings definitions from another module into the current file.
+An import binds a declaration or module of another module in the current module.
 
 See:
 
-- Explanation: [Imports and modules](imports_and_modules.md)
+- Explanation: [Imports and modules](../explanation/imports_and_modules.md)
 - How-to: [Imports and modules (how-to)](../how-to/imports_and_modules.md)
 - Reference: [Imports and modules (reference)](imports_and_modules.md)
 
 ## Keyword
 
-A keyword is a reserved word with special meaning in the language syntax (for example `def`, `return`, `class`).
+A keyword is a reserved word with special meaning in the language syntax (for example `def`, `return`, `class`). The keywords are listed in the [Language reference (generated)](language.md).
+
+## Identifier
+
+An identifier is a name that is not a keyword. Any identifier, `impl`, `dyn`, `ref`, `move` and `use` included, can name a model or class field, a method, a function, a parameter or keyword argument, an enum variant, a type parameter or a module. Reflection (`__fields__()`) and JSON serialization report a field by its identifier as written.
 
 ## Soft keyword
 
-A soft keyword is a keyword that is only reserved in specific contexts (for example after importing a particular stdlib namespace).
+A soft keyword is a keyword only after a particular import; before it, the word is an identifier.
 
-In Incan, `async` and `await` are soft keywords activated by importing `std.async`.
+`async` and `await` are soft keywords: they are keywords after an import of `std.async` or one of its modules.
 
 See: [Imports and modules (reference)](imports_and_modules.md#soft-keywords).
 
 ## Result
 
-`Result[T, E]` represents either success (`Ok(T)`) or failure (`Err(E)`), and is commonly used for typed error handling.
+`Result[T, E]` represents either success (`Ok(T)`) or failure (`Err(E)`).
 
 See: [Error Handling](../explanation/error_handling.md).
 
@@ -59,7 +63,7 @@ See: [Error Handling](../explanation/error_handling.md).
 
 Async code lets a program do other work while waiting on I/O (network, disk, timers).
 
-In Incan, using `async def` and `await` requires importing `std.async` (they are soft keywords).
+`async def` and `await` require an import of `std.async` (see [Soft keyword](#soft-keyword)).
 
 See:
 
@@ -72,7 +76,7 @@ See:
 
 ## cargo
 
-`cargo` is Rust’s build tool and package manager. Incan uses Cargo under the hood when building generated Rust projects.
+`cargo` is Rust’s build tool and package manager.
 
 ## PATH
 
@@ -80,8 +84,8 @@ See:
 
 ## make
 
-`make` runs Makefile targets. This repository provides canonical commands like `make install`, `make release`, and `make smoke-test`.
+`make` runs the targets of a `Makefile`.
 
 ## crate
 
-In these docs, “crate” is used in the Rust sense (“a compiled unit/package”) and sometimes as shorthand for “the project/module root”. See: [Imports and modules](imports_and_modules.md).
+A crate is a Rust compilation unit: a library or a binary. In an Incan import path, `crate` names the project's source root (see [Module paths](imports_and_modules.md#module-paths)).
