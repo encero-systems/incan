@@ -494,6 +494,9 @@ pub fn derive_support(id: SurfaceTypeId, derive: DeriveId) -> SurfaceDeriveSuppo
                 FollowsTypeArguments
             }
         }
+        // These web owners contain runtime state that provides no `Clone`; a kept dict lookup therefore cannot copy
+        // one out of the map (#1830). Other derive capabilities remain unspecified here.
+        SurfaceTypeId::App | SurfaceTypeId::Response | SurfaceTypeId::Request if derive == DeriveId::Clone => Missing,
         SurfaceTypeId::App
         | SurfaceTypeId::Response
         | SurfaceTypeId::Html
@@ -659,6 +662,18 @@ mod tests {
     }
 
     #[test]
+    fn web_owned_handles_lack_clone_issue1830() {
+        for id in [SurfaceTypeId::App, SurfaceTypeId::Response, SurfaceTypeId::Request] {
+            assert_eq!(
+                derive_support(id, DeriveId::Clone),
+                SurfaceDeriveSupport::Missing,
+                "{} must be recorded as non-Clone",
+                as_str(id)
+            );
+        }
+    }
+
+    #[test]
     fn channel_and_lock_handles_follow_their_stdlib_newtype_derives() {
         for id in [SurfaceTypeId::Mutex, SurfaceTypeId::Sender] {
             assert_eq!(
@@ -779,7 +794,7 @@ mod tests {
             SurfaceDeriveSupport::Missing
         );
         assert_eq!(
-            derive_support(SurfaceTypeId::Response, DeriveId::Clone),
+            derive_support(SurfaceTypeId::Html, DeriveId::Clone),
             SurfaceDeriveSupport::NotRecorded
         );
         assert_eq!(

@@ -194,6 +194,44 @@ def nested_partial() -> str:
     Ok(())
 }
 
+/// #1848: a positional argument binds the first residual parameter of an imported partial; the provider-owned preset
+/// still fills its later named slot in the generated call.
+#[test]
+fn imported_partial_positional_call_keeps_later_preset_issue1848() -> Result<(), String> {
+    let index = provider_index(&[(
+        &["lib"],
+        r#"
+pub def show(prefix: str, label: str) -> str:
+    return prefix + label
+
+
+pub show_ace = partial show(label="ace")
+"#,
+    )])?;
+    let ir = lower_consumer(
+        r#"
+from pub::modulelib import show_ace
+
+
+def render() -> str:
+    return show_ace("p:")
+"#,
+        index,
+    )?;
+    let (args, _) = returned_call(&ir, "render")?;
+    assert_eq!(
+        args.iter().map(|arg| arg.name.as_deref()).collect::<Vec<_>>(),
+        vec![Some("prefix"), Some("label")],
+        "the positional residual and later preset must occupy their target parameter slots: {args:?}"
+    );
+    assert!(
+        matches!(&args[1].expr.kind, IrExprKind::Literal(crate::expr::Literal::StaticStr(value)) if value == "ace"),
+        "the later slot must carry the provider preset: {:?}",
+        args[1]
+    );
+    Ok(())
+}
+
 /// The instantiation of every `Some(...)` call a function body holds, in the order the body holds them.
 #[derive(Default)]
 struct SomeInstantiations(Vec<(IrType, IrType)>);

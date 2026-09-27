@@ -428,6 +428,22 @@ def add_item[T with Clone](mut items: List[T], item: T) -> None:
     assert_check_ok(source);
 }
 
+/// #1855: the source-owned `std.fs.Path` newtype keeps its declared `Clone`; its name must not select the unrelated
+/// `std.web.Path[T]` extractor capability entry.
+#[test]
+fn std_fs_path_is_cloneable_despite_web_surface_name_issue1855() {
+    assert_check_ok(
+        r#"
+from std.fs import Path
+
+def main() -> None:
+  mut paths: list[Path] = []
+  path = Path("a.txt")
+  paths.append(path)
+"#,
+    );
+}
+
 /// Return whether `errors` holds the `List.append` refusal for an element type that is not `Clone`.
 fn has_list_append_clone_error(errors: &[CompileError]) -> bool {
     errors

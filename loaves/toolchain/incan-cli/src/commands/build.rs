@@ -569,6 +569,7 @@ pub fn run_file(
     cargo_no_default_features: bool,
     cargo_all_features: bool,
     release: bool,
+    program_args: Vec<String>,
 ) -> CliResult<ExitCode> {
     reject_normal_cargo_controls(&cargo_policy, None)?;
     incan_driver::project::warn_once_about_ignored_cargo_manifest(&resolve_project_root(Path::new(file_path)));
@@ -596,6 +597,7 @@ pub fn run_file(
         let mut command = Command::new(&selected.native_output);
         command.current_dir(project_root);
         clear_inherited_cargo_environment(&mut command);
+        apply_program_args(&mut command, &program_args);
         let status = command.status().map_err(|error| {
             CliError::failure(format!(
                 "failed to run selected Oven project-output Loaf {}: {error}",
@@ -618,7 +620,7 @@ pub fn run_file(
         None,
         &BackendSelectionOptions::default(),
     )?;
-    run_oven_prepared_project(prepared, profile)
+    run_oven_prepared_project(prepared, profile, &program_args)
 }
 
 /// Build and run inline Incan source from `incan run -c`.
@@ -632,6 +634,7 @@ pub fn run_inline_source(
     cargo_no_default_features: bool,
     cargo_all_features: bool,
     release: bool,
+    program_args: Vec<String>,
 ) -> CliResult<ExitCode> {
     reject_normal_cargo_controls(&cargo_policy, None)?;
     let wrapped_source = wrap_inline_command_source(source);
@@ -677,21 +680,31 @@ pub fn run_inline_source(
         None,
         &BackendSelectionOptions::default(),
     )
-    .and_then(|prepared| run_oven_prepared_project(prepared, if release { "release" } else { "debug" }));
+    .and_then(|prepared| run_oven_prepared_project(prepared, if release { "release" } else { "debug" }, &program_args));
     let _ = fs::remove_file(&source_path);
     result
 }
 
 /// Run a receipt-selected native Oven executable while retaining its entry lease for the full process lifetime.
-fn run_oven_prepared_project(prepared: OvenPreparedProject, profile: &str) -> CliResult<ExitCode> {
+fn run_oven_prepared_project(
+    prepared: OvenPreparedProject,
+    profile: &str,
+    program_args: &[String],
+) -> CliResult<ExitCode> {
     let bake = bake_oven_project(&prepared, profile, None)?;
     let mut command = Command::new(&bake.output);
     command.current_dir(&prepared.project_root);
     clear_inherited_cargo_environment(&mut command);
+    apply_program_args(&mut command, program_args);
     let status = command
         .status()
         .map_err(|error| CliError::failure(format!("failed to run Oven binary {}: {error}", bake.output.display())))?;
     Ok(ExitCode(status.code().unwrap_or(ExitCode::FAILURE.0)))
+}
+
+/// Attach source-level program arguments to either selected or freshly prepared native output.
+fn apply_program_args(command: &mut Command, program_args: &[String]) {
+    command.args(program_args);
 }
 
 #[cfg(test)]
@@ -717,6 +730,17 @@ mod tests {
     use incan_frontend::library_manifest::LibraryManifest;
     use incan_provider::FeatureSelection;
     use oven_model::lock::{CargoFeatureSelection, IncanLock, compute_deps_fingerprint};
+
+    #[test]
+    fn native_oven_command_receives_program_args_issue1883() {
+        let mut command = Command::new("program");
+        let program_args = vec!["--verbose".to_string(), "input.txt".to_string()];
+        apply_program_args(&mut command, &program_args);
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            vec![std::ffi::OsStr::new("--verbose"), std::ffi::OsStr::new("input.txt")]
+        );
+    }
     #[cfg(feature = "rust_inspect")]
     use rust_inspect::Inspector;
     #[cfg(feature = "rust_inspect")]

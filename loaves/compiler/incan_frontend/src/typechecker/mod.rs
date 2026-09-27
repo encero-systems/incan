@@ -5025,6 +5025,27 @@ impl TypeChecker {
             self.cache_stdlib_module_import_semantics(&ImportPath::simple(module_path.clone()));
         }
 
+        // Compiler-known surface types have no source declaration for the stdlib cache to return. Their registry
+        // ownership is nevertheless the same proof a direct `from std.web import Html` uses, so retain that stable
+        // builtin identity and canonical resolved spelling for a qualified annotation as well (#1824).
+        if let Some(surface_type) = surface_types::from_str(name)
+            && surface_types::stdlib_module_path(surface_type).is_some_and(|owner| owner == module_path.join("."))
+        {
+            let canonical = surface_types::as_str(surface_type).to_string();
+            return Some(QualifiedTypeReferenceInfo {
+                identity: CanonicalSymbolId {
+                    namespace: SymbolNamespace::OrdinaryLexical,
+                    origin: SymbolOrigin::Builtin,
+                    declaration_name: canonical.clone(),
+                    kind: SemanticSourceTargetKind::Builtin,
+                    scope_discriminant: None,
+                    declaration_span: HirSourceSpan::new(0, 0),
+                },
+                module_path,
+                resolved: ResolvedType::Named(canonical),
+            });
+        }
+
         // ---- Public library module: the checked manifest owns both the identity and the qualified type name ----
         if module_path.len() >= 2 && module_path.first().is_some_and(|part| part == "pub") {
             let resolved = self

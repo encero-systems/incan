@@ -3,6 +3,24 @@
 
 use super::*;
 
+/// #1856: the runtime task handle's synchronous cancellation method is part of the checked surface.
+#[test]
+fn join_handle_abort_is_accepted_issue1856() {
+    assert_check_ok(
+        r#"
+from std.async import spawn, sleep
+
+async def work() -> int:
+  await sleep(10.0)
+  return 1
+
+async def main() -> None:
+  handle = spawn(work())
+  handle.abort()
+"#,
+    );
+}
+
 #[test]
 fn test_local_async_function_named_sleep_shadows_no_builtin() {
     let source = r#"

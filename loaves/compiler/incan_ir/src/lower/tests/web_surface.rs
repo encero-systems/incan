@@ -154,21 +154,18 @@ def render(value: str) -> Page:
     Ok(())
 }
 
-/// Known limitation (#1824): a module-qualified `web.Html` never reaches lowering. `std.web` provides `Html` as a
-/// compiler surface type rather than a declaration, so the checker refuses the spelling, naming that limitation,
-/// instead of letting a bare `Html` reach the build.
+/// A module-qualified `web.Html` reaches lowering with the canonical surface-type identity (#1824).
 #[test]
-fn qualified_std_web_html_is_a_known_checker_refusal_issue1824() -> Result<(), String> {
+fn qualified_std_web_html_lowers_as_text_response_issue1824() -> Result<(), String> {
     for source in [
         "import std.web as web\nfrom std.web import Html\n\n\ndef render(value: str) -> web.Html:\n    return Html(value)\n",
         "from std import web\nfrom std.web import Html\n\n\ndef render(value: str) -> web.Html:\n    return Html(value)\n",
     ] {
-        match lower_checked_source(source) {
-            Err(message)
-                if message.contains("`web.Html` cannot be written through its module")
-                    && message.contains("provides `Html` as a built-in type") => {}
-            other => return Err(format!("`web.Html` must be refused as a surface type, got {other:?}")),
-        }
+        let ir = lower_checked_source(source)?;
+        assert_eq!(
+            function(&ir, "render")?.return_type,
+            IrType::NamedGeneric("crate::__incan_std::web::Html".to_string(), vec![IrType::String])
+        );
     }
     Ok(())
 }

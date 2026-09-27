@@ -23,6 +23,7 @@ use incan_frontend::typechecker::split_canonical_public_library_type_name;
 use incan_lang::lang::c_abi;
 use incan_lang::lang::conventions;
 use incan_lang::lang::stdlib;
+use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::types::numerics::{self, NumericFamily, NumericTypeId};
 use incan_lang::lang::types::stringlike::{self, StringLikeId};
@@ -1415,13 +1416,13 @@ impl AstLowering {
             return IrType::Unknown;
         };
         let has_args = !args.is_empty();
-        let apply_args = |nominal: IrType| match (nominal, !has_args) {
+        let apply_args = |nominal: IrType, args: Vec<IrType>| match (nominal, args.is_empty()) {
             (nominal, true) => nominal,
             (IrType::Struct(name), false) => IrType::NamedGeneric(name, args),
             (other, false) => other,
         };
         if reference.module_path.first().map(String::as_str) == Some("pub") {
-            return apply_args(self.lower_resolved_type(&reference.resolved));
+            return apply_args(self.lower_resolved_type(&reference.resolved), args);
         }
         // A module-qualified source type alias (`first.Answer`) whose target holds a union lowers to that target: the
         // emitter resolves an alias only by its bare name, so a value returned or passed into the alias was never
@@ -1446,7 +1447,15 @@ impl AstLowering {
         // The member is spelled the way the module exports it, which is the name the generated module binds; a
         // facade may export a declaration under another name, so the declaration's own name is not the one to use.
         path.push(member.clone());
-        apply_args(IrType::Struct(path.join("::")))
+        let nominal = path.join("::");
+        if args.is_empty()
+            && surface_types::from_str(member) == Some(SurfaceTypeId::Html)
+            && surface_types::stdlib_module_path(SurfaceTypeId::Html)
+                .is_some_and(|owner| owner == reference.module_path.join("."))
+        {
+            return IrType::NamedGeneric(nominal, vec![IrType::String]);
+        }
+        apply_args(IrType::Struct(nominal), args)
     }
 
     /// Lower an AST type to an IR type.

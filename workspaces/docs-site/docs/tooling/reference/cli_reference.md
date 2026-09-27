@@ -471,10 +471,10 @@ Prints one complete checked typed registry, such as `feature::functions`, or `pa
 ## `incan run`
 
 ```text
-incan run [OPTIONS] [FILE]
+incan run [OPTIONS] [FILE] [-- <PROGRAM_ARG>...]
 ```
 
-Compiles and runs `FILE`, the inline code of `-c`, or the project's `[project.scripts].main`. Outside a project, `FILE` or `-c` is required. Arguments after `--` are refused.
+Compiles and runs `FILE`, the inline code of `-c`, or the project's `[project.scripts].main`. Outside a project, `FILE` or `-c` is required. Arguments after `--` are passed to the executed program in order.
 
 - `-c <CODE>`, `--command <CODE>`: run inline source. It cannot be combined with `FILE` or select a workspace member.
 - `--release`: build the release profile; the default is the debug profile.
@@ -482,6 +482,7 @@ Compiles and runs `FILE`, the inline code of `-c`, or the project's `[project.sc
 
 ```bash
 incan run path/to/file.incn
+incan run path/to/file.incn -- --verbose input.txt
 incan run
 incan run -c "import this"
 ```
