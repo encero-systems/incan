@@ -35,6 +35,8 @@ import rust::std::collections::BTreeMap
 
 For example, if you would use `import std::fs`, this would refer to Incan's stdlib, **not** Rust's!
 
+Using `rust::std` types means working with their Rust behavior; for common file work, Incan's `read_file` and `write_file` builtins are the simpler choice. When you pass a `list[T]` to a Rust function or method that expects `Vec<U>`, Incan converts each element with `.into()`, and Rust checks that `U` implements `From<T>`.
+
 > **Note:** `rust::core::...` and `rust::alloc::...` are reserved for future `no_std`/target work and are not yet
 > supported. The compiler will tell you to use `rust::std::...` instead.
 

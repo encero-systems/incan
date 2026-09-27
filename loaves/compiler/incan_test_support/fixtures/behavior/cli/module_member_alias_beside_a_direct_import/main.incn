@@ -1,0 +1,13 @@
+# behavior: a module that imports a member directly for its own use and re-exports it through an alias of the module member hands consumers the alias (#1764)
+# retires: loaves/compiler/incan_emit/src/tests/reexported_projections.rs::module_member_alias_beside_a_direct_import_binds_publicly_issue1764
+# retires: loaves/compiler/incan_ir/src/lower/tests/reexported_projections.rs::module_member_alias_beside_a_direct_import_binds_publicly_issue1764
+# expect-stdout:
+#   42
+#   12
+
+from facade import quadruple, twice
+
+
+def main() -> None:
+    println(twice(21))
+    println(quadruple(3))

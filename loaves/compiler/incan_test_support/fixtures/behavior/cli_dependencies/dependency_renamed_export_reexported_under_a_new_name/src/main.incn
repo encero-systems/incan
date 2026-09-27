@@ -1,0 +1,10 @@
+# behavior: a module that re-exports a dependency's renamed function under a further name hands its consumers a callable name (#1751)
+# retires: loaves/compiler/incan_emit/src/tests/reexported_projections.rs::module_reexport_of_a_package_renamed_export_binds_the_projection_issue1751
+# expect-stdout:
+#   42
+
+from facade import b_calculate
+
+
+def main() -> None:
+    println(b_calculate(41))

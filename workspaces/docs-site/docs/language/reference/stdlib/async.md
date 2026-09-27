@@ -248,7 +248,7 @@ from std.async.sync import SemaphoreAcquireError
 ## `std.async.prelude`
 
 ```incan
-from std.async.prelude import *
+from std.async.prelude import sleep, spawn, channel
 ```
 
 The prelude re-exports:
