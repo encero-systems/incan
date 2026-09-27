@@ -70,7 +70,7 @@ Replacing an object while a later operation still needs a borrow of one of its f
 
 ## Guide-level explanation
 
-The examples below describe the proposed behavior. Start with the cart examples for assignment, then read shadowing and borrow conflicts. The reference section defines the rules; Unresolved questions records where the Draft is still incomplete.
+The examples below describe the proposed behavior. Start with the cart examples for assignment, then read shadowing and borrow conflicts. The reference section defines the rules and separates source semantics from ownership-planning obligations.
 
 ### Borrow the cart's field
 
@@ -90,6 +90,30 @@ class Cart:
 ```
 
 The local alias belongs to the method's scope; `self.items` names the field. Matching their final name components is not a collision and needs no warning. Assignment through `items` keeps addressing the borrowed field. It does not turn `items` into an independent local.
+
+### Chained assignment preserves each existing target
+
+```incan
+def fresh_items() -> list[str]:
+    return ["pear"]
+
+
+def replace_and_keep(mut cart: Cart) -> None:
+    mut items = cart.items
+    mut saved: Option[list[str]] = None
+
+    items = saved = fresh_items()
+    println(f"{len(items)} {len(saved.unwrap())}")  # 1 1
+
+    items.append("orange")  # last use of the writable borrow
+    println(f"{len(cart.items)} {len(saved.unwrap())}")  # 2 1
+```
+
+`fresh_items()` is evaluated once. Assignment through `items` replaces the borrowed `cart.items` field; assignment to `saved` replaces its owned optional value with a present list. Each target applies its own assignment conversion to the original result: wrapping for `saved` must not turn the value assigned through `items` into an `Option`.
+
+The chain introduces no declarations and creates no alias between the targets. `saved` owns its list, so the later append through `items` changes only the cart. Duckborrowing must materialize the values required by those destinations while preserving their independence. This is not a silent clone used to detach an existing writable alias: `items` keeps borrowing `cart.items` throughout.
+
+The same rule applies to `list[int]` paired with `Option[list[int]]`, and to `set[int]` paired with `Option[set[int]]`, including results from user-defined functions. If both targets are owned locals, both remain owned locals. If an explicit `mut items = items.clone()` shadows the field alias before the chain, the chain updates that new owned local and leaves the cart unchanged. If a target is read-only, assignment to it is refused; chaining does not grant mutation permission.
 
 ### Request a separate value with clone
 
@@ -275,6 +299,10 @@ A changed caller-visible parameter needs an argument the caller may change, exce
 5. A previously created alias must remain tied to its resolved binding and place; a later declaration with the same spelling must not redirect it. Shadowing alone does not end a borrow that is still used through another alias or closure.
 6. A warning must identify the new declaration and the binding it shadows. An ambiguity error must identify the competing candidates and offer qualification where possible. Borrow and permission violations remain errors even when all names are unambiguous.
 
+### Chained assignment to existing bindings
+
+A chained assignment must evaluate its right-hand-side expression once and assign from that result to every target using the existing target's resolved identity, type, and mutation permission. It must not introduce new bindings or change a target from borrowed to owned. Each target's assignment conversion, including lifting a value into `Option`, must be derived from the original result; a converted target value must not contaminate another target's conversion. Ownership planning must supply valid values for every destination without inventing sharing between independently owned targets or detaching borrowed targets. The existing assignment sequencing is unchanged.
+
 ### Read-only local borrowing
 
 1. A bare first declaration `name = place` and an explicit `let name = place` must both borrow the place read-only. Neither spelling requests a clone. A constructed or explicitly cloned initializer instead supplies an immutable owned local.
@@ -416,6 +444,7 @@ The completed design and implementation must demonstrate:
 - bare and explicit-`let` declarations from a place borrow read-only, cannot mutate nested contents, and do not implicitly clone;
 - writable scalar aliases update and replace their original fields just as writable collection or object aliases do;
 - annotated and unannotated writable-place bindings agree;
+- chained assignment evaluates a user-defined initializer once, preserves each target's identity and permission, and applies collection/Option conversions independently; list and set cases cover both owned destinations and write-through borrows, with later mutation proving destination independence;
 - shadowing resolves its initializer through the old binding, warns, and resolves subsequent uses through the new binding;
 - assignment never introduces a shadow or detaches an alias, and same-name qualified field access is not warned about merely for matching a local spelling;
 - owner replacement before a later alias use is rejected, while replacement after the last dependent use is accepted;
