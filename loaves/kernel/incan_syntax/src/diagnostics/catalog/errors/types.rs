@@ -2632,6 +2632,22 @@ pub fn collection_literal_has_no_one_member(destination: &str, members: &[String
     ))
 }
 
+/// Report a collection literal argument (`[]`, `{}`, `[None]`) whose parameter type names a type parameter of the
+/// callee that no argument fixes, so the call has no type to instantiate it with (#1862).
+pub fn generic_literal_argument_leaves_type_param_open(callee: &str, type_param: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Cannot infer type parameter '{type_param}' of '{callee}': this literal's elements do not say what it is, \
+             and no other argument does"
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Pass the type arguments explicitly, as in `{callee}[...](...)`, or give the literal a type first by binding \
+         it to an annotated name"
+    ))
+}
+
 pub fn tuple_index_out_of_bounds(idx: i64, len: usize, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Tuple index {} is out of bounds for tuple of length {}", idx, len),

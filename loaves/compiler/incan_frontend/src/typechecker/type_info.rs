@@ -715,6 +715,12 @@ pub struct ExpressionArtifacts {
     /// The binding is typechecked like an ordinary immutable `Logger` value, but lowering must materialize it as a
     /// module-local `std.logging.get_logger(...)` call so source metadata can become the logger name.
     pub ambient_logger_bindings: HashSet<(usize, usize)>,
+    /// The `Option` type of the place a value is written to, keyed by the value span: a field or index assignment, a
+    /// model or class constructor field, or a `return` (#1858).
+    ///
+    /// The checker accepts a value of an `Option`'s payload type there (`box.count = 5` for an `Option[int]` field),
+    /// and lowering wraps such a value in the `Some` layers the destination adds.
+    pub option_destination_types: HashMap<(usize, usize), ResolvedType>,
     /// Values of chained assignments that each target gets its own evaluation of, keyed by the value span (#1806).
     pub chained_values_written_per_target: HashSet<(usize, usize)>,
     /// Values of chained assignments whose already-bound targets all have one type, keyed by the value span (#1806).
@@ -2138,6 +2144,11 @@ impl TypeCheckInfo {
     /// Return the final compiler-selected type of a binding introduced by an assignment statement.
     pub fn assignment_binding_type(&self, span: Span) -> Option<&ResolvedType> {
         self.expressions.assignment_binding_types.get(&(span.start, span.end))
+    }
+
+    /// Return the `Option` type of the place the value at `span` is written to, if the checker recorded one (#1858).
+    pub fn option_destination_type(&self, span: Span) -> Option<&ResolvedType> {
+        self.expressions.option_destination_types.get(&(span.start, span.end))
     }
 
     /// Return the canonical fields a destructuring pattern leaves unnamed, keyed by its constructor name's span.

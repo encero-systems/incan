@@ -43,6 +43,7 @@ use incan_lang::interop::RustCollectionFamily;
 use incan_lang::lang::builtins::BuiltinFnId;
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
 use incan_lang::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
+use incan_lang::lang::surface::option_methods::{self, OptionMethodId};
 use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId, TASK_JOIN_ERROR_TYPE_NAME};
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
@@ -1242,6 +1243,10 @@ impl AstLowering {
     }
 
     /// Return the ordinary argument policy for a method call.
+    ///
+    /// The fallback of `unwrap_or` on an `Option[str]` is the owned `str` the call returns, so it takes Incan value
+    /// semantics rather than the borrowed shape a Rust method argument otherwise takes (`d.unwrap_or(missing)` passes
+    /// `missing`, not `&missing`) (#1875).
     fn regular_method_call_arg_policy(
         &self,
         receiver_span: incan_frontend::ast::Span,
@@ -1255,6 +1260,12 @@ impl AstLowering {
             .is_some_and(|info| info.preserves_regular_method_arg_shape(receiver_span, method))
         {
             return MethodCallArgPolicy::PreserveShape;
+        }
+
+        if matches!(&receiver.ty, IrType::Option(payload) if matches!(payload.as_ref(), IrType::String))
+            && option_methods::from_str(method) == Some(OptionMethodId::UnwrapOr)
+        {
+            return MethodCallArgPolicy::SourceOwned;
         }
 
         if Self::rust_collection_family_for_ir_type(&receiver.ty)
@@ -1376,7 +1387,8 @@ impl AstLowering {
         lowered = self.wrap_with_validated_newtype_coercion(lowered, expr.span)?;
         lowered = self.copy_for_unchanged_mut_argument(lowered, expr.span);
         lowered.span = expr.span.into();
-        Ok(lowered)
+        // A value written to an `Option` field, element or return type takes the `Some` layers that place adds.
+        Ok(self.wrap_in_recorded_option_destination(lowered, expr.span))
     }
 
     /// Hand an argument to a caller-visible `mut` parameter as a copy when the checker proved the callee never changes

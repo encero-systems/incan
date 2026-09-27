@@ -217,7 +217,21 @@ impl TypeChecker {
             }
             return match cid {
                 ConstructorId::Ok | ConstructorId::Err => {
-                    let arg_types = self.check_call_arg_types(args);
+                    // The payload is checked against the payload type of the `Result` the destination expects, so an
+                    // integer literal in `Ok(1)` at a `Result[float, str]` destination takes the float type (#1859).
+                    let expected_payload =
+                        Self::matching_collection_constructor_args(expected_return_ty, CollectionTypeId::Result, 2)
+                            .and_then(|type_args| type_args.get(usize::from(cid == ConstructorId::Err)))
+                            .cloned();
+                    let arg_types = match (expected_payload, args) {
+                        (Some(expected_payload), [CallArg::Positional(expr)]) => {
+                            self.call_argument_depth += 1;
+                            let ty = self.check_expr_with_expected(expr, Some(&expected_payload));
+                            self.call_argument_depth -= 1;
+                            vec![ty]
+                        }
+                        _ => self.check_call_arg_types(args),
+                    };
                     let current_result = self.symbols.current_return_type().and_then(|ty| match ty {
                         ResolvedType::Generic(name, args)
                             if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result)

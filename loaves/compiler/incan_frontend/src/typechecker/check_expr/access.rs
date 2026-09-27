@@ -5228,6 +5228,52 @@ impl TypeChecker {
         })
     }
 
+    /// Return the type a builtin receiver's method takes its argument at `index` as, where the method stores the
+    /// argument in the receiver or returns it as the receiver's payload (#1859).
+    ///
+    /// `list[T].append(x)` stores `x` as a `T` and `extend` takes a `list[T]`, `dict[K, V].insert(k, v)` and
+    /// `set[T].add(x)` store their arguments as the key, value and element types, `Option[T].unwrap_or(x)` and
+    /// `Result[T, E].unwrap_or(x)` return `x` as the `T`, and `powf` on a `float`, `f32` or `f64` takes an exponent of
+    /// the receiver's own type. The argument is checked against that type, so an integer literal there takes the float
+    /// type a float slot expects, as it does in a declaration. An `Option` of a reference (the `Option[&V]` of
+    /// `dict.get`) and every other method give no expectation.
+    fn builtin_method_argument_expectation(base_ty: &ResolvedType, method: &str, index: usize) -> Option<ResolvedType> {
+        use incan_lang::lang::types::numerics::NumericTypeId;
+        let base_ty = match base_ty {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
+            other => other,
+        };
+        match base_ty {
+            ResolvedType::Float | ResolvedType::Numeric(NumericTypeId::F32 | NumericTypeId::F64) => (index == 0
+                && float_methods::from_str(method) == Some(float_methods::FloatMethodId::Powf))
+            .then(|| base_ty.clone()),
+            ResolvedType::Generic(name, args) => match (collection_type_id(name.as_str()), args.as_slice()) {
+                (Some(CollectionTypeId::List), [element]) => match (list_methods::from_str(method)?, index) {
+                    (list_methods::ListMethodId::Append, 0) => Some(element.clone()),
+                    (list_methods::ListMethodId::Extend, 0) => Some(list_ty(element.clone())),
+                    _ => None,
+                },
+                (Some(CollectionTypeId::Dict), [key, value]) => match (dict_methods::from_str(method)?, index) {
+                    (dict_methods::DictMethodId::Insert, 0) => Some(key.clone()),
+                    (dict_methods::DictMethodId::Insert, 1) => Some(value.clone()),
+                    _ => None,
+                },
+                (Some(CollectionTypeId::Set), [element]) => (index == 0
+                    && set_methods::from_str(method) == Some(set_methods::SetMethodId::Add))
+                .then(|| element.clone()),
+                (Some(CollectionTypeId::Option), [payload]) => (index == 0
+                    && option_methods::from_str(method) == Some(option_methods::OptionMethodId::UnwrapOr)
+                    && !matches!(payload, ResolvedType::Ref(_) | ResolvedType::RefMut(_)))
+                .then(|| payload.clone()),
+                (Some(CollectionTypeId::Result), [ok, _]) => (index == 0
+                    && result_methods::from_str(method) == Some(ResultMethodId::UnwrapOr))
+                .then(|| ok.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Type-check `receiver.method(...)` once the receiver, method name, explicit type arguments, and value arguments
     /// have been identified, against an optional type for the destination the result is being produced for.
     ///
@@ -5621,6 +5667,11 @@ impl TypeChecker {
                     self.check_expr_with_expected(arg_expr, Some(&expected))
                 } else if let Some(payload_ty) = variant_payload_ty {
                     self.check_expr_with_expected(arg_expr, Some(payload_ty))
+                } else if matches!(arg, CallArg::Positional(_))
+                    && !is_closure
+                    && let Some(expected) = Self::builtin_method_argument_expectation(&base_ty, method, index)
+                {
+                    self.check_expr_with_expected(arg_expr, Some(&expected))
                 } else {
                     self.check_method_arg_with_rust_callable_alias(arg, contextual_rust_callable.as_ref())
                 }

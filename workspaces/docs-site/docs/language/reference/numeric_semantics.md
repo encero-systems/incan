@@ -60,15 +60,18 @@ def main() -> None:
 - A literal whose value is not finite in `f32` or `f64` is refused at a destination of that type (`INCAN-T0001`). At a `float` destination, a float literal may be infinite (`1e309`).
 - `_` separators do not change a literal's value.
 - A negated integer literal takes its destination's type as the literal does.
+- At an `Option` or union destination that holds one numeric type other than `int`, an integer literal takes that type: `1` is the float `1.0` at an `Option[float]` or `float | str` destination. At a destination that holds `int`, or two other numeric types, it is an `int`.
+- An integer literal argument of a generic function takes its parameter's type in the call: with `def pick[T](a: T, b: T) -> T`, `pick(2.5, 1)` and `pick(1, 2.5)` bind `T` to `float`, and `1` is `1.0`.
 - An `int` value is not assignable to a float type (see [Assignment between numeric types](#assignment-between-numeric-types)).
 
 ```incan
 def main() -> None:
     scale: float = 2                             # accepted
     mut total: float = 0.5
-    total = -1                                   # accepted
-    pair: tuple[float, int] = (3, 4)             # accepted
-    weights: dict[str, float] = {"a": 1}         # accepted
+    total = -1                                   # accepted: -1.0
+    pair: tuple[float, int] = (3, 4)             # accepted: (3.0, 4)
+    weights: dict[str, float] = {"a": 1}         # accepted: {"a": 1.0}
+    maybe: Option[float] = 1                     # accepted
     ok: u8 = 255                                 # accepted
     bad: u8 = 256                                # refused: 256 is outside u8
     ratio: f32 = 1e39                            # refused: not finite in f32

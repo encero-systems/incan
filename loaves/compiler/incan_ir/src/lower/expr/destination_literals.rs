@@ -1,11 +1,15 @@
-//! Literals lowered in the type their destination gives them: an integer literal the checker typed as a binary float
-//! (#1831), and a collection literal declared in a generic body with its annotation's type parameters (#1847).
+//! Values lowered in the type their destination gives them: an integer literal the checker typed as a binary float
+//! (#1831), a collection literal declared in a generic body with its annotation's type parameters (#1847), and a
+//! value written to an `Option` place wrapped in the `Some` layers that place adds (#1858, #1860).
 
 use super::super::super::TypedExpr;
-use super::super::super::expr::{IrDictEntry, IrExprKind, IrListEntry, UnaryOp};
-use super::super::super::types::IrType;
+use super::super::super::expr::{
+    IrCallArg, IrCallArgKind, IrDictEntry, IrExprKind, IrListEntry, UnaryOp, VarAccess, VarRefKind,
+};
+use super::super::super::types::{IrType, union_member_type_matches};
 use super::super::AstLowering;
 use incan_frontend::ast;
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::types::numerics::NumericTypeId;
 
 impl AstLowering {
@@ -196,5 +200,96 @@ impl AstLowering {
         if literal && same_kind && lowered.ty.contains_generic_parameter() {
             lowered.ty = annotation.clone();
         }
+    }
+
+    /// Wrap a value the checker recorded as written to an `Option` place in the `Some` layers that place adds (#1858).
+    ///
+    /// The checker records the place's `Option` type for the value of a field or index assignment, a model or class
+    /// constructor field and a `return`, where it accepts a value of the `Option`'s payload type (`box.count = 5` for
+    /// an `Option[int]` field). The backend writes these places with the value as lowered, so the value itself becomes
+    /// `Some(5)`. Inside an imported trait default body the facts are not read, since its spans belong to the defining
+    /// module (see [`Self::lower_expr_spanned`]).
+    pub(in crate::lower) fn wrap_in_recorded_option_destination(&self, value: TypedExpr, span: ast::Span) -> TypedExpr {
+        if self.active_imported_trait_defaults.last().copied().unwrap_or(false) {
+            return value;
+        }
+        let Some(destination) = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.option_destination_type(span))
+        else {
+            return value;
+        };
+        let destination = self.lower_resolved_type(destination);
+        Self::wrap_value_in_option_destination(value, &destination)
+    }
+
+    /// Wrap `value` in one `Some` per `Option` layer that `destination` holds around the value's own type (#1858,
+    /// #1860).
+    ///
+    /// An `int` written to an `Option[Option[int]]` place becomes `Some(Some(5))`, a value already of the destination
+    /// type is left as it is, and so is a `None` literal, which is the outer `None` of any `Option` destination. A
+    /// value whose type is not one of the destination's `Option` payloads (a union member, a reference, an unknown
+    /// type) is left as it is too: this wraps only a value the destination holds exactly, and each layer takes the
+    /// destination's own `Option` type, so a `str` literal in an `Option[str]` place is an `Option[str]` value.
+    pub(in crate::lower) fn wrap_value_in_option_destination(value: TypedExpr, destination: &IrType) -> TypedExpr {
+        if matches!(value.kind, IrExprKind::None) {
+            return value;
+        }
+        let mut layers = Vec::new();
+        let mut place = destination;
+        while !union_member_type_matches(place, &value.ty) {
+            let IrType::Option(payload) = place else {
+                return value;
+            };
+            layers.push(place.clone());
+            place = payload;
+        }
+        layers.into_iter().rev().fold(value, |payload, option_ty| {
+            Self::some_constructor_call(payload, option_ty)
+        })
+    }
+
+    /// Wrap a value written to a local binding whose `Option` type holds the value two or more layers deep in all of
+    /// those layers (#1860).
+    ///
+    /// Writing a binding already wraps a value of the binding `Option`'s own payload type in one `Some`, so a value one
+    /// layer short is left as it is. `a: Option[Option[int]] = 5` lowers its value to `Some(Some(5))`, a value of the
+    /// binding's own type, which the write then stores unchanged.
+    pub(in crate::lower) fn wrap_value_in_nested_option_binding(value: TypedExpr, binding_ty: &IrType) -> TypedExpr {
+        if let IrType::Option(payload) = binding_ty
+            && union_member_type_matches(payload, &value.ty)
+        {
+            return value;
+        }
+        Self::wrap_value_in_option_destination(value, binding_ty)
+    }
+
+    /// Build the `Some(payload)` constructor call of type `option_ty`, spelled as a source `Some(...)` call lowers.
+    fn some_constructor_call(payload: TypedExpr, option_ty: IrType) -> TypedExpr {
+        let span = payload.span;
+        let mut call = TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: constructors::as_str(ConstructorId::Some).to_string(),
+                        access: VarAccess::Move,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Unknown,
+                )),
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: payload,
+                }],
+                callable_signature: None,
+                canonical_path: None,
+            },
+            option_ty,
+        );
+        call.span = span;
+        call
     }
 }

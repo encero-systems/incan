@@ -389,6 +389,19 @@ impl TypeChecker {
     pub fn check_expr_with_expected(&mut self, expr: &Spanned<Expr>, expected: Option<&ResolvedType>) -> ResolvedType {
         let errors_before = self.errors.len();
         self.refuse_mut_params_held_in(expr);
+        // An integer literal at an `Option` or union destination takes the one numeric type that destination holds.
+        let numeric_destination = match (&expr.node, expected) {
+            (Expr::Literal(Literal::Int(_)), Some(expected_ty)) => {
+                self.integer_literal_numeric_destination(expected_ty)
+            }
+            (Expr::Unary(UnaryOp::Neg, inner), Some(expected_ty))
+                if matches!(inner.node, Expr::Literal(Literal::Int(_))) =>
+            {
+                self.integer_literal_numeric_destination(expected_ty)
+            }
+            _ => None,
+        };
+        let expected = numeric_destination.as_ref().or(expected);
         let ty = match (&expr.node, expected) {
             (_, Some(ResolvedType::TypeVar(_))) => return self.check_expr(expr),
             (Expr::Paren(inner), Some(expected_ty)) => self.check_expr_with_expected(inner, Some(expected_ty)),
@@ -542,6 +555,39 @@ impl TypeChecker {
             _ => {}
         }
         expected_ty.clone()
+    }
+
+    /// Return the numeric type an integer literal takes at an `Option` or union destination: the one numeric type the
+    /// destination holds, as `float` for `Option[float]`, `Option[Option[float]]` or `float | str` (#1859).
+    ///
+    /// A destination that is itself numeric is checked against directly, so it gives nothing here. Neither does one
+    /// holding `int`, where the literal is an `int` already, nor one holding two other numeric types (`f32 | f64`),
+    /// which does not say which of them the literal is.
+    fn integer_literal_numeric_destination(&self, expected: &ResolvedType) -> Option<ResolvedType> {
+        if super::numeric_type_id_for_compat(expected).is_some() {
+            return None;
+        }
+        let mut held = Vec::new();
+        Self::collect_held_numeric_types(&self.expand_type_aliases(expected.clone()), &mut held);
+        match held.as_slice() {
+            [only] if !matches!(only, ResolvedType::Int) => Some(only.clone()),
+            _ => None,
+        }
+    }
+
+    /// Collect, without duplicates, the numeric types `ty` is or holds inside `Option` layers and union members.
+    fn collect_held_numeric_types(ty: &ResolvedType, held: &mut Vec<ResolvedType>) {
+        if super::numeric_type_id_for_compat(ty).is_some() {
+            if !held.contains(ty) {
+                held.push(ty.clone());
+            }
+        } else if let Some(inner) = ty.option_inner_type() {
+            Self::collect_held_numeric_types(inner, held);
+        } else if let Some(members) = ty.union_members() {
+            for member in members {
+                Self::collect_held_numeric_types(member, held);
+            }
+        }
     }
 
     /// Typecheck a binary-float literal in a known `f32` or `f64` target context.

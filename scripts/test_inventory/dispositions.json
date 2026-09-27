@@ -2465,7 +2465,7 @@
     },
     "loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs": {
       "disposition": "retire",
-      "notes": "asserts the generated Rust text of literals written to typed destinations (#1831, #1832, #1847); retires with the Rust-source backend.",
+      "notes": "asserts the generated Rust text of literals written to typed destinations (#1831, #1832, #1847, #1854, #1858, #1859, #1860, #1862, #1875); retires with the Rust-source backend.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -2482,13 +2482,37 @@
           "notes": "Asserts `n = f = 1` and `f = n = 2` over an `int` and a `float` binding write the integer literal to `n` and the float literal to `f`; the fixture prints each target after such chains.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_integer_literal_takes_each_target_type.incn"
         },
+        "empty_list_argument_is_written_with_the_instantiated_element_type_issue1862": {
+          "notes": "Asserts `[]` passed to a generic `list[T]` parameter is `Vec::<i64>::new()` when another argument binds `T` and `Vec::<String>::new()` under an explicit type argument, never `Vec::<T>`; the fixture runs both calls.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/empty_list_argument_takes_instantiated_element_type.incn"
+        },
         "integer_literal_assigned_to_float_binding_is_a_float_literal_issue1831": {
           "notes": "Asserts `f = 1` over a `float` binding is written `f = 1.0`, and a negated literal as a negated float; the fixture prints the reassigned floats.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/integer_literal_assigned_to_float_binding.incn"
         },
+        "integer_literal_in_more_float_slots_is_a_float_literal_issue1859": {
+          "notes": "Asserts an integer literal is a float literal at an `Option[float]` and `float | str` binding, an `Option[float]` parameter, an `Ok` payload, `append`, `insert`, `unwrap_or`, `powf` and a generic call argument; the fixture prints each value.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/integer_literal_takes_float_type_in_more_slots.incn"
+        },
+        "integer_literal_written_to_a_float_element_is_a_float_literal_issue1854": {
+          "notes": "Asserts `xs[0] = 3`, `xs[1] = -4` over a `list[float]` and `scores[\"a\"] = 5` over a `dict[str, float]` are written as float literals; the fixture prints each stored float.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/integer_literal_written_to_float_element.incn"
+        },
         "list_literal_assigned_to_option_or_union_binding_is_wrapped_issue1832": {
           "notes": "Asserts `a = []` and `b = [None]` over `Option[list[...]]` bindings are wrapped in `Some` and a union binding's `[]` in its list variant; the fixture prints the wrapped values.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/empty_list_assigned_to_optional_binding_is_wrapped.incn"
+        },
+        "option_str_unwrap_or_passes_an_owned_fallback_issue1875": {
+          "notes": "Asserts `unwrap_or` on an `Option[str]` passes a `str` binding as an owned fallback, not `&missing`, in an assignment and a `return`; the fixture prints the fallback through a call, an f-string, an assignment and a return.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/option_str_unwrap_or_with_str_binding.incn"
+        },
+        "value_assigned_to_a_nested_option_binding_is_wrapped_in_each_layer_issue1860": {
+          "notes": "Asserts a value assigned to an `Option[Option[...]]` binding is `Some(Some(...))` in a declaration and a reassignment, and a value one layer short keeps one wrap; the fixture unwraps each layer.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/value_assigned_to_nested_option_binding.incn"
+        },
+        "value_written_to_an_option_place_is_wrapped_in_some_issue1858": {
+          "notes": "Asserts a payload value written to an `Option` return type, field, constructor field and list element is `Some(...)`, and an `Option` value is written as it is; the fixture reads each place back.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/value_written_to_option_place_is_wrapped.incn"
         }
       },
       "twin": ""
@@ -4995,7 +5019,7 @@
     },
     "loaves/compiler/incan_frontend/src/typechecker/tests/expected_literal_types.rs": {
       "disposition": "keep",
-      "notes": "typechecker facts for literals written to typed destinations (#1831, #1832, #1847); no emit/driver dependency.",
+      "notes": "typechecker facts for literals written to typed destinations (#1831, #1832, #1847, #1854, #1858, #1859, #1862); no emit/driver dependency.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -6008,7 +6032,7 @@
     },
     "loaves/compiler/incan_ir/src/lower/tests/expected_literal_types.rs": {
       "disposition": "retire",
-      "notes": "the Rust-source backend's own lowering of literals written to typed destinations (#1831, #1832, #1847); retires with `incan_ir`. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/).",
+      "notes": "the Rust-source backend's own lowering of literals written to typed destinations (#1831, #1832, #1847, #1858, #1860, #1875); retires with `incan_ir`. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/).",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -6033,9 +6057,21 @@
           "notes": "Asserts the legacy IR gives an annotated tuple or list literal in a generic body its annotation's type; the fixture builds and matches such a tuple.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/annotated_tuple_literal_types_its_elements.incn"
         },
+        "option_str_unwrap_or_takes_its_fallback_owned_issue1875": {
+          "notes": "Asserts the legacy IR gives `unwrap_or` on an `Option[str]` the source-owned argument policy and keeps the default on an `Option[int]`; the fixture prints the fallback of each form.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/option_str_unwrap_or_with_str_binding.incn"
+        },
         "tuple_literal_keeps_its_annotated_element_types_issue1847": {
           "notes": "Asserts the legacy IR types a tuple literal, and a nested one, by its annotation's element types; the fixture prints each element.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/annotated_tuple_literal_types_its_elements.incn"
+        },
+        "value_assigned_to_a_nested_option_binding_lowers_to_nested_some_issue1860": {
+          "notes": "Asserts the legacy IR lowers a value assigned to an `Option[Option[...]]` binding to one `Some` call per layer, and leaves a value one layer short as it is; the fixture unwraps each layer.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/value_assigned_to_nested_option_binding.incn"
+        },
+        "value_written_to_an_option_place_lowers_to_some_issue1858": {
+          "notes": "Asserts the legacy IR writes a payload value to an `Option` return type, field and list element as a `Some` call of the place's type, and an `Option` value as it is; the fixture reads each place back.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/value_written_to_option_place_is_wrapped.incn"
         }
       },
       "twin": ""

@@ -541,6 +541,7 @@ impl TypeChecker {
                             field_assign.value.span,
                         ));
                     }
+                    self.record_option_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
                 }
             }
             ResolvedType::Named(type_name) => {
@@ -555,6 +556,7 @@ impl TypeChecker {
                                 field_assign.value.span,
                             ));
                         }
+                        self.record_option_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
                     }
                     None => {
                         self.errors.push(errors::missing_field(type_name, field, span));
@@ -578,6 +580,7 @@ impl TypeChecker {
                                 field_assign.value.span,
                             ));
                         }
+                        self.record_option_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
                     }
                     None => {
                         self.errors.push(errors::missing_field(type_name, field, span));
@@ -599,6 +602,7 @@ impl TypeChecker {
                             field_assign.value.span,
                         ));
                     }
+                    self.record_option_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
                 }
                 None => {
                     self.errors
@@ -616,7 +620,24 @@ impl TypeChecker {
         }
     }
 
+    /// Return the key and value types a list or dict index assignment writes through: `int` and the element type of a
+    /// `list[T]`, the key and value types of a `dict[K, V]`.
+    fn index_assignment_slot_types(obj_ty: &ResolvedType) -> Option<(ResolvedType, ResolvedType)> {
+        let ResolvedType::Generic(name, args) = obj_ty else {
+            return None;
+        };
+        match (collection_type_id(name.as_str()), args.as_slice()) {
+            (Some(CollectionTypeId::List), [element]) => Some((ResolvedType::Int, element.clone())),
+            (Some(CollectionTypeId::Dict), [key, value]) => Some((key.clone(), value.clone())),
+            _ => None,
+        }
+    }
+
     /// Validate list/dict index assignment or RFC 028 `__setitem__` dispatch for user-defined receivers.
+    ///
+    /// The index and the value of a list or dict index assignment are checked against the slot they write, so an
+    /// integer literal written to an element of a `list[float]` takes the float type, as it does in a declaration
+    /// (#1854), and a value written to an `Option` slot is recorded for lowering to wrap (#1858).
     fn check_index_assignment(&mut self, index_assign: &IndexAssignmentStmt, span: Span) {
         // Check the object expression (should be a collection)
         let obj_ty = self.check_expr(&index_assign.object);
@@ -625,10 +646,14 @@ impl TypeChecker {
         if let Some(place) = Self::self_rooted_place(&index_assign.object) {
             self.reject_write_through_immutable_self(&format!("{place}[...]"), SelfMutation::Assignment, span);
         }
+        let slot_types = Self::index_assignment_slot_types(&obj_ty);
         // Check the index expression
-        let index_ty = self.check_expr(&index_assign.index);
+        let index_ty = self.check_expr_with_expected(&index_assign.index, slot_types.as_ref().map(|(key, _)| key));
         // Check the value expression
-        let value_ty = self.check_expr(&index_assign.value);
+        let value_ty = self.check_expr_with_expected(&index_assign.value, slot_types.as_ref().map(|(_, value)| value));
+        if let Some((_, value_slot_ty)) = &slot_types {
+            self.record_option_destination_if_compatible(index_assign.value.span, &value_ty, value_slot_ty);
+        }
 
         // Verify object is indexable and types match
         match &obj_ty {
@@ -1160,6 +1185,9 @@ impl TypeChecker {
                 &return_ty.to_string(),
                 span,
             ));
+        }
+        if let (Some(e), Some(expected)) = (expr, self.symbols.current_return_type().cloned()) {
+            self.record_option_destination_if_compatible(e.span, &return_ty, &expected);
         }
     }
 

@@ -1,7 +1,7 @@
 //! Generic call-site inference, monomorph recording, and explicit bound validation.
 
 use super::TypeChecker;
-use crate::ast::{CallArg, ParamKind, Span, Spanned, Type};
+use crate::ast::{CallArg, DictEntry, Expr, ListEntry, Literal, ParamKind, Span, Spanned, Type, UnaryOp};
 use crate::diagnostics::CompileError;
 use crate::diagnostics::errors::{self, TypeArgumentOrigin};
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map_call_site};
@@ -83,6 +83,7 @@ impl TypeChecker {
         call_span: Span,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
+        let errors_before_call = self.errors.len();
         let mut seeded_type_bindings: std::collections::HashMap<String, ResolvedType> =
             std::collections::HashMap::new();
         if !explicit_type_args.is_empty() {
@@ -133,6 +134,23 @@ impl TypeChecker {
         self.infer_type_param_bindings_from_source_callables(&info.type_param_bound_details, &mut type_bindings);
         let instantiation =
             self.bindings_closed_by_literal_arguments(&info.type_params, &params_with_explicit, args, &type_bindings);
+        if self.errors.len() == errors_before_call {
+            let closed = self.retype_literal_arguments_at_instantiation(
+                func_name,
+                &info.type_params,
+                &params_with_explicit,
+                args,
+                &instantiation,
+            );
+            for (type_param, ty) in closed {
+                if type_bindings
+                    .get(&type_param)
+                    .is_none_or(|bound| is_open_binding(bound, &info.type_params))
+                {
+                    type_bindings.insert(type_param, ty);
+                }
+            }
+        }
         let callee_identity = self.called_function_identity(func_name);
         self.refuse_unhashable_type_arguments(
             func_name,
@@ -142,8 +160,20 @@ impl TypeChecker {
             call_span,
         );
         let resolved_params = Self::substitute_callable_params(&contextual_params, &type_bindings);
-        self.type_info
-            .record_call_site_callable_params(call_span, &resolved_params);
+        if Self::literal_argument_spells_a_type_param(&info.type_params, &info.params, args)
+            && resolved_params
+                .iter()
+                .all(|param| first_open_type_param(&param.ty, &info.type_params).is_none())
+        {
+            // A collection or `None` literal is written with its parameter's type, and the declared `list[T]` would
+            // spell the callee's own `T` at the call site, so the call carries its instantiated parameter types
+            // (#1862).
+            self.type_info
+                .record_call_site_callable_params_exact(call_span, &resolved_params);
+        } else {
+            self.type_info
+                .record_call_site_callable_params(call_span, &resolved_params);
+        }
         self.emit_explicit_bound_errors(
             func_name,
             &info.type_param_bounds,
@@ -163,6 +193,96 @@ impl TypeChecker {
         }
 
         substitute_resolved_type(&info.return_type, &type_bindings)
+    }
+
+    /// Give each literal argument of a generic call the type its parameter has in the instantiation the call made, or
+    /// refuse a collection literal that leaves a type parameter nothing else fixes (#1859, #1862).
+    ///
+    /// A literal is checked against its parameter's declared type, which names the callee's type parameters: `1`
+    /// against `T` stays an `int` although another argument binds `T` to `float` (`pick(2.5, 1)`), and `[]` against
+    /// `list[T]` takes `list[T]`, a type the caller cannot name. Once the arguments are checked, the instantiation is
+    /// the bindings that name no type parameter still to be inferred, completed from the arguments whose own types
+    /// name none (the `5` of `first_or([], 5)` binds `T` although the `[]` bound it to itself first), where an integer
+    /// literal binds a parameter only when no other argument does (`pick(1, 2.5)` binds `T` to `float`). An argument
+    /// built from literals alone is then checked again against its instantiated parameter type, so the `1` takes
+    /// `float` and the `[]` takes `list[int]`. A list, dict, set or tuple literal whose own type still names a type
+    /// parameter the instantiation leaves open gives the call nothing to instantiate that parameter with, and is
+    /// refused (`count([])`), unless a type parameter of that name is in scope at the call. Arguments that are not
+    /// built from literals alone are not checked a second time. The instantiation is returned, so the call's
+    /// parameter and result types take it where inference left a type parameter open.
+    fn retype_literal_arguments_at_instantiation(
+        &mut self,
+        callee: &str,
+        type_params: &[String],
+        params: &[CallableParam],
+        args: &[CallArg],
+        instantiation: &std::collections::HashMap<String, ResolvedType>,
+    ) -> std::collections::HashMap<String, ResolvedType> {
+        let arguments = Self::arguments_with_parameters(params, args);
+        let mut closed = instantiation
+            .iter()
+            .filter(|(_, ty)| !is_open_binding(ty, type_params))
+            .map(|(name, ty)| (name.clone(), ty.clone()))
+            .collect::<std::collections::HashMap<_, _>>();
+        let (integer_literals, others): (Vec<_>, Vec<_>) =
+            arguments.iter().partition(|(expr, _)| is_integer_literal(&expr.node));
+        for (expr, param) in others.into_iter().chain(integer_literals) {
+            let (Some(param), Some(arg_ty)) = (param, self.type_info.expr_type(expr.span)) else {
+                continue;
+            };
+            if first_open_type_param(arg_ty, type_params).is_some() {
+                continue;
+            }
+            let mut inferred = std::collections::HashMap::new();
+            self.infer_type_param_bindings(&param.ty, arg_ty, &mut inferred);
+            for (name, ty) in inferred {
+                if !is_open_binding(&ty, type_params) {
+                    closed.entry(name).or_insert(ty);
+                }
+            }
+        }
+        for (expr, param) in arguments {
+            let Some(param) = param else {
+                continue;
+            };
+            if first_open_type_param(&param.ty, type_params).is_none() || !is_built_from_literals(&expr.node) {
+                continue;
+            }
+            let instantiated = substitute_resolved_type(&param.ty, &closed);
+            if let Some(open) = first_open_type_param(&instantiated, type_params) {
+                let literal_names_open_param = is_collection_literal(&expr.node)
+                    && self
+                        .type_info
+                        .expr_type(expr.span)
+                        .is_some_and(|recorded| first_open_type_param(recorded, type_params).is_some())
+                    && !self.is_generic_placeholder_type(&ResolvedType::Named(open.clone()));
+                if literal_names_open_param {
+                    self.errors
+                        .push(errors::generic_literal_argument_leaves_type_param_open(
+                            callee, &open, expr.span,
+                        ));
+                }
+                continue;
+            }
+            self.check_expr_with_expected(expr, Some(&instantiated));
+        }
+        closed
+    }
+
+    /// Return whether a call passes a collection or `None` literal (looking through parentheses) for a parameter whose
+    /// declared type names one of the callee's type parameters: a literal whose written form spells its type, which
+    /// the declared parameter type would spell with the callee's own type parameter.
+    fn literal_argument_spells_a_type_param(
+        type_params: &[String],
+        params: &[CallableParam],
+        args: &[CallArg],
+    ) -> bool {
+        Self::arguments_with_parameters(params, args)
+            .into_iter()
+            .any(|(expr, param)| {
+                param.is_some_and(|param| first_open_type_param(&param.ty, type_params).is_some())
+                    && (is_collection_literal(&expr.node) || is_none_literal(&expr.node))
+            })
     }
 
     /// Assert that call-site type parameters have been inferred.
@@ -786,5 +906,90 @@ impl TypeChecker {
                 }
             }
         }
+    }
+}
+
+/// Return whether a type-parameter binding leaves the parameter open: unknown, or naming a type parameter still to be
+/// inferred (the `T` a `[]` checked against `list[T]` binds `T` to).
+fn is_open_binding(ty: &ResolvedType, type_params: &[String]) -> bool {
+    matches!(ty, ResolvedType::Unknown | ResolvedType::CallSiteInfer)
+        || first_open_type_param(ty, type_params).is_some()
+}
+
+/// Return the first of `type_params` that `ty` names, at any depth, as a type variable still to be inferred.
+///
+/// A callee's parameter types name its type parameters as type variables; a type parameter of the caller's own body is
+/// a named type there, and is not open.
+fn first_open_type_param(ty: &ResolvedType, type_params: &[String]) -> Option<String> {
+    match ty {
+        ResolvedType::TypeVar(name) => type_params.contains(name).then(|| name.clone()),
+        ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
+            args.iter().find_map(|arg| first_open_type_param(arg, type_params))
+        }
+        ResolvedType::FrozenList(inner)
+        | ResolvedType::FrozenSet(inner)
+        | ResolvedType::TypeToken(inner)
+        | ResolvedType::Ref(inner)
+        | ResolvedType::RefMut(inner) => first_open_type_param(inner, type_params),
+        ResolvedType::FrozenDict(key, value) => {
+            first_open_type_param(key, type_params).or_else(|| first_open_type_param(value, type_params))
+        }
+        ResolvedType::Function(params, ret) => params
+            .iter()
+            .find_map(|param| first_open_type_param(&param.ty, type_params))
+            .or_else(|| first_open_type_param(ret, type_params)),
+        _ => None,
+    }
+}
+
+/// Return whether `expr` is an integer literal or a negated one, looking through parentheses.
+fn is_integer_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::Paren(inner) => is_integer_literal(&inner.node),
+        Expr::Literal(Literal::Int(_)) => true,
+        Expr::Unary(UnaryOp::Neg, operand) => matches!(operand.node, Expr::Literal(Literal::Int(_))),
+        _ => false,
+    }
+}
+
+/// Return whether `expr` is the `None` literal, looking through parentheses.
+fn is_none_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::Paren(inner) => is_none_literal(&inner.node),
+        Expr::Literal(Literal::None) => true,
+        _ => false,
+    }
+}
+
+/// Return whether `expr` is a list, dict, set or tuple literal, looking through parentheses.
+fn is_collection_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::Paren(inner) => is_collection_literal(&inner.node),
+        Expr::List(_) | Expr::Dict(_) | Expr::Set(_) | Expr::Tuple(_) => true,
+        _ => false,
+    }
+}
+
+/// Return whether `expr` is built from literals alone: a literal (`None` included), a negated number literal, or a
+/// list, dict, set or tuple literal whose entries are built from literals alone, with no spread.
+///
+/// Checking such an expression a second time records its types again and does nothing else.
+fn is_built_from_literals(expr: &Expr) -> bool {
+    match expr {
+        Expr::Literal(_) => true,
+        Expr::Paren(inner) => is_built_from_literals(&inner.node),
+        Expr::Unary(UnaryOp::Neg, operand) => {
+            matches!(operand.node, Expr::Literal(Literal::Int(_) | Literal::Float(_)))
+        }
+        Expr::List(entries) => entries.iter().all(|entry| match entry {
+            ListEntry::Element(item) => is_built_from_literals(&item.node),
+            ListEntry::Spread(_) => false,
+        }),
+        Expr::Dict(entries) => entries.iter().all(|entry| match entry {
+            DictEntry::Pair(key, value) => is_built_from_literals(&key.node) && is_built_from_literals(&value.node),
+            DictEntry::Spread(_) => false,
+        }),
+        Expr::Set(items) | Expr::Tuple(items) => items.iter().all(|item| is_built_from_literals(&item.node)),
+        _ => false,
     }
 }

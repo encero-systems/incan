@@ -1,0 +1,20 @@
+# behavior: an integer literal written to an element of a float list or to a value of a float dict is stored as that float, as it is in the collection's declaration
+# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::integer_literal_written_to_a_float_element_is_a_float_literal_issue1854
+# expect-stdout:
+#   3.0
+#   -4.0
+#   5.0
+#   2.5
+
+def main() -> None:
+    mut xs: list[float] = [1, 2]
+    xs[0] = 3
+    println(xs[0])
+    xs[1] = -4
+    println(xs[1])
+    mut scores: dict[str, float] = {}
+    scores["a"] = 5
+    println(scores["a"])
+    mut grid: list[list[float]] = [[0.5]]
+    grid[0][0] = 2
+    println(grid[0][0] + 0.5)

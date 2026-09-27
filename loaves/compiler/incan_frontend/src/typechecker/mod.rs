@@ -2637,6 +2637,28 @@ impl TypeChecker {
         }
     }
 
+    /// Record `destination` as the `Option` type the value at `value_span` is written to, when it is an `Option` (after
+    /// alias expansion) that the value's type `value_ty` is compatible with (#1858).
+    ///
+    /// The write sites that record this (field and index assignment, a model or class constructor field, `return`)
+    /// accept a value of the `Option`'s payload type, and lowering wraps that value in the `Some` layers the
+    /// destination adds. A value that is already of the destination type is recorded too; lowering leaves it as it is.
+    pub(in crate::typechecker) fn record_option_destination_if_compatible(
+        &mut self,
+        value_span: Span,
+        value_ty: &ResolvedType,
+        destination: &ResolvedType,
+    ) {
+        let destination = self.expand_type_aliases(destination.clone());
+        if !destination.is_option() || !self.types_compatible(value_ty, &destination) {
+            return;
+        }
+        self.type_info
+            .expressions
+            .option_destination_types
+            .insert((value_span.start, value_span.end), destination);
+    }
+
     /// Record the final checked type selected for one assignment binding.
     pub fn record_assignment_binding_type(&mut self, span: Span, ty: ResolvedType) {
         self.type_info

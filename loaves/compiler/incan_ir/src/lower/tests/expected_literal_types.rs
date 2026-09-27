@@ -1,10 +1,13 @@
 //! Lowering keeps the type the checker gave a literal from its destination: an integer literal in a float slot is
 //! lowered as a float literal, and each target's copy of a chained integer literal takes that target's type (#1831),
 //! a tuple literal carries the destination's element types (#1847), and a list literal assigned to an
-//! `Option[list[...]]` binding carries the list type (#1832).
+//! `Option[list[...]]` binding carries the list type (#1832). A value written to an `Option` field, element or return
+//! type (#1858), or to a nested `Option` binding (#1860), lowers to a `Some` call per layer, and the fallback of
+//! `Option[str].unwrap_or` takes Incan value semantics (#1875).
 
 use super::*;
 use crate::stmt::AssignTarget;
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
 
 /// Return the statements of the named function's body.
 fn body<'ir>(ir: &'ir IrProgram, name: &str) -> Result<&'ir [IrStmt], String> {
@@ -460,6 +463,168 @@ def declared() -> None:
             assert_literal_in_type(value, 1, false, ty)
                 .map_err(|message| format!("`{function}`, target `{target}`: {message}"))?;
         }
+    }
+    Ok(())
+}
+
+/// Return the payload of `expr` when it is a `Some(...)` call of type `option_ty`.
+fn some_payload<'ir>(expr: &'ir TypedExpr, option_ty: &IrType) -> Result<&'ir TypedExpr, String> {
+    let IrExprKind::Call { func, args, .. } = &expr.kind else {
+        return Err(format!("expected a `Some` call of type {option_ty:?}, got {expr:?}"));
+    };
+    let calls_some = matches!(
+        &func.kind,
+        IrExprKind::Var { name, .. } if name == constructors::as_str(ConstructorId::Some)
+    );
+    match (calls_some, args.as_slice()) {
+        (true, [payload]) if &expr.ty == option_ty => Ok(&payload.expr),
+        _ => Err(format!("expected a `Some` call of type {option_ty:?}, got {expr:?}")),
+    }
+}
+
+/// Return the value the `occurrence`-th assignment to the field `field` writes.
+fn field_write<'ir>(stmts: &'ir [IrStmt], field: &str, occurrence: usize) -> Result<&'ir TypedExpr, String> {
+    stmts
+        .iter()
+        .filter_map(|stmt| match &stmt.kind {
+            IrStmtKind::Assign {
+                target: AssignTarget::Field { field: written, .. },
+                value,
+            } if written == field => Some(value),
+            _ => None,
+        })
+        .nth(occurrence)
+        .ok_or_else(|| format!("missing write {occurrence} of field `{field}`"))
+}
+
+/// #1858: a value of an `Option`'s payload type written to an `Option` return type, field or list element lowers to a
+/// `Some` call of the place's type around the value; a value already of the `Option` type is lowered as it is.
+#[test]
+fn value_written_to_an_option_place_lowers_to_some_issue1858() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+model Box:
+    count: Option[int] = None
+
+
+def make() -> Option[int]:
+    return 5
+
+
+def main() -> None:
+    mut box = Box()
+    box.count = 6
+    box.count = Some(7)
+    mut slots: list[Option[int]] = [None]
+    slots[0] = 8
+    println(make().unwrap_or(0) + slots[0].unwrap_or(0))
+"#,
+    )?;
+    let option_int = IrType::Option(Box::new(IrType::Int));
+    let returned = body(&ir, "make")?
+        .iter()
+        .find_map(|stmt| match &stmt.kind {
+            IrStmtKind::Return(Some(value)) => Some(value),
+            _ => None,
+        })
+        .ok_or("missing the return of `make`")?;
+    let payload = some_payload(returned, &option_int)?;
+    assert!(matches!(payload.kind, IrExprKind::Int(5)), "got {payload:?}");
+
+    let stmts = body(&ir, "main")?;
+    let payload = some_payload(field_write(stmts, "count", 0)?, &option_int)?;
+    assert!(matches!(payload.kind, IrExprKind::Int(6)), "got {payload:?}");
+    let payload = some_payload(field_write(stmts, "count", 1)?, &option_int)?;
+    assert!(
+        matches!(payload.kind, IrExprKind::Int(7)),
+        "`Some(7)` is written as it is, got {payload:?}"
+    );
+    let element = stmts
+        .iter()
+        .find_map(|stmt| match &stmt.kind {
+            IrStmtKind::Assign {
+                target: AssignTarget::Index { .. },
+                value,
+            } => Some(value),
+            _ => None,
+        })
+        .ok_or("missing the element write")?;
+    let payload = some_payload(element, &option_int)?;
+    assert!(matches!(payload.kind, IrExprKind::Int(8)), "got {payload:?}");
+    Ok(())
+}
+
+/// #1860: a value assigned to a binding of a nested `Option` type lowers to one `Some` call per layer, in a
+/// declaration and a reassignment; a value one layer short of its binding's type is lowered as it is.
+#[test]
+fn value_assigned_to_a_nested_option_binding_lowers_to_nested_some_issue1860() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+def main() -> None:
+    a: Option[Option[int]] = 5
+    mut b: Option[Option[list[int]]] = None
+    b = []
+    one: Option[int] = 6
+    println(a.unwrap().unwrap() + one.unwrap_or(0) + len(b.unwrap().unwrap_or([])))
+"#,
+    )?;
+    let stmts = body(&ir, "main")?;
+    let option_int = IrType::Option(Box::new(IrType::Int));
+    let outer = some_payload(
+        written_value(stmts, "a", 0)?,
+        &IrType::Option(Box::new(option_int.clone())),
+    )?;
+    let payload = some_payload(outer, &option_int)?;
+    assert!(matches!(payload.kind, IrExprKind::Int(5)), "got {payload:?}");
+
+    let int_list = IrType::List(Box::new(IrType::Int));
+    let option_list = IrType::Option(Box::new(int_list.clone()));
+    let outer = some_payload(
+        written_value(stmts, "b", 1)?,
+        &IrType::Option(Box::new(option_list.clone())),
+    )?;
+    let payload = some_payload(outer, &option_list)?;
+    assert!(
+        matches!(payload.kind, IrExprKind::List(_)) && payload.ty == int_list,
+        "got {payload:?}"
+    );
+
+    let one = written_value(stmts, "one", 0)?;
+    assert!(
+        matches!(one.kind, IrExprKind::Int(6)),
+        "a value one layer short is lowered as it is, got {one:?}"
+    );
+    Ok(())
+}
+
+/// #1875: `unwrap_or` on an `Option[str]` takes its fallback with Incan value semantics, so a `str` binding is passed
+/// as the owned `str` the call returns; on an `Option[int]` the argument keeps the default policy.
+#[test]
+fn option_str_unwrap_or_takes_its_fallback_owned_issue1875() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+def main() -> None:
+    d: Option[str] = None
+    missing = "none"
+    text = d.unwrap_or(missing)
+    n: Option[int] = None
+    fallback = 3
+    number = n.unwrap_or(fallback)
+    println(text)
+    println(number)
+"#,
+    )?;
+    let stmts = body(&ir, "main")?;
+    for (name, expected) in [
+        ("text", MethodCallArgPolicy::SourceOwned),
+        ("number", MethodCallArgPolicy::Default),
+    ] {
+        let value = written_value(stmts, name, 0)?;
+        let IrExprKind::MethodCall { method, arg_policy, .. } = &value.kind else {
+            return Err(format!("`{name}` must be a method call, got {value:?}"));
+        };
+        assert_eq!(method, "unwrap_or");
+        assert_eq!(*arg_policy, expected, "the argument policy of `{name}`'s `unwrap_or`");
     }
     Ok(())
 }

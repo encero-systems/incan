@@ -1,0 +1,49 @@
+# behavior: a value written to an Option return type, field, constructor field or list element is that Option's Some value
+# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::value_written_to_an_option_place_is_wrapped_in_some_issue1858
+# retires: loaves/compiler/incan_ir/src/lower/tests/expected_literal_types.rs::value_written_to_an_option_place_lowers_to_some_issue1858
+# expect-stdout:
+#   5
+#   a
+#   1
+#   2
+#   b
+#   3
+#   4
+
+model Counter:
+    count: Option[int] = None
+    name: Option[str] = None
+    items: Option[list[int]] = None
+
+
+def make() -> Option[int]:
+    return 5
+
+
+def label_of(text: str) -> Option[str]:
+    return text
+
+
+def main() -> None:
+    println(make().unwrap_or(0))
+    match label_of("a"):
+        Some(text) => println(text)
+        None => println("none")
+    mut counter = Counter(count=1)
+    println(counter.count.unwrap_or(0))
+    counter.count = 2
+    println(counter.count.unwrap_or(0))
+    counter.name = "b"
+    name = counter.name
+    match name:
+        Some(text) => println(text)
+        None => println("none")
+    counter.items = [1, 2, 3]
+    items = counter.items
+    match items:
+        Some(values) => println(len(values))
+        None => println("none")
+    mut slots: list[Option[int]] = [None]
+    slots[0] = 4
+    slot = slots[0]
+    println(slot.unwrap_or(0))
