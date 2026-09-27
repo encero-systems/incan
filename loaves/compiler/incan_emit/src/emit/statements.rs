@@ -744,12 +744,13 @@ fn erase_unused_pattern_bindings(pattern: &Pattern, arm: &MatchArm) -> Pattern {
                 .map(|item| erase_unused_pattern_bindings(item, arm))
                 .collect(),
         ),
-        Pattern::Struct { name, fields } => Pattern::Struct {
+        Pattern::Struct { name, fields, rest } => Pattern::Struct {
             name: name.clone(),
             fields: fields
                 .iter()
                 .map(|(field, pattern)| (field.clone(), erase_unused_pattern_bindings(pattern, arm)))
                 .collect(),
+            rest: *rest,
         },
         Pattern::Enum { name, variant, fields } => Pattern::Enum {
             name: name.clone(),

@@ -2,7 +2,7 @@
 
 use super::super::super::TypedExpr;
 use super::super::super::expr::{
-    BinOp, IrCallArg, IrCallArgKind, IrExprKind, MatchArm, MatchArmBinding, Pattern, VarAccess, VarRefKind,
+    IrCallArg, IrCallArgKind, IrExprKind, MatchArm, MatchArmBinding, Pattern, VarAccess, VarRefKind,
 };
 use super::super::super::types::{IrType, union_member_type_matches};
 use super::super::AstLowering;
@@ -421,6 +421,10 @@ impl AstLowering {
 
     /// Lower match arms to IR.
     ///
+    /// One source arm usually lowers to one IR arm. An arm whose pattern alternation the backend cannot take as
+    /// written lowers to one IR arm per alternative, in order and with the same body and guard, and each IR arm's
+    /// guard first runs the tests its pattern needs (#1739; see [`Self::plan_arm_alternatives`]).
+    ///
     /// # Parameters
     ///
     /// * `arms` - The AST match arms
@@ -550,12 +554,15 @@ impl AstLowering {
             }
 
             let pattern = self.lower_pattern_for_expected_type(&a.node.pattern.node, expected_ty);
-            let (pattern, literal_guard) = Self::hoist_nested_string_literal_patterns(pattern);
+            let alternatives = Self::plan_arm_alternatives(pattern, a.node.guard.is_some(), scrutinee);
+            let guard_may_repeat = alternatives.len() > 1
+                || alternatives
+                    .iter()
+                    .any(|(pattern, _)| Self::pattern_holds_alternation(pattern));
             self.push_scope();
             self.define_match_pattern_bindings_for_expected_type(&a.node.pattern.node, expected_ty);
             let arm_result = (|| {
-                let guard = a.node.guard.as_ref().map(|g| self.lower_expr_spanned(g)).transpose()?;
-                let guard = Self::conjoin_match_guards(literal_guard, guard);
+                let guard = self.lower_match_arm_guard(a.node.guard.as_ref(), guard_may_repeat)?;
                 let body = match &a.node.body {
                     ast::MatchBody::Expr(e) => self.lower_expr_spanned(e)?,
                     ast::MatchBody::Block(stmts) => {
@@ -569,16 +576,11 @@ impl AstLowering {
                         )
                     }
                 };
-                Ok(MatchArm {
-                    pattern,
-                    bindings: Vec::new(),
-                    guard,
-                    body,
-                })
+                Ok(Self::match_arms_for_alternatives(alternatives, guard, body))
             })();
             self.pop_scope();
             match arm_result {
-                Ok(arm) => lowered_arms.push(arm),
+                Ok(arms) => lowered_arms.extend(arms),
                 Err(error) => {
                     self.remaining_ident_reads = original_remaining_reads;
                     return Err(error);
@@ -703,29 +705,28 @@ impl AstLowering {
                 }
 
                 if has_named {
-                    // The pattern names a subset of the fields; the checker recorded the rest (#1708). The struct
-                    // pattern shape has no rest marker, so each omitted field is recorded as a wildcard, which is
-                    // the shape the backend prints and Rust accepts in place of `..` for accessible fields.
-                    if let Some(rest) = self.pattern_rest_fields_for(name.span) {
-                        for field in rest {
+                    // The pattern names a subset of the fields; the checker recorded the rest (#1708). A rest that
+                    // holds a private field the pattern may not name becomes a rest marker (#1740): that field cannot
+                    // be spelled even as a wildcard where the matched model's module keeps it private. Any other
+                    // rest is spelled out as one wildcard per omitted field.
+                    let rest = self.pattern_rest_has_private_fields_for(name.span);
+                    if !rest && let Some(omitted) = self.pattern_rest_fields_for(name.span) {
+                        for field in omitted {
                             if !named_fields.iter().any(|(named, _)| *named == field) {
-                                named_fields.push((field.clone(), Pattern::Wildcard));
+                                named_fields.push((field, Pattern::Wildcard));
                             }
                         }
                     }
                     Pattern::Struct {
                         name: name.node.clone(),
                         fields: named_fields,
+                        rest,
                     }
                 } else {
-                    let mut fields = positional_fields;
-                    if has_named {
-                        fields.extend(named_fields.into_iter().map(|(_, pat)| pat));
-                    }
                     Pattern::Enum {
                         name: String::new(),
                         variant: name.node.clone(),
-                        fields,
+                        fields: positional_fields,
                     }
                 }
             }
@@ -750,173 +751,18 @@ impl AstLowering {
             .map(<[String]>::to_vec)
     }
 
-    /// The binding name a hoisted nested string literal takes, numbered per arm.
-    fn hoisted_string_literal_binding_name(index: usize) -> String {
-        format!("__incan_match_str_{index}")
-    }
-
-    /// The literal test a hoisted string literal contributes to its arm's guard: `binding == "value"`.
+    /// Return whether the checker recorded that the constructor pattern whose name sits at `span` leaves unnamed a
+    /// private field it may not name, so its rest must be a rest marker rather than spelled wildcards (#1740).
     ///
-    /// The comparison is recorded as an ordinary `BinOp::Eq` over two `str` operands, the same fact a source
-    /// `word == "answer"` records, so the backend prints its borrowed string comparison for it and every string
-    /// carrier the position may hold (owned, borrowed or static) compares through one path.
-    fn hoisted_string_literal_test(binding: &str, value: &str) -> TypedExpr {
-        let left = TypedExpr::new(
-            IrExprKind::Var {
-                name: binding.to_string(),
-                access: VarAccess::Read,
-                ref_kind: VarRefKind::Value,
-            },
-            IrType::String,
-        );
-        let right = TypedExpr::new(IrExprKind::String(value.to_string()), IrType::String);
-        TypedExpr::new(
-            IrExprKind::BinOp {
-                op: BinOp::Eq,
-                left: Box::new(left),
-                right: Box::new(right),
-            },
-            IrType::Bool,
-        )
-    }
-
-    /// Join two optional boolean guards with `and`, keeping whichever exists when the other is absent.
-    fn conjoin_match_guards(first: Option<TypedExpr>, second: Option<TypedExpr>) -> Option<TypedExpr> {
-        Self::join_match_guards(first, second, BinOp::And)
-    }
-
-    /// Join two optional boolean guards with `op`, keeping whichever exists when the other is absent.
-    fn join_match_guards(first: Option<TypedExpr>, second: Option<TypedExpr>, op: BinOp) -> Option<TypedExpr> {
-        match (first, second) {
-            (Some(first), Some(second)) => Some(TypedExpr::new(
-                IrExprKind::BinOp {
-                    op,
-                    left: Box::new(first),
-                    right: Box::new(second),
-                },
-                IrType::Bool,
-            )),
-            (first, None) => first,
-            (None, second) => second,
+    /// Like [`Self::pattern_rest_fields_for`], the span-keyed fact is not read while an imported trait default is being
+    /// expanded into an adopter.
+    fn pattern_rest_has_private_fields_for(&self, span: ast::Span) -> bool {
+        if self.active_imported_trait_defaults.last().copied().unwrap_or(false) {
+            return false;
         }
-    }
-
-    /// Rewrite the string literals nested inside an arm's pattern into bindings tested by the arm's guard.
-    ///
-    /// A string literal at the top of a pattern is matched against the scrutinee by the backend's own
-    /// `str` handling, and stays as written. A string literal *inside* a tuple, struct or enum pattern has no such
-    /// path: printed as a pattern token it is a `&str` that an owned `String` position refuses (#1707). The shape
-    /// the backend does consume is a binding plus a guard, so each nested literal becomes a fresh
-    /// `__incan_match_str_<n>` binding and its equality test is returned as the guard to conjoin ahead of the
-    /// arm's own (the literal decides whether the arm applies; the user's guard runs only once it does). An
-    /// alternation whose alternatives are all string literals shares one binding and tests them with `or`, the
-    /// nested twin of the backend's top-level alternation handling. Any other alternation is left as written: its
-    /// alternatives could only be rewritten as separate arms, and a literal inside one keeps its current shape.
-    pub(in crate::lower) fn hoist_nested_string_literal_patterns(pattern: Pattern) -> (Pattern, Option<TypedExpr>) {
-        let mut guard = None;
-        let mut next_index = 0usize;
-        let pattern = match pattern {
-            Pattern::Tuple(items) => Pattern::Tuple(
-                items
-                    .into_iter()
-                    .map(|item| Self::hoist_string_literal_subpattern(item, &mut next_index, &mut guard))
-                    .collect(),
-            ),
-            Pattern::Struct { name, fields } => Pattern::Struct {
-                name,
-                fields: fields
-                    .into_iter()
-                    .map(|(field, item)| {
-                        (
-                            field,
-                            Self::hoist_string_literal_subpattern(item, &mut next_index, &mut guard),
-                        )
-                    })
-                    .collect(),
-            },
-            Pattern::Enum { name, variant, fields } => Pattern::Enum {
-                name,
-                variant,
-                fields: fields
-                    .into_iter()
-                    .map(|item| Self::hoist_string_literal_subpattern(item, &mut next_index, &mut guard))
-                    .collect(),
-            },
-            other => other,
-        };
-        (pattern, guard)
-    }
-
-    /// Rewrite one nested sub-pattern for [`Self::hoist_nested_string_literal_patterns`], accumulating the guard.
-    fn hoist_string_literal_subpattern(
-        pattern: Pattern,
-        next_index: &mut usize,
-        guard: &mut Option<TypedExpr>,
-    ) -> Pattern {
-        match pattern {
-            Pattern::Literal(literal) => match &literal.kind {
-                IrExprKind::String(value) => {
-                    let binding = Self::hoisted_string_literal_binding_name(*next_index);
-                    *next_index += 1;
-                    let test = Self::hoisted_string_literal_test(&binding, value);
-                    *guard = Self::conjoin_match_guards(guard.take(), Some(test));
-                    Pattern::Var(binding)
-                }
-                _ => Pattern::Literal(literal),
-            },
-            Pattern::Or(items) => {
-                let values: Option<Vec<String>> = items
-                    .iter()
-                    .map(|item| match item {
-                        Pattern::Literal(literal) => match &literal.kind {
-                            IrExprKind::String(value) => Some(value.clone()),
-                            _ => None,
-                        },
-                        _ => None,
-                    })
-                    .collect();
-                match values {
-                    Some(values) if !values.is_empty() => {
-                        let binding = Self::hoisted_string_literal_binding_name(*next_index);
-                        *next_index += 1;
-                        let alternatives = values
-                            .iter()
-                            .map(|value| Some(Self::hoisted_string_literal_test(&binding, value)))
-                            .fold(None, |joined, test| Self::join_match_guards(joined, test, BinOp::Or));
-                        *guard = Self::conjoin_match_guards(guard.take(), alternatives);
-                        Pattern::Var(binding)
-                    }
-                    _ => Pattern::Or(items),
-                }
-            }
-            Pattern::Tuple(items) => Pattern::Tuple(
-                items
-                    .into_iter()
-                    .map(|item| Self::hoist_string_literal_subpattern(item, &mut *next_index, &mut *guard))
-                    .collect(),
-            ),
-            Pattern::Struct { name, fields } => Pattern::Struct {
-                name,
-                fields: fields
-                    .into_iter()
-                    .map(|(field, item)| {
-                        (
-                            field,
-                            Self::hoist_string_literal_subpattern(item, &mut *next_index, &mut *guard),
-                        )
-                    })
-                    .collect(),
-            },
-            Pattern::Enum { name, variant, fields } => Pattern::Enum {
-                name,
-                variant,
-                fields: fields
-                    .into_iter()
-                    .map(|item| Self::hoist_string_literal_subpattern(item, &mut *next_index, &mut *guard))
-                    .collect(),
-            },
-            other @ (Pattern::Wildcard | Pattern::Var(_)) => other,
-        }
+        self.type_info
+            .as_ref()
+            .is_some_and(|info| info.pattern_rest_has_private_fields(span))
     }
 }
 
@@ -985,15 +831,17 @@ mod tests {
             .then(|| (name.clone(), value.clone()))
     }
 
-    /// A string literal nested in a tuple pattern lowers to a binding tested by the arm's guard (#1707): the
-    /// pattern shape the backend prints as a compilable `match` over an owned `String` item. The literal arm at the
-    /// top level is left as written, and an arm without a nested literal gets no guard.
+    /// A string literal nested in a tuple pattern over a temporary scrutinee lowers to a binding tested by the arm's
+    /// guard (#1707): the pattern shape the backend prints as a compilable `match` over an owned `String` item. An arm
+    /// without a nested literal gets no guard. Over a place the literal is tested on the place instead, so no part of
+    /// it moves (see `lower/expr/pattern_alternatives.rs`).
     #[test]
     fn nested_string_literal_pattern_lowers_to_a_guarded_binding_issue1707() -> TestResult {
         let source = r#"
 def main() -> None:
-    pair: tuple[int, str] = (42, "answer")
-    match pair:
+    count = 42
+    word = "answer"
+    match (count, word):
         (0, _) => println("first is zero")
         (_, "answer") => println("second is answer")
         _ => println("something else")
@@ -1023,13 +871,13 @@ def main() -> None:
         Ok(())
     }
 
-    /// A hoisted literal test runs ahead of the arm's own guard, and an alternation of string literals in one
-    /// nested position shares a single binding tested with `or`.
+    /// Over a temporary scrutinee, a hoisted literal test runs ahead of the arm's own guard, and an alternation of
+    /// string literals in one nested position shares a single binding tested with `or`.
     #[test]
     fn hoisted_literal_tests_conjoin_with_the_arm_guard_issue1707() -> TestResult {
         let source = r#"
-def classify(pair: tuple[int, str]) -> str:
-    match pair:
+def classify(count: int, word: str) -> str:
+    match (count, word):
         (n, "yes" | "no") if n > 0 => return "answered"
         _ => return "open"
 "#;
@@ -1072,8 +920,9 @@ def classify(pair: tuple[int, str]) -> str:
         Ok(())
     }
 
-    /// A constructor pattern naming a subset of a model's fields records the omitted fields as wildcards
-    /// (#1708), the explicit form of `..` the backend already prints; alias keys resolve to canonical names.
+    /// A constructor pattern naming a subset of a model's fields records the omitted fields as wildcards (#1708);
+    /// alias keys resolve to canonical names. Over the parameter `a`, a place, the named field's literal is tested on
+    /// the place in the guard, so its own position is a wildcard too.
     #[test]
     fn partial_constructor_pattern_records_its_rest_fields_as_wildcards_issue1708() -> TestResult {
         let source = r#"
@@ -1089,10 +938,14 @@ def describe(a: Account) -> str:
 "#;
         let arms = match_arms(&lower_source(source)?, "describe")?;
         let premium = arms.first().ok_or("expected a premium arm")?;
-        let Pattern::Struct { name, fields } = &premium.pattern else {
+        let Pattern::Struct { name, fields, rest } = &premium.pattern else {
             return Err(format!("expected a struct pattern, got {:?}", premium.pattern));
         };
         assert_eq!(name, "Account");
+        assert!(
+            !rest,
+            "a rest of nameable fields is spelled out, not left to a rest marker"
+        );
         let shape = fields
             .iter()
             .map(|(field, pattern)| {
@@ -1106,20 +959,16 @@ def describe(a: Account) -> str:
             .collect::<Vec<_>>();
         assert_eq!(
             shape,
-            vec![
-                "kind_: __incan_match_str_0".to_string(),
-                "tier: _".to_string(),
-                "name: _".to_string()
-            ],
-            "the named field keeps its (hoisted) sub-pattern and every omitted field is a wildcard"
+            vec!["kind_: _".to_string(), "tier: _".to_string(), "name: _".to_string()],
+            "the named field's literal is tested in the guard and every omitted field is a wildcard"
         );
         let guard = premium
             .guard
             .as_ref()
             .ok_or("the literal field test must be recorded as the guard")?;
-        assert_eq!(
-            string_literal_test(guard),
-            Some(("__incan_match_str_0".to_string(), "premium".to_string()))
+        assert!(
+            matches!(guard.kind, IrExprKind::Match { .. }),
+            "the literal field test reads the place, got {guard:?}"
         );
         Ok(())
     }

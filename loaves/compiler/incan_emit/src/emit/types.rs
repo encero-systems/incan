@@ -441,7 +441,7 @@ impl<'a> IrEmitter<'a> {
                     .collect();
                 quote! { (#(#ps),*) }
             }
-            Pattern::Struct { name, fields } => {
+            Pattern::Struct { name, fields, rest } => {
                 // The name may be a bare struct or a qualified enum variant such as `Predicate::KeyValue`; a
                 // qualified one must emit as a path, because `format_ident!` cannot carry `::`.
                 let n: TokenStream = if name.contains("::") {
@@ -459,7 +459,13 @@ impl<'a> IrEmitter<'a> {
                         quote! { #fn_ident: #fp }
                     })
                     .collect();
-                quote! { #n { #(#fs),* } }
+                // Lowering marks a rest it may not spell field by field, such as another module's private field
+                // (#1740); `..` is the only Rust spelling for it.
+                if *rest {
+                    quote! { #n { #(#fs,)* .. } }
+                } else {
+                    quote! { #n { #(#fs),* } }
+                }
             }
             Pattern::Enum {
                 name: _,

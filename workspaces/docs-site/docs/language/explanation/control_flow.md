@@ -97,6 +97,29 @@ match lookup_port(raw):
 
 Alternatives that bind names must bind the same names with the same types. `Cached(port) | Fresh(port)` is valid because both payloads have the same type; `Some(value) | None` is rejected because only one alternative binds `value`.
 
+An alternative is any pattern the arm could use on its own, so literals nest inside alternatives the same way they nest inside a single pattern, and an alternation can sit inside a larger pattern:
+
+```incan
+def classify(pair: tuple[int, str]) -> str:
+    match pair:
+        (0, "a") | (1, "b") => return "known"    # (0, "a") and (1, "b") only; (0, "b") is "other"
+        _ => return "other"
+
+def describe_tag(pair: tuple[int, Option[str]]) -> str:
+    match pair:
+        (n, Some("a") | None) => return f"{n}: a or nothing"
+        (n, _) => return f"{n}: something else"
+```
+
+Alternatives are tried in order, and the first one that matches binds the names. A guard after an alternation runs once, for that alternative: when it is false, the arm is skipped and matching continues with the next arm. Later alternatives of the same arm are not tried.
+
+```incan
+def first_match(pair: tuple[str, str]) -> str:
+    match pair:
+        (x, "a") | ("b", x) if x == "a" => return "a"   # ("b", "a"): the first alternative binds x = "b", the guard is false, the arm is skipped
+        _ => return "other"                             # ("b", "a") returns "other"
+```
+
 ### Guards, and the two ways to write an arm
 
 Add `if <condition>` after a pattern when the pattern alone does not decide the arm. The guard runs only if the pattern matched, and the arm is taken only if the guard is also true; when it is false, matching continues with the next arm.
@@ -120,6 +143,8 @@ def classify(n: int) -> str:
 ```
 
 These are two spellings of one arm, not two kinds of arm. Anything you can write in one you can write in the other, guards included; pick whichever reads better for the arm at hand. A guard sits between the pattern and the arm's `:` or `=>` in both.
+
+A `match` over a number or a string needs an arm that matches any value, such as `_` or a name, because literal arms never cover every value there; the `_` arm in `classify` is that arm. The full coverage rules are in [Match patterns](../reference/match_patterns.md#coverage).
 
 ## Looping while a pattern keeps matching with `while let`
 
@@ -199,4 +224,5 @@ def find_value(flag: bool) -> int:
 
 - Book chapter: [4. Control flow](../tutorials/book/04_control_flow.md)
 - Enums and `match`: [Enums](enums.md)
+- Pattern rules and coverage: [Match patterns](../reference/match_patterns.md)
 - Error-driven control flow (`Result`/`Option`): [Error Handling](error_handling.md)

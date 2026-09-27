@@ -4147,6 +4147,7 @@ mod tests {
     mod error_message_display;
     mod list_count_forms;
     mod method_decorator_receivers;
+    mod pattern_alternatives_and_private_rests;
     mod unary_operand_grouping;
     mod web_surface;
 

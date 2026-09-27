@@ -10,6 +10,7 @@ mod calls;
 mod comprehensions;
 mod error_display;
 mod helpers;
+mod pattern_alternatives;
 mod patterns;
 
 use std::collections::HashMap;
