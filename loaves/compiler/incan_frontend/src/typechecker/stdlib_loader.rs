@@ -49,6 +49,9 @@ use incan_lang::lang::types::numerics::{self as numeric_types, NumericTypeId};
 use incan_lang::lang::types::stringlike::{self as string_types, StringLikeId};
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind};
 
+mod type_param_bounds;
+use type_param_bounds::extract_type_param_bounds;
+
 #[derive(Debug, Clone, Default)]
 struct StdlibModuleData {
     functions: Vec<StdlibFunctionEntry>,
@@ -63,6 +66,8 @@ struct StdlibModuleData {
     /// other parsed module metadata prevents every method call from reparsing the same stdlib source tree.
     type_method_declarations: HashMap<(String, String), ast::MethodDecl>,
     type_docstrings: HashMap<String, String>,
+    /// Declared plain trait bounds of the module's public bounded models and classes, keyed by type name (#1280).
+    type_param_bounds: HashMap<String, Vec<(String, Vec<TypeBoundInfo>)>>,
     constants: Vec<(String, VariableInfo)>,
     statics: Vec<(String, StaticInfo)>,
     /// Declaration identities keyed by the spelling this module exports, preserving re-export targets.
@@ -455,6 +460,7 @@ fn load_stdlib_module_data_unguarded(
     let mut types = extract_type_signatures(&program, module_path);
     let mut type_method_declarations = extract_type_method_declarations(&program);
     let mut type_docstrings = extract_type_docstrings(&program);
+    let type_param_bounds = extract_type_param_bounds(&program, module_path);
     let mut constants = extract_const_signatures(&program);
     let mut statics = extract_static_signatures(&program);
     let mut identities = extract_declaration_identities(&program, module_path);
@@ -490,6 +496,7 @@ fn load_stdlib_module_data_unguarded(
         types,
         type_method_declarations,
         type_docstrings,
+        type_param_bounds,
         constants,
         statics,
         identities,
@@ -2638,6 +2645,7 @@ pub type File = rusttype RustFile:
             types: extract_type_signatures(&program, &["std".to_string(), "fs".to_string()]),
             type_method_declarations: extract_type_method_declarations(&program),
             type_docstrings: extract_type_docstrings(&program),
+            type_param_bounds: HashMap::new(),
             constants: extract_const_signatures(&program),
             statics: extract_static_signatures(&program),
             identities: extract_declaration_identities(&program, &["std".to_string(), "fs".to_string()]),

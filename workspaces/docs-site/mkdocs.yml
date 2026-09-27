@@ -185,6 +185,7 @@ nav:
           - Imports and modules: language/reference/imports_and_modules.md
           - Static storage: language/reference/static_storage.md
           - Numeric semantics: language/reference/numeric_semantics.md
+          - Match patterns: language/reference/match_patterns.md
           - Project lifecycle: language/reference/project_lifecycle.md
           - Strings and Bytes: language/reference/strings.md
           - Reflection: language/reference/reflection.md

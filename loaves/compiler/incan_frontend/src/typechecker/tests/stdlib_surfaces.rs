@@ -380,15 +380,18 @@ fn provider_plan_for_sdk_modules(
     .map(Arc::new)
 }
 
-/// Build one in-memory SDK provider plan publishing `std.helpers` from a checked provider source.
+/// Build one in-memory SDK provider plan publishing `std.<module>` from a checked provider source that exports
+/// `exported`.
 ///
 /// The plan carries the provider's checked API and identity graph exactly as an installed artifact would, so a
 /// consumer test proves what an import binds against the compiled provider rather than against provider source.
-fn sdk_provider_plan_for_helpers_module(
+pub(super) fn sdk_provider_plan_for_module(
     package_name: &str,
+    module: &str,
+    exported: &str,
     provider_source: &str,
 ) -> Result<ProviderPlan, Box<dyn std::error::Error>> {
-    let module_path = vec!["helpers".to_string()];
+    let module_path = vec![module.to_string()];
     let provider_ast = parse_program(provider_source, "checked SDK provider");
     let mut provider_checker = TypeChecker::new();
     provider_checker.set_current_package_identity(Some(package_name.to_string()));
@@ -410,7 +413,7 @@ fn sdk_provider_plan_for_helpers_module(
     materialize_checked_api_public_namespaces(&mut api)?;
     let mut identity_graph = LibraryIdentityGraph::from_checked_exports(package_name, &[]);
     identity_graph.extend_checked_api_exports(package_name, &api, &[(module_path, checked_exports)])?;
-    let public_path = vec![package_name.to_string(), "helpers".to_string(), "helper".to_string()];
+    let public_path = vec![package_name.to_string(), module.to_string(), exported.to_string()];
     if identity_graph.canonical_for_public_path(&public_path).is_none() {
         return Err(format!(
             "fixture identity graph did not retain {public_path:?}: {:?}",
@@ -422,7 +425,7 @@ fn sdk_provider_plan_for_helpers_module(
     manifest.contract_metadata.api = Some(api);
     manifest.contract_metadata.identity_graph = identity_graph;
 
-    let namespace_claims = BTreeSet::from([vec!["std".to_string(), "helpers".to_string()]]);
+    let namespace_claims = BTreeSet::from([vec!["std".to_string(), module.to_string()]]);
     Ok(ProviderPlan::new(
         LibraryManifestIndex::default(),
         vec![ProviderRecord {
@@ -453,7 +456,12 @@ fn sdk_provider_plan_for_helpers_module(
 fn sdk_provider_import_retains_manifest_canonical_identity() -> Result<(), Box<dyn std::error::Error>> {
     let package_name = "incan_stdlib_fixture";
     let module_path = vec!["helpers".to_string()];
-    let plan = sdk_provider_plan_for_helpers_module(package_name, "pub def helper() -> int:\n  return 42\n")?;
+    let plan = sdk_provider_plan_for_module(
+        package_name,
+        "helpers",
+        "helper",
+        "pub def helper() -> int:\n  return 42\n",
+    )?;
     let consumer_source = "from std.helpers import helper\n\ndef run() -> int:\n  return helper()\n";
     let consumer_ast = parse_program(consumer_source, "canonical SDK consumer");
     let mut consumer_checker = TypeChecker::new();
@@ -504,8 +512,10 @@ fn sdk_provider_import_retains_manifest_canonical_identity() -> Result<(), Box<d
 fn sdk_provider_facade_reexport_retains_manifest_canonical_identity_issue1435() -> Result<(), Box<dyn std::error::Error>>
 {
     let package_name = "incan_stdlib_fixture";
-    let plan = sdk_provider_plan_for_helpers_module(
+    let plan = sdk_provider_plan_for_module(
         package_name,
+        "helpers",
+        "helper",
         "pub def helper(pretty: bool = false) -> int:\n  return 42\n",
     )?;
     let facade_ast = parse_program("pub from std.helpers import helper\n", "SDK facade");

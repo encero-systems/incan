@@ -12,8 +12,10 @@ use incan_lang::interop::RustItemKind;
 use incan_lang::lang::surface::constructors;
 use incan_lang::lang::surface::constructors::ConstructorId;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
+use incan_lang::lang::types::numerics;
 
 use super::TypeChecker;
+use super::match_coverage::{coverage_row_head_is_wild, expand_coverage_heads};
 use crate::typechecker::check_stmt::{TupleShape, classify_tuple_shape};
 
 #[derive(Clone)]
@@ -31,14 +33,14 @@ fn sorted_binding_names(bindings: &HashMap<String, PatternBinding>) -> Vec<Strin
 
 /// Default payload binding mode after matching through explicit Rust references.
 #[derive(Clone, Copy)]
-enum PatternBorrow {
+pub(super) enum PatternBorrow {
     Shared,
     Mutable,
 }
 
 /// Peel reference layers for constructor lookup while preserving Rust match ergonomics for payload bindings. A shared
 /// reference fixes shared binding mode even when another reference layer is mutable.
-fn borrowed_pattern_subject(mut subject: &ResolvedType) -> (&ResolvedType, Option<PatternBorrow>) {
+pub(super) fn borrowed_pattern_subject(mut subject: &ResolvedType) -> (&ResolvedType, Option<PatternBorrow>) {
     let mut borrow = None;
     loop {
         match subject {
@@ -53,6 +55,49 @@ fn borrowed_pattern_subject(mut subject: &ResolvedType) -> (&ResolvedType, Optio
                 subject = inner;
             }
             _ => return (subject, borrow),
+        }
+    }
+}
+
+/// The family of a match position's type that a literal pattern is compared against (#1741).
+///
+/// A literal spells one of a few scalar types, so a position of one of these families can say for certain whether a
+/// literal can ever match there. Following the literal rules of the numeric reference, an integer literal is an `int`
+/// and matches only an integer position, whose width then bounds its value; a float literal matches only a float
+/// position; `None` matches only an `Option` position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LiteralPatternFamily {
+    Integer,
+    Float,
+    Str,
+    Bool,
+    Option,
+}
+
+impl LiteralPatternFamily {
+    /// Return the family of a position type, or `None` when a literal cannot be judged against it here.
+    fn of_position(ty: &ResolvedType) -> Option<Self> {
+        match ty {
+            ResolvedType::Int => Some(Self::Integer),
+            ResolvedType::Float => Some(Self::Float),
+            ResolvedType::Numeric(id) if numerics::is_integer(*id) => Some(Self::Integer),
+            ResolvedType::Numeric(id) if numerics::is_binary_float(*id) => Some(Self::Float),
+            ResolvedType::Numeric(_) | ResolvedType::Bool => Some(Self::Bool),
+            ResolvedType::Str | ResolvedType::FrozenStr => Some(Self::Str),
+            _ if ty.is_option() => Some(Self::Option),
+            _ => None,
+        }
+    }
+
+    /// Whether a literal of this spelling can match a value of this family.
+    fn admits(self, literal: &Literal) -> bool {
+        match literal {
+            Literal::Int(_) => self == Self::Integer,
+            Literal::Float(_) => self == Self::Float,
+            Literal::String(_) => self == Self::Str,
+            Literal::Bool(_) => self == Self::Bool,
+            Literal::None => self == Self::Option,
+            Literal::Decimal(_) | Literal::Bytes(_) => false,
         }
     }
 }
@@ -72,7 +117,7 @@ impl TypeChecker {
     /// The parser normalizes qualified surface patterns like `Color.Red` to `Color::Red`, while bare constructors
     /// such as `Some` and `Ok` keep the unqualified spelling. Match checking needs both pieces separately so
     /// qualifier validation and variant symbol lookup stay consistent.
-    fn split_pattern_constructor_name(name: &str) -> (Option<&str>, &str) {
+    pub(super) fn split_pattern_constructor_name(name: &str) -> (Option<&str>, &str) {
         match name.rsplit_once("::") {
             Some((qualifier, variant)) => (Some(qualifier), variant),
             None => (None, name),
@@ -366,7 +411,7 @@ impl TypeChecker {
             Pattern::Or(alternatives) => {
                 self.check_or_pattern(alternatives, expected_ty);
             }
-            Pattern::Literal(_) => {}
+            Pattern::Literal(literal) => self.check_literal_pattern(literal, expected_ty, pattern.span),
             Pattern::Constructor(name, sub_patterns) => {
                 let (subject_ty, borrow) = borrowed_pattern_subject(expected_ty);
                 let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.node.as_str());
@@ -620,6 +665,53 @@ impl TypeChecker {
                     }
                 }
             }
+        }
+    }
+
+    /// Refuse a literal pattern whose value can never match the position it is in (#1741).
+    ///
+    /// A decimal or bytes literal has no pattern form at all. Any other literal is compared with the position's type
+    /// (the scrutinee, a tuple element, a variant payload or a field) after peeling the borrow wrappers match
+    /// ergonomics add; only the families a literal can spell are judged (`LiteralPatternFamily`), and any other
+    /// position type (a type parameter, a union, a nominal, an unresolved type) is left to the checks that own it. A
+    /// numeric literal that has the position's family is then held to the position's width and range by the same rules
+    /// a value literal of that type follows.
+    fn check_literal_pattern(&mut self, literal: &Literal, expected_ty: &ResolvedType, span: Span) {
+        let unmatchable = match literal {
+            Literal::Decimal(_) => Some("decimal"),
+            Literal::Bytes(_) => Some("bytes"),
+            _ => None,
+        };
+        if let Some(kind) = unmatchable {
+            self.errors.push(errors::pattern_literal_not_matchable(kind, span));
+            return;
+        }
+        let (position_ty, _) = borrowed_pattern_subject(expected_ty);
+        let Some(family) = LiteralPatternFamily::of_position(position_ty) else {
+            return;
+        };
+        if !family.admits(literal) {
+            let found = match literal {
+                Literal::None => constructors::as_str(ConstructorId::None).to_string(),
+                _ => self.check_literal(literal).to_string(),
+            };
+            self.errors.push(errors::pattern_literal_type_mismatch(
+                &position_ty.to_string(),
+                &found,
+                span,
+            ));
+            return;
+        }
+        let position_ty = position_ty.clone();
+        let literal_expr = Spanned::new(Expr::Literal(literal.clone()), span);
+        match literal {
+            Literal::Int(_) => {
+                self.check_int_literal_with_expected(&literal_expr, &position_ty);
+            }
+            Literal::Float(_) => {
+                self.check_float_literal_with_expected(&literal_expr, &position_ty);
+            }
+            _ => {}
         }
     }
 
@@ -915,7 +1007,11 @@ impl TypeChecker {
     /// Check that a match expression covers all possible cases.
     ///
     /// For enums, `Result`, and `Option`, verifies every variant is handled. Wildcards (`_`) satisfy all remaining
-    /// cases. Emits a [`non_exhaustive_match`](errors::non_exhaustive_match) error if patterns are missing.
+    /// cases. A variant counts as handled only when the unguarded arms that name it also cover its payload, which the
+    /// pattern-matrix walk in `match_coverage` decides (#1741). Emits a
+    /// [`non_exhaustive_match`](errors::non_exhaustive_match) error naming each missing variant, spelled with wildcard
+    /// payloads (`Some(_)`) when arms name it but leave part of its payload uncovered. Every other subject is held to
+    /// the same walk and reported as missing `_`: literal arms over an `int` or a `str` never cover it on their own.
     fn check_match_exhaustiveness(&mut self, subject_ty: &ResolvedType, arms: &[Spanned<MatchArm>], span: Span) {
         if let Some(members) = Self::expected_union_members(subject_ty) {
             let mut remaining = members.to_vec();
@@ -942,45 +1038,36 @@ impl TypeChecker {
             }
             return;
         }
-        let variants = if let ResolvedType::Named(name) = subject_ty {
-            match self.lookup_type_info(name) {
-                Some(TypeInfo::Enum(enum_info)) => Some(enum_info.variants.clone()),
-                _ => None,
+        let rows = expand_coverage_heads(
+            arms.iter()
+                .filter(|arm| arm.node.guard.is_none())
+                .map(|arm| vec![Some(&arm.node.pattern.node)])
+                .collect(),
+        );
+        if rows.iter().any(coverage_row_head_is_wild) {
+            return;
+        }
+        let Some(variant_constructors) = self.match_subject_variant_constructors(subject_ty) else {
+            // Any other subject (a scalar, a tuple, a model): the arms must cover every value, so arms that are only
+            // literals over an open type need a wildcard (#1741).
+            if !self.coverage_rows_exhaustive(rows, std::slice::from_ref(subject_ty), 0) {
+                self.errors.push(errors::non_exhaustive_match(&["_".to_string()], span));
             }
-        } else if subject_ty.is_result() || subject_ty.is_option() {
-            if subject_ty.is_result() {
-                Some(vec![
-                    constructors::as_str(ConstructorId::Ok).to_string(),
-                    constructors::as_str(ConstructorId::Err).to_string(),
-                ])
-            } else {
-                Some(vec![
-                    constructors::as_str(ConstructorId::Some).to_string(),
-                    constructors::as_str(ConstructorId::None).to_string(),
-                ])
-            }
-        } else {
-            None
+            return;
         };
-
-        if let Some(all_variants) = variants {
-            let mut covered: HashSet<String> = HashSet::new();
-            let mut has_wildcard = false;
-
-            for arm in arms {
-                if arm.node.guard.is_some() {
-                    continue;
-                }
-                self.collect_pattern_coverage(&arm.node.pattern.node, subject_ty, &mut covered, &mut has_wildcard);
-            }
-
-            if !has_wildcard {
-                let missing: Vec<String> = all_variants.iter().filter(|v| !covered.contains(*v)).cloned().collect();
-
-                if !missing.is_empty() {
-                    self.errors.push(errors::non_exhaustive_match(&missing, span));
-                }
-            }
+        // A variant is covered when the arms that name it cover its payload too: `Some(0)` alone leaves `Some(_)`
+        // open, while `Ok(Some(x))` beside `Ok(None)` covers `Ok` (#1741).
+        let missing: Vec<String> = variant_constructors
+            .iter()
+            .filter_map(|constructor| {
+                let payload_rows = self.specialize_coverage_rows(&rows, constructor);
+                let named = !payload_rows.is_empty();
+                (!self.coverage_rows_exhaustive(payload_rows, constructor.payload_types(), 0))
+                    .then(|| constructor.missing_label(named))
+            })
+            .collect();
+        if !missing.is_empty() {
+            self.errors.push(errors::non_exhaustive_match(&missing, span));
         }
     }
 

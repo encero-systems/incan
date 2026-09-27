@@ -1,0 +1,14 @@
+# behavior: a generic function that builds a model whose type parameter declares a bound, from a value of its own unbounded type parameter, is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+model Stream[R with Clone]:
+    item: R
+
+
+def wrap[T](value: T) -> int:
+    stream = Stream(item=value)
+    return 1
+
+
+def main() -> None:
+    println(wrap(7))
