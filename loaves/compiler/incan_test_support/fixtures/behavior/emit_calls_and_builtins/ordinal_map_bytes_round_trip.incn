@@ -1,0 +1,26 @@
+# behavior: an OrdinalMap serialized with to_bytes, whose encoder appends into a mutable byte list through a std.collections helper, deserializes with from_bytes to a map answering the same ordinals
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_call_prefers_callable_signature_over_local_registry
+# expect-stdout:
+#   true
+#   1
+#   0
+#   true
+
+from std.collections import OrdinalMap, OrdinalMapError
+
+
+def run() -> Result[None, OrdinalMapError]:
+    columns: OrdinalMap[str] = OrdinalMap.from_keys(["id", "status"])?
+    encoded = columns.to_bytes()
+    println(len(encoded) > 0)
+    decoded: OrdinalMap[str] = OrdinalMap.from_bytes(encoded)?
+    println(decoded.require("status")?)
+    println(decoded.require("id")?)
+    println(len(decoded.to_bytes()) == len(encoded))
+    return Ok(None)
+
+
+def main() -> None:
+    match run():
+        Ok(_) => pass
+        Err(_) => println("failed")

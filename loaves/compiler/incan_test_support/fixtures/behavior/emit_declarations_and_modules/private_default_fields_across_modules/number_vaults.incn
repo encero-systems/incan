@@ -1,0 +1,7 @@
+pub class Vault:
+    secret: int
+    pub label: int
+    revision: str = "provider-default"
+
+    def describe(self) -> str:
+        return f"{self.label} {self.revision} {self.secret}"

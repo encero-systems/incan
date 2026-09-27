@@ -1,0 +1,12 @@
+# behavior: a function of a compiled standard-library module is callable from a program that declares nothing of its own about it
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_canonical_call_accepts_compiled_provider_module_without_legacy_registry_entry
+# expect-stdout:
+#   3
+#   12
+
+from std.math import gcd, lcm
+
+
+def main() -> None:
+    println(gcd(12, 9))
+    println(lcm(4, 6))

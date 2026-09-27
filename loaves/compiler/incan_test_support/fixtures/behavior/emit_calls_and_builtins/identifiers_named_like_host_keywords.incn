@@ -1,0 +1,25 @@
+# behavior: parameters, locals and a function named like host-language keywords (struct, where, mod, use, move, impl, dyn, box, async) are ordinary Incan names
+# retires: loaves/compiler/incan_emit/src/emit/mod.rs::rust_ident_uses_raw_idents_for_keywords
+# expect-stdout:
+#   5
+#   9
+#   10
+#   3
+#   11
+
+def mod(struct: int, where: int) -> int:
+    return struct + where
+
+
+def main() -> None:
+    use = mod(2, 3)
+    move = [1, use]
+    impl = move[0] + move[1] + 3
+    dyn = impl + 1
+    box = "abc"
+    async = len(box)
+    println(use)
+    println(impl)
+    println(dyn)
+    println(async)
+    println(dyn + 1)

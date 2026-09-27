@@ -1,0 +1,17 @@
+# behavior: the write_file and read_file builtins return Result values whose Err side is the host's error message as a str (#874), so a missing file reads back as an error naming the missing entry
+# retires: loaves/compiler/incan_emit/src/emit/expressions/builtins.rs::legacy_file_result_stringifies_rust_io_errors_issue874
+# expect-stdout:
+#   written
+#   hello file
+#   missing: true
+
+def main() -> None:
+    match write_file("twin_probe_output.txt", "hello file"):
+        Ok(_) => println("written")
+        Err(error) => println(f"write failed: {error}")
+    match read_file("twin_probe_output.txt"):
+        Ok(data) => println(data)
+        Err(error) => println(f"read failed: {error}")
+    match read_file("definitely/missing/file.txt"):
+        Ok(data) => println(f"unexpected: {data}")
+        Err(error) => println(f"missing: {"No such file" in error}")

@@ -1,0 +1,12 @@
+pub const DEFAULT_SIZE: int = 12
+
+
+pub model HyperquantIndex:
+    pub size: int
+
+
+pub class IndexBuilder:
+    pub size: int = 3
+
+    def build(self) -> HyperquantIndex:
+        return HyperquantIndex(size=self.size)

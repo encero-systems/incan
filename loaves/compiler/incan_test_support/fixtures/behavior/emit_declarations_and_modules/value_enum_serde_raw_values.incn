@@ -1,0 +1,41 @@
+# behavior: json-derived str and int value enums serialize as their raw values, parse back from the raw value and refuse the variant name
+# retires: loaves/compiler/incan_emit/src/emit/decls/structures.rs::serde_value_enum_uses_raw_value_impls_not_serde_derives
+# retires: loaves/compiler/incan_emit/src/emit/decls/structures.rs::serde_integer_value_enum_uses_raw_value_impls
+# expect-stdout:
+#   {"env":"production","status":404}
+#   Dev 200
+#   refused variant name
+#   refused variant name
+
+from std.serde import json
+
+
+@derive(json)
+enum Env(str):
+    Dev = "development"
+    Prod = "production"
+
+
+@derive(json)
+pub enum HttpStatus(int):
+    Ok = 200
+    NotFound = 404
+
+
+@derive(json)
+model Deployment:
+    env: Env
+    status: HttpStatus
+
+
+def describe(document: str) -> str:
+    match Deployment.from_json(document):
+        Ok(parsed) => return f"{parsed.env.message()} {parsed.status.value()}"
+        Err(_) => return "refused variant name"
+
+
+def main() -> None:
+    println(Deployment(env=Env.Prod, status=HttpStatus.NotFound).to_json())
+    println(describe('{"env":"development","status":200}'))
+    println(describe('{"env":"Dev","status":200}'))
+    println(describe('{"env":"development","status":"Ok"}'))

@@ -1,0 +1,1 @@
+pub from vault_facade import FacadeVault as ExportedVault

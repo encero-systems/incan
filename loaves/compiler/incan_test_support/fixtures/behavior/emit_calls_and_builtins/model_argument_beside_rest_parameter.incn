@@ -1,0 +1,20 @@
+# behavior: a model passed to a parameter that sits beside a `*rest: int` parameter is read by the callee, which also counts and sums the rest items, and the same model is passed again with no rest items
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::rest_aware_call_arg_uses_argument_plan_without_double_borrow
+# expect-stdout:
+#   thing 3 6
+#   thing 1 5
+#   thing 0 0
+
+model Thing:
+    name: str
+
+
+def takes_rest(value: Thing, *rest: int) -> str:
+    return f"{value.name} {len(rest)} {sum(rest)}"
+
+
+def main() -> None:
+    thing = Thing(name="thing")
+    println(takes_rest(thing, 1, 2, 3))
+    println(takes_rest(thing, 5))
+    println(takes_rest(thing))

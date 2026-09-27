@@ -1,0 +1,49 @@
+# behavior: every declaration kind a dependency publishes is usable from a consumer: a model, a class with a method, an enum, a newtype, a trait adopted by a model, a union alias, a const, a static read through a function, a partial, an alias, a decorated function, a decorated generic function and an overloaded function
+# retires: loaves/compiler/incan_emit/src/emit/native_unions.rs::source_publication_anchors_survive_every_direct_lowering_path
+# expect-stdout:
+#   3
+#   8
+#   fast
+#   slow
+#   9
+#   badge gold
+#   int 4
+#   str four
+#   0
+#   10
+#   5
+#   1
+#   6
+#   1
+#   7
+#   x
+#   3
+#   two!
+
+from pub::kinds import Record, Container, Mode, Token, Named, Badge, ZERO, current_count, first, fixed, second, decorated, generic, convert, show_mode, show_answer
+
+
+def describe[N with Named](named: N) -> str:
+    return named.label()
+
+
+def main() -> None:
+    println(Record(value=3).value)
+    println(Container(value=4).doubled())
+    println(show_mode(Mode.Fast))
+    println(show_mode(Mode.Slow))
+    token = Token(9)
+    println(token.0)
+    println(describe(Badge(text="gold")))
+    println(show_answer(4))
+    println(show_answer("four"))
+    println(ZERO)
+    println(current_count())
+    println(first(5))
+    println(fixed())
+    println(second(6))
+    println(decorated())
+    println(generic(7))
+    println(generic("x"))
+    println(convert(2))
+    println(convert("two"))

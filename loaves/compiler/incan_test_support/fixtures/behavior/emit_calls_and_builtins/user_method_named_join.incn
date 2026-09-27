@@ -1,0 +1,20 @@
+# behavior: a user model's own method named join, taking a model and a bool, is dispatched as that method and not as str.join
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::non_string_method_call_join_stays_regular_method_call
+# expect-stdout:
+#   left+right
+#   left|right
+
+model Dataset:
+    name: str
+
+    def join(self, other: Dataset, inner: bool) -> str:
+        if inner:
+            return f"{self.name}+{other.name}"
+        return f"{self.name}|{other.name}"
+
+
+def main() -> None:
+    dataset = Dataset(name="left")
+    other = Dataset(name="right")
+    println(dataset.join(other, true))
+    println(dataset.join(other, false))

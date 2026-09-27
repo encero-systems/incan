@@ -1,0 +1,35 @@
+# behavior: enumerate used as a value is an indexable list of (index, item) pairs, and enumerate over lists of generic tuples and of Option items yields each element once with its index
+# retires: loaves/compiler/incan_emit/src/emit/expressions/builtins.rs::canonical_and_legacy_enumerate_values_materialize_checked_lists
+# retires: loaves/compiler/incan_emit/src/emit/expressions/builtins.rs::enumerate_copy_policy_keeps_generic_tuple_items_owned
+# expect-stdout:
+#   3
+#   1=b
+#   0=a
+#   1=b
+#   2=c
+#   0:5
+#   1:7
+#   0 some 1
+#   1 none
+
+def weights[T](items: list[tuple[T, int]]) -> list[str]:
+    mut out: list[str] = []
+    for position, pair in enumerate(items):
+        out.append(f"{position}:{pair[1]}")
+    return out
+
+
+def main() -> None:
+    pairs = enumerate(["a", "b", "c"])
+    println(len(pairs))
+    second = pairs[1]
+    println(f"{second[0]}={second[1]}")
+    for index, name in pairs:
+        println(f"{index}={name}")
+    for line in weights([("x", 5), ("y", 7)]):
+        println(line)
+    maybes: list[Option[int]] = [Some(1), None]
+    for index, maybe in enumerate(maybes):
+        match maybe:
+            Some(value) => println(f"{index} some {value}")
+            None => println(f"{index} none")
