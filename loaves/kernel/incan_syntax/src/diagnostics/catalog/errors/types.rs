@@ -482,6 +482,28 @@ pub fn route_handler_parameter_unbound(
     }
 }
 
+/// Report a `@route` handler whose JSON-carrying wrapper has a payload type with no JSON form (#1768).
+///
+/// A `Json[T]`, `Query[T]` or `Path[T]` parameter deserializes the request into `T` through serde, and a `Json[T]`
+/// return serializes `T` as the response body, so `T`, and every model or class it is built from, must derive `json`.
+/// A model or class declared without it checked and then could not be registered as a handler. `handler` is the
+/// function's name, `wrapper` the declared wrapper type as written, and `payload` the model or class that lacks the
+/// derive. `INCAN-T0112` is its stable code.
+pub fn route_payload_without_json_form(handler: &str, wrapper: &str, payload: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Route handler '{handler}' uses '{wrapper}', but '{payload}' has no JSON form"),
+        span,
+    )
+    .with_stable_code("INCAN-T0112")
+    .with_hint(format!(
+        "Derive JSON support on '{payload}': add '@derive(json)' above its declaration, with 'from std.serde import json'"
+    ))
+    .with_note(
+        "A route's 'Json[T]', 'Query[T]' and 'Path[T]' parameters deserialize the request into 'T', and a 'Json[T]' \
+         return serializes 'T' as the response body, so every model or class in 'T' must derive 'json'",
+    )
+}
+
 /// Report a malformed `ValidationError(...)` constructor call.
 pub fn validation_error_constructor_shape(span: Span) -> CompileError {
     CompileError::type_error(

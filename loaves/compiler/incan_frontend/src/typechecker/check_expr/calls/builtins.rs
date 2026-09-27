@@ -30,14 +30,15 @@ impl TypeChecker {
     ///
     /// Every argument is checked as usual so its own diagnostics still surface; a tuple argument is then refused
     /// with the call's own spelling (`builtin`), because a tuple has no printed form and the program could not be
-    /// built. The tuple's arity shapes the element-by-element remedy in the hint. Any other argument type stays
-    /// as permissive as before.
+    /// built. The tuple's arity shapes the element-by-element remedy in the hint. An `Error` adopter with no
+    /// `__str__` is recorded to print its `message()` (#1778). Any other argument type stays as permissive as before.
     fn check_print_call_args(&mut self, builtin: &str, args: &[CallArg]) {
         for arg in args {
             let arg_expr = Self::call_arg_expr(arg);
             self.call_argument_depth += 1;
             let arg_ty = self.check_expr(arg_expr);
             self.call_argument_depth -= 1;
+            self.record_error_message_display(arg_expr.span, &arg_ty);
             let arity = match &arg_ty {
                 ResolvedType::Tuple(elements) => elements.len(),
                 ResolvedType::Generic(name, elements)
@@ -417,7 +418,11 @@ impl TypeChecker {
                     }
                 }
                 BuiltinFnId::Str => {
-                    self.check_call_args(args);
+                    // `str(error)` renders an `Error` adopter with no `__str__` through its `message()` (#1778).
+                    let arg_types = self.check_call_arg_types(args);
+                    if let ([arg], [arg_ty]) = (args, arg_types.as_slice()) {
+                        self.record_error_message_display(Self::call_arg_expr(arg).span, arg_ty);
+                    }
                     Some(ResolvedType::Str)
                 }
                 BuiltinFnId::Int => {

@@ -1409,6 +1409,33 @@ pub struct CallArtifacts {
     pub resolved_string_helper_calls: HashMap<(usize, usize), StringMethodId>,
     /// Direct closures whose contextual parameter types came from a canonical source `CallableN` bound.
     pub source_callable_closures: HashSet<(usize, usize)>,
+    /// Display operands that render through `message()`, keyed by the operand's expression span (#1778).
+    ///
+    /// A model or class has a textual form only through `__str__`. A type that adopts `Error` and has no `Display` of
+    /// its own renders its `message()` instead wherever a value is displayed: an f-string `{value}` part, the
+    /// argument of `str(value)`, and each `print`/`println` argument. The value is the `message()` call the checker
+    /// resolved for the operand, so lowering emits the same call a written `value.message()` would.
+    pub error_message_displays: HashMap<(usize, usize), ErrorMessageDisplay>,
+}
+
+/// The `message()` call one displayed `Error` adopter renders through (#1778).
+///
+/// Resolved by the checker exactly as a written `value.message()` call: through the adopter's own method, a trait
+/// default it inherits, or the `Error` bound of a type parameter.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ErrorMessageDisplay {
+    /// Canonical identity of the selected `message` declaration, when declaration provenance retained one.
+    pub identity: Option<CanonicalSymbolId>,
+    /// Trait dispatch the call needs, when the selected `message` is reached through a trait.
+    pub dispatch: Option<ResolvedMethodDispatch>,
+    /// Whether the operand is `self` inside a default method of a trait that extends `Error`.
+    ///
+    /// Such a display is checked once against the trait's `Self`, like a written `self.message()` there, which the
+    /// checker resolves no further; lowering expands the default into each adopter.
+    pub receiver_is_trait_self: bool,
+    /// For a trait-`Self` display, the adopters in this module that have a `Display` of their own and so keep it
+    /// where the default is expanded into them. Empty for every other display.
+    pub self_displaying_adopters: BTreeSet<String>,
 }
 
 /// Typechecker-owned meaning of one `isinstance` target expression.
@@ -2421,6 +2448,22 @@ impl TypeCheckInfo {
             .resolved_builtin_calls
             .get(&(call_span.start, call_span.end))
             .copied()
+    }
+
+    /// Return the `message()` call one display operand renders through, or `None` when it displays itself.
+    ///
+    /// See [`CallArtifacts::error_message_displays`].
+    pub fn error_message_display(&self, operand_span: Span) -> Option<&ErrorMessageDisplay> {
+        self.calls
+            .error_message_displays
+            .get(&(operand_span.start, operand_span.end))
+    }
+
+    /// Record the `message()` call one display operand renders through (#1778).
+    pub fn record_error_message_display(&mut self, operand_span: Span, display: ErrorMessageDisplay) {
+        self.calls
+            .error_message_displays
+            .insert((operand_span.start, operand_span.end), display);
     }
 
     /// Record the compiler-owned builtin selected for one checked call.

@@ -286,6 +286,7 @@ def touch_span_context(context: SpanContext) -> None:
     )
 }
 
+/// The route payload derives `json`: a `Query[T]` or `Json[T]` payload without it is refused (`INCAN-T0112`, #1768).
 #[test]
 fn std_web_prelude_import_snapshot() -> TestResult {
     assert_import_snapshot(
@@ -293,7 +294,9 @@ fn std_web_prelude_import_snapshot() -> TestResult {
         r#"
 import std.async
 from std.web import App, Json, Html, Response, Query, Path, route, GET
+from std.serde import json
 
+@derive(json)
 model Search:
     q: str
 

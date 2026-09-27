@@ -141,6 +141,17 @@ async def index() -> Response:
     return Response.html("<h1>Welcome!</h1>")
 ```
 
+Or declare the `Html` response type and wrap the markup in `Html(...)`:
+
+```incan
+from std.web import route, Html
+import std.async
+
+@route("/about")
+async def about() -> Html:
+    return Html("<h1>About</h1>")
+```
+
 ### Status Codes
 
 Use `Response.ok()` for an empty 200 response, or `Response.status(code, body)` when the status and body are explicit:
@@ -196,6 +207,8 @@ Use `Query[T]` for typed query-string parameters and `Json[T]` for typed JSON re
 ```incan
 --8<-- "_snippets/language/examples/verified_web_request_extractors.incn"
 ```
+
+A handler reads the payload's fields through the wrapper (`params.q`, `body.name`) or takes the whole payload with `.value` (`Json(body.value)`). A `Json[T]` payload is read and written as JSON, while a `Query[T]` payload is decoded from the query string and a `Path[T]` payload from the path; all three go through the serde support that `@derive(json)` gives a model. Every model in the payload, including one inside a collection such as `Json[list[User]]`, therefore derives `json`: `incan check` refuses one that does not (`INCAN-T0112`).
 
 ## Application design
 

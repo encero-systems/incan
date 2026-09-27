@@ -13,6 +13,12 @@ age = parts[1]
 role = parts[2]
 ```
 
+To split on runs of whitespace, as Python's `split()` with no argument does, use `split_whitespace()`; `split()` without a separator returns the whole string as one item:
+
+```incan
+words = "  alpha   beta ".split_whitespace()   # ["alpha", "beta"]
+```
+
 > Note: Indexing panics if out of range. If you need fallible parsing, validate the length before indexing (or use a
 > `Result`-returning helper function).
 

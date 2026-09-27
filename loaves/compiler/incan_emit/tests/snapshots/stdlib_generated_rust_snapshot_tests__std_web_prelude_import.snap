@@ -7,6 +7,7 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+use json::{Deserialize as _, Serialize as _};
 pub use crate::__incan_std::r#async;
 pub use crate::__incan_std::web::App;
 pub use crate::__incan_std::web::Json;
@@ -16,7 +17,15 @@ pub use crate::__incan_std::web::Query;
 pub use crate::__incan_std::web::Path;
 pub use crate::__incan_std::web::route;
 pub use crate::__incan_std::web::GET;
-#[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
+pub use crate::__incan_std::serde::json;
+#[derive(
+    serde::Serialize,
+    serde::Deserialize,
+    Debug,
+    Clone,
+    incan_derive::FieldInfo,
+    incan_derive::IncanClass
+)]
 struct Search {
     q: String,
 }
@@ -66,10 +75,20 @@ impl incan_std_core::reflection::HasFieldValueReflection for Search {
         vec![("q".to_string(), format!("{}", self.q))]
     }
 }
+impl json::Serialize for Search {
+    fn to_json(&self) -> String {
+        incan_std_data::json::__private::stringify_or_raise(self, stringify!(Search))
+    }
+}
+impl json::Deserialize for Search {
+    fn from_json(json_str: String) -> Result<Self, String> {
+        incan_std_data::json::__private::parse_or_error(&json_str)
+    }
+}
 #[incan_web_macros::route("/snapshot/{id}", method = "GET")]
 async fn snapshot(
     _: Path<i64>,
     query: Query<Search>,
 ) -> Json<Search> {
-    return crate::__incan_std::web::Json(query.value.clone());
+    return crate::__incan_std::web::Json(query.0.clone());
 }

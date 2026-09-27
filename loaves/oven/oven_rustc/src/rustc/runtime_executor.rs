@@ -24,8 +24,8 @@ use super::{
     OvenCompiledRustUnitIdentity, OvenMaterializedRuntimeFoundation, OvenMaterializedRustFacetEnvironmentValue,
     OvenMaterializedRustFacetLinkedLibrary, OvenRuntimeFoundationUnitExecution, OvenRustcError,
     OvenSelectedRustFacetCrateKind, OvenSelectedRustFacetDomain, OvenSelectedRustFacetUnit,
-    OvenSelectedRustFacetUnitRole, ValidatedOvenRuntimeFoundation, apply_oven_profile,
-    clear_inherited_cargo_environment, digest_regular_file, parse_rustc_diagnostics, verified_regular_file,
+    OvenSelectedRustFacetUnitRole, ValidatedOvenRuntimeFoundation, apply_oven_profile, digest_regular_file,
+    parse_rustc_diagnostics, verified_regular_file,
 };
 
 /// The explicit retained compiler that owns every output this executor produces.
@@ -437,7 +437,57 @@ fn compile_rebuild_unit(
     output_root: &Path,
     artifact: &Path,
 ) -> Result<(), OvenRustcError> {
-    let mut command = Command::new(closure.rustc());
+    let mut command = rebuild_unit_command(
+        closure,
+        unit,
+        source,
+        selection,
+        compiler_target,
+        plan,
+        search_paths,
+        externs,
+        output_root,
+        artifact,
+    )?;
+    let result = command.output().map_err(|source_error| OvenRustcError::Io {
+        path: closure.rustc().to_path_buf(),
+        source: source_error,
+    })?;
+    if !result.status.success() {
+        return Err(OvenRustcError::CompilationFailed {
+            report: parse_rustc_diagnostics(&result.stdout, &result.stderr).with_invocation(&command),
+        });
+    }
+    verified_regular_file(artifact, "runtime rebuild output")?;
+    Ok(())
+}
+
+/// Build the one retained-compiler command that compiles an admitted rebuild unit, without launching it.
+///
+/// The command starts from [`super::rustc_probe_command`], the launcher every compiler probe uses, rather than a bare
+/// `Command`. A store-retained compiler derives its sysroot from wherever the dynamic loader found `librustc_driver`,
+/// and on Linux an inherited `LD_LIBRARY_PATH` is consulted before the retained binary's own runpath, so a rebuild
+/// that inherited the caller's loader path could run another toolchain's driver while its outputs are attributed to
+/// the retained closure (#1785, the rebuild half of #1755). The launcher clears the inherited Cargo state and the
+/// loader search paths; the only environment the compiler then sees beyond the process's own is what the sealed
+/// artifact plan and the materialized unit admit, applied below.
+///
+/// The arguments are the admitted authorities [`compile_rebuild_unit`] documents; building the command separately
+/// lets a test pin the environment a rebuild launches with.
+#[allow(clippy::too_many_arguments)]
+fn rebuild_unit_command(
+    closure: &OvenRuntimeCompilerClosure,
+    unit: &OvenSelectedRustFacetUnit,
+    source: &super::OvenMaterializedRustFacetUnit,
+    selection: &super::OvenSelectedRustFacetSelection,
+    compiler_target: &std::ffi::OsStr,
+    plan: &super::OvenRustcArtifactPlan,
+    search_paths: &BTreeSet<PathBuf>,
+    externs: &[(String, PathBuf)],
+    output_root: &Path,
+    artifact: &Path,
+) -> Result<Command, OvenRustcError> {
+    let mut command = super::rustc_probe_command(closure.rustc());
     command.args(["--crate-type", "lib"]);
     append_compiler_target(&mut command, compiler_target);
     command
@@ -474,7 +524,6 @@ fn compile_rebuild_unit(
             toolchain_root.join("lib/rustlib/src/rust").display()
         ));
     }
-    clear_inherited_cargo_environment(&mut command);
     for (name, value) in &plan.compile_environment {
         command.env(name, value);
     }
@@ -504,17 +553,7 @@ fn compile_rebuild_unit(
     }
     append_materialized_sysroot_extern_arguments(&mut command, &source.sysroot_externs);
     append_materialized_link_arguments(&mut command, &source.linked_libraries)?;
-    let result = command.output().map_err(|source_error| OvenRustcError::Io {
-        path: closure.rustc().to_path_buf(),
-        source: source_error,
-    })?;
-    if !result.status.success() {
-        return Err(OvenRustcError::CompilationFailed {
-            report: parse_rustc_diagnostics(&result.stdout, &result.stderr).with_invocation(&command),
-        });
-    }
-    verified_regular_file(artifact, "runtime rebuild output")?;
-    Ok(())
+    Ok(command)
 }
 
 /// Append compiler-owned bare externs already admitted by the selected graph's verified toolchain contract.
@@ -1297,6 +1336,66 @@ pub(crate) mod tests {
             fs::read_dir(output_root.path())?.count(),
             0,
             "a refused closure must not leave outputs"
+        );
+        Ok(())
+    }
+
+    /// A rebuild launches the retained compiler without the caller's dynamic-loader search paths.
+    ///
+    /// The retained `rustc` derives its sysroot from wherever the loader found `librustc_driver`. On Linux an
+    /// inherited `LD_LIBRARY_PATH` wins over the binary's own runpath, and the compiler-suite runner exports one to
+    /// every libtest child, so a rebuild that kept it ran the ambient toolchain's driver while its outputs were
+    /// attributed to the retained closure (#1785). The probes were fixed the same way by #1755.
+    #[test]
+    fn rebuild_launch_clears_the_inherited_loader_search_paths() -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = fixture()?;
+        let output_root = tempfile::tempdir()?;
+        let closure = OvenRuntimeCompilerClosure::new(&fixture.rustc, FIXTURE_CLOSURE);
+        let graph = fixture.foundation.selected_graph().graph();
+        let selected_identity = fixture
+            .materialized
+            .rebuild_order()
+            .next()
+            .ok_or("the fixture declares no rebuild unit")?;
+        let unit = graph
+            .units
+            .iter()
+            .find(|unit| unit.identity == selected_identity)
+            .ok_or("the first rebuild unit is absent from the selected graph")?;
+        let source = fixture
+            .materialized
+            .sources()
+            .unit(selected_identity)
+            .ok_or("the first rebuild unit was not materialized")?;
+
+        let command = rebuild_unit_command(
+            &closure,
+            unit,
+            source,
+            &graph.selection,
+            fixture.materialized.sources().compiler_target(),
+            fixture.materialized.artifact_plan(),
+            &BTreeSet::new(),
+            &[],
+            output_root.path(),
+            &output_root.path().join(format!("lib{}.rlib", unit.crate_name)),
+        )?;
+
+        assert_eq!(command.get_program(), fixture.rustc.as_os_str());
+        let cleared = command
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(name, _)| name.to_string_lossy().into_owned())
+            .collect::<BTreeSet<_>>();
+        for name in crate::rustc::toolchain::INHERITED_LOADER_SEARCH_PATH_VARIABLES {
+            assert!(
+                cleared.contains(name),
+                "`{name}` would steer the retained compiler to another toolchain's driver and sysroot"
+            );
+        }
+        assert!(
+            !cleared.contains("PATH"),
+            "`PATH` locates the compiler on Windows and must survive the rebuild launch"
         );
         Ok(())
     }
