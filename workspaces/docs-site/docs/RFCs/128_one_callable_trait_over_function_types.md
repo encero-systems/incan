@@ -19,16 +19,17 @@
 
 ## Summary
 
-This RFC replaces the fixed-arity callable traits `Callable0[R]`, `Callable1[A, R]`, and `Callable2[A, B, R]` with one trait, `Callable[(A, B) -> R]`, whose single type argument is an ordinary Incan function type. The function type carries both the parameter list and the return type, so the trait has no arity limit, a model can hold a callable in a bounded field (`model Holder[F with Callable[(int) -> str]]`), and a model that adopts `Callable[(int, int) -> int]` is checked against the `__call__` signature the argument spells. The RFC 041 markers `Fn[...]`, `FnMut[...]`, and `FnOnce[...]` keep their spelling, lose their two-parameter limit, and mean `Callable[(params) -> R]` with the return type taken from the call that passes the value. `Callable` is compiler-known: `std.traits.callable` declares and documents it, and the checker derives the `__call__` requirement from the argument, because a source trait cannot derive a method signature from a type argument. The RFC records why the generated code cannot keep one nominal trait per arity without imposing a limit, and recommends lowering `Callable` bounds to the host language's own function traits.
+This RFC replaces `Callable0[R]`, `Callable1[A, R]`, and `Callable2[A, B, R]` with one trait, `Callable[(A, B) -> R]`, with no arity limit. Its function-type argument describes how to call a value; it does not convert that value into a closure or replace its concrete type. Function types gain named, keyword-only, optional, and variadic parameters through the same signature rules used by function and method declarations. Bound receivers are represented separately from caller-supplied parameters, preserving mutable access and ownership requirements. Compiler-derived, read-only `__signature__` metadata exposes this shared model. Stateful `__call__(mut self)` adopters are supported; the `Fn`, `FnMut`, and `FnOnce` markers retain distinct invocation guarantees.
 
 ## Core model
 
-1. **One trait.** `Callable[F]` takes exactly one type argument, and `F` must be a function type: `() -> R`, `(A) -> R`, `(A, B) -> R`, and so on. Function types are written with `->`; `=>` belongs to closure expressions only.
-2. **The argument is the contract.** The trait's one requirement is `__call__(self, ...)` with the argument's parameter count, parameter types, and return type. Whatever a function type can express, `Callable` expresses, with no rule of its own.
-3. **No arity limit.** The language imposes none, and the generated code must not impose one that a program can observe.
-4. **Three ways to satisfy a bound.** A named function or closure whose function type matches, a declaration that adopts the matching `Callable`, or a type parameter already bounded by it.
-5. **The markers are shorthand.** On a function or method type parameter, `Fn[A, B]`, `FnMut[A, B]`, and `FnOnce[A, B]` mean `Callable[(A, B) -> R]` with `R` taken from each call. A nominal declaration has no call to take `R` from, so a marker there stays refused and the diagnostic points at `Callable`.
-6. **One identity everywhere.** A value that satisfies a `Callable` bound in one package satisfies the same bound declared in any other package.
+1. **One trait.** `Callable[F]` takes one function-type argument. `->` describes a signature; `=>` constructs a closure.
+2. **One signature model.** Functions, methods, closures, and callable objects share parameter and return-type rules. `Callable` does not define a parallel parameter system.
+3. **Caller-facing parameters.** A bound `self` or `cls` is absent from the argument list. Receiver binding, access, and consumption remain part of the callable contract.
+4. **Objects retain their identity.** Satisfying a bound preserves the concrete type, fields, other traits, and state. Calling an object invokes its `__call__`.
+5. **Explicit mutation.** `__call__(mut self)` is valid. Invoking it requires mutable access in source; lowering cannot invent that permission.
+6. **No arity limit or package-local capability.** The same bound has the same meaning across packages, for functions, closures, and nominal adopters.
+7. **Signature metadata.** `__signature__` is a read-only view of the shared signature contract, not a mechanism for changing it.
 
 ## Motivation
 
@@ -42,7 +43,9 @@ Both gaps close when the bound spells a function type. `(A, B, C) -> R` already 
 
 - Define `Callable[F]`, with a function-type argument, as the one callable capability, with no arity limit.
 - Let functions, methods, models, classes, enums, traits, newtypes, and type aliases bound a type parameter with `Callable[...]`, and let nominal declarations hold such a value in a field.
-- Check an adopter's `__call__` against the signature its `Callable` argument spells, with a diagnostic that shows the expected signature.
+- Check an adopter's `__call__` against the complete caller-facing signature, including keyword names and omission rules.
+- Share signature semantics across functions, methods, closures, and callable objects, and expose compiler-derived `__signature__` metadata.
+- Preserve concrete types and receiver permissions through generic calls, stored fields, and package boundaries.
 - Keep the RFC 041 markers, remove their parameter limit, and narrow `INCAN-T0106` to a marker on a nominal declaration.
 - Remove `Callable0`, `Callable1`, and `Callable2`, with diagnostics that name the replacement spelling and a migration of every use in the standard library, examples, and documentation.
 - Keep one identity for the callable capability across package boundaries, so a function, a closure, or an adopting model satisfies a bound declared in another package.
@@ -51,7 +54,7 @@ Both gaps close when the bound spells a function type. `(A, B, C) -> R` already 
 ## Non-Goals
 
 - Changing closure syntax, closure parameter inference, or what a closure may capture.
-- Adding keyword, default, or rest parameters to function types. `Callable` inherits function types as they are.
+- Defining a general runtime reflection system or permitting writable signature metadata.
 - Designing the `mut` parameter marker. #1790 owns it; `Callable` inherits it when it lands.
 - Allowing the `Fn[...]` markers on nominal declarations. `Callable[...]` is the spelling there.
 - Satisfying a `Callable` bound structurally. As RFC 068 already rules, a type that defines `__call__` without adopting `Callable` can be called, but only adoption satisfies a bound.
@@ -68,7 +71,7 @@ Both gaps close when the bound spells a function type. `(A, B, C) -> R` already 
 from std.traits.callable import Callable
 
 
-def render_row[Formatter with Callable[(str, int, float) -> str]](formatter: Formatter) -> str:
+def render_row[Formatter with Callable[(str, int, float) -> str]](mut formatter: Formatter) -> str:
     return formatter("widget", 3, 9.5)
 
 
@@ -84,14 +87,14 @@ def main() -> None:
 A named function and a closure both satisfy the bound. The closure's parameter types come from the bound, as they do today. Any number of parameters works, including none:
 
 ```incan
-def twice[Make with Callable[() -> int]](make: Make) -> int:
+def twice[Make with Callable[() -> int]](mut make: Make) -> int:
     return make() + make()
 ```
 
 The return type is part of the argument, so it can be generic:
 
 ```incan
-def map_all[U, Mapper with Callable[(int) -> U]](items: list[int], mapper: Mapper) -> list[U]:
+def map_all[U, Mapper with Callable[(int) -> U]](items: list[int], mut mapper: Mapper) -> list[U]:
     mut out: list[U] = []
     for item in items:
         out.append(mapper(item))
@@ -127,6 +130,82 @@ model Broken with Callable[(str, int, float) -> str]:
   expected: def __call__(self, _: str, _: int, _: float) -> str
 ```
 
+### Stateful objects stay objects
+
+```incan
+model Counter with Callable[() -> int]:
+    value: int
+
+    def __call__(mut self) -> int:
+        self.value += 1
+        return self.value
+
+    def current(self) -> int:
+        return self.value
+
+
+def advance[C with Callable[() -> int]](mut counter: C) -> int:
+    return counter()
+
+
+def main() -> None:
+    mut counter = Counter(value=0)
+    println(advance(counter))  # 1
+    println(counter.current())  # 1: the same Counter
+    println(counter())  # 2
+```
+
+Calling through the bound preserves the original object and its state. `C` is `Counter`, including any other traits it adopts; it does not become a function type. A combined bound such as `C with (Named, Callable[() -> int])` retains both capabilities. An explicit owner such as `Holder[Counter]` stores a `Counter`, with its fields and methods intact.
+
+The generic helpers here use `mut` because they permit stateful callbacks. A read-only receiver can also be called through mutable access. A read-only binding cannot invoke a callable that requires `mut self`, and a backend adapter must not make that operation legal.
+
+### Keyword arguments and optional parameters
+
+An unnamed signature describes positional calls:
+
+```incan
+Callable[(str, int) -> str]
+```
+
+It does not promise that either argument has a particular keyword name. Named parameters make that promise explicit:
+
+```incan
+Callable[(text: str, limit: int) -> str]
+```
+
+Both positional calls and `formatter(text="hello", limit=20)` are supported by that contract. To require a keyword and allow its omission:
+
+```incan
+Callable[(text: str, *, limit: int = ...) -> str]
+```
+
+Here `text` is required, `limit` is keyword-only and optional, and the implementing callable supplies the actual default. `...` records permission to omit an argument; it is not a default expression evaluated by the caller.
+
+The same signature vocabulary includes positional-only parameters and variadic positional or keyword parameters, using declaration syntax:
+
+```incan
+Callable[(text: str, /, *, limit: int = ...) -> str]
+Callable[(*values: int, **options: str) -> str]
+```
+
+The latter accepts additional positional integers and additional keyword string values. Types describe each variadic element, following the declaration rules. These are proposed function-type extensions, shared with declarations rather than implemented solely inside `Callable`.
+
+### Methods, receivers, and signature metadata
+
+For a method declared as `def format(self, text: str, *, limit: int = 80) -> str`, the bound value `formatter.format` has caller-facing signature `(text: str, *, limit: int = ...) -> str`. The object already supplies `self`.
+
+| Callable form | Receiver treatment |
+| --- | --- |
+| Bound instance method | Instance supplies `self`; absent from caller-facing parameters |
+| Bound class method | Class supplies `cls`; absent from caller-facing parameters |
+| Static method | No implicit receiver |
+| Callable object | Object supplies the receiver of `__call__` |
+| Unbound instance method, where supported | Caller must supply the receiver |
+
+A bound method declared with `mut self` retains its mutable receiver requirement and borrow lifetime. Removing a bound receiver from the parameter list does not remove those constraints. Receiver roles come from declaration and binding semantics, not simply from a parameter being named `self` or `cls`.
+
+`formatter.format.__signature__` exposes compiler-derived, read-only signature metadata. Conceptually it describes `text` and `limit`, their types and parameter kinds, whether each is required, the return type, and the separately recorded bound receiver contract. A callable object's `__signature__` describes calling that object, rather than its constructor. Metadata cannot be assigned to in order to change a signature or bypass receiver checks. The concrete metadata types and runtime availability policy remain to be specified below.
+
 ### Holding a callable in a model
 
 Because the return type is spelled, a nominal declaration can bound its own type parameter and store the value:
@@ -139,15 +218,15 @@ model Validator[Check with Callable[(str) -> bool]]:
     name: str
     check: Check
 
-    def run(self, value: str) -> str:
-        check = self.check
+    def run(mut self, value: str) -> str:
+        mut check = self.check
         if check(value):
             return f"{self.name}: ok"
         return f"{self.name}: rejected"
 
 
 def main() -> None:
-    not_empty = Validator(name="not-empty", check=(value) => len(value) > 0)
+    mut not_empty = Validator(name="not-empty", check=(value) => len(value) > 0)
     println(not_empty.run("incan"))
     println(not_empty.run(""))
 ```
@@ -194,8 +273,9 @@ The old names no longer resolve. Code that still uses one is refused with a diag
 
 - `std.traits.callable` must export exactly one callable trait, `Callable`, and the standard prelude must re-export it.
 - `Callable` must take exactly one type argument, and that argument must be a function type. The zero-parameter form is `() -> R`.
-- For `Callable[(P1, ..., Pn) -> R]`, the one required method is `__call__` with the signature `(self, p1: P1, ..., pn: Pn) -> R`: `n` parameters after the receiver, in order, with the argument's parameter types, and the argument's return type. Parameter names are not part of the contract.
-- A parameter marker a function type carries, such as the `mut` marker proposed in #1790, must carry over to the corresponding `__call__` parameter unchanged. `Callable[(mut Box, int) -> int]` requires `__call__(self, mut box: Box, value: int) -> int`.
+- The required method is `__call__`, with caller-facing parameters and result compatible with the function-type argument. Both `self` and `mut self` receivers must be supported; the receiver is recorded separately from explicit parameters.
+- Parameter names, kinds, defaults, variadic element types, and return types must use the same signature rules as function and method declarations. Named parameters promise keyword availability; unnamed entries promise positional access only. `/`, `*`, `*args`, and `**kwargs` must retain their declaration meanings. Optional parameters are written `name: T = ...`; a type contract must not evaluate or replace the implementation's default.
+- A parameter marker such as the `mut` marker proposed in #1790 must carry over unchanged. `Callable[(mut Box, int) -> int]` describes mutation permission for an explicit argument, independently of whether `__call__` has `self` or `mut self`.
 - The argument may mention any type in scope, including the type parameters of the declaration that owns the bound, and may itself contain function types.
 
 ### Where `Callable` may appear
@@ -209,7 +289,7 @@ The old names no longer resolve. Code that still uses one is refused with a diag
 
 A type `T` satisfies `Callable[(P1, ..., Pn) -> R]` when one of these holds:
 
-1. `T` is a function type, as for a named function or a closure, with exactly `n` parameters, and a value of `T` is assignable to a variable annotated `(P1, ..., Pn) -> R`.
+1. `T` is a function type, as for a named function or a closure, whose accepted calls cover the required signature, and a value of `T` is assignable to a variable annotated `(P1, ..., Pn) -> R`.
 2. `T` is a declaration that adopts `Callable[G]` with `G` compatible with the bound's argument under the same rule.
 3. `T` is a type parameter whose own bounds include a compatible `Callable`.
 
@@ -217,7 +297,9 @@ Any other type must be refused at the call, construction, or assignment that sup
 
 ### Calling a bounded value
 
-A value whose type is a `Callable`-bounded type parameter must be callable with call syntax. The call must be checked as a call to a value of the argument's function type, and its result has the argument's return type.
+A value whose type is a `Callable`-bounded type parameter must be callable with call syntax. Argument binding and result typing must use the shared signature rules. Every call allowed by the required signature must be accepted by the supplied callable: keyword names and kinds must be compatible, promised optional parameters must be omittable, and an implementation must not introduce additional required arguments. A callable may provide additional defaults or accept more calls without requiring callers to use them. The same compatibility relation must apply to bare function types and `Callable` arguments.
+
+Receiver access and invocation multiplicity must also be checked. `mut` is required to invoke a mutating receiver. A read-only generic parameter must have a proven read-only call capability; a signature-only bound must not be treated as such proof. If a consuming callable is supplied, ownership analysis must prove each invocation legal; repeated invocation cannot be assumed merely from the parameter and result types. These requirements must survive generic forwarding and library metadata. A function body requiring repeatable or read-only invocation must have that requirement checked against supplied callables before lowering, including across package boundaries.
 
 ### Adoption
 
@@ -227,7 +309,9 @@ A value whose type is a `Callable`-bounded type parameter must be callable with 
 
 ### The `Fn`, `FnMut`, and `FnOnce` markers
 
-- On a type parameter of a function or method, `F with Fn[P1, ..., Pn]` must mean `F with Callable[(P1, ..., Pn) -> R]`, where `R` is a type the checker determines from the argument at each call. `FnMut` and `FnOnce` follow the same rule. A bare marker names zero parameters. There must be no limit on `n`.
+- Each marker carries the corresponding `Callable[(P1, ..., Pn) -> R]` parameter/result contract, with `R` determined from the supplied callable, plus a distinct receiver guarantee. A bare marker names zero parameters; there must be no arity limit.
+- `Fn` permits repeated calls through read-only access. `FnMut` permits repeated calls through mutable access and requires source permission to mutate. `FnOnce` permits consuming invocation; generic code with only that guarantee must not assume a second call is legal.
+- These are source checking guarantees, not merely backend choices. Read-only repeatable callables can satisfy mutable or consuming invocation requirements; mutable repeatable callables can satisfy consuming requirements. The reverse must not be assumed. Forwarding through a signature-only bound must not erase the applicable restrictions.
 - On a type parameter of any other declaration, a marker must be refused with `INCAN-T0106`. The message must name the replacement `Callable[(P1, ..., Pn) -> R]` with the written parameter types filled in.
 
 ### Removed names
@@ -242,13 +326,19 @@ A value whose type is a `Callable`-bounded type parameter must be callable with 
 
 ### Library metadata
 
-A library's checked metadata must record a `Callable` bound in its source spelling, `Callable[(A, B) -> R]`, so a consumer checks its arguments against the same contract the library was checked against.
+A library's checked metadata must preserve the complete signature, receiver requirements, invocation guarantees, and generic invocation requirements so consumers check the same contract. Original nominal type identity and other trait bounds must survive export, import, and forwarding.
+
+### `__signature__`
+
+Functions, methods, closures, and callable objects must expose a compiler-derived, read-only signature description. This description must use the shared signature model and distinguish caller-facing parameters from receiver binding. It must represent parameter order, available keyword names, kinds, types, required versus optional status, variadic element types, return type, and applicable receiver access and consumption requirements. Generic signatures must retain their type parameters and reflect substitutions when specialized.
+
+The metadata must not be an independently editable source of truth. Reading it must not invoke the callable, evaluate defaults, consume the receiver, or acquire permission to mutate it. Metadata need not expose actual default values: omission support is the contract, and default evaluation remains owned by the declaration. The exact runtime data types and availability policy are unresolved; this RFC does not yet promise a runtime object attached to every compiled function.
 
 ## Design details
 
 ### Syntax
 
-No new syntax is needed for bounds and adoption. `Callable[(A, B) -> R]` is a trait name applied to one type argument, and `(A, B) -> R` already parses as a type in that position.
+The outer bound and adoption syntax is unchanged. Function-type parameters gain the richer declaration-style forms described above. `Callable[(A, B) -> R]` is a trait name applied to one type argument, and `(A, B) -> R` already parses as a type in that position.
 
 ### Why a trait around a function type
 
@@ -272,13 +362,13 @@ A source trait declares its methods with fixed parameter lists. `Callable`'s one
 Closed RFCs remain historical records and are not edited. This RFC replaces the following promises for code written against it:
 
 - **RFC 068:** the "Callable object" row of its protocol table, which names "fixed-arity callable traits such as `Callable0[R]`, `Callable1[A, R]`, and `Callable2[A, B, R]`" as the nominal capability, and the Design Decisions bullet that lists "fixed-arity callable traits" among the capabilities generic code can name. The capability is `Callable[(A, B) -> R]`, one trait for every arity. RFC 068's `__call__` hook, its structural resolution of call syntax, its rule that bounds require adoption, and its rule that a hook must type-check against the trait it claims all remain, the last one now against the derived signature.
-- **RFC 041:** its recorded lowering of the markers, under which each marker becomes the fixed-arity callable trait of its arity, a marker names at most two parameters, and all three markers lower to the same bound. The markers now mean `Callable[(params) -> R]` without a limit, and how `FnMut` and `FnOnce` differ in the generated code follows the backend decision below. The Incan-facing marker names, their use in `with` clauses, and the refusal of a marker on a nominal declaration's type parameter remain.
+- **RFC 041:** its recorded lowering of the markers, under which each marker becomes the fixed-arity callable trait of its arity, a marker names at most two parameters, and all three markers lower to the same bound. The markers now carry a shared signature without an arity limit while preserving their distinct read-only, mutable, and consuming invocation guarantees in source checking. The Incan-facing marker names, their use in `with` clauses, and the refusal of a marker on a nominal declaration's type parameter remain.
 - **RFC 115:** the statement that callback parameters "use the canonical fixed-arity callable traits" with "explicit `Callable1` / `Callable2` adopters", the `Callable1[...]` and `Callable2[...]` spellings in its combinator signatures, the paragraph that relies on RFC 068's fixed-arity traits and on "the backend's callable-value bridge", and the non-normative note that a backend may bridge function and closure values to the canonical fixed-arity traits. The combinator set, their semantics, their `Clone` requirements, and the promise that callbacks accept functions, capturing closures, compatible enum variant constructors, and adopting models, without narrowing them to function pointers, remain.
 - **RFC 035**, if the shorthand is retired (Unresolved questions): the `Callable[Params, R]` type-position shorthand and its desugaring table. First-class function values and the arrow function type, which RFC 035 already calls canonical, remain.
 
 ### Compatibility and migration
 
-This is a breaking change on the 0.6 line. The removed names get no aliases and no deprecation period; the diagnostics carry the exact replacement, so each use is a mechanical rewrite:
+This is a breaking change on the 0.6 line. The removed names get no aliases and no deprecation period; the diagnostics carry the exact replacement, so the trait-name migration is mechanical. Call sites and generic helpers must also satisfy the receiver permissions and invocation guarantees specified above:
 
 - `Callable0[R]` to `Callable[() -> R]`, `Callable1[A, R]` to `Callable[(A) -> R]`, `Callable2[A, B, R]` to `Callable[(A, B) -> R]`, and `from std.traits.callable import Callable1, Callable2` to `from std.traits.callable import Callable`.
 - In the standard library: `std.traits.callable` itself, the standard and trait preludes, the feature inventory in `std.features`, and the `FallibleIterator` combinators and their state models in `std.derives.collection`.
@@ -301,62 +391,33 @@ Published library artifacts whose metadata names the old traits must be rebuilt 
 - Every use of `Callable0`, `Callable1`, and `Callable2` must be rewritten, and, if the shorthand is retired, every use of `Callable[A, R]` in a type position as well.
 - `Callable` is a compiler-known trait. `std.traits.callable` documents it but cannot state its requirement in source, which makes it a special case beside the ordinary source traits.
 - Until the shorthand question is settled, `Callable[...]` means a function type in a type position and a trait in a bound, which is exactly the kind of position-dependent meaning the language otherwise avoids.
-- Under the recommended backend, a model adopter that flows into a `Callable`-bounded parameter is passed as its call, so code that needs the model's own type through that parameter is refused (Unresolved question 2).
+- Rich signatures require consistent argument binding, compatibility, and metadata across all callable forms. Backend adapters must preserve nominal identity and receiver effects, including through stored and nested values.
 
 ## Implementation architecture
 
-This section is non-normative. It records what the generated code must preserve and the options for preserving it.
+This section is non-normative. The shared signature model is the source of truth for declarations, function types, callable checking, diagnostics, and `__signature__`. Binding a method derives its caller-facing view while retaining receiver ownership and access requirements. Separate implementations of keyword binding or signature compatibility for `Callable` would risk divergent language behavior.
 
-### Constraints
+The backend must preserve the original source type of an adopting object. Converting an adopter to a closure and substituting that closure as the source generic type is rejected: it loses fields, additional trait bounds, and explicit types such as `Holder[Counter]`. Implementation-only adapters are permitted when they preserve all source-visible behavior, identity, state, and ownership. Nested values in lists or options do not justify a source-level refusal or type substitution.
 
-- The standard library is compiled once, before and independently of any program, into a prebuilt SDK crate. Every executable, test batch, and library package links that crate and reaches the standard library through a re-export of it; none may compile a second copy. The current `Callable0`, `Callable1`, and `Callable2` have one identity only because they live in that crate.
-- Library packages are compiled as crates of their own, so a trait generated inside a package is a different trait from the same-named trait generated inside another.
-- On a stable toolchain, the host language has one family of callable bounds that covers every arity: its own `Fn`, `FnMut`, and `FnOnce` traits, written in the parenthesized form. A crate's own trait covers closures only through one blanket implementation per arity, and that implementation must be written in the trait's own crate, because the orphan rule refuses a blanket implementation of a foreign trait over an uncovered type parameter. A model, by contrast, can implement a foreign trait anywhere, since the model is local to its own package.
+One possible representation is a canonical SDK callable capability over an argument tuple, with adapters for function and closure values. It must support receiver access and consumption separately and must not acquire an observable arity limit through tuple trait implementations. Keyword binding and omitted arguments must retain the original declaration's behavior. Rust function traits may be used where suitable, but do not replace the source contract.
 
-### Option B: one generated trait per arity, per package (not viable)
-
-Generating `Callable3` inside each package that uses three parameters has no limit and lets closures cross packages, because each package's bridge covers every closure. A model does not cross: a model adopting `Callable[(A, B, C) -> R]` implements its own package's trait, a bound declared in another package names that package's trait, and no crate can add the missing implementation because both the trait and the model are foreign to it. This breaks the one-identity requirement.
-
-### Option C: a fixed family in the SDK (a limit)
-
-The SDK crate declares `Callable0` through some `CallableK` with a bridge for each. One identity, but `K` is a limit fixed when the SDK is built, which the no-limit requirement rules out.
-
-### Option A: one tuple-argument trait plus closure adapters
-
-The SDK crate declares one trait over an argument tuple, `Callable<(A, B, C), R>`, which adopting models implement directly. Functions and closures do not implement it; lowering wraps each one in a small package-local adapter wherever it flows into a `Callable`-bounded parameter, and calls go through the trait method with the arguments packed into a tuple. One identity and no limit, and a model adopter keeps its own type. The cost falls on the common case: closures are what nearly every higher-order call passes, including every standard-library combinator call, so wrapping touches almost every such call site, including values nested inside collections and options; adopter implementations change shape to take a tuple; and bounds over parameters the compiler passes without copying need higher-ranked forms spelled out. Several changes to the frozen emitter follow.
-
-### Option D: the host's function traits, with model adopters converted (recommended)
-
-`F with Callable[(A, B) -> R]` lowers to the host's own `F: Fn(A, B) -> R`. Functions and closures satisfy it natively at every arity, and it has one identity in every crate. A model adopter cannot implement the host's function traits on a stable toolchain, so lowering converts it where it flows into a `Callable`-bounded parameter: the adopter is passed as a closure that calls its `__call__`. Adoption itself generates no trait implementation; `__call__` remains an ordinary method that call syntax already reaches. The markers map to their namesakes, `Fn` to `Fn`, `FnMut` to `FnMut`, and `FnOnce` to `FnOnce`, which closes the gap recorded in RFC 041 where all three lowered to the same bound and a closure that is only `FnMut` or `FnOnce` was refused.
-
-Its costs, stated plainly:
-
-- The emitter prints trait bounds only in the angle-bracket form, which the host refuses for its function traits. D needs one recorded change to the frozen emitter: a bound printer for the parenthesized form. Removing the fixed-arity bridge the emitter prints today is a deletion in the same area.
-- A model adopter passed to a `Callable`-bounded parameter is passed as its call, so the type parameter is instantiated with the function type, not the model. Code that relies on the model's own type through that parameter, such as an explicit `Validator[TableRow]` or reading `validator.check.separator`, cannot be supported and must be refused (Unresolved question 2).
-- The conversion happens where lowering can see the flow: call arguments, constructor fields, assignments, and returns. A model adopter nested inside a collection or option that flows into `list[F]` or `Option[F]` needs an element-wise conversion or a refusal.
-- A value bounded by `FnOnce[...]` may be called once. The checker must refuse a second call on any path, or the host compiler reports it in generated code. A value bounded by `FnMut[...]` is called through a binding lowering must declare as changeable.
-- A trait that adopts `Callable` as a supertrait cannot pass it on as a host function-trait supertrait, because its model adopters cannot implement that. Its lowered form carries the derived `__call__` as an ordinary trait method instead, and generic code bounded by that trait calls through it.
-
-D is recommended because the cost lands on the rare case, a model adopter, instead of the common one, a function or closure, and because the host's parenthesized bounds already handle parameters the compiler passes without copying at every arity. Every option requires rebuilding published artifacts whose metadata names the old traits.
+Per-package traits cannot stand in for one canonical capability, and a fixed family of SDK arity traits cannot satisfy the no-limit rule. The detailed lowering is implementation work constrained by these contracts, including combined traits, supertraits, borrowing, and cross-package behavior; it is not permission to narrow the source language.
 
 ## Layers affected
 
-- **Parser / AST**: none for bounds and adoption. If the shorthand is retired, the type-position rewrite of `Callable[Params, R]` is removed, and a type-position `Callable[...]` with two arguments must be refused with the arrow spelling.
-- **Typechecker / Symbol resolution**: `Callable` is a compiler-known trait whose `__call__` requirement is derived from its function-type argument; bound satisfaction, adoption validation, the single-adoption rule, and calls through bounded values follow that requirement; the markers mean `Callable[(params) -> R]` without a count limit; `INCAN-T0106` narrows to nominal owners; the new stable code and the removed-name diagnostic are added; under Option D, a model adopter supplied to a `Callable`-bounded parameter instantiates it with the function type, and a second call of an `FnOnce[...]` value is refused.
-- **IR Lowering**: `Callable` bounds and markers lower to the chosen backend representation with no arity limit; under Option D, model adopters are converted at the flow sites listed above, and `FnMut`-bounded values get a changeable binding.
-- **Emission**: under Option D, one recorded change to the frozen emitter for parenthesized function-trait bounds, and removal of the fixed-arity bridge.
-- **Stdlib**: `std.traits.callable` declares `Callable` and carries its documentation, with a three-argument example and a model holding a callable; the preludes re-export it; the `FallibleIterator` combinators and the feature inventory migrate. If the shorthand is retired, `std.result` and `std.regex` signatures migrate to arrow types.
-- **Library metadata**: `Callable` bounds are recorded in their source spelling.
-- **Formatter**: prints `Callable[(A, B) -> R]` bounds and adoption lists without rewriting the argument.
-- **LSP / Tooling**: hover shows `Callable[(A, B) -> R]`; completion offers `Callable` from `std.traits.callable` and the prelude; `incan explain` covers the new code and the narrowed `INCAN-T0106`.
+- **Parser / AST**: function-type syntax for named parameters, parameter kinds, omission markers, and variadics, sharing the declaration signature model.
+- **Typechecker / Symbol resolution**: signature compatibility, nominal adoption, receiver binding, mutable invocation, consuming calls, generic forwarding, and signature metadata access.
+- **IR Lowering / Emission**: preserve concrete types, receiver effects, default dispatch, and canonical callable identity without an arity limit.
+- **Stdlib / Library metadata**: export `Callable`, migrate fixed-arity names, describe signatures and receiver requirements, and preserve checked contracts across packages.
+- **Formatter**: print richer function types consistently with declaration parameters.
+- **LSP / Tooling**: present concrete callable types, signatures, keyword completions, receiver requirements, and actionable mismatch diagnostics.
 
 ## Inspectability and tooling surface
 
-- **Artifact or metadata:** a library's checked metadata records each `Callable` bound in source spelling; generated reference documentation for `std.traits.callable` comes from its declaration.
-- **Inspection command:** `incan check` reports every refusal named above; `incan explain` renders the new code and `INCAN-T0106`; LSP hover shows the bound and the derived `__call__` signature.
-- **Diagnostics:** the new stable code for a malformed `Callable` argument, the removed-name diagnostic with its replacement, the adoption mismatch with the derived signature, and `INCAN-T0106` for a marker on a nominal owner.
-- **Provenance:** each diagnostic is anchored at the bound, adoption entry, or `__call__` declaration that caused it; a bound violation names the call or construction site that supplied the type.
-- **Not implicit:** no arity limit exists anywhere, in the language or the generated code; a marker's hidden return type is visible in hover as the `R` of its `Callable` meaning; under Option D, the conversion of a model adopter is a checked step whose result, the function type, is what hover shows for the instantiated parameter.
+- **Artifact or metadata:** checked library metadata preserves signatures, receiver requirements, and original nominal identities; `__signature__` presents the same information under the availability policy still to be specified.
+- **Inspection command:** `incan check` reports contract violations before backend compilation; `incan explain` describes callable diagnostics; hover shows the original type and callable signature.
+- **Diagnostics:** malformed signature arguments, incompatible parameter names or kinds, missing defaults, adoption mismatch, missing mutable access, and illegal repeated consuming calls must identify the relevant source operation.
+- **Provenance:** mismatch messages name the required contract and supplied declaration. Binding a receiver must not hide its access requirements or manufacture a closure type in source-facing output.
 
 ## Acceptance criteria
 
@@ -367,7 +428,11 @@ This RFC is done when:
 - each nominal declaration kind (model, class, enum, trait, newtype, type alias) accepts a `Callable`-bounded type parameter;
 - `Fn[...]`, `FnMut[...]`, and `FnOnce[...]` with three or more parameters are accepted on functions and methods, and a marker on a nominal owner is refused with `INCAN-T0106` pointing at `Callable[(...) -> R]`;
 - every use of `Callable0`, `Callable1`, and `Callable2` is refused with its replacement, and none remains in the standard library, examples, tests, or documentation;
-- behavior fixtures run: a three-argument callback passed as a named function, a closure, and an adopting model; a model holding a `Callable[(int) -> str]` field constructed with a closure; a zero-argument callable; a callable with thirteen parameters, past twelve, where the host's standard library stops implementing its traits for tuples; an adopting model from one package passed to a `Callable`-bounded function declared in another; and, under Option D, each marker lowered to its namesake, with a fixture for a closure that only `FnMut[...]` admits if Incan source can write one, or a checker test that pins why it cannot;
+- behavior fixtures run: a three-argument callback passed as a named function, a closure, and an adopting model; a model holding a `Callable[(int) -> str]` field constructed with a closure; a zero-argument callable; a callable with thirteen parameters, past twelve, where the host's standard library stops implementing its traits for tuples; an adopting model from one package passed to a `Callable`-bounded function declared in another; each marker preserving its invocation guarantees; a mutable `Counter` retaining state through a generic helper; and rejection of mutating invocation through read-only access;
+- named and keyword-only calls, omitted defaults, positional-only parameters, and variadics have matching behavior through direct calls, function types, methods, closures, and `Callable` bounds, with negative fixtures for incompatible contracts;
+- bound instance and class methods exclude the bound receiver from caller-facing parameters while preserving receiver restrictions; static and supported unbound methods expose the appropriate parameter list;
+- explicit nominal generic arguments, combined trait bounds, supertraits, and callable objects nested in options or lists retain their types and capabilities across packages;
+- signature metadata reflects parameter kinds, omission support, return types, generic substitutions, and receiver binding without invoking the callable or evaluating defaults, and attempts to overwrite it are refused under the finalized metadata API;
 - the reference pages for callable objects, traits, and collection protocols, the Rust interop how-to, the CLI reference, and the release notes describe `Callable[(A, B) -> R]` and the removal;
 - if the shorthand is retired, a type-position `Callable[A, R]` is refused with its arrow spelling and no use remains.
 
@@ -379,17 +444,17 @@ This RFC is done when:
 - **Adoption is checked.** `__call__` is derived from the argument and checked at the declaration.
 - **A trait around a function type, not a bare function type.** A function type is a value type; `with` names a capability, and adoption reads right only with a capability.
 - **The old names are removed.** `Callable0`, `Callable1`, and `Callable2` get no aliases; diagnostics carry the replacement, and every use in the standard library and documentation is migrated.
-- **The markers keep their spelling.** `Fn`, `FnMut`, and `FnOnce` lower to `Callable[(params) -> R]` with the return from the call, have no parameter limit, and stay refused on nominal owners with `INCAN-T0106` pointing at `Callable[...]`.
+- **The markers keep their spelling and guarantees.** They share signature types but retain read-only, mutable, and consuming invocation distinctions. There is no parameter limit; nominal owners use `Callable[...]`.
+- **Identity and receivers.** Callable objects remain their original types. `mut self` is supported and requires mutable access; bound receivers remain part of the access contract.
+- **Shared signatures and metadata.** Named, optional, keyword-only, and variadic parameters use declaration rules. `__signature__` is compiler-derived and read-only.
 - **Inherited features.** `Callable` expresses whatever function types express, including the `mut` parameter marker of #1790 once it lands, with no rule of its own.
 - **Compiler-known.** `std.traits.callable` declares and documents `Callable`; the checker supplies its requirement.
 - **One identity.** A callable value satisfies the same bound in every package; a backend that breaks this is not acceptable.
 
 ## Unresolved questions
 
-- **Which backend representation carries `Callable`?** The options are under "Implementation architecture": B breaks cross-package adoption, C is a limit, A wraps every closure, and D wraps model adopters. Recommendation: Option D, lowering to the host's own function traits, with the marker mutability gap closed as a side effect, one recorded emitter change, and the costs listed there accepted.
-- **Under Option D, what type argument does a model adopter produce?** When `TableRow` flows into `Check with Callable[(str) -> bool]`, the generated code passes it as its call. Recommendation: the checker instantiates `Check` with the function type `(str) -> bool`, not `TableRow`; an explicit type argument naming an adopter, such as `Validator[TableRow]`, is refused with a diagnostic that names the function type; and a model adopter nested in a collection or option supplied to `list[Check]` or `Option[Check]` is refused with a hint to convert the elements with a closure.
 - **Should the RFC 035 `Callable[Params, R]` type-position shorthand be retired?** With `Callable` a trait, RFC 042 already gives `Callable[(A) -> R]` a meaning in annotation position, and the shorthand gives `Callable[A, R]` another, so the same name would mean two things depending on position and argument count. Recommendation: retire it in the same release, with no deprecation period, so `(A) -> R` is the only spelling of a function type; refuse a type-position `Callable[A, R]` with a diagnostic that shows the arrow form; migrate its uses in `std.result` (six signatures), `std.regex` (three), the feature inventory, two examples, test programs, about ten documentation pages, and the open draft RFCs that use it.
-- **May an adopter's `__call__` take `mut self`?** A stateful callable object changes itself on each call, which a plain function value does not. Recommendation: no, in this RFC. `Callable`'s derived receiver is `self`, a `mut self` `__call__` is refused as a mismatch, and stateful callables are left to a follow-up that decides how they relate to the `FnMut` marker.
+- **What concrete API and availability policy does `__signature__` expose?** The shared model, read-only behavior, and receiver treatment are settled. The metadata types, how programs query them, and whether runtime metadata is always available or explicitly retained still need a concrete contract before this RFC advances. This is distinct from compiler and checked-library metadata, which must always retain the information needed for checking.
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.
      An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
