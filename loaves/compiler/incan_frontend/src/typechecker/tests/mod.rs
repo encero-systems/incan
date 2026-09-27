@@ -64,6 +64,7 @@ mod capability_requirements;
 mod checked_facts_and_registries;
 mod collections_strings_and_bytes;
 mod error_display;
+mod expected_literal_types;
 mod extern_and_c_bindings;
 mod fields_and_members;
 mod for_item_taking;

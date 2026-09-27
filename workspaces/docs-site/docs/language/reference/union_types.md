@@ -1,6 +1,6 @@
 # Union types (reference)
 
-A union type is an anonymous, closed set of member types; a value of the union is a value of one member. This page specifies union spellings, assignability, narrowing, and matching.
+A union type is an anonymous, closed set of member types; a value of the union is a value of one member. This page specifies union spellings, assignability, collection literals at a union destination, narrowing, and matching.
 
 ## Spellings
 
@@ -14,8 +14,8 @@ A union type is an anonymous, closed set of member types; a value of the union i
 
 ## Assignability
 
-- A value of a member type is assignable to the union, as a return value, an assigned value or an argument.
-- A union is assignable to another union when each of its members is a member of the other. A union with a member the target lacks is refused (`INCAN-T0001`).
+- A value of a member type, or of a type assignable to a member type, is assignable to the union, as a return value, an assigned value or an argument.
+- A union is assignable to another union when each of its members is assignable to a member of the other. A union with a member assignable to no member of the target is refused (`INCAN-T0001`).
 - A union in the signature of another package's function or method is the same type as a union with the same members in the calling package.
 
 ```incan
@@ -37,13 +37,30 @@ def show(value: int | str) -> str:
         str(text) => return f"text {text}"
 
 def widen(value: int | str) -> int | str | bool:
-    return value                                 # accepted: every member of int | str is in the target
+    return value                                 # accepted
 
 def narrow(value: int | str | bool) -> int | str:
     return value                                 # refused: bool is not a member of int | str
 
 def main() -> None:
-    println(show(Box(value=3).answer()))         # accepted: the package's int | str is this int | str
+    println(show(Box(value=3).answer()))         # accepted
+```
+
+## Collection literals
+
+- A list, dict or tuple literal at a union or `Option` destination has the type of the destination's one member of the literal's kind (for a tuple literal, a tuple of the literal's length) when each other member is a scalar, a tuple, a `list`, `dict`, `set`, `Result` or `Generator`, or a model, class or enum. An empty literal and a literal of `None` elements have that member's type.
+- A literal at a destination with two or more members of its kind has the type its elements give. A literal whose elements leave part of its type open (`[]`, `[None]`, `{}`, `(None, 1)`) is refused there (`INCAN-T0001`).
+- A literal at a destination with a type parameter, newtype, trait or frozen collection member has the type its elements give.
+
+```incan
+def main() -> None:
+    mut values: list[int] | str = "none"
+    values = []                                  # accepted
+    mut names: Option[list[Option[str]]] = None
+    names = [None]                               # accepted
+    mut either: list[int] | list[str] = [1]
+    either = ["a"]                               # accepted
+    either = []                                  # refused: list[int] or list[str]
 ```
 
 ## Narrowing
@@ -51,20 +68,21 @@ def main() -> None:
 - A union value has no member-specific methods or operators. Calling one, or applying an operator, is refused (`INCAN-T0001`).
 - In an `if isinstance(value, T):` branch, `value` has type `T`. In the `else` branch and in each following `elif` branch, it has the members no earlier branch tested.
 - An `Option` union narrows through `is None` and `is not None` as well.
+- Narrowing ends with the conditional statement: after it, `value` has the union type again.
 
 ```incan
 def size(value: int | str) -> int:
     if isinstance(value, str):
-        return len(value)                        # accepted: value is str here
+        return len(value)                        # accepted
     else:
-        return value + 1                         # accepted: value is int here
+        return value + 1                         # accepted
 
 def shout(value: int | str) -> str:
     return value.upper()                         # refused: upper is not a method of int | str
 
 def label(value: str | None) -> str:
     if value is not None:
-        return value.upper()                     # accepted: value is str here
+        return value.upper()                     # accepted
     return "missing"
 ```
 

@@ -1120,6 +1120,7 @@ impl AstLowering {
                 if let Some(annotation) = &type_annotation {
                     Self::retain_union_owners_at(&mut lowered_value, annotation);
                 }
+                Self::give_literal_its_annotated_type_parameters(&mut lowered_value, type_annotation.as_ref());
                 // A new binding read straight from a module static aliases the static's storage, so reads and
                 // mutations through the local stay live. The alias is the static's storage binding, not a value of
                 // the annotated type, so a checked annotation that names the static's own type is not spelled on

@@ -2459,6 +2459,36 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs": {
+      "disposition": "retire",
+      "notes": "asserts the generated Rust text of literals written to typed destinations (#1831, #1832, #1847); retires with the Rust-source backend.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "annotated_literal_in_a_generic_body_types_its_none_issue1847": {
+          "notes": "Asserts a `None` element of an annotated tuple or list literal in a generic body is `None::<T>`, never `None::<()>`; the fixture builds and matches such a tuple.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/annotated_tuple_literal_types_its_elements.incn"
+        },
+        "annotated_tuple_literal_types_its_elements_issue1847": {
+          "notes": "Asserts the tuple literal's `None` is `None::<String>`, its `Ok(1)` is `Ok::<i64, i64>(1)` and its integer in a float slot is `1.0`; the fixture prints each element.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/annotated_tuple_literal_types_its_elements.incn"
+        },
+        "chained_integer_literal_is_written_in_each_targets_type_issue1831": {
+          "notes": "Asserts `n = f = 1` and `f = n = 2` over an `int` and a `float` binding write the integer literal to `n` and the float literal to `f`; the fixture prints each target after such chains.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_integer_literal_takes_each_target_type.incn"
+        },
+        "integer_literal_assigned_to_float_binding_is_a_float_literal_issue1831": {
+          "notes": "Asserts `f = 1` over a `float` binding is written `f = 1.0`, and a negated literal as a negated float; the fixture prints the reassigned floats.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/integer_literal_assigned_to_float_binding.incn"
+        },
+        "list_literal_assigned_to_option_or_union_binding_is_wrapped_issue1832": {
+          "notes": "Asserts `a = []` and `b = [None]` over `Option[list[...]]` bindings are wrapped in `Some` and a union binding's `[]` in its list variant; the fixture prints the wrapped values.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/empty_list_assigned_to_optional_binding_is_wrapped.incn"
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/tests/generic_caller_bounds.rs": {
       "disposition": "retire",
       "notes": "bound inference of the Rust-source backend over lowered programs: the bounds a generic caller receives from the source methods it calls (#1779, #1280). Retires with the backend under #654; each test is twinned by a program that runs only when the caller carries the bound.",
@@ -4951,6 +4981,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/expected_literal_types.rs": {
+      "disposition": "keep",
+      "notes": "typechecker facts for literals written to typed destinations (#1831, #1832, #1847); no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/extern_and_c_bindings.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route.",
@@ -5934,6 +5972,40 @@
         "self_in_an_error_trait_default_displays_per_adopter_issue1778": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/error_adopter_displays_its_message.incn",
           "notes": "Asserts the recorded shape on the legacy IR (`{self}` in an `Error` subtrait's default displays `self.message()` in an adopter without `__str__` and itself in one with `__str__`); retires with `incan_ir`. The behavior is carried by the named fixture (#1778)."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/expected_literal_types.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering of literals written to typed destinations (#1831, #1832, #1847); retires with `incan_ir`. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "chained_integer_literal_elements_take_each_targets_type_issue1831": {
+          "notes": "Asserts the legacy IR retypes a chained value's integer literals inside list and dict literals, under parentheses, and for a name the chain declares; the fixture prints list, dict and declared targets.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_integer_literal_takes_each_target_type.incn"
+        },
+        "chained_integer_literal_takes_each_targets_type_issue1831": {
+          "notes": "Asserts the legacy IR writes each target's copy of a chained integer literal, or its negation, in that target's type over `int`, `float` and `f32` targets in either order; the fixture prints each target.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/chained_integer_literal_takes_each_target_type.incn"
+        },
+        "float_typed_integer_literal_lowers_as_a_float_literal_issue1831": {
+          "notes": "Asserts the legacy IR writes an integer literal in a float slot as a float literal, in a declaration, a reassignment, a negation and a tuple element; the fixture prints the stored floats.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/integer_literal_assigned_to_float_binding.incn"
+        },
+        "list_literal_keeps_its_option_binding_type_issue1832": {
+          "notes": "Asserts the legacy IR types `a = []` and `b = [None]` by the `Option[list[...]]` binding's list type; the fixture prints the wrapped values.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/empty_list_assigned_to_optional_binding_is_wrapped.incn"
+        },
+        "literal_in_a_generic_body_takes_its_annotated_type_issue1847": {
+          "notes": "Asserts the legacy IR gives an annotated tuple or list literal in a generic body its annotation's type; the fixture builds and matches such a tuple.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/annotated_tuple_literal_types_its_elements.incn"
+        },
+        "tuple_literal_keeps_its_annotated_element_types_issue1847": {
+          "notes": "Asserts the legacy IR types a tuple literal, and a nested one, by its annotation's element types; the fixture prints each element.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/annotated_tuple_literal_types_its_elements.incn"
         }
       },
       "twin": ""

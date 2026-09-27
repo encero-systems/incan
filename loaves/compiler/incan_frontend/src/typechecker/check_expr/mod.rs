@@ -374,6 +374,7 @@ impl TypeChecker {
     /// This is intentionally narrow: only expression forms that benefit from contextual typing without broad inference
     /// changes should use the hint. Calls record their `mut` arguments as [`Self::check_expr`] does.
     pub fn check_expr_with_expected(&mut self, expr: &Spanned<Expr>, expected: Option<&ResolvedType>) -> ResolvedType {
+        let errors_before = self.errors.len();
         self.refuse_mut_params_held_in(expr);
         let ty = match (&expr.node, expected) {
             (_, Some(ResolvedType::TypeVar(_))) => return self.check_expr(expr),
@@ -445,6 +446,7 @@ impl TypeChecker {
                 ty
             }
             (Expr::Tuple(items), Some(ResolvedType::Unit)) if items.is_empty() => ResolvedType::Unit,
+            (Expr::Tuple(items), Some(expected_ty)) => self.check_tuple_with_expected(items, expected_ty),
             (Expr::Closure(params, body), Some(ResolvedType::Function(expected_params, expected_ret))) => {
                 self.check_closure_with_expected(params, body, expected_params, expected_ret, expr.span)
             }
@@ -455,6 +457,10 @@ impl TypeChecker {
             _ => return self.check_expr(expr),
         };
 
+        // A literal whose elements already failed to check is not refused a second time for its open type.
+        if matches!(expr.node, Expr::List(_) | Expr::Dict(_) | Expr::Tuple(_)) && self.errors.len() == errors_before {
+            self.refuse_collection_literal_without_one_member(&ty, expected, expr.span);
+        }
         self.record_expr_type(expr.span, ty.clone());
         ty
     }

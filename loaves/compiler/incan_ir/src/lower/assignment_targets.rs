@@ -128,7 +128,8 @@ impl AstLowering {
     /// own `None`. Every evaluation of such a value gives an equal value and does nothing else; the checker records the
     /// fact only for such a value, so a call to a user function spelled `list` or `set` never comes here and is
     /// evaluated once. The checker checked the value once per target, and records one type per source span, so each
-    /// evaluation takes its own target's type here.
+    /// evaluation takes its own target's type here, down to its integer literals: `n = f = 1` over an `int` and a
+    /// `float` writes `1` to `n` and `1.0` to `f` (see [`Self::retype_chained_integer_literals`]).
     fn lower_chained_literal(
         &mut self,
         chain: &ast::ChainedAssignmentStmt,
@@ -142,7 +143,12 @@ impl AstLowering {
                 let target_ty = self.lookup_var(name);
                 if target_ty != IrType::Unknown {
                     Self::retype_literal(&mut value, &target_ty);
+                    Self::retype_chained_integer_literals(&mut value, &chain.value.node, &target_ty);
                 }
+            } else {
+                // A name the chain declares takes the value checked without a destination, where an integer literal
+                // is an `int`.
+                Self::retype_chained_integer_literals(&mut value, &chain.value.node, &IrType::Int);
             }
             stmts.push(match place {
                 Some(target) => IrStmt::new(IrStmtKind::Assign { target, value }),

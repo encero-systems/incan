@@ -4625,6 +4625,7 @@ mod tests {
     mod dependency_call_arguments;
     mod derive_vocabulary_imports;
     mod error_message_display;
+    mod expected_literal_types;
     mod for_item_taking;
     mod import_paths;
     mod imported_trait_adoption_scope;

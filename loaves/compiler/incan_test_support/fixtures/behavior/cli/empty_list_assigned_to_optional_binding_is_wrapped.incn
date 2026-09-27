@@ -1,0 +1,35 @@
+# behavior: an empty or None-only list literal assigned to an existing Option or union binding becomes that binding's list value
+# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::list_literal_assigned_to_option_or_union_binding_is_wrapped_issue1832
+# retires: loaves/compiler/incan_ir/src/lower/tests/expected_literal_types.rs::list_literal_keeps_its_option_binding_type_issue1832
+# expect-stdout:
+#   1
+#   some 0
+#   some 1
+#   list 0
+#   0
+
+def main() -> None:
+    mut a: Option[list[int]] = None
+    a = []
+    mut b: Option[list[Option[str]]] = None
+    b = [None]
+    println(len(a.unwrap_or([])) + len(b.unwrap_or([])))
+    mut empty: Option[list[int]] = None
+    empty = []
+    match empty:
+        Some(items) => println(f"some {len(items)}")
+        None => println("none")
+    mut nones: Option[list[Option[str]]] = None
+    nones = [None]
+    match nones:
+        Some(items) => println(f"some {len(items)}")
+        None => println("none")
+    mut either: list[int] | str = "x"
+    either = []
+    if isinstance(either, str):
+        println(f"text {either}")
+    else:
+        println(f"list {len(either)}")
+    mut counts: Option[dict[str, int]] = None
+    counts = {}
+    println(len(counts.unwrap_or({})))

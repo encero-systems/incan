@@ -64,8 +64,10 @@ Aliases canonicalize to exact Incan types.
 | `int`, `bigint`, `long`   | `i64`           |
 | `hugeint`                 | `i128`          |
 | `real`, `fp32`            | `f32`           |
-| `float`, `double`, `fp64` | `f64`           |
+| `double`, `fp64`          | `f64`           |
 | `numeric[p, s]`           | `decimal[p, s]` |
+
+`float` is not an alias of `f64`: it is its own type, and it can also hold NaN and infinity.
 
 Use canonical names when the exact width is the important thing. Use aliases when matching source vocabulary matters more.
 
@@ -149,6 +151,32 @@ Use `saturating_resize()` when clipping to the target range is intended.
 ```incan
 sample: i16 = 500
 clipped: i8 = sample.saturating_resize()
+```
+
+Arithmetic on exact-width integers gives an ordinary `int`, so storing a result back in an exact-width binding that could overflow it needs one of these policies:
+
+```incan
+n: i8 = 10
+maybe_next: Option[i8] = (n + 1).try_resize()
+```
+
+## Write numeric helpers over concrete types
+
+`/`, `//`, `%` and `**` are refused between two values of a type parameter (`INCAN-T0109`). Write such a helper over `int` or `float`:
+
+```incan
+def modulo(a: int, b: int) -> int:
+    return a % b
+```
+
+For a helper over your own types, bound the type parameter with a trait that declares the operator's method (`__div__`, `__floordiv__`, `__mod__` or `__pow__`), so the operator resolves through that trait:
+
+```incan
+trait Remainder:
+    def __mod__(self, other: Self) -> Self: ...
+
+def modulo[T with Remainder](a: T, b: T) -> T:
+    return a % b
 ```
 
 ## Avoid unsigned integers as validation

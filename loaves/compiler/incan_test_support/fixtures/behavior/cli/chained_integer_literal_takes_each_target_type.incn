@@ -1,0 +1,40 @@
+# behavior: a chained assignment of an integer literal over an int binding and a float or f32 binding stores the integer in the int binding and the float in the float binding, whichever target comes last, under a negation, inside list and dict literals, and for a name the chain declares
+# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::chained_integer_literal_is_written_in_each_targets_type_issue1831
+# retires: loaves/compiler/incan_ir/src/lower/tests/expected_literal_types.rs::chained_integer_literal_takes_each_targets_type_issue1831
+# retires: loaves/compiler/incan_ir/src/lower/tests/expected_literal_types.rs::chained_integer_literal_elements_take_each_targets_type_issue1831
+# expect-stdout:
+#   1
+#   1.0
+#   -2
+#   -2.0
+#   3
+#   3.5
+#   4
+#   -4.0
+#   5.0
+#   12
+
+def main() -> None:
+    mut n: int = 0
+    mut f: float = 0.5
+    n = f = 1
+    println(n)
+    println(f)
+    f = n = -2
+    println(n)
+    println(f)
+    mut g: f32 = 0.5
+    g = n = 3
+    println(n)
+    println(g + 0.5)
+    mut ints: list[int] = []
+    mut floats: list[float] = []
+    ints = floats = [4, -4]
+    println(ints[0])
+    println(floats[1])
+    mut counts: dict[str, int] = {}
+    mut weights: dict[str, float] = {}
+    counts = weights = {"a": 5}
+    println(weights["a"])
+    x = n = f = 6
+    println(x + n)
