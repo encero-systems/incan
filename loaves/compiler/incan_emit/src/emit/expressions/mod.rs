@@ -1384,7 +1384,10 @@ impl<'a> IrEmitter<'a> {
                 let arm_tokens: Vec<TokenStream> = arms
                     .iter()
                     .map(|arm| {
-                        let (pat, pattern_guard) = self.emit_pattern_for_scrutinee(&arm.pattern, &scrutinee.ty);
+                        let mutable_bindings =
+                            crate::emit::statements::pattern_mutated_bindings_in_expr(&arm.pattern, &arm.body);
+                        let (pat, pattern_guard) =
+                            self.emit_pattern_for_scrutinee(&arm.pattern, &scrutinee.ty, &mutable_bindings);
                         let body = self.emit_match_arm_body(arm, Some(&expr.ty))?;
                         let guard = self.emit_match_arm_guard(arm, pattern_guard)?;
                         if let Some(guard) = guard {

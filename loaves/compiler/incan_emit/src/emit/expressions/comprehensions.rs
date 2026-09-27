@@ -5,10 +5,13 @@
 //! - Dict comprehensions: `{key: value for var in iter if cond}`
 //! - Generator expressions: `(expr for var in iter if cond)`
 
+use std::collections::HashSet;
+
 use proc_macro2::TokenStream;
 use quote::quote;
 
 use super::super::{EmitError, IrEmitter};
+use crate::emit::statements::expr_contains_mutation;
 use crate::ownership::{
     ComprehensionIterationPlan, dict_comprehension_key_needs_clone, plan_dict_comprehension_iteration,
     plan_list_comprehension_iteration, plan_opaque_comprehension_source, plan_owned_iterator_source,
@@ -120,6 +123,27 @@ impl<'a> IrEmitter<'a> {
         let pattern_tokens = self.emit_pattern(pattern);
         let elem = self.emit_expr(element)?;
         let body_can_propagate = Self::expr_contains_try(element) || filter.is_some_and(Self::expr_contains_try);
+
+        // A binding mutated by the element or by the filter is reached in place, so the change lands in the source.
+        if let Pattern::Var(name) = pattern
+            && (expr_contains_mutation(element, name)
+                || filter.is_some_and(|filter| expr_contains_mutation(filter, name)))
+            && matches!(iterable.ty, IrType::List(_) | IrType::RefMut(_))
+            && matches!(
+                iterable.kind,
+                IrExprKind::Var { .. } | IrExprKind::Field { .. } | IrExprKind::Index { .. }
+            )
+        {
+            let source = self.emit_lvalue_expr(iterable)?;
+            let iter = quote! { (#source).iter_mut() };
+            // The binding is a `&mut` item; a mutating helper borrows it mutably, which needs the binding declared
+            // `mut` (the extra reference coerces back to the item).
+            let pattern_tokens = self.emit_pattern_with_mutable_bindings(pattern, &HashSet::from([name.clone()]));
+            if body_can_propagate {
+                return self.emit_direct_list_comp_loop(iter, pattern_tokens, elem, filter);
+            }
+            return self.emit_direct_list_comp(iter, pattern_tokens, elem, filter);
+        }
 
         if let Some(iter) = self.emit_direct_comprehension_iterable(iterable)? {
             if body_can_propagate {

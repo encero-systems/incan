@@ -91,6 +91,15 @@ impl ReceiverInfo {
     }
 }
 
+/// Whether emitted place tokens are a bare path (`items`, `self.items`) that takes a method call without grouping.
+fn is_plain_place(tokens: &TokenStream) -> bool {
+    tokens.clone().into_iter().all(|token| match token {
+        proc_macro2::TokenTree::Ident(_) => true,
+        proc_macro2::TokenTree::Punct(punct) => punct.as_char() == '.',
+        proc_macro2::TokenTree::Group(_) | proc_macro2::TokenTree::Literal(_) => false,
+    })
+}
+
 /// Classify an IR type as a Rust collection family.
 fn rust_collection_family_for_ir_type(ty: &IrType) -> Option<RustCollectionFamily> {
     match ty {
@@ -103,6 +112,18 @@ fn rust_collection_family_for_ir_type(ty: &IrType) -> Option<RustCollectionFamil
 }
 
 impl<'a> IrEmitter<'a> {
+    /// Whether `callback` is a closure literal, alone or after the snapshots of the locals it captures.
+    ///
+    /// Passed straight to a combinator, the closure takes its parameter types from the combinator's signature; called
+    /// through a wrapper it would need them written out.
+    fn is_closure_literal(callback: &TypedExpr) -> bool {
+        match &callback.kind {
+            IrExprKind::Closure { .. } => true,
+            IrExprKind::Block { value: Some(value), .. } => matches!(value.kind, IrExprKind::Closure { .. }),
+            _ => false,
+        }
+    }
+
     /// Emit a one-argument callback invocation for a `Result` combinator payload.
     fn emit_result_callback_call(
         &self,
@@ -233,7 +254,7 @@ impl<'a> IrEmitter<'a> {
                         #helper_path(#receiver_tokens, #callback_tokens)
                     });
                 }
-                if matches!(callback.kind, IrExprKind::Closure { .. }) {
+                if Self::is_closure_literal(callback) {
                     let callback_tokens = self.emit_expr(callback)?;
                     return Ok(quote! {
                         #receiver_tokens.#method_ident(#callback_tokens)
@@ -924,7 +945,16 @@ impl<'a> IrEmitter<'a> {
             return Ok(Self::storage_rooted_method_expr(arg_bindings, wrapped));
         }
 
-        let r0 = self.emit_expr(receiver)?;
+        let r0 = if super::method_kind_uses_mutable_receiver(kind) {
+            let receiver = self.emit_lvalue_expr(receiver)?;
+            if is_plain_place(&receiver) {
+                receiver
+            } else {
+                quote! { (#receiver) }
+            }
+        } else {
+            self.emit_expr(receiver)?
+        };
         let info = ReceiverInfo::new(&receiver.ty, r0);
         let arg_exprs: Vec<TypedExpr> = args.iter().map(|a| a.expr.clone()).collect();
         match kind {

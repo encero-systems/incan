@@ -45,7 +45,7 @@ use incan_ir::IrProgram;
 use incan_ir::decl::{FunctionParam, IrDeclKind, IrFunction, IrTraitBound, IrTypeParam};
 use incan_ir::expr::{
     BinOp, BuiltinFn, CollectionMethodKind, FormatPart, IrCallArg, IrDictEntry, IrExpr, IrExprKind, IrGeneratorClause,
-    IrListEntry, MethodCallArgPolicy, MethodKind, VarRefKind,
+    IrListEntry, MethodCallArgPolicy, MethodKind, VarAccess, VarRefKind,
 };
 use incan_ir::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use incan_ir::types::{IrType, SetConstructorIteration};
@@ -1291,7 +1291,17 @@ fn collect_backend_clone_bounds_in_call(
                     in_return: call_context.in_return,
                 },
             );
-            if requires_clone {
+            let mut_parameter_copy = sig_param
+                .is_some_and(|param| matches!(param.mutability, incan_ir::types::Mutability::Mutable))
+                && !matches!(arg.expr.ty, IrType::RefMut(_))
+                && !matches!(
+                    arg.expr.kind,
+                    IrExprKind::Var {
+                        access: VarAccess::BorrowMut,
+                        ..
+                    }
+                );
+            if requires_clone || mut_parameter_copy {
                 add_backend_clone_bounds_for_cloned_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
             }
             collect_backend_clone_bounds_in_expr(

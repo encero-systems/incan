@@ -346,6 +346,13 @@ impl<'a> IrEmitter<'a> {
         }
 
         let o = self.emit_expr(object)?;
+        // A `Copy` item read out of a collection is emitted as a dereference, and a field access binds tighter than a
+        // dereference: `*list_get(&pts, 0).0` dereferences the field, so the dereference is grouped first (#1861).
+        let o = if starts_with_dereference(&o) {
+            quote! { (#o) }
+        } else {
+            o
+        };
         // Check if field is a numeric index (tuple access)
         if field.chars().all(|c| c.is_ascii_digit()) {
             let idx: syn::Index = field
@@ -423,6 +430,16 @@ impl<'a> IrEmitter<'a> {
             }
         }
     }
+}
+
+/// Whether emitted tokens begin with a prefix `*`, so a following field access would bind to the operand rather than to
+/// the dereferenced value.
+fn starts_with_dereference(tokens: &TokenStream) -> bool {
+    tokens
+        .clone()
+        .into_iter()
+        .next()
+        .is_some_and(|token| matches!(token, proc_macro2::TokenTree::Punct(punct) if punct.as_char() == '*'))
 }
 
 #[cfg(test)]

@@ -42,6 +42,10 @@ h: (str) -> int = double          # refused: INCAN-T0001
 
 `Callable[...]` with other than two type arguments, and a bracketed parameter list such as `Callable[[A], R]`, are syntax error `INCAN-P0001`.
 
+### Closure captures
+
+A closure reads an outer local from the value captured when the closure is constructed. When code after the closure also needs that local, the closure receives its own snapshot; a later mutation of the outer binding does not change the captured value.
+
 ### `mut` parameters
 
 `mut` on a parameter makes it a mutable binding in the function's body. A parameter of type `int`, `float` or `bool`, also through a type alias, is the function's own copy: the body may change and rebind it, its changes stay local, and it is not marked in the function type. A parameter of any other type, except a Rust type and `*args` or `**kwargs`, is marked: the function's changes to it reach the caller, and the function type marks it, `(mut T, ...) -> R`.

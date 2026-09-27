@@ -2581,6 +2581,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs": {
+      "disposition": "retire",
+      "notes": "compiled-Rust regressions for mutation and ownership shapes: an owned copy from a `mut` collection parameter (#1852), a `JoinHandle` field refused before loop lowering (#1853), a mutating method on a list element (#1857), a tuple index read after a list index (#1861), mutable iteration over `enumerate`, `zip`, dictionary values and a nested list (#1863), match/comprehension bindings and a closure's construction-time snapshot (#1864), mut-receiver loop shapes (#1869), and the `Clone` bound a generic `mut` argument copy needs (#1874); retires with the Rust-source backend (#654), whose ownership and iteration-shape emission these tests pin.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/tests/reexported_projections.rs": {
       "disposition": "retire",
       "notes": "lowering through emission end to end.",

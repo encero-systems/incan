@@ -2614,6 +2614,38 @@ impl AstLowering {
                     .collect();
                 let mut closure_read_counts = HashMap::new();
                 self.count_expr_ident_reads(&body.node, &mut closure_read_counts);
+                let parameter_names = param_pairs
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<std::collections::HashSet<_>>();
+                // A closure snapshots the outer locals it shares with code that runs after its construction (#1864):
+                // code later in the block, or the next pass of an enclosing loop. The root scope holds the module's
+                // functions, consts and statics, which the closure reaches by path, so it is not searched. Each
+                // block's read counters still include this closure's own reads, so a count above them is a later
+                // read.
+                let read_after_construction = |name: &str| {
+                    let own_reads = closure_read_counts.get(name).copied().unwrap_or(0);
+                    self.non_linear_context_depth > 0
+                        || self
+                            .remaining_ident_reads
+                            .iter()
+                            .any(|reads| reads.get(name).is_some_and(|remaining| *remaining > own_reads))
+                };
+                let mut capture_names = closure_read_counts
+                    .keys()
+                    .filter(|name| {
+                        !parameter_names.contains(name.as_str())
+                            && self
+                                .scopes
+                                .iter()
+                                .skip(1)
+                                .rev()
+                                .any(|scope| scope.contains_key(name.as_str()))
+                            && read_after_construction(name)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                capture_names.sort();
                 self.remaining_ident_reads.push(closure_read_counts);
                 self.non_linear_context_depth += 1;
                 self.push_scope();
@@ -2636,18 +2668,50 @@ impl AstLowering {
                     .type_info
                     .as_ref()
                     .is_some_and(|info| info.is_source_callable_closure(expr_span));
-                (
+                let closure = TypedExpr::new(
                     IrExprKind::Closure {
                         params: param_pairs,
                         body: Box::new(body_ir),
-                        captures: vec![],
+                        captures: capture_names.clone(),
                         annotate_param_types,
                     },
                     IrType::Function {
                         params: param_tys,
                         ret: Box::new(ret_ty),
                     },
-                )
+                );
+                if capture_names.is_empty() {
+                    (closure.kind, closure.ty)
+                } else {
+                    let capture_stmts = capture_names
+                        .iter()
+                        .map(|name| {
+                            let ty = self.lookup_var(name);
+                            IrStmt::new(IrStmtKind::Let {
+                                name: name.clone(),
+                                ty: ty.clone(),
+                                type_annotation: None,
+                                mutability: Mutability::Immutable,
+                                value: TypedExpr::new(
+                                    IrExprKind::Var {
+                                        name: name.clone(),
+                                        access: VarAccess::Read,
+                                        ref_kind: VarRefKind::Value,
+                                    },
+                                    ty,
+                                ),
+                            })
+                        })
+                        .collect();
+                    let ty = closure.ty.clone();
+                    (
+                        IrExprKind::Block {
+                            stmts: capture_stmts,
+                            value: Some(Box::new(closure)),
+                        },
+                        ty,
+                    )
+                }
             }
 
             // ---- Collection literals ----
