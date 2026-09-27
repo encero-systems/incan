@@ -131,6 +131,21 @@ jobs:
         run: |
           python3 scripts/test_check_us_english.py
           make us-english-check
+      # A docs-site reference page states its contract and nothing else; the gate checks every reference page the
+      # change touches, whole, so touching a page brings all of it to contract.
+      - name: Check reference pages state only their contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/test_check_reference_contract.py
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base_ref="origin/${{ github.base_ref }}"
+          elif [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            base_ref="${{ github.event.before }}"
+          else
+            base_ref="HEAD^"
+          fi
+          python3 scripts/check_reference_contract.py --base "$base_ref"
 
   clippy:
     name: Clippy
