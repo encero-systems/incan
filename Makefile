@@ -238,6 +238,10 @@ doc-paths:
 us-english-check:
 	@python3 scripts/check_us_english.py
 
+.PHONY: reference-contract-check  ## quality - Fail when a changed docs-site reference page states more than its contract
+reference-contract-check:
+	@python3 scripts/check_reference_contract.py
+
 .PHONY: us-english-fix  ## quality - Rewrite UK spellings as US English in place, prose and identifiers alike
 us-english-fix:
 	@python3 scripts/check_us_english.py --fix
@@ -320,6 +324,9 @@ pre-commit-fast:
 	$(MAKE) -s us-english-check; \
 	echo "\033[32mDONE\033[0m"; \
 	t2us=$$(date +%s); \
+	printf "\033[1mChecking reference pages state only their contract...\033[0m "; \
+	$(MAKE) -s reference-contract-check; \
+	echo "\033[32mDONE\033[0m"; \
 	printf "\033[1mChecking the test corpus inventory...\033[0m "; \
 	$(MAKE) -s test-inventory-check; \
 	echo "\033[32mDONE\033[0m"; \
