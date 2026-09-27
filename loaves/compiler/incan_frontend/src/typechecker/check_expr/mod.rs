@@ -102,20 +102,27 @@ impl TypeChecker {
     }
 
     /// Type-check every interpolated expression of an f-string and refuse a `{value}` part with no printed form
-    /// (#1748).
+    /// (#1748) or an unsupported format specifier.
     ///
     /// A `{value}` part displays under the rule `print`/`println` arguments and `str(...)` share (see
     /// [`Self::check_display_operand`]); an `Error` adopter with no `__str__` is recorded to render its `message()`
-    /// (#1778). A `{value:?}` part asks for the value's structure through `Debug` and is left alone.
+    /// (#1778). A `{value:?}` part asks for the value's structure through `Debug` and is left alone. A part with any
+    /// other format spec (`{value:x}`) names a specifier the language does not support and is refused outright.
     fn check_fstring_parts(&mut self, parts: &[FStringPart]) {
         for part in parts {
             let FStringPart::Expr { expr, format } = part else {
                 continue;
             };
             let ty = self.check_expr(expr);
-            if matches!(format, FStringFormat::Display) {
-                self.record_error_message_display(expr.span, &ty);
-                self.check_display_operand(errors::DisplayPosition::Interpolation, expr, &ty);
+            match format {
+                FStringFormat::Display => {
+                    self.record_error_message_display(expr.span, &ty);
+                    self.check_display_operand(errors::DisplayPosition::Interpolation, expr, &ty);
+                }
+                FStringFormat::Debug => {}
+                FStringFormat::Unsupported(spec) => self
+                    .errors
+                    .push(errors::unsupported_fstring_format_specifier(spec, expr.span)),
             }
         }
     }

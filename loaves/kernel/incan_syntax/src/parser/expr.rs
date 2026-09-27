@@ -2169,14 +2169,7 @@ impl<'a> Parser<'a> {
                 (Statement::Expr(expr), false) => MatchBody::Expr(expr.clone()),
                 _ => MatchBody::Block(vec![stmt]),
             };
-            Ok(Spanned::new(
-                MatchArm {
-                    pattern,
-                    guard,
-                    body,
-                },
-                Span::new(start, end),
-            ))
+            Ok(Spanned::new(MatchArm { pattern, guard, body }, Span::new(start, end)))
         }
     }
 
@@ -3034,6 +3027,7 @@ fn split_fstring_format(text: &str) -> (&str, FStringFormat) {
         if spec == "?" {
             return (text[..idx].trim_end(), FStringFormat::Debug);
         }
+        return (text[..idx].trim_end(), FStringFormat::Unsupported(spec.to_string()));
     }
 
     (text, FStringFormat::Display)

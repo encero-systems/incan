@@ -7,10 +7,18 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 // __INCAN_INSERT_MODS__
 
 incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum __IncanUniond83007a429c21b6f {
     V0(String),
     V1(Vec<u8>),
+}
+impl ::core::fmt::Debug for __IncanUniond83007a429c21b6f {
+    fn fmt(&self, formatter: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        match self {
+            Self::V0(value) => ::core::fmt::Debug::fmt(value, formatter),
+            Self::V1(value) => ::core::fmt::Debug::fmt(value, formatter),
+        }
+    }
 }
 use ::rand::Rng;
 use ::rand::thread_rng;

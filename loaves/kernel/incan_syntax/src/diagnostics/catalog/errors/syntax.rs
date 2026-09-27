@@ -356,6 +356,14 @@ pub fn unterminated_fstring_escape(span: Span) -> CompileError {
     CompileError::new("Unterminated escape in f-string".to_string(), span)
 }
 
+/// Refuse an f-string format specifier other than `:?`, the one specifier an interpolation accepts.
+pub fn unsupported_fstring_format_specifier(spec: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Unsupported f-string format specifier '{spec}'; only ':?' is supported"),
+        span,
+    )
+}
+
 pub fn invalid_float_literal(value: &str, span: Span) -> CompileError {
     CompileError::new(format!("Invalid float literal: {}", value), span)
 }

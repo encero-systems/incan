@@ -530,15 +530,19 @@ impl FormatStyle {
 /// Return whether default Incan f-string display should use structured formatting for a backend representation that
 /// does not expose Rust `Display` directly.
 pub fn display_style_uses_structured_debug(ty: &IrType) -> bool {
-    matches!(
-        ty,
+    match ty {
         IrType::List(_)
-            | IrType::Dict(_, _)
-            | IrType::Set(_)
-            | IrType::Tuple(_)
-            | IrType::Option(_)
-            | IrType::Result(_, _)
-    )
+        | IrType::Dict(_, _)
+        | IrType::Set(_)
+        | IrType::Tuple(_)
+        | IrType::Option(_)
+        | IrType::Result(_, _) => true,
+        IrType::NamedGeneric(name, _) => matches!(
+            collection_types::from_str(name),
+            Some(CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet | CollectionTypeId::FrozenDict)
+        ),
+        _ => false,
+    }
 }
 
 /// How a variable is accessed
@@ -1181,5 +1185,25 @@ mod tests {
             );
         }
         assert_eq!(MethodKind::for_receiver(&result_ty, "missing"), None);
+    }
+
+    #[test]
+    fn frozen_collections_use_structured_display_issue1838() {
+        use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
+
+        let frozen = |id| collection_types::as_str(id).to_string();
+        for ty in [
+            IrType::NamedGeneric(frozen(CollectionTypeId::FrozenList), vec![IrType::String]),
+            IrType::NamedGeneric(frozen(CollectionTypeId::FrozenSet), vec![IrType::Float]),
+            IrType::NamedGeneric(
+                frozen(CollectionTypeId::FrozenDict),
+                vec![IrType::String, IrType::Float],
+            ),
+        ] {
+            assert!(
+                display_style_uses_structured_debug(&ty),
+                "expected structured display for {ty:?}"
+            );
+        }
     }
 }

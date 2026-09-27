@@ -18,7 +18,7 @@ use crate::ast::{Expr, Span, Spanned};
 use crate::diagnostics::CompileError;
 use crate::diagnostics::errors::{self, DisplayPosition, UnprintableValue};
 use crate::symbols::{ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo};
-use crate::typechecker::helpers::collection_type_id;
+use crate::typechecker::helpers::{collection_type_id, is_frozen_bytes};
 
 /// How deep a class's `extends` chain is followed when looking for an inherited `__str__`.
 const MAX_EXTENDS_DEPTH: usize = 64;
@@ -73,11 +73,13 @@ impl TypeChecker {
     /// Whether a type satisfies a `Display` bound under the display rule, or `None` when the rule leaves the answer to
     /// the bound's ordinary check.
     ///
-    /// The rule answers for `bytes`, which has no printed form, and for a model, class, enum or newtype, which
-    /// provides `Display` exactly as [`Self::nominal_provides_display`] states.
+    /// The rule answers for `bytes` and `FrozenBytes` (#1838: the two share one display contract), which have no
+    /// printed form, and for a model, class, enum or newtype, which provides `Display` exactly as
+    /// [`Self::nominal_provides_display`] states.
     pub(in crate::typechecker) fn display_bound_satisfied(&self, ty: &ResolvedType) -> Option<bool> {
         match ty {
             ResolvedType::Bytes => Some(false),
+            _ if is_frozen_bytes(ty) => Some(false),
             ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => {
                 self.nominal_provides_display(type_name)
             }
@@ -87,8 +89,8 @@ impl TypeChecker {
 
     /// Classify a value type with no printed form, or return `None` when every display position renders it.
     ///
-    /// A union value, a generator, a function, `bytes`, and a model, class, enum or newtype that provides no `Display`
-    /// have none.
+    /// A union value, a generator, a function, `bytes` or `FrozenBytes` (#1838: the two share one display contract),
+    /// and a model, class, enum or newtype that provides no `Display` have none.
     fn unprintable_value<'ty>(&self, ty: &'ty ResolvedType) -> Option<UnprintableValue<'ty>> {
         match ty {
             _ if ty.is_union() => Some(UnprintableValue::Union),
@@ -99,6 +101,7 @@ impl TypeChecker {
             }
             ResolvedType::Function(..) => Some(UnprintableValue::Function),
             ResolvedType::Bytes => Some(UnprintableValue::Bytes),
+            _ if is_frozen_bytes(ty) => Some(UnprintableValue::Bytes),
             ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _)
                 if self.nominal_provides_display(type_name) == Some(false) =>
             {

@@ -507,6 +507,7 @@ pub enum EmbeddedTypeShape {
 pub enum FStringFormat {
     Display,
     Debug,
+    Unsupported(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]

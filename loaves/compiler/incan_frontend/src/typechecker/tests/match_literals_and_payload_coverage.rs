@@ -204,6 +204,53 @@ def describe(value: Option[int]) -> str:
     }
 }
 
+/// #1876: a union type pattern covers only the values selected by its nested pattern, not the whole member type.
+#[test]
+fn union_type_pattern_with_a_literal_payload_is_partial_coverage_issue1876() -> Result<(), String> {
+    let messages = refusal_messages(
+        r#"
+def describe(value: int | str) -> str:
+    match value:
+        int(0) => return "zero"
+        str(s) => return s
+"#,
+    )?;
+    if messages
+        .iter()
+        .any(|message| message.contains("Non-exhaustive match") && message.contains("int"))
+    {
+        Ok(())
+    } else {
+        Err(format!("expected the match to leave int uncovered, got: {messages:?}"))
+    }
+}
+
+/// #1877: the built-in single-payload variants reject extra sub-patterns before generated Rust can see them.
+#[test]
+fn option_and_result_patterns_reject_extra_payloads_issue1877() -> Result<(), String> {
+    for (source, constructor) in [
+        (
+            "def f(value: Option[int]) -> int:\n    match value:\n        Some(a, b) => return a\n        None => return 0\n",
+            "Some",
+        ),
+        (
+            "def f(value: Result[int, str]) -> int:\n    match value:\n        Ok(a, b) => return a\n        Err(_) => return 0\n",
+            "Ok",
+        ),
+        (
+            "def f(value: Result[int, str]) -> int:\n    match value:\n        Ok(a) => return a\n        Err(message, other) => return 0\n",
+            "Err",
+        ),
+    ] {
+        let messages = refusal_messages(source)?;
+        let expected = format!("{constructor}() expects 1 argument(s), got 2");
+        if !messages.iter().any(|message| message.contains(&expected)) {
+            return Err(format!("expected `{expected}`, got: {messages:?}"));
+        }
+    }
+    Ok(())
+}
+
 /// #1741: an enum variant whose only arm names one payload value is reported, spelled with its payload wildcard.
 #[test]
 fn enum_variant_with_a_literal_payload_is_partial_coverage_issue1741() -> Result<(), String> {

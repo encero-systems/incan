@@ -309,19 +309,23 @@ impl TypeChecker {
         subject_ty: &ResolvedType,
     ) {
         match &pattern.node {
-            Pattern::Constructor(name, _) => {
+            Pattern::Constructor(name, sub_patterns) => {
                 let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.node.as_str());
                 if enum_qualifier_opt.is_none()
                     && let Some(member_ty) = self.union_pattern_target_type(subject_ty, ctor_name)
                 {
                     if let Some(target_members) = member_ty.union_members() {
                         remaining.retain(|member| {
-                            !target_members
-                                .iter()
-                                .any(|target| self.match_union_member_matches(member, target))
+                            !target_members.iter().any(|target| {
+                                self.match_union_member_matches(member, target)
+                                    && self.union_type_pattern_payload_is_exhaustive(sub_patterns, target)
+                            })
                         });
                     } else {
-                        remaining.retain(|member| !self.match_union_member_matches(member, &member_ty));
+                        remaining.retain(|member| {
+                            !self.match_union_member_matches(member, &member_ty)
+                                || !self.union_type_pattern_payload_is_exhaustive(sub_patterns, &member_ty)
+                        });
                     }
                 }
             }
@@ -333,6 +337,52 @@ impl TypeChecker {
             Pattern::Group(inner) => self.remove_covered_union_members(remaining, inner, subject_ty),
             Pattern::Wildcard | Pattern::Binding(_) => remaining.clear(),
             _ => {}
+        }
+    }
+
+    /// Return whether a union type pattern covers every value of the member it names.
+    ///
+    /// `int(n)` covers the `int` member, while `int(0)` leaves every other integer uncovered. The nested pattern is
+    /// the payload stored by the generated union wrapper, so it is judged by the same pattern-matrix walk used for an
+    /// enum variant payload rather than treating the outer type name as proof of complete coverage (#1876).
+    fn union_type_pattern_payload_is_exhaustive(&self, sub_patterns: &[PatternArg], member_ty: &ResolvedType) -> bool {
+        let rows = sub_patterns
+            .iter()
+            .find_map(|arg| match arg {
+                PatternArg::Positional(pattern) => Some(vec![vec![Some(&pattern.node)]]),
+                PatternArg::Named(_, _) => None,
+            })
+            .unwrap_or_default();
+        self.coverage_rows_exhaustive(rows, std::slice::from_ref(member_ty), 0)
+    }
+
+    /// Check the one positional payload accepted by `Some`, `Ok`, and `Err` patterns.
+    fn check_single_payload_constructor_pattern(
+        &mut self,
+        constructor: &Spanned<String>,
+        sub_patterns: &[PatternArg],
+        payload_ty: &ResolvedType,
+    ) {
+        if sub_patterns.len() != 1 {
+            self.errors.push(errors::builtin_arity(
+                &constructor.node,
+                1,
+                sub_patterns.len(),
+                constructor.span,
+            ));
+        }
+        let mut checked_positional = false;
+        for arg in sub_patterns {
+            match arg {
+                PatternArg::Positional(pattern) if !checked_positional => {
+                    self.check_pattern(pattern, payload_ty);
+                    checked_positional = true;
+                }
+                PatternArg::Positional(_) => {}
+                PatternArg::Named(_, pattern) => self
+                    .errors
+                    .push(errors::named_pattern_not_supported(&constructor.node, pattern.span)),
+            }
         }
     }
 
@@ -478,22 +528,8 @@ impl TypeChecker {
                                 && !args.is_empty()
                             {
                                 self.record_pattern_lexical_identity(ctor_name, name.span);
-                                let mut positional = None;
-                                for arg in sub_patterns {
-                                    match arg {
-                                        PatternArg::Positional(pat) => {
-                                            positional = Some(pat);
-                                            break;
-                                        }
-                                        PatternArg::Named(_, pat) => {
-                                            self.errors
-                                                .push(errors::named_pattern_not_supported(&name.node, pat.span));
-                                        }
-                                    }
-                                }
-                                if let Some(pat) = positional {
-                                    self.check_pattern(pat, &borrowed_pattern_payload(args[0].clone(), borrow));
-                                }
+                                let payload_ty = borrowed_pattern_payload(args[0].clone(), borrow);
+                                self.check_single_payload_constructor_pattern(name, sub_patterns, &payload_ty);
                                 return;
                             }
                         }
@@ -503,22 +539,8 @@ impl TypeChecker {
                                 && args.len() >= 2
                             {
                                 self.record_pattern_lexical_identity(ctor_name, name.span);
-                                let mut positional = None;
-                                for arg in sub_patterns {
-                                    match arg {
-                                        PatternArg::Positional(pat) => {
-                                            positional = Some(pat);
-                                            break;
-                                        }
-                                        PatternArg::Named(_, pat) => {
-                                            self.errors
-                                                .push(errors::named_pattern_not_supported(&name.node, pat.span));
-                                        }
-                                    }
-                                }
-                                if let Some(pat) = positional {
-                                    self.check_pattern(pat, &borrowed_pattern_payload(args[1].clone(), borrow));
-                                }
+                                let payload_ty = borrowed_pattern_payload(args[1].clone(), borrow);
+                                self.check_single_payload_constructor_pattern(name, sub_patterns, &payload_ty);
                                 return;
                             }
                         }
@@ -528,22 +550,8 @@ impl TypeChecker {
                                 && !args.is_empty()
                             {
                                 self.record_pattern_lexical_identity(ctor_name, name.span);
-                                let mut positional = None;
-                                for arg in sub_patterns {
-                                    match arg {
-                                        PatternArg::Positional(pat) => {
-                                            positional = Some(pat);
-                                            break;
-                                        }
-                                        PatternArg::Named(_, pat) => {
-                                            self.errors
-                                                .push(errors::named_pattern_not_supported(&name.node, pat.span));
-                                        }
-                                    }
-                                }
-                                if let Some(pat) = positional {
-                                    self.check_pattern(pat, &borrowed_pattern_payload(args[0].clone(), borrow));
-                                }
+                                let payload_ty = borrowed_pattern_payload(args[0].clone(), borrow);
+                                self.check_single_payload_constructor_pattern(name, sub_patterns, &payload_ty);
                                 return;
                             }
                         }

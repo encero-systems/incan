@@ -2823,6 +2823,7 @@ impl AstLowering {
                             let style = match format {
                                 ast::FStringFormat::Display => super::super::expr::FormatStyle::Display,
                                 ast::FStringFormat::Debug => super::super::expr::FormatStyle::Debug,
+                                ast::FStringFormat::Unsupported(_) => super::super::expr::FormatStyle::Display,
                             };
                             Ok(super::super::expr::FormatPart::Expr { expr: lowered, style })
                         }

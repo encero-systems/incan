@@ -7,10 +7,18 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum __IncanUnionf13d01fefab04049 {
     V0(File),
     V1(_BytesIO),
+}
+impl ::core::fmt::Debug for __IncanUnionf13d01fefab04049 {
+    fn fmt(&self, formatter: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        match self {
+            Self::V0(value) => ::core::fmt::Debug::fmt(value, formatter),
+            Self::V1(value) => ::core::fmt::Debug::fmt(value, formatter),
+        }
+    }
 }
 pub use crate::__incan_std::fs::File;
 pub use crate::__incan_std::traits::error::Error;

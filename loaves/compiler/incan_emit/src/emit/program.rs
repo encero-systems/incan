@@ -18,7 +18,7 @@
 //! - [`crate::emit::expressions`]
 //! - [`crate::emit::statements`]
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -3480,19 +3480,33 @@ impl<'a> IrEmitter<'a> {
         let name = ty.union_type_name()?;
         let members = ty.union_members()?;
         let name_ident = format_ident!("{}", name);
-        let variants: Vec<TokenStream> = members
+        let variant_specs: Vec<(Ident, TokenStream)> = members
             .iter()
             .enumerate()
             .map(|(index, member)| {
                 let variant = format_ident!("{}", IrType::union_variant_name(index));
                 let member_ty = self.emit_generated_union_member_type(member);
-                quote! { #variant(#member_ty) }
+                (variant, member_ty)
             })
             .collect();
+        let variants = variant_specs
+            .iter()
+            .map(|(variant, member_ty)| quote! { #variant(#member_ty) });
+        let debug_arms = variant_specs
+            .iter()
+            .map(|(variant, _)| quote! { Self::#variant(value) => ::core::fmt::Debug::fmt(value, formatter) });
         Some(quote! {
-            #[derive(Debug, Clone)]
+            #[derive(Clone)]
             pub enum #name_ident {
                 #(#variants),*
+            }
+
+            impl ::core::fmt::Debug for #name_ident {
+                fn fmt(&self, formatter: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                    match self {
+                        #(#debug_arms),*
+                    }
+                }
             }
         })
     }
@@ -4514,6 +4528,32 @@ mod tests {
         assert!(
             rendered.contains("Envelope < provider :: public_types :: ProviderPayload >"),
             "expected nested public provider payloads to stay qualified: {rendered}"
+        );
+        Ok(())
+    }
+
+    /// #1833: a generated union's Debug form is its active member's form, without the compiler-owned variant name.
+    #[test]
+    fn generated_union_debug_delegates_to_member_issue1833() -> Result<(), String> {
+        let program = IrProgram::new();
+        let emitter = IrEmitter::new(&program.function_registry);
+        let rendered = emitter
+            .emit_generated_union_type(&union(vec![IrType::Int, IrType::String]))
+            .ok_or("expected an anonymous union definition")?
+            .to_string();
+        let compact = rendered
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect::<String>();
+
+        assert!(
+            !compact.contains("derive(Debug"),
+            "variant names must not leak through derived Debug: {rendered}"
+        );
+        assert!(
+            compact.contains("Self::V0(value)=>::core::fmt::Debug::fmt(value,formatter)")
+                && compact.contains("Self::V1(value)=>::core::fmt::Debug::fmt(value,formatter)"),
+            "each generated variant must delegate Debug to its member: {rendered}"
         );
         Ok(())
     }
