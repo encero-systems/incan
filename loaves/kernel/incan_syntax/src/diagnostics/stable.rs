@@ -428,6 +428,27 @@ const METHOD_DECORATOR_RECEIVER_NOT_PLANNED: DiagnosticCatalogEntry = Diagnostic
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/language/"),
 };
 
+const ROUTE_PAYLOAD_WITHOUT_JSON_FORM: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0112",
+    title: "Route payload type has no JSON form",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A `@route` handler's `Json[T]`, `Query[T]` or `Path[T]` payload type does not derive `json`.",
+    explanation: "The route wrappers convert their payload at the handler boundary through serde: a `Json[T]` parameter deserializes the request body as JSON, a `Query[T]` parameter the URL-encoded query string, and a `Path[T]` parameter the path segments; a `Json[T]` return serializes `T` as the JSON response body. A model or class gets that serde support from `@derive(json)` (or by adopting the needed `std.serde.json` trait), and so does every model or class the payload is built from, such as `Search` in `Json[list[Search]]`. A payload declared without it checked before but could not be built: the route registration needed the conversion and had none. The check refuses only a model or class whose declaration certainly has no JSON form; any other payload is left to the build.",
+    examples: &[
+        "from std.web import route, Json, Query\nimport std.async\n\nmodel Search:\n    q: str\n\n@route(\"/search\")\nasync def search(query: Query[Search]) -> Json[Search]:\n    return Json(query.value)",
+    ],
+    common_causes: &[
+        "A payload model declared without `@derive(json)`.",
+        "A payload model that carries only builtin derives such as `Clone` or `Eq`, none of which gives it a JSON form.",
+    ],
+    fixes: &[
+        "Add `@derive(json)` above the model, with `from std.serde import json`.",
+        "Read or return a type that already derives `json`.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/tutorials/web_framework/"),
+};
+
 const IMPORT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-I0001",
     title: "Import or module resolution error",
@@ -551,6 +572,7 @@ const CATALOG: &[DiagnosticCatalogEntry] = &[
     ROUTE_HANDLER_PARAMETER_UNBOUND,
     OPERATOR_HAS_NO_TYPE_PARAMETER_BOUND,
     METHOD_DECORATOR_RECEIVER_SPELLING,
+    ROUTE_PAYLOAD_WITHOUT_JSON_FORM,
     METHOD_DECORATOR_RECEIVER_NOT_PLANNED,
     IMPORT,
     SDK_COMPONENT_DISABLED,
@@ -844,11 +866,18 @@ mod tests {
             Span::default(),
         );
         let operator = errors::operator_has_no_type_parameter_bound("%", "T", "__mod__", Span::default());
+        let payload = errors::route_payload_without_json_form("search", "Query[Search]", "Search", Span::default());
 
         assert_eq!(code_for_error(&return_type, DiagnosticPhase::Typecheck), "INCAN-T0107");
         assert_eq!(code_for_error(&unbound, DiagnosticPhase::Typecheck), "INCAN-T0108");
         assert_eq!(code_for_error(&operator, DiagnosticPhase::Typecheck), "INCAN-T0109");
-        for code in ["INCAN-T0107", "INCAN-T0108", "INCAN-T0109"] {
+        assert_eq!(code_for_error(&payload, DiagnosticPhase::Typecheck), "INCAN-T0112");
+        assert!(
+            payload.hints.iter().any(|hint| hint.contains("'@derive(json)'")),
+            "the remedy must name the JSON derive, got {:?}",
+            payload.hints
+        );
+        for code in ["INCAN-T0107", "INCAN-T0108", "INCAN-T0109", "INCAN-T0112"] {
             let Some(entry) = explain(code) else {
                 panic!("{code} must have a catalog explanation");
             };

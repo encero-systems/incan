@@ -1,51 +1,40 @@
 # Error trait
 
-The `Error` trait is the standard interface for custom error types used with `Result[T, E]`.
+`Error` is the trait for the error type `E` of `Result[T, E]`.
 
-Implement it when you want:
+## Methods
 
-- a human-readable message (`message()`)
-- optional error chaining (`source()`)
-
-## Definition
+| Method | Returns | Required |
+| --- | --- | --- |
+| `message(self) -> str` | The error's message. | Yes |
+| `source(self) -> Option[str]` | The underlying cause. | No; the default returns `None`. |
 
 ```incan
 trait Error:
-    def message(self) -> str:
-        """Return a human-readable error message"""
-        ...
+    def message(self) -> str: ...
 
     def source(self) -> Option[str]:
-        """Optional: Return the underlying cause of this error"""
         return None
 ```
 
-## Example: simple structured error
+## Displaying an error
+
+A value whose type adopts `Error` and has no `Display` of its own (no `__str__`, and no adopted `Display`) renders its `message()` wherever a value is displayed: an f-string `{value}` part, `str(value)`, and a `print` or `println` argument. `{value:?}` renders `Debug`.
 
 ```incan
-model AgeValidationError with Error:
+from std.traits.error import Error
+
+model ParseFailure with Error:
     field: str
-    msg: str
+    reason: str
 
     def message(self) -> str:
-        return f"Validation failed for '{self.field}': {self.msg}"
+        return f"cannot parse {self.field}: {self.reason}"
 
-def validate_age(age: int) -> Result[int, AgeValidationError]:
-    if age < 0:
-        return Err(AgeValidationError(field="age", msg="cannot be negative"))
-    return Ok(age)
+def main() -> None:
+    failure = ParseFailure(field="age", reason="not a number")
+    println(f"error {failure}")   # error cannot parse age: not a number
+    println(str(failure))         # cannot parse age: not a number
 ```
 
-## Example: chaining with `source()`
-
-```incan
-model DatabaseError with Error:
-    query: str
-    cause: Option[str]
-
-    def message(self) -> str:
-        return f"Database query failed: {self.query}"
-
-    def source(self) -> Option[str]:
-        return self.cause
-```
+See [Error handling](../../explanation/error_handling.md) for how errors are propagated and handled.

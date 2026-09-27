@@ -4689,6 +4689,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/error_display.rs": {
+      "disposition": "keep",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/extern_and_c_bindings.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route.",
@@ -4898,6 +4906,14 @@
       "twin": ""
     },
     "loaves/compiler/incan_frontend/src/typechecker/tests/traits.rs": {
+      "disposition": "keep",
+      "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/web_route_payloads.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
       "owner": 1561,
@@ -5526,6 +5542,32 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_ir/src/lower/tests/error_message_display.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "error_adopter_without_str_displays_through_message_issue1778": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/error_adopter_displays_its_message.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (an f-string part, `str` argument and `print` argument of an `Error` adopter with no `__str__` become its `message()` call, spelled as a written call is); retires with `incan_ir`. The behavior, each display position printing the message, is carried by the named fixture (#1778)."
+        },
+        "generic_and_trait_default_adopters_display_through_trait_dispatch_issue1778": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/error_adopter_displays_its_message.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (a trait-default `message` and a type parameter bounded by `Error` display through the trait-dispatched call a written `message()` lowers to); retires with `incan_ir`. The fixture carries the type-parameter half; the trait-default half cannot run until #1825, because that adopter shape does not build even without a display."
+        },
+        "namespaced_builtins_display_error_adopters_through_message_issue1778": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/error_adopter_displays_its_message.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (`std.builtins.str`/`std.builtins.println` display an `Error` adopter through `message()`); retires with `incan_ir`. The behavior is carried by the named fixture (#1778)."
+        },
+        "self_in_an_error_trait_default_displays_per_adopter_issue1778": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/error_adopter_displays_its_message.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (`{self}` in an `Error` subtrait's default displays `self.message()` in an adopter without `__str__` and itself in one with `__str__`); retires with `incan_ir`. The behavior is carried by the named fixture (#1778)."
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_ir/src/lower/tests/list_count_forms.rs": {
       "disposition": "retire",
       "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
@@ -5588,6 +5630,28 @@
         "prefix_operator_over_an_operator_expression_lowers_a_grouped_operand_issue1763": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/negation_keeps_its_operand_grouping.incn",
           "notes": "Asserts the recorded shape on the legacy IR (an operator-shaped operand of `not`, unary `-` or `~` is handed to the emitter as one grouped value in its own type; an atomic operand stays as written); retires with `incan_ir`. The behavior, `not (1 == 2)` printing `true` and `-(2 + 3)` printing `-5`, is carried by the named fixture (#1763)."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/web_surface.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "aliased_std_web_html_lowers_with_its_text_body_issue1768": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/web_html_response_type.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (an aliased `std.web` `Html` lowers to `Page<String>`); retires with `incan_ir`. The behavior, a function returning the aliased `Html` building and running, is carried by the named fixture (#1768)."
+        },
+        "std_web_html_return_type_lowers_with_its_text_body_issue1768": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/web_html_response_type.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (a declared `Html` return type lowers to `Html<String>`); retires with `incan_ir`. The behavior, a route handler and a function returning `Html` building and running, is carried by the named fixture (#1768)."
+        },
+        "web_extractor_value_reads_the_payload_field_issue1768": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/web_extractor_value_reads_the_payload.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (`query.value` reads the extractor's tuple field `0`, typed as the payload); retires with `incan_ir`. The behavior, `.value` returning the wrapped model, is carried by the named fixture (#1768)."
         }
       },
       "twin": ""
@@ -6975,11 +7039,11 @@
     },
     "loaves/toolchain/incan-cli/tests/behavior_codegen_tests.rs": {
       "disposition": "re-point",
+      "notes": "runs every behavior fixture of the codegen_functions_and_aliases, codegen_modules_and_imports, codegen_models_and_collections and codegen_dependencies areas as a program and compares its observables, one libtest case per area; the observables stay the same when the Rust-source backend is removed (#654).",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "runs every behavior fixture of the codegen_functions_and_aliases, codegen_modules_and_imports, codegen_models_and_collections and codegen_dependencies areas as a program and compares its observables, one libtest case per area; the observables stay the same when the Rust-source backend is removed (#654)."
+      "twin": ""
     },
     "loaves/toolchain/incan-cli/tests/behavior_driver_tests.rs": {
       "disposition": "re-point",
@@ -7007,11 +7071,11 @@
     },
     "loaves/toolchain/incan-cli/tests/behavior_ownership_tests.rs": {
       "disposition": "re-point",
+      "notes": "runs every behavior fixture of the four ownership_* areas as a program (one case per area) and compares its observables, which stay the same when the Rust-source backend is removed (#654).",
       "owner": 1561,
-      "twin": "",
       "split_required": false,
       "split_target": "",
-      "notes": "runs every behavior fixture of the four ownership_* areas as a program (one case per area) and compares its observables, which stay the same when the Rust-source backend is removed (#654)."
+      "twin": ""
     },
     "loaves/toolchain/incan-cli/tests/behavior_smoke_tests.rs": {
       "disposition": "re-point",
@@ -8111,28 +8175,28 @@
       "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/codegen_dependencies": {
-      "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
+      "notes": "behavior fixtures that are projects with an in-fixture `pub::` provider, twinning the incan_emit codegen tests that drove IrCodegen with a synthetic library manifest index; the runner bakes the provider before the run with no Cargo authority. Run by behavior_codegen_tests.rs; each names the retire tests it twins in `# retires:` lines.",
       "owner": 1561,
-      "notes": "behavior fixtures that are projects with an in-fixture `pub::` provider, twinning the incan_emit codegen tests that drove IrCodegen with a synthetic library manifest index; the runner bakes the provider before the run with no Cargo authority. Run by behavior_codegen_tests.rs; each names the retire tests it twins in `# retires:` lines."
+      "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/codegen_functions_and_aliases": {
-      "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
+      "notes": "behavior fixtures twinning incan_emit's codegen.rs and small emit-test-file retire tests about functions, partials, aliases, statics, decorators, explicit type arguments, closures and magic methods; each program prints what the retired test's generated-text assertion was indirectly about. Run by behavior_codegen_tests.rs; each names the retire tests it twins in `# retires:` lines.",
       "owner": 1561,
-      "notes": "behavior fixtures twinning incan_emit's codegen.rs and small emit-test-file retire tests about functions, partials, aliases, statics, decorators, explicit type arguments, closures and magic methods; each program prints what the retired test's generated-text assertion was indirectly about. Run by behavior_codegen_tests.rs; each names the retire tests it twins in `# retires:` lines."
+      "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections": {
-      "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
+      "notes": "behavior fixtures twinning incan_emit retire tests about reflection, membership, serialization, empty collections in generics, value aliases, match-arm ownership, string helpers, entrypoints and the stdlib surfaces the stdlib snapshots imported. Run by behavior_codegen_tests.rs; each names the retire tests it twins in `# retires:` lines.",
       "owner": 1561,
-      "notes": "behavior fixtures twinning incan_emit retire tests about reflection, membership, serialization, empty collections in generics, value aliases, match-arm ownership, string helpers, entrypoints and the stdlib surfaces the stdlib snapshots imported. Run by behavior_codegen_tests.rs; each names the retire tests it twins in `# retires:` lines."
+      "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/codegen_modules_and_imports": {
-      "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
+      "notes": "behavior fixtures (module directories) twinning incan_emit retire tests about nested modules, import spellings, field aliases across modules, facade re-exports, std module imports and derive bundles, and module-qualified type annotations. Run by behavior_codegen_tests.rs; each names the retire tests it twins in `# retires:` lines.",
       "owner": 1561,
-      "notes": "behavior fixtures (module directories) twinning incan_emit retire tests about nested modules, import spellings, field aliases across modules, facade re-exports, std module imports and derive bundles, and module-qualified type annotations. Run by behavior_codegen_tests.rs; each names the retire tests it twins in `# retires:` lines."
+      "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/driver": {
       "disposition": "re-point",
@@ -8165,28 +8229,28 @@
       "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/ownership_numerics_and_bounds": {
-      "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
+      "notes": "behavior fixtures: exact-width float arithmetic and its finiteness check, and generic functions and models whose inferred bounds are satisfied by concrete types; twins of conversions.rs and trait_bound_inference.rs tests, run by behavior_ownership_tests.rs. A fixture is proved by running a program, so it is re-point and stays valid when the Rust-source backend is removed (#654); each names the retire tests it twins in `# retires:` lines.",
       "owner": 1561,
-      "notes": "behavior fixtures: exact-width float arithmetic and its finiteness check, and generic functions and models whose inferred bounds are satisfied by concrete types; twins of conversions.rs and trait_bound_inference.rs tests, run by behavior_ownership_tests.rs. A fixture is proved by running a program, so it is re-point and stays valid when the Rust-source backend is removed (#654); each names the retire tests it twins in `# retires:` lines."
+      "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/ownership_parameters_and_receivers": {
-      "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
+      "notes": "behavior fixtures: parameters the callee mutates, dict probes through them, loops over strings, bytes and enum lists, comprehension and list() sources, a bounded read through a buffer, self returned as a value, channel ends; twins of ownership.rs and conversions.rs planner tests, run by behavior_ownership_tests.rs. A fixture is proved by running a program, so it is re-point and stays valid when the Rust-source backend is removed (#654); each names the retire tests it twins in `# retires:` lines.",
       "owner": 1561,
-      "notes": "behavior fixtures: parameters the callee mutates, dict probes through them, loops over strings, bytes and enum lists, comprehension and list() sources, a bounded read through a buffer, self returned as a value, channel ends; twins of ownership.rs and conversions.rs planner tests, run by behavior_ownership_tests.rs. A fixture is proved by running a program, so it is re-point and stays valid when the Rust-source backend is removed (#654); each names the retire tests it twins in `# retires:` lines."
+      "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/ownership_string_boundaries": {
-      "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
+      "notes": "behavior fixtures: strings crossing call, assignment, return, field and collection boundaries (literals, variables, consts, statics, frozen strings) and primitives that need no conversion; twins of conversions.rs and ownership.rs planner tests, run by behavior_ownership_tests.rs. A fixture is proved by running a program, so it is re-point and stays valid when the Rust-source backend is removed (#654); each names the retire tests it twins in `# retires:` lines.",
       "owner": 1561,
-      "notes": "behavior fixtures: strings crossing call, assignment, return, field and collection boundaries (literals, variables, consts, statics, frozen strings) and primitives that need no conversion; twins of conversions.rs and ownership.rs planner tests, run by behavior_ownership_tests.rs. A fixture is proved by running a program, so it is re-point and stays valid when the Rust-source backend is removed (#654); each names the retire tests it twins in `# retires:` lines."
+      "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/ownership_values_and_fields": {
-      "pattern": "<name>.incn or <name>/",
       "disposition": "re-point",
+      "notes": "behavior fixtures: values passed and used again, fields read out of owners, loop bindings stored into results, generator sources consumed or reused, a field read through a web extractor wrapper; twins of conversions.rs, ownership.rs and implicit_borrowing planner tests, run by behavior_ownership_tests.rs. A fixture is proved by running a program, so it is re-point and stays valid when the Rust-source backend is removed (#654); each names the retire tests it twins in `# retires:` lines.",
       "owner": 1561,
-      "notes": "behavior fixtures: values passed and used again, fields read out of owners, loop bindings stored into results, generator sources consumed or reused, a field read through a web extractor wrapper; twins of conversions.rs, ownership.rs and implicit_borrowing planner tests, run by behavior_ownership_tests.rs. A fixture is proved by running a program, so it is re-point and stays valid when the Rust-source backend is removed (#654); each names the retire tests it twins in `# retires:` lines."
+      "pattern": "<name>.incn or <name>/"
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/smoke": {
       "disposition": "re-point",

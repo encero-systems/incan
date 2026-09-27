@@ -193,10 +193,11 @@ pub fn resolve_active_rustc() -> Result<PathBuf, OvenRustcError> {
     verified_regular_file(Path::new(&reported), "rustc")
 }
 
-/// The dynamic-loader search-path variables a compiler probe must not inherit from the calling process.
+/// The dynamic-loader search-path variables a compiler probe or retained-closure rebuild must not inherit from the
+/// calling process.
 ///
 /// Windows resolves libraries through `PATH`, which also locates the compiler itself, so it has no entry here.
-const INHERITED_LOADER_SEARCH_PATH_VARIABLES: [&str; 3] =
+pub(crate) const INHERITED_LOADER_SEARCH_PATH_VARIABLES: [&str; 3] =
     ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH"];
 
 /// Build the command that asks one compiler about itself, answering for that compiler's own closure.
@@ -208,8 +209,10 @@ const INHERITED_LOADER_SEARCH_PATH_VARIABLES: [&str; 3] =
 /// store-retained compiler that inherits a path naming another toolchain's `lib` loads that toolchain's driver and
 /// reports that toolchain's sysroot. The compiler-suite runner exports exactly such a path to every libtest child,
 /// which is how the retained-toolchain staging test failed under the Linux replay while passing on macOS, where
-/// `DYLD_FALLBACK_LIBRARY_PATH` is consulted only after the rpath (#1755). The same launcher serves a test that
-/// compiles with a retained compiler to prove it stands on its own closure.
+/// `DYLD_FALLBACK_LIBRARY_PATH` is consulted only after the rpath (#1755). The same launcher starts the
+/// store-retained compiler of a runtime-foundation rebuild (`compile_rebuild_unit`), which compiles through that
+/// closure and must therefore load that closure's driver (#1785), and serves a test that compiles with a retained
+/// compiler to prove it stands on its own closure.
 ///
 /// A real direct compile does not come through here: it runs under the frozen environment the JEC plan admits, with
 /// nothing inherited at all.

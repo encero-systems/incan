@@ -177,6 +177,23 @@ def process() -> Result[Data, ProcessError]:
     return Err(ProcessError.NotFound("user"))
 ```
 
+### How an error displays
+
+An error type's `message()` is what a reader sees. Displaying an error value, in an f-string, through `str(...)` or with `print`, shows its `message()` unless the type defines a `Display` of its own with `__str__`. The same rule holds where the concrete type is not known yet: a value of a type parameter bounded by `Error`, and `self` inside a default method of a trait that extends `Error`, both display their `message()`, and an adopter's own `__str__` still wins.
+
+```incan
+from std.traits.error import Error
+
+def describe[E with Error](error: E) -> str:
+    return f"failed: {error}"        # shows the error's message()
+
+trait Reported with Error:
+    def report(self) -> str:
+        return f"reported: {self}"   # the adopter's __str__ if it has one, otherwise its message()
+```
+
+See [Error trait](../reference/stdlib_traits/error.md) for the trait's methods.
+
 ## Common helpers
 
 ### Transform errors with `map_err`

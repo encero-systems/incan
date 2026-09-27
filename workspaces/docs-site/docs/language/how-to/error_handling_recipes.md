@@ -113,6 +113,44 @@ match await tx.send(msg):
         save_for_retry(e.value)
 ```
 
+## Pattern: Define an error type with `Error`
+
+Adopt `Error` on a model and implement `message()`; the model then serves as the `E` of a `Result`:
+
+```incan
+from std.traits.error import Error
+
+model AgeValidationError with Error:
+    field: str
+    msg: str
+
+    def message(self) -> str:
+        return f"Validation failed for '{self.field}': {self.msg}"
+
+def validate_age(age: int) -> Result[int, AgeValidationError]:
+    if age < 0:
+        return Err(AgeValidationError(field="age", msg="cannot be negative"))
+    return Ok(age)
+```
+
+## Pattern: Record the cause with `source()`
+
+When an error wraps a lower-level failure, keep the cause in a field and return it from `source()`:
+
+```incan
+from std.traits.error import Error
+
+model DatabaseError with Error:
+    query: str
+    cause: Option[str]
+
+    def message(self) -> str:
+        return f"Database query failed: {self.query}"
+
+    def source(self) -> Option[str]:
+        return self.cause
+```
+
 ## “Don’t do this”: `unwrap()` on user input
 
 `unwrap()` and `panic()` are for “should never happen” paths (tests, invariants, internal compiler bugs), not expected failures.

@@ -1,0 +1,28 @@
+# behavior: a route handler and ordinary functions may declare the std.web Html response as their return type, also under an import alias
+# retires: loaves/compiler/incan_ir/src/lower/tests/web_surface.rs::std_web_html_return_type_lowers_with_its_text_body_issue1768
+# retires: loaves/compiler/incan_ir/src/lower/tests/web_surface.rs::aliased_std_web_html_lowers_with_its_text_body_issue1768
+# expect-stdout:
+#   rendered
+
+import std.async
+from std.web import Html, route, GET
+from std.web import Html as Page
+
+
+@route("/page", method=GET)
+async def page() -> Html:
+    return Html("<p>ok</p>")
+
+
+def render_html(value: str) -> Html:
+    return Html(value)
+
+
+def render_page(value: str) -> Page:
+    return Page(value)
+
+
+def main() -> None:
+    render_html("<p>ok</p>")
+    render_page("<p>ok</p>")
+    println("rendered")

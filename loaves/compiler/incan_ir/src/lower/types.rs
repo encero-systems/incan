@@ -983,7 +983,9 @@ impl AstLowering {
                 .active_trait_type_substitution(name)
                 .unwrap_or_else(|| IrType::Generic(name.clone())),
             ResolvedType::Named(name) if self.is_active_callable_type_param(name) => IrType::Generic(name.clone()),
-            ResolvedType::Named(name) => IrType::Struct(name.clone()),
+            ResolvedType::Named(name) => self
+                .std_web_html_type(name)
+                .unwrap_or_else(|| IrType::Struct(name.clone())),
             ResolvedType::Ref(inner) => IrType::Ref(Box::new(
                 self.lower_resolved_type_with_rust_path_mode(inner, rust_path_mode),
             )),
@@ -1256,6 +1258,8 @@ impl AstLowering {
 
                 if let Some(enum_ty) = self.enum_names.get(name) {
                     enum_ty.clone()
+                } else if let Some(html) = self.std_web_html_type(n) {
+                    html
                 } else {
                     IrType::Struct(name.clone())
                 }

@@ -1,0 +1,26 @@
+# behavior: .value on a Query[T] parameter is the wrapped payload, in a route handler and in an ordinary function
+# retires: loaves/compiler/incan_ir/src/lower/tests/web_surface.rs::web_extractor_value_reads_the_payload_field_issue1768
+# expect-stdout:
+#   incan
+
+import std.async
+from std.web import Json, Query, Path, route, GET
+from std.serde import json
+
+
+@derive(json)
+model Search:
+    q: str
+
+
+@route("/snapshot/{id}", method=GET)
+async def snapshot(id: Path[int], query: Query[Search]) -> Json[Search]:
+    return Json(query.value)
+
+
+def search_text(query: Query[Search]) -> str:
+    return query.value.q
+
+
+def main() -> None:
+    println(search_text(Query(Search(q="incan"))))
