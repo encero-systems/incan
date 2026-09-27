@@ -211,9 +211,9 @@ impl AstLowering {
     ///
     /// A `mut` parameter is passed the way the checker's marker says (#1790, #1773): a marked parameter, whose changes
     /// reach the caller, as [`Mutability::Mutable`] (`&mut T`), an unmarked one (an `int`, `float` or `bool`, also
-    /// through an alias, or a Rust handle) by value as [`Mutability::OwnedMutable`], `mut name: T`. The decision never
-    /// reads the parameter's IR type. A parameter the checker recorded no marker for keeps the rule from its
-    /// annotation: a direct Rust handle by value, anything else as `&mut T`.
+    /// through a type alias, or a direct Rust handle) by value as [`Mutability::OwnedMutable`], `mut name: T`. A
+    /// recorded marker decides without reading the parameter's IR type. A parameter of this module the checker
+    /// recorded no marker for is decided by [`Self::unrecorded_parameter_mutability`], which reads its annotation.
     pub(in crate::lower) fn lower_parameter_mutability(&self, param: &ast::Spanned<ast::Param>) -> Mutability {
         if !param.node.is_mut {
             return Mutability::Immutable;
@@ -225,8 +225,46 @@ impl AstLowering {
         match marker {
             Some(true) => Mutability::Mutable,
             Some(false) => Mutability::OwnedMutable,
-            None if self.type_is_top_level_direct_rust_import(&param.node.ty.node) => Mutability::OwnedMutable,
-            None => Mutability::Mutable,
+            None => self.unrecorded_parameter_mutability(param),
+        }
+    }
+
+    /// Lower the passing mode of a parameter whose marker this module's checker did not record, such as a parameter of
+    /// a stdlib declaration read from its own source (#1827).
+    ///
+    /// The marker facts are keyed by source span within one module, so a declaration from another source must not be
+    /// looked up there. This applies the marker rule to the annotation instead, the rule the stdlib loader marks such
+    /// declarations by: an `int`, `float` or `bool` annotation and a direct Rust handle are unmarked and passed by
+    /// value, and any other ordinary `mut` parameter is marked and passed as `&mut T`.
+    pub(in crate::lower) fn unrecorded_parameter_mutability(&self, param: &ast::Spanned<ast::Param>) -> Mutability {
+        if !param.node.is_mut {
+            Mutability::Immutable
+        } else if self.type_is_top_level_direct_rust_import(&param.node.ty.node)
+            || (param.node.kind == ast::ParamKind::Normal
+                && matches!(
+                    self.lower_type(&param.node.ty.node),
+                    IrType::Int | IrType::Float | IrType::Bool
+                ))
+        {
+            Mutability::OwnedMutable
+        } else {
+            Mutability::Mutable
+        }
+    }
+
+    /// Lower the passing mode of a parameter in a bodiless trait slot (#1827).
+    ///
+    /// The slot declares the parameter's type only. A by-value `mut` binding of a copied scalar (`int`, `float`,
+    /// `bool`, also through a type alias) belongs to each implementing body, and Rust refuses a `mut` binding in a
+    /// method declaration without a body, so the slot declares that parameter immutable; for a scalar the two modes
+    /// pass the argument alike. A marked parameter keeps its `&mut T` type, and a direct Rust handle keeps the owned
+    /// mode its call sites move the handle by.
+    pub(in crate::lower) fn trait_slot_parameter_mutability(&self, param: &ast::Spanned<ast::Param>) -> Mutability {
+        match self.lower_parameter_mutability(param) {
+            Mutability::OwnedMutable if !self.type_is_top_level_direct_rust_import(&param.node.ty.node) => {
+                Mutability::Immutable
+            }
+            other => other,
         }
     }
 
