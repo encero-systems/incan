@@ -15,12 +15,14 @@
 //! | `assignments` | Assignments with several targets                         |
 //! | `c_abi`       | Checked C ABI diagnostics (RFC 116)                      |
 //! | `capability_requirements` | Types lacking a derive or task capability a program needs of them |
+//! | `derive_contract` | Derive requirements and conflicts, dunder signatures, receivers of static methods |
 //! | `patterns_and_bounds` | Match-pattern literals, list-method forms, bounds owed to bounded nominals |
 
 mod assignments;
 mod c_abi;
 mod capability_requirements;
 mod const_eval;
+mod derive_contract;
 mod modules;
 mod patterns_and_bounds;
 mod rust_module;
@@ -31,6 +33,7 @@ pub use assignments::*;
 pub use c_abi::*;
 pub use capability_requirements::*;
 pub use const_eval::*;
+pub use derive_contract::*;
 pub use modules::*;
 pub use patterns_and_bounds::*;
 pub use rust_module::*;

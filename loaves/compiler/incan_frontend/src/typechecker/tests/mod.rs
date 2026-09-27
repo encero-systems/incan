@@ -63,6 +63,7 @@ mod capabilities;
 mod capability_requirements;
 mod checked_facts_and_registries;
 mod collections_strings_and_bytes;
+mod derive_contract;
 mod dict_get_and_frozen_payloads;
 mod display_rule;
 mod error_display;

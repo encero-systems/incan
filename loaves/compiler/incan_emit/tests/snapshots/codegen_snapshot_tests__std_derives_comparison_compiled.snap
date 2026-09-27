@@ -81,7 +81,6 @@ pub trait Ord: PartialEq {
     fn __ge__(&self, other: Self) -> bool;
 }
 /// Hash trait - Enables use as Dict keys or in Sets
-/// Python equivalent: `__hash__`
 ///
 /// WHY IT'S NEEDED:
 /// Sets and Dicts use hashing internally for fast lookups. Without Hash,
@@ -109,8 +108,9 @@ pub trait Ord: PartialEq {
 /// names[UserId(value=1)] = "Alice"
 /// ```
 ///
-/// ⚠️ Important: If you override `__eq__`, you must also override `__hash__`
-/// to ensure equal objects have equal hashes. Otherwise Set/Dict lookups break.
+/// A Set or Dict hashes a type only through `@derive(Hash)` (or `Hash` in
+/// `@rust.derive(...)`). A method named `__hash__`, including the one this trait
+/// declares, is an ordinary method: a Set or Dict does not call it.
 pub trait Hash {
     fn __hash__(&self) -> i64;
 }

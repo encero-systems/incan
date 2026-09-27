@@ -70,6 +70,7 @@ impl AstLowering {
 
         let (mut derives, derive_rust_modules) = self.extract_derives(&m.decorators);
         self.extend_derives_with_adopted_serde_traits(&mut derives, &m.traits);
+        Self::defer_default_derive_to_field_defaults(&mut derives, &fields);
 
         let debug = derives::as_str(DeriveId::Debug);
         let clone = derives::as_str(DeriveId::Clone);

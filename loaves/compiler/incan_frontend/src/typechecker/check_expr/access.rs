@@ -3775,10 +3775,11 @@ impl TypeChecker {
                     receiver_ty: call.receiver_ty,
                     expected_return_ty: call.expected_return_ty,
                 };
+                let trait_adoptions = self.newtype_trait_adoptions_for_type_methods(type_name, &nt);
                 let ret = self.resolve_source_owner_method_without_arg_prepass(
                     &nt.methods,
                     &nt.method_overloads,
-                    &nt.trait_adoptions,
+                    &trait_adoptions,
                     &resolved_call,
                 )?;
                 if nt.is_rusttype {
@@ -6310,10 +6311,11 @@ impl TypeChecker {
                 }
                 TypeInfo::Newtype(newtype) => {
                     let resolved_method = self.resolve_newtype_method_name(&newtype, method);
+                    let trait_adoptions = self.newtype_trait_adoptions_for_type_methods(type_name, &newtype);
                     if let Some(ret) = self.resolve_named_method(
                         &newtype.methods,
                         Some(&newtype.method_overloads),
-                        Some(&newtype.trait_adoptions),
+                        Some(&trait_adoptions),
                         resolved_method,
                         receiver_surface,
                         type_args,
@@ -6422,10 +6424,11 @@ impl TypeChecker {
                     }
                     TypeInfo::Newtype(nt) => {
                         let resolved_method = self.resolve_newtype_method_name(&nt, method);
+                        let trait_adoptions = self.newtype_trait_adoptions_for_type_methods(type_name, &nt);
                         if let Some(ret) = self.resolve_named_method(
                             &nt.methods,
                             Some(&nt.method_overloads),
-                            Some(&nt.trait_adoptions),
+                            Some(&trait_adoptions),
                             resolved_method,
                             receiver_surface,
                             type_args,

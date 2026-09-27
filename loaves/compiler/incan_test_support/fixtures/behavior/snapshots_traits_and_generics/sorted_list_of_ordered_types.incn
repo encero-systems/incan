@@ -1,0 +1,39 @@
+# behavior: sorted() orders a list whose element type has a total order: a model, enum and newtype that derive Ord, and tuples, lists and Options of ordered values
+# expect-stdout:
+#   a
+#   true
+#   1
+#   a
+#   2
+#   true
+
+
+@derive(Ord)
+model Task:
+    priority: int
+    name: str
+
+
+@derive(Ord)
+enum Level:
+    Low
+    High
+
+
+@derive(Ord)
+type Rank = newtype int
+
+
+def main() -> None:
+    tasks = sorted([Task(priority=2, name="b"), Task(priority=1, name="a")])
+    println(tasks[0].name)
+    levels = sorted([Level.High, Level.Low])
+    println(levels[0] == Level.Low)
+    ranks = sorted([Rank(3), Rank(1)])
+    println(ranks[0].0)
+    pairs = sorted([(2, "b"), (1, "a")])
+    println(pairs[0][1])
+    nested = sorted([[3, 1], [2]])
+    println(nested[0][0])
+    options = sorted([Some(2), None, Some(1)])
+    println(options[0] == None)

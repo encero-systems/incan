@@ -422,10 +422,11 @@ impl AstLowering {
                             // A bare or module-qualified derive name (`Serialize`, `json.Serialize`).
                             if let Some(name) = decorator_resolution::derive_argument_name(&expr.node) {
                                 let name = &name;
-                                if derives::from_str(name) == Some(DeriveId::Descriptor) {
+                                if matches!(derives::from_str(name), Some(DeriveId::Descriptor | DeriveId::Display)) {
                                     // `Descriptor` is a compiler-checked structural-snapshot opt-in, not a Rust
                                     // derive macro. The checked registry fact retains it; generated Rust must not
-                                    // attempt `#[derive(Descriptor)]`.
+                                    // attempt `#[derive(Descriptor)]`. `@derive(Display)` provides nothing: a type
+                                    // displays through `__str__`, and Rust has no `Display` derive (#1872).
                                     continue;
                                 }
                                 if derives::from_str(name).is_some() {

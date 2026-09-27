@@ -4,8 +4,10 @@ use super::TypeChecker;
 use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned, Type};
 use crate::diagnostics::errors::{self, HashedCollectionRole};
 use crate::symbols::{CallableParam, FunctionInfo, ResolvedType};
+use crate::typechecker::derive_requirements::DeriveSupport;
 use crate::typechecker::helpers::{collection_type_id, dict_ty, is_frozen_str, list_ty, option_ty, result_ty, set_ty};
 use incan_lang::lang::builtins::{self as core_builtins, BuiltinFnId};
+use incan_lang::lang::derives::DeriveId;
 use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::constructors::{self as surface_constructors, ConstructorId};
 use incan_lang::lang::surface::functions::SurfaceFnId;
@@ -598,21 +600,35 @@ impl TypeChecker {
                         return Some(ResolvedType::Unknown);
                     }
 
-                    match inner {
-                        ResolvedType::Int
-                        | ResolvedType::Float
-                        | ResolvedType::Bool
-                        | ResolvedType::Str
-                        | ResolvedType::FrozenStr => Some(list_ty(inner)),
-                        other => {
-                            self.errors.push(errors::builtin_list_element_type_not_supported(
-                                name,
-                                &other.to_string(),
-                                call_span,
-                            ));
-                            Some(ResolvedType::Unknown)
-                        }
+                    // A `float` list sorts by its partial order; any other element type sorts by its total order
+                    // (#1881): a derived or adopted `Ord`, or a tuple, list or `Option` of ordered values. An element
+                    // type the derive relation cannot decide is refused, as it cannot be sorted without one, and so
+                    // is a type parameter, whose `Ord` bound does not give the generated program a total order.
+                    if matches!(inner, ResolvedType::Float)
+                        || self.derive_support(&inner, DeriveId::Ord) == DeriveSupport::Supported
+                    {
+                        return Some(list_ty(inner));
                     }
+                    if self.generic_placeholder_name(&inner).is_some() {
+                        self.errors.push(errors::builtin_list_element_type_not_supported(
+                            name,
+                            &inner.to_string(),
+                            call_span,
+                        ));
+                        return Some(ResolvedType::Unknown);
+                    }
+                    let holder = match self.derive_support(&inner, DeriveId::Ord) {
+                        DeriveSupport::Missing(holder) => holder,
+                        DeriveSupport::Supported | DeriveSupport::Unknown => inner.clone(),
+                    };
+                    let holder_is_declared = self.is_user_operator_receiver(&holder);
+                    self.errors.push(errors::sorted_element_not_ordered(
+                        &inner.to_string(),
+                        &holder.to_string(),
+                        holder_is_declared,
+                        call_span,
+                    ));
+                    Some(ResolvedType::Unknown)
                 }
                 BuiltinFnId::ReadFile => {
                     self.check_call_args(args);

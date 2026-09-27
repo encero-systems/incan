@@ -324,17 +324,17 @@ impl TypeChecker {
         {
             return satisfies;
         }
-        if builtin_traits::from_str(bound).is_none() && self.lookup_semantic_trait_info(bound).is_some() {
-            return self.type_satisfies_nominal_trait_bound(ty, bound);
-        }
-        // `Clone`, `Debug`, `Eq` and `Hash` are answered by the derive relation wherever it knows the type; an unknown
-        // answer keeps the per-type fallback below.
+        // A builtin derive (`Clone`, `Copy`, `Eq`, `Ord`, ...) is answered by the derive relation wherever it knows the
+        // type, automatic and implied derives included (#1870); an unknown answer keeps the fallbacks below.
         if let Some(derive) = self.builtin_derive_bound(bound) {
             match self.derive_support(ty, derive) {
                 DeriveSupport::Supported => return true,
                 DeriveSupport::Missing(_) => return false,
                 DeriveSupport::Unknown => {}
             }
+        }
+        if builtin_traits::from_str(bound).is_none() && self.lookup_semantic_trait_info(bound).is_some() {
+            return self.type_satisfies_nominal_trait_bound(ty, bound);
         }
         match ty {
             ResolvedType::Never
@@ -387,14 +387,17 @@ impl TypeChecker {
 
     /// Return the builtin derive a bound or trait adoption names, when its spelling reaches the builtin trait.
     ///
-    /// An imported trait that merely shares a builtin's name (`from unrelated import Eq`) is not the builtin; an import
-    /// alias of the builtin (`from std.derives.comparison import Eq as Equality`) is.
+    /// The builtin traits are the `std.derives.*` traits the stdlib registry records, `Copy` included although it has
+    /// no builtin trait identity of its own. An imported trait that merely shares a builtin's name (`from unrelated
+    /// import Eq`) is not the builtin; an import alias of the builtin (`from std.derives.comparison import Eq as
+    /// Equality`) is.
     pub(in crate::typechecker) fn builtin_derive_bound(&self, bound: &str) -> Option<DeriveId> {
+        let names_builtin_trait = |name: &str| stdlib::trait_method_module_segments(name).is_some();
         let Some(path) = self.import_binding_path(bound) else {
-            return derives::from_str(bound).filter(|_| builtin_traits::from_str(bound).is_some());
+            return derives::from_str(bound).filter(|_| names_builtin_trait(bound));
         };
         let (trait_name, module_path) = path.split_last()?;
-        let derive = derives::from_str(trait_name).filter(|_| builtin_traits::from_str(trait_name).is_some())?;
+        let derive = derives::from_str(trait_name).filter(|_| names_builtin_trait(trait_name))?;
         stdlib::trait_method_module_segments(trait_name)
             .is_some_and(|builtin_module| builtin_module == module_path)
             .then_some(derive)

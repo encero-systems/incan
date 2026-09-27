@@ -39,7 +39,7 @@ model Wrapped:
 | `Display` | `{value}`, `str(value)`, `print(value)` | `__str__` | [String representation](derives/string_representation.md#display) |
 | `Eq` | `==`, `!=`; with `Hash`, use as a `set` element or `dict` key | `__eq__`, `__ne__` | [Comparison](derives/comparison.md#eq) |
 | `PartialEq` | `==`, `!=` | `__eq__`, `__ne__` | [Comparison](derives/comparison.md#partialeq) |
-| `Ord` | `<`, `<=`, `>`, `>=` | `__lt__`, `__le__`, `__gt__`, `__ge__` | [Comparison](derives/comparison.md#ord) |
+| `Ord` | `<`, `<=`, `>`, `>=`, `sorted(values)` | `__lt__`, `__le__`, `__gt__`, `__ge__` | [Comparison](derives/comparison.md#ord) |
 | `PartialOrd` | `<`, `<=`, `>`, `>=` | `__lt__`, `__le__`, `__gt__`, `__ge__` | [Comparison](derives/comparison.md#partialord) |
 | `Hash` | with `Eq`, use as a `set` element or `dict` key | — | [Comparison](derives/comparison.md#hash) |
 | `Clone` | `.clone()` | — | [Copying and Default](derives/copying_default.md#clone) |
@@ -68,6 +68,10 @@ Each of these is refused (`INCAN-T0001`):
 | `@derive(module)` for a module that declares no `__derives__` | The module provides no derives. |
 | `@derive(Eq)` on a type that defines `__eq__` | See [Custom behavior](derives/custom_behavior.md). |
 | `@derive(Copy)` on a type with a field that is not `Copy` | See [Copy](derives/copying_default.md#copy). |
+| `@derive(Eq)`, or any derive, on a type with a field, payload or underlying type that does not meet the derive's **Requires** entry, such as a `float` field | See the derive's page in the [catalog](#derive-catalog). A derive's requirements include those of the derives it implies. |
+| `@derive(PartialOrd)` on a type that provides no `PartialEq` | See [PartialOrd](derives/comparison.md#partialord). |
+| `@derive(Default)` on an enum | See [Default](derives/copying_default.md#default). |
+| `@derive(Validate)` on a class, enum or newtype | See [Validate](derives/validation.md#validate). |
 
 ## Decorators (`@staticmethod`, `@classmethod`, `@requires`) {#decorators-staticmethod-requires}
 

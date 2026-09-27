@@ -14,6 +14,7 @@ use crate::typechecker::helpers::{collection_type_id, dict_ty, list_ty};
 use super::collect::decorators::resolve_decorator_id;
 use super::collect::{capability_description_text, dotted_path_segments};
 use super::decorated_method_receivers::DecoratedMethodReceiver;
+use super::derive_contract::DerivedKind;
 use super::trait_bound_relations::CallableMarkerOwner;
 use super::type_info::{
     CapabilityDeclarationInfo, ProviderOperationDeclarationInfo, RegistryDefinitionInfo, RegistryDescriptionInfo,
@@ -373,6 +374,35 @@ impl TypeChecker {
             .decorators
             .iter()
             .any(|decorator| decorators::from_segments(&decorator.node.path.segments) == Some(id))
+    }
+
+    /// Refuse a `self` or `mut self` receiver on a `@staticmethod` (#1882).
+    ///
+    /// A static method is called on the type, `TypeName.method(...)`, so there is no instance to receive; the parser
+    /// reads a leading `self` as the receiver whatever the decorator, and a method that keeps it is an instance method
+    /// no call on the type reaches.
+    fn refuse_receiver_on_static_method(&mut self, method: &MethodDecl, method_span: Span) {
+        let Some(receiver) = method.receiver else {
+            return;
+        };
+        let decorator = DecoratorId::StaticMethod;
+        if !Self::method_has_decorator(method, decorator) {
+            return;
+        }
+        let receiver_text = match receiver {
+            Receiver::Mutable => "mut self",
+            Receiver::Immutable => "self",
+        };
+        let span = method
+            .receiver_binding
+            .as_ref()
+            .map_or(method_span, |binding| binding.span);
+        self.errors.push(errors::receiver_on_static_method(
+            &method.name,
+            decorators::as_str(decorator),
+            receiver_text,
+            span,
+        ));
     }
 
     /// Replace every nested `Self` occurrence in an annotation with the concrete owner type used for this method body.
@@ -3511,6 +3541,18 @@ impl TypeChecker {
         if has_validate {
             self.check_validate_derive_model(model);
         }
+        let member_spans = model
+            .fields
+            .iter()
+            .map(|field| (field.node.name.as_str(), field.span))
+            .collect();
+        self.check_derive_contract(
+            DerivedKind::Model,
+            &model.name,
+            &model.decorators,
+            &member_spans,
+            &model.methods,
+        );
 
         self.symbols.exit_scope();
     }
@@ -3959,6 +4001,18 @@ impl TypeChecker {
                 &method_spans,
             );
         }
+        let member_spans = class
+            .fields
+            .iter()
+            .map(|field| (field.node.name.as_str(), field.span))
+            .collect();
+        self.check_derive_contract(
+            DerivedKind::Class,
+            &class.name,
+            &class.decorators,
+            &member_spans,
+            &class.methods,
+        );
 
         self.symbols.exit_scope();
     }
@@ -4552,6 +4606,16 @@ impl TypeChecker {
                 &method_spans,
             );
         }
+        if !nt.is_rusttype {
+            let member_spans = HashMap::from([("", nt.underlying.span)]);
+            self.check_derive_contract(
+                DerivedKind::Newtype,
+                &nt.name,
+                &nt.decorators,
+                &member_spans,
+                &nt.methods,
+            );
+        }
 
         self.symbols.exit_scope();
     }
@@ -4825,6 +4889,12 @@ impl TypeChecker {
                 &method_spans,
             );
         }
+        let member_spans = en
+            .variants
+            .iter()
+            .map(|variant| (variant.node.name.as_str(), variant.span))
+            .collect();
+        self.check_derive_contract(DerivedKind::Enum, &en.name, &en.decorators, &member_spans, &en.methods);
 
         self.symbols.exit_scope();
     }
@@ -6216,6 +6286,7 @@ impl TypeChecker {
         owner_params: &[TypeParam],
     ) {
         self.validate_protected_type_param_bindings(&method.type_params, method_span);
+        self.refuse_receiver_on_static_method(method, method_span);
         self.symbols.enter_scope(ScopeKind::Method {
             receiver: method.receiver,
         });

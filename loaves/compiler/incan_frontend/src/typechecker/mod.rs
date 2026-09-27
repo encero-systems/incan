@@ -49,6 +49,7 @@ mod collect;
 mod collection_annotations;
 mod const_eval;
 mod decorated_method_receivers;
+mod derive_contract;
 mod derive_requirements;
 mod for_item_taking;
 mod hash_key_inference;
@@ -115,6 +116,7 @@ use incan_lang::lang::builtins::{self, BuiltinFnId};
 use incan_lang::lang::c_abi;
 use incan_lang::lang::conventions;
 use incan_lang::lang::decorators::{self as core_decorators, DecoratorId};
+use incan_lang::lang::derives::{self as builtin_derives, DeriveId};
 use incan_lang::lang::errors as runtime_errors;
 use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::functions::SurfaceFnId;
@@ -3070,17 +3072,53 @@ impl TypeChecker {
         false
     }
 
-    /// Explicit `with Trait[...]` entries plus trait-like `@derive` entries for method lookup.
+    /// Explicit `with Trait[...]` entries plus trait-like `@derive` entries and the automatic `Clone` of a `model`,
+    /// `class` or `enum`, for method lookup on one of those.
+    ///
+    /// Every model, class and enum derives `Clone` without `@derive(Clone)`, so `value.clone()` resolves through the
+    /// builtin trait whether or not the derive is spelled (#1870).
     pub fn trait_adoptions_for_type_methods(
         &self,
         adopted: &[TypeBoundInfo],
         derives: &[String],
     ) -> Vec<TypeBoundInfo> {
+        let automatic_clone = builtin_derives::as_str(DeriveId::Clone);
+        self.with_derive_trait_adoptions(adopted, derives.iter().map(String::as_str).chain([automatic_clone]))
+    }
+
+    /// Explicit `with Trait[...]` entries of a newtype plus trait-like `@derive` entries and its automatic `Clone`, for
+    /// method lookup on it.
+    ///
+    /// A newtype derives `Clone` automatically when its underlying type implements it (#1754), so `value.clone()`
+    /// resolves whenever the derive relation says the newtype is `Clone` (#1870).
+    pub(in crate::typechecker) fn newtype_trait_adoptions_for_type_methods(
+        &self,
+        name: &str,
+        info: &NewtypeInfo,
+    ) -> Vec<TypeBoundInfo> {
+        let clone = builtin_derives::as_str(DeriveId::Clone);
+        let automatic_clone = (!info.is_rusttype
+            && self.derive_support(&ResolvedType::Named(name.to_string()), DeriveId::Clone)
+                == derive_requirements::DeriveSupport::Supported)
+            .then_some(clone);
+        self.with_derive_trait_adoptions(
+            &info.trait_adoptions,
+            info.derives.iter().map(String::as_str).chain(automatic_clone),
+        )
+    }
+
+    /// Append to `adopted` each derive in `derives` that names a trait in scope, once, as a trait adoption.
+    fn with_derive_trait_adoptions<'a>(
+        &self,
+        adopted: &[TypeBoundInfo],
+        derives: impl Iterator<Item = &'a str>,
+    ) -> Vec<TypeBoundInfo> {
         let mut out = adopted.to_vec();
-        for d in derives {
-            if self.lookup_semantic_trait_info(d).is_some() && !out.iter().any(|t| t.name == *d) {
+        for derive in derives {
+            if self.lookup_semantic_trait_info(derive).is_some() && !out.iter().any(|adoption| adoption.name == derive)
+            {
                 out.push(TypeBoundInfo {
-                    name: d.clone(),
+                    name: derive.to_string(),
                     source_name: None,
                     type_args: Vec::new(),
                     module_path: None,

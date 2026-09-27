@@ -14,8 +14,9 @@ This page specifies the dunder methods that define behavior a derive would other
 | `__gt__` | `(self, other: Self) -> bool` | `>` | `Ord` |
 | `__ge__` | `(self, other: Self) -> bool` | `>=` | `Ord` |
 
+- A dunder in the table is declared with its signature; one declared with another signature, including a `mut self` receiver, is refused (`INCAN-T0001`). `other` is written `Self` or as the declaring type with its own type parameters.
 - Each dunder defines only its own operator. Adopting `std.derives.comparison.Eq` supplies `__ne__` from `__eq__`, and adopting `std.derives.comparison.Ord` supplies `__le__`, `__gt__` and `__ge__` from `__lt__` and `__eq__` (see [Comparison](comparison.md)).
-- A type does not both define `__str__` and derive `Display`, define `__eq__` and derive `Eq`, or define `__lt__` and derive `Ord`; such a type is refused (`INCAN-T0001`).
+- A type does not both define a dunder in the table and derive its matching derive; such a type is refused (`INCAN-T0001`). `PartialEq` matches as `Eq` does and `PartialOrd` as `Ord` does, and a derive matches whether it is written in `@derive(...)`, implied by another derive (`Ord` implies `Eq`) or spelled in `@rust.derive(...)`.
 - `Debug`, `Clone`, `Copy`, `Default` and `Hash` have no dunder. A method named `__hash__` is an ordinary method: it does not provide `Hash`, and a set or dict does not call it.
 
 ## See also

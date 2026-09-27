@@ -1,11 +1,12 @@
-//! The compiler's one relation for the builtin derives `Clone`, `Debug`, `Eq` and `Hash`, and the refusals built on it.
+//! The compiler's one relation for the builtin derives, and the refusals built on it.
 //!
-//! [`TypeChecker::derive_support`] answers whether a checked type implements one of those derives in the generated
-//! program, reading the surface-type registry for runtime types ([`surface_types::derive_support`]), the derive
-//! implication table for declared types ([`derives::implied_derives`]), and the automatic derives lowering gives a
-//! `model`, `class`, `enum` or newtype. Generic bound checks (`type_satisfies_explicit_bound`) and the clone
-//! requirement of collection methods (`is_clone_type`) consult it before their own fallbacks, and the refusals below
-//! are built on it:
+//! [`TypeChecker::derive_support`] answers whether a checked type implements `Clone`, `Debug`, `Copy`, `Default`,
+//! `PartialEq`, `Eq`, `PartialOrd`, `Ord` or `Hash` in the generated program, reading the surface-type registry for
+//! runtime types ([`surface_types::derive_support`]), the derive implication table for declared types
+//! ([`derives::implied_derives`]), and the automatic derives lowering gives a `model`, `class`, `enum` or newtype
+//! (#1870). Generic bound checks (`type_satisfies_explicit_bound`), the clone requirement of collection methods
+//! (`is_clone_type`) and the comparison operators consult it before their own fallbacks, and the refusals below are
+//! built on it:
 //!
 //! - a `model` or `class` field, or an `enum` payload, whose type cannot carry the automatic `Clone` and `Debug`
 //!   derives (`INCAN-T0113`, #1754);
@@ -14,8 +15,9 @@
 //!   (`INCAN-T0114`, #1758).
 //!
 //! The relation answers [`DeriveSupport::Unknown`] rather than guess: for a type parameter, a Rust-origin type, a
-//! `rusttype`, a runtime type the registry records nothing for, and the `Eq` / `Hash` of a type declared in another
-//! module, whose manifest may not list every derive. The refusals never refuse on an unknown answer.
+//! `rusttype`, a runtime type the registry records nothing for, and a derive of a type declared in another module that
+//! its manifest does not list, since a manifest may not list every derive. The refusals never refuse on an unknown
+//! answer.
 
 use std::collections::HashMap;
 
@@ -23,9 +25,12 @@ use super::TypeChecker;
 use crate::ast::{CallArg, DictEntry, Expr, ListEntry, ParamKind, Span, Spanned, Type};
 use crate::diagnostics::CompileError;
 use crate::diagnostics::errors::{self, DerivedMember, HashRemedy, HashedCollectionRole};
-use crate::symbols::{CallableParam, NewtypeInfo, ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo};
+use crate::symbols::{
+    CallableParam, EnumInfo, MethodInfo, NewtypeInfo, ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo,
+};
 use crate::typechecker::helpers::collection_type_id;
 use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::magic_methods::{self, MagicMethodId};
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceDeriveSupport, SurfaceTypeId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_lang::lang::types::numerics;
@@ -56,12 +61,63 @@ pub(in crate::typechecker) struct LocalDeriveFacts {
     pub has_unclassified_rust_derive: bool,
 }
 
-/// Whether `derive` is one the relation answers for.
+/// Whether `derive` is one the relation answers for: every builtin derive that is a Rust trait of the generated
+/// program. `Display` is not (`@derive(Display)` provides nothing), nor are `Validate` and `Descriptor`.
 fn is_relation_derive(derive: DeriveId) -> bool {
     matches!(
         derive,
-        DeriveId::Clone | DeriveId::Debug | DeriveId::Eq | DeriveId::Hash
+        DeriveId::Clone
+            | DeriveId::Debug
+            | DeriveId::Copy
+            | DeriveId::Default
+            | DeriveId::PartialEq
+            | DeriveId::Eq
+            | DeriveId::PartialOrd
+            | DeriveId::Ord
+            | DeriveId::Hash
     )
+}
+
+/// Whether `derive` needs a total order or a hash, which a binary float does not have: `Eq`, `Ord` and `Hash`.
+fn needs_total_comparison(derive: DeriveId) -> bool {
+    matches!(derive, DeriveId::Eq | DeriveId::Ord | DeriveId::Hash)
+}
+
+/// Whether an enum payload type lets the enum take lowering's automatic `PartialEq`: a number, `bool`, `str` or
+/// `bytes`, or a `list`, `set`, `dict`, `Option`, `Result` or tuple of those. A declared type never does, whatever it
+/// derives, since lowering decides on the lowered payload type alone.
+fn payload_defaults_partial_eq(ty: &ResolvedType) -> bool {
+    match ty {
+        ResolvedType::Unit
+        | ResolvedType::Bool
+        | ResolvedType::Int
+        | ResolvedType::Float
+        | ResolvedType::Numeric(_)
+        | ResolvedType::Str
+        | ResolvedType::Bytes
+        | ResolvedType::FrozenStr
+        | ResolvedType::FrozenBytes => true,
+        ResolvedType::Tuple(items) => items.iter().all(payload_defaults_partial_eq),
+        ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) | ResolvedType::TypeToken(inner) => {
+            payload_defaults_partial_eq(inner)
+        }
+        ResolvedType::Generic(name, args) => {
+            if numerics::decimal_constructor_from_str(name).is_some() {
+                return true;
+            }
+            match collection_type_id(name) {
+                Some(CollectionTypeId::List | CollectionTypeId::Set | CollectionTypeId::Option) => {
+                    args.len() == 1 && args.iter().all(payload_defaults_partial_eq)
+                }
+                Some(CollectionTypeId::Dict | CollectionTypeId::Result) => {
+                    args.len() == 2 && args.iter().all(payload_defaults_partial_eq)
+                }
+                Some(CollectionTypeId::Tuple) => args.iter().all(payload_defaults_partial_eq),
+                _ => false,
+            }
+        }
+        _ => false,
+    }
 }
 
 impl TypeChecker {
@@ -69,14 +125,28 @@ impl TypeChecker {
     // The relation
     // ========================================================================
 
-    /// Return whether `ty` implements `derive` (`Clone`, `Debug`, `Eq` or `Hash`) in the generated program.
+    /// Return whether `ty` implements `derive` in the generated program.
     ///
-    /// Any other derive is [`DeriveSupport::Unknown`].
+    /// A derive the relation does not answer for ([`is_relation_derive`]) is [`DeriveSupport::Unknown`].
     pub(in crate::typechecker) fn derive_support(&self, ty: &ResolvedType, derive: DeriveId) -> DeriveSupport {
         if !is_relation_derive(derive) {
             return DeriveSupport::Unknown;
         }
         self.derive_support_assuming(ty, derive, &[], &mut Vec::new())
+    }
+
+    /// Return the relation's answer for `ty` with a declaration's own type parameters taken to implement `derive`, as
+    /// a derive on a generic declaration bounds them.
+    pub(in crate::typechecker) fn derive_support_assuming_type_params(
+        &self,
+        ty: &ResolvedType,
+        derive: DeriveId,
+        type_params: &[String],
+    ) -> DeriveSupport {
+        if !is_relation_derive(derive) {
+            return DeriveSupport::Unknown;
+        }
+        self.derive_support_assuming(ty, derive, type_params, &mut Vec::new())
     }
 
     /// The relation with a set of type-parameter names assumed to implement `derive`, and the newtypes being visited.
@@ -91,46 +161,57 @@ impl TypeChecker {
         assumed: &[String],
         visiting: &mut Vec<String>,
     ) -> DeriveSupport {
-        let hashing = matches!(derive, DeriveId::Eq | DeriveId::Hash);
         match ty {
-            ResolvedType::Int
-            | ResolvedType::Bool
-            | ResolvedType::Str
-            | ResolvedType::Bytes
-            | ResolvedType::FrozenStr
-            | ResolvedType::FrozenBytes
-            | ResolvedType::Unit => DeriveSupport::Supported,
+            ResolvedType::Int | ResolvedType::Bool | ResolvedType::Unit => DeriveSupport::Supported,
+            // `String` and `Vec<u8>` own their contents, so they are not `Copy`.
+            ResolvedType::Str | ResolvedType::Bytes => {
+                if derive == DeriveId::Copy {
+                    DeriveSupport::Missing(ty.clone())
+                } else {
+                    DeriveSupport::Supported
+                }
+            }
+            // The baked `'static` string and bytes are `Copy` and ordered; whether they have a `Default` is not
+            // recorded.
+            ResolvedType::FrozenStr | ResolvedType::FrozenBytes => {
+                if derive == DeriveId::Default {
+                    DeriveSupport::Unknown
+                } else {
+                    DeriveSupport::Supported
+                }
+            }
             ResolvedType::Float => {
-                if hashing {
+                if needs_total_comparison(derive) {
                     DeriveSupport::Missing(ty.clone())
                 } else {
                     DeriveSupport::Supported
                 }
             }
             ResolvedType::Numeric(id) => {
-                if hashing && numerics::is_binary_float(*id) {
+                if needs_total_comparison(derive) && numerics::is_binary_float(*id) {
                     DeriveSupport::Missing(ty.clone())
                 } else {
                     DeriveSupport::Supported
                 }
             }
             ResolvedType::Tuple(items) => self.all_derive_support(items, derive, assumed, visiting),
-            // The frozen collections are baked slices: `Clone`, `Debug` and `Eq` follow their contents; none hashes.
-            ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => {
-                if derive == DeriveId::Hash {
-                    DeriveSupport::Missing(ty.clone())
-                } else {
+            // The frozen collections are baked slices: `Clone`, `Debug`, `PartialEq` and `Eq` follow their contents;
+            // none hashes, and the rest is not recorded.
+            ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => match derive {
+                DeriveId::Hash => DeriveSupport::Missing(ty.clone()),
+                DeriveId::Clone | DeriveId::Debug | DeriveId::PartialEq | DeriveId::Eq => {
                     self.derive_support_assuming(inner, derive, assumed, visiting)
                 }
-            }
-            ResolvedType::FrozenDict(key, value) => {
-                if derive == DeriveId::Hash {
-                    DeriveSupport::Missing(ty.clone())
-                } else {
+                _ => DeriveSupport::Unknown,
+            },
+            ResolvedType::FrozenDict(key, value) => match derive {
+                DeriveId::Hash => DeriveSupport::Missing(ty.clone()),
+                DeriveId::Clone | DeriveId::Debug | DeriveId::PartialEq | DeriveId::Eq => {
                     let pair = [key.as_ref().clone(), value.as_ref().clone()];
                     self.all_derive_support(&pair, derive, assumed, visiting)
                 }
-            }
+                _ => DeriveSupport::Unknown,
+            },
             ResolvedType::TypeVar(name) => {
                 if assumed.contains(name) {
                     DeriveSupport::Supported
@@ -152,22 +233,13 @@ impl TypeChecker {
             }
             ResolvedType::Generic(name, args) => {
                 if numerics::decimal_constructor_from_str(name).is_some() {
-                    return DeriveSupport::Supported;
+                    return match derive {
+                        DeriveId::PartialOrd | DeriveId::Ord | DeriveId::Default => DeriveSupport::Unknown,
+                        _ => DeriveSupport::Supported,
+                    };
                 }
                 if let Some(collection) = collection_type_id(name) {
-                    return match collection {
-                        CollectionTypeId::Generator => DeriveSupport::Unknown,
-                        CollectionTypeId::Set
-                        | CollectionTypeId::Dict
-                        | CollectionTypeId::FrozenList
-                        | CollectionTypeId::FrozenSet
-                        | CollectionTypeId::FrozenDict
-                            if derive == DeriveId::Hash =>
-                        {
-                            DeriveSupport::Missing(ty.clone())
-                        }
-                        _ => self.all_derive_support(args, derive, assumed, visiting),
-                    };
+                    return self.collection_derive_support(ty, collection, args, derive, assumed, visiting);
                 }
                 if let Some(surface_type) = self.surface_type_named(name) {
                     return self.surface_derive_support(ty, surface_type, args, derive, assumed, visiting);
@@ -209,6 +281,54 @@ impl TypeChecker {
         }
     }
 
+    /// Answer for a builtin collection from what its generated Rust type implements.
+    ///
+    /// A `list` is a `Vec`, a `set` a `HashSet` and a `dict` a `HashMap`: none is `Copy`, each has an empty `Default`,
+    /// and the hashed ones are neither ordered nor hashable. `Option`, `Result` and tuples follow their type arguments,
+    /// except that only `Option` has a `Default`. The frozen collections are baked slices that record `Clone`,
+    /// `Debug`, `PartialEq` and `Eq` only.
+    fn collection_derive_support(
+        &self,
+        ty: &ResolvedType,
+        collection: CollectionTypeId,
+        args: &[ResolvedType],
+        derive: DeriveId,
+        assumed: &[String],
+        visiting: &mut Vec<String>,
+    ) -> DeriveSupport {
+        let follows =
+            |checker: &Self, visiting: &mut Vec<String>| checker.all_derive_support(args, derive, assumed, visiting);
+        match collection {
+            CollectionTypeId::Generator => DeriveSupport::Unknown,
+            CollectionTypeId::List => match derive {
+                DeriveId::Copy => DeriveSupport::Missing(ty.clone()),
+                DeriveId::Default => DeriveSupport::Supported,
+                _ => follows(self, visiting),
+            },
+            CollectionTypeId::Set | CollectionTypeId::Dict => match derive {
+                DeriveId::Copy | DeriveId::Hash | DeriveId::PartialOrd | DeriveId::Ord => {
+                    DeriveSupport::Missing(ty.clone())
+                }
+                DeriveId::Default => DeriveSupport::Supported,
+                _ => follows(self, visiting),
+            },
+            CollectionTypeId::Option => match derive {
+                DeriveId::Default => DeriveSupport::Supported,
+                _ => follows(self, visiting),
+            },
+            CollectionTypeId::Result => match derive {
+                DeriveId::Default => DeriveSupport::Missing(ty.clone()),
+                _ => follows(self, visiting),
+            },
+            CollectionTypeId::Tuple => follows(self, visiting),
+            CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet | CollectionTypeId::FrozenDict => match derive {
+                DeriveId::Hash => DeriveSupport::Missing(ty.clone()),
+                DeriveId::Clone | DeriveId::Debug | DeriveId::PartialEq | DeriveId::Eq => follows(self, visiting),
+                _ => DeriveSupport::Unknown,
+            },
+        }
+    }
+
     /// Answer for a stdlib surface type from the registry.
     fn surface_derive_support(
         &self,
@@ -244,15 +364,26 @@ impl TypeChecker {
             return DeriveSupport::Unknown;
         };
         let own = match info {
-            TypeInfo::Model(model) => self.automatic_nominal_derive(name, &model.derives, &model.traits, derive, false),
+            TypeInfo::Model(model) => self
+                .automatic_nominal_derive(name, &model.derives, &model.traits, derive, false)
+                .map(|derived| derived || Self::dunder_provides(&model.methods, derive)),
             TypeInfo::Class(class) => {
                 // Lowering drops the automatic `Debug` of a private adapter class holding direct Rust state.
                 let opaque_debug = name.starts_with('_') && derive == DeriveId::Debug;
                 self.automatic_nominal_derive(name, &class.derives, &class.traits, derive, opaque_debug)
+                    .map(|derived| derived || Self::dunder_provides(&class.methods, derive))
             }
-            TypeInfo::Enum(en) => self.automatic_nominal_derive(name, &en.derives, &en.traits, derive, false),
+            TypeInfo::Enum(en) => self
+                .automatic_nominal_derive(name, &en.derives, &en.traits, derive, false)
+                .map(|derived| {
+                    derived
+                        || Self::dunder_provides(&en.methods, derive)
+                        || (derive == DeriveId::PartialEq && Self::enum_has_automatic_partial_eq(en))
+                }),
             TypeInfo::Newtype(newtype) if newtype.is_rusttype => None,
-            TypeInfo::Newtype(newtype) => self.newtype_derive(name, newtype, derive, visiting),
+            TypeInfo::Newtype(newtype) => self
+                .newtype_derive(name, newtype, derive, visiting)
+                .map(|derived| derived || Self::dunder_provides(&newtype.methods, derive)),
             TypeInfo::Builtin | TypeInfo::TypeAlias => None,
         };
         match own {
@@ -262,8 +393,8 @@ impl TypeChecker {
         }
     }
 
-    /// Whether a `model`, `class` or `enum` implements `derive`: `Clone` and `Debug` always (`opaque_debug` marks the
-    /// one case lowering drops `Debug`), `Eq` and `Hash` only when declared.
+    /// Whether a `model`, `class` or `enum` implements `derive` through its derives: `Clone` and `Debug` always
+    /// (`opaque_debug` marks the one case lowering drops `Debug`), any other only when declared or implied.
     fn automatic_nominal_derive(
         &self,
         name: &str,
@@ -279,11 +410,56 @@ impl TypeChecker {
         }
     }
 
+    /// Whether a type's own dunder gives it `derive` in the generated program: `__eq__` is emitted as its
+    /// `PartialEq` implementation.
+    fn dunder_provides(methods: &HashMap<String, MethodInfo>, derive: DeriveId) -> bool {
+        derive == DeriveId::PartialEq && methods.contains_key(magic_methods::as_str(MagicMethodId::Eq))
+    }
+
+    /// Whether lowering derives `PartialEq` for an enum automatically: when it defines no `__eq__` and every payload
+    /// type is a number, `bool`, `str` or `bytes`, or a `list`, `set`, `dict`, `Option`, `Result` or tuple of those.
+    ///
+    /// This is the checked form of lowering's own rule (`enum_variant_payloads_default_partial_eq`), which decides the
+    /// derive on the lowered payload types; the two must agree, so a change to one is a change to both.
+    pub(in crate::typechecker) fn enum_has_automatic_partial_eq(info: &EnumInfo) -> bool {
+        !info.methods.contains_key(magic_methods::as_str(MagicMethodId::Eq))
+            && info.variant_fields.values().flatten().all(payload_defaults_partial_eq)
+    }
+
+    /// Whether a comparison operator on `ty` is backed by a derive rather than a dunder: `derive` (`PartialEq` for
+    /// `==` and `!=`, `PartialOrd` for the orderings) declared or implied on the type, spelled in `@rust.derive(...)`,
+    /// or, for `PartialEq`, the automatic derive of an enum.
+    ///
+    /// A dunder defines only its own operator, so the operator check dispatches a type's dunders separately and asks
+    /// this only for the derived implementation.
+    pub(in crate::typechecker) fn comparison_is_derived(&self, ty: &ResolvedType, derive: DeriveId) -> bool {
+        let (ResolvedType::Named(name) | ResolvedType::Generic(name, _)) = ty else {
+            return false;
+        };
+        let Some(info) = self.lookup_semantic_type_info(name) else {
+            return false;
+        };
+        let declared =
+            |derives: &[String], traits: &[String]| self.declared_derive(name, derives, traits, derive) == Some(true);
+        match info {
+            TypeInfo::Model(model) => declared(&model.derives, &model.traits),
+            TypeInfo::Class(class) => declared(&class.derives, &class.traits),
+            TypeInfo::Enum(en) => {
+                declared(&en.derives, &en.traits)
+                    || (derive == DeriveId::PartialEq && Self::enum_has_automatic_partial_eq(en))
+            }
+            TypeInfo::Newtype(newtype) => !newtype.is_rusttype && declared(&newtype.derives, &newtype.traits),
+            TypeInfo::Builtin | TypeInfo::TypeAlias => false,
+        }
+    }
+
     /// Whether a declared type provides `derive` through its own derive list, trait adoptions and `@rust.derive`.
     ///
     /// A derive counts together with what it implies (`Ord` implies `Eq`), under its own name or an import alias, and a
-    /// trait adoption counts when it names the builtin trait. A type declared in another module, or with a
-    /// `@rust.derive(...)` the compiler cannot classify, answers `None` when the derive is absent from what is known.
+    /// trait adoption counts when it names the builtin trait, except `Hash`: a set or dict hashes a type only through
+    /// the derive, and the `__hash__` an adopter of `std.derives.comparison.Hash` defines is an ordinary method
+    /// (#1822). A type declared in another module, or with a `@rust.derive(...)` the compiler cannot classify,
+    /// answers `None` when the derive is absent from what is known.
     fn declared_derive(
         &self,
         name: &str,
@@ -298,7 +474,8 @@ impl TypeChecker {
             .chain(
                 trait_names
                     .iter()
-                    .filter_map(|spelling| self.builtin_derive_bound(spelling)),
+                    .filter_map(|spelling| self.builtin_derive_bound(spelling))
+                    .filter(|adopted| *adopted != DeriveId::Hash),
             )
             .collect::<Vec<_>>();
         if let Some(facts) = local {
@@ -321,7 +498,7 @@ impl TypeChecker {
     ///
     /// Lowering takes a builtin derive name as the builtin derive whatever else it could name, so the relation does
     /// too; a trait adoption is resolved strictly instead ([`Self::builtin_derive_bound`]).
-    fn builtin_derive_named(&self, spelling: &str) -> Option<DeriveId> {
+    pub(in crate::typechecker) fn builtin_derive_named(&self, spelling: &str) -> Option<DeriveId> {
         derives::from_str(spelling).or_else(|| {
             self.import_binding_path(spelling)
                 .and_then(<[String]>::last)
@@ -344,6 +521,7 @@ impl TypeChecker {
             return Some(true);
         }
         match derive {
+            DeriveId::Copy if Self::newtype_underlying_is_copy(&info.underlying) => Some(true),
             DeriveId::Clone | DeriveId::Debug => {
                 if self.newtype_automatic_derive(name, info, derive, visiting) {
                     return Some(true);
@@ -357,6 +535,39 @@ impl TypeChecker {
                 complete.then_some(false)
             }
             _ => self.declared_derive(name, &info.derives, &info.traits, derive),
+        }
+    }
+
+    /// Whether lowering derives `Copy` (and `Clone`) for a newtype automatically: when its underlying type is a
+    /// number, `bool`, `None`, a frozen string or bytes, or a tuple, `Option` or `Result` of those.
+    ///
+    /// This is the checked form of the rule lowering applies to the lowered underlying type (`IrType::is_copy`); a
+    /// declared type that derives `Copy` does not count there, so it does not count here either.
+    fn newtype_underlying_is_copy(underlying: &ResolvedType) -> bool {
+        match underlying {
+            ResolvedType::Unit
+            | ResolvedType::Bool
+            | ResolvedType::Int
+            | ResolvedType::Float
+            | ResolvedType::Numeric(_)
+            | ResolvedType::FrozenStr
+            | ResolvedType::FrozenBytes
+            | ResolvedType::Ref(_)
+            | ResolvedType::RefMut(_)
+            | ResolvedType::TypeToken(_) => true,
+            ResolvedType::Tuple(items) => items.iter().all(Self::newtype_underlying_is_copy),
+            ResolvedType::Generic(name, args) => {
+                if numerics::decimal_constructor_from_str(name).is_some() {
+                    return true;
+                }
+                match collection_type_id(name) {
+                    Some(CollectionTypeId::Option | CollectionTypeId::Result | CollectionTypeId::Tuple) => {
+                        !args.is_empty() && args.iter().all(Self::newtype_underlying_is_copy)
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
         }
     }
 

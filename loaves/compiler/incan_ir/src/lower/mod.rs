@@ -3071,6 +3071,11 @@ impl AstLowering {
                                     Err(e) => errors.push(e),
                                 }
                             }
+                            if let Some(default_impl) = self.lower_field_default_impl(&struct_ir, &m.decorators) {
+                                ir_program
+                                    .declarations
+                                    .push(IrDecl::new(IrDeclKind::Impl(default_impl)));
+                            }
                         }
                         Err(e) => errors.push(e),
                     }
@@ -3160,6 +3165,11 @@ impl AstLowering {
                                     }
                                     Err(e) => errors.push(e),
                                 }
+                            }
+                            if let Some(default_impl) = self.lower_field_default_impl(&struct_ir, &c.decorators) {
+                                ir_program
+                                    .declarations
+                                    .push(IrDecl::new(IrDeclKind::Impl(default_impl)));
                             }
                         }
                         Err(e) => errors.push(e),
@@ -4607,6 +4617,7 @@ mod tests {
     mod default_named_items;
     mod default_owner_paths;
     mod dependency_call_arguments;
+    mod derive_contract_lowering;
     mod derive_vocabulary_imports;
     mod display_operands;
     mod error_message_display;

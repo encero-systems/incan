@@ -15,6 +15,7 @@ use crate::ast::*;
 use crate::diagnostics::errors;
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved, pow_exponent_kind_from_ast};
 use crate::symbols::{ResolvedType, TypeBoundInfo, TypeInfo};
+use crate::typechecker::derive_requirements::DeriveSupport;
 use crate::typechecker::{MemberBindingSurface, ProtocolIterationInfo, ResolvedMethodDispatch, ResolvedOperatorKind};
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
@@ -188,17 +189,13 @@ fn comparison_dunders() -> &'static [&'static str] {
     &["__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__"]
 }
 
-/// Return whether a derive set supplies Rust-backed comparison for an operator.
-fn derives_support_comparison_operator(derives: &[String], op: BinaryOp) -> bool {
-    let has = |id| derives.iter().any(|derive| derive == derives::as_str(id));
+/// Return the derive whose Rust trait implements a comparison operator: `PartialEq` for `==`, `!=` and list
+/// membership, `PartialOrd` for the orderings.
+fn comparison_operator_derive(op: BinaryOp) -> Option<DeriveId> {
     match op {
-        BinaryOp::Eq | BinaryOp::NotEq => {
-            has(DeriveId::Eq) || has(DeriveId::PartialEq) || has(DeriveId::Ord) || has(DeriveId::PartialOrd)
-        }
-        BinaryOp::Lt | BinaryOp::Gt | BinaryOp::LtEq | BinaryOp::GtEq => {
-            has(DeriveId::Ord) || has(DeriveId::PartialOrd)
-        }
-        _ => false,
+        BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::In | BinaryOp::NotIn => Some(DeriveId::PartialEq),
+        BinaryOp::Lt | BinaryOp::Gt | BinaryOp::LtEq | BinaryOp::GtEq => Some(DeriveId::PartialOrd),
+        _ => None,
     }
 }
 
@@ -603,6 +600,8 @@ impl TypeChecker {
                         self.errors
                             .push(errors::missing_method(&left_ty.to_string(), method, span));
                         ResolvedType::Unknown
+                    } else if self.refuse_comparison_without_derive(&left_ty, op, span) {
+                        ResolvedType::Unknown
                     } else if left_ty == right_ty || self.types_compatible(&left_ty, &right_ty) {
                         ResolvedType::Bool
                     } else {
@@ -614,7 +613,10 @@ impl TypeChecker {
                         ResolvedType::Bool
                     }
                 } else if left_ty == right_ty || self.types_compatible(&left_ty, &right_ty) {
-                    // Same-type or compatible comparison
+                    // Same-type or compatible comparison, which the operands' type must implement.
+                    if self.refuse_comparison_without_derive(&left_ty, op, span) {
+                        return ResolvedType::Unknown;
+                    }
                     ResolvedType::Bool
                 } else {
                     // Different non-numeric types
@@ -642,6 +644,11 @@ impl TypeChecker {
                         Some(CollectionTypeId::List | CollectionTypeId::Set) if !args.is_empty() => {
                             let elem_ty = &args[0];
                             if self.types_compatible(&left_ty, elem_ty) || matches!(left_ty, ResolvedType::Unknown) {
+                                // A list finds its item by equality, which the element type must implement (#1870); a
+                                // set's element type is held to `Eq` and `Hash` where the set type is written.
+                                if collection_type_id(name.as_str()) == Some(CollectionTypeId::List) {
+                                    self.refuse_comparison_without_derive(elem_ty, op, span);
+                                }
                                 return ResolvedType::Bool;
                             }
                             self.errors
@@ -1372,23 +1379,50 @@ impl TypeChecker {
         }
     }
 
-    /// Return whether a type has Rust-backed comparison derives for this operator.
+    /// Return whether a type has Rust-backed comparison derives for this operator: the operator's derive declared or
+    /// implied (`Ord` implies `PartialEq`), spelled in `@rust.derive(...)`, or an enum's automatic `PartialEq`.
     fn type_has_derive_backed_comparison_operator(&self, ty: &ResolvedType, op: BinaryOp) -> bool {
-        match ty {
-            ResolvedType::Generic(type_name, _) | ResolvedType::Named(type_name) => {
-                let Some(type_info) = self.lookup_semantic_type_info(type_name) else {
-                    return false;
-                };
-                let derives = match type_info {
-                    TypeInfo::Model(model) => model.derives.as_slice(),
-                    TypeInfo::Class(class) => class.derives.as_slice(),
-                    TypeInfo::Enum(en) => en.derives.as_slice(),
-                    TypeInfo::Newtype(_) | TypeInfo::Builtin | TypeInfo::TypeAlias => &[],
-                };
-                derives_support_comparison_operator(derives, op)
-            }
-            _ => false,
-        }
+        comparison_operator_derive(op).is_some_and(|derive| self.comparison_is_derived(ty, derive))
+    }
+
+    /// Refuse a comparison whose operand type is known not to implement the operator's trait (#1870).
+    ///
+    /// Called once the operator's dunders have not resolved it: `==`, `!=` and list membership need `PartialEq` and the
+    /// orderings need `PartialOrd`, of the operand and of every type inside it, as the generated comparison does. For
+    /// membership `ty` is the list's element type. A type the derive relation cannot decide is accepted. Returns
+    /// whether the comparison was refused.
+    fn refuse_comparison_without_derive(&mut self, ty: &ResolvedType, op: BinaryOp, span: Span) -> bool {
+        let Some(derive) = comparison_operator_derive(op) else {
+            return false;
+        };
+        let DeriveSupport::Missing(holder) = self.derive_support(ty, derive) else {
+            return false;
+        };
+        // The catalog derive that provides the operator; `Eq` and `Ord` bring `PartialEq` and `PartialOrd` with them.
+        let providing_derive = if derive == DeriveId::PartialEq {
+            DeriveId::Eq
+        } else {
+            DeriveId::Ord
+        };
+        // Membership compares items with `==`, so its dunder is `__eq__`.
+        let dunder_op = if matches!(op, BinaryOp::In | BinaryOp::NotIn) {
+            BinaryOp::Eq
+        } else {
+            op
+        };
+        let dunder = self
+            .is_user_operator_receiver(&holder)
+            .then(|| binary_operator_dunder(dunder_op))
+            .flatten();
+        self.errors.push(errors::operator_not_provided(
+            &ty.to_string(),
+            &holder.to_string(),
+            &op.to_string(),
+            derives::as_str(providing_derive),
+            dunder,
+            span,
+        ));
+        true
     }
 
     /// Return whether a type directly declares an operator method, excluding derived trait defaults.

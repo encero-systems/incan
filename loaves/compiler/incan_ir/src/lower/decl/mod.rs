@@ -8,6 +8,7 @@
 mod classes;
 mod default_names;
 mod enums;
+mod field_default_impls;
 mod functions;
 mod helpers;
 mod imports;

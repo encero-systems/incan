@@ -16,15 +16,15 @@ This page specifies `Clone`, `Copy` and `Default`, and field defaults at constru
 - **Provided by**: `@derive(Copy)`; a `newtype` whose underlying type is `Copy`.
 - **Behavior**: every field is copied.
 - **Dunder**: none.
-- **Requires**: every field type is `Copy`: `int`, `float`, `bool`, an exact-width numeric type, or a type that derives `Copy`.
+- **Requires**: every field type is `Copy`: a number, `bool`, a tuple, `Option` or `Result` of `Copy` types, a type that derives `Copy`, or a newtype over a `Copy` type. A field of any other type is refused (`INCAN-T0001`).
 
 ## Default
 
 - **Provides**: `Type.default()`, and `T with Default` bounds, under which `T.default()` constructs a value.
-- **Provided by**: `@derive(Default)`.
+- **Provided by**: `@derive(Default)` on a model, class or newtype. On an enum it is refused (`INCAN-T0001`).
 - **Behavior**: each field takes its declared default, or its type's default when it declares none.
 - **Dunder**: none.
-- **Requires**: each field that declares no default has a type that implements `Default`.
+- **Requires**: each field that declares no default has a type that implements `Default` (`INCAN-T0001`).
 
 | Type | Default |
 | --- | --- |

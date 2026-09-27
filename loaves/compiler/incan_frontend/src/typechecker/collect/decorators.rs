@@ -76,7 +76,7 @@ pub(in crate::typechecker) fn resolve_decorator_id(dec: &Decorator, symbols: &Sy
 }
 
 /// Find decorators by name.
-pub(super) fn decorators_named<'a>(
+pub(in crate::typechecker) fn decorators_named<'a>(
     decorators: &'a [Spanned<Decorator>],
     symbols: &SymbolTable,
     id: DecoratorId,
@@ -88,7 +88,9 @@ pub(super) fn decorators_named<'a>(
 
 /// Extract the derive names positional decorator arguments spell, bare or module-qualified
 /// ([`decorator_resolution::derive_argument_name`]).
-pub(super) fn positional_derive_names(args: &[DecoratorArg]) -> impl Iterator<Item = (String, Span)> + '_ {
+pub(in crate::typechecker) fn positional_derive_names(
+    args: &[DecoratorArg],
+) -> impl Iterator<Item = (String, Span)> + '_ {
     args.iter().filter_map(|arg| match arg {
         DecoratorArg::Positional(expr) => {
             decorator_resolution::derive_argument_name(&expr.node).map(|name| (name, expr.span))

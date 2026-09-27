@@ -2677,13 +2677,13 @@
       "owner": 1561,
       "split_required": false,
       "split_target": "",
-      "twin": "",
       "tests": {
         "trait_slots_declare_mut_scalar_parameters_without_a_binding": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/trait_mut_scalar_parameter_is_a_local_copy.incn",
           "notes": "asserts that the trait slot declares `n: Count`, `n: i64` and `x: f64` while the implementation keeps `mut` (#1827); the twin runs an abstract and a default trait method that change their scalar parameter locally."
         }
-      }
+      },
+      "twin": ""
     },
     "loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs": {
       "disposition": "retire",
@@ -5039,6 +5039,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/derive_contract.rs": {
+      "disposition": "keep",
+      "notes": "typechecker refusals and acceptances of the derive contract (#1822 set elements through the Hash derive only, #1870 automatic and implied derives, #1871 derive requirements and dunder signatures, #1872 a dunder beside its matching derive, #1881 sorted() element order, #1882 static-method receivers); no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/dict_get_and_frozen_payloads.rs": {
       "disposition": "keep",
       "notes": "checker facts for a dict's `get` result (the stored value, `copied`/`cloned` refused) and a `Some` payload's string instantiation (#1793, #1794); typechecker only, no emit/driver dependency.",
@@ -6026,6 +6034,23 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_ir/src/lower/tests/derive_contract_lowering.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, derive lists and trait impls). Retire with `incan_ir` (#654); the behavior each test pins is carried by the named fixture.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "default_derive_over_field_defaults_lowers_to_a_constructing_impl_issue1879": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/derived_default_takes_declared_field_defaults.incn",
+          "notes": "Asserts lowering replaces `@derive(Default)` over declared field defaults with a constructing `impl Default`. The behavior, `Type.default()` giving each field its declared default, is carried by the named fixture (#1879)."
+        },
+        "display_derive_and_enum_partial_eq_beside_eq_dunder_are_not_derived_issue1872": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/enum_eq_dunder_and_display_derive.incn",
+          "notes": "Asserts lowering passes no `Display` derive and no automatic `PartialEq` beside an enum's `__eq__`. The behavior, such an enum comparing through `__eq__` and an `@derive(Display)` model building, is carried by the named fixture (#1872)."
+        }
+      }
+    },
     "loaves/compiler/incan_ir/src/lower/tests/derive_vocabulary_imports.rs": {
       "disposition": "retire",
       "notes": "the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level.",
@@ -6046,7 +6071,6 @@
       "owner": 1561,
       "split_required": false,
       "split_target": "",
-      "twin": "",
       "tests": {
         "print_arguments_render_structural_values_like_interpolation_issue1748": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/display_positions_render_collections_alike.incn",
@@ -6056,7 +6080,8 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/display_positions_render_collections_alike.incn",
           "notes": "Asserts the recorded shape on the legacy IR (`str(items)` becomes the one-part f-string rendering, `str(count)` keeps the builtin conversion); retires with `incan_ir`. The behavior, `str(items)` printing `[1, 2, 3]`, is carried by the named fixture (#1748)."
         }
-      }
+      },
+      "twin": ""
     },
     "loaves/compiler/incan_ir/src/lower/tests/error_message_display.rs": {
       "disposition": "retire",
