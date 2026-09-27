@@ -20,7 +20,7 @@
 
 ## Summary
 
-This RFC specifies the `mut` parameter contract and chooses inferred borrowing for writable local aliases: `mut items = cart.items` borrows the existing field, `items = replacement` writes through that borrow, and `mut items = cart.items.clone()` creates a separate local value. Explicit declarations introduce bindings; assignment uses the binding already resolved. Shadowing that name resolution can disambiguate produces a warning, while ambiguous names and conflicting access produce errors. Duckborrowing must preserve these meanings and must never silently clone an alias to make a borrow conflict compile. Python and Scala provide prior art for naming and mutation, while Incan stays Rust-like in borrowing and lifetime safety, consistent with its dual surface with Rust. Bare and explicit-`let` declarations from places borrow read-only; writable access requires `mut`, including for scalar places. Explicit cloning creates independent owned contents. The remaining Draft work concerns storage and lifetime boundaries, not these settled binding rules.
+This RFC specifies the `mut` parameter contract and chooses inferred borrowing for writable local aliases: `mut items = cart.items` borrows the existing field, `items = replacement` writes through that borrow, and `mut items = cart.items.clone()` creates a separate local value. Explicit declarations introduce bindings; assignment uses the binding already resolved. Shadowing that name resolution can disambiguate produces a warning, while ambiguous names and conflicting access produce errors. Duckborrowing must preserve these meanings and must never silently clone an alias to make a borrow conflict compile. Python and Scala provide prior art for naming and mutation, while Incan stays Rust-like in borrowing and lifetime safety, consistent with its dual surface with Rust. Bare and explicit-`let` declarations from places borrow read-only; writable access requires `mut`, including for scalar places. Explicit cloning creates independent owned contents. Storage owns its elements, caller-visible parameter assignment writes through, and duckborrowing handles safe value transfer and lifetime planning. The RFC remains Draft for review, not because these contracts are undecided.
 
 ## Core model
 
@@ -31,7 +31,7 @@ This RFC specifies the `mut` parameter contract and chooses inferred borrowing f
 5. **Borrows have checked lifetimes.** A borrow remains active while a later use needs it. Conflicting access and replacement of a borrowed parent are errors. An alias does not follow a replaced parent.
 6. **Duckborrowing preserves meaning.** Representation choices may change only when observable behavior does not. A clone that would detach intended mutations is never a legal conflict repair.
 7. **Read-only access is the default.** Bare and explicit-`let` first declarations from a place borrow read-only. Mutation through a name requires `mut`; this includes nested mutation. `let` does not request a copy.
-8. **The parameter contract remains explicit.** Caller-visible `mut` parameters share the caller's value. Scalar parameters and imported Rust values have the separate rules below. This RFC does not silently change parameter rebinding through a new alias spelling.
+8. **The parameter contract remains explicit.** Caller-visible `mut` parameters share the caller's value. Scalar parameters and imported Rust values have the separate rules below. Assignment to a caller-visible parameter writes through to the caller, consistently with assignment through a local writable borrow.
 
 ## Motivation
 
@@ -57,7 +57,7 @@ Replacing an object while a later operation still needs a borrow of one of its f
 - Keep borrowing, exclusive access, and lifetime safety Rust-like across Incan's dual surface with Rust; use Python and Scala as prior art for readability and naming, not as competing ownership contracts.
 - Reject conflicting access at the Incan checker, with diagnostics that explain how long the borrow is needed.
 - Specify the `mut` parameter contract, including caller-visible changes and conservative mutation analysis.
-- Keep the remaining decisions explicit rather than presenting a partial borrowing contract as complete.
+- Separate source semantics from duckborrowing implementation: ownership planning must implement the contract rather than turn its implementation cases into new language choices.
 
 ## Non-Goals
 
@@ -66,7 +66,7 @@ Replacing an object while a later operation still needs a borrow of one of its f
 - Reproducing Python assignment or Scala binding semantics exactly.
 - Introducing runtime reference counting as the default identity model.
 - Implementing the proposal in this documentation PR or claiming that the examples already compile.
-- Deciding storage, whole-parameter replacement, suspension, or escape boundaries by implication.
+- Prescribing the duckborrowing algorithms for value transfer, branch joins, escape analysis, or suspension safety.
 
 ## Guide-level explanation
 
@@ -226,7 +226,22 @@ second.append("pear")
 
 The names are unambiguous, but the accesses conflict. Name shadowing may warn; borrow conflicts must error. Fields proven disjoint need not conflict, while an operation on their whole parent overlaps each of them.
 
-### Parameters keep their own contract
+### Replacing a caller-visible parameter
+
+```incan
+def replace(mut items: list[str]) -> None:
+    items = ["pear"]         # replaces the caller's list through the borrow
+
+
+def main() -> None:
+    mut items = ["apple"]
+    replace(items)
+    println(items)           # ["pear"]
+```
+
+Whole-value assignment follows the writable-borrow rule. It must not detach the parameter from its caller, and it must not invalidate another borrow that is still needed.
+
+### Parameter passing and scalar copies
 
 ```incan
 def tag(mut tags: list[str], label: str) -> None:
@@ -238,7 +253,7 @@ def countdown(mut remaining: int) -> int:
     return remaining
 ```
 
-A changed caller-visible parameter needs an argument the caller may change, except that an unshared temporary is accepted. Direct rebinding of a caller-visible parameter remains refused under `INCAN-T0001`; replacing a field through a local alias is a distinct operation. Whole-parameter replacement through a local alias must not become an accidental bypass of that refusal.
+A changed caller-visible parameter needs an argument the caller may change, except that an unshared temporary is accepted. Assignment to a caller-visible parameter writes through to the caller, just like assignment through a local writable borrow. The existing blanket rebinding refusal under `INCAN-T0001` is superseded for this operation; borrowing and mutation-permission checks still apply.
 
 ## Reference-level explanation
 
@@ -274,7 +289,7 @@ A changed caller-visible parameter needs an argument the caller may change, exce
 4. Assignment through an alias must leave its target unchanged. If the right-hand side is another place, duckborrowing must plan the value transfer without reborrowing or retargeting the left-hand alias implicitly. Any move or copy must preserve source-observable behavior and the destination's ownership contract; an impossible transfer must produce a diagnostic, not silently change sharing.
 5. An initializer that constructs a new value or explicitly clones a value must create an owned local result, rather than borrow the initializer's receiver. An explicit clone must own independent mutable contents, including nested mutable contents; it must not retain source borrows. Unsupported cloning must be diagnosed. Generic bounds and representation choices must enforce this contract rather than weaken it.
 6. A derived alias must preserve the original target identity and access permissions. Reborrowing through a writable alias may temporarily suspend use of the parent alias, subject to the same conflict checks. It must not manufacture two independently usable exclusive accesses.
-7. These rules must apply consistently to field places in collections and custom objects. Borrowable element projections, selection expressions, and destructuring require the remaining rules listed under Unresolved questions; this Draft does not silently classify unsupported shapes as copies.
+7. These rules must apply consistently to field places in collections and custom objects. Element projections, selection expressions, and destructuring must preserve the same access permissions and alias meaning. Duckborrowing must analyze the resulting ownership and lifetimes, not silently classify difficult shapes as detached copies.
 
 ### Borrow duration and conflicts
 
@@ -285,6 +300,14 @@ A changed caller-visible parameter needs an argument the caller may change, exce
 5. A conflict diagnostic must identify the borrow declaration, conflicting operation, and later use or capture that keeps the borrow active. Hints may suggest completing the alias's work first or explicitly cloning when independence is intended; they must not describe cloning as behavior-preserving in all cases.
 6. The checker must report these errors as Incan diagnostics. A program accepted under the completed rules must not defer an alias-induced invalidation or overlap failure to the host compiler.
 
+### Storage and ownership-planning boundaries
+
+Collections and fields own their stored values. In `mut rows = [row]`, the list owns its element; the initializer does not declare a new local alias to `row`. Duckborrowing must plan the transfer and any later source uses safely. Moving or physically borrowing storage is an implementation choice only where it preserves the source contract. The planner must not introduce observable sharing or detach an explicitly requested borrow to make the transfer compile. An explicit clone requests independence according to the cloning rule above.
+
+Existing return and selection syntax remains valid. For example, `def items(cart: Cart) -> list[str]: return cart.items` is not rejected merely because its source is a field. Duckborrowing must determine the ownership transfer or checked lifetime relationship required by the surrounding contract. A borrowed result must not outlive its owner. Likewise, a branch selecting an existing place and a branch constructing a value must preserve each branch's meaning; joining their representations is an ownership-planning obligation, not a reason to invent different local-binding semantics.
+
+The same responsibility applies to loop targets, destructuring, element projections, closures, `await`, and `yield`: prove lifetime, overlap, and required task-safety properties, while preserving mutation effects. Actual violations require diagnostics. The RFC specifies these semantic obligations; the planner's algorithms and evidence belong to implementation work.
+
 ### Duckborrowing
 
 The compiler may infer a borrow, move, or copy only when it preserves the source contract. An owned local's unobservable copy may be optimized away. A writable alias's observable sharing must not be optimized away. In particular, the compiler must not turn an alias into a copy to permit owner replacement, overlapping access, suspension, escape, or an unsupported expression shape. When the source requests conflicting access, the result must be a diagnostic.
@@ -293,11 +316,11 @@ The compiler may infer a borrow, move, or copy only when it preserves the source
 
 1. A parameter declared `mut` is mutable within the body. A caller-visible parameter gives access to the caller's value; every permitted in-place change, field or element assignment, and forwarding to another mutating parameter must reach the caller.
 2. A `mut` parameter that is not caller-visible is the function's own value. Scalar parameters are local copies. Imported Rust values follow their ownership contract rather than becoming caller-visible solely because their binding is `mut`.
-3. Rebinding a caller-visible parameter directly, including compound assignment to its whole name, must remain refused under `INCAN-T0001` until an explicit design decision changes this contract. A local alias of the whole parameter must not bypass that restriction. Changes to a field or element are not whole-parameter rebinding.
+3. Assignment to a caller-visible parameter must replace the caller's value through the borrow, including supported compound assignment. Assignment through a local writable alias of that parameter must have the same effect. This supersedes the blanket whole-parameter rebinding refusal under `INCAN-T0001`; it does not waive conflicts caused by other live borrows into that value.
 4. For a caller-visible parameter a call changes or may change, the argument must be a permitted mutable place: a mutable binding, a caller-visible parameter, `self` in a `mut self` method, or an allowed field of one. Immutable arguments, collection elements, and statics retain the existing `INCAN-T0117` refusal; an unshared temporary must be accepted. Extending local element borrowing does not implicitly change this call-argument rule.
 5. A method call counts as a change unless the method is known only to read its receiver. Unresolved methods count conservatively. A callee reached through a trait bound, trait default, trait-typed value, mut-marked callable type, unread compiled body, or reassigned function-valued local may change the marked parameter. A known unreassigned function value may use its body's effect information.
 6. Mutation through a local alias rooted at a caller-visible parameter must count as mutation of that parameter. Derived aliases must not hide that effect. Passing it to Rust or C exclusive access must count too.
-7. A closure retaining a caller-visible parameter must not outlive that call. A returned, stored, or yielded closure must not retain such a borrow without an explicit, checked escape contract; this RFC does not introduce one.
+7. A closure retaining a borrow must not outlive the borrowed storage or violate its access permissions. Duckborrowing must prove the required lifetime relationships across calls, storage, returns, and yields. Returning or storing a closure is not inherently invalid; an unprovable or invalid escaping borrow must produce a diagnostic.
 
 ## Design details
 
@@ -338,7 +361,7 @@ Incan stays Rust-like in borrowing, exclusive access, and lifetime safety. Pytho
 
 The invariant that ownership decisions must not change user-visible behavior remains in force. This RFC narrows the clone fallback: it cannot apply to source-level writable aliases when a clone would change sharing. Such cases must produce a borrow diagnostic. For owned values, the planner retains its freedom to choose an equivalent representation.
 
-RFC 023's suspension policy and this RFC's proposed last-use borrowing need a separate decision for `await` and `yield`. Rust-style borrowing does not by itself imply a blanket ban on every borrow across suspension. This Draft neither promises support for every such borrow nor permits cloning an alias to evade the problem. Closed RFCs remain unchanged; the eventual accepted contract must record any precise supersession here.
+For this contract, RFC 023's blanket no-borrows-across-`await` policy is replaced by checked suspension safety: a borrow may cross suspension only when its lifetime, exclusivity, and required task-safety properties hold. A failure to prove those properties requires a diagnostic, not a clone that changes sharing. The ownership planner must establish the proof; no additional borrowing syntax is introduced. Closed RFCs remain unchanged, with this supersession recorded here.
 
 ### Transition and migration
 
@@ -346,7 +369,7 @@ The transitional refusals tracked by #1773 and #1814 protect the affected caller
 
 The transition is not a compatibility guarantee for ordinary locals. Code that currently copies `mut other = original` can change meaning when that declaration becomes a writable borrow. Existing code may also become invalid because it overlaps accesses. Adoption requires a warning release identifying affected declarations before their meaning changes, with explicit cloning for independent values and direct mutation or a checked borrow for shared access. A warning cannot make an actual borrow conflict safe in the new semantics.
 
-The current whole-parameter rebinding restriction remains separate. `clear()` on `list`, `dict`, and `set` remains a proposed in-place operation for callers that need to empty collections without rebinding a restricted parameter; it must remove all elements while preserving the collection as the mutation target. It does not determine alias semantics or add a new `.copy()` contract.
+The blanket whole-parameter rebinding refusal is replaced by write-through assignment subject to borrow safety. `clear()` on `list`, `dict`, and `set` remains a proposed in-place operation; it must remove all elements while preserving the collection as the mutation target. It is useful independently of assignment and does not add a new `.copy()` contract.
 
 ## Alternatives considered
 
@@ -364,7 +387,7 @@ The current whole-parameter rebinding restriction remains separate. `clear()` on
 - Correct last-use and overlap analysis must follow branches, loops, projections, and closures; per-block read counts are insufficient.
 - Same-scope shadowing can hide a useful alias, even when deterministic. The warning must identify both declarations without warning on ordinary qualified-field aliases.
 - Migration changes existing copy behavior and needs advance diagnostics. The transitional parameter checks do not eliminate this cost.
-- Storage and lifetime boundaries still need specification. These remaining Draft questions must not reopen the settled read-only, scalar-borrowing, and independent-cloning rules.
+- Ownership planning must handle storage, returns, mixed branch results, and suspension consistently. Proving those cases is substantial compiler work; it is not an unresolved choice of source semantics.
 
 ## Implementation architecture
 
@@ -399,9 +422,9 @@ The completed design and implementation must demonstrate:
 - overlapping writable aliases, separate conflicting reads, invalid mutation permission, and invalidating element operations receive source diagnostics; proven disjoint fields remain usable;
 - reborrows, branches, loops, and captures preserve borrow duration and mutation provenance;
 - a source-level conflict never becomes accepted by an implicit clone or by following a replacement parent;
-- caller-visible mutations reach callers, scalar parameters remain local copies, whole-parameter rebinding restrictions cannot be bypassed through aliases, and `INCAN-T0117` keeps its stated argument checks;
+- caller-visible mutations and whole-value assignment reach callers, scalar parameters remain local copies, and `INCAN-T0117` keeps its stated argument checks;
 - `clear()` empties a caller-visible collection in place;
-- each remaining decision has accepted and rejected examples, checker coverage, and native-build behavior coverage before the RFC is considered implemented;
+- storage ownership, valid returns, mixed owned/borrowed branch results, projections, and safe suspension or escape have checker and native-build coverage; unsafe lifetimes produce source diagnostics;
 - documentation and migration warnings explain the selected semantics, and generated code does not expose borrow failures for programs accepted by the completed checker.
 
 ## Design Decisions
@@ -418,18 +441,7 @@ The completed design and implementation must demonstrate:
 - **Duckborrowing must preserve observable sharing.** A conflict must not be repaired by silently cloning.
 - **Lists and custom objects follow the same naming and assignment principles.** The proposal does not invent a special rebinding rule for lists.
 - **No local `alias` extension.** The keyword keeps its existing declaration-level roles, and field alias metadata remains separate. Function and method bodies use inferred borrowing rather than a new `alias` form.
-- **The RFC remains Draft.** The decisions below are not settled by choosing writable borrowing.
-
-## Unresolved questions
-
-The binding, mutation-permission, scalar-alias, and clone-independence rules above are settled. The following questions concern boundaries not resolved by the local test drives; implementation details of enforcing settled rules belong in the implementation work, not in this list.
-
-- **Storage boundaries.** Define ownership transfer when an existing place is inserted into a field or collection: which uses move the value, retain a checked borrow, or require an explicit clone? In particular, specify whether a later use of the original remains valid. This must preserve the settled explicit-clone and no-silent-detachment guarantees.
-- **Whole caller-visible parameter replacement.** Should assignment to a whole caller-visible parameter replace the caller's value, as assignment through a local writable alias does, or retain the existing rebinding refusal? Until resolved, a local alias must not bypass the existing restriction. This is separate from storing a value in a collection.
-- **Mixed selection results.** Define a binding whose `match`, `if`, or `loop` result selects a borrowed place on one path and a constructed or cloned value on another. The rule must preserve each path's ownership meaning or diagnose an unsupported combination; it must not silently copy to make the shapes agree.
-- **Projection and destructuring coverage.** Complete the rules for tuple unpacking, loop targets, and element projections, with accepted and rejected examples for overlap and invalidation. These are extensions of the chosen borrowing rules, not a new choice between copying and sharing for scalar or object fields.
-- **Suspension.** Define which otherwise-valid borrows may cross `await` or `yield`, including task-safety requirements and any precise change to RFC 023's suspension policy. Cloning must not be used to evade an invalid borrow.
-- **Escape and borrowed returns.** Define when a closure or returned value may retain a checked borrow, including how its lifetime relates to the original argument or owner. A borrow of a destroyed local must never escape.
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- **Storage owns its elements.** Inserting a value is not a declaration of a local alias. Duckborrowing plans safe transfers without changing observable ownership or sharing.
+- **Caller-visible parameter assignment writes through.** Whole-value replacement follows the same borrowed-target rule as local writable aliases, subject to conflict checks.
+- **Returns, branch joins, suspension, and escape are ownership-planning obligations.** Existing syntax remains valid; the planner must prove safe ownership and lifetimes or report an actual conflict. These are not new binding-design questions.
+- **The RFC remains Draft for review.** No unresolved language choice is recorded by this revision; implementation planning and lifecycle promotion are separate work.
