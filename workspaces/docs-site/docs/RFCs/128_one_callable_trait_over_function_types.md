@@ -303,7 +303,7 @@ Receiver access and invocation multiplicity must also be checked. `mut` is requi
 
 ### Adoption
 
-- A declaration that adopts `Callable[G]` must define `__call__` with the signature derived from `G`. A missing `__call__`, a different parameter count, a differing parameter type or marker, or a differing return type must be refused at the declaration, and the diagnostic must show the derived signature.
+- A declaration that adopts `Callable[G]` must define `__call__` with a signature compatible with `G` under the shared signature rules. It must accept every call promised by `G`; additional optional parameters are permitted. A missing `__call__` or an incompatible parameter contract, mutation marker, or return type must be refused at the declaration, and the diagnostic must show the required signature. A different parameter count alone is not a mismatch.
 - A declaration must not adopt `Callable` more than once, directly or through supertraits.
 - Adoption does not change call syntax: RFC 068 already resolves `value(args)` through a compatible `__call__`.
 
@@ -324,7 +324,7 @@ The RFC 035 `Callable[Params, R]` function-type shorthand must be retired withou
 
 ### Diagnostics
 
-- A `Callable` with no type argument, with more than one, or with one that is not a function type must be refused under one new stable `INCAN-T` code. The message must show the corrected spelling built from the written arguments: `Callable[int, str]` becomes `Callable[(int) -> str]`. For a single argument that is not a function type, such as `Callable[int]`, either `Callable[(int) -> R]` or `Callable[() -> int]` may be meant, so the message must offer both.
+- A `Callable` with no type argument, with more than one, or with one that is not a function type must be refused under one new stable `INCAN-T` code. The message must use the source context to preserve the intended meaning: in a bound or adoption, malformed `Callable[int, str]` points to `Callable[(int) -> str]`; in a legacy function-type annotation, it points to `(int) -> str` under the retirement rule above. For a single argument that is not a function type, such as `Callable[int]`, either `Callable[(int) -> R]` or `Callable[() -> int]` may be meant, so the message must offer both.
 - The removed-name diagnostic may share that code or take its own; either way it must have a catalog entry and an `incan explain` text.
 - `INCAN-T0106` keeps its code and covers only a marker on a nominal declaration. Its parameter-count case must be removed from the catalog entry, the `incan explain` text, and the CLI reference.
 
@@ -430,7 +430,7 @@ Per-package traits cannot stand in for one canonical capability, and a fixed fam
 This RFC is done when:
 
 - the checker accepts `Callable` bounds with zero, one, three, and five parameters and with a generic return type, and refuses a non-function argument, a missing argument, and extra arguments under the new stable code with the corrected spelling;
-- adoption with a matching `__call__` is accepted and a mismatch in count, parameter type, or return type is refused with the derived signature, and a second `Callable` adoption on one declaration is refused;
+- adoption with a compatible `__call__` is accepted, including an implementation with additional optional parameters; an additional required parameter or another incompatible parameter or return contract is refused with the required signature, and a second `Callable` adoption on one declaration is refused;
 - each nominal declaration kind (model, class, enum, trait, newtype, type alias) accepts a `Callable`-bounded type parameter;
 - `Fn[...]`, `FnMut[...]`, and `FnOnce[...]` with three or more parameters are accepted on functions and methods, and a marker on a nominal owner is refused with `INCAN-T0106` pointing at `Callable[(...) -> R]`;
 - every use of `Callable0`, `Callable1`, and `Callable2` is refused with its replacement, and none remains in the standard library, examples, tests, or documentation;
