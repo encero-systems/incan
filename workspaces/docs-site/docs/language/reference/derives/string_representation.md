@@ -12,11 +12,12 @@ This page specifies `Debug` and `Display`. The derive catalog and the automatic 
 
 ## Display
 
-- **Provides**: `{value}` formatting, `str(value)`, and `print(value)` and `println(value)`.
-- **Provided by**: a `__str__(self) -> str` method; for an enum that declares values, such as `enum Level(str)`, each variant's value; for a type that adopts `Error` and has no `__str__`, its `message()` (see [Displaying an error](../stdlib_traits/error.md#displaying-an-error)). `@derive(Display)` provides nothing.
-- **Behavior**: the value displays as the string `__str__` returns.
+- **Provides**: `{value}` formatting, `str(value)`, and `print(value)` and `println(value)`; satisfies a `Display` bound.
+- **Provided by**: a `__str__(self) -> str` method, declared on the type, inherited from a class it extends, or supplied by an adopted trait; for an enum that declares values, such as `enum Level(str)`, each variant's value; for a type that adopts `Error` and has no `__str__`, its `message()` (see [Displaying an error](../stdlib_traits/error.md#displaying-an-error)). `@derive(Display)` provides nothing.
+- **Behavior**: the value displays as the string `__str__` returns, a value enum's variant as its value, and an `Error` adopter without `__str__` as the string `message()` returns.
 - **Dunder**: `__str__(self) -> str`.
 - **Requires**: none.
+- **Refused**: a `model`, `class`, `enum` or `newtype` value whose type provides no `Display`, in each position above (`INCAN-T0103`); see [Display](../strings.md#display).
 
 ## Formats
 

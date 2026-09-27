@@ -1,8 +1,8 @@
 # Static storage (reference)
 
-This page is the reference for module `static` declarations and `pub static` imports.
+This page specifies module `static` declarations: their syntax, storage, initialization, the operations on a static, aliases of a static, imports of a `pub static`, and the refusals. Refusals are reported with `INCAN-T0001`, and syntax errors with `INCAN-P0001`, unless a rule below names another code.
 
-For motivation and mental model, see: [Module static storage](../explanation/static_storage.md). For a practical walkthrough, see: [Module state (how-to)](../how-to/module_state.md).
+For the mental model, see [Module static storage](../explanation/static_storage.md). For a task walkthrough, see [Module state (how-to)](../how-to/module_state.md).
 
 ## Syntax
 
@@ -11,183 +11,105 @@ static name: Type = expr
 pub static name: Type = expr
 ```
 
-## Summary
+- A `static` is declared at module scope, with a type annotation and an initializer.
+- `pub static` exports the static from its module.
 
-- `static` declares module-owned runtime storage
-- `pub static` exports that storage to other modules
-- every `static` requires a type annotation
-- every `static` requires an initializer
-- `static` declarations are allowed only at module scope
+## Storage
 
-## Semantics
+- Each `static` declaration is one storage cell of its module.
+- A read of the static observes the cell's current value.
+- An assignment, a compound assignment, a mutating method call, and a field or index assignment through the static change the cell.
+- An imported `pub static` names the exporting module's cell.
 
-### Storage identity
+## Initialization
 
-Each `static` creates one compiler-recognized storage cell for that module declaration.
+- The initializer's type is the declared type.
+- A static is initialized once, in declaration order.
+- An initializer may read a `const`, an earlier static, and call functions.
+- An initializer may not read a later static, directly or through a function it calls, and may not assign to a static through a function it calls.
+- Statics may not depend on each other in a cycle.
 
-- reads observe the current contents of the cell
-- assignments update that same cell
-- imported `pub static` names refer to the same cell, not a copied value
-
-### Initialization
-
-Static initialization is runtime-oriented, not const-eval-oriented.
-
-- initialization happens once
-- earlier declarations may be referenced when valid in declaration order
-- later static references are rejected
-- dependency cycles are rejected
-
-The compiler preserves declaration-order initialization semantics.
-
-### Visibility and imports
-
-Private statics are visible only inside their declaring module.
-
-Public statics may be imported:
-
---8<-- "snippets/module_state_code.md"
-
-The imported name refers to the exported storage cell.
-
-## Allowed operations
-
-### Read a static
+## Operations
 
 ```incan
 static counter: int = 0
-
-def current() -> int:
-    return counter
-```
-
-### Assign to a static
-
-```incan
-static counter: int = 0
-
-def reset() -> None:
-    counter = 0
-```
-
-### Compound-assign a static
-
-```incan
-static counter: int = 0
-
-def bump() -> None:
-    counter += 1
-```
-
-### Mutate through a method / field / index path
-
-```incan
 static items: list[int] = []
 static counts: dict[str, int] = {}
 
+def current() -> int:
+    return counter               # accepted
+
+def reset() -> None:
+    counter = 0                  # accepted
+
+def bump() -> None:
+    counter += 1                 # accepted
+
 def record(name: str) -> None:
-    items.append(len(items))
-    counts[name] = counts.get(name, 0) + 1
+    items.append(len(items))     # accepted
+    counts[name] = counts.get(name, 0) + 1   # accepted
 ```
 
-### Bind a direct alias
+## Aliases
+
+A new local bound directly to a static, `x = s`, `let x = s` or `mut x = s`, is an alias of the static's cell. The same holds when the binding is annotated with the static's type, spelled directly or through a type alias.
+
+- A mutating method call and a field or index assignment through the alias change the static.
+- An assignment to the alias rebinds the local; the static keeps its value.
+- A binding annotated with another type that accepts the static's value, such as `Option[int]` for an `int` static, holds a copy of the value.
 
 ```incan
 static items: list[int] = []
 
-def add_default() -> None:
+def add_defaults() -> None:
     let live_items = items
-    live_items.append(1)
+    live_items.append(1)         # accepted
+    annotated: list[int] = items
+    annotated.append(2)          # accepted
 ```
 
-Direct aliases from statics preserve live behavior for ordinary mutation paths.
-
-## Disallowed forms
-
-### Missing type annotation
-
-```incan
-static counter = 0
-```
-
-*Rejected*: `static` requires an explicit type annotation.
-
-### Missing initializer
-
-```incan
-static counter: int
-```
-
-*Rejected*: `static` requires an initializer.
-
-### Non-module placement
-
-```incan
-def bad() -> None:
-    static counter: int = 0
-```
-
-*Rejected*: `static` is module-scope only.
-
-### Rebinding an imported static
-
-```incan
-from counters import hits
-
-def bad() -> None:
-    hits = 0
-```
-
-*Rejected*: the imported name is not a new local storage cell. It still refers to the exporting module’s static storage.
-
-Mutation of the live value may still be valid when the value’s API allows it. Rebinding the imported name is rejected.
-
-### Using `const` for runtime state
-
-```incan
-const counter: int = 0
-
-def bad() -> None:
-    counter += 1
-```
-
-*Rejected*: `const` is compile-time data.
-
-## Initialization rules
-
-The initializer:
-
-- runs under static runtime-init rules, not const-eval rules
-- must be valid for the declared type
-- may reference earlier declarations that are valid in init order
-- must not participate in a static dependency cycle
-
-## Import behavior
-
-`pub static` participates in module exports alongside other public declarations.
+## Imports
 
 ```incan
 from counters import hits
 import counters::hits
 ```
 
-Both import styles refer to the same exported storage when the module exports `pub static hits`.
+- Both forms bind the exported static `hits` of `counters`, and name its cell.
+- A static declared without `pub` is not exported; importing it is refused (see [Imports and modules](imports_and_modules.md)).
+- A mutating method call and a field or index assignment through an imported static change the exporting module's cell.
 
-## Errors
+## Refusals
 
-Typical compile-time errors include:
+| Form | Code |
+| --- | --- |
+| `static counter = 0`: no type annotation | `INCAN-P0001` |
+| `static counter: int`: no initializer | `INCAN-P0001` |
+| `static` inside a function or other block | `INCAN-P0001` |
+| An initializer that reads a later static | `INCAN-T0001` |
+| Statics that depend on each other in a cycle | `INCAN-T0001` |
+| An initializer that assigns to a static through a function it calls | `INCAN-T0001` |
+| An assignment to an imported static's name, `hits = 0` | `INCAN-T0001` |
+| An assignment or compound assignment to a `const` | `INCAN-T0001` |
 
-- `static` outside module scope
-- missing type annotation
-- missing initializer
-- initializer references a later static
-- static dependency cycle
-- assignment to an imported static name
-- attempted `const` reassignment where `static` was probably intended
+```incan
+static counter = 0               # refused: a static needs a type annotation
+
+def bad() -> None:
+    static local: int = 0        # refused: static is declared at module scope
+```
+
+```incan
+from counters import hits
+
+def bad() -> None:
+    hits = 0                     # refused: an imported static cannot be reassigned
+```
 
 ## Related pages
 
 - [Module static storage](../explanation/static_storage.md)
 - [Const bindings](../explanation/consts.md)
+- [Frozen collections](frozen_collections.md)
 - [Imports and modules](imports_and_modules.md)
 - [Module state (how-to)](../how-to/module_state.md)

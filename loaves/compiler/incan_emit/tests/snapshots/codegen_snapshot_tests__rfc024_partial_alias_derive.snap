@@ -81,7 +81,7 @@ impl Payload {
         <Self as JsonSerialize>::to_json(self)
     }
 }
-fn encode<T: JsonSerialize>(value: T) -> String {
+fn encode<T: JsonSerialize + ::serde::Serialize>(value: T) -> String {
     return crate::__incan_std::serde::json::Serialize::to_json(&value);
 }
 fn main() {

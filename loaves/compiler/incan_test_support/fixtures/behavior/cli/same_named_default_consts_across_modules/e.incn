@@ -1,0 +1,8 @@
+const SIZE: int = 5
+
+
+pub def fifth(n: int = SIZE) -> int:
+    return n
+
+
+pub five = fifth

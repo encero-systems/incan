@@ -6,10 +6,13 @@
 //! The logic is split across submodules by declaration kind; all methods live on `impl AstLowering`.
 
 mod classes;
+mod default_names;
 mod enums;
 mod functions;
 mod helpers;
 mod imports;
+mod json_protocol;
+mod method_partials;
 mod methods;
 mod models;
 mod newtypes;
@@ -117,10 +120,9 @@ impl AstLowering {
                 } else {
                     IrType::Unknown
                 };
-                let visibility = match c.visibility {
-                    ast::Visibility::Public => Visibility::Public,
-                    ast::Visibility::Private => Visibility::Private,
-                };
+                // A private const a parameter default names is reached from the default's call sites, which lie
+                // outside this module.
+                let visibility = self.default_reachable_visibility(&c.name, Self::map_visibility(c.visibility));
                 IrDeclKind::Const {
                     visibility,
                     name: c.name.clone(),
@@ -131,10 +133,7 @@ impl AstLowering {
             ast::Declaration::Static(s) => {
                 let mut value = self.lower_expr_spanned(&s.value)?;
                 self.rewrite_checked_registry_entry_subject(&s.name, s.value.span, &mut value)?;
-                let visibility = match s.visibility {
-                    ast::Visibility::Public => Visibility::Public,
-                    ast::Visibility::Private => Visibility::Private,
-                };
+                let visibility = self.default_reachable_visibility(&s.name, Self::map_visibility(s.visibility));
                 IrDeclKind::Static {
                     visibility,
                     name: s.name.clone(),

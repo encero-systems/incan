@@ -5,7 +5,9 @@
 
 use crate::ast::Span;
 use incan_lang::lang::builtins::{self, BuiltinFnId};
+use incan_lang::lang::conventions;
 use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 use crate::diagnostics::CompileError;
 
@@ -14,6 +16,31 @@ use crate::diagnostics::CompileError;
 pub fn unknown_symbol(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Unknown symbol '{}'", name), span)
         .with_hint("Did you forget to import it or define it?")
+}
+
+/// Report a source name that starts with the compiler's reserved `__incan_` prefix (#1769).
+///
+/// The compiler spells the items and locals it generates with that prefix, the original a decorator wraps among them,
+/// so a source declaration, binding or import alias with the same prefix could collide with a generated name and stop
+/// the build on a duplicate definition. `name` is the spelling the source used and `kind` the kind of name it declares
+/// (`function`, `parameter`, `import alias`, ...), which the message and hint repeat. The hint suggests the name
+/// without the prefix when what remains starts like an identifier. `INCAN-T0111` is its stable code.
+pub fn reserved_compiler_name(name: &str, kind: &str, span: Span) -> CompileError {
+    let prefix = conventions::RESERVED_COMPILER_NAME_PREFIX;
+    let suggestion = name
+        .strip_prefix(prefix)
+        .filter(|rest| rest.starts_with(|first: char| first.is_ascii_alphabetic() || first == '_'));
+    let hint = match suggestion {
+        Some(rest) => format!("Rename the {kind} so it does not start with '{prefix}', for example '{rest}'"),
+        None => format!("Rename the {kind} so it does not start with '{prefix}'"),
+    };
+    CompileError::type_error(
+        format!("The {kind} '{name}' starts with '{prefix}', a prefix reserved for names the compiler generates"),
+        span,
+    )
+    .with_stable_code("INCAN-T0111")
+    .with_hint(hint)
+    .with_note("The compiler names the items and locals it generates with this prefix, so a source name spelled the same way could collide with one of them")
 }
 
 /// Report an unknown type name written in a callable's signature or body annotation.
@@ -1031,6 +1058,163 @@ pub fn self_mutation_requires_mut_self(
         .with_stable_code("INCAN-T0102")
         .with_hint(format!("Declare the receiver as 'mut self': def {method}(mut self, ...)"))
         .with_note("A method that changes the object it is called on says so in its receiver; a plain 'self' method only reads it")
+}
+
+/// The argument an `INCAN-T0117` refusal names, which decides the remedy its hint spells.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MutArgumentPlace {
+    /// A binding declared without `mut`, by name.
+    Binding(String),
+    /// A field reached from a binding declared without `mut`.
+    Field,
+    /// An element of a list or a dict, which a call receives as a copy of the stored value.
+    Element,
+    /// A module static, which a call receives as a copy of its current value.
+    Static,
+    /// A `for` loop variable, which cannot be declared `mut`: its name, and whether the loop's pattern destructures
+    /// each element (`for xs, n in pairs:`).
+    LoopVariable { name: String, destructured: bool },
+}
+
+/// How an `INCAN-T0117` refusal names the `mut` parameter: by its declared name, or by its position when the callee is
+/// known only by a callable type whose parameters have no names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MutParameterLabel<'a> {
+    /// A declared parameter name.
+    Named(&'a str),
+    /// A 1-based position in the callable type's parameter list.
+    Position(usize),
+}
+
+impl MutParameterLabel<'_> {
+    /// Spell the parameter inside a sentence: `'items'` or `at position 1`.
+    fn in_sentence(self) -> String {
+        match self {
+            Self::Named(name) => format!("'{name}'"),
+            Self::Position(position) => format!("at position {position}"),
+        }
+    }
+
+    /// Name a `mut` variable a remedy binds the value to.
+    fn binding_name(self) -> String {
+        match self {
+            Self::Named(name) => name.to_string(),
+            Self::Position(_) => "value".to_string(),
+        }
+    }
+}
+
+/// Whether an `INCAN-T0117` refusal's callee is known to change the `mut` parameter or may change it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MutParameterChange {
+    /// The body that runs changes the parameter.
+    Changes,
+    /// The body that runs is not known at the call (a method reached by trait dispatch, a callable known only by its
+    /// type, a declaration whose body the check does not read), and it may change the parameter.
+    MayChange,
+}
+
+/// Refuse an argument for a `mut` parameter whose changes reach the caller when the callee changes it and the change
+/// would fail to reach the argument (#1773).
+///
+/// A `mut` parameter of any type but `int`, `float`, `bool` or a Rust type, and not a rest parameter, shows the
+/// callee's changes to the caller. When the callee does change it, the argument must be a place the caller may change:
+/// an immutable binding or a field of one cannot be changed, and an element or a static reaches the callee as a copy,
+/// so the change would be lost. `parameter` and `callee` name the declaration and `place` the argument, which picks the
+/// remedy; a callee known only by its callable type names the parameter by position. `change` says whether the callee
+/// is known to change the parameter or may change it. `INCAN-T0117` is its stable code.
+pub fn immutable_argument_to_mut_parameter(
+    parameter: MutParameterLabel<'_>,
+    callee: &str,
+    change: MutParameterChange,
+    place: MutArgumentPlace,
+    span: Span,
+) -> CompileError {
+    let binding = parameter.binding_name();
+    let parameter = parameter.in_sentence();
+    let hint = match &place {
+        MutArgumentPlace::Binding(name) => format!("Declare '{name}' with 'mut' where it is bound: mut {name} = ..."),
+        MutArgumentPlace::Field => "Declare the binding the field belongs to with 'mut'".to_string(),
+        MutArgumentPlace::Element | MutArgumentPlace::Static => format!(
+            "Bind the value to a 'mut' variable, pass the variable, and store it back: mut {binding} = ..., then assign it to the element or static"
+        ),
+        MutArgumentPlace::LoopVariable {
+            name,
+            destructured: false,
+        } => format!(
+            "A 'for' loop variable cannot be declared 'mut': loop over the indexes instead, bind each element to a 'mut' variable, pass that variable, and store it back: mut {name} = ...[i], then ...[i] = {name}"
+        ),
+        MutArgumentPlace::LoopVariable {
+            name,
+            destructured: true,
+        } => format!(
+            "A 'for' loop variable cannot be declared 'mut', so '{name}' cannot be passed to a parameter the call changes"
+        ),
+    };
+    CompileError::type_error(
+        format!("Argument for the 'mut' parameter {parameter} of '{callee}' must be a mutable binding"),
+        span,
+    )
+    .with_stable_code("INCAN-T0117")
+    .with_hint(hint)
+    .with_note(format!(
+        "'{callee}' {} the parameter {parameter}, and its changes are visible to the caller, so the caller passes a binding declared with 'mut'",
+        match change {
+            MutParameterChange::Changes => "changes",
+            MutParameterChange::MayChange => "may change",
+        }
+    ))
+}
+
+/// Refuse rebinding a `mut` parameter whose changes reach the caller inside its own body (#1773).
+///
+/// The caller sees what the callee does to such a parameter's value, not a new value bound to its name, so an
+/// assignment or compound assignment to the parameter itself could only be lost. Changes in place (appending, element
+/// or field assignment) stay allowed; a parameter of type `int`, `float` or `bool` is the callee's own copy and may be
+/// rebound freely.
+pub fn caller_visible_mut_parameter_rebinding(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Cannot rebind the 'mut' parameter '{name}': its changes are visible to the caller"),
+        span,
+    )
+    .with_hint(format!(
+        "Change '{name}' in place (append to it, assign its elements or fields), or bind the new value to a new name"
+    ))
+    .with_note("The caller sees changes made to the value it passed, not a new value bound to the parameter's name")
+}
+
+/// How the hint of a refused hold on a caller-visible `mut` parameter spells an independent copy of its value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MutParameterCopy {
+    /// A copy written as one expression, such as `list(items)`.
+    Expression(String),
+    /// No single expression copies a value of the parameter's type; the copy is a new value built from it.
+    NewValue,
+}
+
+/// Refuse holding a `mut` parameter whose changes reach the caller in a new binding or another value (#1773).
+///
+/// `other = items`, a literal, comprehension, field store, construction or `partial` preset holding `items`, a
+/// `match`, `if`, `break` or `yield` value that is `items`, a `match items:` arm that binds it and a closure that
+/// returns it, changes it or passes it on to a parameter that may change it would each hold the parameter's value under
+/// another name. Whether such a holder
+/// shares the caller's value or copies it is not defined, so the parameter is used only directly. `copy` spells the
+/// independent copy the hint offers.
+pub fn caller_visible_mut_parameter_held(name: &str, copy: &MutParameterCopy, span: Span) -> CompileError {
+    let copy = match copy {
+        MutParameterCopy::Expression(expression) => format!("write {expression}"),
+        MutParameterCopy::NewValue => format!("build a new value from '{name}'"),
+    };
+    CompileError::type_error(
+        format!("The 'mut' parameter '{name}' cannot be bound to another name or held in another value"),
+        span,
+    )
+    .with_hint(format!(
+        "Change '{name}' directly, or pass it to a function that takes a 'mut' parameter; for an independent copy, {copy}"
+    ))
+    .with_note(format!(
+        "'{name}' shows its changes to the caller; whether another name or value holding it shares the caller's value or copies it is not defined, so it is used only directly"
+    ))
 }
 
 /// A Rust interop parameter requires an exclusive borrow of an immutable Incan binding.
@@ -2425,6 +2609,29 @@ pub fn tuple_index_requires_int_literal(span: Span) -> CompileError {
     .with_hint("Use a literal index so the compiler can validate bounds")
 }
 
+/// Report a collection literal whose own elements leave part of its type open (`[]`, `[None]`, `(None, 1)`, `{}`) at a
+/// destination that holds two or more types of the literal's kind (`list[int] | list[str]`) (#1832).
+///
+/// Neither the destination nor the elements say which of those types the literal is, so it has none to take.
+pub fn collection_literal_has_no_one_member(destination: &str, members: &[String], span: Span) -> CompileError {
+    let quoted = members
+        .iter()
+        .map(|member| format!("'{member}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let example = members.first().map_or("one member", String::as_str);
+    CompileError::type_error(
+        format!(
+            "Cannot tell which member of '{destination}' this literal is: it could be any of {quoted}, and its \
+             elements do not say which"
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Give the literal one member's type first, such as by binding it to a name annotated '{example}'"
+    ))
+}
+
 pub fn tuple_index_out_of_bounds(idx: i64, len: usize, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Tuple index {} is out of bounds for tuple of length {}", idx, len),
@@ -2458,13 +2665,22 @@ pub fn index_value_type_mismatch(expected: &str, found: &str, span: Span) -> Com
     ))
 }
 
+/// Report that `list.append(value)` needs a cloneable element type because its argument reads a place.
+///
+/// An argument that reads a name, field or element, or builds a value from one whose type is not `Clone`, leaves the
+/// list holding a copy so the place stays usable. A new value built only from call results, constructors, literals and
+/// `Copy` or `Clone` parts moves into the list and is never reported (#1821).
 pub fn list_append_requires_clone(elem_type: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("List.append requires element type '{}' to be Clone", elem_type),
         span,
     )
-    .with_note("List.append clones non-Copy values before pushing")
-    .with_hint("Add @derive(Clone) to the element type or append a Copy type")
+    .with_note(
+        "List.append copies a value that reads a name, field or element, or is built from one, so the original stays usable",
+    )
+    .with_hint(
+        "Add @derive(Clone) to the element type, append a Copy type, or append a value built only from call results, constructors and literals",
+    )
 }
 
 /// Report that `list.repeat(value, count)` requires cloneable element values.
@@ -2609,23 +2825,170 @@ pub fn tuple_annotation_requires_element_types(spelling: &str, span: Span) -> Co
     ))
 }
 
-/// Report a `print`/`println` argument that is a tuple (#1725).
+/// Report a builtin collection annotation written without its type arguments (#1717, #1749).
 ///
-/// A tuple has no printed form in the language, so the call would print nothing the reader can rely on. `builtin`
-/// is the spelling the call used (`print` or `println`), `value` the argument as the source spells it when it is a
-/// plain name (`coords`) or a placeholder otherwise, and `arity` the tuple's length, which shapes the hint's
-/// element-by-element spelling. `INCAN-T0103` is its stable code.
-pub fn print_argument_is_tuple(builtin: &str, value: &str, arity: usize, span: Span) -> CompileError {
-    let elements = (0..arity.max(1))
-        .map(|index| format!("{value}[{index}]"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    CompileError::type_error(format!("'{builtin}' cannot print the tuple '{value}'"), span)
+/// `list`, `dict`, `set`, `tuple`, `Option`, `Result`, the frozen collections and `Generator` each name a family of
+/// types, one per argument list, so a bare spelling names no type at all and the build has nothing to emit for it.
+/// `spelling` is the word the source used (`List`, `list`, `Option`, ...) so the message and the hint keep the
+/// author's casing; the family decides which type arguments the hint spells. `INCAN-T0104` is its stable code.
+pub fn collection_annotation_requires_type_arguments(spelling: &str, span: Span) -> CompileError {
+    let family = collections::from_str(spelling);
+    let (missing, arguments) = match family {
+        Some(CollectionTypeId::Tuple) => return tuple_annotation_requires_element_types(spelling, span),
+        Some(CollectionTypeId::Dict | CollectionTypeId::FrozenDict) => ("key and value types", "str, int"),
+        Some(CollectionTypeId::Result) => ("value and error types", "int, str"),
+        Some(CollectionTypeId::Option) => ("value type", "int"),
+        Some(
+            CollectionTypeId::List
+            | CollectionTypeId::Set
+            | CollectionTypeId::FrozenList
+            | CollectionTypeId::FrozenSet
+            | CollectionTypeId::Generator,
+        )
+        | None => ("element type", "int"),
+    };
+    let family_name = match family {
+        Some(family) => collections::as_str(family),
+        None => spelling,
+    };
+    CompileError::type_error(
+        format!("{family_name} annotation '{spelling}' is missing its {missing}"),
+        span,
+    )
+    .with_stable_code("INCAN-T0104")
+    .with_hint(format!(
+        "Write the type arguments, for example '{spelling}[{arguments}]'"
+    ))
+}
+
+// -- Display -----------------------------------------------------------------
+
+/// Where a value is displayed: every position shares one display rule (#1748).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayPosition<'a> {
+    /// An argument of `print` or `println`.
+    Print {
+        /// The spelling the call used (`print` or `println`).
+        builtin: &'a str,
+    },
+    /// The argument of `str(...)`.
+    Str,
+    /// An f-string `{value}` part.
+    Interpolation,
+    /// A type argument bound to a type parameter that requires `Display`.
+    Bound {
+        /// The callee whose type parameter carries the bound.
+        callee: &'a str,
+        /// The type parameter that requires `Display`.
+        type_param: &'a str,
+    },
+}
+
+/// A value with no printed form in any display position (#1748).
+///
+/// A tuple, list, dict, set, `Option` or `Result` renders through its structure in every display position, a scalar or
+/// a `str` renders through its own text, and a model, class, enum or newtype renders through the `Display` it provides:
+/// a `__str__` method, the values of an enum that declares them, or the `message()` of an `Error` adopter. What remains
+/// has no printed form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnprintableValue<'a> {
+    /// A value of an anonymous union type (`int | str`), which prints once it is narrowed to one member.
+    Union,
+    /// A `Generator` value, whose items exist only as it is consumed.
+    Generator,
+    /// A function or closure value.
+    Function,
+    /// A `bytes` value, which has no text of its own.
+    Bytes,
+    /// A model, class, enum or newtype value whose type provides no `Display`.
+    Nominal {
+        /// The type as the checker names it.
+        type_name: &'a str,
+    },
+}
+
+impl UnprintableValue<'_> {
+    /// Name the value for a message: `the union value 'x'` when the source spells it as a plain name, otherwise the
+    /// kind with its article (`a union value`), and a nominal type by name (`a value of type 'Point'`), so the article
+    /// never depends on how a type name is pronounced.
+    fn describe(self, name: Option<&str>) -> String {
+        let kind = match self {
+            Self::Union => "union value".to_string(),
+            Self::Generator => "generator".to_string(),
+            Self::Function => "function".to_string(),
+            Self::Bytes => "bytes value".to_string(),
+            Self::Nominal { type_name } => match name {
+                Some(_) => format!("{type_name} value"),
+                None => return format!("a value of type '{type_name}'"),
+            },
+        };
+        match name {
+            Some(name) => format!("the {kind} '{name}'"),
+            None => format!("a {kind}"),
+        }
+    }
+}
+
+/// Report a displayed value that has no printed form (#1748).
+///
+/// `print`/`println` arguments, the argument of `str(...)`, f-string `{value}` parts and `Display` bounds share one
+/// display rule, so the same value is refused in each; `position` words the message for the position the source used.
+/// `name` is the operand when the source spells it as a plain name (or `self`), `None` for any other expression and for
+/// a bound. The hint names what does display: a narrowed union member, a collected generator's list, a called
+/// function's result, decoded bytes, or a type's `__str__` (and, outside a bound, its `{value:?}` structure, spelled
+/// with the operand's own name when it has one). `INCAN-T0103` is its stable code.
+pub fn value_has_no_printed_form(
+    position: DisplayPosition<'_>,
+    name: Option<&str>,
+    value: UnprintableValue<'_>,
+    span: Span,
+) -> CompileError {
+    let what = value.describe(name);
+    let message = match position {
+        DisplayPosition::Print { builtin } => format!("'{builtin}' cannot print {what}"),
+        DisplayPosition::Str => format!("'str' cannot convert {what} to text"),
+        DisplayPosition::Interpolation => format!("f-string cannot interpolate {what}"),
+        DisplayPosition::Bound { callee, type_param } => {
+            format!("Call to '{callee}' cannot bind {what} to '{type_param}', which requires 'Display'")
+        }
+    };
+    let hint = match value {
+        UnprintableValue::Union => {
+            "Narrow it to one member first, with match or isinstance, and display that member".to_string()
+        }
+        UnprintableValue::Generator => {
+            "Collect its items first with list(...); a list displays its elements".to_string()
+        }
+        UnprintableValue::Function => "Call it and display the result".to_string(),
+        UnprintableValue::Bytes => {
+            "Decode it to text first with decode(), or display its length with len(...)".to_string()
+        }
+        UnprintableValue::Nominal { type_name } => {
+            // Spell the structure form with the operand's own name; any other expression gets the format spec alone,
+            // so the hint never names a binding the program does not have. A bound displays inside the callee, where
+            // the caller has no f-string part to change.
+            let structure = match (position, name) {
+                (DisplayPosition::Bound { .. }, _) => String::new(),
+                (_, Some(name)) => format!(", or interpolate its structure with f\"{{{name}:?}}\""),
+                (_, None) => {
+                    ", or interpolate its structure by adding the :? format spec to its f-string part".to_string()
+                }
+            };
+            format!("Define __str__(self) -> str on '{type_name}' to give it a printed form{structure}")
+        }
+    };
+    let note = match value {
+        UnprintableValue::Nominal { .. } => {
+            "A type provides Display through a __str__ method, the values of an enum that declares them, or the message() of an Error adopter; @derive(Display) provides nothing"
+        }
+        _ => {
+            "print, println, str, an f-string {value} and a Display bound share one display rule, and it gives this value no printed form"
+        }
+    };
+    CompileError::type_error(message, span)
         .with_stable_code("INCAN-T0103")
-        .with_hint(format!(
-            "Print the elements instead: {builtin}({elements}), or unpack them first and print the names"
-        ))
-        .with_note("Tuples have no printed form; each element prints on its own")
+        .with_hint(hint)
+        .with_note(note)
 }
 
 pub fn tuple_field_assignment(span: Span) -> CompileError {

@@ -46,15 +46,18 @@ mod check_decl;
 mod check_expr;
 mod check_stmt;
 mod collect;
+mod collection_annotations;
 mod const_eval;
 mod decorated_method_receivers;
 mod derive_requirements;
 mod for_item_taking;
 mod hash_key_inference;
 mod helpers;
+mod mut_arguments;
 mod mut_marker;
 mod nominal_type_param_bounds;
 mod reachability;
+mod reserved_names;
 pub mod stdlib_loader;
 mod trait_bound_relations;
 mod type_info;
@@ -474,6 +477,9 @@ pub struct TypeChecker {
     pub warnings: Vec<CompileError>,
     /// Track which bindings are mutable for mutation checks.
     pub mutable_bindings: HashSet<String>,
+    /// Caller-visible `mut` parameters: which callables declare them, which the checked bodies change, and the call
+    /// arguments waiting to be decided once the module's bodies are known (#1773, `INCAN-T0117`).
+    pub(crate) mut_params: mut_arguments::MutParamFacts,
     /// The method whose body is being checked while its receiver is a plain `self`, so a write through `self`
     /// inside it can be refused with the declaration to change (#1723). `None` outside a method body, and inside a
     /// `mut self` method.
@@ -557,6 +563,11 @@ pub struct TypeChecker {
     pub static_decls: Vec<(StaticDecl, Span)>,
     /// Collected module-level function declarations for static dependency analysis.
     pub local_function_decls: HashMap<String, FunctionDecl>,
+    /// Names of the declarations the program being checked marks `pub`.
+    ///
+    /// A public library carries a parameter default that constructs a model or class to its consumers only when they
+    /// can construct that type themselves, which needs its declaration to be public.
+    current_module_public_declarations: HashSet<String>,
     /// What method-decorator receiver planning (#1790) gathers while bodies are checked.
     receiver_plan_inputs: decorated_method_receivers::ReceiverPlanInputs,
     /// Function symbols collected in the current module pass, keyed by source name.
@@ -576,9 +587,15 @@ pub struct TypeChecker {
     /// Whether source annotation names should be validated during the semantic check pass.
     validate_source_type_names: bool,
     /// Source annotation diagnostics already emitted in the current program check, keyed by spelling and span:
-    /// unbound names, and bare tuple annotations (#1717), which the collection pass and the body check can both
-    /// meet.
+    /// unbound names, and bare builtin collection annotations (#1717, #1749), which the collection pass and the body
+    /// check can both meet.
     unknown_source_type_names_emitted: HashSet<(String, usize, usize)>,
+    /// Type names the program under check declares itself, recorded before its declarations are collected.
+    ///
+    /// A program may take a builtin collection spelling (`Result`, `Tuple`) for its own type; an annotation that
+    /// names such a type is an ordinary nominal, and the collection pass can meet the annotation before it meets the
+    /// declaration, so the bare-collection refusal consults this set rather than the symbol table alone (#1749).
+    source_type_declaration_names: HashSet<String>,
     /// The callable whose signature and body annotations are being checked, when one is active.
     ///
     /// An unknown type name inside a callable is most likely a type parameter that was never declared, so the
@@ -750,6 +767,13 @@ pub struct TypeChecker {
     /// The stored symbol id must remain the active lookup binding; later local declarations or user imports with the
     /// same name shadow these constructor semantics.
     pub surface_type_import_bindings: HashMap<String, (SurfaceTypeId, SymbolId)>,
+    /// Type names the program being checked declares at module scope (models, classes, enums, newtypes, traits, type
+    /// aliases), recorded before collection so every annotation sees them.
+    ///
+    /// A module declaration is the program's own type: a stdlib surface type of the same name is reached only by
+    /// importing it, so it never shadows the declaration, even from a signature collected before the declaration
+    /// itself (#1795).
+    pub module_declared_type_names: HashSet<String>,
     /// Fixture function names collected before body checking so dependency metadata is order-independent.
     pub testing_fixture_names: HashSet<String>,
     /// Checked `std.testing` marker contract supplied by the active provider projection.
@@ -820,6 +844,7 @@ impl TypeChecker {
             errors: Vec::new(),
             warnings: Vec::new(),
             mutable_bindings: HashSet::new(),
+            mut_params: mut_arguments::MutParamFacts::default(),
             current_immutable_self_method: None,
             consumed_iterator_bindings: HashMap::new(),
             transferred_c_resource_bindings: HashMap::new(),
@@ -859,6 +884,7 @@ impl TypeChecker {
             const_decls: HashMap::new(),
             static_decls: Vec::new(),
             local_function_decls: HashMap::new(),
+            current_module_public_declarations: HashSet::new(),
             receiver_plan_inputs: Default::default(),
             current_module_function_symbols: HashMap::new(),
             type_aliases: HashMap::new(),
@@ -866,6 +892,7 @@ impl TypeChecker {
             dependency_import_type_alias_transaction: None,
             validate_source_type_names: false,
             unknown_source_type_names_emitted: HashSet::new(),
+            source_type_declaration_names: HashSet::new(),
             annotation_owner: None,
             static_decl_positions: HashMap::new(),
             checking_registry_entry_static_initializer: false,
@@ -908,6 +935,7 @@ impl TypeChecker {
             testing_marker_import_bindings: HashSet::new(),
             surface_function_import_bindings: HashMap::new(),
             surface_type_import_bindings: HashMap::new(),
+            module_declared_type_names: HashSet::new(),
             testing_fixture_names: HashSet::new(),
             testing_marker_semantics: None,
             surface_context: SurfaceContext::default(),
@@ -4693,13 +4721,39 @@ impl TypeChecker {
         }
     }
 
+    /// Report a stdlib surface type name (`Response`, `FieldInfo`, ...) that no binding in scope provides.
+    ///
+    /// A name the program declares at module scope is its own type and never the stdlib's, whether or not the
+    /// declaration has been collected yet when this annotation is resolved: a model's own method signatures are
+    /// collected before the model itself (#1795).
     fn validate_stdlib_type_name(&mut self, name: &str, span: Span) {
         let Some(id) = surface_types::from_str(name) else {
             return;
         };
-        if surface_types::stdlib_module_path(id).is_some() && self.symbols.lookup(name).is_none() {
+        if surface_types::stdlib_module_path(id).is_some()
+            && !self.module_declared_type_names.contains(name)
+            && self.symbols.lookup(name).is_none()
+        {
             self.errors.push(errors::unknown_symbol(name, span));
         }
+    }
+
+    /// Collect the type names one program declares at module scope: models, classes, enums, newtypes, traits and
+    /// type aliases.
+    fn collect_module_declared_type_names(program: &Program) -> HashSet<String> {
+        program
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.node {
+                Declaration::Model(model) => Some(model.name.clone()),
+                Declaration::Class(class) => Some(class.name.clone()),
+                Declaration::Enum(enum_decl) => Some(enum_decl.name.clone()),
+                Declaration::Newtype(newtype) => Some(newtype.name.clone()),
+                Declaration::Trait(trait_decl) => Some(trait_decl.name.clone()),
+                Declaration::TypeAlias(alias) => Some(alias.name.clone()),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Record every compiler-proven declaration identity referenced by one source type annotation.
@@ -5170,18 +5224,7 @@ impl TypeChecker {
         if let Some(decimal_ty) = self.resolve_decimal_type_checked(ty) {
             return decimal_ty;
         }
-        if let Type::Simple(name) = &ty.node
-            && self.is_bare_builtin_tuple_annotation(name)
-        {
-            // The same annotation can be resolved by the collection pass and again by the body check; one report
-            // per occurrence, keyed the way unknown annotation names are.
-            if self
-                .unknown_source_type_names_emitted
-                .insert((name.clone(), ty.span.start, ty.span.end))
-            {
-                self.errors
-                    .push(errors::tuple_annotation_requires_element_types(name, ty.span));
-            }
+        if self.report_bare_builtin_collection_annotations(ty) {
             return ResolvedType::Unknown;
         }
         if let Type::Simple(name) = &ty.node
@@ -5207,17 +5250,6 @@ impl TypeChecker {
             self.refuse_unhashable_collection_keys(ty, &resolved);
         }
         resolved
-    }
-
-    /// Return whether a simple annotation is the builtin tuple family written without element types (#1717).
-    ///
-    /// `Tuple` and `tuple` name a family of types, one per element list; the bare word names no type, and the
-    /// shared resolver would otherwise hand lowering a `Tuple` nominal that no backend can spell. Only the prelude
-    /// builtin counts: a source declaration that shadows the spelling with its own `Tuple` type is a nominal like
-    /// any other and resolves as one.
-    fn is_bare_builtin_tuple_annotation(&self, name: &str) -> bool {
-        collection_type_id(name) == Some(CollectionTypeId::Tuple)
-            && matches!(self.lookup_type_info(name), Some(TypeInfo::Builtin))
     }
 
     /// Return the nominal type a module-qualified spelling was proven to name, for the shared type resolver.
@@ -6523,6 +6555,11 @@ impl TypeChecker {
         }
     }
 
+    /// Return whether the program last checked declares `name` itself and marks that declaration `pub`.
+    pub fn declares_public(&self, name: &str) -> bool {
+        self.current_module_public_declarations.contains(name)
+    }
+
     /// Check a program and return errors if any.
     ///
     /// Runs the two-pass type-checking algorithm:
@@ -6562,6 +6599,7 @@ impl TypeChecker {
         // Reset per-run caches.
         self.validate_source_type_names = false;
         self.unknown_source_type_names_emitted.clear();
+        self.source_type_declaration_names = Self::collect_source_type_declaration_names(&program.declarations);
         self.const_decls.clear();
         self.static_decls.clear();
         self.local_function_decls.clear();
@@ -6578,6 +6616,7 @@ impl TypeChecker {
         self.testing_marker_import_bindings.clear();
         self.surface_function_import_bindings.clear();
         self.surface_type_import_bindings.clear();
+        self.module_declared_type_names = Self::collect_module_declared_type_names(program);
         self.testing_fixture_names.clear();
         self.testing_marker_semantics = None;
         self.local_rust_derive_paths.clear();
@@ -6596,6 +6635,14 @@ impl TypeChecker {
             self.foreign_pub_type_remappings.clear();
         }
         self.validate_alias_declarations(program);
+        self.report_reserved_compiler_names(program);
+        self.current_module_public_declarations = program
+            .declarations
+            .iter()
+            .filter(|decl| is_public_decl(decl))
+            .filter_map(declaration_name)
+            .map(str::to_string)
+            .collect();
 
         // `check_with_imports` / `import_module` can queue supertrait bounds while collecting dependency ASTs.
         // Resolve those queued bounds into trait symbols before we collect and resolve the current program.
@@ -6630,6 +6677,7 @@ impl TypeChecker {
                 self.check_declaration(decl);
             }
         }
+        self.resolve_mut_arguments();
 
         self.type_info
             .c_abi

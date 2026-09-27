@@ -8,10 +8,16 @@
 
 mod calls;
 mod comprehensions;
+mod default_owner_paths;
+mod destination_literals;
+mod display_operands;
 mod error_display;
 mod helpers;
 mod pattern_alternatives;
 mod patterns;
+mod pub_default_constructions;
+mod stdlib_defaults;
+mod union_owner;
 
 use std::collections::HashMap;
 
@@ -121,6 +127,37 @@ fn grouped_unary_operand(operand: TypedExpr) -> TypedExpr {
         },
         ty,
     )
+}
+
+/// Return the value type `V` of a `FrozenDict[K, V]`, the frozen form a `const` dict carries.
+fn frozen_dict_value_type(ty: &IrType) -> Option<IrType> {
+    match ty {
+        IrType::NamedGeneric(name, args) if collection_types::from_str(name) == Some(CollectionTypeId::FrozenDict) => {
+            match args.as_slice() {
+                [_, value_ty] => Some(value_ty.clone()),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Group a `const` `FrozenDict` lookup whose value type is `Copy`, so the lookup is one operand wherever it is placed.
+///
+/// The frozen dict hands out a borrow of its baked value. The Rust-emission backend reads a `Copy` value out of that
+/// borrow with a prefix dereference, and a prefix operator binds looser than the method call a conversion appends: a
+/// `str` value bound to a `str` annotation, passed as a `str` argument or converted with `str(...)` re-associates as
+/// `*lookup.to_string()`, which dereferences the converted text rather than the lookup (#1757). The grouping form is
+/// the one [`grouped_unary_operand`] uses, a block with no statements and a value, in the value's own type. A value
+/// that is not `Copy` is cloned out of the borrow by a method call, which binds as written, so it is left as it is.
+fn grouped_frozen_dict_lookup(lookup: TypedExpr) -> IrExprKind {
+    if !lookup.ty.is_copy() {
+        return lookup.kind;
+    }
+    IrExprKind::Block {
+        stmts: Vec::new(),
+        value: Some(Box::new(lookup)),
+    }
 }
 
 impl AstLowering {
@@ -812,7 +849,12 @@ impl AstLowering {
 
     /// Resolve one source-owned stdlib trait through the provider, public package, or provider-local facade that owns
     /// the receiver at the current compilation boundary.
-    fn lower_stdlib_trait_dispatch_path(&self, segments: &[String], trait_name: &str, receiver: &TypedExpr) -> String {
+    pub(in crate::lower) fn lower_stdlib_trait_dispatch_path(
+        &self,
+        segments: &[String],
+        trait_name: &str,
+        receiver: &TypedExpr,
+    ) -> String {
         let module = segments.iter().skip(1).cloned().collect::<Vec<_>>().join("::");
         let trait_name = trait_name
             .rsplit(['.', ':'])
@@ -1273,6 +1315,7 @@ impl AstLowering {
                 existing => Self::merge_inferred_ir_type(existing, inferred),
             };
         }
+        Self::write_float_typed_int_literal_as_float(&mut lowered, &expr.node);
         if matches!(expr.node, ast::Expr::Ident(_))
             && let IrType::TypeToken(inner) = &lowered.ty
         {
@@ -1321,12 +1364,50 @@ impl AstLowering {
                 _ => {}
             }
         }
+        // A const read in a parameter default reaches callers in other modules as a path to its declaring module.
+        if let ast::Expr::Ident(name) = &expr.node
+            && let Some(spelled) = self.default_owner_const_path(name, expr.span, &lowered)
+        {
+            lowered = spelled;
+        }
         // Apply any rusttype method return coercion recorded by the typechecker (e.g. &str → String).
         lowered = self.wrap_with_rust_return_coercion(lowered, expr.span)?;
         // Apply RFC 017 implicit validated-newtype coercions at typechecker-approved destination sites.
         lowered = self.wrap_with_validated_newtype_coercion(lowered, expr.span)?;
+        lowered = self.copy_for_unchanged_mut_argument(lowered, expr.span);
         lowered.span = expr.span.into();
         Ok(lowered)
+    }
+
+    /// Hand an argument to a caller-visible `mut` parameter as a copy when the checker proved the callee never changes
+    /// that parameter and the argument is an immutable binding or a field of one (#1773).
+    ///
+    /// Such a call only reads the value, as the same call to a parameter without `mut` would, so a copy keeps it valid
+    /// without asking the caller to declare the binding `mut`. The fact is keyed by the argument's span in the module
+    /// being lowered, so it is not consulted while an imported trait default, whose spans belong to another file, is
+    /// expanded.
+    fn copy_for_unchanged_mut_argument(&self, lowered: TypedExpr, span: ast::Span) -> TypedExpr {
+        let copied = !self.active_imported_trait_defaults.last().copied().unwrap_or(false)
+            && self
+                .type_info
+                .as_ref()
+                .is_some_and(|info| info.mut_argument_is_copied(span));
+        if !copied {
+            return lowered;
+        }
+        let ty = lowered.ty.clone();
+        TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(lowered),
+                method: "clone".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            ty,
+        )
     }
 
     /// Lower a known model-constructor partial call through the ordinary constructor lowering path.
@@ -1400,6 +1481,38 @@ impl AstLowering {
             return Some(IdentKind::TypeName);
         }
         None
+    }
+
+    /// Build a read of `member` on the Rust path `path` (`crate::shapes::Corner` and `Top`).
+    ///
+    /// The path is a chain of field reads rooted in an external name, which the backend prints as one Rust path
+    /// (`crate::shapes::Corner::Top`), the same shape a member read through an imported module takes.
+    fn external_path_member_expr(path: &[String], member: &str) -> TypedExpr {
+        let mut segments = path
+            .iter()
+            .chain(std::iter::once(&member.to_string()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let root = segments.remove(0);
+        segments.into_iter().fold(
+            TypedExpr::new(
+                IrExprKind::Var {
+                    name: root,
+                    access: VarAccess::Read,
+                    ref_kind: VarRefKind::ExternalName,
+                },
+                IrType::Unknown,
+            ),
+            |object, field| {
+                TypedExpr::new(
+                    IrExprKind::Field {
+                        object: Box::new(object),
+                        field,
+                    },
+                    IrType::Unknown,
+                )
+            },
+        )
     }
 
     /// Return the known IR type for a synthetic type-like identifier.
@@ -1832,13 +1945,8 @@ impl AstLowering {
                 {
                     let args_ir = self.lower_builtin_call_args(builtin, args)?;
                     let result_ty = self.lowered_builtin_call_type(builtin, expr_span);
-                    return Ok(TypedExpr::new(
-                        IrExprKind::BuiltinCall {
-                            func: builtin,
-                            args: args_ir,
-                        },
-                        result_ty,
-                    ));
+                    let (kind, ty) = self.builtin_call_with_display_operands(builtin, args_ir, result_ty);
+                    return Ok(TypedExpr::new(kind, ty));
                 }
 
                 if matches!(&o.node, ast::Expr::Ident(name)
@@ -2065,6 +2173,7 @@ impl AstLowering {
                     // Rust ABI slot because no inherent owner is statically nameable there.
                     let (emitted_method_name, dispatch) =
                         self.project_resolved_method_target(expr_span, &method_name, &receiver, dispatch);
+                    Self::retain_argument_union_owners(&mut args_ir, callable_signature.as_ref());
                     (
                         IrExprKind::MethodCall {
                             receiver: Box::new(receiver),
@@ -2142,6 +2251,16 @@ impl AstLowering {
                         },
                         elem_ty,
                     )
+                } else if let Some(value_ty) = frozen_dict_value_type(&obj.ty) {
+                    // A `const` `FrozenDict[K, V]` lookup yields its value type (#1757).
+                    let lookup = TypedExpr::new(
+                        IrExprKind::Index {
+                            object: Box::new(obj),
+                            index: Box::new(idx),
+                        },
+                        value_ty.clone(),
+                    );
+                    (grouped_frozen_dict_lookup(lookup), value_ty)
                 } else {
                     let elem_ty = match &obj.ty {
                         IrType::List(e) => (**e).clone(),
@@ -2167,6 +2286,13 @@ impl AstLowering {
                     .and_then(|info| info.c_abi.enum_value_for_access(expr_span))
                 {
                     return Ok(TypedExpr::new(IrExprKind::Int(value), IrType::Int));
+                }
+                // An expanded source-module trait default reads a member of its module's type (`Corner.Top`) by that
+                // module's path, which the adopter need not import (#1759).
+                if let ast::Expr::Ident(type_name) = &o.node
+                    && let Some(path) = self.active_source_trait_default_type_path(type_name)
+                {
+                    return Ok(Self::external_path_member_expr(&path, f));
                 }
                 if let ast::Expr::Ident(type_name) = &o.node
                     && f.starts_with("__incan_original_")

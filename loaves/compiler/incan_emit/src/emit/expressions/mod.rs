@@ -1466,7 +1466,7 @@ impl<'a> IrEmitter<'a> {
             }
 
             IrExprKind::Race { binding, arms } => {
-                let binding_ident = format_ident!("{}", binding);
+                let binding_ident = Self::rust_ident(binding);
                 let mut branch_tokens = Vec::with_capacity(arms.len());
                 for arm in arms {
                     let awaitable = self.emit_expr(&arm.awaitable)?;
@@ -1587,7 +1587,7 @@ impl<'a> IrEmitter<'a> {
             }
 
             IrExprKind::SerdeFromJson(type_name) => {
-                let type_ident = format_ident!("{}", type_name);
+                let type_ident = Self::rust_ident(type_name);
                 Ok(quote! {
                     incan_std_data::json::__private::parse_or_error::<#type_ident>(&s)
                 })

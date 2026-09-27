@@ -1,0 +1,39 @@
+# behavior: a generic function and a trait method with no bound on their type parameter return an element of their list by index and a slice of it, for int and str elements
+# retires: loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs::index_read_of_a_type_parameter_element_states_clone_issue1756
+# retires: loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs::trait_method_and_slice_element_copies_state_clone_on_every_signature_issue1756
+# expect-stdout:
+#   4
+#   x
+#   1
+#   5
+#   z
+#   2
+
+def first[K](items: list[K]) -> K:
+    return items[0]
+
+
+def rest[K](items: list[K]) -> list[K]:
+    return items[1:]
+
+
+trait Picker:
+    def pick[K](self, items: list[K]) -> K:
+        return items[0]
+
+    def tail[K](self, items: list[K]) -> list[K]:
+        return items[1:]
+
+
+model Chooser with Picker:
+    id: int
+
+
+def main() -> None:
+    println(first([4, 5]))
+    println(first(["x", "y"]))
+    println(len(rest(["x", "y"])))
+    chooser = Chooser(id=1)
+    println(chooser.pick([5, 6]))
+    println(chooser.pick(["z"]))
+    println(len(chooser.tail([7, 8, 9])))

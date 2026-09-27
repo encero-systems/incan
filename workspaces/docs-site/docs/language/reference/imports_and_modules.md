@@ -1,6 +1,6 @@
 # Imports and modules (reference)
 
-This page specifies import forms, module paths and files, what an import binds, re-exports, package namespaces, the `std` root, soft keywords, and Rust crate imports. Refusals of an import are reported with `INCAN-I0001`, and syntax errors with `INCAN-P0001`, unless a rule below names another code.
+This page specifies import forms, module paths and files, what an import binds, the reserved name prefix, re-exports, package namespaces, the `std` root, soft keywords, and Rust crate imports. Refusals of an import are reported with `INCAN-I0001`, syntax errors with `INCAN-P0001`, and refusals made when a project builds or locks with `INCAN-C0001`, unless a rule below names another code.
 
 ## Import forms
 
@@ -21,8 +21,8 @@ from utils import (
     format_currency as fmt,
     validate_email,
 )                                             # accepted
-import db.models                              # accepted: binds models
-import db::models::User                       # accepted: binds User
+import db.models                              # accepted
+import db::models::User                       # accepted
 from models import *                          # refused: wildcard (INCAN-P0001)
 ```
 
@@ -46,11 +46,13 @@ A module path `a.b` names the first of these files that exists: `a/b.incn`, `a/b
 
 ```incan
 # store/relative.incn
-from ..db.schema import Database          # accepted: db/schema.incn, beside store/
-from super::db::schema import Database    # accepted: the same module
+from ..db.schema import Database          # accepted
+
+# store/parent.incn
+from super::db::schema import Database    # accepted
 
 # app/store/nested.incn
-from ...db.schema import Database         # accepted: db/schema.incn, two directories above app/store/
+from ...db.schema import Database         # accepted
 ```
 
 ## Bindings
@@ -72,12 +74,27 @@ def load(path: str) -> models.Config:     # accepted
 
 - An import binds its local name in the module scope, beside the module's declarations.
 - A second binding of a name in the same scope is refused: a repeated import of the same declaration as a duplicate, and an import of a different declaration as ambiguous. The first binding stays in effect.
-- `std` and `rust` cannot be bound as local names, by a declaration or an import (`INCAN-T0001` on a declaration). `import rust::std` without `as` binds `std` and is refused.
+- `std` and `rust` cannot be bound as local names, by a declaration or an import (`INCAN-T0001` on a declaration). The exception is an import that binds the root of its own path, such as `import std.web as std`. `import rust::std` without `as` binds `std` and is refused.
 
 ```incan
 import codecs.prelude as codecs_prelude
-import compression.prelude as compression_prelude   # accepted: distinct local names
+import compression.prelude as compression_prelude   # accepted
 import models as std                                # refused: std is reserved
+```
+
+### Standard-library type names
+
+- A standard-library type name, such as `Response` from `std.web`, names that type after an import that binds it.
+- A module-level `model`, `class`, `enum`, `trait`, `newtype` or `type` declaration of the same name is the type that name refers to throughout the module: in annotations, including the method signatures of the declaration itself, and in calls that construct the type.
+- Refused (`INCAN-T0001`): the name in an annotation of a module that neither declares nor imports it.
+
+```incan
+model Response:
+    body: str
+
+    @staticmethod
+    def make(body: str) -> Response:          # accepted
+        return Response(body=body)
 ```
 
 ### Builtin functions
@@ -91,12 +108,38 @@ import models as std                                # refused: std is reserved
 from aggregates import sum
 
 def report() -> int:
-    local_total = sum(41)                     # accepted: calls aggregates.sum
-    builtin_total = std.builtins.sum([1, 2])  # accepted: calls the builtin
+    local_total = sum(41)                     # accepted
+    builtin_total = std.builtins.sum([1, 2])  # accepted
     return local_total + builtin_total
 ```
 
 The builtin functions and types are listed in the [language reference](language.md#builtin-functions).
+
+### Reserved name prefix
+
+Names that start with `__incan_` are reserved for the compiler. A name the source declares or binds with that prefix is refused (`INCAN-T0111`), public or private:
+
+- a module-level function, constant, static, type, trait, alias or partial;
+- a field, property, method, method alias, method partial, enum variant or variant alias;
+- a parameter or type parameter;
+- a local, pattern or closure binding;
+- an import alias, or an imported name bound without an alias.
+
+A method named `__incan_new` is exempt: it is a type's constructor hook.
+
+```incan
+from helpers import total as __incan_total   # refused: reserved prefix (INCAN-T0111)
+
+pub def __incan_original_target() -> int:     # refused: reserved prefix (INCAN-T0111)
+    return 2
+
+class Counter:
+    value: int = 0
+
+    @staticmethod
+    def __incan_new() -> Self:                # accepted
+        return Counter(value=5)
+```
 
 ## Re-exports
 
@@ -124,10 +167,10 @@ pub from pub::calc_lib import facade_calculate as b_calculate
 from facade import b_calculate
 
 def main() -> None:
-    println(b_calculate(41))    # accepted: calls calc_lib's helpers.calculate
+    println(b_calculate(41))    # accepted
 ```
 
-`incan build --lib` refuses a library entrypoint that re-exports from an unknown module, re-exports a name its module does not export, or exports one name twice.
+`incan build --lib` refuses (`INCAN-C0001`) a library entrypoint that re-exports from an unknown module, re-exports a name its module does not export, or exports one name twice.
 
 ## Package namespaces
 
@@ -141,7 +184,7 @@ def main() -> None:
 - At the package root, a re-export in `src/lib.incn` and a child namespace with the same name are ambiguous; the exact path selects one.
 
 ```incan
-from pub::hees_ai import hyperquant                            # accepted: the namespace
+from pub::hees_ai import hyperquant                            # accepted
 from pub::hees_ai.hyperquant.index import build_index          # accepted
 import pub::hees_ai.hyperquant as hq                           # accepted
 from pub::codecs.encoding.base64 import encode                 # accepted
@@ -155,8 +198,8 @@ from pub::codecs.encoding import encode                        # refused: base64
 - An unknown `std.*` module is refused.
 
 ```incan
-from std import toml                   # accepted: the module std.toml
-from std import math as arithmetic     # accepted: the module std.math, as arithmetic
+from std import toml                   # accepted
+from std import math as arithmetic     # accepted
 from std import Debug                  # refused: Debug is declared in std.derives.string
 from std.derives.string import Debug   # accepted
 ```
@@ -183,7 +226,7 @@ from rust::CRATE [@ "VERSION"] [with ["FEATURE", ...]] import ITEMS
 - Across files, one crate's versions match, and its features are unioned.
 - Annotations apply to `rust::` imports only.
 
-These refusals are reported when the project builds or locks.
+These refusals are reported when the project builds or locks (`INCAN-C0001`).
 
 ```incan
 import rust::my_crate @ "1.0"

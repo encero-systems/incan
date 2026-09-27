@@ -41,6 +41,12 @@ Use named functions for callbacks when the operation is shared or worth naming. 
 
 Generators support the same adapter and consumer surface as other iterator values, including `flat_map`, `skip`, `enumerate`, `zip`, `batch`, `count`, `fold`, `any`, `all`, `find`, `for_each`, and `sum`.
 
+## Pair, reuse, and materialize iterators
+
+Use the builtin `zip(left, right)` to pair two lists or iterators directly, and the method form `left.iter().zip(right.iter())` when `zip` is one stage in an existing iterator pipeline. Neither form builds a list by itself: iterate the result directly, or call `.collect()` when an owned `list[tuple[T, U]]` is required.
+
+A terminal call such as `count()` or `collect()` consumes the iterator. Clone the iterator before a terminal call when the original iterator must still be used later.
+
 ## Limit an unbounded producer
 
 Pair an unbounded generator with `take` before collecting.

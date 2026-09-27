@@ -28,7 +28,7 @@ Incan is not copying either system wholesale. Arrow is a memory format and Subst
 
 ## Lossless conversion is the implicit line
 
-The conversion rule is deliberately simple: implicit numeric movement is allowed when it is exact or provably lossless, and rejected when it may lose data.
+The conversion rule is deliberately simple: implicit numeric movement is allowed when it is exact or provably lossless within one family (signed integers, unsigned integers, binary floats) or from an unsigned integer to a wider signed one, and rejected when it may lose data. Integer-to-float movement is never implicit, even where every value would fit.
 
 This admits common safe cases without user friction:
 
@@ -54,6 +54,16 @@ Narrowing can be correct. It just needs to say what should happen when the value
 
 That makes code review sharper. A reviewer can accept or challenge the policy by reading the method name, rather than discovering it in generated Rust or runtime behavior.
 
+## `float` and the exact floats
+
+`float` and `f64` share one Rust carrier, `f64`, but not one value contract. `float` is the ordinary IEEE type: operations may produce NaN or infinity and carry them on. `f32` and `f64` are exact-width types for boundaries, and they promise finite values, so `float` is a type of its own rather than an alias of `f64`.
+
+Generated code keeps that promise by checking an exact value where it enters or is observed: when a direct exact scalar enters through a public function or Rust interop, when an exact scalar is extracted from a field or collection index, when an exact call or arithmetic operation produces a result, and before an exact value is compared, formatted, or printed. Crossing from ordinary `float` into an exact carrier performs the same check, and ordinary `float` itself stays unchecked. Public and Rust-facing aggregates are not recursively scanned at ingress; each exact scalar is checked when Incan extracts or observes it. A failed check raises `ValueError`.
+
+## Division keeps Python's meaning
+
+`/` is true division, `//` floors toward negative infinity and `%` takes the sign of the divisor, as Python defines them, so arithmetic ported from Python keeps its results. Division by zero raises `ZeroDivisionError` for floats too, instead of producing NaN or infinity.
+
 ## Rust interop follows the same rule
 
 Rust APIs often encode numeric decisions in parameter types. If Rust expects `i64`, passing an Incan `i32` should be painless. If Rust expects `i32`, passing an Incan `int` should not silently downcast.
@@ -64,10 +74,10 @@ Keeping Rust interop on the same exact-or-lossless rule prevents a separate "int
 
 Decimal types are included because fixed-scale values are central to data, finance, and analytics code. Precision and scale belong in the type because they define what values can be represented.
 
-Decimal arithmetic is a separate language-design problem. Addition, multiplication, division, rounding, overflow, scale propagation, and aggregation need explicit rules. The implemented surface therefore stops at decimal type syntax, literal validation, formatting, runtime representation, generated Rust, and display.
+Decimal arithmetic is a separate language-design problem. Addition, multiplication, division, rounding, overflow, scale propagation, and aggregation need explicit rules. The implemented surface therefore stops at decimal type syntax, literal validation, comparison, formatting, runtime representation, generated Rust, and display. Parsing decimal values from strings and rich decimal math stay library-owned until the language specifies those semantics.
 
 ## What this design does not claim
 
-This design does not make every numeric operation maximally precise, does not define arbitrary-precision integers, and does not turn `usize` into a general positive integer type. It also does not claim that aliases are always better than canonical names.
+This design does not make every numeric operation maximally precise, does not define arbitrary-precision integers, and does not turn `usize` into a general positive integer type. It also does not claim that aliases are always better than canonical names. Integer overflow in general exact-width arithmetic is not yet a separately documented language contract.
 
 The rule of thumb is: use ordinary names for ordinary code, exact names for exact boundaries, aliases for schema vocabulary, and explicit resize methods whenever data loss is possible.

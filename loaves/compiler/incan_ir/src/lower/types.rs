@@ -881,7 +881,7 @@ impl AstLowering {
                         };
                         IrType::NamedGeneric(collections::as_str(id).to_string(), params_lowered)
                     }
-                    _ if base == IR_UNION_TYPE_NAME => union_ir_type(params_lowered),
+                    _ if base == IR_UNION_TYPE_NAME => self.lower_union_members(params_lowered),
                     _ => IrType::NamedGeneric(base.clone(), params.iter().map(|p| self.lower_type(&p.node)).collect()),
                 }
             }
@@ -1075,7 +1075,7 @@ impl AstLowering {
                         .map(|ty| self.lower_resolved_type_with_rust_path_mode(ty, rust_path_mode))
                         .collect::<Vec<_>>();
                     if name == IR_UNION_TYPE_NAME {
-                        return union_ir_type(lowered_args);
+                        return self.lower_union_members(lowered_args);
                     }
                     if lowered_args.is_empty() {
                         IrType::Struct(name.clone())
@@ -1208,6 +1208,10 @@ impl AstLowering {
     }
 
     /// Lower an AST type while preserving names that are in-scope type parameters.
+    ///
+    /// While an imported trait default is being expanded into an adopter, a nominal name the trait's defining module
+    /// declares lowers to that module's path, bare or generic, so the expansion never depends on what the adopter
+    /// happens to import.
     pub fn lower_type_with_type_params(
         &self,
         ty: &ast::Type,
@@ -1258,6 +1262,9 @@ impl AstLowering {
 
                 if let Some(enum_ty) = self.enum_names.get(name) {
                     enum_ty.clone()
+                } else if let Some(path) = self.active_trait_default_type_path(n) {
+                    // An expanded imported trait default names its own module's types, not the adopter's (#1759).
+                    IrType::Struct(path.join("::"))
                 } else if let Some(html) = self.std_web_html_type(n) {
                     html
                 } else {
@@ -1309,7 +1316,7 @@ impl AstLowering {
                         collections::as_str(CollectionTypeId::Generator).to_string(),
                         lowered_params,
                     ),
-                    GenericBaseKind::Other if base == IR_UNION_TYPE_NAME => union_ir_type(lowered_params),
+                    GenericBaseKind::Other if base == IR_UNION_TYPE_NAME => self.lower_union_members(lowered_params),
                     GenericBaseKind::Other => IrType::NamedGeneric(
                         self.active_trait_default_type_path(base)
                             .map_or_else(|| base.clone(), |path| path.join("::")),

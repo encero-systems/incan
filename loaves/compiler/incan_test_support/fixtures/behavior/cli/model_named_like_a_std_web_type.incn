@@ -1,0 +1,14 @@
+# behavior: a model named Response, a name std.web also uses, is the return type of its own static method in a program that never imports std.web
+# expect-stdout:
+#   ok
+
+model Response:
+    body: str
+
+    @staticmethod
+    def make(body: str) -> Response:
+        return Response(body=body)
+
+
+def main() -> None:
+    println(Response.make("ok").body)

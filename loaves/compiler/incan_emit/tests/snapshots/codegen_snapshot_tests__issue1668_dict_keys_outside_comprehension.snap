@@ -75,13 +75,25 @@ fn main() {
     let mut d: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
     d.insert("b".to_string(), 2);
     d.insert("a".to_string(), 1);
-    let _ = println!("{}", names(d.clone()));
+    let _ = println!(
+        "{}", { let __parts : [& str; 2usize] = ["", ""]; let __args : Vec < String > =
+        vec![format!("{:?}", names(d.clone()))]; incan_std_core::strings::fstring(&
+        __parts, & __args) }
+    );
     let _ = println!("{}", has(d.clone(), "a".to_string()));
     let _ = println!("{}", count_keys(d.clone()));
     let _ = println!("{}", total(d.clone()));
     let _ = println!(
         "{}", ::std::convert::identity(collect_keys(d.clone()).len() as i64)
     );
-    let _ = println!("{}", doubled(d.clone()));
-    let _ = println!("{}", ordered_values(d.clone()));
+    let _ = println!(
+        "{}", { let __parts : [& str; 2usize] = ["", ""]; let __args : Vec < String > =
+        vec![format!("{:?}", doubled(d.clone()))]; incan_std_core::strings::fstring(&
+        __parts, & __args) }
+    );
+    let _ = println!(
+        "{}", { let __parts : [& str; 2usize] = ["", ""]; let __args : Vec < String > =
+        vec![format!("{:?}", ordered_values(d.clone()))];
+        incan_std_core::strings::fstring(& __parts, & __args) }
+    );
 }

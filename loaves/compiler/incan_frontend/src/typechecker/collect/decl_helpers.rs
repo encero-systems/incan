@@ -235,7 +235,7 @@ fn method_info_from_decl(
             )
         })
         .collect();
-    let params = method
+    let params: Vec<CallableParam> = method
         .node
         .params
         .iter()
@@ -268,12 +268,13 @@ fn method_info_from_decl(
         implementation_type_params: Vec::new(),
         inferred: false,
     });
+    let identity =
+        checker
+            .symbols
+            .member_declaration_identity(&method.node.name, SemanticSourceTargetKind::Method, method.span);
+    checker.record_caller_visible_mut_params(Some(&identity), &method.node.params, &params);
     MethodInfo {
-        identity: Some(checker.symbols.member_declaration_identity(
-            &method.node.name,
-            SemanticSourceTargetKind::Method,
-            method.span,
-        )),
+        identity: Some(identity),
         type_params,
         type_param_bounds,
         type_param_bound_details,

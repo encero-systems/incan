@@ -2,10 +2,12 @@
 
 use super::TypeChecker;
 use crate::ast::{CallArg, ParamKind, Span, Spanned, Type};
+use crate::diagnostics::CompileError;
 use crate::diagnostics::errors::{self, TypeArgumentOrigin};
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map_call_site};
 use crate::symbols::{CallableParam, FunctionInfo, MethodInfo, ResolvedType, TypeInfo};
 use incan_lang::lang::callables;
+use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_semantics_core::CanonicalSymbolId;
 
 impl TypeChecker {
@@ -690,6 +692,22 @@ impl TypeChecker {
         }
     }
 
+    /// Return the display rule's refusal for a type argument that fails a `Display` bound, or `None` for any other
+    /// bound or for a type argument the ordinary bound refusal describes (#1748).
+    fn unsatisfied_display_bound(
+        &self,
+        func_name: &str,
+        type_param: &str,
+        bound: &str,
+        actual_ty: &ResolvedType,
+        call_span: Span,
+    ) -> Option<CompileError> {
+        if builtin_traits::from_str(bound) != Some(TraitId::Display) {
+            return None;
+        }
+        self.display_bound_refusal(func_name, type_param, actual_ty, call_span)
+    }
+
     /// Emit diagnostics when inferred concrete generic bindings violate explicit `with` bounds.
     ///
     /// An `Eq` or `Hash` bound the provider inferred from its body (a compiled library's hashed type parameter, #1758)
@@ -731,30 +749,40 @@ impl TypeChecker {
                 }
                 for bound in details.iter().filter(|bound| !bound.inferred) {
                     if !self.type_satisfies_explicit_bound_info(actual_ty, bound, bindings) {
-                        self.errors.push(errors::generic_bound_not_satisfied(
-                            func_name,
-                            type_param,
-                            &self.type_bound_display(bound, bindings),
-                            self.generic_bound_target(&bound.name),
-                            &actual_ty.to_string(),
-                            actual_origin,
-                            call_span,
-                        ));
+                        let error = self
+                            .unsatisfied_display_bound(func_name, type_param, &bound.name, actual_ty, call_span)
+                            .unwrap_or_else(|| {
+                                errors::generic_bound_not_satisfied(
+                                    func_name,
+                                    type_param,
+                                    &self.type_bound_display(bound, bindings),
+                                    self.generic_bound_target(&bound.name),
+                                    &actual_ty.to_string(),
+                                    actual_origin,
+                                    call_span,
+                                )
+                            });
+                        self.errors.push(error);
                     }
                 }
                 continue;
             }
             for bound in bounds {
                 if !self.type_satisfies_explicit_bound(actual_ty, bound) {
-                    self.errors.push(errors::generic_bound_not_satisfied(
-                        func_name,
-                        type_param,
-                        bound,
-                        self.generic_bound_target(bound),
-                        &actual_ty.to_string(),
-                        actual_origin,
-                        call_span,
-                    ));
+                    let error = self
+                        .unsatisfied_display_bound(func_name, type_param, bound, actual_ty, call_span)
+                        .unwrap_or_else(|| {
+                            errors::generic_bound_not_satisfied(
+                                func_name,
+                                type_param,
+                                bound,
+                                self.generic_bound_target(bound),
+                                &actual_ty.to_string(),
+                                actual_origin,
+                                call_span,
+                            )
+                        });
+                    self.errors.push(error);
                 }
             }
         }

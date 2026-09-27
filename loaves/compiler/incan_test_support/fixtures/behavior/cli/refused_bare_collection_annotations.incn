@@ -1,0 +1,8 @@
+# behavior: a bare List, Dict or Option annotation names no type and is refused at check time
+# expect-diagnostic: INCAN-T0104
+
+def main() -> None:
+    items: List = [1, 2]
+    counts: Dict = {"a": 1}
+    maybe: Option = None
+    println(len(items), len(counts))

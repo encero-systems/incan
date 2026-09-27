@@ -76,7 +76,7 @@ impl json::Deserialize for Payload {
         incan_std_data::json::__private::parse_or_error(&json_str)
     }
 }
-fn encode<T: json::Serialize>(value: T) -> String {
+fn encode<T: json::Serialize + ::serde::Serialize>(value: T) -> String {
     return crate::__incan_std::serde::json::Serialize::to_json(&value);
 }
 fn main() {

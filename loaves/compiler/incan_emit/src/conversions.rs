@@ -1191,7 +1191,8 @@ fn incan_mutable_param_skips_incan_value_conversions(param: &FunctionParam) -> b
 ///
 /// For mutable aggregate parameters, codegen emits `&mut` of the binding. For owned mutable Rust handles, it moves the
 /// handle through the Incan call unchanged. In both cases, the generic Incan rule that clones non-copy locals on
-/// non-final reads would produce an invalid Rust call.
+/// non-final reads would produce an invalid Rust call. A mutable `str` parameter that receives the caller's binding or
+/// field takes it unconverted for the same reason.
 pub fn determine_conversion_for_incan_call(
     expr: &IrExpr,
     target_ty: Option<&IrType>,
@@ -1217,11 +1218,23 @@ pub fn determine_conversion_for_incan_call(
     if matches!(
         context,
         ConversionContext::IncanFunctionArg | ConversionContext::IncanFunctionArgInReturn
-    ) && callee_param.is_some_and(incan_mutable_param_skips_incan_value_conversions)
-    {
+    ) && callee_param.is_some_and(|param| {
+        incan_mutable_param_skips_incan_value_conversions(param) || mutable_str_param_receives_place(param, expr)
+    }) {
         return Conversion::None;
     }
     determine_conversion(expr, target_ty, context)
+}
+
+/// Returns whether a mutable `str` parameter receives the caller's own binding or field rather than a converted copy.
+///
+/// The checker admits only a mutable place for a `mut` parameter whose changes reach the caller (#1773), so the value
+/// already is the caller's `String`: converting it would hand the callee a copy and drop its changes. Any other shape
+/// keeps the ordinary string conversion.
+fn mutable_str_param_receives_place(param: &FunctionParam, expr: &IrExpr) -> bool {
+    param.mutability == Mutability::Mutable
+        && matches!(param.ty, IrType::String)
+        && matches!(expr.kind, IrExprKind::Var { .. } | IrExprKind::Field { .. })
 }
 
 #[cfg(test)]

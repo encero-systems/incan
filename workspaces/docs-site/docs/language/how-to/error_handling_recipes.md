@@ -100,6 +100,75 @@ def fetch_with_retry(url: str, attempts: int) -> Result[str, NetworkError]:
     return Err(last_err.unwrap_or(NetworkError("unreachable")))
 ```
 
+## Pattern: Retry inside a fallible iterator
+
+`FallibleIterator` has no generic retry adapter. Repeating a failed poll is safe only when the source knows whether its cursor advanced, whether the operation is idempotent, which errors are transient, and how attempts and backoff are counted.
+
+A remote paginator that supports retry should therefore accept an explicit application or domain policy. Its own `__next__` implementation keeps the logical cursor unchanged while retrying, advances it only after a successful page, and emits one final error when the policy declines another attempt. `inspect_err`, `map_err`, `collect`, `fold`, and `for ...?:` outside that source observe only the final emitted error. Instrumentation for individual attempts belongs inside the paginator or policy.
+
+The following design sketch is application code, not a shipped `std.http` API. The transport and wait callbacks make every effect visible, while the paginator alone owns cursor safety:
+
+```incan
+from std.derives.collection import FallibleIterator
+
+model Record:
+    id: str
+    active: bool
+
+
+model FetchError:
+    detail: str
+    transient: bool
+
+
+model RetryPolicy:
+    max_attempts: int
+    backoff_ms: int
+
+    def should_retry(self, error: FetchError, attempt: int) -> bool:
+        return error.transient and attempt < self.max_attempts
+
+    def delay_ms(self, attempt: int) -> int:
+        return self.backoff_ms * attempt
+
+
+model RemotePage:
+    records: list[Record]
+    next_cursor: Option[str]
+
+
+model RetryingPages with FallibleIterator[RemotePage, FetchError]:
+    cursor: str
+    done: bool
+    retry: RetryPolicy
+    fetch: (str) -> Result[RemotePage, FetchError]
+    wait: (int) -> None
+
+    def __next__(mut self) -> Result[Option[RemotePage], FetchError]:
+        if self.done:
+            return Ok(None)
+
+        mut attempt = 1
+        while true:
+            request_page = self.fetch
+            match request_page(self.cursor):
+                Ok(page) =>
+                    match page.next_cursor:
+                        Some(next_cursor) => self.cursor = next_cursor
+                        None => self.done = true
+                    return Ok(Some(page))
+                Err(error) =>
+                    if not self.retry.should_retry(error, attempt):
+                        return Err(error)
+                    wait_before_retry = self.wait
+                    wait_before_retry(self.retry.delay_ms(attempt))
+                    attempt += 1
+```
+
+No retry is magical here. A failed call leaves `self.cursor` untouched. The policy classifies retryable failures and limits attempts, the injected `wait` callback owns backoff, and only a successful page advances or closes the cursor. If the policy declines, `__next__` emits the final `FetchError`; outer combinators and `for ...?:` observe exactly that one error.
+
+The adapters and terminals are specified in [Collection protocols](../reference/stdlib_traits/collection_protocols.md#fallibleiterator-fallible-iteration).
+
 ## Pattern: Errors with recoverable payloads
 
 Sometimes the error should carry a value that would otherwise be lost (e.g. sending on a closed channel).

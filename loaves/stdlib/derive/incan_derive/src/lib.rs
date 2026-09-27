@@ -12,6 +12,7 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
+use syn::ext::IdentExt;
 use syn::{Data, DeriveInput, Fields, parse_macro_input};
 
 /// Generates reflection methods for Incan classes/models.
@@ -39,7 +40,8 @@ use syn::{Data, DeriveInput, Fields, parse_macro_input};
 pub fn derive_incan_class(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
-    let name_str = name.to_string();
+    // A source name that is a Rust keyword arrives as a raw identifier; the reported name is the source spelling.
+    let name_str = name.unraw().to_string();
     let generics = input.generics.clone();
     let (impl_generics, type_generics, where_clause) = generics.split_for_impl();
 
@@ -131,7 +133,8 @@ pub fn derive_field_info(input: TokenStream) -> TokenStream {
                     .named
                     .iter()
                     .filter_map(|f| {
-                        let field_name = f.ident.as_ref()?.to_string();
+                        // A field named like a Rust keyword arrives as a raw identifier (`r#impl`); report `impl`.
+                        let field_name = f.ident.as_ref()?.unraw().to_string();
                         let ty = &f.ty;
                         let field_type = quote!(#ty).to_string();
                         Some((field_name, field_type))

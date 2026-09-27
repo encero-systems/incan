@@ -32,14 +32,17 @@ mod expr;
 mod receiver_plan;
 mod stmt;
 mod types;
+mod union_identity;
 mod web_surface;
+
+pub use union_identity::{CrateNominalContext, declared_nominal_names};
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use super::TypedExpr;
 use super::decl::{
-    FunctionParam, FunctionParamDefault, IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier, IrTypeParam,
+    FunctionParam, FunctionParamDefault, IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier, IrTypeParam, Visibility,
 };
 use super::expr::{IrCallArg, IrCallArgKind, IrExprKind, MethodCallArgPolicy, VarAccess, VarRefKind};
 use super::stmt::{IrStmt, IrStmtKind};
@@ -58,6 +61,7 @@ use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_frontend::typechecker::{CBindingType, TypeCheckInfo};
 use incan_lang::lang::conventions;
 use incan_lang::lang::decorators::{self, DecoratorId};
+use incan_lang::lang::keywords::{self, KeywordId};
 use incan_lang::lang::stdlib;
 use incan_lang::lang::trait_capabilities;
 use incan_lang::lang::traits::{self as core_traits, TraitId};
@@ -67,6 +71,12 @@ use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind, SymbolOr
 
 // Re-export error types
 pub use errors::{LoweringError, LoweringErrors};
+
+/// How many `from ... import` hops a trait module's binding is followed to reach its declaring module.
+///
+/// Each hop is one import or re-export; a chain longer than this, or an import cycle, leaves the binding unresolved
+/// rather than looping.
+const SOURCE_BINDING_RESOLUTION_DEPTH: usize = 16;
 
 pub(in crate::lower) struct TraitImplLoweringInput<'a> {
     pub type_name: &'a str,
@@ -262,6 +272,16 @@ pub struct AstLowering {
     /// Return statements need this source-owned context to widen a checked-C scalar result only when the
     /// typechecker has already accepted a lossless conversion to an ordinary Incan numeric type.
     pub callable_return_types: Vec<IrType>,
+    /// Module items -- consts, statics, functions and nominal types -- that a parameter default or method-partial
+    /// preset of the module names; their generated items are published because the default is expanded at call
+    /// sites outside the module.
+    pub default_named_items: HashSet<String>,
+    /// Module models and classes that a parameter default or method-partial preset constructs; their fields are
+    /// reachable within the crate because the construction is spelled at call sites outside the module.
+    pub default_constructed_types: HashSet<String>,
+    /// Models and classes of other modules in the crate that a parameter default or method-partial preset of the
+    /// module constructs, each as its declaring module's Rust path and its name.
+    pub default_constructed_foreign_types: HashSet<(Vec<String>, String)>,
     /// Module-level symbol aliases mapped from alias name to canonical target name.
     pub symbol_aliases: HashMap<String, String>,
     /// Imported overload bindings that must be reexported because a public alias projects them.
@@ -304,7 +324,8 @@ pub struct AstLowering {
     /// A recoverable projection is a wrapper emitted beside a declaration. A local type gets one for a method it
     /// writes and for a trait it adopts -- and for nothing else. A trait method the type never adopted has no slot
     /// here even though the call resolves to a real declaration, so projection needs to know which traits were
-    /// actually adopted rather than inferring it from the identity the call resolved to.
+    /// actually adopted rather than inferring it from the identity the call resolved to. A trait adopted through a
+    /// source-module derive (`@derive(codec)`) counts as adopted, like one written in a `with` clause.
     pub adopted_traits_by_type: HashMap<String, HashSet<String>>,
     /// Trait names this program declares.
     ///
@@ -329,6 +350,18 @@ pub struct AstLowering {
     /// declarations from another package's -- see [`AstLowering::produced_library_identity`]. It is `None` when no
     /// project owns the compilation, and every package identity is then genuinely foreign.
     pub registry_package_identity: Option<String>,
+    /// Crate-wide facts about nominal names several modules of the crate declare, shared by every module's lowering.
+    ///
+    /// `None` outside a code generator that knows the whole crate; union members then keep their spellings (#1796).
+    pub crate_nominal_context: Option<Arc<CrateNominalContext>>,
+    /// Nominal type names the module being lowered declares, read from its declarations when lowering starts.
+    pub module_declared_nominals: HashSet<String>,
+    /// Rust module path below the crate root of each source module compiled into this crate, keyed by the origin the
+    /// checked identities of that module's declarations carry. Names in parameter defaults are spelled through it.
+    pub source_module_rust_paths: HashMap<SymbolOrigin, Vec<String>>,
+    /// Number of source parameter defaults being lowered; names read in them are spelled through their declaring
+    /// modules.
+    pub param_default_depth: usize,
 }
 
 impl AstLowering {
@@ -634,7 +667,24 @@ impl AstLowering {
     /// Parameter defaults participate in the callable surface used by direct calls, decorated wrappers, aliases,
     /// imports, and stdlib source rehydration. Dropping a lowering error here silently changes that callable surface,
     /// so every source-backed default must either lower successfully or report the original lowering failure.
+    ///
+    /// A caller that omits the argument receives the default at its own call site, so the consts and functions the
+    /// default names are spelled through the modules that declare them (#1771).
     pub(in crate::lower) fn lower_param_default_expr(
+        &mut self,
+        default_expr: Option<&ast::Spanned<ast::Expr>>,
+    ) -> Result<Option<TypedExpr>, LoweringError> {
+        self.param_default_depth += 1;
+        let lowered = self.lower_foreign_param_default_expr(default_expr);
+        self.param_default_depth -= 1;
+        lowered
+    }
+
+    /// Lower a parameter default read from another module's source, such as a stdlib declaration, as written.
+    ///
+    /// The checked facts of the module being lowered do not cover that source's spans, so its names are not spelled
+    /// through their declaring modules; see [`Self::lower_param_default_expr`].
+    pub(in crate::lower) fn lower_foreign_param_default_expr(
         &mut self,
         default_expr: Option<&ast::Spanned<ast::Expr>>,
     ) -> Result<Option<TypedExpr>, LoweringError> {
@@ -733,6 +783,9 @@ impl AstLowering {
             rust_import_aliases: HashMap::new(),
             callable_param_scopes: Vec::new(),
             callable_return_types: Vec::new(),
+            default_named_items: HashSet::new(),
+            default_constructed_types: HashSet::new(),
+            default_constructed_foreign_types: HashSet::new(),
             symbol_aliases: HashMap::new(),
             overload_alias_reexport_targets: HashSet::new(),
             source_type_alias_targets: HashMap::new(),
@@ -751,6 +804,10 @@ impl AstLowering {
             declared_trait_names: HashSet::new(),
             local_function_declared_returns: HashMap::new(),
             registry_package_identity: None,
+            crate_nominal_context: None,
+            module_declared_nominals: HashSet::new(),
+            source_module_rust_paths: HashMap::new(),
+            param_default_depth: 0,
         }
     }
 
@@ -762,6 +819,11 @@ impl AstLowering {
     /// Set the canonical defining package identity used by compiler-materialized registry subjects.
     pub fn set_registry_package_identity(&mut self, identity: Option<String>) {
         self.registry_package_identity = identity;
+    }
+
+    /// Share the crate-wide nominal facts that let a union member name its declaring module (#1796).
+    pub fn set_crate_nominal_context(&mut self, context: Option<Arc<CrateNominalContext>>) {
+        self.crate_nominal_context = context;
     }
 
     /// Provide a warmed stdlib metadata cache for lowering stages that need stdlib-backed decorator or helper
@@ -1044,6 +1106,18 @@ impl AstLowering {
             .find_map(|paths| paths.get(name).cloned())
     }
 
+    /// Return the source path of a helper function an expanded source-module trait default calls, or `None` outside
+    /// such a default, for a stdlib trait's helper, or for a local binding of that name.
+    pub fn active_source_trait_default_function_path(&self, name: &str) -> Option<Vec<String>> {
+        if self.scopes.iter().rev().any(|scope| scope.contains_key(name)) {
+            return None;
+        }
+        let path = self.active_trait_default_function_path(name)?;
+        (path.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT)
+            && path.first().map(String::as_str) != Some(stdlib::INCAN_STD_NAMESPACE))
+        .then_some(path)
+    }
+
     /// Return the defining-module path for a type annotation in the currently-expanded trait default.
     pub fn active_trait_default_type_path(&self, name: &str) -> Option<Vec<String>> {
         self.active_trait_default_type_paths
@@ -1061,6 +1135,31 @@ impl AstLowering {
             return None;
         }
         self.active_trait_default_type_path(name)
+    }
+
+    /// Return the declaring-module path of a type name an expanded source-module trait default names in value
+    /// position (`Corner.Top`, a constructor pattern), or `None` outside such a default or for a local binding.
+    ///
+    /// Stdlib trait defaults keep their established spelling; only a trait declared in a project source module is
+    /// expanded against its module's paths here (#1759).
+    pub fn active_source_trait_default_type_path(&self, name: &str) -> Option<Vec<String>> {
+        let path = self.active_trait_default_value_type_path(name)?;
+        (path.get(1).map(String::as_str) != Some(stdlib::INCAN_STD_NAMESPACE)).then_some(path)
+    }
+
+    /// Qualify a constructor-pattern name (`Corner::Top`, `Extent`) whose type an expanded source-module trait default
+    /// resolves through its defining module, keeping any variant segment after the type.
+    pub fn active_trait_default_qualified_pattern_name(&self, spelled: &str) -> Option<String> {
+        let (head, rest) = match spelled.split_once("::") {
+            Some((head, rest)) => (head, Some(rest)),
+            None => (spelled, None),
+        };
+        let mut qualified = self.active_source_trait_default_type_path(head)?.join("::");
+        if let Some(rest) = rest {
+            qualified.push_str("::");
+            qualified.push_str(rest);
+        }
+        Some(qualified)
     }
 
     /// Return the concrete adopter type for one type variable in the currently-expanded trait default.
@@ -1630,10 +1729,27 @@ impl AstLowering {
 
     /// Seed trait declarations from imported source modules so RFC 024 default methods can be expanded into adopter
     /// impls.
+    ///
+    /// Each trait also records what its defining module's names resolve to. A default body is expanded in the
+    /// adopter's module, where a type the trait's module owns or imports (`Extent` in `shapes`) and a function it
+    /// declares or imports are not in scope unless the adopter happens to import them too, so the expansion names
+    /// them by their declaring-module path, the same facts stdlib traits already carry (#1759).
     pub fn seed_dependency_trait_decls(
         &mut self,
         dependency_modules: &[(&str, &ast::Program, Option<Vec<String>>)],
     ) -> Result<(), LoweringErrors> {
+        let module_graph = dependency_modules
+            .iter()
+            .map(|(module_name, module_ast, path_segments)| {
+                let module_path = path_segments
+                    .clone()
+                    .unwrap_or_else(|| module_name.split('.').map(str::to_string).collect());
+                (
+                    incan_frontend::module::canonicalize_source_module_segments(&module_path),
+                    *module_ast,
+                )
+            })
+            .collect::<HashMap<_, _>>();
         for (module_name, module_ast, path_segments) in dependency_modules {
             let mut module_keys = vec![(*module_name).to_string()];
             if let Some(path_segments) = path_segments {
@@ -1642,6 +1758,15 @@ impl AstLowering {
                     module_keys.push(dotted);
                 }
             }
+            let module_path = path_segments
+                .clone()
+                .unwrap_or_else(|| module_name.split('.').map(str::to_string).collect());
+            let module_path = incan_frontend::module::canonicalize_source_module_segments(&module_path);
+            let mut default_type_paths = Self::source_module_type_paths(module_ast, &module_path);
+            for (binding, path) in Self::source_module_imported_type_paths(module_ast, &module_path, &module_graph) {
+                default_type_paths.entry(binding).or_insert(path);
+            }
+            let default_function_paths = Self::source_module_function_paths(module_ast, &module_path, &module_graph);
             for decl in &module_ast.declarations {
                 let ast::Declaration::Trait(tr) = &decl.node else {
                     continue;
@@ -1656,11 +1781,189 @@ impl AstLowering {
                     false,
                 )?;
                 for module_key in &module_keys {
-                    self.register_trait_decl(format!("{module_key}.{}", tr.name), trait_decl.clone(), true);
+                    let trait_key = format!("{module_key}.{}", tr.name);
+                    self.trait_default_type_paths
+                        .insert(trait_key.clone(), default_type_paths.clone());
+                    if !default_function_paths.is_empty() {
+                        self.trait_default_function_paths
+                            .insert(trait_key.clone(), default_function_paths.clone());
+                    }
+                    self.register_trait_decl(trait_key, trait_decl.clone(), true);
                 }
             }
         }
         Ok(())
+    }
+
+    /// Return the Rust path of every nominal type one source module declares, keyed by its declared name.
+    ///
+    /// A source module is emitted as the crate module named by its logical path (`shapes` as `crate::shapes`,
+    /// `api.routes` as `crate::api::routes`; a directory's `mod.incn` names the directory), which is where the paths
+    /// point. Only declarations that are types in their own right are listed: models, classes, enums and newtypes. A
+    /// transparent `type` alias names another type and a trait is a bound, so neither is re-spelled.
+    fn source_module_type_paths(module_ast: &ast::Program, module_path: &[String]) -> HashMap<String, Vec<String>> {
+        let mut rust_module_path = vec![keywords::as_str(KeywordId::Crate).to_string()];
+        rust_module_path.extend(incan_frontend::module::canonicalize_source_module_segments(module_path));
+        module_ast
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.node {
+                ast::Declaration::Model(model) => Some(model.name.clone()),
+                ast::Declaration::Class(class) => Some(class.name.clone()),
+                ast::Declaration::Enum(enum_decl) => Some(enum_decl.name.clone()),
+                ast::Declaration::Newtype(newtype) => Some(newtype.name.clone()),
+                _ => None,
+            })
+            .map(|type_name| {
+                let mut path = rust_module_path.clone();
+                path.push(type_name.clone());
+                (type_name, path)
+            })
+            .collect()
+    }
+
+    /// Return the Rust path of every nominal type one source module imports from another, keyed by its local binding.
+    ///
+    /// `from units import Extent` binds `Extent` in the trait's module; the path names the module that declares it,
+    /// following re-exports and further imports, so the expansion reaches the type wherever the adopter lives. A
+    /// binding that does not resolve to a model, class, enum or newtype of a known source module is left out.
+    fn source_module_imported_type_paths(
+        module_ast: &ast::Program,
+        module_path: &[String],
+        module_graph: &HashMap<Vec<String>, &ast::Program>,
+    ) -> HashMap<String, Vec<String>> {
+        let mut paths = HashMap::new();
+        for (binding, source_module, declared_name) in
+            Self::source_module_from_imports(module_ast, module_path, module_graph)
+        {
+            let Some((declaring_module, declared_name)) = Self::declaring_source_module(
+                module_graph,
+                &source_module,
+                &declared_name,
+                Self::declares_nominal_type,
+                SOURCE_BINDING_RESOLUTION_DEPTH,
+            ) else {
+                continue;
+            };
+            let mut path = vec![keywords::as_str(KeywordId::Crate).to_string()];
+            path.extend(declaring_module);
+            path.push(declared_name);
+            paths.insert(binding, path);
+        }
+        paths
+    }
+
+    /// Return the source path (`<module>.<function>`) of every top-level function one source module declares or
+    /// imports, keyed by its local binding.
+    ///
+    /// A trait default that calls a helper of its module (`doubled(...)`) is expanded in the adopter, where the
+    /// helper is not in scope; the call names the helper by its declaring module's path instead.
+    fn source_module_function_paths(
+        module_ast: &ast::Program,
+        module_path: &[String],
+        module_graph: &HashMap<Vec<String>, &ast::Program>,
+    ) -> HashMap<String, Vec<String>> {
+        let mut paths = module_ast
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.node {
+                ast::Declaration::Function(function) => Some(function.name.clone()),
+                _ => None,
+            })
+            .map(|name| {
+                let mut path = module_path.to_vec();
+                path.push(name.clone());
+                (name, path)
+            })
+            .collect::<HashMap<_, _>>();
+        for (binding, source_module, declared_name) in
+            Self::source_module_from_imports(module_ast, module_path, module_graph)
+        {
+            if paths.contains_key(&binding) {
+                continue;
+            }
+            let Some((mut path, declared_name)) = Self::declaring_source_module(
+                module_graph,
+                &source_module,
+                &declared_name,
+                Self::declares_function,
+                SOURCE_BINDING_RESOLUTION_DEPTH,
+            ) else {
+                continue;
+            };
+            path.push(declared_name);
+            paths.insert(binding, path);
+        }
+        paths
+    }
+
+    /// Return each `from <module> import <name> [as <binding>]` item of one source module whose module is a known
+    /// source module, as `(binding, source module path, imported name)`.
+    fn source_module_from_imports(
+        module_ast: &ast::Program,
+        module_path: &[String],
+        module_graph: &HashMap<Vec<String>, &ast::Program>,
+    ) -> Vec<(String, Vec<String>, String)> {
+        let mut imports = Vec::new();
+        for decl in &module_ast.declarations {
+            let ast::Declaration::Import(import) = &decl.node else {
+                continue;
+            };
+            let ast::ImportKind::From { module, items } = &import.kind else {
+                continue;
+            };
+            let Some(source_module) = incan_frontend::module::logical_source_import_candidates(module_path, module)
+                .into_iter()
+                .find(|candidate| module_graph.contains_key(candidate))
+            else {
+                continue;
+            };
+            for item in items {
+                let binding = item.alias.clone().unwrap_or_else(|| item.name.clone());
+                imports.push((binding, source_module.clone(), item.name.clone()));
+            }
+        }
+        imports
+    }
+
+    /// Follow a name bound in one source module to the module that declares it, as `(declaring module, declared name)`.
+    ///
+    /// The name is declared by `module_path` when `declares` says so; otherwise a `from ... import` of that module that
+    /// binds it (a plain import or a `pub from` re-export) is followed, at most `depth` modules deep.
+    fn declaring_source_module(
+        module_graph: &HashMap<Vec<String>, &ast::Program>,
+        module_path: &[String],
+        name: &str,
+        declares: fn(&ast::Declaration, &str) -> bool,
+        depth: usize,
+    ) -> Option<(Vec<String>, String)> {
+        let module_ast = module_graph.get(module_path)?;
+        if module_ast.declarations.iter().any(|decl| declares(&decl.node, name)) {
+            return Some((module_path.to_vec(), name.to_string()));
+        }
+        let depth = depth.checked_sub(1)?;
+        Self::source_module_from_imports(module_ast, module_path, module_graph)
+            .into_iter()
+            .filter(|(binding, _, _)| binding == name)
+            .find_map(|(_, source_module, imported_name)| {
+                Self::declaring_source_module(module_graph, &source_module, &imported_name, declares, depth)
+            })
+    }
+
+    /// Return whether a declaration is the model, class, enum or newtype `name`.
+    fn declares_nominal_type(decl: &ast::Declaration, name: &str) -> bool {
+        match decl {
+            ast::Declaration::Model(model) => model.name == name,
+            ast::Declaration::Class(class) => class.name == name,
+            ast::Declaration::Enum(enum_decl) => enum_decl.name == name,
+            ast::Declaration::Newtype(newtype) => newtype.name == name,
+            _ => false,
+        }
+    }
+
+    /// Return whether a declaration is the top-level function `name`.
+    fn declares_function(decl: &ast::Declaration, name: &str) -> bool {
+        matches!(decl, ast::Declaration::Function(function) if function.name == name)
     }
 
     /// Seed alias maps for types that may be referenced from other modules.
@@ -2215,31 +2518,31 @@ impl AstLowering {
         let mut ir_program = IrProgram::new();
         self.emitted_member_projections.clear();
         ir_program.source_module_name = self.current_source_module_name.clone();
+        self.module_declared_nominals = declared_nominal_names(program);
         let mut errors: Vec<LoweringError> = Vec::new();
         self.import_aliases = decorator_resolution::collect_import_aliases(program);
         self.rust_import_aliases = decorator_resolution::collect_rust_import_aliases(program);
+        self.collect_default_named_items(program);
         ir_program.function_reexports = self.collect_function_reexports(program);
         (self.imported_alias_targets, self.imported_module_bindings) = self.collect_imported_bindings(program);
         self.seed_imported_stdlib_trait_decls(program)?;
-        self.adopted_traits_by_type = program
-            .declarations
-            .iter()
-            .filter_map(|decl| match &decl.node {
-                ast::Declaration::Model(m) => Some((m.name.clone(), &m.traits)),
-                ast::Declaration::Class(c) => Some((c.name.clone(), &c.traits)),
-                _ => None,
-            })
-            .map(|(name, traits)| {
-                let adopted = traits
-                    .iter()
-                    .map(|trait_ref| {
-                        let spelled = trait_ref.node.name.as_str();
-                        spelled.rsplit('.').next().unwrap_or(spelled).to_string()
-                    })
-                    .collect::<HashSet<_>>();
-                (name, adopted)
-            })
-            .collect();
+        self.adopted_traits_by_type = HashMap::new();
+        for decl in &program.declarations {
+            let (name, traits, decorators) = match &decl.node {
+                ast::Declaration::Model(m) => (&m.name, &m.traits, &m.decorators),
+                ast::Declaration::Class(c) => (&c.name, &c.traits, &c.decorators),
+                _ => continue,
+            };
+            let mut adopted = traits
+                .iter()
+                .map(|trait_ref| {
+                    let spelled = trait_ref.node.name.as_str();
+                    spelled.rsplit('.').next().unwrap_or(spelled).to_string()
+                })
+                .collect::<HashSet<_>>();
+            adopted.extend(self.derived_source_trait_adoptions(decorators));
+            self.adopted_traits_by_type.insert(name.clone(), adopted);
+        }
         self.declared_trait_names = program
             .declarations
             .iter()
@@ -2655,11 +2958,7 @@ impl AstLowering {
                                 Ok(FunctionParam {
                                     name: p.node.name.clone(),
                                     ty: param_ty,
-                                    mutability: if p.node.is_mut {
-                                        Mutability::Mutable
-                                    } else {
-                                        Mutability::Immutable
-                                    },
+                                    mutability: self.lower_parameter_mutability(p),
                                     is_self: false,
                                     kind: p.node.kind,
                                     default: self
@@ -2987,6 +3286,28 @@ impl AstLowering {
                                     }
                                 }
                             }
+                            // A derived `std.serde.json` trait is implemented like a model's (#1820).
+                            for (trait_name, trait_type_args) in self.derived_json_protocol_impl_targets(&n.decorators)
+                            {
+                                match self.lower_trait_impl(TraitImplLoweringInput {
+                                    type_name: &struct_ir.name,
+                                    type_params: &n.type_params,
+                                    trait_name: &trait_name,
+                                    trait_type_args,
+                                    impl_methods: &n.methods,
+                                    impl_properties: &[],
+                                    impl_associated_types: &n.associated_types,
+                                }) {
+                                    Ok(mut trait_impl) => {
+                                        self.require_json_protocol_capability_on_impl_params(
+                                            &mut trait_impl,
+                                            &trait_name,
+                                        );
+                                        ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
+                                    }
+                                    Err(e) => errors.push(e),
+                                }
+                            }
                         }
                         Err(e) => errors.push(e),
                     }
@@ -3203,7 +3524,9 @@ impl AstLowering {
                     span: super::IrSpan::default(),
                 }),
         );
+        Self::open_trait_default_helpers_to_the_crate(program, &mut ir_program);
         if errors.is_empty() {
+            self.attach_json_protocol_capability_to_trait_returns(&mut ir_program);
             super::borrow_inference::infer_shared_helpers(
                 &mut ir_program,
                 &self
@@ -3216,6 +3539,66 @@ impl AstLowering {
         } else {
             // Return all collected errors
             Err(LoweringErrors(errors))
+        }
+    }
+
+    /// Return the top-level functions of a module that a default body of one of its public traits calls.
+    ///
+    /// Such a default is expanded into adopters in other modules, where it calls these helpers through the trait
+    /// module's path (#1759), so they must be emitted, and reachable from those modules, whether or not anything in
+    /// the trait's own module calls them.
+    pub fn source_trait_default_helper_functions(program: &ast::Program) -> HashSet<String> {
+        let functions = program
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.node {
+                ast::Declaration::Function(function) => Some(function.name.as_str()),
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
+        let mut helpers = HashSet::new();
+        if functions.is_empty() {
+            return helpers;
+        }
+        for decl in &program.declarations {
+            let ast::Declaration::Trait(trait_decl) = &decl.node else {
+                continue;
+            };
+            if !matches!(trait_decl.visibility, ast::Visibility::Public) {
+                continue;
+            }
+            for body in trait_decl.methods.iter().filter_map(|method| method.node.body.as_ref()) {
+                incan_frontend::ast_walk::any_expr_in_body(body, |expr| {
+                    if let ast::Expr::Call(callee, _, _) = expr
+                        && let ast::Expr::Ident(name) = &callee.node
+                        && functions.contains(name.as_str())
+                    {
+                        helpers.insert(name.clone());
+                    }
+                    false
+                });
+            }
+        }
+        helpers
+    }
+
+    /// Give each private function that a public trait's default body calls crate visibility.
+    ///
+    /// The default is expanded into every adopter, including adopters in other modules of the crate, and there it
+    /// calls the helper through the trait module's path (#1759); a private helper would be out of their reach. The
+    /// helper becomes visible to the crate, never beyond it.
+    fn open_trait_default_helpers_to_the_crate(program: &ast::Program, ir_program: &mut IrProgram) {
+        let helpers = Self::source_trait_default_helper_functions(program);
+        if helpers.is_empty() {
+            return;
+        }
+        for decl in &mut ir_program.declarations {
+            if let IrDeclKind::Function(function) = &mut decl.kind
+                && matches!(function.visibility, Visibility::Private)
+                && helpers.contains(&function.name)
+            {
+                function.visibility = Visibility::Crate;
+            }
         }
     }
 
@@ -3323,7 +3706,8 @@ impl AstLowering {
                     self.lower_declaration(&ast::Declaration::Function(f.clone()), span)?,
                 ]);
             }
-            let lowered = self.lower_function_named(f, emitted_name, self.map_callable_visibility(f.visibility))?;
+            let visibility = self.default_reachable_visibility(&f.name, self.map_callable_visibility(f.visibility));
+            let lowered = self.lower_function_named(f, emitted_name, visibility)?;
             return Ok(vec![IrDecl::new(IrDeclKind::Function(lowered)).with_span(span.into())]);
         };
         let incan_frontend::symbols::ResolvedType::Function(callable_params, callable_ret) = binding.ty else {
@@ -3902,7 +4286,12 @@ impl AstLowering {
         surface_param.kind == original_param.kind && surface_param.ty == original_param.ty
     }
 
-    /// Add alias-qualified dependency trait declarations so default methods can expand for imported derive aliases.
+    /// Bind each import spelling of a dependency source trait to its declaration.
+    ///
+    /// Default methods expand for the spelling an adopter's `with` clause or derive uses, and an adopter's own
+    /// methods are sorted into the implementation by the declaration's method list, so every imported source trait is
+    /// bound, whether or not it has defaults, and whether the adopter imports it from its declaring module or from a
+    /// module that re-exports it (#1759).
     fn alias_imported_dependency_trait_decls(&mut self) {
         let existing = self.trait_decls.clone();
         let existing_provenance = self.imported_trait_decls.clone();
@@ -3915,30 +4304,71 @@ impl AstLowering {
                 canonical_path[0] = stdlib::INCAN_STD_NAMESPACE.to_string();
             }
             let module_key = canonical_path.join(".");
-            if let (Some(decl), Some(imported)) =
-                (existing.get(&module_key), existing_provenance.get(&module_key).copied())
+            // A trait re-exported by another module (`pub from shapes import Measured`) is bound here under the
+            // re-exporting module's path; the checked import identity names the module that declares it (#1759).
+            let source_key = if existing.contains_key(&module_key) {
+                Some(module_key.clone())
+            } else {
+                self.declaring_trait_key(&alias)
+            };
+            if let Some(source_key) = source_key
+                && let (Some(decl), Some(imported)) =
+                    (existing.get(&source_key), existing_provenance.get(&source_key).copied())
                 && imported
-                && Self::trait_decl_has_lowerable_defaults(decl)
             {
-                self.register_trait_decl_if_absent(alias.clone(), decl.clone(), imported);
+                self.register_imported_trait_alias(alias.clone(), &source_key, decl.clone(), imported);
             }
             let prefix = format!("{module_key}.");
             for (qualified, decl) in &existing {
                 let Some(trait_name) = qualified.strip_prefix(&prefix) else {
                     continue;
                 };
-                if !Self::trait_decl_has_lowerable_defaults(decl) {
-                    continue;
-                }
                 let Some(imported) = existing_provenance.get(qualified).copied() else {
                     continue;
                 };
                 if !imported {
                     continue;
                 }
-                self.register_trait_decl_if_absent(format!("{alias}.{trait_name}"), decl.clone(), imported);
+                self.register_imported_trait_alias(format!("{alias}.{trait_name}"), qualified, decl.clone(), imported);
             }
         }
+    }
+
+    /// Return the seeded key (`<declaring module>.<trait>`) of the source trait an import binding resolves to.
+    ///
+    /// The checker records which declaration each import binding selects, through any chain of re-exports, so the key
+    /// names the module that declares the trait even when the binding imports it from a module that re-exports it.
+    fn declaring_trait_key(&self, alias: &str) -> Option<String> {
+        let identity = self.type_info.as_ref()?.resolved_import_identity(alias)?;
+        if identity.kind != SemanticSourceTargetKind::Trait {
+            return None;
+        }
+        let SymbolOrigin::Module(declaring_module) = &identity.origin else {
+            return None;
+        };
+        let declaring_module = incan_frontend::module::canonicalize_source_module_segments(declaring_module);
+        Some(format!("{}.{}", declaring_module.join("."), identity.declaration_name))
+    }
+
+    /// Bind an import spelling to an imported trait declaration together with its defining-module type and function
+    /// paths.
+    ///
+    /// Default expansion looks up the declaration, its provenance and the paths of its defining module by the
+    /// spelling the adopter's `with` clause uses, so an alias carries all of them or none. A spelling another binding
+    /// already owns keeps that binding and its paths.
+    fn register_imported_trait_alias(&mut self, alias: String, source_key: &str, decl: ast::TraitDecl, imported: bool) {
+        if self.trait_decls.contains_key(&alias) {
+            return;
+        }
+        if let Some(type_paths) = self.trait_default_type_paths.get(source_key).cloned() {
+            self.trait_default_type_paths.entry(alias.clone()).or_insert(type_paths);
+        }
+        if let Some(function_paths) = self.trait_default_function_paths.get(source_key).cloned() {
+            self.trait_default_function_paths
+                .entry(alias.clone())
+                .or_insert(function_paths);
+        }
+        self.register_trait_decl(alias, decl, imported);
     }
 
     /// Seed trait declarations imported from stdlib modules.
@@ -4042,11 +4472,6 @@ impl AstLowering {
             .collect();
         }
         HashMap::new()
-    }
-
-    /// Return whether an imported trait declaration needs aliasing for default-body expansion.
-    fn trait_decl_has_lowerable_defaults(decl: &ast::TraitDecl) -> bool {
-        decl.methods.iter().any(|method| method.node.body.is_some())
     }
 
     /// Propagate serde Rust derives from structs to enum/newtype field types.
@@ -4211,18 +4636,29 @@ mod tests {
     use incan_lang::lang::trait_bounds;
 
     mod builtin_str_arguments;
+    mod collection_sources_and_static_reads;
+    mod default_named_items;
+    mod default_owner_paths;
+    mod dependency_call_arguments;
     mod derive_vocabulary_imports;
+    mod display_operands;
     mod error_message_display;
+    mod expected_literal_types;
     mod for_item_taking;
     mod import_paths;
+    mod imported_trait_adoption_scope;
+    mod json_protocol_bounds;
     mod list_count_forms;
     mod method_decorator_receivers;
+    mod method_partial_forwarding;
     mod newtype_automatic_derives;
     mod pattern_alternatives_and_private_rests;
     mod pub_method_results;
     mod reexported_projections;
+    mod stdlib_const_defaults;
     mod tuple_assignment;
     mod unary_operand_grouping;
+    mod union_member_identity;
     mod web_surface;
 
     fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {
@@ -4646,13 +5082,13 @@ class Account:
     }
 
     #[test]
-    fn decorated_function_original_name_collision_uses_distinct_registry_keys() -> Result<(), String> {
+    fn decorated_function_original_uses_a_generated_registry_key() -> Result<(), String> {
+        // A source declaration can no longer spell `__incan_original_target` (the checker reserves the prefix,
+        // #1769), so the generated original is the only declaration with that physical name; it is registered under
+        // the generated key, never as a source declaration.
         let source = r#"
 def preserve[F]() -> ((F) -> F):
   return (func) => func
-
-def __incan_original_target() -> int:
-  return 1
 
 @preserve()
 def target() -> int:
@@ -4678,7 +5114,8 @@ def target() -> int:
         assert!(
             ir.function_registry
                 .canonical_identity("__incan_original_target")
-                .is_some()
+                .is_none(),
+            "the generated original's physical name must not register as a source declaration"
         );
         Ok(())
     }

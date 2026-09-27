@@ -50,10 +50,26 @@ pub fn collection_element_type(receiver_ty: &IrType) -> Option<&IrType> {
 /// lookup shaping, membership) must see through that wrapper, because `HashMap` offers no `IndexMut` and no
 /// `contains`: the borrowed receiver has to take the same `.insert` / `.get` / `.contains_key` route a local dict
 /// takes (#1668).
+///
+/// A `const` `FrozenDict` is dict-shaped for the reads it offers: its `contains_key` and key lookup take the same
+/// borrowed key probe a `HashMap`'s do (#1757). Writes never reach it, because the checker refuses them.
 pub fn dict_entry_types(object_ty: &IrType) -> Option<(&IrType, &IrType)> {
     match object_ty {
         IrType::Ref(inner) | IrType::RefMut(inner) => dict_entry_types(inner),
         IrType::Dict(key_ty, value_ty) => Some((key_ty.as_ref(), value_ty.as_ref())),
+        frozen => frozen_dict_entry_types(frozen),
+    }
+}
+
+/// Return the key and value types of a `FrozenDict[K, V]`, the frozen form a `const` dict carries.
+pub fn frozen_dict_entry_types(object_ty: &IrType) -> Option<(&IrType, &IrType)> {
+    match object_ty {
+        IrType::NamedGeneric(name, args) if collections::from_str(name) == Some(CollectionTypeId::FrozenDict) => {
+            match args.as_slice() {
+                [key_ty, value_ty] => Some((key_ty, value_ty)),
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -698,8 +714,19 @@ impl DictLookupKeyPlan {
 /// Plan the borrow shape for a dictionary lookup key probe.
 ///
 /// The receiver may be a borrowed dict (a `mut Dict` parameter); the key family behind the wrapper decides the plan.
+/// A text-keyed `FrozenDict` stores `'static` text, so every probe is viewed as `str`: only that view compares with a
+/// probe of any lifetime, whatever form the probe arrives in (#1757).
 pub fn plan_dict_lookup_key(receiver_ty: &IrType, arg_ty: &IrType) -> DictLookupKeyPlan {
+    let mut peeled_receiver = receiver_ty;
+    while let IrType::Ref(inner) | IrType::RefMut(inner) = peeled_receiver {
+        peeled_receiver = inner;
+    }
     match dict_entry_types(receiver_ty) {
+        Some((IrType::String | IrType::StrRef | IrType::StaticStr | IrType::FrozenStr, _))
+            if frozen_dict_entry_types(peeled_receiver).is_some() =>
+        {
+            DictLookupKeyPlan::BorrowAsRefStr
+        }
         Some((IrType::String | IrType::StrRef | IrType::StaticStr | IrType::FrozenStr, _)) => match arg_ty {
             IrType::Ref(_) | IrType::RefMut(_) | IrType::StrRef | IrType::StaticStr => DictLookupKeyPlan::AsIs,
             _ => DictLookupKeyPlan::BorrowAsRefStr,

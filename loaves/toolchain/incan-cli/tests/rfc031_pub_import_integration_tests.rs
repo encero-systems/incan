@@ -1509,12 +1509,12 @@ pub def desc(expr: ColumnExpr) -> ColumnExpr:
             &consumer_root,
             "[project]\nname = \"boundarykit_consumer\"\n\n[dependencies]\nboundarykit = { path = \"../boundarykit_provider\" }\n",
             r#"from pub::boundarykit import Frame, frame
-from pub::boundarykit import col as __incan_vocab_helper_boundarykit_col
-from pub::boundarykit import desc as __incan_vocab_helper_boundarykit_desc
+from pub::boundarykit import col as vocab_helper_boundarykit_col
+from pub::boundarykit import desc as vocab_helper_boundarykit_desc
 
 def main() -> None:
   ordered: Frame = frame().order_by([
-    __incan_vocab_helper_boundarykit_desc(__incan_vocab_helper_boundarykit_col("amount"))
+    vocab_helper_boundarykit_desc(vocab_helper_boundarykit_col("amount"))
   ])
   ordered.order_by([])
 "#,

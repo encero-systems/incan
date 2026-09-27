@@ -317,6 +317,13 @@ impl TypeChecker {
         {
             return satisfies;
         }
+        // A `Display` bound asks for the display rule's `Display`, which a `__str__`, an enum's declared values or an
+        // `Error` adoption provides and `@derive(Display)` does not (#1748).
+        if builtin_traits::from_str(bound) == Some(TraitId::Display)
+            && let Some(satisfies) = self.display_bound_satisfied(ty)
+        {
+            return satisfies;
+        }
         if builtin_traits::from_str(bound).is_none() && self.lookup_semantic_trait_info(bound).is_some() {
             return self.type_satisfies_nominal_trait_bound(ty, bound);
         }

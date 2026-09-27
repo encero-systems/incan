@@ -17,7 +17,8 @@ use crate::typechecker::helpers::{
     string_method_return,
 };
 use crate::typechecker::type_info::{
-    CBindingEnumAccess, RustArgCoercionInfo, RustArgCoercionKind, RustMethodTraitImportUse, RustTraitImportInfo,
+    CBindingEnumAccess, ResolvedMethodCall, RustArgCoercionInfo, RustArgCoercionKind, RustMethodTraitImportUse,
+    RustTraitImportInfo,
 };
 use crate::typechecker::{IdentKind, MemberBindingSurface, canonical_public_library_type_name};
 use incan_lang::interop::{
@@ -441,7 +442,9 @@ impl TypeChecker {
             })
             .collect::<Vec<_>>();
 
+        self.enter_mut_param_closure();
         let return_ty = self.check_expr_with_expected(body, Some(&signature.return_ty));
+        self.exit_mut_param_closure();
         if !matches!(return_ty, ResolvedType::Unknown) && !self.types_compatible(&return_ty, &signature.return_ty) {
             self.errors.push(errors::type_mismatch(
                 &signature.return_ty.to_string(),
@@ -943,36 +946,37 @@ impl TypeChecker {
         valid
     }
 
-    /// Validate `dict.contains_key(key)` (#1668): exactly one positional probe whose type is compatible with the key
-    /// type, so a mistyped probe fails here instead of as a rustc `Borrow` error in the generated `contains_key`. The
-    /// probe has no parameter name, so a named or unpacked argument is refused with the ordinary call diagnostics.
+    /// Validate `dict.contains_key(key)` (#1668) and `frozen_dict.contains_key(key)` (#1757): exactly one positional
+    /// probe whose type is compatible with the key type, so a mistyped probe fails here instead of as a rustc `Borrow`
+    /// error in the generated `contains_key`. The probe has no parameter name, so a named or unpacked argument is
+    /// refused with the ordinary call diagnostics. `callee` names the receiver family in those diagnostics.
     fn validate_dict_contains_key_call(
         &mut self,
+        callee: &str,
         key_ty: &ResolvedType,
         args: &[CallArg],
         arg_types: &[ResolvedType],
         span: Span,
     ) {
-        const CALLEE: &str = "Dict.contains_key";
         let [arg] = args else {
-            self.errors.push(errors::builtin_arity(CALLEE, 1, args.len(), span));
+            self.errors.push(errors::builtin_arity(callee, 1, args.len(), span));
             return;
         };
         let expr = match arg {
             CallArg::Positional(expr) => expr,
             CallArg::Named(name, _) => {
                 self.errors
-                    .push(errors::unknown_keyword_argument(CALLEE, &name.node, name.span));
+                    .push(errors::unknown_keyword_argument(callee, &name.node, name.span));
                 return;
             }
             CallArg::PositionalUnpack(expr) => {
                 self.errors
-                    .push(errors::call_unpack_without_rest(CALLEE, "*", expr.span));
+                    .push(errors::call_unpack_without_rest(callee, "*", expr.span));
                 return;
             }
             CallArg::KeywordUnpack(expr) => {
                 self.errors
-                    .push(errors::call_unpack_without_rest(CALLEE, "**", expr.span));
+                    .push(errors::call_unpack_without_rest(callee, "**", expr.span));
                 return;
             }
         };
@@ -981,7 +985,7 @@ impl TypeChecker {
             && !self.types_compatible(actual, key_ty)
         {
             self.errors.push(errors::call_argument_type_mismatch(
-                CALLEE,
+                callee,
                 None,
                 &key_ty.to_string(),
                 &actual.to_string(),
@@ -3293,6 +3297,47 @@ impl TypeChecker {
         })
     }
 
+    /// Return whether `expr` builds a new value without taking anything out of an existing place, so storing it moves
+    /// the value and needs no copy (#1821).
+    ///
+    /// A literal and an f-string are new values. A call, a method call and a constructor are new values only when
+    /// every argument, and a method call's receiver, is itself a new value by this rule or has a `Copy` or `Clone`
+    /// type: `spawn(work(n))` qualifies, while `Some(handle)`, `maybe.unwrap()` and `holder.get()` over a place whose
+    /// type is not `Clone` do not, since building them would move or copy out of that place. A name, a field, an
+    /// element, `self` and every other shape read a place the program may use again; the checker does not decide
+    /// whether a read is the place's last use, so those are never new values. Parentheses and `?` yield the value of
+    /// the expression they wrap. The call's own callee is not a part of the value and is not inspected.
+    fn is_fresh_value(&self, expr: &Spanned<Expr>) -> bool {
+        let arguments_are_fresh_or_copyable = |args: &[CallArg]| {
+            args.iter().all(|arg| match arg {
+                CallArg::Positional(value) | CallArg::Named(_, value) => self.is_fresh_or_copyable_value(value),
+                CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => false,
+            })
+        };
+        match &expr.node {
+            Expr::Literal(_) | Expr::FString(_) => true,
+            Expr::Paren(inner) | Expr::Try(inner) => self.is_fresh_value(inner),
+            Expr::Call(_, _, args) | Expr::Constructor(_, args) => arguments_are_fresh_or_copyable(args),
+            Expr::MethodCall(receiver, _, _, args) => {
+                self.is_fresh_or_copyable_value(receiver) && arguments_are_fresh_or_copyable(args)
+            }
+            _ => false,
+        }
+    }
+
+    /// Return whether `expr` is a new value ([`Self::is_fresh_value`]) or has a checked type that is `Copy` or `Clone`,
+    /// so a value built from it takes nothing out of a place the program may use again.
+    ///
+    /// A part whose type the checker did not record counts as neither, which keeps the enclosing append's `Clone`
+    /// requirement.
+    fn is_fresh_or_copyable_value(&self, expr: &Spanned<Expr>) -> bool {
+        self.is_fresh_value(expr)
+            || self
+                .type_info
+                .expr_type(expr.span)
+                .is_some_and(|ty| self.is_copy_type(ty) || self.is_clone_type(ty))
+    }
+
     /// [`ResolvedType::SelfType`] in a trait method signature means the receiver type for this call site.
     fn concrete_type_for_trait_self(&self, receiver: &ResolvedType) -> ResolvedType {
         match receiver {
@@ -4075,6 +4120,77 @@ impl TypeChecker {
         )
     }
 
+    /// Resolve a method on a trait-typed value whose trait this module never bound, through the trait's owning module.
+    ///
+    /// A trait method may return a value of its own trait (`FallibleIterator.map` returns `FallibleIterator[U, E]`),
+    /// and a consumer can hold such a value without importing the trait: `numbers().map(double)` on a dependency's
+    /// adopter is checked through the adopter's own protocol, which the dependency's type carries together with the
+    /// trait's owning module. The next call in the chain names the trait only by its spelling, which is not bound here,
+    /// so it used to stay unresolved and the generated program called the method with the trait out of scope (#1761).
+    ///
+    /// The owning module is taken from what the checker already proved: the receiver's own trait dispatch when the
+    /// receiver is a call on the same trait, otherwise the stdlib module that trait resolution loaded it from. The
+    /// method then resolves exactly as it does on an adopter that carries the trait with that module, and records the
+    /// same dispatch, so lowering names the trait by its path. A name that is bound here, as a trait or as a type, is
+    /// left to ordinary resolution, and nothing is resolved when no owning module is known.
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_unbound_trait_receiver_method(
+        &mut self,
+        receiver_span: Span,
+        receiver_ty: &ResolvedType,
+        method: &str,
+        receiver_surface: MemberBindingSurface,
+        explicit_type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        call_site_span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> Option<ResolvedType> {
+        let (trait_name, trait_args) = match receiver_ty {
+            ResolvedType::Named(name) => (name.as_str(), Vec::new()),
+            ResolvedType::Generic(name, args) => (name.as_str(), args.clone()),
+            _ => return None,
+        };
+        if self.lookup_semantic_trait_info(trait_name).is_some() || self.lookup_semantic_type_info(trait_name).is_some()
+        {
+            return None;
+        }
+        let receiver_module = match self.type_info.resolved_method_call(receiver_span) {
+            Some(ResolvedMethodCall {
+                dispatch:
+                    crate::typechecker::ResolvedMethodDispatch::Trait {
+                        trait_name: receiver_trait,
+                        module_path: Some(module_path),
+                        ..
+                    },
+                ..
+            }) if receiver_trait == trait_name => Some(module_path.clone()),
+            _ => None,
+        };
+        let module_path = receiver_module.or_else(|| self.stdlib_cache.loaded_trait_module_path(trait_name))?;
+        let adoption = TypeBoundInfo {
+            name: trait_name.to_string(),
+            source_name: Some(trait_name.to_string()),
+            type_args: trait_args,
+            module_path: Some(module_path),
+            implementation_type_params: Vec::new(),
+            inferred: false,
+        };
+        self.resolve_named_method(
+            &std::collections::HashMap::new(),
+            None,
+            Some(std::slice::from_ref(&adoption)),
+            method,
+            receiver_surface,
+            explicit_type_args,
+            args,
+            arg_types,
+            call_site_span,
+            receiver_ty,
+            expected_return_ty,
+        )
+    }
+
     /// Resolve a newtype/rusttype rebound method alias to its target method name.
     pub(in crate::typechecker) fn resolve_newtype_method_name<'a>(
         &self,
@@ -4282,6 +4398,20 @@ impl TypeChecker {
                         .push(errors::index_type_mismatch("int", &index_ty.to_string(), index.span));
                 }
                 ResolvedType::Str
+            }
+            // A `const` `FrozenDict[K, V]` is read like a dict: `table[key]` is the value, or a `KeyError` at run
+            // time. A text key (`str` or `FrozenStr`) accepts any text probe (#1757).
+            ResolvedType::FrozenDict(key_ty, value_ty) => {
+                let is_text = |ty: &ResolvedType| matches!(ty, ResolvedType::Str) || is_frozen_str(ty);
+                let text_probe_for_text_key = is_text(&index_ty) && is_text(&key_ty);
+                if !text_probe_for_text_key && !self.types_compatible(&index_ty, &key_ty) {
+                    self.errors.push(errors::index_type_mismatch(
+                        &key_ty.to_string(),
+                        &index_ty.to_string(),
+                        index.span,
+                    ));
+                }
+                *value_ty
             }
             ResolvedType::Tuple(elems) => {
                 // Guardrail: tuple indexing must be an integer literal so we can bounds-check.
@@ -5211,6 +5341,7 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
         self.reject_mutating_call_through_immutable_self(base, &base_ty, method, span);
+        self.note_mut_param_method_call(base, &base_ty, method);
         if let Some(identity) = Self::compiler_builtin_method_identity(&base_ty, method) {
             self.type_info.record_resolved_identity(span, identity);
         }
@@ -5753,12 +5884,29 @@ impl TypeChecker {
                     }
                 }
             }
-            ResolvedType::FrozenDict(_, _) => {
+            ResolvedType::FrozenDict(key_ty, _) => {
                 if let Some(id) = frozen_dict_methods::from_str(method) {
                     use frozen_dict_methods::FrozenDictMethodId as M;
                     match id {
                         M::Len => return ResolvedType::Int,
-                        M::IsEmpty | M::ContainsKey => return ResolvedType::Bool,
+                        M::IsEmpty => return ResolvedType::Bool,
+                        M::ContainsKey => {
+                            // The probe follows the key rule of `table[key]`: a text key (`str` or `FrozenStr`)
+                            // takes any text probe (#1757).
+                            let is_text = |ty: &ResolvedType| matches!(ty, ResolvedType::Str) || is_frozen_str(ty);
+                            let probe_key_ty = match arg_types.first() {
+                                Some(probe_ty) if is_text(probe_ty) && is_text(key_ty) => probe_ty.clone(),
+                                _ => (**key_ty).clone(),
+                            };
+                            self.validate_dict_contains_key_call(
+                                "FrozenDict.contains_key",
+                                &probe_key_ty,
+                                args,
+                                &arg_types,
+                                span,
+                            );
+                            return ResolvedType::Bool;
+                        }
                     }
                 }
             }
@@ -5898,7 +6046,13 @@ impl TypeChecker {
                                 self.errors
                                     .push(errors::type_mismatch(&elem.to_string(), &arg0.to_string(), span));
                             }
-                            if !self.is_copy_type(clone_ty) && !self.is_clone_type(clone_ty) {
+                            // A new value moves into the list; a value taken from a place is copied (#1821).
+                            let appends_fresh_value = matches!(
+                                args.first(),
+                                Some(CallArg::Positional(value) | CallArg::Named(_, value))
+                                    if self.is_fresh_value(value)
+                            );
+                            if !appends_fresh_value && !self.is_copy_type(clone_ty) && !self.is_clone_type(clone_ty) {
                                 self.errors
                                     .push(errors::list_append_requires_clone(&clone_ty.to_string(), span));
                             }
@@ -5956,7 +6110,7 @@ impl TypeChecker {
                         M::Get => return option_ty(ResolvedType::Ref(Box::new(val.clone()))),
                         M::Insert => return ResolvedType::Unit,
                         M::ContainsKey => {
-                            self.validate_dict_contains_key_call(&key, args, &arg_types, span);
+                            self.validate_dict_contains_key_call("Dict.contains_key", &key, args, &arg_types, span);
                             return ResolvedType::Bool;
                         }
                     }
@@ -6018,6 +6172,19 @@ impl TypeChecker {
             self.errors
                 .push(errors::missing_method(&base_ty.to_string(), method, span));
             return ResolvedType::Unknown;
+        }
+        if let Some(ret) = self.resolve_unbound_trait_receiver_method(
+            base.span,
+            &base_ty,
+            method,
+            receiver_surface,
+            type_args,
+            args,
+            &arg_types,
+            span,
+            expected_return_ty,
+        ) {
+            return ret;
         }
 
         if let ResolvedType::Generic(type_name, _type_args) = &base_ty

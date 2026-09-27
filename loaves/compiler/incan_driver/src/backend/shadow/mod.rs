@@ -174,9 +174,10 @@ const RESULT_REPORT_VERSION: &str = "incan-shadow-result-v2";
 
 /// Fresh root bindings for one generated legacy result-report wrapper.
 ///
-/// These aliases never borrow an ordinary source spelling. A checked profile chooses one versioned stem that is
-/// absent from all source root bindings, so the appended wrapper cannot shadow a transport primitive or local and
-/// valid source using an older generated-looking spelling remains observable.
+/// The wrapper is appended to the profile's source and checked as source, so its names follow the source rules and
+/// stay outside the `__incan_` prefix the checker reserves for compiler-generated names (#1769). A checked profile
+/// chooses one versioned stem that is absent from all source root bindings, so the appended wrapper cannot shadow a
+/// transport primitive or local, and valid source that already spells an older stem remains observable.
 #[derive(Debug, Clone)]
 struct GeneratedWrapperIdentifiers {
     fs_rename: String,
@@ -190,11 +191,11 @@ impl GeneratedWrapperIdentifiers {
     /// Construct one candidate alias set without assuming any spelling is free in source.
     fn for_version(version: u64) -> Self {
         Self {
-            fs_rename: format!("__incan_shadow_fs_rename_v{version}"),
-            fs_write: format!("__incan_shadow_fs_write_v{version}"),
-            rust_path: format!("__incan_shadow_rust_path_v{version}"),
-            process_exit: format!("__incan_shadow_process_exit_v{version}"),
-            result_value: format!("__incan_shadow_result_value_v{version}"),
+            fs_rename: format!("_incan_shadow_fs_rename_v{version}"),
+            fs_write: format!("_incan_shadow_fs_write_v{version}"),
+            rust_path: format!("_incan_shadow_rust_path_v{version}"),
+            process_exit: format!("_incan_shadow_process_exit_v{version}"),
+            result_value: format!("_incan_shadow_result_value_v{version}"),
         }
     }
 

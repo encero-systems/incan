@@ -1,325 +1,247 @@
 # Numeric semantics (reference)
 
-This is the reference for Incan numeric type spellings, literal checking, assignment compatibility, explicit resizing, Rust interop adaptation, and numeric operator result types.
+This page specifies the numeric types and their aliases, numeric literals, decimal types, assignment between numeric types, resizing methods, numeric arguments to Rust functions, numeric operators, and compound assignment.
 
-For task-oriented guidance, see [Choosing numeric types](../how-to/choosing_numeric_types.md). For the design rationale, see [Why numeric types work this way](../explanation/numeric_types.md).
+## Types
 
-## Numeric type families
-
-| Family                 | Canonical types                                      | Notes                                                              |
-| ---------------------- | ---------------------------------------------------- | ------------------------------------------------------------------ |
-| Signed integers        | `i8`, `i16`, `i32`, `i64`, `i128`                    | Exact-width signed integers.                                       |
-| Unsigned integers      | `u8`, `u16`, `u32`, `u64`, `u128`                    | Exact-width unsigned integers.                                     |
-| Pointer-sized integers | `isize`, `usize`                                     | Platform-sized Rust integer types.                                 |
-| Binary floats          | `float`, `f32`, `f64`                                | `float` is the broad IEEE type; exact-width `f32` and `f64` are finite-only. |
-| Decimal values         | `decimal[p, s]`, `numeric[p, s]`, `decimal128[p, s]` | Fixed-precision decimal types with precision and scale parameters. |
-
-## Canonical type table
-
-| Incan type      | Rust representation             | Value range or shape                                       |
-| --------------- | ------------------------------- | ---------------------------------------------------------- |
-| `i8`            | `i8`                            | -128 to 127                                                |
-| `i16`           | `i16`                           | -32,768 to 32,767                                          |
-| `i32`           | `i32`                           | -2,147,483,648 to 2,147,483,647                            |
-| `i64`           | `i64`                           | -9,223,372,036,854,775,808 to 9,223,372,036,854,775,807    |
-| `i128`          | `i128`                          | -2^127 to 2^127 - 1                                        |
-| `u8`            | `u8`                            | 0 to 255                                                   |
-| `u16`           | `u16`                           | 0 to 65,535                                                |
-| `u32`           | `u32`                           | 0 to 4,294,967,295                                         |
-| `u64`           | `u64`                           | 0 to 18,446,744,073,709,551,615                            |
-| `u128`          | `u128`                          | 0 to 2^128 - 1                                             |
-| `isize`         | `isize`                         | Platform-sized signed integer                              |
-| `usize`         | `usize`                         | Platform-sized unsigned integer                            |
-| `float`         | `f64`                           | Broad 64-bit IEEE binary float, including NaN and infinity |
-| `f32`           | `f32`                           | Finite 32-bit IEEE binary value                            |
-| `f64`           | `f64`                           | Finite 64-bit IEEE binary value                            |
-| `decimal[p, s]` | `incan_std_core::num::Decimal128` | Base-10 fixed-scale value with precision `p` and scale `s` |
+| Type | Family | Rust representation | Values |
+| --- | --- | --- | --- |
+| `i8` | Signed integer | `i8` | -128 to 127 |
+| `i16` | Signed integer | `i16` | -32,768 to 32,767 |
+| `i32` | Signed integer | `i32` | -2,147,483,648 to 2,147,483,647 |
+| `i64` | Signed integer | `i64` | -9,223,372,036,854,775,808 to 9,223,372,036,854,775,807 |
+| `i128` | Signed integer | `i128` | -2^127 to 2^127 - 1 |
+| `isize` | Signed integer | `isize` | The platform's pointer-sized signed range |
+| `u8` | Unsigned integer | `u8` | 0 to 255 |
+| `u16` | Unsigned integer | `u16` | 0 to 65,535 |
+| `u32` | Unsigned integer | `u32` | 0 to 4,294,967,295 |
+| `u64` | Unsigned integer | `u64` | 0 to 18,446,744,073,709,551,615 |
+| `u128` | Unsigned integer | `u128` | 0 to 2^128 - 1 |
+| `usize` | Unsigned integer | `usize` | The platform's pointer-sized unsigned range |
+| `float` | Binary float | `f64` | IEEE 754 binary64 values, NaN and infinity included |
+| `f32` | Binary float | `f32` | Finite IEEE 754 binary32 values |
+| `f64` | Binary float | `f64` | Finite IEEE 754 binary64 values |
+| `decimal[p, s]` | Decimal | `incan_std_core::num::Decimal128` | Base-10 values with precision `p` and scale `s` (see [Decimal types](#decimal-types)) |
 
 ## Aliases
 
-Aliases resolve to canonical types. They do not introduce distinct nominal types. The broad `float` type and the
-exact-width `f64` type share a Rust carrier but have different value contracts, so `float` is not an alias for
-`f64`.
+An alias is the same type as its canonical type.
 
-| Alias              | Canonical type                                                          |
-| ------------------ | ----------------------------------------------------------------------- |
-| `byte`             | `u8`                                                                    |
-| `short`            | `i16`                                                                   |
-| `smallint`         | `i16`                                                                   |
-| `integer`          | `i32`                                                                   |
-| `int`              | `i64`                                                                   |
-| `bigint`           | `i64`                                                                   |
-| `long`             | `i64`                                                                   |
-| `hugeint`          | `i128`                                                                  |
-| `real`             | `f32`                                                                   |
-| `fp32`             | `f32`                                                                   |
-| `float`            | Broad binary float with an `f64` Rust carrier                           |
-| `double`           | `f64`                                                                   |
-| `fp64`             | `f64`                                                                   |
-| `numeric[p, s]`    | `decimal[p, s]`                                                         |
-| `decimal128[p, s]` | `decimal[p, s]` using the current 128-bit scaled runtime representation |
+| Alias | Canonical type |
+| --- | --- |
+| `byte` | `u8` |
+| `short`, `smallint` | `i16` |
+| `integer` | `i32` |
+| `int`, `bigint`, `long` | `i64` |
+| `hugeint` | `i128` |
+| `real`, `fp32` | `f32` |
+| `double`, `fp64` | `f64` |
+| `numeric[p, s]`, `decimal128[p, s]` | `decimal[p, s]` |
 
-Example:
+- `float` is not an alias: it is a type of its own, whose values include NaN and infinity. `float` and `f64` are assignable to each other (see [Assignment between numeric types](#assignment-between-numeric-types)).
 
 ```incan
-x: integer = 10
-y: i32 = x
-z: int = y
+def main() -> None:
+    x: integer = 10
+    y: i32 = x                                   # accepted
+    z: i16 = x                                   # refused: i32 is not assignable to i16
 ```
 
-## Literal typing
+## Literals
 
-| Literal form | Default type without stronger context | Contextual checks                                                                              |
-| ------------ | ------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `42`         | `int`                                 | Checked against the target integer range when assigned to or passed as an exact-width integer. |
-| `1_000_000`  | `int`                                 | Separators do not affect the value.                                                            |
-| `0.5`        | `float`                               | Checked as `f32` when the expected type is `f32`.                                              |
-| `19.99d`     | Requires a decimal expected type      | Checked against the expected decimal precision and scale.                                      |
+| Literal | Type without a destination | Type at a destination |
+| --- | --- | --- |
+| `42`, `-42`, `1_000_000` | `int` | The numeric type the destination expects. At a `float`, `f32` or `f64` destination, the float of the same value. |
+| `0.5`, `1e3` | `float` | The binary float type the destination expects: `f32` or `f64`. |
+| `42u16`, `7i8`, `3.14f32` | The type its suffix names | The type its suffix names. |
+| `19.99d`, `12345d` | A decimal literal requires a decimal destination | The destination's `decimal[p, s]` type (see [Decimal types](#decimal-types)). |
 
-Integer literals are checked against concrete integer targets:
-
-```incan
-ok: u8 = 255
-bad: u8 = 256
-also_bad: usize = -1
-```
-
-Float literals assigned to `f32` must be representable as finite `f32` values.
+- An integer literal outside the range of its integer type is refused (`INCAN-T0001`), as a declared value, an argument and a returned value alike. A suffixed literal outside the range of its suffix's type is refused.
+- A literal whose value is not finite in `f32` or `f64` is refused at a destination of that type (`INCAN-T0001`). At a `float` destination, a float literal may be infinite (`1e309`).
+- `_` separators do not change a literal's value.
+- A negated integer literal takes its destination's type as the literal does.
+- An `int` value is not assignable to a float type (see [Assignment between numeric types](#assignment-between-numeric-types)).
 
 ```incan
-ratio: f32 = 0.5
+def main() -> None:
+    scale: float = 2                             # accepted
+    mut total: float = 0.5
+    total = -1                                   # accepted
+    pair: tuple[float, int] = (3, 4)             # accepted
+    weights: dict[str, float] = {"a": 1}         # accepted
+    ok: u8 = 255                                 # accepted
+    bad: u8 = 256                                # refused: 256 is outside u8
+    ratio: f32 = 1e39                            # refused: not finite in f32
+    count = 5
+    total = count                                # refused: count is an int value
 ```
 
 ## Decimal types
 
-Decimal types require two integer type arguments:
+- `decimal[p, s]` takes exactly two integer arguments: a precision `p` from 1 to 38 and a scale `s` from 0 to `p`. Any other argument list is refused (`INCAN-T0001`).
+- Bare `decimal` and bare `numeric` are not types (`INCAN-T0001`).
+- A decimal literal is a plain decimal number followed by a lowercase `d`. A literal in exponent notation (`1e2d`) is refused (`INCAN-T0001`).
+- A decimal literal at a `decimal[p, s]` destination has at most `s` fractional digits, and its integer part has at most `p - s` digits (an integer part of `0` has none). A literal outside these limits is refused (`INCAN-T0001`). A literal with fewer than `s` fractional digits is accepted.
+- An `int` value is not assignable to a decimal type (`INCAN-T0001`).
+- A decimal value is assignable to a decimal type with at least its scale and at least its number of integer digits (`p - s`). A conversion that loses precision or scale is not implicit.
+- The language defines no arithmetic on decimal values: an arithmetic operator with a decimal operand, unary `-` included, is refused (`INCAN-T0001`). Decimal values compare with `==`, `!=`, `<`, `<=`, `>` and `>=` against decimal values.
 
 ```incan
-price: decimal[10, 2] = 19.99d
-amount: numeric[12, 4] = 1000.2500d
+def main() -> None:
+    price: decimal[10, 2] = 19.99d               # accepted
+    amount: numeric[12, 4] = 1000.2500d          # accepted
+    whole: decimal[5, 0] = 12345d                # accepted
+    wider: decimal[12, 4] = price                # accepted
+    too_precise: decimal[10, 2] = 1.234d         # refused: 3 fractional digits
+    too_large: decimal[7, 2] = 123456.78d        # refused: 6 integer digits
+    missing_shape: decimal = 1.00d               # refused: bare decimal
+    total = price + price                        # refused: no decimal arithmetic
 ```
 
-Rules:
+## Assignment between numeric types
 
-- `p` is precision and must be between `1` and `38`.
-- `s` is scale and must be between `0` and `p`.
-- `decimal`, `numeric`, and `decimal128` require exactly two integer type arguments.
-- Bare `decimal`, bare `numeric`, and bare `decimal128` are not value types.
-- Decimal literals use a trailing lowercase `d`.
-- Decimal literals do not use exponent notation.
-- Decimal literals must fit the target precision and scale.
+A value of one numeric type is assignable to another numeric type only as the table lists; every other assignment between different numeric types is refused (`INCAN-T0001`). Arguments and returned values follow the same rule.
 
-The integer digit count must fit `p - s`, and the fractional digit count must fit `s`.
+| Source | Assignable to |
+| --- | --- |
+| `i8` | `i16`, `i32`, `i64`, `i128` |
+| `i16` | `i32`, `i64`, `i128` |
+| `i32` | `i64`, `i128` |
+| `i64` | `i128` |
+| `u8` | `u16`, `u32`, `u64`, `u128`, `i16`, `i32`, `i64`, `i128` |
+| `u16` | `u32`, `u64`, `u128`, `i32`, `i64`, `i128` |
+| `u32` | `u64`, `u128`, `i64`, `i128` |
+| `u64` | `u128`, `i128` |
+| `f32` | `f64`, `float` |
+| `f64` | `float` |
+| `float` | `f64` |
+
+- `i128`, `u128`, `isize` and `usize` are assignable to no other numeric type.
+- No integer type is assignable to a float type, and no float type to an integer type.
+- A `float` value that is NaN or infinite raises `ValueError` when it becomes an `f64` value.
 
 ```incan
-ok_money: decimal[10, 2] = 12345678.90d
-ok_whole: decimal[5, 0] = 12345d
-too_precise: decimal[10, 2] = 1.234d
-too_large: decimal[7, 2] = 123456.78d
-missing_shape: decimal = 1.00d
+def main() -> None:
+    small: i8 = 120
+    wide: int = small                            # accepted
+    huge: i128 = wide                            # accepted
+    bits: u8 = 200
+    more_bits: u16 = bits                        # accepted
+    single: f32 = 1.25
+    double: float = single                       # accepted
+    back: i8 = wide                              # refused: int is not assignable to i8
 ```
-
-Decimal arithmetic is not defined by the language yet. The implemented decimal surface covers syntax, type checking, literal validation, formatting, Rust emission, display, and runtime representation.
-
-## Assignment compatibility
-
-Implicit numeric assignment is allowed when the conversion is exact or provably lossless.
-
-| Source         | Target                                                          | Implicit? | Reason                                                   |
-| -------------- | --------------------------------------------------------------- | --------- | -------------------------------------------------------- |
-| `i8`           | `i16`, `i32`, `i64`, `i128`, `int`                              | Yes       | Every `i8` value fits the target.                        |
-| `i32`          | `i64`, `i128`, `int`                                            | Yes       | Every `i32` value fits the target.                       |
-| `u8`           | `u16`, `u32`, `u64`, `u128`, `i16`, `i32`, `i64`, `i128`, `int` | Yes       | Every `u8` value fits the target.                        |
-| `u16`          | `u32`, `u64`, `u128`, `i32`, `i64`, `i128`, `int`               | Yes       | Every `u16` value fits the target.                       |
-| `u32`          | `u64`, `u128`, `i64`, `i128`, `int`                             | Yes       | Every `u32` value fits the target.                       |
-| `f32`          | `f64`, `float`                                                  | Yes       | The represented `f32` value can be represented as `f64`. |
-| `i64`, `int`   | `i32`                                                           | No        | Values may be outside `i32`.                             |
-| `i16`          | `u16`                                                           | No        | Negative values do not fit `u16`.                        |
-| `f64`, `float` | `f32`                                                           | No        | Values may not be representable as `f32`.                |
-
-Examples:
-
-```incan
-small: i8 = 120
-wide: int = small
-huge: i128 = wide
-
-bits: u8 = 200
-more_bits: u16 = bits
-
-single: f32 = 1.25
-double: float = single
-```
-
-Integer-to-float assignment is not currently an implicit assignment conversion.
 
 ## Resizing methods
 
-Resize methods are contextual: the target type comes from the surrounding expected type.
+A resizing method converts a numeric value to its destination type `T`, the expected type of the call, such as a binding's declared type.
 
-| Method                | Return type      | Compile-time rule                                        | Runtime behavior                                   |
-| --------------------- | ---------------- | -------------------------------------------------------- | -------------------------------------------------- |
-| `resize()`            | Target type      | Only accepted for exact or provably lossless conversion. | No data loss.                                      |
-| `try_resize()`        | `Option[target]` | Integer targets only.                                    | `Some(value)` if the value fits; `None` otherwise. |
-| `wrapping_resize()`   | Target type      | Integer targets only.                                    | Rust-style integer cast wrapping or truncation.    |
-| `saturating_resize()` | Target type      | Integer targets only.                                    | Clamps to the target integer minimum or maximum.   |
+| Method | Destination | Receiver and `T` | Result |
+| --- | --- | --- | --- |
+| `resize()` | `T` | The receiver's type is `T` or assignable to `T` | The same value |
+| `try_resize()` | `Option[T]` | Integer types | `Some(value)` when `T` holds the value, otherwise `None` |
+| `wrapping_resize()` | `T` | Integer types | The value modulo 2^N, in the range of `T`, where N is the bit width of `T` |
+| `saturating_resize()` | `T` | Integer types | The value clamped to the minimum and maximum of `T` |
 
-Examples:
+- A call without a destination type, with arguments or with type arguments, or outside the table's receiver and destination types is refused (`INCAN-T0001`).
 
 ```incan
-small: i8 = 120
-wide: int = small.resize()
-
-incoming: i16 = 240
-maybe: Option[i8] = incoming.try_resize()
-wrapped: i8 = incoming.wrapping_resize()
-capped: i8 = incoming.saturating_resize()
+def main() -> None:
+    small: i8 = 120
+    wide: int = small.resize()                   # accepted
+    incoming: i16 = 240
+    maybe: Option[i8] = incoming.try_resize()    # accepted
+    wrapped: i8 = incoming.wrapping_resize()     # accepted
+    capped: i8 = incoming.saturating_resize()    # accepted
+    narrow: i8 = wide.resize()                   # refused: int is not assignable to i8
+    loose = small.resize()                       # refused: no destination type
 ```
 
-`resize()` is not a forced cast:
+## Rust interop numeric arguments
+
+A numeric argument to a Rust parameter of a primitive numeric type is accepted when the types match or when the Incan type widens without loss: a signed type to a signed type at least as wide, an unsigned type to an unsigned type at least as wide or to a wider signed type, and `f32` to `f64`. `int` matches `i64` and `float` matches `f64`. `isize` and `usize` match only themselves. Every other pairing is refused.
+
+| Incan argument | Rust parameter | Accepted |
+| --- | --- | --- |
+| `i32` | `i32` | Yes |
+| `i32` | `i64` | Yes |
+| `int` | `i32` | No |
+| `u8` | `i16` | Yes |
+| `i16` | `u16` | No |
+| `f32` | `f64` | Yes |
+| `float`, `f64` | `f32` | No |
+
+## Operators
+
+| Operator | Operands | Result |
+| --- | --- | --- |
+| `+`, `-`, `*` | Two `f32` / two `f64` | `f32` / `f64` |
+| | Any other pair with a float operand | `float` |
+| | Two integer operands | `int` |
+| `/` | Two `f32` / two `f64` | `f32` / `f64` |
+| | Any other numeric pair | `float` |
+| `//`, `%` | Two `f32` / two `f64` | `f32` / `f64` |
+| | Any other pair with a float operand | `float` |
+| | Two operands of one unsigned type, or an unsigned operand and a non-negative integer literal | That unsigned type |
+| | Any other pair of integer operands | `int` |
+| `**` | Two `f32` / two `f64` | `f32` / `f64` |
+| | An integer left operand and a non-negative integer literal exponent | `int` |
+| | Any other numeric pair | `float` |
+| `==`, `!=`, `<`, `<=`, `>`, `>=` | Two numeric operands | `bool` |
+
+- `//` or `%` between two different unsigned types, or between an unsigned operand and an `int` value or a negative integer literal, is refused (`INCAN-T0001`).
+- `/` is true division. `//` rounds the quotient toward negative infinity. The result of `%` has the sign of the divisor, and `a == (a // b) * b + (a % b)`.
+- `/`, `//` and `%` with a zero divisor raise `ZeroDivisionError`, for integer and float operands alike.
+- `+`, `-` and `*` between two values of one type parameter are accepted. `/`, `//`, `%` and `**` between two values of one type parameter are refused (`INCAN-T0109`), unless the parameter is bounded by a trait that defines the operator's method (`__div__`, `__floordiv__`, `__mod__` or `__pow__`); the operator then resolves through that trait.
 
 ```incan
-wide: int = 240
-small: i8 = wide.resize()
-```
+trait Remainder:
+    def __mod__(self, other: Self) -> Self: ...
 
-The last example is rejected because not every `int` value fits `i8`.
+def modulo[T with Remainder](a: T, b: T) -> T:
+    return a % b                                 # accepted
 
-## Rust interop numeric adaptation
+def divide[T](a: T, b: T) -> T:
+    return a / b                                 # refused: INCAN-T0109
 
-Rust interop accepts exact primitive matches and provably lossless primitive widening. Narrowing is rejected.
-
-| Incan source    | Rust target | Accepted? |
-| --------------- | ----------- | --------- |
-| `i32`           | `i32`       | Yes       |
-| `i32`           | `i64`       | Yes       |
-| `int` / `i64`   | `i32`       | No        |
-| `u8`            | `i16`       | Yes       |
-| `i16`           | `u16`       | No        |
-| `f32`           | `f64`       | Yes       |
-| `float` / `f64` | `f32`       | No        |
-
-If a Rust API requires a narrowing conversion, apply an explicit resize policy before the call.
-
-## Operator result types
-
-| Operator                         | Result type rule                                                                            |
-| -------------------------------- | ------------------------------------------------------------------------------------------- |
-| `+`, `-`, `*`                    | Matching exact floats retain their width; other floating combinations produce `float`; integer-family operands produce `int`. |
-| `/`                              | Matching exact floats retain their width; all other combinations produce `float`.           |
-| `//`                             | Matching exact floats retain their width; integer-family operands produce `int`; otherwise `float`. |
-| `%`                              | Matching exact floats retain their width; integer-family operands produce `int`; otherwise `float`. |
-| `**`                             | Matching exact floats retain their width; `int ** <non-negative int literal>` produces `int`; otherwise `float`. |
-| `==`, `!=`, `<`, `<=`, `>`, `>=` | `bool`.                                                                                     |
-
-These rules for `/`, `//`, `%` and `**` belong to the concrete numeric types, so `incan check` refuses each of them between two values of a type parameter (`INCAN-T0109`): write the function over `int` or `float`, or bound the parameter with a trait that defines the operator's hook (`__div__`, `__floordiv__`, `__mod__` or `__pow__`), as in `def modulo[T with Remainder](a: T, b: T) -> T`, so the operator resolves through that trait.
-
-### Division
-
-`/` is true division. Matching `f32` operands produce `f32`, and matching exact `f64` operands produce exact `f64`.
-All other operand combinations produce `float`.
-
-```incan
-1 / 2
-4 / 2
-7.0 / 2
-7 / 2.0
-```
-
-Division by zero currently panics with a `ZeroDivisionError: float division by zero`-style runtime message.
-
-### Floor division
-
-`//` floors toward negative infinity.
-
-```incan
-7 // 3
--7 // 3
-7 // -3
--7 // -3
-```
-
-Floor division by zero currently panics with a `ZeroDivisionError: float division by zero`-style runtime message.
-
-### Modulo
-
-`%` uses Python-style modulo semantics. The remainder has the sign of the divisor and satisfies `a == (a // b) * b + (a % b)`.
-
-```incan
-7 % 3
--7 % 3
-7 % -3
--7 % -3
-```
-
-Modulo by zero currently panics with a `ZeroDivisionError: float division by zero`-style runtime message.
-
-### Power
-
-`**` returns `int` only when the left operand is `int` and the exponent is a non-negative integer literal.
-
-```incan
-2 ** 3
-2 ** 0
-2 ** -1
-
-exp = 3
-2 ** exp
+def main() -> None:
+    half = 1 / 2                                 # accepted
+    floor = -7 // 2                              # accepted
+    rest = -7 % 3                                # accepted
+    cube = 2 ** 3                                # accepted
+    inverse = 2 ** -1                            # accepted
+    exp = 3
+    power: int = 2 ** exp                        # refused: 2 ** exp is a float
+    size: u16 = 10
+    part: u16 = size % 3                         # accepted
+    other: u8 = 3
+    mixed = size % other                         # refused: u16 and u8
 ```
 
 ## Compound assignment
 
-Compound assignment is typechecked as assignment of the operator result back to the left-hand binding.
-
-```text
-x <op>= y
-x = x <op> y
-```
-
-The two forms are not exactly the same evaluation form, but they have the same assignability requirement.
+- `x op= y`, with `op` one of `+`, `-`, `*`, `/`, `//` and `%`, reassigns `x`, which is `mut` (`INCAN-T0001` otherwise).
+- `x op= y` has the assignability requirement of `x = x op y`: the result of `x op y` (see [Operators](#operators)) is assignable to the type of `x`, or the statement is refused (`INCAN-T0001`).
 
 ```incan
-mut x: int = 10
-x += 2
-x *= 3
-x /= 2
-
-mut y: float = 10.0
-y /= 2
-y %= 7
+def main() -> None:
+    mut x: int = 10
+    x += 2                                       # accepted
+    x /= 2                                       # refused: x / 2 is a float
+    mut y: float = 10.0
+    y /= 2                                       # accepted
+    y %= 7                                       # accepted
+    mut n: i8 = 10
+    n += 1                                       # refused: n + 1 is an int
+    following: Option[i8] = (n + 1).try_resize() # accepted
 ```
-
-`x /= 2` is rejected when `x` is `int`, because `/` returns `float`.
-
-Exact-width integer arithmetic results are ordinary `int` expressions today, so assigning an arithmetic result back to an exact-width binding requires an explicit policy when narrowing would be needed.
-
-```incan
-n: i8 = 10
-maybe_next: Option[i8] = (n + 1).try_resize()
-```
-
-Matching exact-width floating operands retain their width for `+`, `-`, `*`, `/`, `//`, `%`, and `**`. Every exact
-result is checked for finiteness when it is produced. Mixed `f32`/`f64`, `f32`/`float`, and `f32`/integer arithmetic
-widens the concrete `f32` operand and produces ordinary `float`.
 
 ## NaN and infinity
 
-Ordinary `float` follows IEEE behavior and can contain NaN or infinity. Exact-width `f32` and `f64` use Rust's
-binary floating-point carriers but accept only finite values.
+- A `float` value may be NaN or infinite.
+- An `f32` or `f64` value is finite. A non-finite value that reaches an `f32` or `f64` at run time, from a `float`, from a Rust value or as the result of an operation, raises `ValueError`.
 
-The compiler rejects non-finite exact literals. Generated code applies the same canonical `ValueError` check when a
-direct exact scalar enters through a public function or Rust interop, when an exact scalar is extracted from a field or
-collection index, when an exact call or arithmetic operation produces a result, and before an exact value is compared,
-formatted, or printed. Crossing from ordinary `float` into an exact carrier performs the same check; ordinary `float`
-itself remains unchanged. Public and Rust-facing aggregates are not recursively scanned at ingress; each exact scalar
-is checked when Incan extracts or observes it.
+## See also
 
-Division by zero remains a `ZeroDivisionError` instead of producing NaN or infinity.
-
-## Current limitations
-
-- Decimal arithmetic is not defined yet.
-- Integer overflow behavior for general exact-width arithmetic is not yet a separately documented language contract.
-- Integer-to-float assignment is not an implicit conversion rule.
-- Literal suffixes such as `42i32` or `1.0f32` are not part of the current syntax.
-- Parsing decimal values from strings and rich decimal math should remain library-owned until the language specifies those semantics.
+- [Choosing numeric types](../how-to/choosing_numeric_types.md)
+- [Why numeric types work this way](../explanation/numeric_types.md)

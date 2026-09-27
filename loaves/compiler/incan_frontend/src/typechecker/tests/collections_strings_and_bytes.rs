@@ -391,6 +391,192 @@ def add_item[T with Clone](mut items: List[T], item: T) -> None:
     assert_check_ok(source);
 }
 
+/// Return whether `errors` holds the `List.append` refusal for an element type that is not `Clone`.
+fn has_list_append_clone_error(errors: &[CompileError]) -> bool {
+    errors
+        .iter()
+        .any(|error| error.message.contains("List.append requires element type"))
+}
+
+/// #1821: a new value moves into the list, so its type need not be `Clone`. A spawned task's handle is the common
+/// case: `JoinHandle[T]` is not `Clone`, and a call result built from other call results or `Copy` values is appended
+/// as it is, parenthesized, with a copied argument, or wrapped in a constructor.
+#[test]
+fn list_append_accepts_a_new_value_that_is_not_clone_issue1821() -> Result<(), String> {
+    let source = r#"
+from std.async import spawn
+from std.async.task import JoinHandle
+
+async def work(n: int) -> int:
+  return n
+
+async def main() -> None:
+  mut handles = []
+  handles.append(spawn(work(1)))
+  handles.append((spawn(work(2))))
+  for n in range(3):
+    handles.append(spawn(work(n)))
+  mut slots: list[Option[JoinHandle[int]]] = []
+  slots.append(Some(spawn(work(3))))
+  println(len(handles) + len(slots))
+"#;
+    check_str(source).map_err(|errors| format!("a new task handle should append: {errors:?}"))
+}
+
+/// #1821: an argument that takes a value out of a place keeps the requirement, whether it reads the place directly or
+/// builds a value from it: the generated code would copy the place's value, which a task handle cannot provide, or
+/// move it out of a place the program uses again. Each row was refused before the relaxation and still is.
+#[test]
+fn list_append_of_a_value_taken_from_a_place_still_requires_clone_issue1821() -> Result<(), String> {
+    let rows = [
+        (
+            "a name",
+            r#"
+from std.async import spawn
+
+async def work() -> int:
+  return 1
+
+async def main() -> None:
+  mut handles = []
+  handle = spawn(work())
+  handles.append(handle)
+  println(len(handles))
+"#,
+        ),
+        (
+            "an element",
+            r#"
+from std.async.task import JoinHandle
+
+def keep_first(mut kept: list[JoinHandle[int]], handles: list[JoinHandle[int]]) -> None:
+  kept.append(handles[0])
+"#,
+        ),
+        (
+            "a constructor over a name awaited later",
+            r#"
+from std.async import spawn
+from std.async.task import JoinHandle
+
+async def work() -> int:
+  return 1
+
+async def main() -> None:
+  mut slots: list[Option[JoinHandle[int]]] = []
+  handle = spawn(work())
+  slots.append(Some(handle))
+  match await handle:
+    Ok(value) => println(value)
+    Err(_) => println("join failed")
+"#,
+        ),
+        (
+            "a constructor over a parameter awaited later",
+            r#"
+from std.async.task import JoinHandle
+
+async def wrap(mut out: list[Result[JoinHandle[int], str]], handle: JoinHandle[int]) -> None:
+  out.append(Ok(handle))
+  match await handle:
+    Ok(value) => println(value)
+    Err(_) => println("join failed")
+"#,
+        ),
+        (
+            "a constructor over an element",
+            r#"
+from std.async.task import JoinHandle
+
+def keep(mut out: list[Option[JoinHandle[int]]], handles: list[JoinHandle[int]]) -> None:
+  out.append(Some(handles[0]))
+"#,
+        ),
+        (
+            "a method call on a name matched later",
+            r#"
+from std.async import spawn
+from std.async.task import JoinHandle
+
+async def work() -> int:
+  return 1
+
+async def main() -> None:
+  mut handles: list[JoinHandle[int]] = []
+  maybe = Some(spawn(work()))
+  handles.append(maybe.unwrap())
+  match maybe:
+    Some(_) => println("some")
+    None => println("none")
+"#,
+        ),
+        (
+            "`?` over a method call on a parameter matched later",
+            r#"
+from std.async.task import JoinHandle
+
+def take(mut out: list[JoinHandle[int]], outcome: Result[JoinHandle[int], str]) -> Result[None, str]:
+  out.append(outcome.map_err((e) => e)?)
+  match outcome:
+    Ok(_) => println("ok")
+    Err(_) => println("err")
+  return Ok(None)
+"#,
+        ),
+        (
+            "a getter on a generic holder",
+            r#"
+from std.async import spawn
+from std.async.task import JoinHandle
+
+class Holder[T]:
+  item: T
+
+  def get(self) -> T:
+    return self.item
+
+async def work() -> int:
+  return 1
+
+async def main() -> None:
+  holder = Holder(item=spawn(work()))
+  mut handles: list[JoinHandle[int]] = []
+  handles.append(holder.get())
+  println(len(handles))
+"#,
+        ),
+        (
+            "`pop` on a list of handles",
+            r#"
+from std.async import spawn
+from std.async.task import JoinHandle
+
+async def work() -> int:
+  return 1
+
+async def main() -> None:
+  mut source: list[JoinHandle[int]] = [spawn(work())]
+  mut target: list[JoinHandle[int]] = []
+  target.append(source.pop())
+  println(len(target))
+"#,
+        ),
+    ];
+    for (shape, source) in rows {
+        let Err(errors) = check_str(source) else {
+            return Err(format!(
+                "appending {shape} that is not Clone should be refused:\n{source}"
+            ));
+        };
+        if !has_list_append_clone_error(&errors) {
+            return Err(format!(
+                "expected the List.append Clone refusal for {shape}, got {errors:?}\n{source}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn test_list_repeat_infers_list_element_type() {
     let source = r#"
@@ -1041,4 +1227,193 @@ def sum(pair: Tuple) -> int:
     return pair.left + pair.right
 "#,
     );
+}
+
+// ---- #1749: every builtin collection annotation spells its type arguments ----
+
+#[test]
+fn bare_collection_annotations_are_refused_where_they_stand_issue1749() -> Result<(), Box<dyn std::error::Error>> {
+    // The program from #1749, plus a parameter and two nested spellings: each bare family is refused where it
+    // stands, once, with its own missing arguments named.
+    let source = r#"
+def first(items: List) -> int:
+    return 0
+
+def main() -> None:
+    counts: Dict = {"a": 1}
+    maybe: Option = None
+    outcome: Result = Ok(1)
+    nested: list[Set] = []
+    wrapped: Option[List] = None
+    println("ok")
+"#;
+    let errors = check_str(source)
+        .err()
+        .ok_or("a bare collection annotation must be refused")?;
+    let mut refused = errors
+        .iter()
+        .filter(|error| error.stable_code() == Some("INCAN-T0104"))
+        .map(|error| error.message.as_str())
+        .collect::<Vec<_>>();
+    refused.sort_unstable();
+    assert_eq!(
+        refused,
+        vec![
+            "Dict annotation 'Dict' is missing its key and value types",
+            "List annotation 'List' is missing its element type",
+            "List annotation 'List' is missing its element type",
+            "Option annotation 'Option' is missing its value type",
+            "Result annotation 'Result' is missing its value and error types",
+            "Set annotation 'Set' is missing its element type",
+        ],
+        "one report per bare occurrence, nested ones included"
+    );
+    let dict_hints = errors
+        .iter()
+        .find(|error| error.message.starts_with("Dict annotation"))
+        .map(|error| error.hints.clone())
+        .ok_or("the Dict refusal must be present")?;
+    assert!(
+        dict_hints.iter().any(|hint| hint.contains("'Dict[str, int]'")),
+        "the hint keeps the author's spelling with the missing arguments, got: {dict_hints:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn source_types_spelled_like_collection_families_stay_nominal_issue1749() -> Result<(), Box<dyn std::error::Error>> {
+    // A program may take a family spelling for its own type, and an annotation may name that type before the
+    // declaration: both are ordinary nominals.
+    check_str(
+        r#"
+def describe(outcome: Result) -> str:
+    match outcome:
+        case Result.Good:
+            return "good"
+        case Result.Bad:
+            return "bad"
+
+enum Result:
+    Good
+    Bad
+
+model List:
+    size: int
+
+def measure(list_value: List) -> int:
+    return list_value.size
+"#,
+    )
+    .map_err(|errors| format!("a source type spelled like a collection family must resolve, got: {errors:?}"))?;
+    Ok(())
+}
+
+// ---- #1757: a `const` `FrozenDict` is read like a dict ----
+
+/// `table[key]` on a `const` `FrozenDict[K, V]` is typed `V`: the lookup's value carries its declared type into the
+/// binding, a text key accepts any text probe, and a probe outside the key type is refused (#1757).
+#[test]
+fn frozen_dict_index_reads_the_value_type_issue1757() -> Result<(), String> {
+    check_str(
+        r#"
+const TABLE: FrozenDict[str, FrozenList[str]] = {"names": ["alpha", "beta"], "empty": []}
+const CODES: FrozenDict[FrozenStr, int] = {"a": 1}
+const SQUARES: FrozenDict[int, int] = {2: 4}
+
+
+def main() -> None:
+    key = "names"
+    names: FrozenList[str] = TABLE[key]
+    code: int = CODES["a"]
+    square: int = SQUARES[2]
+    println(len(names) + code + square)
+"#,
+    )
+    .map_err(|errors| {
+        format!(
+            "a frozen dict lookup must check as its value type: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        )
+    })?;
+
+    let errors = match check_str(
+        r#"
+const CODES: FrozenDict[FrozenStr, int] = {"a": 1}
+
+
+def code_text() -> str:
+    return CODES["a"]
+
+
+def by_number() -> int:
+    return CODES[1]
+"#,
+    ) {
+        Err(errors) => errors,
+        Ok(()) => return Err("a mistyped frozen dict read must be refused".to_string()),
+    };
+    let messages = errors.iter().map(|error| error.message.as_str()).collect::<Vec<_>>();
+    if !messages
+        .iter()
+        .any(|message| message.contains("Index type mismatch: expected 'FrozenStr', found 'int'"))
+    {
+        return Err(format!("expected the key type refusal, got: {messages:?}"));
+    }
+    if errors.len() < 2 {
+        return Err(format!(
+            "expected the value type refusal for `str` as well, got: {messages:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// `table.contains_key(key)` on a `const` `FrozenDict[K, V]` takes one probe under the key rule of `table[key]`: a
+/// text key accepts any text probe, and a probe outside the key type is refused (#1757).
+#[test]
+fn frozen_dict_contains_key_checks_its_probe_issue1757() -> Result<(), String> {
+    check_str(
+        r#"
+const CODES: FrozenDict[FrozenStr, int] = {"a": 1}
+const SQUARES: FrozenDict[int, int] = {2: 4}
+
+
+def main() -> None:
+    key = "a"
+    println(CODES.contains_key(key))
+    println(SQUARES.contains_key(2))
+"#,
+    )
+    .map_err(|errors| {
+        format!(
+            "a probe of the key type must check: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        )
+    })?;
+
+    let errors = match check_str(
+        r#"
+const SQUARES: FrozenDict[int, int] = {2: 4}
+
+
+def by_text() -> bool:
+    return SQUARES.contains_key("two")
+
+
+def without_probe() -> bool:
+    return SQUARES.contains_key()
+"#,
+    ) {
+        Err(errors) => errors,
+        Ok(()) => return Err("a mistyped or missing frozen dict probe must be refused".to_string()),
+    };
+    let messages = errors.iter().map(|error| error.message.as_str()).collect::<Vec<_>>();
+    for expected in [
+        "Argument to 'FrozenDict.contains_key' has type mismatch: expected 'int', found 'str'",
+        "FrozenDict.contains_key() expects 1 argument(s), got 0",
+    ] {
+        if !messages.iter().any(|message| message.contains(expected)) {
+            return Err(format!("expected `{expected}`, got: {messages:?}"));
+        }
+    }
+    Ok(())
 }

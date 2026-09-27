@@ -4,15 +4,22 @@ use std::collections::{HashMap, HashSet};
 
 use incan_frontend::ast::{self, Declaration, Expr, ImportKind, ImportPath, Program};
 use incan_frontend::decorator_resolution;
-use incan_frontend::module::{canonicalize_source_module_segments, logical_source_import_candidates};
+use incan_frontend::module::{
+    canonicalize_source_module_segments, declaration_package_identity, logical_source_import_candidates,
+};
 use incan_frontend::typechecker::stdlib_loader::StdlibAstCache;
+use incan_ir::decl::{FunctionParamDefault, Visibility};
 use incan_ir::expr::{BuiltinFn, IrDictEntry, IrGeneratorClause, IrListEntry, MethodKind, Pattern, VarRefKind};
-use incan_ir::{IrDecl, IrDeclKind, IrExpr, IrExprKind, IrProgram, IrStmt, IrStmtKind, IrType};
+use incan_ir::{IrDecl, IrDeclKind, IrExpr, IrExprKind, IrFunction, IrProgram, IrStmt, IrStmtKind, IrType};
 use incan_lang::lang::{
     generated_support, stdlib,
     surface::result_methods,
     traits::{self as core_traits, TraitId},
 };
+use incan_semantics_core::SymbolOrigin;
+
+/// The root segment of a crate-relative Rust path.
+const CRATE_ROOT_SEGMENT: &str = "crate";
 
 /// Collect field-alias metadata for exported models.
 pub fn collect_model_field_aliases(
@@ -176,6 +183,235 @@ pub fn record_direct_generated_path_support_items_from_ir(
         }
     }
     record_result_helper_support_items_from_ir(reachable, program);
+}
+
+/// Keep the module items that the parameter defaults of one module's reachable callables reach through a crate path.
+///
+/// Lowering spells a const that a default reads as a path to the const's declaring module (#1771), so the default's
+/// callers reach the const without a use of its name. The generated-use analysis retains a module's items from the
+/// names reachable code uses, which such a path does not carry, so each item a default spells is recorded as reachable
+/// in its module here. Only the defaults of callables that can be called count: a function another module imports or
+/// that this module names anywhere, directly or through a symbol alias, and every method, whose retention emission
+/// decides. The default of a function nothing names is never expanded, so it keeps nothing. Stdlib paths are left to
+/// the stdlib support records.
+pub fn record_default_path_items_from_ir(
+    reachable: &mut HashMap<Vec<String>, HashSet<String>>,
+    module_path: &[String],
+    program: &IrProgram,
+) {
+    let mut callable = ir_program_referenced_names(program);
+    for name in reachable.get(module_path).into_iter().flatten() {
+        callable.insert(name.clone());
+        callable.insert(program.function_registry.registry_key(name).to_string());
+    }
+    follow_symbol_aliases(program, &mut callable);
+    let mut paths: HashSet<Vec<String>> = HashSet::new();
+    let mut collect = |expr: &IrExpr| {
+        if let Some(path) = crate_rooted_item_path(expr) {
+            paths.insert(path);
+        }
+        false
+    };
+    for decl in &program.declarations {
+        let functions: Vec<&IrFunction> = match &decl.kind {
+            IrDeclKind::Function(function) if callable.contains(&function.name) => vec![function],
+            IrDeclKind::Impl(impl_decl) => impl_decl.methods.iter().collect(),
+            IrDeclKind::Trait(trait_decl) => trait_decl.methods.iter().collect(),
+            _ => Vec::new(),
+        };
+        for default in functions.iter().flat_map(|function| source_param_defaults(function)) {
+            ir_expr_any_expr(default, &mut collect);
+        }
+    }
+    let spelled = paths.clone();
+    for path in paths {
+        // The walk also meets each path's own prefixes, which name the modules on the way rather than items.
+        if spelled
+            .iter()
+            .any(|other| other.len() > path.len() && other.starts_with(&path))
+        {
+            continue;
+        }
+        let Some((item, module_path)) = path.split_last() else {
+            continue;
+        };
+        if module_path.is_empty() || module_path.first().map(String::as_str) == Some(stdlib::INCAN_STD_NAMESPACE) {
+            continue;
+        }
+        reachable.entry(module_path.to_vec()).or_default().insert(item.clone());
+    }
+}
+
+/// Add to `names` the target of every symbol alias of `program` that `names` holds, through chains of aliases.
+///
+/// Calling `one` where `pub one = first` calls `first`, so a callable reached by an alias is reached by its target.
+fn follow_symbol_aliases(program: &IrProgram, names: &mut HashSet<String>) {
+    let targets = program
+        .declarations
+        .iter()
+        .filter_map(|decl| match &decl.kind {
+            IrDeclKind::SymbolAlias { name, target_path, .. } => Some((name.as_str(), target_path.last()?.as_str())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    loop {
+        let mut added = false;
+        for (alias, target) in &targets {
+            if (names.contains(*alias) || names.contains(program.function_registry.registry_key(alias)))
+                && names.insert((*target).to_string())
+            {
+                names.insert(program.function_registry.registry_key(target).to_string());
+                added = true;
+            }
+        }
+        if !added {
+            break;
+        }
+    }
+}
+
+/// Return the source parameter defaults one callable declares.
+fn source_param_defaults(function: &IrFunction) -> impl Iterator<Item = &IrExpr> {
+    function.params.iter().filter_map(|param| match &param.default {
+        Some(FunctionParamDefault::Source(default)) => Some(default.as_ref()),
+        _ => None,
+    })
+}
+
+/// Return every name one lowered module refers to from a body, a const or static value, a parameter default or a
+/// field default.
+///
+/// Each name is kept both as written and as the declaration its emitted projection stands for, so a callable is found
+/// whichever spelling a reference carries.
+fn ir_program_referenced_names(program: &IrProgram) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let mut collect = |expr: &IrExpr| {
+        let name = match &expr.kind {
+            IrExprKind::Var { name, .. } | IrExprKind::FunctionItem { name, .. } => Some(name.as_str()),
+            IrExprKind::Call {
+                canonical_path: Some(path),
+                ..
+            } => path.last().map(String::as_str),
+            _ => None,
+        };
+        if let Some(name) = name {
+            names.insert(name.to_string());
+            names.insert(program.function_registry.registry_key(name).to_string());
+        }
+        false
+    };
+    ir_program_any_expr(program, &mut collect);
+    for decl in &program.declarations {
+        match &decl.kind {
+            IrDeclKind::Function(function) => {
+                for default in source_param_defaults(function) {
+                    ir_expr_any_expr(default, &mut collect);
+                }
+            }
+            IrDeclKind::Impl(impl_decl) => {
+                for default in impl_decl.methods.iter().flat_map(source_param_defaults) {
+                    ir_expr_any_expr(default, &mut collect);
+                }
+            }
+            IrDeclKind::Trait(trait_decl) => {
+                for default in trait_decl.methods.iter().flat_map(source_param_defaults) {
+                    ir_expr_any_expr(default, &mut collect);
+                }
+            }
+            IrDeclKind::Struct(declared) => {
+                for default in declared.fields.iter().filter_map(|field| field.default.as_ref()) {
+                    ir_expr_any_expr(default, &mut collect);
+                }
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+/// Make the private fields of each model and class that another module's parameter default constructs reachable
+/// within the crate.
+///
+/// Such a construction is spelled at a caller as a literal of every field, in a module that may not import the type.
+/// `constructed` holds each type as its declaring module's Rust path and its name, as lowering recorded them from the
+/// defaults' checked identities (#1771). The fields become `pub(crate)`, which reaches every caller in the crate and
+/// leaves the library's public Rust surface unchanged.
+pub fn publish_default_constructed_fields<'p>(
+    modules: impl IntoIterator<Item = (&'p [String], &'p mut IrProgram)>,
+    constructed: &HashSet<(Vec<String>, String)>,
+) {
+    if constructed.is_empty() {
+        return;
+    }
+    for (module_path, program) in modules {
+        for decl in &mut program.declarations {
+            let IrDeclKind::Struct(declared) = &mut decl.kind else {
+                continue;
+            };
+            if !constructed.contains(&(module_path.to_vec(), declared.name.clone())) {
+                continue;
+            }
+            for field in &mut declared.fields {
+                if field.visibility == Visibility::Private {
+                    field.visibility = Visibility::Crate;
+                }
+            }
+        }
+    }
+}
+
+/// Return the segments below the crate root of a `crate::a::b` path expression, if `expr` is one.
+fn crate_rooted_item_path(expr: &IrExpr) -> Option<Vec<String>> {
+    match &expr.kind {
+        IrExprKind::Var {
+            name,
+            ref_kind: VarRefKind::ExternalName,
+            ..
+        } if name == CRATE_ROOT_SEGMENT => Some(Vec::new()),
+        IrExprKind::Field { object, field } => crate_rooted_item_path(object).map(|mut path| {
+            path.push(field.clone());
+            path
+        }),
+        _ => None,
+    }
+}
+
+/// Map the origin of each emitted source module's declarations to the module's Rust path below the crate root.
+///
+/// `modules` pairs each module's checked module path with its Rust path. Lowering spells a name that a parameter
+/// default reads through this map (#1771). Stdlib modules are left out: a stdlib const in a default is spelled from
+/// the stdlib loader's own paths.
+pub fn source_module_rust_paths(
+    modules: impl IntoIterator<Item = (Vec<String>, Vec<String>)>,
+    package_identity: Option<&str>,
+) -> HashMap<SymbolOrigin, Vec<String>> {
+    let mut paths = HashMap::new();
+    for (module_path, rust_path) in modules {
+        if module_path
+            .first()
+            .is_some_and(|root| root == stdlib::STDLIB_ROOT || root == stdlib::INCAN_STD_NAMESPACE)
+        {
+            continue;
+        }
+        for origin in source_module_origins(&module_path, package_identity) {
+            paths.insert(origin, rust_path.clone());
+        }
+    }
+    paths
+}
+
+/// Return the origins the checked identities of one source module's declarations carry.
+///
+/// A declaration is owned by its module, or by its package and module when the compilation produces a package.
+pub fn source_module_origins(module_path: &[String], package_identity: Option<&str>) -> Vec<SymbolOrigin> {
+    let mut origins = vec![SymbolOrigin::Module(module_path.to_vec())];
+    if let Some(library) = declaration_package_identity(package_identity, Some(module_path)) {
+        origins.push(SymbolOrigin::Package {
+            library,
+            module_path: module_path.to_vec(),
+        });
+    }
+    origins
 }
 
 /// Return whether one lowered program uses a surface that backend emission routes through generated Rust paths.
@@ -645,11 +881,13 @@ fn trait_emission_references(trait_decl: &ast::TraitDecl) -> HashSet<String> {
     names
 }
 
-/// Extend selected trait declarations with the local trait declarations needed to emit their public surface.
+/// Extend selected trait declarations with the local trait declarations needed to emit their public surface, and with
+/// the module's functions their default bodies call.
 ///
 /// This fixed-point closure is needed because an initial import can retain `Sum[T]` while its `sum` method refers to
 /// `Iterator[T]`. Both source declarations must be emitted together, regardless of whether the importing program
-/// happens to call an iterator method.
+/// happens to call an iterator method. A default body is expanded into adopters in other modules, which call its
+/// helpers through the trait module's path (#1759), so a selected trait keeps those helpers too.
 fn retain_same_module_trait_signature_dependencies(
     reachable: &mut HashMap<Vec<String>, HashSet<String>>,
     dependency_modules: &[(&str, &Program, Option<Vec<String>>)],
@@ -672,6 +910,7 @@ fn retain_same_module_trait_signature_dependencies(
                     _ => None,
                 })
                 .collect::<HashMap<_, _>>();
+            let default_helpers = incan_ir::AstLowering::source_trait_default_helper_functions(program);
             for selected_name in selected {
                 let Some(trait_decl) = declared_traits.get(selected_name.as_str()) else {
                     continue;
@@ -679,6 +918,11 @@ fn retain_same_module_trait_signature_dependencies(
                 for reference in trait_emission_references(trait_decl) {
                     if declared_traits.contains_key(reference.as_str()) && !selected.contains(&reference) {
                         additions.push((module_path.clone(), reference));
+                    }
+                }
+                for helper in &default_helpers {
+                    if !selected.contains(helper) {
+                        additions.push((module_path.clone(), helper.clone()));
                     }
                 }
             }
@@ -947,6 +1191,23 @@ pub trait {sum}[T]:
             collect_externally_reachable_items_by_module(&main, &[("text_vaults", &vaults, Some(path.clone()))]);
 
         assert_eq!(reachable.get(&path), Some(&HashSet::from(["Vault".to_string()])));
+    }
+
+    /// #1759: a selected trait keeps the helper functions its default bodies call, because adopters in other modules
+    /// call them through the trait module's path; a function no default calls is not kept for the trait's sake.
+    #[test]
+    fn selected_trait_keeps_its_default_body_helpers_issue1759() {
+        let main = parse("from shapes import Measured\n");
+        let shapes = parse(
+            "def doubled(n: int) -> int:\n    return n * 2\n\ndef unused(n: int) -> int:\n    return n\n\npub trait Measured:\n    def width(self) -> int: ...\n\n    def twice(self) -> int:\n        return doubled(self.width())\n",
+        );
+        let path = vec!["shapes".to_string()];
+        let reachable = collect_externally_reachable_items_by_module(&main, &[("shapes", &shapes, Some(path.clone()))]);
+
+        assert_eq!(
+            reachable.get(&path),
+            Some(&HashSet::from(["Measured".to_string(), "doubled".to_string()]))
+        );
     }
 
     #[test]

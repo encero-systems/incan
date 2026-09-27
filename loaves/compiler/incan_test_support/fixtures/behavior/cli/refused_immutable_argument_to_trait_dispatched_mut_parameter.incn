@@ -1,0 +1,23 @@
+# behavior: an immutable binding passed through a generic trait bound to a mut list parameter that the trait's default only reads is refused at check time, because the adopter's override may change it
+# expect-diagnostic: INCAN-T0117
+
+trait Grower:
+    def grow(self, mut items: list[int]) -> int:
+        return len(items)
+
+
+model Box with Grower:
+    id: int
+
+    def grow(self, mut items: list[int]) -> int:
+        items.append(1)
+        return len(items)
+
+
+def run[T with Grower](grower: T, items: list[int]) -> int:
+    return grower.grow(items)
+
+
+def main() -> None:
+    fixed: list[int] = [1, 2]
+    println(run(Box(id=1), fixed))

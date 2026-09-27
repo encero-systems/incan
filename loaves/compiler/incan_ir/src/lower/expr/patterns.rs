@@ -60,7 +60,7 @@ impl AstLowering {
                     .map(|param| self.lower_pattern_type_with_aliases(&param.node, visiting))
                     .collect::<Vec<_>>();
                 if base == super::super::super::types::IR_UNION_TYPE_NAME {
-                    union_ir_type(lowered_params)
+                    self.lower_union_members(lowered_params)
                 } else {
                     IrType::NamedGeneric(base.clone(), lowered_params)
                 }
@@ -718,14 +718,19 @@ impl AstLowering {
                         }
                     }
                     Pattern::Struct {
-                        name: name.node.clone(),
+                        name: self
+                            .active_trait_default_qualified_pattern_name(&name.node)
+                            .unwrap_or_else(|| name.node.clone()),
                         fields: named_fields,
                         rest,
                     }
                 } else {
+                    // An expanded source-module trait default names its module's enum by that module's path (#1759).
                     Pattern::Enum {
                         name: String::new(),
-                        variant: name.node.clone(),
+                        variant: self
+                            .active_trait_default_qualified_pattern_name(&name.node)
+                            .unwrap_or_else(|| name.node.clone()),
                         fields: positional_fields,
                     }
                 }

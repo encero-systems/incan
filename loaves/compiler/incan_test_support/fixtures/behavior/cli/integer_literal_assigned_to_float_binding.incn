@@ -1,0 +1,27 @@
+# behavior: an integer literal assigned to an existing float binding is stored as that float, as it is in a float declaration
+# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::integer_literal_assigned_to_float_binding_is_a_float_literal_issue1831
+# retires: loaves/compiler/incan_ir/src/lower/tests/expected_literal_types.rs::float_typed_integer_literal_lowers_as_a_float_literal_issue1831
+# expect-stdout:
+#   1.0
+#   -2.0
+#   3.0
+#   7.0
+#   2.5
+
+def half(value: float) -> float:
+    return value / 2.0
+
+
+def main() -> None:
+    mut f: float = 0.5
+    f = 1
+    println(f)
+    f = -2
+    println(f)
+    declared: float = 3
+    println(declared)
+    for step in range(2):
+        if step == 1:
+            f = 7
+    println(f)
+    println(half(5))

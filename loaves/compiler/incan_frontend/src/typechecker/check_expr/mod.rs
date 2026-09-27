@@ -17,6 +17,7 @@ use incan_semantics_core::SurfaceExprTypeCheck;
 use std::collections::HashMap;
 
 use super::TypeChecker;
+use super::mut_arguments::MutArgumentCallee;
 
 mod access;
 mod basics;
@@ -29,6 +30,7 @@ mod list_methods;
 mod match_;
 mod match_coverage;
 mod ops;
+mod printed_form;
 
 impl TypeChecker {
     /// Type-check a local partial expression and return its projected callable type.
@@ -96,6 +98,25 @@ impl TypeChecker {
         // A local partial retains its complete callable signature. Presets become defaulted, name-overrideable
         // slots; `is_partial_preset` preserves the separate positional rule that starts at the residual arguments.
         ResolvedType::Function(Self::local_partial_params(projected, &partial.args), ret)
+    }
+
+    /// Type-check every interpolated expression of an f-string and refuse a `{value}` part with no printed form
+    /// (#1748).
+    ///
+    /// A `{value}` part displays under the rule `print`/`println` arguments and `str(...)` share (see
+    /// [`Self::check_display_operand`]); an `Error` adopter with no `__str__` is recorded to render its `message()`
+    /// (#1778). A `{value:?}` part asks for the value's structure through `Debug` and is left alone.
+    fn check_fstring_parts(&mut self, parts: &[FStringPart]) {
+        for part in parts {
+            let FStringPart::Expr { expr, format } = part else {
+                continue;
+            };
+            let ty = self.check_expr(expr);
+            if matches!(format, FStringFormat::Display) {
+                self.record_error_message_display(expr.span, &ty);
+                self.check_display_operand(errors::DisplayPosition::Interpolation, expr, &ty);
+            }
+        }
     }
 
     /// Resolve a field by canonical name or alias, returning the canonical name and FieldInfo.
@@ -237,20 +258,29 @@ impl TypeChecker {
     /// Validate an expression and return its resolved type.
     ///
     /// Dispatches to specialized helpers (`check_call`, `check_binary`, `check_match`, etc.) and accumulates errors.
-    /// Returns [`ResolvedType::Unknown`] when the expression is invalid so checking can continue.
+    /// Returns [`ResolvedType::Unknown`] when the expression is invalid so checking can continue. Once a call has
+    /// resolved its callee, its arguments for `mut` parameters whose changes reach the caller are recorded for the
+    /// module-level `INCAN-T0117` decision.
     pub fn check_expr(&mut self, expr: &Spanned<Expr>) -> ResolvedType {
+        self.refuse_mut_params_held_in(expr);
         let ty = match &expr.node {
             Expr::Ident(name) => self.check_ident(name, expr.span),
             Expr::Literal(lit) => self.check_literal(lit),
             Expr::SelfExpr => self.check_self(expr.span),
             Expr::Binary(left, op, right) => self.check_binary(left, *op, right, expr.span),
             Expr::Unary(op, operand) => self.check_unary(*op, operand, expr.span),
-            Expr::Call(callee, type_args, args) => self.check_call(callee, type_args, args, expr.span),
+            Expr::Call(callee, type_args, args) => {
+                let ty = self.check_call(callee, type_args, args, expr.span);
+                self.record_mut_arguments(MutArgumentCallee::Function(callee), expr.span, args);
+                ty
+            }
             Expr::Index(base, index) => self.check_index(base, index, expr.span),
             Expr::Slice(base, slice) => self.check_slice(base, slice, expr.span),
             Expr::Field(base, field) => self.check_field(base, field, expr.span),
             Expr::MethodCall(base, method, type_args, args) => {
-                self.check_method_call(base, method, type_args, args, expr.span)
+                let ty = self.check_method_call(base, method, type_args, args, expr.span);
+                self.record_mut_arguments(MutArgumentCallee::Method { receiver: base, method }, expr.span, args);
+                ty
             }
             Expr::Partial(partial) => self.check_partial_expr(partial, expr.span),
             Expr::Surface(surface_expr) => self.check_surface_expr(surface_expr, expr.span),
@@ -269,14 +299,7 @@ impl TypeChecker {
             Expr::Paren(inner) => self.check_expr(inner),
             Expr::Constructor(name, args) => self.check_constructor(name, args, expr.span),
             Expr::FString(parts) => {
-                for part in parts {
-                    if let FStringPart::Expr { expr, format } = part {
-                        let part_ty = self.check_expr(expr);
-                        if matches!(format, FStringFormat::Display) {
-                            self.record_error_message_display(expr.span, &part_ty);
-                        }
-                    }
-                }
+                self.check_fstring_parts(parts);
                 ResolvedType::Str
             }
             Expr::Yield(inner) => {
@@ -362,8 +385,10 @@ impl TypeChecker {
     /// Type-check an expression with an expected destination type when one is already known.
     ///
     /// This is intentionally narrow: only expression forms that benefit from contextual typing without broad inference
-    /// changes should use the hint.
+    /// changes should use the hint. Calls record their `mut` arguments as [`Self::check_expr`] does.
     pub fn check_expr_with_expected(&mut self, expr: &Spanned<Expr>, expected: Option<&ResolvedType>) -> ResolvedType {
+        let errors_before = self.errors.len();
+        self.refuse_mut_params_held_in(expr);
         let ty = match (&expr.node, expected) {
             (_, Some(ResolvedType::TypeVar(_))) => return self.check_expr(expr),
             (Expr::Paren(inner), Some(expected_ty)) => self.check_expr_with_expected(inner, Some(expected_ty)),
@@ -423,12 +448,18 @@ impl TypeChecker {
             }
             (Expr::Try(inner), Some(expected_ty)) => self.check_try_with_expected(inner, expr.span, Some(expected_ty)),
             (Expr::Call(callee, type_args, args), Some(expected_ty)) => {
-                self.check_call_with_expected(callee, type_args, args, expr.span, Some(expected_ty))
+                let ty = self.check_call_with_expected(callee, type_args, args, expr.span, Some(expected_ty));
+                self.record_mut_arguments(MutArgumentCallee::Function(callee), expr.span, args);
+                ty
             }
             (Expr::MethodCall(base, method, type_args, args), Some(expected_ty)) => {
-                self.check_method_call_with_expected(base, method, type_args, args, expr.span, Some(expected_ty))
+                let ty =
+                    self.check_method_call_with_expected(base, method, type_args, args, expr.span, Some(expected_ty));
+                self.record_mut_arguments(MutArgumentCallee::Method { receiver: base, method }, expr.span, args);
+                ty
             }
             (Expr::Tuple(items), Some(ResolvedType::Unit)) if items.is_empty() => ResolvedType::Unit,
+            (Expr::Tuple(items), Some(expected_ty)) => self.check_tuple_with_expected(items, expected_ty),
             (Expr::Closure(params, body), Some(ResolvedType::Function(expected_params, expected_ret))) => {
                 self.check_closure_with_expected(params, body, expected_params, expected_ret, expr.span)
             }
@@ -439,6 +470,10 @@ impl TypeChecker {
             _ => return self.check_expr(expr),
         };
 
+        // A literal whose elements already failed to check is not refused a second time for its open type.
+        if matches!(expr.node, Expr::List(_) | Expr::Dict(_) | Expr::Tuple(_)) && self.errors.len() == errors_before {
+            self.refuse_collection_literal_without_one_member(&ty, expected, expr.span);
+        }
         self.record_expr_type(expr.span, ty.clone());
         ty
     }

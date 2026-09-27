@@ -1,0 +1,9 @@
+[project]
+name = "some_member_into_dependency_option_union"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+unionlib = { path = "deps/unionlib" }

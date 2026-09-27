@@ -1,13 +1,14 @@
 //! Display of `Error` adopters that define no `__str__` (#1778).
 //!
-//! A model or class has a textual form only through `__str__`. An `Error` adopter carries its human-readable text in
-//! `message()` instead, so wherever such a value is displayed -- an f-string `{value}` part, `str(value)`, and each
-//! `print`/`println` argument -- it renders that text. That holds for a concrete adopter, for one whose `message`
+//! A model, class, enum or newtype has a textual form of its own only through `__str__`, an enum's declared values, or
+//! a `Display` adoption. An `Error` adopter without one carries its human-readable text in `message()` instead, so
+//! wherever such a value is displayed -- an f-string `{value}` part, `str(value)`, and each `print`/`println` argument
+//! -- it renders that text. That holds for a concrete adopter, for one whose `message`
 //! comes from a trait default, for a value of a type parameter bounded by `Error`, and for `self` inside a default
 //! method of a trait that extends `Error`. The checker proves which operands take that route and resolves their
 //! `message()` call exactly as a written `value.message()` is resolved, trait dispatch included; lowering rewrites each
-//! recorded operand into that call. Nothing here refuses a program: every other operand keeps its existing display
-//! path.
+//! recorded operand into that call. Nothing here refuses a program: a value with no printed form is refused by the
+//! display rule in `printed_form`, and every other operand keeps its existing display path.
 
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
 use incan_lang::lang::traits::{self as core_traits, TraitId};
@@ -18,7 +19,7 @@ use incan_semantics_core::CanonicalSymbolId;
 
 use super::TypeChecker;
 use crate::ast::Span;
-use crate::symbols::{CallableParam, ResolvedType, TypeBoundInfo, TypeInfo};
+use crate::symbols::{CallableParam, ResolvedType, TypeBoundInfo};
 use crate::typechecker::TypeCheckInfo;
 use crate::typechecker::type_info::{ErrorMessageDisplay, ResolvedMethodCall};
 
@@ -74,43 +75,26 @@ impl TypeChecker {
             && !self.trait_supplies_str(trait_name)
     }
 
-    /// Return the models and classes of this module that adopt `trait_name` and have a `Display` of their own.
+    /// Return the types of this module that adopt `trait_name` and have a `Display` of their own.
     ///
     /// A trait default is expanded into each adopter, and `{self}` there follows the adopter: one that has a `Display`
-    /// by the same rule [`Self::displays_through_error_message`] applies (a declared or inherited `__str__`, one
-    /// supplied by any adopted trait, or a `Display` adoption or derive) keeps it, every other adopter renders
-    /// `message()`. Lowering reads this set while expanding the default.
+    /// by the same rule [`Self::displays_through_error_message`] applies (see [`Self::nominal_own_display`]) keeps
+    /// it, every other adopter renders `message()`. Lowering reads this set while expanding the default.
     fn self_displaying_adopters_of(&self, trait_name: &str) -> BTreeSet<String> {
         self.symbols
             .active_module_source_bindings()
             .map(|(_, name, _)| name.to_string())
             .filter(|name| self.type_implements_trait(name, trait_name))
-            .filter(|name| self.nominal_has_own_display(name) == Some(true))
+            .filter(|name| self.nominal_own_display(name) == Some(true))
             .collect()
-    }
-
-    /// Return whether a model or class has a `Display` of its own, or `None` when `type_name` is neither.
-    ///
-    /// A `Display` comes from a `__str__` the type declares or inherits, a `__str__` an adopted trait (or one of its
-    /// supertraits) declares, or a `Display` adoption or derive.
-    fn nominal_has_own_display(&self, type_name: &str) -> Option<bool> {
-        let (methods, trait_adoptions) = match self.lookup_semantic_type_info(type_name)? {
-            TypeInfo::Model(model) => (&model.methods, &model.trait_adoptions),
-            TypeInfo::Class(class) => (&class.methods, &class.trait_adoptions),
-            _ => return None,
-        };
-        Some(
-            self.type_implements_trait(type_name, core_traits::as_str(TraitId::Display))
-                || methods.contains_key(magic_methods::as_str(MagicMethodId::Str))
-                || trait_adoptions.iter().any(|adoption| self.bound_supplies_str(adoption)),
-        )
     }
 
     /// Return whether a displayed value of this type renders its `message()`.
     ///
-    /// The route applies to a model or class that adopts `Error` (directly or through a subtrait) and to a type
-    /// parameter bounded by `Error`, as long as nothing gives the value a `Display` of its own: a `__str__` that is
-    /// declared, inherited or supplied by an adopted trait, or a `Display` adoption, derive or bound.
+    /// The route applies to a model, class, enum or newtype that adopts `Error` (directly or through a subtrait) and to
+    /// a type parameter bounded by `Error`, as long as nothing gives the value a `Display` of its own: a `__str__` that
+    /// is declared, inherited or supplied by an adopted trait, the values of an enum that declares them, or a `Display`
+    /// adoption or bound.
     fn displays_through_error_message(&self, ty: &ResolvedType) -> bool {
         if let Some(placeholder) = self.generic_placeholder_name(ty) {
             let bounds = self.placeholder_bounds(placeholder);
@@ -124,7 +108,7 @@ impl TypeChecker {
         let (ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _)) = ty else {
             return false;
         };
-        self.nominal_has_own_display(type_name) == Some(false)
+        self.nominal_own_display(type_name) == Some(false)
             && self.type_implements_trait(type_name, core_traits::as_str(TraitId::Error))
     }
 

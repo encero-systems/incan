@@ -163,6 +163,12 @@ def main() -> None:
     data = fetch_data()?  # error: can't use ? in a non-Result function
 ```
 
+### Fallible iteration
+
+A fallible source, a `FallibleIterator[T, E]`, can fail while a loop asks it for its next item. The loop-header `?` is required because of that: `for row in rows?:` propagates the first polling error through the enclosing function's existing `Result` return type. It does not retry, discard, or turn errors into ordinary exhaustion.
+
+Stream creation and stream polling are separate failure boundaries. Unwrap the `Result` that creates a stream into a binding before starting a fallible loop over it; the combined spelling `for row in open_rows(path)?:` is refused when `open_rows` returns a `Result` containing a fallible iterator. The rules are in [Collection protocols](../reference/stdlib_traits/collection_protocols.md#fallibleiterator-fallible-iteration).
+
 ## Structured error types
 
 Prefer structured errors over strings so callers can pattern match on failure modes and carry context.

@@ -255,7 +255,7 @@ def log_profile(profile: Profile) -> None:
     println(f"loaded profile {profile.name}")
 
 def log_load_error(err: LoadError) -> None:
-    println(f"profile load failed: {err}")
+    println(f"profile load failed: {err:?}")
 
 def load_profile_with_logging(path: Path) -> Result[Profile, LoadError]:
     return load_profile(path).inspect(log_profile).inspect_err(log_load_error)
