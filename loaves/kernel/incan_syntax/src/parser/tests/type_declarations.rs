@@ -42,6 +42,34 @@ trait From[T]:
 }
 
 #[test]
+fn receiverless_methods_accept_mutable_first_parameters_issue1884() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+class Counter:
+  value: int
+
+  @staticmethod
+  def make(mut n: int) -> Counter:
+    n += 1
+    return Counter(value=n)
+
+trait Factory:
+  @staticmethod
+  def make(mut n: int) -> int
+"#;
+    let program = parse_str(source)?;
+    let class = require_class_decl(&program.declarations[0])?;
+    let trait_decl = require_trait_decl(&program.declarations[1])?;
+
+    for method in [&class.methods[0].node, &trait_decl.methods[0].node] {
+        assert!(method.receiver.is_none());
+        assert_eq!(method.params.len(), 1);
+        assert!(method.params[0].node.is_mut);
+        assert_eq!(method.params[0].node.name, "n");
+    }
+    Ok(())
+}
+
+#[test]
 fn method_receiver_bindings_retain_the_exact_source_token() -> Result<(), Vec<CompileError>> {
     let source = r#"
 class ReceiverExamples:

@@ -1091,48 +1091,6 @@ impl TypeChecker {
             .unwrap_or_default()
     }
 
-    /// Recursively collect abstract trait methods after applying any explicit adoption-time type arguments.
-    fn collect_instantiated_trait_abstract_method_entries(
-        &self,
-        trait_name: &str,
-        trait_info: &TraitInfo,
-        trait_args: &[ResolvedType],
-        seen: &mut HashSet<String>,
-        out: &mut Vec<(String, String, MethodInfo)>,
-    ) {
-        let key = format!(
-            "{trait_name}<{}>",
-            trait_args
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(",")
-        );
-        if !seen.insert(key) {
-            return;
-        }
-
-        for (method_name, method_info) in &trait_info.methods {
-            if !method_info.has_body {
-                out.push((method_name.clone(), trait_name.to_string(), method_info.clone()));
-            }
-        }
-
-        for (supertrait_name, supertrait_args) in &trait_info.supertraits {
-            let Some(supertrait_info) = self.lookup_semantic_trait_info(supertrait_name.as_str()) else {
-                continue;
-            };
-            let instantiated = self.instantiate_trait_info(supertrait_info, supertrait_args);
-            self.collect_instantiated_trait_abstract_method_entries(
-                supertrait_name,
-                &instantiated,
-                supertrait_args,
-                seen,
-                out,
-            );
-        }
-    }
-
     /// Recursively collect abstract trait properties after applying adoption-time type arguments.
     fn collect_instantiated_trait_abstract_property_entries(
         &self,
@@ -1277,43 +1235,6 @@ impl TypeChecker {
             &mut entries,
         );
         entries
-    }
-
-    /// Collect abstract (`...`) methods from a trait and its transitive supertraits with supertrait type args applied.
-    fn raw_trait_abstract_method_entries(
-        &self,
-        trait_name: &str,
-        explicit_root: Option<(&TraitInfo, &[ResolvedType])>,
-    ) -> Vec<(String, String, MethodInfo)> {
-        if let Some((trait_info, trait_args)) = explicit_root {
-            let mut out = Vec::new();
-            let mut seen = HashSet::new();
-            self.collect_instantiated_trait_abstract_method_entries(
-                trait_name, trait_info, trait_args, &mut seen, &mut out,
-            );
-            return out;
-        }
-
-        let mut out = Vec::new();
-        if let Some(root) = self.lookup_semantic_trait_info(trait_name) {
-            for (m, info) in &root.methods {
-                if !info.has_body {
-                    out.push((m.clone(), trait_name.to_string(), info.clone()));
-                }
-            }
-        }
-        for (supertrait_name, supertrait_args) in self.semantic_supertrait_closure(trait_name) {
-            let Some(supertrait_info) = self.lookup_semantic_trait_info(supertrait_name.as_str()) else {
-                continue;
-            };
-            let subst = type_param_subst_map(&supertrait_info.type_params, &supertrait_args);
-            for (m, info) in &supertrait_info.methods {
-                if !info.has_body {
-                    out.push((m.clone(), supertrait_name.clone(), substitute_method_info(info, &subst)));
-                }
-            }
-        }
-        out
     }
 
     /// Resolve a trait method visible when a concrete type adopts `adopted_trait`, including methods from transitive
@@ -1596,14 +1517,54 @@ impl TypeChecker {
         trait_name: &str,
         explicit_root: Option<(&TraitInfo, &[ResolvedType])>,
     ) -> HashMap<String, Vec<(String, MethodInfo)>> {
-        let raw = self.raw_trait_abstract_method_entries(trait_name, explicit_root);
+        let raw = if let Some((trait_info, trait_args)) = explicit_root {
+            let mut entries = Vec::new();
+            let mut seen = HashSet::new();
+            self.collect_instantiated_trait_method_entries(
+                trait_name,
+                trait_info,
+                trait_args,
+                None,
+                &mut seen,
+                &mut entries,
+            );
+            entries
+                .into_iter()
+                .map(|entry| (entry.method_name, entry.origin_trait, entry.info))
+                .collect()
+        } else {
+            let mut entries = Vec::new();
+            if let Some(root) = self.lookup_semantic_trait_info(trait_name) {
+                for (method, info) in &root.methods {
+                    entries.push((method.clone(), trait_name.to_string(), info.clone()));
+                }
+            }
+            for (supertrait_name, supertrait_args) in self.semantic_supertrait_closure(trait_name) {
+                let Some(supertrait_info) = self.lookup_semantic_trait_info(supertrait_name.as_str()) else {
+                    continue;
+                };
+                let subst = type_param_subst_map(&supertrait_info.type_params, &supertrait_args);
+                for (method, info) in &supertrait_info.methods {
+                    entries.push((
+                        method.clone(),
+                        supertrait_name.clone(),
+                        substitute_method_info(info, &subst),
+                    ));
+                }
+            }
+            entries
+        };
         let mut map: HashMap<String, Vec<(String, MethodInfo)>> = HashMap::new();
         for (method, origin, info) in raw {
             map.entry(method).or_default().push((origin, info));
         }
         let mut out = HashMap::new();
         for (m, entries) in map {
-            let filtered = self.filter_supertrait_dominated_entries(entries);
+            let filtered = self
+                .filter_supertrait_dominated_entries(entries)
+                .into_iter()
+                .filter(|(_, info)| !info.has_body)
+                .collect::<Vec<_>>();
             if !filtered.is_empty() {
                 out.insert(m, filtered);
             }

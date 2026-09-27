@@ -19,6 +19,29 @@ use incan_frontend::ast;
 use incan_frontend::symbols::ResolvedType;
 
 impl AstLowering {
+    /// Return whether a transitive supertrait owns the same source method slot.
+    fn supertrait_declares_method(&self, trait_decl: &ast::TraitDecl, method: &str) -> bool {
+        /// Whether `trait_name` or one of its supertraits, at any depth, declares `method`, visiting each trait once.
+        fn visit(lowering: &AstLowering, trait_name: &str, method: &str, seen: &mut HashSet<String>) -> bool {
+            if !seen.insert(trait_name.to_string()) {
+                return false;
+            }
+            let Some(parent) = lowering.trait_decls.get(trait_name) else {
+                return false;
+            };
+            parent.methods.iter().any(|candidate| candidate.node.name == method)
+                || parent
+                    .traits
+                    .iter()
+                    .any(|bound| visit(lowering, &bound.node.name, method, seen))
+        }
+
+        trait_decl
+            .traits
+            .iter()
+            .any(|bound| visit(self, &bound.node.name, method, &mut HashSet::new()))
+    }
+
     /// Resolve a trait declaration to the canonical source callable role owned by `std.traits.callable`.
     ///
     /// SDK component projects compile the contents of the public `std` namespace as crate-local module paths. Restore
@@ -156,6 +179,10 @@ impl AstLowering {
             ast::Span::default(),
             true,
         )?;
+        let trait_methods = trait_methods
+            .into_iter()
+            .filter(|method| !self.supertrait_declares_method(t, &method.node.name))
+            .collect::<Vec<_>>();
         let mut methods: Vec<IrFunction> = trait_methods
             .iter()
             .map(|m| {

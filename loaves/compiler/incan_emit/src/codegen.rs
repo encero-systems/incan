@@ -3261,7 +3261,7 @@ mod tests {
         LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
     };
     use incan_frontend::{lexer, parser};
-    use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin};
+    use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin, encode_incan_symbol_identity};
     use incan_test_support::canonical_projection::{projected_identities, projected_identity, projected_name};
     use std::collections::HashMap;
     #[cfg(feature = "rust_inspect")]
@@ -5632,6 +5632,87 @@ pub def from_csv[T]() -> str:
                 && code.contains("+ Clone"),
             "{code}"
         );
+    }
+
+    #[test]
+    fn subtrait_default_satisfies_supertrait_slot_issue1825() {
+        let code = generate(
+            r#"
+trait Root:
+  def label(self) -> str: ...
+
+trait Child with Root:
+  def label(self) -> str:
+    return "child"
+
+model Item with Child:
+  value: int
+
+def describe[T with Root](item: T) -> str:
+  return item.label()
+
+def main() -> None:
+  println(Item(value=1).label())
+  println(describe(Item(value=1)))
+"#,
+        );
+        let compact = compact_rust(&code);
+        assert!(compact.contains("implRootforItem{fnlabel(&self)->String{"), "{code}");
+        assert!(!compact.contains("traitChild:Root{fnlabel"), "{code}");
+        assert!(!compact.contains("implChildforItem{fnlabel"), "{code}");
+    }
+
+    #[test]
+    fn class_override_replaces_inherited_dispatch_issue1841() {
+        let source = r#"
+class Animal:
+  id: int
+
+  def grow(self) -> int:
+    return 1
+
+  def feed(self) -> int:
+    return self.grow()
+
+class Dog extends Animal:
+  def grow(self) -> int:
+    return 2
+
+def main() -> None:
+  println(Dog(id=1).feed())
+"#;
+        let code = generate(source);
+        let mut grow_identities = projected_identities(&code, "grow", SemanticSourceTargetKind::Method)
+            .into_iter()
+            .collect::<Vec<_>>();
+        grow_identities.sort_by_key(|identity| identity.declaration_span.start);
+        assert_eq!(grow_identities.len(), 1, "{code}");
+        assert!(grow_identities[0].declaration_span.start > source.find("class Dog").unwrap_or_default());
+        let dog_grow = encode_incan_symbol_identity(&grow_identities[0]);
+        let dog_impl = code
+            .split("impl Dog")
+            .nth(1)
+            .and_then(|tail| tail.split("impl ").next())
+            .unwrap_or_default();
+        assert!(compact_rust(dog_impl).contains(&format!("self.{dog_grow}()")), "{code}");
+    }
+
+    #[test]
+    fn generic_callable_name_emits_support_for_function_items_issue1865() {
+        let code = generate(
+            r#"
+def make() -> int:
+  return 1
+
+def name_of[F](func: F) -> str:
+  return func.__name__
+
+def main() -> None:
+  println(name_of(make))
+"#,
+        );
+        assert!(code.contains("pub trait __IncanCallableName"), "{code}");
+        assert!(code.contains("impl __IncanCallableName for fn() -> i64"), "{code}");
     }
 
     #[test]

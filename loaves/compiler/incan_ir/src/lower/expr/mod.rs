@@ -171,10 +171,27 @@ impl AstLowering {
         receiver: &TypedExpr,
         dispatch: Option<IrMethodDispatch>,
     ) -> (String, Option<IrMethodDispatch>) {
-        let identity = self
-            .type_info
-            .as_ref()
-            .and_then(|info| info.resolved_identity(call_span));
+        let overriding_identity = matches!(
+            &receiver.kind,
+            IrExprKind::Var { name, .. } if name == "self"
+        )
+        .then(|| self.current_impl_type.as_deref())
+        .flatten()
+        .and_then(|owner| self.class_decls.get(owner))
+        .and_then(|class| class.methods.iter().find(|method| method.node.name == source_method))
+        .and_then(|method| {
+            self.type_info.as_ref().and_then(|info| {
+                info.declarations
+                    .member_declaration_identities
+                    .get(&(method.span.start, method.span.end))
+                    .cloned()
+            })
+        });
+        let identity = overriding_identity.as_ref().or_else(|| {
+            self.type_info
+                .as_ref()
+                .and_then(|info| info.resolved_identity(call_span))
+        });
         self.project_method_target_for_identity(identity, source_method, receiver, dispatch)
     }
 

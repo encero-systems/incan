@@ -530,9 +530,9 @@
     },
     {
       "path": "loaves/compiler/incan_ir/src/lower/expr/mod.rs",
-      "category": "method, public dependency, stdlib, checked C string-pointer, and output lowering compatibility",
-      "expected_count": 17,
-      "expected_fingerprint": "0x96d00a7b6140eca6"
+      "category": "method, public dependency, stdlib, checked C string-pointer, output lowering compatibility, and a trait default's self receiver",
+      "expected_count": 18,
+      "expected_fingerprint": "0x79dc584f24848422"
     },
     {
       "path": "loaves/compiler/incan_ir/src/lower/mod.rs",

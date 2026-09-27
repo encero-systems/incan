@@ -1142,6 +1142,10 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_modules_and_imports/module_item_import_spellings",
           "notes": "twinned by one module fixture calling a module function under the four import spellings (`import helper::value`, `from helper import value as answer`, `import other::count as total`, `from other import count`; two helper modules so the bindings do not collide); the projection assertions die."
         },
+        "class_override_replaces_inherited_dispatch_issue1841": {
+          "twin": "",
+          "notes": "open: the generated-Rust assertion proves that an inherited base method dispatches a self-call to the subclass override and that reachability retains the override. A behavior twin should construct the subclass, call the inherited method, and observe the overridden result."
+        },
         "compression_auto_moves_non_clone_decoder_match_bindings": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections/compression_auto_decode.incn",
           "notes": "twinned by a program gzip-compressing bytes and decoding them through `decompress_auto`; the `let mut adapter = reader;` spelling dies."
@@ -1161,6 +1165,10 @@
         "generated_use_analysis_keeps_rust_trait_for_associated_method_on_rust_type": {
           "twin": "dies",
           "dies": "a hand-built legacy IR program over `sha2`, asserting a trait `use` survives for an associated method; legacy IR and generated text, no program to run."
+        },
+        "generic_callable_name_emits_support_for_function_items_issue1865": {
+          "twin": "loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs::run_generic_reflection_contracts_issues712_715_819",
+          "notes": "twinned by the CLI regression's generic `remember[F](func: F)` function reading `func.__name__` from decorated function items; this test pins the emitted support trait and impl spellings, which die with #654."
         },
         "implementation_metadata_preserves_decimal_type_arguments": {
           "twin": "dies",
@@ -1353,6 +1361,10 @@
         "string_membership_probe_keeps_literal_and_borrowed_probes_well_formed_issue1066": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections/membership_probe_owned_and_literal.incn",
           "notes": "twinned by the same program probing with a str literal."
+        },
+        "subtrait_default_satisfies_supertrait_slot_issue1825": {
+          "twin": "",
+          "notes": "open: the generated-Rust assertion proves that a subtrait default satisfies its supertrait's abstract slot without duplicate Rust trait or impl methods. A behavior twin should call the method directly and through a function bounded by the supertrait."
         },
         "test_codegen_awaits_async_rust_backed_method_from_metadata": {
           "twin": "",

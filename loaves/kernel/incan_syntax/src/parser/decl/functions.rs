@@ -200,62 +200,60 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse a receiver and parameters.
-    fn receiver_and_params(
-        &mut self,
-        is_classmethod: bool,
-    ) -> Result<ParsedReceiverAndParams, CompileError> {
+    fn receiver_and_params(&mut self, is_classmethod: bool) -> Result<ParsedReceiverAndParams, CompileError> {
         self.skip_newlines();
 
         // Check for receiver
-        let (receiver, receiver_binding) = if self.check_keyword(KeywordId::Mut) {
-            self.advance();
-            let span = self.current_span();
-            self.expect(&TokenKind::Keyword(KeywordId::SelfKw), "Expected 'self' after 'mut'")?;
-            self.skip_newlines();
-            if self.check(&TokenKind::Punctuation(PunctuationId::Comma)) {
+        let (receiver, receiver_binding) =
+            if self.check_keyword(KeywordId::Mut) && self.peek_next().kind == TokenKind::Keyword(KeywordId::SelfKw) {
+                self.advance();
+                let span = self.current_span();
+                self.expect(&TokenKind::Keyword(KeywordId::SelfKw), "Expected 'self' after 'mut'")?;
+                self.skip_newlines();
+                if self.check(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                    self.advance();
+                    self.skip_newlines();
+                }
+                (
+                    Some(Receiver::Mutable),
+                    Some(Spanned::new(
+                        incan_lang::lang::keywords::as_str(KeywordId::SelfKw).to_string(),
+                        span,
+                    )),
+                )
+            } else if self.check_keyword(KeywordId::SelfKw) {
+                let span = self.current_span();
                 self.advance();
                 self.skip_newlines();
-            }
-            (
-                Some(Receiver::Mutable),
-                Some(Spanned::new(
-                    incan_lang::lang::keywords::as_str(KeywordId::SelfKw).to_string(),
-                    span,
-                )),
-            )
-        } else if self.check_keyword(KeywordId::SelfKw) {
-            let span = self.current_span();
-            self.advance();
-            self.skip_newlines();
-            if self.check(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                if self.check(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                    self.advance();
+                    self.skip_newlines();
+                }
+                (
+                    Some(Receiver::Immutable),
+                    Some(Spanned::new(
+                        incan_lang::lang::keywords::as_str(KeywordId::SelfKw).to_string(),
+                        span,
+                    )),
+                )
+            } else if is_classmethod && self.peek_ident_text(incan_lang::lang::keywords::as_str(KeywordId::Cls)) {
+                let span = self.current_span();
                 self.advance();
                 self.skip_newlines();
-            }
-            (
-                Some(Receiver::Immutable),
-                Some(Spanned::new(
-                    incan_lang::lang::keywords::as_str(KeywordId::SelfKw).to_string(),
-                    span,
-                )),
-            )
-        } else if is_classmethod && self.peek_ident_text(incan_lang::lang::keywords::as_str(KeywordId::Cls)) {
-            let span = self.current_span();
-            self.advance();
-            self.skip_newlines();
-            if self.check(&TokenKind::Punctuation(PunctuationId::Comma)) {
-                self.advance();
-                self.skip_newlines();
-            }
-            (
-                None,
-                Some(Spanned::new(
-                    incan_lang::lang::keywords::as_str(KeywordId::Cls).to_string(),
-                    span,
-                )),
-            )
-        } else {
-            (None, None)
-        };
+                if self.check(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                    self.advance();
+                    self.skip_newlines();
+                }
+                (
+                    None,
+                    Some(Spanned::new(
+                        incan_lang::lang::keywords::as_str(KeywordId::Cls).to_string(),
+                        span,
+                    )),
+                )
+            } else {
+                (None, None)
+            };
 
         let params = if !self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
             self.params()?

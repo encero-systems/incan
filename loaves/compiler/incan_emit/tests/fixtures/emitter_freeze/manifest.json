@@ -9,8 +9,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/decls/functions.rs",
-      "sha256": "0f8b77b3091103eeb1261c925d72db8e3bcec5a94d5c231a65d13d6e79840d19",
-      "lines": 2015
+      "sha256": "265d71c5f6932f6088d7f4a9a3b491e7c21ed3b2b414b84ab9dcf7b9f921378b",
+      "lines": 2061
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/decls/impls.rs",
@@ -297,6 +297,21 @@
       "compatibility_issue": "#1843",
       "behavior_evidence": "incan_emit default_argument_codegen_tests::default_constructing_another_modules_type_reaches_its_fields_within_the_crate_issue1771; behavior fixture cli_modules_and_declarations/private_default_items_across_modules; incan_emit emit::tests::manifest_constructor_emits_type_parameter_fields_at_the_supplied_type_issue1843",
       "semantic_owner": "checked constructor identity: Body IR names the constructed declaration, not its spelling",
+      "retirement_condition": "the Rust-source emitter is removed under #654"
+    },
+    {
+      "kind": "change",
+      "pr": 1894,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/decls/functions.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1828",
+      "behavior_evidence": "bodyless_trait_slot_drops_owned_mutable_rust_parameter_binding_issue1828",
+      "semantic_owner": "checked IR parameter mutability and method body presence",
       "retirement_condition": "the Rust-source emitter is removed under #654"
     }
   ]

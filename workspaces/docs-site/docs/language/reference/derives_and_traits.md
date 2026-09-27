@@ -81,6 +81,7 @@ Each of these is refused (`INCAN-T0001`):
 
 - Applies to methods of `class`, `model`, `enum` and `newtype` declarations.
 - The method has no `self` or `mut self` parameter; one is refused (`INCAN-T0001`).
+- Its first declared parameter is an ordinary parameter and may use `mut`.
 - It is called on the type, `TypeName.method(...)`. A call through an instance is refused (`INCAN-T0001`).
 - A static method and a field may share a name: `TimeDelta.days(7)` calls the method and `delta.days` reads the field.
 - A generic static method may return `Self`; `Box[int].make(1)` fixes the owner's type arguments.
@@ -214,6 +215,7 @@ def main() -> None:
 - A bound `T with Trait[...]` is satisfied by a type that adopts that trait instantiation, directly or through a supertrait.
 - A default method's body resolves the names it uses in the trait's module: a type, an enum variant or a function that the trait's module declares or imports, private functions included, whether or not the adopting module imports it.
 - A trait imported through a module that re-exports it (`pub from shapes import Measured` in `geometry`, then `from geometry import Measured`) is the trait its declaring module declares: `with Measured` adopts `shapes.Measured`, its default methods included.
+- A subtrait may give a compatible default body to a method its supertrait requires. An adopter of the subtrait satisfies the supertrait requirement with that default and exposes one method at the source call surface.
 
 ```incan
 trait Describable:

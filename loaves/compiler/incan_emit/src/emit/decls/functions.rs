@@ -2012,4 +2012,50 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn bodyless_trait_slot_drops_owned_mutable_rust_parameter_binding_issue1828()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let items_ty = IrType::NamedGeneric("Vec".to_string(), vec![IrType::Int]);
+        let func = IrFunction {
+            name: "replace".to_string(),
+            docstring: None,
+            params: vec![
+                FunctionParam {
+                    name: "self".to_string(),
+                    ty: IrType::SelfType,
+                    mutability: Mutability::Immutable,
+                    is_self: true,
+                    kind: incan_frontend::ast::ParamKind::Normal,
+                    default: None,
+                },
+                FunctionParam {
+                    name: "items".to_string(),
+                    ty: items_ty,
+                    mutability: Mutability::OwnedMutable,
+                    is_self: false,
+                    kind: incan_frontend::ast::ParamKind::Normal,
+                    default: None,
+                },
+            ],
+            return_type: IrType::Unit,
+            body: Vec::new(),
+            is_async: false,
+            is_generator: false,
+            visibility: Visibility::Private,
+            type_params: Vec::new(),
+            is_extern: false,
+            rust_extern_name: None,
+            rust_attributes: Vec::new(),
+            lint_allows: Vec::new(),
+        };
+
+        let emitted = emitter.emit_trait_method(&func)?.to_string();
+        let compact = emitted.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+        assert!(compact.contains("fnreplace(&self,items:Vec<i64>);"), "{emitted}");
+        assert!(!compact.contains("mutitems"), "{emitted}");
+        Ok(())
+    }
 }

@@ -32,6 +32,72 @@ struct TraitImplSignature<'a> {
 }
 
 impl AstLowering {
+    /// Find the default that a directly adopted subtrait supplies for one inherited abstract slot.
+    fn adopted_subtrait_default_method(
+        &self,
+        type_name: &str,
+        supertrait_name: &str,
+        method_name: &str,
+    ) -> Option<Spanned<ast::MethodDecl>> {
+        /// Whether `descendant` reaches `ancestor` through its supertraits, visiting each trait once.
+        fn extends_trait(lowering: &AstLowering, descendant: &str, ancestor: &str, seen: &mut HashSet<String>) -> bool {
+            if !seen.insert(descendant.to_string()) {
+                return false;
+            }
+            lowering
+                .type_info
+                .as_ref()
+                .and_then(|info| info.traits.direct_supertraits.get(descendant))
+                .is_some_and(|parents| {
+                    parents
+                        .iter()
+                        .any(|(parent, _)| parent == ancestor || extends_trait(lowering, parent, ancestor, seen))
+                })
+        }
+
+        let mut adopted = self
+            .adopted_traits_by_type
+            .get(type_name)?
+            .iter()
+            .filter(|candidate| extends_trait(self, candidate, supertrait_name, &mut HashSet::new()))
+            .collect::<Vec<_>>();
+        adopted.sort();
+        adopted.into_iter().find_map(|trait_name| {
+            self.trait_decls.get(trait_name).and_then(|trait_decl| {
+                trait_decl
+                    .methods
+                    .iter()
+                    .find(|method| method.node.name == method_name && method.node.body.is_some())
+                    .cloned()
+            })
+        })
+    }
+
+    /// Return whether this trait method refines a slot declared by one of its supertraits.
+    fn trait_method_refines_supertrait_slot(&self, trait_name: &str, method_name: &str) -> bool {
+        /// Whether `trait_name` or a supertrait of it at any depth declares `method_name`, visiting each trait once.
+        fn visit(lowering: &AstLowering, trait_name: &str, method_name: &str, seen: &mut HashSet<String>) -> bool {
+            if !seen.insert(trait_name.to_string()) {
+                return false;
+            }
+            let Some(trait_decl) = lowering.trait_decls.get(trait_name) else {
+                return false;
+            };
+            trait_decl.methods.iter().any(|method| method.node.name == method_name)
+                || trait_decl
+                    .traits
+                    .iter()
+                    .any(|bound| visit(lowering, &bound.node.name, method_name, seen))
+        }
+
+        self.trait_decls.get(trait_name).is_some_and(|trait_decl| {
+            trait_decl
+                .traits
+                .iter()
+                .any(|bound| visit(self, &bound.node.name, method_name, &mut HashSet::new()))
+        })
+    }
+
     /// Retain the established source-spelled native Rust surface without duplicating authored method bodies.
     ///
     /// The canonical method remains the sole implementation. A unique source spelling receives a forwarding
@@ -1472,6 +1538,8 @@ impl AstLowering {
             };
             let trait_properties = trait_decl.properties;
             let mut trait_methods = trait_decl.methods;
+            trait_methods.retain(|method| !self.trait_method_refines_supertrait_slot(trait_name, &method.node.name));
+            let mut refined_default_projections = Vec::new();
             if trait_name == core_traits::as_str(TraitId::Iterator) {
                 trait_methods.retain(|method| method.node.name == magic_methods::as_str(MagicMethodId::Next));
             }
@@ -1595,6 +1663,12 @@ impl AstLowering {
                     continue;
                 }
 
+                if let Some(default) = self.adopted_subtrait_default_method(type_name, trait_name, method_name) {
+                    methods.push(self.lower_impl_method_for_trait(&default.node, Some(&type_param_names))?);
+                    refined_default_projections.push(default);
+                    continue;
+                }
+
                 // Some stdlib traits expose source-level obligations that are intentionally satisfied by backend
                 // derive expansion. Keep collecting ordinary missing-method errors for all other traits.
                 if Self::backend_default_trait_method(stdlib_json_protocol, method_name) {
@@ -1610,7 +1684,7 @@ impl AstLowering {
                 });
             }
 
-            let method_projections = self.trait_method_projections(
+            let mut method_projections = self.trait_method_projections(
                 &methods,
                 impl_methods,
                 &trait_methods,
@@ -1619,6 +1693,18 @@ impl AstLowering {
                 &trait_type_args,
                 &type_param_names,
             )?;
+            for source in refined_default_projections {
+                let identity = self.required_member_identity(trait_name, &source.node.name, source.span)?;
+                if !method_projections
+                    .iter()
+                    .any(|projection| projection.identity == identity)
+                {
+                    method_projections.push(IrMethodProjection {
+                        abi_method_name: source.node.name,
+                        identity,
+                    });
+                }
+            }
             Ok(IrImpl {
                 target_type: type_name.to_string(),
                 type_params: self.lower_type_params(type_params),
@@ -2032,8 +2118,13 @@ impl AstLowering {
                 kind: ast::ParamKind::Normal,
                 default: None,
             });
-            // Add self to scope
-            self.define_local_binding("self".to_string(), IrType::Unknown, false);
+            // An inherited method is lowered again for the concrete subclass. Its `self` calls must therefore drive
+            // reachability and override dispatch against that subclass rather than the declaration's original owner.
+            let concrete_self = self
+                .current_impl_type
+                .as_ref()
+                .map_or(IrType::SelfType, |owner| IrType::Struct(owner.clone()));
+            self.define_local_binding("self".to_string(), concrete_self, false);
         }
 
         // Add regular parameters
