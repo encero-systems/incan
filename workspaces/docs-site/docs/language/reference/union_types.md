@@ -11,6 +11,23 @@ A union type is an anonymous, closed set of member types; a value of the union i
 
 - Nested unions flatten, duplicate members collapse, and member order does not matter: `Union[str, int]`, `int | str` and `int | str | int` are one type.
 - A union with `None` as a member is an `Option` of the other members: `str | None` is `Option[str]`, and `int | str | None` is `Option[Union[int, str]]`.
+- A member that names a model, class, enum or newtype is the declaration that name resolves to where the union is written. `Product | int` written in two modules that each declare `Product` is two different union types.
+
+```incan
+# first.incn
+pub model Product:
+    pub value: int
+
+pub type Answer = Product | int                  # accepted
+```
+
+```incan
+# second.incn
+pub model Product:
+    pub value: str
+
+pub type Answer = Product | int                  # accepted
+```
 
 ## Assignability
 

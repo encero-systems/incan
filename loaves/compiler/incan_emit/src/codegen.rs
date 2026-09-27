@@ -1242,6 +1242,52 @@ impl<'a> IrCodegen<'a> {
                 }),
             self.canonical_emission_package_identity.as_deref(),
         ));
+        lowering.set_crate_nominal_context(Some(Arc::new(self.crate_nominal_context())));
+    }
+
+    /// Collect the nominal facts every module's lowering shares, from the modules this generator emits into one crate.
+    ///
+    /// The crate is the root program, emitted at the crate root, and each dependency module, emitted at its path. Each
+    /// module is keyed by every logical path its checked identities can name it by. Metadata-only symbol modules are
+    /// not emitted here and take no part, so a name they share with a crate module leaves that module's unions
+    /// unchanged (#1796).
+    fn crate_nominal_context(&self) -> incan_ir::lower::CrateNominalContext {
+        let mut modules = Vec::new();
+        if let Some(root) = self.current_program {
+            let root_logical_paths = [
+                source_module_identity_path(
+                    root,
+                    self.root_source_module_name
+                        .as_deref()
+                        .map(|name| name.split('.').map(str::to_owned).collect()),
+                    None,
+                ),
+                self.metadata_root_module_path
+                    .as_deref()
+                    .map(canonicalize_source_module_segments),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+            modules.push((root_logical_paths, Vec::new(), root));
+        }
+        for (name, ast, path_segments) in &self.dependency_modules {
+            let rust_path = self
+                .source_dependency_module_paths
+                .iter()
+                .find_map(|(source, path)| std::ptr::eq(*source, *ast).then_some(path.clone()))
+                .or_else(|| path_segments.clone())
+                .unwrap_or_else(|| vec![(*name).to_string()]);
+            let logical_paths = [
+                Some(canonicalize_source_module_segments(&rust_path)),
+                source_module_identity_path(ast, path_segments.clone(), Some(*name)),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+            modules.push((logical_paths, rust_path, *ast));
+        }
+        incan_ir::lower::CrateNominalContext::from_modules(modules)
     }
 
     /// Add a dependency module (for multi-file compilation)
@@ -4373,6 +4419,166 @@ def main() -> None:
             );
             assert!(main_code.contains(&format!("{projection}()")), "{import}: {main_code}");
         }
+        Ok(())
+    }
+
+    /// One provider module declaring `Product`, `Answer = Product | int` and a function over `Answer`.
+    fn same_named_union_module(label: &str, field_type: &str) -> Result<Program, Box<dyn std::error::Error>> {
+        parse_program_result(&format!(
+            "pub model Product:\n    pub value: {field_type}\n\n\npub type Answer = Product | int\n\n\npub def label(answer: Answer) -> str:\n    match answer:\n        Product(product) => return f\"{label} product {{product.value}}\"\n        int(number) => return f\"{label} number {{number}}\"\n\n\npub def wrap(value: {field_type}) -> Answer:\n    return Product(value=value)\n"
+        ))
+    }
+
+    /// Return the one crate-root wrapper definition whose first variant carries `payload`.
+    fn union_wrapper_with_payload(root_code: &str, payload: &str) -> Result<String, Box<dyn std::error::Error>> {
+        let compact = compact_rust(root_code);
+        let marker = format!("{{V0({payload}),V1(i64),}}");
+        let end = compact
+            .find(&marker)
+            .ok_or_else(|| format!("no wrapper carries `{payload}`:\n{root_code}"))?;
+        let start = compact[..end]
+            .rfind("pubenum")
+            .ok_or_else(|| format!("wrapper for `{payload}` has no enum header:\n{root_code}"))?;
+        Ok(compact[start + "pubenum".len()..end].to_string())
+    }
+
+    /// #1796: two modules of one package that each declare `Product` and `Answer = Product | int` get one wrapper each.
+    ///
+    /// The wrapper name was hashed from the members' spellings, so both modules' unions shared one crate-root wrapper
+    /// whose `Product` payload could name neither declaration, and publishing the package refused to bind that one
+    /// wrapper's `Product` to two declarations. A member whose spelling two modules of the crate declare is now spelled
+    /// by its declaring module, so each union has its own wrapper, carrying its own module's `Product`, and each module
+    /// constructs and matches through the wrapper that carries its own type.
+    #[test]
+    fn same_named_nominals_in_two_modules_get_one_union_wrapper_each_issue1796()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let first = same_named_union_module("first", "int")?;
+        let second = same_named_union_module("second", "str")?;
+        let root = parse_program_result("pub const PRODUCER: str = \"producer\"\n")?;
+        let first_path = vec!["first".to_string()];
+        let second_path = vec!["second".to_string()];
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("first", &first, first_path.clone());
+        codegen.add_module_with_path_segments("second", &second, second_path.clone());
+        let (root_code, modules) =
+            codegen.try_generate_multi_file_nested(&root, &[first_path.clone(), second_path.clone()])?;
+
+        let first_wrapper = union_wrapper_with_payload(&root_code, "crate::first::Product")?;
+        let second_wrapper = union_wrapper_with_payload(&root_code, "crate::second::Product")?;
+        assert_ne!(
+            first_wrapper, second_wrapper,
+            "each module's union needs its own wrapper:\n{root_code}"
+        );
+
+        for (path, own, other) in [
+            (&first_path, &first_wrapper, &second_wrapper),
+            (&second_path, &second_wrapper, &first_wrapper),
+        ] {
+            let code = compact_rust(modules.get(path).ok_or("missing generated module")?);
+            assert!(
+                code.contains(&format!("pubtypeAnswer=crate::{own};")),
+                "{path:?} must alias its own wrapper:\n{code}"
+            );
+            assert!(
+                code.contains(&format!("crate::{own}::V0(Product{{value:value}})")),
+                "{path:?} must construct its own wrapper:\n{code}"
+            );
+            assert!(
+                code.contains(&format!("crate::{own}::V0(product)")),
+                "{path:?} must match through its own wrapper:\n{code}"
+            );
+            assert!(
+                !code.contains(other.as_str()),
+                "{path:?} must not reach the other wrapper:\n{code}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #1796: a union over a nominal no other module of the crate declares keeps the wrapper name it always had, so
+    /// codegen snapshots and published wrapper names are unchanged wherever no two declarations share a spelling.
+    #[test]
+    fn union_over_an_unshared_nominal_keeps_its_wrapper_name_issue1796() -> Result<(), Box<dyn std::error::Error>> {
+        let first = same_named_union_module("first", "int")?;
+        let root = parse_program_result("pub const PRODUCER: str = \"producer\"\n")?;
+        let first_path = vec!["first".to_string()];
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("first", &first, first_path.clone());
+        let (_, modules) = codegen.try_generate_multi_file_nested(&root, std::slice::from_ref(&first_path))?;
+        let code = compact_rust(modules.get(&first_path).ok_or("missing generated module")?);
+        let unchanged = incan_ir::types::IrType::NamedGeneric(
+            incan_ir::types::IR_UNION_TYPE_NAME.to_string(),
+            vec![
+                incan_ir::types::IrType::Struct("Product".to_string()),
+                incan_ir::types::IrType::Int,
+            ],
+        )
+        .union_type_name()
+        .ok_or("a union has a wrapper name")?;
+        assert!(
+            code.contains(&format!("pubtypeAnswer=crate::{unchanged};")),
+            "the wrapper name must stay `{unchanged}`:\n{code}"
+        );
+        Ok(())
+    }
+
+    /// #1796: in a package build, a sibling module that imports the shared `Product` under its own name and passes one
+    /// to `first.label` builds `first`'s wrapper, the one `label` accepts.
+    ///
+    /// A package build gives the imported declaration the package's origin rather than a module origin, and the
+    /// sibling's view of `label`'s parameter spelled `Product` unqualified, so it built a third wrapper that `label`
+    /// does not accept.
+    #[test]
+    fn a_sibling_importing_a_shared_nominal_builds_the_declaring_modules_wrapper_issue1796()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let first = same_named_union_module("first", "int")?;
+        let second = same_named_union_module("second", "str")?;
+        let user = parse_program_result(
+            "from first import Product, label\n\n\npub def go() -> str:\n    return label(Product(value=1))\n",
+        )?;
+        let root = parse_program_result("pub const PRODUCER: str = \"producer\"\n")?;
+        let paths = [
+            vec!["first".to_string()],
+            vec!["second".to_string()],
+            vec!["user".to_string()],
+        ];
+        let mut codegen = IrCodegen::new();
+        codegen.set_registry_package_identity(Some("producer".to_string()));
+        codegen.set_canonical_emission_package_identity(Some("producer".to_string()));
+        codegen.add_module_with_path_segments("first", &first, paths[0].clone());
+        codegen.add_module_with_path_segments("second", &second, paths[1].clone());
+        codegen.add_module_with_path_segments("user", &user, paths[2].clone());
+        let (root_code, modules) = codegen.try_generate_multi_file_nested(&root, &paths)?;
+
+        let first_wrapper = union_wrapper_with_payload(&root_code, "crate::first::Product")?;
+        let user_code = compact_rust(modules.get(&paths[2]).ok_or("missing generated module")?);
+        assert!(
+            user_code.contains(&format!("crate::{first_wrapper}::V0(Product{{value:1}})")),
+            "the sibling must build `first`'s wrapper `{first_wrapper}`:\n{user_code}"
+        );
+        Ok(())
+    }
+
+    /// #1796: a generic nominal two modules declare keeps its spelling inside a union member, so generating the
+    /// crate-root wrapper for `Holder[int] | str` does not fail on a module path where it spells one identifier.
+    #[test]
+    fn a_union_over_a_shared_generic_nominal_still_generates_issue1796() -> Result<(), Box<dyn std::error::Error>> {
+        let holder = "pub model Holder[T]:\n    pub item: T\n";
+        let first = parse_program_result(&format!(
+            "{holder}\n\npub type Held = Holder[int] | str\n\n\npub def hold() -> Held:\n    return Holder(item=1)\n"
+        ))?;
+        let second = parse_program_result(holder)?;
+        let root = parse_program_result("pub const PRODUCER: str = \"producer\"\n")?;
+        let paths = [vec!["first".to_string()], vec!["second".to_string()]];
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("first", &first, paths[0].clone());
+        codegen.add_module_with_path_segments("second", &second, paths[1].clone());
+        let (_, modules) = codegen.try_generate_multi_file_nested(&root, &paths)?;
+        let first_code = compact_rust(modules.get(&paths[0]).ok_or("missing generated module")?);
+        assert!(
+            first_code.contains("pubtypeHeld=crate::__IncanUnion"),
+            "`Held` must alias a crate-root wrapper:\n{first_code}"
+        );
         Ok(())
     }
 
