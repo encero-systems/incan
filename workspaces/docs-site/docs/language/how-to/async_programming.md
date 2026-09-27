@@ -41,6 +41,8 @@ def main() -> None:
     println("Starting...")
 ```
 
+Import the individual `std.async` modules you use, such as `std.async.time` or `std.async.task`, for narrow dependencies, or `std.async.prelude` for the common surface.
+
 ## Core Concepts
 
 ### Cancellation Vocabulary
@@ -221,7 +223,50 @@ async def main() -> None:
     println(await wait_for(first) + await wait_for(second))
 ```
 
-A handle cannot be a `model` or `class` field or an `enum` payload (`INCAN-T0113`): those derive `Clone` and `Debug` automatically, and a handle supports neither ([Automatic derives](../reference/derives_and_traits.md#automatic-derives)). A `list[JoinHandle[T]]` cannot be grown with `append`, which requires an element type that implements `Clone`; spawn each task into its own variable instead.
+A handle cannot be a `model` or `class` field or an `enum` payload (`INCAN-T0113`): those derive `Clone` and `Debug` automatically, and a handle supports neither ([Automatic derives](../reference/derives_and_traits.md#automatic-derives)). A `list[JoinHandle[T]]` cannot be grown with `append`, which requires an element type that implements `Clone`; build the list of handles as a literal instead, as in the next section.
+
+### Await every task in a list
+
+Spawn the tasks into a list, then await each handle in a `for` loop:
+
+```incan
+from std.async import spawn
+
+async def double(n: int) -> int:
+    return n * 2
+
+async def main() -> None:
+    handles = [spawn(double(1)), spawn(double(2))]
+    mut results: list[int] = []
+    for handle in handles:
+        match await handle:
+            Ok(value) => results.append(value)
+            Err(error) => println(f"task failed: {error.message()}")
+    println(len(results))
+```
+
+Awaiting a handle uses it up, so the loop takes the handles out of `handles`, and the compiler refuses a read of `handles` inside or after the loop with `INCAN-T0119`. Keep what the rest of the function needs in a list of its own, like `results` above, or read it before the loop, such as `count = len(handles)`. A closure that reads `handles` is refused too when it is made before the loop, so read the value it needs into a binding of its own first.
+
+To reuse the name, assign it a new list after the loop, outside any branch and where no `break` or `continue` after the loop can skip the assignment. When an enclosing `while` or `loop:` awaits a fresh set of tasks on each pass, build the list inside that loop, or assign it a new list at the start of each pass, before anything in the pass reads it.
+
+A list of lists of handles works the same way, one group at a time:
+
+```incan
+from std.async import spawn
+
+async def double(n: int) -> int:
+    return n * 2
+
+async def main() -> None:
+    groups = [[spawn(double(1))], [spawn(double(2)), spawn(double(3))]]
+    mut results: list[int] = []
+    for group in groups:
+        for handle in group:
+            match await handle:
+                Ok(value) => results.append(value)
+                Err(error) => println(f"task failed: {error.message()}")
+    println(len(results))
+```
 
 ### spawn_blocking
 
@@ -261,7 +306,7 @@ async def cooperative_loop() -> None:
 Channels enable safe message passing between concurrent tasks. They're the primary way to communicate between async tasks without shared mutable state.
 
 !!! warning "Current compiler limitation"
-    The channel declarations exist in `std.async.channel`, but the current compiler rejects the documented typed constructor and imported `Sender`/`Receiver` methods. Treat the channel material below as the intended library contract, not as a currently runnable authoring path. Task spawning, joining, and timeouts are runnable in [Build an asynchronous worker pipeline](../tutorials/async_worker_pipeline.md).
+    The channel declarations exist in `std.async.channel`, but the current compiler rejects the documented typed constructor and imported `Sender`/`Receiver` methods. Treat the channel material below as the intended library contract, not as a currently runnable authoring path. Task spawning, joining, and timeouts are runnable in [Build an asynchronous worker pipeline](../tutorials/async_worker_pipeline.md). Call the constructors without type arguments, such as `channel(32)`, and let subsequent sends, receives, or annotations infer `T`.
 
 ### MPSC Channel (Multi-Producer, Single-Consumer)
 
@@ -286,7 +331,7 @@ Channels enable safe message passing between concurrent tasks. They're the prima
 from std.async.channel import channel
 
 # Create channel with buffer size 32
-tx, rx = channel[str](32)
+tx, rx = channel(32)
 
 # Sender - blocks if buffer is full (backpressure)
 async def producer() -> None:
@@ -324,7 +369,7 @@ match await tx.reserve():
 from std.async.channel import channel
 from std.async.task import spawn
 
-tx, rx = channel[int](100)
+tx, rx = channel(100)
 
 # Clone sender for each producer
 tx1 = tx.clone()
@@ -370,7 +415,7 @@ async def consume() -> None:
 from std.async.channel import unbounded_channel
 
 # No capacity limit - send always succeeds immediately
-tx, rx = unbounded_channel[int]()
+tx, rx = unbounded_channel()
 
 # These never block
 tx.send(1)
@@ -408,7 +453,7 @@ A **oneshot channel** sends exactly one value. After sending, the sender is cons
 from std.async.channel import oneshot
 from std.async.task import spawn
 
-tx, rx = oneshot[int]()
+tx, rx = oneshot()
 
 spawn(async () -> None:
     result = expensive_computation()
@@ -431,7 +476,7 @@ from std.async.task import spawn
 
 async def compute_in_background(input: Data) -> Result[Output, ComputeError]:
     # Create oneshot for the result
-    tx, rx = oneshot[Result[Output, ComputeError]]()
+    tx, rx = oneshot()
     
     # Spawn the computation
     spawn(async () -> None:
@@ -484,6 +529,8 @@ Mutual exclusion — ensures only **one task** can access the wrapped value at a
 - `guard.get()` — Read the value
 - `guard.set(new_value)` — Write a new value
 - Guard auto-releases when it goes out of scope
+
+`Mutex[T]` and `RwLock[T]` require `T with Clone` because guard reads return cloned values.
 
 ```incan
 from std.async.sync import Mutex
@@ -613,7 +660,7 @@ async def worker(id: int) -> None:
     println(f"Worker {id} starting phase 2")  # All start phase 2 together
 ```
 
-`barrier.wait()` is cancellation-aware before release: cancelling a pending wait withdraws that participant from the current generation and frees its slot. Remaining participants still need enough active arrivals to complete the generation, so workflows that allow independent participant cancellation should also define how replacement participants arrive or how the whole phase is abandoned. The returned slot is unique within a completed generation, but cancellation can reuse freed slots, so do not treat it as chronological arrival order.
+`barrier.wait()` is cancellation-aware before release: cancelling a pending wait withdraws that participant from the current generation and frees its slot. Remaining participants still need enough active arrivals to complete the generation, so workflows that allow independent participant cancellation should also define how replacement participants arrive or how the whole phase is abandoned. The returned slot is unique within a completed generation, so it supports leader selection, such as letting the task with slot `0` do the phase's shared work, but cancellation can reuse freed slots, so do not treat it as chronological arrival order.
 
 !!! note "Python equivalent"
     `asyncio.Barrier(n)` (added in Python 3.11) works the same way.
@@ -708,10 +755,10 @@ Prefer bounded channels to prevent memory issues:
 from std.async.channel import channel, unbounded_channel
 
 # Prefer this:
-tx, rx = channel[Data](100)
+tx, rx = channel(100)
 
 # Over this (unbounded can grow forever):
-tx, rx = unbounded_channel[Data]()
+tx, rx = unbounded_channel()
 ```
 
 ### 4. Handle Cancellation Explicitly

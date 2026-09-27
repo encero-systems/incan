@@ -49,6 +49,7 @@ mod collect;
 mod const_eval;
 mod decorated_method_receivers;
 mod derive_requirements;
+mod for_item_taking;
 mod hash_key_inference;
 mod helpers;
 mod mut_marker;
@@ -151,6 +152,13 @@ pub struct LoopContext {
     pub expected_break_ty: Option<ResolvedType>,
     /// Types observed from `break` statements that contribute to the loop result.
     pub break_types: Vec<(ResolvedType, Span)>,
+    /// Symbol-table scope of the loop body: a binding held by an outer scope outlives each pass of the loop.
+    pub scope: usize,
+    /// How many statement blocks surround the loop; its body is the next one, so an assignment in a block deeper than
+    /// this runs in every pass of the loop that reaches it.
+    pub block_depth: usize,
+    /// Where the loop statement or expression starts; it also identifies the loop a `break` or `continue` leaves.
+    pub start: usize,
 }
 
 /// Resolved target for a source-level `type Alias = Target` declaration.
@@ -474,6 +482,8 @@ pub struct TypeChecker {
     pub consumed_iterator_bindings: HashMap<String, Span>,
     /// Resource bindings transferred to an owning C ABI parameter in the current local checking flow.
     pub transferred_c_resource_bindings: HashMap<String, Span>,
+    /// Lists whose items a `for` loop of the current body takes, and that body's `for` pattern bindings (#1844).
+    for_item_taking: for_item_taking::ForItemTaking,
     /// Checked span constructors waiting for the enclosing direct assignment to name their only legal owner.
     pub unbound_c_abi_span_constructors: HashMap<(usize, usize), CAbiSpanKind>,
     /// Opaque checked typed span carriers keyed by their direct source local.
@@ -813,6 +823,7 @@ impl TypeChecker {
             current_immutable_self_method: None,
             consumed_iterator_bindings: HashMap::new(),
             transferred_c_resource_bindings: HashMap::new(),
+            for_item_taking: for_item_taking::ForItemTaking::default(),
             unbound_c_abi_span_constructors: HashMap::new(),
             c_abi_span_bindings: HashMap::new(),
             consumed_c_abi_span_bindings: HashMap::new(),
@@ -927,15 +938,18 @@ impl TypeChecker {
         true
     }
 
-    /// Push a new loop context before checking a loop body.
+    /// Push a new loop context before checking a loop body; the loop starts at `start`.
     ///
     /// Statement loops pass `None` for `expected_break_ty`; expression loops forward whatever result type the
     /// surrounding context expects.
-    pub fn push_loop_context(&mut self, kind: LoopContextKind, expected_break_ty: Option<ResolvedType>) {
+    pub fn push_loop_context(&mut self, kind: LoopContextKind, expected_break_ty: Option<ResolvedType>, start: usize) {
         self.loop_stack.push(LoopContext {
             kind,
             expected_break_ty,
             break_types: Vec::new(),
+            scope: self.symbols.current_scope_index(),
+            block_depth: self.item_taking_block_depth(),
+            start,
         });
     }
 

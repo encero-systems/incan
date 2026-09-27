@@ -66,6 +66,7 @@ mod collections_strings_and_bytes;
 mod error_display;
 mod extern_and_c_bindings;
 mod fields_and_members;
+mod for_item_taking;
 mod forward_declared_types;
 mod generic_model_bounds;
 mod generics_and_type_tokens;

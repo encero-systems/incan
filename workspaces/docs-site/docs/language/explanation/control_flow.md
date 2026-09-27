@@ -193,6 +193,39 @@ for name in items:
         break
 ```
 
+### Loops that take their items
+
+A `for` loop over a list normally reads each item where it stays, and the list keeps its items. A task handle can be neither copied nor cloned, and awaiting it uses it up, so a loop that awaits the handles of a list has to take them out of it:
+
+```incan
+async def main() -> None:
+    handles = [spawn(work()), spawn(work())]
+    for handle in handles:
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
+```
+
+The compiler takes a list's items when three things hold. The list is a local binding, the binding of an enclosing `for` loop that itself takes its list's items, or a parameter not marked `mut`. Each item is a handle, or a tuple or collection that contains one. And the loop body uses by value a loop binding that holds a handle: it awaits it, passes it as an argument to a function, method or constructor other than a builtin function, assigns it to another name, returns or yields it, breaks with it, or puts it in a new tuple, list or set, or as a value in a new dict. A binding that holds a list of handles, as in a list of lists of handles, is also used by value when a nested `for` loop over it takes its items, so each group is emptied in turn:
+
+```incan
+async def main() -> None:
+    groups = [[spawn(work())], [spawn(work())]]
+    for group in groups:
+        for handle in group:
+            match await handle:
+                Ok(value) => println(value)
+                Err(_) => println("join failed")
+```
+
+Once the loop has taken the items, the list is empty, so the compiler refuses whatever could still see it (`INCAN-T0119`):
+
+- a read of the list inside or after the loop, until an assignment gives the name a new list on every path after the loop, with no branch, `break` or `continue` able to skip it;
+- a closure that captured the list before the loop, since the closure could read it later;
+- an enclosing loop that repeats the loop over a list defined outside it, unless each pass assigns the list a new one before the loop and before any read of the list in that pass.
+
+Loops over any other item type keep reading their items in place.
+
 ## Looping with `while`
 
 Use `while` when the loop condition should be checked before each iteration:

@@ -162,9 +162,9 @@ impl TypeChecker {
             Statement::IndexAssignment(index_assign) => self.check_index_assignment(index_assign, stmt.span),
             Statement::Return(expr) => self.check_return(expr.as_ref(), stmt.span),
             Statement::If(if_stmt) => self.check_if_stmt(if_stmt),
-            Statement::Loop(loop_stmt) => self.check_loop_stmt(loop_stmt),
-            Statement::While(while_stmt) => self.check_while_stmt(while_stmt),
-            Statement::For(for_stmt) => self.check_for_stmt(for_stmt),
+            Statement::Loop(loop_stmt) => self.check_loop_stmt(loop_stmt, stmt.span),
+            Statement::While(while_stmt) => self.check_while_stmt(while_stmt, stmt.span),
+            Statement::For(for_stmt) => self.check_for_stmt(for_stmt, stmt.span),
             Statement::Unsafe(unsafe_stmt) => self.check_unsafe_stmt(unsafe_stmt),
             Statement::VocabBlock(vocab_block) => {
                 self.errors.push(crate::diagnostics::CompileError::new(
@@ -758,6 +758,7 @@ impl TypeChecker {
             }
             self.consumed_iterator_bindings.remove(&assign.name);
             self.transferred_c_resource_bindings.remove(&assign.name);
+            self.note_list_reassignment(&assign.name, span);
             self.mark_open_rust_generic_binding_read(&assign.name);
             return;
         }
@@ -904,6 +905,7 @@ impl TypeChecker {
                 }
                 self.consumed_iterator_bindings.remove(name);
                 self.transferred_c_resource_bindings.remove(name);
+                self.note_list_reassignment(name, target_span);
                 self.mark_open_rust_generic_binding_read(name);
                 return;
             }
@@ -1507,8 +1509,9 @@ impl TypeChecker {
         }
     }
 
-    /// Type-check a statement-form `while`, including ordinary truthiness and pattern-driven `while let` conditions.
-    fn check_while_stmt(&mut self, while_stmt: &WhileStmt) {
+    /// Type-check a statement-form `while` at `span`, including ordinary truthiness and pattern-driven `while let`
+    /// conditions.
+    fn check_while_stmt(&mut self, while_stmt: &WhileStmt, span: Span) {
         match &while_stmt.condition {
             // ---- Context: ordinary boolean `while` condition ----
             Condition::Expr(expr) => {
@@ -1516,7 +1519,7 @@ impl TypeChecker {
                 self.validate_truthiness_condition(&cond_ty, expr.span);
 
                 self.symbols.enter_scope(ScopeKind::Block);
-                self.push_loop_context(LoopContextKind::Statement, None);
+                self.push_loop_context(LoopContextKind::Statement, None, span.start);
                 self.check_statement_block(&while_stmt.body);
                 let _ = self.pop_loop_context();
                 self.symbols.exit_scope();
@@ -1526,7 +1529,7 @@ impl TypeChecker {
                 let value_ty = self.check_expr(value);
                 self.symbols.enter_scope(ScopeKind::Block);
                 self.check_pattern(pattern, &value_ty);
-                self.push_loop_context(LoopContextKind::Statement, None);
+                self.push_loop_context(LoopContextKind::Statement, None, span.start);
                 self.check_statement_block(&while_stmt.body);
                 let _ = self.pop_loop_context();
                 self.symbols.exit_scope();
@@ -1534,20 +1537,21 @@ impl TypeChecker {
         }
     }
 
-    /// Type-check a statement-form `loop:` body.
+    /// Type-check a statement-form `loop:` body; the statement starts at `span`.
     ///
     /// Statement loops share the same loop context stack as `for` / `while`, but they do not accept `break <value>`
     /// because no surrounding expression consumes a result.
-    fn check_loop_stmt(&mut self, loop_stmt: &LoopStmt) {
+    fn check_loop_stmt(&mut self, loop_stmt: &LoopStmt, span: Span) {
         self.symbols.enter_scope(ScopeKind::Block);
-        self.push_loop_context(LoopContextKind::Statement, None);
+        self.push_loop_context(LoopContextKind::Statement, None, span.start);
         self.check_statement_block(&loop_stmt.body);
         let _ = self.pop_loop_context();
         self.symbols.exit_scope();
     }
 
-    /// Type-check a statement-form `for`, binding the loop pattern from builtin collections or RFC 068 iteration hooks.
-    fn check_for_stmt(&mut self, for_stmt: &ForStmt) {
+    /// Type-check a statement-form `for` at `span`, binding the loop pattern from builtin collections or RFC 068
+    /// iteration hooks.
+    fn check_for_stmt(&mut self, for_stmt: &ForStmt, span: Span) {
         let elem_ty = match &for_stmt.iter.node {
             Expr::Try(inner) => {
                 let iter_ty = self.check_expr(inner);
@@ -1574,6 +1578,7 @@ impl TypeChecker {
                 self.infer_iterator_element_type_from_expr(&for_stmt.iter, &iter_ty)
             }
         };
+        let takes_items = self.plan_for_item_taking(for_stmt, &elem_ty);
 
         self.symbols.enter_scope(ScopeKind::Block);
         // Record the resolved element type at the pattern's own span. Body IR's `lower_for` already reads the loop
@@ -1582,7 +1587,8 @@ impl TypeChecker {
         // bindings would carry `Unknown` even though the element type is fully resolved right here.
         self.record_expr_type(for_stmt.pattern.span, elem_ty.clone());
         self.define_for_pattern_bindings(&for_stmt.pattern, &elem_ty);
-        self.push_loop_context(LoopContextKind::Statement, None);
+        self.remember_for_pattern_bindings(&for_stmt.pattern.node, takes_items);
+        self.push_loop_context(LoopContextKind::Statement, None, span.start);
 
         self.check_statement_block(&for_stmt.body);
         let _ = self.pop_loop_context();
@@ -1636,8 +1642,10 @@ impl TypeChecker {
     ///
     /// For expression-form `loop:` bodies this records the break value type so the loop result can be resolved after
     /// the body finishes checking. For statement loops it rejects `break <value>` while still type-checking the
-    /// provided expression to surface any nested errors.
+    /// provided expression to surface any nested errors. The exit is recorded, since it can skip the statements after
+    /// it in the loop it leaves.
     fn check_break_stmt(&mut self, value: Option<&Spanned<Expr>>, span: Span) {
+        self.note_loop_exit(span);
         let Some((loop_kind, expected_break_ty)) = self
             .loop_stack
             .last()
@@ -1676,8 +1684,10 @@ impl TypeChecker {
         }
     }
 
-    /// Validate that `continue` appears inside some active loop context.
+    /// Validate that `continue` appears inside some active loop context, and record the exit, which can skip the
+    /// statements after it in that loop.
     fn check_continue_stmt(&mut self, span: Span) {
+        self.note_loop_exit(span);
         if self.loop_stack.is_empty() {
             self.errors.push(errors::continue_outside_loop(span));
         }

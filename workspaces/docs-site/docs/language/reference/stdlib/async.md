@@ -107,9 +107,30 @@ from std.async.task import JoinHandle, TaskJoinError, spawn, spawn_blocking, yie
 
 ### `JoinHandle[T]`
 
-Awaiting a handle produces `Result[T, TaskJoinError]`. Dropping it detaches the task. `handle.abort() -> None` requests cancellation of async work; for `spawn_blocking`, abort can only prevent work that is still queued.
+| Operation | Result |
+| --- | --- |
+| `await handle` | `Result[T, TaskJoinError]`. The handle is used up. |
+| `handle.abort() -> None` | Requests cancellation of async work. For `spawn_blocking`, it prevents only work that is still queued. |
+| Dropping the handle | Detaches the task. |
 
-`JoinHandle[T]` implements neither `Clone` nor `Debug`. A `model` or `class` field or an `enum` variant payload of this type, directly or inside a `list`, `dict`, `Option`, `Result` or tuple, is refused at check time with `INCAN-T0113` (see [Automatic derives](../derives_and_traits.md#automatic-derives)).
+- `JoinHandle[T]` implements neither `Clone` nor `Debug`. A `model` or `class` field or an `enum` variant payload of this type, directly or inside a `list`, `dict`, `Option`, `Result` or tuple, is refused (`INCAN-T0113`; see [Automatic derives](../derives_and_traits.md#automatic-derives)).
+- A `for` loop whose body awaits or hands on each handle of a list empties that list. Using the list after the loop, before it is assigned a new list, is refused (`INCAN-T0119`), and so are such a loop over a list that a closure captured earlier and a loop that an enclosing loop repeats without a new list in each pass. The exact conditions are explained in [Loops that take their items](../../explanation/control_flow.md#loops-that-take-their-items).
+
+```incan
+import std.async
+from std.async.task import spawn
+
+async def work() -> int:
+    return 1
+
+async def main() -> None:
+    handles = [spawn(work()), spawn(work())]
+    for handle in handles:
+        match await handle:          # accepted
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
+    println(len(handles))            # refused: the loop emptied handles (INCAN-T0119)
+```
 
 ### `TaskJoinError`
 

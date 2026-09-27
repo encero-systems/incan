@@ -62,6 +62,7 @@ impl TypeChecker {
             self.errors.push(errors::unknown_symbol(name, span));
             return ResolvedType::Unknown;
         };
+        self.observe_binding_read(sym_id, span);
         if self.symbols.identity_of(sym_id).is_some_and(|identity| {
             identity.kind == SemanticSourceTargetKind::Receiver && identity.declaration_name == "cls"
         }) {

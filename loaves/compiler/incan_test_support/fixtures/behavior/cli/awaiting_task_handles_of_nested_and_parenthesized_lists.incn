@@ -1,0 +1,27 @@
+# behavior: a list of lists of task handles is awaited group by group, and a parenthesized list of handles is awaited like the bare name
+# retires: loaves/compiler/incan_ir/src/lower/tests/for_item_taking.rs::nested_loop_over_an_owned_loop_binding_iterates_it_by_value_issue1844
+# expect-stdout:
+#   1
+#   2
+#   3
+#   4
+
+from std.async import spawn
+
+
+async def work(value: int) -> int:
+    return value
+
+
+async def main() -> None:
+    groups = [[spawn(work(1))], [spawn(work(2)), spawn(work(3))]]
+    for group in groups:
+        for handle in group:
+            match await handle:
+                Ok(value) => println(value)
+                Err(_) => println("join failed")
+    handles = [spawn(work(4))]
+    for handle in (handles):
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")

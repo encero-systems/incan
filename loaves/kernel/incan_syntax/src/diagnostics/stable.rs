@@ -510,6 +510,30 @@ const ARGUMENT_IS_NOT_A_TASK: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/stdlib/async/"),
 };
 
+const TAKEN_LIST_USED_AGAIN: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
+    code: "INCAN-T0119",
+    title: "List used again after a `for` loop took its items",
+    severity: "error",
+    phase: "typecheck",
+    summary: "A `for` loop took the task handles out of a list, and the list is then read inside or after the loop, a closure captured it before the loop, or an enclosing loop repeats the loop.",
+    explanation: "A `for` loop over a list reads each item where it stays, so the list keeps its items, and an item the loop body hands on by value is copied out of it. A `JoinHandle[T]` can be neither copied nor cloned, so when the body hands a handle on by value, by awaiting it, returning or yielding it, breaking with it, assigning it to another name, passing it to a call, placing it in a new tuple, list, set or dict, or iterating it (a list of handles) in a nested `for` loop that takes its items, the loop takes every handle out of the list instead; a tuple item that contains a handle counts the same way. That is only possible when nothing reads the list again, so these are refused: a read of the list inside the loop or after it, until an assignment gives the name a new list on every path after the loop, with no branch, `break` or `continue` able to skip it; a closure that captured the list before the loop; and an enclosing loop that runs the `for` loop again over a list defined outside it, unless each pass assigns the list a new one before the loop and before any read of the list in that pass.",
+    examples: &[
+        "from std.async import spawn\n\nasync def work() -> int:\n    return 1\n\nasync def main() -> None:\n    handles = [spawn(work()), spawn(work())]\n    for handle in handles:\n        match await handle:\n            Ok(value) => println(value)\n            Err(_) => println(\"join failed\")\n    println(len(handles))",
+    ],
+    common_causes: &[
+        "Reading the length or the items of a list of task handles after awaiting each handle in a loop.",
+        "Awaiting the handles of a list built outside an enclosing `while` or `loop:`.",
+        "A closure made before the loop that reads the list.",
+    ],
+    fixes: &[
+        "Read what the later code needs from the list before the loop, such as `count = len(handles)`.",
+        "Collect the results in a new list inside the loop and use that list afterwards.",
+        "Build the list inside the enclosing loop, so each pass iterates a list of its own.",
+        "Have the closure read a value taken from the list before the loop instead of the list itself.",
+    ],
+    docs_url: Some("https://encero-systems.github.io/incan/language/reference/stdlib/async/"),
+};
+
 const IMPORT: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     code: "INCAN-I0001",
     title: "Import or module resolution error",
@@ -638,6 +662,7 @@ const CATALOG: &[DiagnosticCatalogEntry] = &[
     FIELD_LACKS_AUTOMATIC_DERIVES,
     HASHED_MEMBER_LACKS_EQ_HASH,
     ARGUMENT_IS_NOT_A_TASK,
+    TAKEN_LIST_USED_AGAIN,
     IMPORT,
     SDK_COMPONENT_DISABLED,
     SDK_COMPONENT_UNAVAILABLE,
@@ -1038,6 +1063,40 @@ mod tests {
         );
         let Some(entry) = explain("INCAN-T0116") else {
             return Err("INCAN-T0116 must have a catalog explanation".into());
+        };
+        assert_eq!(entry.severity, "error");
+        assert_eq!(entry.phase, "typecheck");
+        Ok(())
+    }
+
+    /// Issue #1844: a list used again after a `for` loop took its items has its own explainable code, and the
+    /// refusal names the list, points back at the loop and says what to write instead.
+    #[test]
+    fn taken_list_reuse_refusal_uses_a_distinct_stable_code() -> Result<(), Box<dyn std::error::Error>> {
+        let refusal = errors::taken_list_used_again(
+            "handles",
+            "JoinHandle[int]",
+            errors::TakenListReuse::AfterLoop,
+            Span::new(90, 97),
+            Span::new(40, 47),
+        );
+        assert_eq!(code_for_error(&refusal, DiagnosticPhase::Typecheck), "INCAN-T0119");
+        assert_eq!(
+            refusal.message,
+            "`handles` is used after the `for` loop that took its items"
+        );
+        assert_eq!(
+            refusal.related_spans().len(),
+            1,
+            "the refusal must point back at the loop"
+        );
+        assert!(
+            refusal.hints.iter().any(|hint| hint.contains("before the loop")),
+            "the refusal must say what to write instead, got {:?}",
+            refusal.hints
+        );
+        let Some(entry) = explain("INCAN-T0119") else {
+            return Err("INCAN-T0119 must have a catalog explanation".into());
         };
         assert_eq!(entry.severity, "error");
         assert_eq!(entry.phase, "typecheck");
