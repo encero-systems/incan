@@ -20,17 +20,18 @@
 
 ## Summary
 
-This RFC specifies the `mut` parameter contract and chooses inferred borrowing for writable local aliases: `mut items = cart.items` borrows the existing field, `items = replacement` writes through that borrow, and `mut items = cart.items.clone()` creates a separate local value. Explicit declarations introduce bindings; assignment uses the binding already resolved. Shadowing that name resolution can disambiguate produces a warning, while ambiguous names and conflicting access produce errors. Duckborrowing must preserve these meanings and must never silently clone an alias to make a borrow conflict compile. Python and Scala provide prior art for naming and mutation, while Incan stays Rust-like in borrowing and lifetime safety, consistent with its dual surface with Rust. This remains a Draft: bare bindings, read-only aliases, scalar local aliases, storage, and nested cloning still need decisions before the design is complete.
+This RFC specifies the `mut` parameter contract and chooses inferred borrowing for writable local aliases: `mut items = cart.items` borrows the existing field, `items = replacement` writes through that borrow, and `mut items = cart.items.clone()` creates a separate local value. Explicit declarations introduce bindings; assignment uses the binding already resolved. Shadowing that name resolution can disambiguate produces a warning, while ambiguous names and conflicting access produce errors. Duckborrowing must preserve these meanings and must never silently clone an alias to make a borrow conflict compile. Python and Scala provide prior art for naming and mutation, while Incan stays Rust-like in borrowing and lifetime safety, consistent with its dual surface with Rust. Bare and explicit-`let` declarations from places borrow read-only; writable access requires `mut`, including for scalar places. Explicit cloning creates independent owned contents. The remaining Draft work concerns storage and lifetime boundaries, not these settled binding rules.
 
 ## Core model
 
 1. **A name resolves to one binding.** An explicit `let` or `mut` declaration introduces a binding. Its initializer resolves in the preceding environment; the new binding is visible afterward. A resolvable shadow produces a warning.
-2. **A writable alias borrows an existing place.** For a collection, model, or class place, `mut local = source` gives `local` access to that place. An annotation does not request a copy. The source must already permit mutation.
+2. **A writable alias borrows an existing place.** For an existing place, including a scalar field, `mut local = source` gives `local` writable access to that place. An annotation does not request a copy. The source must already permit mutation.
 3. **Assignment writes through the resolved binding.** Assigning through a writable alias replaces the borrowed value; it never retargets the alias or creates an independent local. Assigning to an owned local replaces that local's value.
-4. **Construction and explicit cloning create local values.** `mut local = source.clone()` uses the clone result as an owned local. The depth and independence guarantees of cloning remain an open contract; cloning a list of strings supplies the independent-copy examples in this RFC.
+4. **Construction and explicit cloning create local values.** `mut local = source.clone()` uses the clone result as an owned local. The clone owns independent mutable contents, including nested contents; it must not retain a borrow into the source. Duckborrowing chooses a representation that preserves that independence.
 5. **Borrows have checked lifetimes.** A borrow remains active while a later use needs it. Conflicting access and replacement of a borrowed parent are errors. An alias does not follow a replaced parent.
 6. **Duckborrowing preserves meaning.** Representation choices may change only when observable behavior does not. A clone that would detach intended mutations is never a legal conflict repair.
-7. **The parameter contract remains explicit.** Caller-visible `mut` parameters share the caller's value. Scalar parameters and imported Rust values have the separate rules below. This RFC does not silently change parameter rebinding through a new alias spelling.
+7. **Read-only access is the default.** Bare and explicit-`let` first declarations from a place borrow read-only. Mutation through a name requires `mut`; this includes nested mutation. `let` does not request a copy.
+8. **The parameter contract remains explicit.** Caller-visible `mut` parameters share the caller's value. Scalar parameters and imported Rust values have the separate rules below. This RFC does not silently change parameter rebinding through a new alias spelling.
 
 ## Motivation
 
@@ -65,7 +66,7 @@ Replacing an object while a later operation still needs a borrow of one of its f
 - Reproducing Python assignment or Scala binding semantics exactly.
 - Introducing runtime reference counting as the default identity model.
 - Implementing the proposal in this documentation PR or claiming that the examples already compile.
-- Deciding the unresolved read-only, storage, scalar-alias, suspension, or clone-depth contracts by implication.
+- Deciding storage, whole-parameter replacement, suspension, or escape boundaries by implication.
 
 ## Guide-level explanation
 
@@ -100,7 +101,7 @@ def prepare(cart: Cart) -> None:
     # cart.items is unchanged
 ```
 
-The initializer is a clone result, not a borrowed place. The new local owns that result. `.clone()` is the preferred spelling for an explicit copy; constructor-style copies such as `list(cart.items)` remain available where the type supports them. Nested mutable members and imported reference-counted types need the clone contract settled below before this example can be generalized to every type.
+The initializer is a clone result, not a borrowed place. The new local owns that result. `.clone()` is the preferred spelling for an explicit copy; constructor-style copies such as `list(cart.items)` remain available where the type supports them. Cloning an enclosing object must not leave its mutable interior borrowed from the source. If a type cannot provide the required independent clone, the operation must be diagnosed rather than silently retain shared mutable contents.
 
 ### A new declaration can shadow an alias
 
@@ -133,7 +134,31 @@ mut items = cart.items
 items = items.clone()         # writes the clone back into cart.items
 ```
 
-The assignment introduces no new binding. Whether omitting `let` on a first declaration creates a read-only alias or an owned value remains open; it must not change the distinction between assignment to an existing name and explicit shadowing.
+The assignment introduces no new binding. Omitting `let` when first introducing a name does not change its meaning: a place initializer is borrowed read-only, while an explicit clone or constructed value is owned. Explicit `let` introduces a new binding when shadowing is intended; plain assignment to an existing name does not.
+
+### Read-only access and scalar places
+
+```incan
+items = cart.items        # read-only borrow
+let same = cart.items     # equivalent explicit declaration
+items.append("pear")     # error: mutation requires mut
+```
+
+Read-only access applies through nested fields too. A fixed local name does not grant permission to mutate an object merely because its type offers a mutating method.
+
+```incan
+mut quantity = order.quantity
+quantity += 1            # increments order.quantity
+quantity = 10            # replaces order.quantity
+```
+
+The scalar field follows the same writable-place rule as a list or custom-object field. This local borrowing rule is separate from the scalar parameter-passing contract.
+
+```incan
+mut copied = cart.clone()
+copied.items.append("pear")
+# cart.items is unchanged; the clone's interior is independent
+```
 
 ### The same distinction applies to custom objects
 
@@ -235,13 +260,19 @@ A changed caller-visible parameter needs an argument the caller may change, exce
 5. A previously created alias must remain tied to its resolved binding and place; a later declaration with the same spelling must not redirect it. Shadowing alone does not end a borrow that is still used through another alias or closure.
 6. A warning must identify the new declaration and the binding it shadows. An ambiguity error must identify the competing candidates and offer qualification where possible. Borrow and permission violations remain errors even when all names are unambiguous.
 
+### Read-only local borrowing
+
+1. A bare first declaration `name = place` and an explicit `let name = place` must both borrow the place read-only. Neither spelling requests a clone. A constructed or explicitly cloned initializer instead supplies an immutable owned local.
+2. A read-only binding must not permit assignment or mutation through it, including mutation through nested fields or elements. Writable access requires `mut` and permission from the source; an interior mutable object does not bypass that rule.
+3. Multiple read-only borrows may coexist. While one remains needed, overlapping mutation, exclusive borrowing, or invalidation must be refused. The last-use and provenance rules below apply to read-only as well as writable borrows.
+
 ### Writable local aliases
 
-1. For a collection, model, or class place `p`, `mut name = p` must create a writable borrow of `p`. An explicit compatible type annotation must not turn it into a copy. Scalar and imported-type local aliases remain open questions.
+1. For an existing place `p`, `mut name = p` must create a writable borrow of `p`. This applies to scalar places as well as collections, models, and classes. An explicit compatible type annotation must not turn it into a copy. Imported types must respect their access and ownership contracts; inference cannot grant unsupported mutation rights.
 2. The source must permit mutation. Borrowing must not grant mutation rights absent from the source or upgrade a read-only access into writable access. An immutable source must not be silently moved merely to make a writable alias legal.
 3. In-place mutation and assignment through the alias must act on the borrowed place. For example, `items = replacement` must replace the borrowed field when `items` borrows `cart.items`. Compound assignment must likewise target the borrowed place where the operation is supported.
-4. Assignment through an alias must leave its target unchanged. If the right-hand side is another place, transferring its value must follow the eventual value-transfer rules, not reborrow or retarget the left-hand alias implicitly. Those transfer and copying details remain open.
-5. An initializer that constructs a new value or explicitly clones a value must create an owned local result, rather than borrow the initializer's receiver. A clone's deep-independence guarantees must not be inferred merely from the method name.
+4. Assignment through an alias must leave its target unchanged. If the right-hand side is another place, duckborrowing must plan the value transfer without reborrowing or retargeting the left-hand alias implicitly. Any move or copy must preserve source-observable behavior and the destination's ownership contract; an impossible transfer must produce a diagnostic, not silently change sharing.
+5. An initializer that constructs a new value or explicitly clones a value must create an owned local result, rather than borrow the initializer's receiver. An explicit clone must own independent mutable contents, including nested mutable contents; it must not retain source borrows. Unsupported cloning must be diagnosed. Generic bounds and representation choices must enforce this contract rather than weaken it.
 6. A derived alias must preserve the original target identity and access permissions. Reborrowing through a writable alias may temporarily suspend use of the parent alias, subject to the same conflict checks. It must not manufacture two independently usable exclusive accesses.
 7. These rules must apply consistently to field places in collections and custom objects. Borrowable element projections, selection expressions, and destructuring require the remaining rules listed under Unresolved questions; this Draft does not silently classify unsupported shapes as copies.
 
@@ -274,7 +305,7 @@ The compiler may infer a borrow, move, or copy only when it preserves the source
 
 The selected writable spelling is `mut local = place`; an explicit clone is `mut local = place.clone()`. This proposal does not add `&`, `&mut`, or lifetime annotations to ordinary source. The existing `alias` marker keeps its declaration-level roles for top-level symbols, same-type methods, and enum variants. Model-field alias metadata remains a separate naming and wire-mapping feature. This RFC does not extend `alias` into function or method bodies: local writable borrowing is inferred from `mut local = place`, so no second explicit local alias spelling is introduced.
 
-Explicit declarations and assignment are distinct even where `let` is optional for introducing an unused name. If bare and explicit-`let` declarations eventually receive different copy or borrow meanings, that difference must be stated as a change to optional-`let` semantics, not hidden behind the existing wording.
+Explicit declarations and assignment are distinct even where `let` is optional for introducing an unused name. Bare and explicit-`let` first declarations have the same meaning: read-only borrowing from a place, or an immutable owned local from an explicit clone or constructed value. `let` does not implicitly request a clone.
 
 ### Spelling and behavior
 
@@ -288,7 +319,8 @@ Explicit declarations and assignment are distinct even where `let` is optional f
 | `mut items = items.clone()`, with an existing items | Clone the old binding, then shadow it; warn |
 | `items = items.clone()`, where items is an alias | Write the clone back through the existing alias |
 | `cart = Cart(...)`, followed by a use of an alias into cart | Borrow conflict error |
-| Bare or explicit-let binding directly from cart.items | Unresolved read-only/copy decision |
+| Bare or explicit-let binding directly from cart.items | Read-only borrow; mutation through it is refused |
+| `mut quantity = order.quantity` | Writable borrow of the scalar field |
 
 ### Prior art and the Rust-like semantic direction
 
@@ -300,7 +332,7 @@ Incan stays Rust-like in borrowing, exclusive access, and lifetime safety. Pytho
 
 **Scala is prior art for separating binding reassignment from object mutation.** `val` fixes a binding and `var` permits reassignment; the collection type determines whether its contents can change. Neither declaration requests an independent copy. This distinction helps state the questions separately, but does not make Scala's reference model the Incan borrowing contract. See [Scala bindings](https://docs.scala-lang.org/scala3/book/taste-vars-data-types.html) and [Scala collection mutability](https://docs.scala-lang.org/overviews/collections-2.13/overview.html).
 
-**Explicit cloning must have an honest contract.** Rust's [Clone contract](https://doc.rust-lang.org/std/clone/trait.Clone.html) shows why copying a wrapper does not necessarily make all reachable state independent. The proposed clone spelling must therefore be paired with a resolved Incan rule for nested mutable members and imported shared handles; familiarity with Rust's method name does not supply a deep-copy guarantee.
+**Explicit cloning must have an honest contract.** Rust's [Clone contract](https://doc.rust-lang.org/std/clone/trait.Clone.html) shows why copying a wrapper does not necessarily make all reachable state independent. Incan explicitly requires an independent clone here: its mutable interior must not remain borrowed from or shared with the source. An imported clone operation that only duplicates a shared handle cannot silently satisfy that contract. This is a deliberate semantic requirement, not an assumption that Rust's method name guarantees it.
 
 ### Relationship to RFC 023
 
@@ -332,7 +364,7 @@ The current whole-parameter rebinding restriction remains separate. `clear()` on
 - Correct last-use and overlap analysis must follow branches, loops, projections, and closures; per-block read counts are insufficient.
 - Same-scope shadowing can hide a useful alias, even when deterministic. The warning must identify both declarations without warning on ordinary qualified-field aliases.
 - Migration changes existing copy behavior and needs advance diagnostics. The transitional parameter checks do not eliminate this cost.
-- The remaining read-only, storage, clone-depth, and suspension decisions affect everyday use. This Draft must not advance to Planned while those contracts are still open.
+- Storage and lifetime boundaries still need specification. These remaining Draft questions must not reopen the settled read-only, scalar-borrowing, and independent-cloning rules.
 
 ## Implementation architecture
 
@@ -357,7 +389,9 @@ A writable alias can lower to a checked reborrow; assignment through it lowers t
 The completed design and implementation must demonstrate:
 
 - a list field and a custom-object field can be borrowed locally, mutated, and replaced through their aliases without retargeting;
-- explicit construction and cloning produce owned locals, and changing them does not change the source except where the resolved clone contract explicitly retains sharing;
+- explicit cloning produces owned locals with independent mutable interiors; nested mutation of a cloned object does not reach the source, and unsupported independent cloning is diagnosed;
+- bare and explicit-`let` declarations from a place borrow read-only, cannot mutate nested contents, and do not implicitly clone;
+- writable scalar aliases update and replace their original fields just as writable collection or object aliases do;
 - annotated and unannotated writable-place bindings agree;
 - shadowing resolves its initializer through the old binding, warns, and resolves subsequent uses through the new binding;
 - assignment never introduces a shadow or detaches an alias, and same-name qualified field access is not warned about merely for matching a local spelling;
@@ -373,7 +407,10 @@ The completed design and implementation must demonstrate:
 ## Design Decisions
 
 - **Rust-like borrowing is the semantic direction.** Python and Scala are prior art for naming and mutation; borrowing, exclusivity, and lifetime safety remain aligned with Rust, supporting Incan's dual surface with Rust.
-- **Inferred writable borrowing is the selected direction.** A mutable local initialized directly from a collection, model, or class place borrows that place; explicit cloning requests a separate local value.
+- **Inferred writable borrowing is the selected direction.** A mutable local initialized directly from an existing place borrows that place, including scalar fields; explicit cloning requests a separate local value.
+- **Read-only borrowing is the default.** Bare and explicit-`let` declarations from a place borrow read-only; mutation, including nested mutation, requires `mut`. `let` does not request a clone.
+- **Explicit clones own independent mutable interiors.** Duckborrowing must preserve this independence; a cloned object must not retain source borrows or silently share its mutable contents.
+- **Scalar places use the same borrowing rule.** `mut quantity = order.quantity` writes through to the field.
 - **Assignment writes through an alias.** It does not retarget the alias or detach it from the borrowed location.
 - **Explicit declarations introduce bindings.** Deterministic shadowing warns, initializers resolve before the new binding is introduced, and subsequent uses resolve to the new binding.
 - **Diagnostic severity follows the problem.** Resolvable name collisions warn; unresolved ambiguity, mutation-permission failures, and borrow conflicts error.
@@ -385,13 +422,14 @@ The completed design and implementation must demonstrate:
 
 ## Unresolved questions
 
-- **Bare bindings and explicit `let`.** Does a first `name = place` or `let name = place` create a read-only borrow or an independent value? Does explicit `let` request independence, or remain optional with identical meaning when introducing an unused name? Explicit shadowing and assignment to an existing binding are already distinct.
-- **Read-only access.** What access does a read-only local permit, including nested mutation? Resolve this through the local binding and borrowing rules; no runtime-place form of the `alias` keyword is proposed.
-- **Scalar and imported-type local aliases.** Should `mut quantity = order.quantity` borrow a scalar field or take a local copy? The scalar parameter rule is unchanged; local aliasing needs its own decision. Imported types must respect their mutation and ownership contracts.
-- **Nested cloning and value transfer.** Which types support `.clone()`, how are generic bounds inferred, and what independence is guaranteed for nested mutable members or imported shared handles? What happens when assignment through an alias takes another place as its right-hand side? The clone spelling must not imply unsupported deep-copy guarantees.
-- **Storage, returns, and whole parameters.** Do fields, collection elements, ordinary arguments, returns, and yields own independent values, move values, or permit checked sharing, and where is explicit cloning required? Should whole caller-visible parameters eventually support replacement, including through aliases? Until resolved, aliasing must not bypass their rebinding prohibition.
-- **Selections, destructuring, and elements.** Define bindings from `match`, `if`, `loop`/`break`, tuple unpacking, and loop targets, including a selection mixing a place with a constructed or cloned value. Define stable element projections and conservative overlap rules. The checker must not silently resolve these gaps by copying.
-- **Suspension and escape.** Which borrows may cross `await` or `yield`, and which captures or returned values can retain a borrow? Define the lifetime, task-safety, and escape contract and any precise change to RFC 023's suspension policy. No silent clone fallback is permitted.
+The binding, mutation-permission, scalar-alias, and clone-independence rules above are settled. The following questions concern boundaries not resolved by the local test drives; implementation details of enforcing settled rules belong in the implementation work, not in this list.
+
+- **Storage boundaries.** Define ownership transfer when an existing place is inserted into a field or collection: which uses move the value, retain a checked borrow, or require an explicit clone? In particular, specify whether a later use of the original remains valid. This must preserve the settled explicit-clone and no-silent-detachment guarantees.
+- **Whole caller-visible parameter replacement.** Should assignment to a whole caller-visible parameter replace the caller's value, as assignment through a local writable alias does, or retain the existing rebinding refusal? Until resolved, a local alias must not bypass the existing restriction. This is separate from storing a value in a collection.
+- **Mixed selection results.** Define a binding whose `match`, `if`, or `loop` result selects a borrowed place on one path and a constructed or cloned value on another. The rule must preserve each path's ownership meaning or diagnose an unsupported combination; it must not silently copy to make the shapes agree.
+- **Projection and destructuring coverage.** Complete the rules for tuple unpacking, loop targets, and element projections, with accepted and rejected examples for overlap and invalidation. These are extensions of the chosen borrowing rules, not a new choice between copying and sharing for scalar or object fields.
+- **Suspension.** Define which otherwise-valid borrows may cross `await` or `yield`, including task-safety requirements and any precise change to RFC 023's suspension policy. Cloning must not be used to evade an invalid borrow.
+- **Escape and borrowed returns.** Define when a closure or returned value may retain a checked borrow, including how its lifetime relates to the original argument or owner. A borrow of a destroyed local must never escape.
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.
      An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
