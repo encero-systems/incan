@@ -5962,7 +5962,9 @@ impl TypeChecker {
         self.check_route_handler_signature(func, &return_type, &resolved_param_types);
 
         // Define parameters after checking defaults so a declaration-owned default cannot resolve a callable-frame
-        // binding. The function body still receives its ordinary parameter locals below.
+        // binding. The function body still receives its ordinary parameter locals below. Its `mut` bindings are its
+        // own: the set starts empty and the enclosing set is restored afterwards.
+        let previous_mutable_bindings = std::mem::take(&mut self.mutable_bindings);
         let mut_param_body = self.enter_mut_param_body(
             &func.name,
             SemanticSourceTargetKind::Function,
@@ -6051,6 +6053,7 @@ impl TypeChecker {
         self.current_type_param_bound_details.pop();
         self.annotation_owner = previous_annotation_owner;
         self.exit_mut_param_body(mut_param_body);
+        self.mutable_bindings = previous_mutable_bindings;
         self.symbols.exit_scope();
         self.apply_user_defined_function_decorators(func, decl_span);
     }
@@ -6412,6 +6415,9 @@ impl TypeChecker {
             &mut self.current_immutable_self_method,
             (method.receiver == Some(Receiver::Immutable) && binds_self_receiver).then(|| method.name.clone()),
         );
+        // The method's `mut` bindings, its receiver included, are its own: the set starts empty and the enclosing set
+        // is restored afterwards.
+        let previous_mutable_bindings = std::mem::take(&mut self.mutable_bindings);
         if let Some(receiver) = method.receiver
             && binds_self_receiver
         {
@@ -6580,7 +6586,7 @@ impl TypeChecker {
         self.current_type_param_bound_details.pop();
         self.annotation_owner = previous_annotation_owner;
         self.current_immutable_self_method = previous_immutable_self_method;
-        self.mutable_bindings.remove("self");
+        self.mutable_bindings = previous_mutable_bindings;
         self.exit_mut_param_body(mut_param_body);
         self.symbols.exit_scope();
     }

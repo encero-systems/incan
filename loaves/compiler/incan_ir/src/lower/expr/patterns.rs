@@ -435,6 +435,9 @@ impl AstLowering {
     /// # Parameters
     ///
     /// * `arms` - The AST match arms
+    /// * `scrutinee` - The lowered scrutinee
+    /// * `in_place` - Whether the match reaches its scrutinee in place (see `in_place_matches`): each arm's pattern
+    ///   binds compiler names, and the arm binds its source names from them before the body runs
     ///
     /// # Returns
     ///
@@ -443,6 +446,7 @@ impl AstLowering {
         &mut self,
         arms: &[Spanned<ast::MatchArm>],
         scrutinee: &TypedExpr,
+        in_place: bool,
     ) -> Result<Vec<MatchArm>, LoweringError> {
         let scrutinee_ty = &scrutinee.ty;
         let subject_binding_name = Self::direct_match_subject_binding_name(scrutinee);
@@ -566,8 +570,12 @@ impl AstLowering {
                 || alternatives
                     .iter()
                     .any(|(pattern, _)| Self::pattern_holds_alternation(pattern));
+            let in_place_bindings = in_place.then(|| self.in_place_arm_bindings(&a.node.pattern));
             self.push_scope();
-            self.define_match_pattern_bindings_for_expected_type(&a.node.pattern.node, expected_ty);
+            match &in_place_bindings {
+                Some(bindings) => self.define_in_place_arm_bindings(bindings),
+                None => self.define_match_pattern_bindings_for_expected_type(&a.node.pattern.node, expected_ty),
+            }
             let arm_result = (|| {
                 let guard = self.lower_match_arm_guard(a.node.guard.as_ref(), guard_may_repeat)?;
                 let body = match &a.node.body {
@@ -583,7 +591,11 @@ impl AstLowering {
                         )
                     }
                 };
-                Ok(Self::match_arms_for_alternatives(alternatives, guard, body))
+                let mut arms = Self::match_arms_for_alternatives(alternatives, guard, body);
+                if let Some(bindings) = &in_place_bindings {
+                    bindings.apply(&mut arms);
+                }
+                Ok(arms)
             })();
             self.pop_scope();
             match arm_result {

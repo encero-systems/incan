@@ -1543,6 +1543,12 @@ pub struct ProtocolArtifacts {
     /// assignment that no branch, `break` or `continue` can skip gives the binding a new list, a closure that captured
     /// the list before the loop, and a repeat of the loop that would reach the emptied list.
     pub item_taking_iterations: HashSet<(usize, usize)>,
+    /// Scrutinee spans of the `match`, `if let` and `while let` forms whose pattern binds a view into a caller-visible
+    /// `mut` parameter that an arm changes (#1561).
+    ///
+    /// The change has to reach the parameter, so lowering matches such a scrutinee in place, through a mutable
+    /// reference, and binds each pattern name to the part of the parameter it names rather than to a copy.
+    pub in_place_match_scrutinees: HashSet<(usize, usize)>,
 }
 
 /// A typechecker-resolved user-defined operator call consumed by IR lowering.
@@ -2820,6 +2826,20 @@ impl TypeCheckInfo {
         self.protocols
             .item_taking_iterations
             .contains(&(iter_span.start, iter_span.end))
+    }
+
+    /// Record that an arm of the `match`, `if let` or `while let` over the scrutinee at `span` changes a caller-visible
+    /// `mut` parameter through a name its pattern binds (#1561).
+    pub fn record_match_scrutinee_changed_in_place(&mut self, span: Span) {
+        self.protocols.in_place_match_scrutinees.insert((span.start, span.end));
+    }
+
+    /// Return whether the scrutinee at `span` is matched in place: an arm changes a caller-visible `mut` parameter
+    /// through a name the pattern binds, so each name binds the part of the parameter it names (#1561).
+    pub fn match_scrutinee_is_changed_in_place(&self, span: Span) -> bool {
+        self.protocols
+            .in_place_match_scrutinees
+            .contains(&(span.start, span.end))
     }
 }
 

@@ -2409,7 +2409,14 @@ impl AstLowering {
     }
 
     /// Resolve a method name through per-type rebinding aliases.
+    ///
+    /// A receiver reached through a reference, such as a `mut` parameter (`&mut Counter`), names its type's aliases
+    /// as the value itself does.
     pub fn resolve_method_rebinding(&self, receiver_ty: &IrType, method_name: &str) -> String {
+        let mut receiver_ty = receiver_ty;
+        while let IrType::Ref(inner) | IrType::RefMut(inner) = receiver_ty {
+            receiver_ty = inner;
+        }
         let Some(type_name) = receiver_ty.nominal_type_name() else {
             return method_name.to_string();
         };

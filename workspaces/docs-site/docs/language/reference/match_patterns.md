@@ -181,6 +181,32 @@ def label(n: int) -> str:
     return text
 ```
 
+## Changes through bound names
+
+A subject that names a place makes each name its pattern binds part of that place. A place is a binding, `self`, a field or list element of a place, or the variable of a `for` loop over a list of a place, written with or without parentheses. A change through a bound name is an assignment to its fields or elements, a call of a method that takes `mut self` or of a changing `list`, `dict` or `set` method, or an iteration of a `Generator`.
+
+| Place the subject names | A change through a bound name |
+| --- | --- |
+| A `mut` binding or parameter, `self` in a `mut self` method, or a field or list element of one | Changes the place. |
+| A binding or parameter declared without `mut`, a static, `self` in a plain `self` method, a dict value, or a field or element of one | Refused (`INCAN-T0001`). |
+| No place, such as a call result | Changes the subject's own value. |
+
+```incan
+def fill(mut box: Option[list[int]]) -> None:
+    match box:
+        Some(xs) => xs.append(1)    # accepted: changes the caller's box
+        None => pass
+
+def main() -> None:
+    mut rows = [Some([1]), None]
+    if let Some(xs) = rows[0]:
+        xs.append(2)                # accepted: rows is [Some([1, 2]), None]
+    fixed = Some([1])
+    match fixed:
+        Some(xs) => xs.append(3)    # refused: fixed is not declared mut
+        None => pass
+```
+
 ## Coverage
 
 The unguarded arms of a `match` cover its subject. A guarded arm never counts toward coverage, an alternation counts as one arm per alternative, and a group counts as the pattern it groups. An arm whose pattern is `_` or a binding covers any subject. Otherwise:

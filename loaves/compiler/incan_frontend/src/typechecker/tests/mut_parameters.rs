@@ -702,6 +702,362 @@ def main() -> None:
     Ok(())
 }
 
+/// #1561: any use of a `Generator` parameter advances it (iterating it, collecting it, iterating it in a comprehension,
+/// passing it on to a parameter that iterates it), so an immutable binding passed for it is refused. One whose callee
+/// never touches it is refused too: an unchanged parameter receives a copy of an immutable argument, and a generator
+/// cannot be copied. A `mut` binding is accepted for each.
+#[test]
+fn generator_parameter_use_counts_as_changing_issue1561() -> Result<(), String> {
+    let callees = r#"
+def numbers(limit: int) -> Generator[int]:
+    for value in range(limit):
+        yield value
+
+def first(mut g: Generator[int]) -> int:
+    for v in g:
+        return v
+    return -1
+
+def drained(mut g: Generator[int]) -> list[int]:
+    return list(g)
+
+def doubled(mut g: Generator[int]) -> list[int]:
+    return [v * 2 for v in g]
+
+def outer(mut g: Generator[int]) -> int:
+    return first(g)
+
+def ignore(mut g: Generator[int]) -> int:
+    return 0
+"#;
+    let calls = "    println(first(g))\n    println(drained(g))\n    println(doubled(g))\n    println(outer(g))\n    println(ignore(g))\n";
+    let refused = mut_argument_refusals(&format!("{callees}\ndef main() -> None:\n    g = numbers(3)\n{calls}"));
+    assert_eq!(
+        refusals_by_callee(&refused),
+        ["first", "drained", "doubled", "outer", "ignore"],
+        "got {refused:?}"
+    );
+    for refusal in &refused[..4] {
+        assert!(
+            refusal
+                .notes
+                .iter()
+                .any(|note| note.contains("changes the parameter 'g'")),
+            "a callee that uses the generator changes it, got {:?}",
+            refusal.notes
+        );
+    }
+    assert!(
+        refused[4]
+            .notes
+            .iter()
+            .any(|note| note.contains("does not change the parameter 'g'")
+                && note.contains("'Generator[int]' cannot be copied")),
+        "an unchanged generator parameter would need a copy, got {:?}",
+        refused[4].notes
+    );
+    checked(&format!(
+        "{callees}\ndef main() -> None:\n    mut g = numbers(3)\n{calls}"
+    ))?;
+    Ok(())
+}
+
+/// #1561: the names a `match`, `if let` or `while let` pattern binds from a `mut` parameter, from a field of it or from
+/// a view into it are views into the parameter, even when one reuses the parameter's name, so a change through one is a
+/// change to the parameter and an immutable binding passed for it is refused. A pattern that only reads leaves the
+/// parameter unchanged, and the immutable binding is handed over as a copy.
+#[test]
+fn change_through_a_pattern_binding_counts_as_changing_issue1561() -> Result<(), String> {
+    let changes = r#"
+model Holder:
+    inner: Option[list[int]]
+
+def by_match(mut box: Option[list[int]]) -> None:
+    match box:
+        Some(xs) => xs.append(1)
+        None => pass
+
+def by_if_let(mut box: Option[list[int]]) -> None:
+    if let Some(xs) = box:
+        xs.append(1)
+
+def by_while_let(mut box: Option[list[int]]) -> None:
+    while let Some(xs) = box:
+        xs.append(1)
+        break
+
+def by_field(mut h: Holder) -> None:
+    match h.inner:
+        Some(xs) => xs.append(1)
+        None => pass
+
+def by_loop_view(mut rows: list[Option[list[int]]]) -> None:
+    for row in rows:
+        if let Some(xs) = row:
+            xs.append(1)
+
+def by_shadow(mut box: Option[list[int]]) -> None:
+    match box:
+        Some(box) => box.append(1)
+        None => pass
+"#;
+    let refused = mut_argument_refusals(&format!(
+        "{changes}\ndef main() -> None:\n    box = Some([0])\n    h = Holder(inner=Some([0]))\n    rows = [Some([0])]\n    by_match(box)\n    by_if_let(box)\n    by_while_let(box)\n    by_field(h)\n    by_loop_view(rows)\n    by_shadow(box)\n"
+    ));
+    assert_eq!(
+        refusals_by_callee(&refused),
+        [
+            "by_match",
+            "by_if_let",
+            "by_while_let",
+            "by_field",
+            "by_loop_view",
+            "by_shadow"
+        ],
+        "got {refused:?}"
+    );
+
+    let reads = "def total(mut box: Option[list[int]]) -> int:\n    match box:\n        Some(xs) => return len(xs)\n        None => return 0\n\ndef main() -> None:\n    box = Some([0])\n    println(total(box))\n";
+    let (_, info) = checked(reads)?;
+    let call = span_of(reads, "total(box)", 0)?;
+    assert!(
+        info.mut_argument_is_copied(Span::new(call.start + "total(".len(), call.end - 1)),
+        "a pattern that only reads leaves the parameter unchanged, so the immutable binding is copied"
+    );
+    Ok(())
+}
+
+/// #1561: a `match`, `if let` or `while let` whose arm changes a `mut` parameter through a name its pattern binds is
+/// recorded for lowering as matched in place, and so is each enclosing scrutinee the change goes through, and a field
+/// of `self` in a `mut self` method. A form whose arms only read, and one over a value the parameter does not own,
+/// are not.
+#[test]
+fn scrutinee_changed_through_a_pattern_binding_is_matched_in_place_issue1561() -> Result<(), String> {
+    let source = r#"
+model Holder:
+    pub inner: Option[list[int]]
+
+class Grid:
+    pub rows: list[Option[list[int]]]
+
+    def fill(mut self) -> None:
+        for row in self.rows:
+            if let Some(xs) = row:
+                xs.append(1)
+
+    def count(self) -> int:
+        match self.rows[0]:
+            Some(xs) => return len(xs)
+            None => return 0
+
+def fresh() -> Option[list[int]]:
+    return Some([0])
+
+def changes(mut box: Option[Option[list[int]]], mut h: Holder, mut other: Option[list[int]]) -> int:
+    match box:
+        Some(inner) =>
+            match inner:
+                Some(xs) => xs.append(1)
+                None => pass
+        None => pass
+    if let Some(ys) = h.inner:
+        ys.append(2)
+    while let Some(zs) = other:
+        zs.append(3)
+        break
+    match other:
+        Some(ws) => return len(ws)
+        None => pass
+    match fresh():
+        Some(vs) => vs.append(4)
+        None => pass
+    return 0
+"#;
+    let (_, info) = checked(source)?;
+    for (header, scrutinee, occurrence, in_place) in [
+        ("match box:", "box", 0, true),
+        ("match inner:", "inner", 0, true),
+        ("= h.inner:", "h.inner", 0, true),
+        ("= other:", "other", 0, true),
+        ("match other:", "other", 0, false),
+        ("match fresh():", "fresh()", 0, false),
+        ("= row:", "row", 0, true),
+        ("match self.rows[0]:", "self.rows[0]", 0, false),
+    ] {
+        let header_span = span_of(source, header, occurrence)?;
+        let start = header_span.end - 1 - scrutinee.len();
+        assert_eq!(
+            info.match_scrutinee_is_changed_in_place(Span::new(start, start + scrutinee.len())),
+            in_place,
+            "`{header}` matches `{scrutinee}` in place: {in_place}"
+        );
+    }
+    Ok(())
+}
+
+/// #1561: a change through a name a pattern binds from a place that does not permit it is refused (`INCAN-T0001`),
+/// naming the place: a binding or parameter declared without `mut`, a static, `self` in a plain `self` method, a dict
+/// value, and the variable of a loop over an immutable list. A pattern that only reads, a direct change to an immutable
+/// local, a subject that is no place, and a method the checker cannot classify are not refused.
+#[test]
+fn change_through_a_pattern_binding_of_a_read_only_place_is_refused_issue1561() -> Result<(), String> {
+    let refused = r#"
+static BOX: Option[list[int]] = Some([1])
+
+class Holder:
+    pub inner: Option[list[int]]
+
+    def fill(self) -> None:
+        match self.inner:
+            Some(xs) => xs.append(1)
+            None => pass
+
+def by_param(box: Option[list[int]]) -> None:
+    if let Some(xs) = box:
+        xs.append(1)
+
+def main() -> None:
+    fixed = Some([1])
+    match fixed:
+        Some(xs) => xs.append(1)
+        None => pass
+    match BOX:
+        Some(xs) => xs.append(1)
+        None => pass
+    mut table = {"a": Some([1])}
+    match table["a"]:
+        Some(xs) => xs.append(1)
+        None => pass
+    rows = [Some([1])]
+    for row in rows:
+        while let Some(xs) = row:
+            xs.append(1)
+            break
+"#;
+    let messages = check_errors(refused)
+        .into_iter()
+        .map(|error| {
+            assert_eq!(
+                error.stable_code(),
+                None,
+                "the refusal takes the typecheck code INCAN-T0001: {error:?}"
+            );
+            error.message
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        messages,
+        [
+            "Cannot change 'xs' - it is bound from 'self', which this method takes as plain 'self'",
+            "Cannot change 'xs' - it is bound from the parameter 'box', which is not declared 'mut'",
+            "Cannot change 'xs' - it is bound from 'fixed', which is immutable",
+            "Cannot change 'xs' - it is bound from the static 'BOX', which a pattern cannot change in place",
+            "Cannot change 'xs' - it is bound from a dict value, which a pattern binds as a copy",
+            "Cannot change 'xs' - it is bound from 'rows', which is immutable",
+        ]
+    );
+
+    checked(
+        r#"
+from std.async.task import TaskJoinError
+
+def fresh() -> Option[list[int]]:
+    return Some([1])
+
+def describe(result: Result[int, TaskJoinError]) -> str:
+    match result:
+        Ok(_) => return "ok"
+        Err(error) => return error.message()
+
+def main() -> None:
+    fixed = Some([1, 2])
+    match fixed:
+        Some(xs) => println(len(xs))
+        None => pass
+    items = [1]
+    items.append(2)
+    match fresh():
+        Some(xs) => xs.append(3)
+        None => pass
+"#,
+    )?;
+    Ok(())
+}
+
+/// #1561: a method call changes a `mut` parameter exactly when the one receiver classifier says so: a builtin
+/// collection method by its registry entry, and a declared method by its declarations, a method alias by its target and
+/// a method the type does not declare by the trait that provides it. A call that only reads leaves an immutable binding
+/// handed over as a copy; a call that changes the receiver refuses it.
+#[test]
+fn method_receiver_change_follows_its_declaration_issue1561() -> Result<(), String> {
+    let callees = r#"
+trait Peek:
+    def peek(self) -> int:
+        return 7
+
+trait Bump:
+    def bump(mut self) -> None:
+        pass
+
+class Counter with Peek, Bump:
+    n: int
+    look = read
+    grow = add
+
+    def read(self) -> int:
+        return self.n
+
+    def add(mut self) -> None:
+        self.n += 1
+
+def counted(mut items: list[int]) -> int:
+    return items.count(1)
+
+def appended(mut items: list[int]) -> None:
+    items.append(1)
+
+def looked(mut c: Counter) -> int:
+    return c.look()
+
+def grown(mut c: Counter) -> None:
+    c.grow()
+
+def peeked(mut c: Counter) -> int:
+    return c.peek()
+
+def bumped(mut c: Counter) -> None:
+    c.bump()
+
+def main() -> None:
+    items = [1, 2]
+    c = Counter(n=1)
+    println(counted(items))
+    appended(items)
+    println(looked(c))
+    grown(c)
+    println(peeked(c))
+    bumped(c)
+"#;
+    let refused = mut_argument_refusals(callees);
+    assert_eq!(
+        refusals_by_callee(&refused),
+        ["appended", "grown", "bumped"],
+        "got {refused:?}"
+    );
+    let (_, info) = checked(
+        &callees
+            .replace("    appended(items)\n", "")
+            .replace("    grown(c)\n", "")
+            .replace("    bumped(c)\n", ""),
+    )?;
+    assert_eq!(
+        info.calls.mut_argument_copies.len(),
+        3,
+        "`count`, a method alias of a plain-`self` method and a plain-`self` trait method only read, so each immutable binding is copied"
+    );
+    Ok(())
+}
+
 /// Return the callee each `INCAN-T0117` refusal names, in order.
 fn refusals_by_callee(refusals: &[CompileError]) -> Vec<String> {
     refusals

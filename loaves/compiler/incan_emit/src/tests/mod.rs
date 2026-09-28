@@ -7,6 +7,7 @@ mod generic_caller_bounds;
 mod lowering_through_emission;
 mod mut_marker_publication;
 mod mut_ownership_regressions;
+mod mut_parameter_changes;
 mod numeric_operator_emission;
 mod packages;
 mod partial_preset_emission;

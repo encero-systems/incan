@@ -59,6 +59,7 @@ mod mut_arguments;
 mod mut_marker;
 mod nominal_type_param_bounds;
 mod reachability;
+mod receiver_change;
 mod reserved_names;
 pub mod stdlib_loader;
 mod trait_bound_relations;
@@ -479,7 +480,8 @@ pub struct TypeChecker {
     ///
     /// These are produced during typechecking but do not cause `check_*` to fail.
     pub warnings: Vec<CompileError>,
-    /// Track which bindings are mutable for mutation checks.
+    /// The `mut` bindings of the body being checked, by name, which a Rust or C boundary that needs a mutable argument
+    /// admits. Each function and method body starts with an empty set and restores the enclosing one when it ends.
     pub mutable_bindings: HashSet<String>,
     /// Caller-visible `mut` parameters: which callables declare them, which the checked bodies change, and the call
     /// arguments waiting to be decided once the module's bodies are known (#1773, `INCAN-T0117`).
@@ -6769,6 +6771,7 @@ impl TypeChecker {
         self.warnings.clear();
         self.errors.clear();
         self.pending_uncopyable_dict_lookups.clear();
+        self.mutable_bindings.clear();
         self.static_alias_bindings.clear();
         self.testing_marker_import_bindings.clear();
         self.surface_function_import_bindings.clear();

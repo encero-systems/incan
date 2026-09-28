@@ -315,7 +315,8 @@ impl TypeChecker {
         }
     }
 
-    /// Whether a value of type `ty` cannot be copied, so a lookup that keeps one is refused.
+    /// Whether a value of type `ty` cannot be copied, so a lookup that keeps one is refused (`INCAN-T0118`), and so is
+    /// an immutable argument that would reach an unchanged `mut` parameter as a copy (`INCAN-T0117`).
     ///
     /// This asks the relation `is_clone_type` answers, looking through containers, with three differences: a type
     /// parameter is given the `Clone` bound where a lookup copies it (see trait bound inference); a Rust type counts
@@ -328,7 +329,7 @@ impl TypeChecker {
     /// Rust-backed wrapper such as `JoinHandle[T]` has no `Clone` whatever `T` is, so only the collection kinds whose
     /// `Clone` genuinely reduces to their arguments' are looked through; any other generic type asks `is_clone_type`
     /// for the whole type, which consults the derive registry for it.
-    fn value_type_cannot_be_copied(&self, ty: &ResolvedType) -> bool {
+    pub(in crate::typechecker) fn value_type_cannot_be_copied(&self, ty: &ResolvedType) -> bool {
         match ty {
             ResolvedType::RustPath(path) => self.rust_type_proven_not_clone(path),
             ResolvedType::TypeVar(_) => false,

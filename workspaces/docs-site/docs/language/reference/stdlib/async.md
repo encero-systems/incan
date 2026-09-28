@@ -139,6 +139,8 @@ A `for` loop over a list binding takes the items out of the list, leaving it emp
 - each item is a `JoinHandle[T]`, or a tuple or collection that contains one;
 - the loop body uses by value a loop binding that holds a handle: it awaits it, passes it as an argument to a function, method or constructor other than a builtin function, assigns it to another name, returns or yields it, breaks with it, puts it in a new tuple, list or set or as a value in a new dict, or iterates it (a list of handles) in a nested `for` loop that takes its items.
 
+A `for` loop over a list literal, a list comprehension or a call result receives each handle by value in the same way. A `for` loop over a list element, a field, a `list`, `dict` or `set` method such as `values()`, `enumerate(...)`, `zip(...)`, a `mut` parameter, or the variable of a `for` loop that reads its items in place is refused (`INCAN-T0119`), since none of those give up ownership of the handle.
+
 Refused (`INCAN-T0119`):
 
 - a read of the list inside the loop body;

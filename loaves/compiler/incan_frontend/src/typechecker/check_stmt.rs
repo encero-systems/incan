@@ -1575,11 +1575,14 @@ impl TypeChecker {
             // ---- Context: pattern-driven `while let` loop ----
             Condition::Let { pattern, value } => {
                 let value_ty = self.check_expr(value);
+                let view_param = self.pattern_view_param(value);
                 self.symbols.enter_scope(ScopeKind::Block);
                 self.check_pattern(pattern, &value_ty);
+                let views = self.enter_pattern_views(&pattern.node, view_param);
                 self.push_loop_context(LoopContextKind::Statement, None, span.start);
                 self.check_statement_block(&while_stmt.body);
                 let _ = self.pop_loop_context();
+                self.exit_pattern_views(views);
                 self.symbols.exit_scope();
                 self.note_dict_lookup_let(value, pattern, &while_stmt.body);
             }
@@ -1627,7 +1630,7 @@ impl TypeChecker {
                 self.infer_iterator_element_type_from_expr(&for_stmt.iter, &iter_ty)
             }
         };
-        let takes_items = self.plan_for_item_taking(for_stmt, &elem_ty);
+        let owns_items = self.plan_for_item_taking(for_stmt, &elem_ty);
 
         // The iterated parameter is resolved before the loop's bindings shadow it (`for items in items:`).
         let loop_view_param = self.loop_view_param(&for_stmt.iter);
@@ -1638,7 +1641,7 @@ impl TypeChecker {
         // bindings would carry `Unknown` even though the element type is fully resolved right here.
         self.record_expr_type(for_stmt.pattern.span, elem_ty.clone());
         self.define_for_pattern_bindings(&for_stmt.pattern, &elem_ty);
-        self.remember_for_pattern_bindings(&for_stmt.pattern.node, takes_items);
+        self.remember_for_pattern_bindings(&for_stmt.pattern.node, owns_items);
         self.push_loop_context(LoopContextKind::Statement, None, span.start);
         let loop_body = self.enter_for_loop_body(&for_stmt.pattern.node, loop_view_param);
 
@@ -1846,10 +1849,13 @@ impl TypeChecker {
             Condition::Expr(expr) => self.check_expr_condition_body(expr, body, incoming_refinements),
             Condition::Let { pattern, value } => {
                 let value_ty = self.check_expr(value);
+                let view_param = self.pattern_view_param(value);
                 self.symbols.enter_scope(ScopeKind::Block);
                 self.apply_branch_refinements(incoming_refinements);
                 self.check_pattern(pattern, &value_ty);
+                let views = self.enter_pattern_views(&pattern.node, view_param);
                 self.check_statement_block(body);
+                self.exit_pattern_views(views);
                 self.symbols.exit_scope();
                 self.note_dict_lookup_let(value, pattern, body);
                 None
@@ -2090,11 +2096,15 @@ impl TypeChecker {
     }
 
     /// Infer a loop item type from an iterable expression, falling back to structural `__iter__` / `__next__` hooks.
+    ///
+    /// Every `for` statement and comprehension clause iterates through here, so this is also where iterating a
+    /// generator that a caller-visible `mut` parameter holds is recorded as a change to the parameter.
     pub fn infer_iterator_element_type_from_expr(
         &mut self,
         iter_expr: &Spanned<Expr>,
         iter_ty: &ResolvedType,
     ) -> ResolvedType {
+        self.note_mut_param_iteration(iter_expr, iter_ty);
         if iter_ty.iterator_item_type().is_some()
             && let Expr::Ident(name) = &iter_expr.node
         {

@@ -1074,6 +1074,62 @@ pub fn mutation_without_mut(name: &str, span: Span) -> CompileError {
         .with_note("This prevents accidental modifications and makes code easier to reason about")
 }
 
+/// The place a pattern bound a name from, when that place does not permit a change through the name (#1561).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadOnlyScrutinee<'a> {
+    /// A local binding declared without `mut`.
+    Binding(&'a str),
+    /// A parameter declared without `mut`.
+    Parameter(&'a str),
+    /// A module static, which a pattern cannot bind in place.
+    Static(&'a str),
+    /// `self` in a method that takes a plain `self` receiver.
+    SelfReceiver,
+    /// A dict value, which a pattern binds as a copy.
+    DictValue,
+}
+
+/// Refuse a change through a name a `match`, `if let` or `while let` pattern binds from a place that does not permit
+/// it (#1561).
+///
+/// A name a pattern binds from a place is part of that place, so a change through the name is a change to the place:
+/// a `mut` binding or parameter, a field or list element of one, or `self` in a `mut self` method takes the change. The
+/// place named by `place` does not, so the change is refused rather than applied to a copy. `binding` is the name the
+/// change goes through.
+pub fn change_through_binding_of_read_only_place(
+    binding: &str,
+    place: ReadOnlyScrutinee<'_>,
+    span: Span,
+) -> CompileError {
+    let (source, hint) = match place {
+        ReadOnlyScrutinee::Binding(name) => (
+            format!("'{name}', which is immutable"),
+            format!("Declare '{name}' with 'mut' to change it through '{binding}': mut {name} = ..."),
+        ),
+        ReadOnlyScrutinee::Parameter(name) => (
+            format!("the parameter '{name}', which is not declared 'mut'"),
+            format!("Declare the parameter 'mut' to change the caller's value through '{binding}': mut {name}: ..."),
+        ),
+        ReadOnlyScrutinee::Static(name) => (
+            format!("the static '{name}', which a pattern cannot change in place"),
+            format!("Bind the value to a 'mut' variable, change it, and assign it back to '{name}'"),
+        ),
+        ReadOnlyScrutinee::SelfReceiver => (
+            "'self', which this method takes as plain 'self'".to_string(),
+            "Declare the method with 'mut self' to change its fields through a pattern".to_string(),
+        ),
+        ReadOnlyScrutinee::DictValue => (
+            "a dict value, which a pattern binds as a copy".to_string(),
+            "Bind the value to a 'mut' variable, change it, and store it back into the dict".to_string(),
+        ),
+    };
+    CompileError::type_error(format!("Cannot change '{binding}' - it is bound from {source}"), span)
+        .with_hint(hint)
+        .with_note(
+            "A name a pattern binds from a place is part of that place, so a change through the name changes the place",
+        )
+}
+
 /// How a method body changes the object its plain `self` receiver names (#1723).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelfMutation<'a> {
@@ -1181,9 +1237,54 @@ pub fn immutable_argument_to_mut_parameter(
     place: MutArgumentPlace,
     span: Span,
 ) -> CompileError {
-    let binding = parameter.binding_name();
+    let hint = mut_argument_hint(&place, parameter);
     let parameter = parameter.in_sentence();
-    let hint = match &place {
+    CompileError::type_error(
+        format!("Argument for the 'mut' parameter {parameter} of '{callee}' must be a mutable binding"),
+        span,
+    )
+    .with_stable_code("INCAN-T0117")
+    .with_hint(hint)
+    .with_note(format!(
+        "'{callee}' {} the parameter {parameter}, and its changes are visible to the caller, so the caller passes a binding declared with 'mut'",
+        match change {
+            MutParameterChange::Changes => "changes",
+            MutParameterChange::MayChange => "may change",
+        }
+    ))
+}
+
+/// Refuse an immutable argument for a `mut` parameter whose changes reach the caller when the callee does not change
+/// the parameter but the argument cannot be copied (#1561).
+///
+/// An argument the caller may not change reaches a parameter the call never changes as a copy of its value. A value of
+/// `value_type`, such as a `Generator`, has no copy, so the argument has to be a place the caller may change, as for a
+/// parameter the call changes. `parameter`, `callee` and `place` are as for [`immutable_argument_to_mut_parameter`].
+/// `INCAN-T0117` is its stable code.
+pub fn uncopyable_argument_to_mut_parameter(
+    parameter: MutParameterLabel<'_>,
+    callee: &str,
+    value_type: &str,
+    place: MutArgumentPlace,
+    span: Span,
+) -> CompileError {
+    let hint = mut_argument_hint(&place, parameter);
+    let parameter = parameter.in_sentence();
+    CompileError::type_error(
+        format!("Argument for the 'mut' parameter {parameter} of '{callee}' must be a mutable binding"),
+        span,
+    )
+    .with_stable_code("INCAN-T0117")
+    .with_hint(hint)
+    .with_note(format!(
+        "'{callee}' does not change the parameter {parameter}, so an argument the caller may not change is passed as a copy, and a '{value_type}' cannot be copied"
+    ))
+}
+
+/// Spell the remedy for an `INCAN-T0117` argument: declare the binding `mut`, or pass a `mut` variable in its place.
+fn mut_argument_hint(place: &MutArgumentPlace, parameter: MutParameterLabel<'_>) -> String {
+    let binding = parameter.binding_name();
+    match place {
         MutArgumentPlace::Binding(name) => format!("Declare '{name}' with 'mut' where it is bound: mut {name} = ..."),
         MutArgumentPlace::Field => "Declare the binding the field belongs to with 'mut'".to_string(),
         MutArgumentPlace::Element | MutArgumentPlace::Static => format!(
@@ -1198,23 +1299,8 @@ pub fn immutable_argument_to_mut_parameter(
         MutArgumentPlace::LoopVariable {
             name,
             destructured: true,
-        } => format!(
-            "A 'for' loop variable cannot be declared 'mut', so '{name}' cannot be passed to a parameter the call changes"
-        ),
-    };
-    CompileError::type_error(
-        format!("Argument for the 'mut' parameter {parameter} of '{callee}' must be a mutable binding"),
-        span,
-    )
-    .with_stable_code("INCAN-T0117")
-    .with_hint(hint)
-    .with_note(format!(
-        "'{callee}' {} the parameter {parameter}, and its changes are visible to the caller, so the caller passes a binding declared with 'mut'",
-        match change {
-            MutParameterChange::Changes => "changes",
-            MutParameterChange::MayChange => "may change",
-        }
-    ))
+        } => format!("A 'for' loop variable cannot be declared 'mut', so '{name}' cannot be passed to this parameter"),
+    }
 }
 
 /// Refuse rebinding a `mut` parameter whose changes reach the caller inside its own body (#1773).
@@ -2918,6 +3004,61 @@ pub fn taken_list_used_again(
              cloned, so the loop takes the items out of `{list}`"
         ))
         .with_hint(hint)
+}
+
+/// What a `for` loop that has to take its items out iterates instead of a list it can take them from (#1561).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UntakeableIterable<'a> {
+    /// A `mut` parameter, whose items belong to the caller.
+    MutParameter(&'a str),
+    /// The variable of an enclosing `for` loop that reads its items in place.
+    InPlaceLoopVariable(&'a str),
+    /// Another binding that is not a local list, such as a static.
+    Binding(&'a str),
+    /// An element of a list or a value of a dict.
+    Element,
+    /// A field.
+    Field,
+    /// The result of a `list`, `dict` or `set` method, such as `values()`, by method name.
+    CollectionMethod(&'a str),
+    /// `enumerate(...)` or `zip(...)`, by name, which pair up the items of what they iterate.
+    Adapter(&'a str),
+    /// Any other expression.
+    Other,
+}
+
+/// Refuse a `for` loop that has to take its items out of what it iterates and cannot (#1561).
+///
+/// The loop body hands each item on by value and `item_ty` can be neither copied nor cloned, so the loop has to take
+/// the items out of `iterable`, which is only possible for a local list, the variable of an enclosing loop that owns
+/// its items, a parameter not marked `mut`, or a new list such as a call result. `span` is the iterable.
+/// `INCAN-T0119` is its stable code.
+pub fn loop_cannot_take_items(iterable: UntakeableIterable<'_>, item_ty: &str, span: Span) -> CompileError {
+    let what = match iterable {
+        UntakeableIterable::MutParameter(name) => {
+            format!("`{name}`, a `mut` parameter whose items belong to the caller")
+        }
+        UntakeableIterable::InPlaceLoopVariable(name) => {
+            format!("`{name}`, the variable of a `for` loop that reads its items in place")
+        }
+        UntakeableIterable::Binding(name) => format!("`{name}`"),
+        UntakeableIterable::Element => "a list element or dict value".to_string(),
+        UntakeableIterable::Field => "a field".to_string(),
+        UntakeableIterable::CollectionMethod(method) => format!("`{method}()`, which reads the collection in place"),
+        UntakeableIterable::Adapter(name) => format!("`{name}(...)`, which reads what it iterates in place"),
+        UntakeableIterable::Other => "this iterable".to_string(),
+    };
+    CompileError::type_error(
+        format!("the `for` loop cannot take its `{item_ty}` items out of {what}"),
+        span,
+    )
+    .with_stable_code("INCAN-T0119")
+    .with_note(format!(
+        "The loop body hands each `{item_ty}` item on by value, and a `{item_ty}` can be neither copied nor cloned, so \
+         the loop has to take the items out of what it iterates: a local list, the variable of an enclosing loop that \
+         owns its items, a parameter not marked `mut`, or a new list such as a call result"
+    ))
+    .with_hint("Iterate a local list or a parameter not marked `mut` that holds the items, or take the items out one at a time with `pop()`")
 }
 
 pub fn string_index_assignment_not_allowed(span: Span) -> CompileError {

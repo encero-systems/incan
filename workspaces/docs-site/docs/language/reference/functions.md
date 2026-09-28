@@ -65,7 +65,7 @@ A closure reads each outer local it names as the value that local holds when the
 | Rebinding           | The body does not assign a new value to a marked parameter: `items = []` and `label += "!"` are refused with `INCAN-T0001`. |
 | Holding             | The body does not hold a marked parameter in another name or value. Each form in the table below is refused with `INCAN-T0001`. Passing the parameter as an argument to any other call is accepted, `rows.append(items)` included. |
 | Changing calls      | A call changes a marked parameter in the cases that [Changing calls](#changing-calls) lists. |
-| Arguments           | For a marked parameter that the call changes, the argument is a `mut` binding or parameter, `self` in a `mut self` method, a field of one of those, or a temporary such as a literal or a call result. An immutable binding or a field of one, an element of a list or a value of a dict, a static, and the variable of a `for` loop are refused with `INCAN-T0117`. For a marked parameter that the call does not change, any argument is accepted. |
+| Arguments           | For a marked parameter that the call changes, the argument is a `mut` binding or parameter, `self` in a `mut self` method, a field of one of those, or a temporary such as a literal or a call result. An immutable binding or a field of one, an element of a list or a value of a dict, a static, and the variable of a `for` loop are refused with `INCAN-T0117`. For a marked parameter that the call does not change, any argument is accepted, except one of those whose type cannot be copied, such as a `Generator`, which is refused with `INCAN-T0117`. |
 | Libraries           | A published function keeps its marked parameters: a consumer sees the function type the producer checked. |
 | Closures            | A closure checked against a function type has each parameter that type marks marked in its own type. |
 
@@ -85,8 +85,10 @@ A marked parameter is held, and refused with `INCAN-T0001`, by each of these:
 
 A call changes a marked parameter when:
 
-- the body that runs assigns to the parameter's elements or fields, passes it to a marked parameter that a call it makes changes, or calls on it a method that takes `mut self`, a `list` method other than `clone`, `contains`, `count` and `index`, a `dict` method other than `keys`, `values`, `get` and `contains_key`, or a `set` method other than `contains`;
+- the body that runs assigns to the parameter's elements or fields, passes it to a marked parameter that a call it makes changes, or calls on it a method that takes `mut self` (declared by the parameter's type, named through a method alias, or provided by a trait the type adopts), a `list` method other than `clone`, `contains`, `count` and `index`, a `dict` method other than `keys`, `values`, `get` and `contains_key`, or a `set` method other than `contains`;
+- the parameter is a `Generator`, and the body that runs uses it: iterating it, calling one of its methods and passing it to a call each advance it;
 - the body that runs changes an element through the variable of a `for` loop over the parameter, over a field of it, or over the variable of an enclosing such loop, for a list whose elements are not `int`, `float` or `bool` (`for row in items: row.append(3)`);
+- the body that runs changes a value through a name that a `match`, `if let` or `while let` pattern binds from the parameter, from a field of it, or from such a loop variable or name (`match box: Some(xs) => xs.append(1)`);
 - the call is a method call through a type parameter's bound, on `self` in a trait's default method, or on a trait-typed value;
 - the callee is known only by a function type that marks the parameter, such as a parameter of function type or a function of a compiled library;
 - the call goes through a local bound to a function, and the local is reassigned in the module.

@@ -104,8 +104,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/mod.rs",
-      "sha256": "63ea1ecfe21e81ec5ca3ac8a00dc408ca9db1119c6e07bb2917af1e8b2e1ee35",
-      "lines": 4481
+      "sha256": "bf7e2a58a2c5bd4edd797bbe36a2e3db17c8ea0d746f903d0935fab2890b44bb",
+      "lines": 4490
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/structs_enums.rs",
@@ -520,6 +520,21 @@
       "behavior_evidence": "emit tests tuple_element_places (tuple_element_method_changes_the_tuple_in_place_issue1561, tuple_element_of_a_field_changes_in_place_issue1561, writes_through_a_tuple_element_change_the_tuple_issue1561, mut_tuple_parameter_elements_are_places_issue1561) build and run the generated Rust; behavior fixtures ownership_values_and_fields/tuple_elements_changed_in_place.incn and ownership_parameters_and_receivers/mut_tuple_parameter_elements_changed_in_place.incn",
       "semantic_owner": "#1561: lowering spells a tuple element place as a field named by its position (TypedExpr::tuple_element) and incan_ir::expr::positional_field_index reads the position back; this lvalue adapter only spells that position as a positional member instead of an identifier",
       "retirement_condition": "#654: the Rust-source backend is deleted; Body IR projects tuple element places from the source model"
+    },
+    {
+      "kind": "change",
+      "pr": null,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/mod.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "1561",
+      "behavior_evidence": "unit test change_through_a_pattern_binding_of_a_mut_local_reaches_it_issue1561 in loaves/compiler/incan_emit/src/tests/mut_parameter_changes.rs, which fails without the change (the in-place scrutinee rows[0] is read out through list_get and the change is lost); behavior fixture cli_values_and_calls/mut_local_changed_through_a_pattern_binding.incn",
+      "semantic_owner": "#1561: the checker fact TypeCheckInfo::match_scrutinee_is_changed_in_place, which lowering (incan_ir lower/expr/in_place_matches.rs) turns into a UnaryOp::RefMut scrutinee; the emitter only borrows that operand as a place",
+      "retirement_condition": "the Rust-source backend is deleted (#654); the replacement route matches the recorded place in place from the checked fact"
     }
   ]
 }

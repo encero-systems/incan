@@ -1285,6 +1285,15 @@ impl<'a> IrEmitter<'a> {
 
             IrExprKind::BinOp { op, left, right } => self.emit_binop_expr(op, left, right),
 
+            // A mutable borrow borrows its operand as a place, so a list element is reached through `list_get_mut`
+            // rather than read out (#1561).
+            IrExprKind::UnaryOp {
+                op: UnaryOp::RefMut,
+                operand,
+            } => {
+                let o = self.emit_lvalue_expr(operand)?;
+                Ok(quote! { (&mut #o) })
+            }
             IrExprKind::UnaryOp { op, operand } => {
                 let o = self.emit_expr(operand)?;
                 match op {

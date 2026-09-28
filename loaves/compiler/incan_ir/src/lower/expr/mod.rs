@@ -14,12 +14,15 @@ mod display_operands;
 mod error_display;
 mod frozen_reads;
 mod helpers;
+mod in_place_matches;
 mod pattern_alternatives;
 mod patterns;
 mod pub_default_constructions;
 mod static_method_args;
 mod stdlib_defaults;
 mod union_owner;
+
+pub(in crate::lower) use in_place_matches::InPlaceArmBindings;
 
 use std::collections::HashMap;
 
@@ -2718,7 +2721,13 @@ impl AstLowering {
             // ---- Match expressions (delegated to patterns submodule) ----
             ast::Expr::Match(s, arms) => {
                 let scrutinee = self.lower_expr_spanned(s)?;
-                let arms_ir = self.lower_match_arms(arms, &scrutinee)?;
+                let in_place = self.match_is_in_place(s.span, &scrutinee);
+                let scrutinee = if in_place {
+                    Self::in_place_scrutinee(scrutinee)
+                } else {
+                    scrutinee
+                };
+                let arms_ir = self.lower_match_arms(arms, &scrutinee, in_place)?;
                 let ty = arms_ir.first().map(|a| a.body.ty.clone()).unwrap_or(IrType::Unknown);
                 (
                     IrExprKind::Match {

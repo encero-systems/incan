@@ -276,6 +276,23 @@ impl AstLowering {
         ))
     }
 
+    /// Lower the body of an `if let` or `while let` arm, with the source names of an in-place pattern (see
+    /// `expr::in_place_matches`) defined as the body sees them.
+    fn lower_let_arm_body(
+        &mut self,
+        stmts: &[Spanned<ast::Statement>],
+        in_place_bindings: Option<&super::expr::InPlaceArmBindings>,
+    ) -> Result<TypedExpr, LoweringError> {
+        let Some(bindings) = in_place_bindings else {
+            return self.lower_block_expr(stmts, true);
+        };
+        self.push_scope();
+        self.define_in_place_arm_bindings(bindings);
+        let body = self.lower_block_expr(stmts, true);
+        self.pop_scope();
+        body
+    }
+
     /// Lower `elif` / `else` branches into nested IR `if` statements.
     ///
     /// The returned statement list becomes the else-branch payload for the preceding branch, which lets `if let` reuse
@@ -1373,7 +1390,15 @@ impl AstLowering {
                         ast::Condition::Let { pattern, value } => {
                             let else_branch = self.lower_if_else_chain(&i.elif_branches, i.else_body.as_deref())?;
                             let scrutinee = self.lower_expr_spanned(value)?;
-                            let then_body = self.lower_block_expr(&i.then_body, true)?;
+                            let in_place_bindings = self
+                                .match_is_in_place(value.span, &scrutinee)
+                                .then(|| self.in_place_arm_bindings(pattern));
+                            let scrutinee = if in_place_bindings.is_some() {
+                                Self::in_place_scrutinee(scrutinee)
+                            } else {
+                                scrutinee
+                            };
+                            let then_body = self.lower_let_arm_body(&i.then_body, in_place_bindings.as_ref())?;
                             let fallback_body = TypedExpr::new(
                                 IrExprKind::Block {
                                     stmts: else_branch.unwrap_or_default(),
@@ -1385,6 +1410,9 @@ impl AstLowering {
                             let alternatives =
                                 Self::plan_arm_alternatives(self.lower_pattern(&pattern.node), false, &scrutinee);
                             let mut arms = Self::match_arms_for_alternatives(alternatives, None, then_body);
+                            if let Some(bindings) = &in_place_bindings {
+                                bindings.apply(&mut arms);
+                            }
                             arms.push(MatchArm {
                                 pattern: IrPattern::Wildcard,
                                 bindings: Vec::new(),
@@ -1419,7 +1447,15 @@ impl AstLowering {
                         }
                         ast::Condition::Let { pattern, value } => {
                             let scrutinee = self.lower_expr_spanned(value)?;
-                            let body_expr = self.lower_block_expr(&w.body, true)?;
+                            let in_place_bindings = self
+                                .match_is_in_place(value.span, &scrutinee)
+                                .then(|| self.in_place_arm_bindings(pattern));
+                            let scrutinee = if in_place_bindings.is_some() {
+                                Self::in_place_scrutinee(scrutinee)
+                            } else {
+                                scrutinee
+                            };
+                            let body_expr = self.lower_let_arm_body(&w.body, in_place_bindings.as_ref())?;
                             let break_expr = TypedExpr::new(
                                 IrExprKind::Block {
                                     stmts: vec![IrStmt::new(IrStmtKind::Break {
@@ -1434,6 +1470,9 @@ impl AstLowering {
                             let alternatives =
                                 Self::plan_arm_alternatives(self.lower_pattern(&pattern.node), false, &scrutinee);
                             let mut arms = Self::match_arms_for_alternatives(alternatives, None, body_expr);
+                            if let Some(bindings) = &in_place_bindings {
+                                bindings.apply(&mut arms);
+                            }
                             arms.push(MatchArm {
                                 pattern: IrPattern::Wildcard,
                                 bindings: Vec::new(),

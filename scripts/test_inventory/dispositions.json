@@ -3345,6 +3345,36 @@
       },
       "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/mutation_ownership_regressions.incn"
     },
+    "loaves/compiler/incan_emit/src/tests/mut_parameter_changes.rs": {
+      "disposition": "retire",
+      "notes": "builds and runs the Rust emission gives a `mut` `Generator` parameter the callee advances, `mut` parameters read through a `match` binding, a plain-`self` trait method or a method on `Self`, each handed an immutable binding as a copy, `mut` parameters and `mut` locals changed through a pattern binding, and method aliases called on `mut` parameters (#1561); generated Rust dies with #654.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "change_through_a_pattern_binding_of_a_mut_local_reaches_it_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/mut_local_changed_through_a_pattern_binding.incn",
+          "notes": "Asserts that generated Rust builds and prints each changed local; the behavior, `match`, `if let` and `while let` arms changing a `mut` local, a field, a list element and a loop variable of one through pattern bindings, and a read-only arm leaving an immutable local as it is, is carried by the named fixture (#1561)."
+        },
+        "change_through_a_pattern_binding_reaches_the_caller_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/mut_parameter_changed_through_a_pattern_binding.incn",
+          "notes": "Asserts that generated Rust builds and prints each changed value; the behavior, `match`, `if let` and `while let` arms changing `mut` parameters, a field, a loop variable, nested bindings, a `match` value, a guarded arm, a copy beside the change and a `mut self` field through pattern bindings, is carried by the named fixture (#1561)."
+        },
+        "generator_parameter_advanced_by_the_callee_reaches_the_caller_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/generator_mut_parameter_advanced_by_the_callee.incn",
+          "notes": "Asserts that generated Rust builds and prints each next item, and that an immutable generator is refused with `INCAN-T0117`; the behavior, three calls advancing the caller's generator directly and through a function that passes it on, is carried by the named fixture, and the refusal by `cli_refusals/refused_immutable_generator_argument_to_mut_parameter.incn` (#1561)."
+        },
+        "method_alias_on_a_mut_parameter_calls_its_target_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/method_alias_on_a_mut_parameter.incn",
+          "notes": "Asserts that generated Rust builds and prints each aliased call's result; the behavior, model, class and newtype method aliases called on `mut` parameters, is carried by the named fixture (#1561)."
+        },
+        "parameter_read_through_a_pattern_or_a_trait_method_takes_a_copy_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/mut_parameter_read_through_a_pattern_or_a_trait_method.incn",
+          "notes": "Asserts that generated Rust builds and prints the values read through the copies; the behavior, immutable bindings accepted by `mut` parameters read only through a `match` binding, a plain-`self` trait method and a method on `Self`, is carried by the named fixture (#1561)."
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/tests/numeric_operator_emission.rs": {
       "disposition": "retire",
       "notes": "generated-Rust text of numeric operators: the typed `**` receiver, the checked zero-divisor helpers, exact-width integer arithmetic, `f64` as `float`, and lossless numeric widening at every destination (RFC 009).",

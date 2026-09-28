@@ -214,6 +214,7 @@ impl TypeChecker {
             None
         };
         let mut remaining_union_members = subject_ty.union_members().map(|members| members.to_vec());
+        let view_param = self.pattern_view_param(subject);
 
         self.check_match_exhaustiveness(&subject_ty, arms, _span);
 
@@ -227,6 +228,7 @@ impl TypeChecker {
 
             self.symbols.enter_scope(ScopeKind::Block);
             self.check_pattern(&arm.node.pattern, expected_ty);
+            let views = self.enter_pattern_views(&arm.node.pattern.node, view_param.clone());
             if let (Some((name, info, span)), Some(ty)) = (&subject_binding, narrowed_subject_ty.clone()) {
                 self.symbols.define_refined_binding(Symbol {
                     name: name.clone(),
@@ -264,6 +266,7 @@ impl TypeChecker {
                 }
             }
 
+            self.exit_pattern_views(views);
             self.symbols.exit_scope();
 
             if arm.node.guard.is_none()

@@ -1,0 +1,18 @@
+# behavior: an immutable binding passed to a mut parameter that the callee changes through a name a match or if-let pattern binds from it is refused at check time
+# expect-diagnostic: INCAN-T0117
+
+def by_match(mut box: Option[list[int]]) -> None:
+    match box:
+        Some(xs) => xs.append(1)
+        None => pass
+
+
+def by_if_let(mut box: Option[list[int]]) -> None:
+    if let Some(xs) = box:
+        xs.append(1)
+
+
+def main() -> None:
+    box = Some([0])
+    by_match(box)
+    by_if_let(box)

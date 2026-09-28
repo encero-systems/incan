@@ -548,8 +548,8 @@ const IMMUTABLE_ARGUMENT_TO_MUT_PARAMETER: DiagnosticCatalogEntry = DiagnosticCa
     title: "Immutable argument for a changed `mut` parameter",
     severity: "error",
     phase: "typecheck",
-    summary: "A `mut` parameter the callee changes, and whose changes reach the caller, receives an immutable binding, a field of one, a collection element or a static.",
-    explanation: "A parameter declared `mut` is a mutable binding inside its function. When its type is not `int`, `float`, `bool` or a Rust type, and it is not a `*args` or `**kwargs` parameter, the function's changes to it are visible to the caller after the call. When the call changes such a parameter, the argument has to be a place the caller may change: a binding or parameter declared `mut`, `self` in a `mut self` method, or a field of one of those. An immutable binding or a field of one is refused, and so are an element of a list or dict and a static, whose change would reach only a copy. A literal or a call result is accepted, and so is any argument for a parameter the call never changes. A call changes the parameter when the body that runs assigns to its elements or fields, calls a method that changes it, or passes it on to a parameter that is changed; a change through the variable of a `for` loop over a list parameter itself, over a field of it, or over the variable of an enclosing such loop is a change to the parameter, and a `for` loop variable passed to such a parameter is refused like an immutable binding. A method called through a type parameter's bound, on `self` in a trait default or on a trait-typed value counts as changing the parameter, because any adopter's method may run; so does a callee whose body the check does not read, such as a compiled library's function or a callable known only by a type that marks the parameter `mut`. A call through a local bound to a function is checked as a call of that function while the local is never reassigned; a call through a reassigned local counts as changing each parameter its type marks `mut`.",
+    summary: "A `mut` parameter whose changes reach the caller receives an immutable binding, a field of one, a collection element or a static, and the callee changes it or the value cannot be copied.",
+    explanation: "A parameter declared `mut` is a mutable binding inside its function. When its type is not `int`, `float`, `bool` or a Rust type, and it is not a `*args` or `**kwargs` parameter, the function's changes to it are visible to the caller after the call. When the call changes such a parameter, the argument has to be a place the caller may change: a binding or parameter declared `mut`, `self` in a `mut self` method, or a field of one of those. An immutable binding or a field of one is refused, and so are an element of a list or dict and a static, whose change would reach only a copy. A literal or a call result is accepted, and so is any argument for a parameter the call never changes, except one the caller may not change whose type cannot be copied, such as a `Generator`: such an argument reaches the parameter as a copy, and there is none. A call changes the parameter when the body that runs assigns to its elements or fields, calls a method that takes `mut self` or a builtin collection method that adds, removes or reorders elements, uses it when it is a `Generator` (iterating it, calling its methods and passing it on all advance it), or passes it on to a parameter that is changed; a change through the variable of a `for` loop over a list parameter itself, over a field of it, or over the variable of an enclosing such loop, or through a name a `match`, `if let` or `while let` pattern binds from the parameter, is a change to the parameter, and a `for` loop variable passed to such a parameter is refused like an immutable binding. A method called through a type parameter's bound, on `self` in a trait default or on a trait-typed value counts as changing the parameter, because any adopter's method may run; so does a callee whose body the check does not read, such as a compiled library's function or a callable known only by a type that marks the parameter `mut`. A call through a local bound to a function is checked as a call of that function while the local is never reassigned; a call through a reassigned local counts as changing each parameter its type marks `mut`.",
     examples: &[
         "def extend(mut items: list[int]) -> None:\n    items.append(9)\n\ndef main() -> None:\n    items: list[int] = [1, 2]\n    extend(items)",
         "def extend(mut items: list[int]) -> None:\n    items.append(9)\n\ndef main() -> None:\n    mut rows: list[list[int]] = [[1]]\n    extend(rows[0])",
@@ -557,6 +557,7 @@ const IMMUTABLE_ARGUMENT_TO_MUT_PARAMETER: DiagnosticCatalogEntry = DiagnosticCa
     common_causes: &[
         "A binding declared without `mut` passed to a function that changes it.",
         "A list element, dict value or static passed straight to a function that changes it.",
+        "A generator bound without `mut` passed to a `mut` `Generator` parameter.",
     ],
     fixes: &[
         "Declare the binding with `mut`: `mut items: list[int] = [1, 2]`.",
@@ -587,8 +588,8 @@ const TAKEN_LIST_USED_AGAIN: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
     title: "List used again after a `for` loop took its items",
     severity: "error",
     phase: "typecheck",
-    summary: "A `for` loop took the task handles out of a list, and the list is then read inside or after the loop, a closure captured it before the loop, or an enclosing loop repeats the loop.",
-    explanation: "A `for` loop over a list reads each item where it stays, so the list keeps its items, and an item the loop body hands on by value is copied out of it. A `JoinHandle[T]` can be neither copied nor cloned, so when the body hands a handle on by value, by awaiting it, returning or yielding it, breaking with it, assigning it to another name, passing it to a call, placing it in a new tuple, list, set or dict, or iterating it (a list of handles) in a nested `for` loop that takes its items, the loop takes every handle out of the list instead; a tuple item that contains a handle counts the same way. That is only possible when nothing reads the list again, so these are refused: a read of the list inside the loop or after it, until an assignment gives the name a new list on every path after the loop, with no branch, `break` or `continue` able to skip it; a closure that captured the list before the loop; and an enclosing loop that runs the `for` loop again over a list defined outside it, unless each pass assigns the list a new one before the loop and before any read of the list in that pass.",
+    summary: "A `for` loop took the task handles out of a list, and the list is then read inside or after the loop, a closure captured it before the loop, or an enclosing loop repeats the loop; or a loop that hands each handle on iterates something it cannot take them out of.",
+    explanation: "A `for` loop over a list reads each item where it stays, so the list keeps its items, and an item the loop body hands on by value is copied out of it. A `JoinHandle[T]` can be neither copied nor cloned, so when the body hands a handle on by value, by awaiting it, returning or yielding it, breaking with it, assigning it to another name, passing it to a call, placing it in a new tuple, list, set or dict, or iterating it (a list of handles) in a nested `for` loop that takes its items, the loop takes every handle out of the list instead; a tuple item that contains a handle counts the same way. That is only possible when nothing reads the list again, so these are refused: a read of the list inside the loop or after it, until an assignment gives the name a new list on every path after the loop, with no branch, `break` or `continue` able to skip it; a closure that captured the list before the loop; and an enclosing loop that runs the `for` loop again over a list defined outside it, unless each pass assigns the list a new one before the loop and before any read of the list in that pass. The loop can take the handles out of a local list, the variable of an enclosing loop that owns its items (it takes them, or iterates a list literal, a comprehension or a call result), or a parameter not marked `mut`, and a loop over a list literal, a comprehension or a call result receives each handle by value already; a loop that hands each handle on over anything else, such as a list element, a field, a `list`, `dict` or `set` method like `values()`, `enumerate(...)`, `zip(...)`, a `mut` parameter or the variable of a loop that reads its items in place, can take them out of neither it nor a copy, and is refused.",
     examples: &[
         "from std.async import spawn\n\nasync def work() -> int:\n    return 1\n\nasync def main() -> None:\n    handles = [spawn(work()), spawn(work())]\n    for handle in handles:\n        match await handle:\n            Ok(value) => println(value)\n            Err(_) => println(\"join failed\")\n    println(len(handles))",
     ],
@@ -596,12 +597,14 @@ const TAKEN_LIST_USED_AGAIN: DiagnosticCatalogEntry = DiagnosticCatalogEntry {
         "Reading the length or the items of a list of task handles after awaiting each handle in a loop.",
         "Awaiting the handles of a list built outside an enclosing `while` or `loop:`.",
         "A closure made before the loop that reads the list.",
+        "Awaiting the handles of a list element, a field, a dict's `values()` or a `mut` parameter.",
     ],
     fixes: &[
         "Read what the later code needs from the list before the loop, such as `count = len(handles)`.",
         "Collect the results in a new list inside the loop and use that list afterwards.",
         "Build the list inside the enclosing loop, so each pass iterates a list of its own.",
         "Have the closure read a value taken from the list before the loop instead of the list itself.",
+        "Iterate a local list that holds the handles, or take them out one at a time with `pop()`.",
     ],
     docs_url: Some("https://encero-systems.github.io/incan/language/reference/stdlib/async/"),
 };
@@ -1167,6 +1170,22 @@ mod tests {
         let entry = explain("INCAN-T0117").ok_or("INCAN-T0117 must have a catalog explanation")?;
         assert_eq!(entry.severity, "error");
         assert_eq!(entry.phase, "typecheck");
+        let uncopyable = errors::uncopyable_argument_to_mut_parameter(
+            errors::MutParameterLabel::Named("g"),
+            "ignore",
+            "Generator[int]",
+            errors::MutArgumentPlace::Binding("g".to_string()),
+            Span::default(),
+        );
+        assert_eq!(code_for_error(&uncopyable, DiagnosticPhase::Typecheck), "INCAN-T0117");
+        assert!(
+            uncopyable
+                .notes
+                .iter()
+                .any(|note| note.contains("does not change") && note.contains("'Generator[int]' cannot be copied")),
+            "a refusal for an unchanged parameter says the argument cannot be copied, got {:?}",
+            uncopyable.notes
+        );
         assert!(
             binding.hints.iter().any(|hint| hint.contains("mut items = ...")),
             "an immutable binding's remedy names the binding to declare 'mut', got {:?}",
@@ -1367,6 +1386,16 @@ mod tests {
         };
         assert_eq!(entry.severity, "error");
         assert_eq!(entry.phase, "typecheck");
+        let untakeable = errors::loop_cannot_take_items(
+            errors::UntakeableIterable::MutParameter("handles"),
+            "JoinHandle[int]",
+            Span::new(40, 47),
+        );
+        assert_eq!(code_for_error(&untakeable, DiagnosticPhase::Typecheck), "INCAN-T0119");
+        assert_eq!(
+            untakeable.message,
+            "the `for` loop cannot take its `JoinHandle[int]` items out of `handles`, a `mut` parameter whose items belong to the caller"
+        );
         Ok(())
     }
 

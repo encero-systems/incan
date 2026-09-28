@@ -16,6 +16,7 @@ use crate::typechecker::helpers::{
     is_str_like, list_ty, option_ty, render_resolved_type_as_rust_arg, runtime_string_method_identity_and_return,
     string_method_return,
 };
+use crate::typechecker::receiver_change::ReceiverChange;
 use crate::typechecker::type_info::{
     CBindingEnumAccess, ResolvedMethodCall, RustArgCoercionInfo, RustArgCoercionKind, RustMethodTraitImportUse,
     RustTraitImportInfo,
@@ -5094,8 +5095,8 @@ impl TypeChecker {
     ///
     /// `self.items.pop()` in a `def pop(self)` body writes through a receiver the generated code borrows shared, so
     /// the build would refuse it; reporting it here names the receiver to declare instead. The receiver chain is
-    /// followed the way assignments are (`Self::self_rooted_place`), and the method is judged by its declaration:
-    /// the changing builtin collection methods, and a source method whose every candidate takes `mut self`. A
+    /// followed the way assignments are (`Self::self_rooted_place`), and the method is judged by its declarations
+    /// ([`Self::method_receiver_change`]): only a call every candidate of which changes the receiver is refused. A
     /// method the checker cannot classify is left alone, as is a receiver that is not rooted at `self`; a local
     /// collection's mutability is the emitter's inference to make, not a source contract.
     fn reject_mutating_call_through_immutable_self(
@@ -5111,47 +5112,8 @@ impl TypeChecker {
         let Some(place) = Self::self_rooted_place(base) else {
             return;
         };
-        if self.method_requires_mutable_receiver(base_ty, method, span) {
+        if self.method_receiver_change(base_ty, method, span) == ReceiverChange::Changes {
             self.reject_write_through_immutable_self(&place, SelfMutation::MutatingCall { callee: method }, span);
-        }
-    }
-
-    /// Return whether `method` is declared to change the receiver it is called on.
-    ///
-    /// Builtin `list`, `dict` and `set` methods are classified from the surface registries: the ones that add,
-    /// remove or reorder elements change the receiver, the readers do not. A source-declared type answers from its
-    /// own method table, its overloads and its adopted traits, and only when every candidate agrees on `mut self`,
-    /// so an overload set the call could resolve either way is never refused on the receiver alone. Inside a trait
-    /// default method the receiver is `Self` and the trait's own declarations answer. Anything else (Rust
-    /// receivers, unknown methods) is `false`: the checker refuses only what it can read from a declaration.
-    fn method_requires_mutable_receiver(&mut self, base_ty: &ResolvedType, method: &str, span: Span) -> bool {
-        if base_ty.is_option() {
-            return option_methods::from_str(method) == Some(option_methods::OptionMethodId::AsMut);
-        }
-        match base_ty {
-            ResolvedType::Generic(name, _) => match collection_type_id(name.as_str()) {
-                Some(CollectionTypeId::List) => list_methods::from_str(method).is_some_and(|id| {
-                    use list_methods::ListMethodId as M;
-                    matches!(
-                        id,
-                        M::Append | M::Extend | M::Pop | M::Swap | M::Reserve | M::ReserveExact | M::Remove
-                    )
-                }),
-                Some(CollectionTypeId::Dict) => {
-                    dict_methods::from_str(method) == Some(dict_methods::DictMethodId::Insert)
-                }
-                Some(CollectionTypeId::Set) => set_methods::from_str(method) == Some(set_methods::SetMethodId::Add),
-                Some(_) => false,
-                None => self.nominal_method_requires_mutable_receiver(name, method, span),
-            },
-            ResolvedType::Named(name) => self.nominal_method_requires_mutable_receiver(name, method, span),
-            ResolvedType::SelfType => self
-                .current_trait_name
-                .as_deref()
-                .and_then(|trait_name| self.lookup_semantic_trait_info(trait_name))
-                .and_then(|info| info.methods.get(method))
-                .is_some_and(|info| info.receiver == Some(Receiver::Mutable)),
-            _ => false,
         }
     }
 
@@ -5175,81 +5137,6 @@ impl TypeChecker {
                 .mutable_receiver_method_calls
                 .insert((span.start, span.end));
         }
-    }
-
-    /// Return whether every declaration of `method` on the source type `type_name` takes `mut self`.
-    ///
-    /// The type's own method table and overload set answer first, after resolving a method alias to its target;
-    /// when the type declares nothing by that name, the methods its adopted traits provide answer instead. An empty
-    /// candidate set is `false`, so a method the checker does not know never counts as changing.
-    fn nominal_method_requires_mutable_receiver(&mut self, type_name: &str, method: &str, span: Span) -> bool {
-        let Some((declared, adoptions)) = self.declared_method_receivers_and_adoptions(type_name, method) else {
-            return false;
-        };
-        if !declared.is_empty() {
-            return declared.iter().all(|receiver| *receiver == Some(Receiver::Mutable));
-        }
-        let adopted = adoptions
-            .iter()
-            .filter_map(|adoption| {
-                self.trait_method_entry_resolved_for_adoption(adoption, method, span)
-                    .map(|entry| entry.info.receiver)
-            })
-            .collect::<Vec<_>>();
-        !adopted.is_empty() && adopted.iter().all(|receiver| *receiver == Some(Receiver::Mutable))
-    }
-
-    /// Collect the receivers of every declaration of `method` that the source type `type_name` itself carries, an
-    /// alias resolved to its target, together with the traits the type adopts.
-    ///
-    /// `None` when the name is not a source-declared type with a method table (a builtin or a type alias). The
-    /// receivers are the type's own answer; the adoptions let the caller ask the traits when that answer is empty,
-    /// and are returned owned because that question needs the checker mutably.
-    fn declared_method_receivers_and_adoptions(
-        &self,
-        type_name: &str,
-        method: &str,
-    ) -> Option<(Vec<Option<Receiver>>, Vec<TypeBoundInfo>)> {
-        let (aliases, methods, overloads, adoptions) = match self.lookup_semantic_type_info(type_name)? {
-            TypeInfo::Class(class) => (
-                Some(&class.method_aliases),
-                &class.methods,
-                &class.method_overloads,
-                &class.trait_adoptions,
-            ),
-            TypeInfo::Model(model) => (
-                Some(&model.method_aliases),
-                &model.methods,
-                &model.method_overloads,
-                &model.trait_adoptions,
-            ),
-            TypeInfo::Newtype(newtype) => (
-                Some(&newtype.method_aliases),
-                &newtype.methods,
-                &newtype.method_overloads,
-                &newtype.trait_adoptions,
-            ),
-            TypeInfo::Enum(enum_info) => (
-                None,
-                &enum_info.methods,
-                &enum_info.method_overloads,
-                &enum_info.trait_adoptions,
-            ),
-            TypeInfo::Builtin | TypeInfo::TypeAlias => return None,
-        };
-        let target = aliases
-            .and_then(|aliases| aliases.get(method))
-            .map(String::as_str)
-            .unwrap_or(method);
-        let mut receivers = methods
-            .get(target)
-            .map(|info| info.receiver)
-            .into_iter()
-            .collect::<Vec<_>>();
-        if let Some(candidates) = overloads.get(target) {
-            receivers.extend(candidates.iter().map(|info| info.receiver));
-        }
-        Some((receivers, adoptions.clone()))
     }
 
     /// Classify a checked member-call receiver without recovering ownership from its spelling.

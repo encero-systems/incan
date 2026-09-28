@@ -282,7 +282,10 @@ def main() -> None:
     compile_generated_rust(&rust)?;
     let rust = compact(&rust);
     assert!(rust.contains("iter_mut()).map(|mutrow|"), "{rust}");
-    assert!(rust.contains("mutxs=>"), "{rust}");
+    // The arm changes the element through `xs`, so the element is matched in place and the change reaches `rows`
+    // (#1561).
+    assert!(rust.contains("list_get_mut(&mutrows,"), "{rust}");
+    assert!(rust.contains("__incan_in_place_xs=>"), "{rust}");
     assert!(rust.contains("letitems=items.clone();move||"), "{rust}");
     Ok(())
 }
