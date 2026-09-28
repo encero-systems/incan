@@ -2589,6 +2589,32 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/reads_and_iterator_surface.rs": {
+      "disposition": "retire",
+      "notes": "compiles the Rust text emission gives `const` frozen collection reads, the RFC 088 surface on a generator, `dict.get(key, default)` and `flat_map` over any iterable; generated Rust dies with #654.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "const_frozen_collection_reads_compile_issue1757": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings/const_frozen_collection_membership_and_iteration.incn",
+          "notes": "Asserts that generated Rust compiles; the behavior, every frozen read printing its value, is carried by the named fixture (#1757)."
+        },
+        "dict_get_with_default_reads_the_value": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings/dict_get_with_default.incn",
+          "notes": "Asserts that generated Rust compiles; the behavior, `counts.get(name, 0) + 1` counting into a static and a missing key reading its default, is carried by the named fixture."
+        },
+        "flat_map_expands_any_iterable_compiles": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/iterator_flat_map_over_iterables.incn",
+          "notes": "Asserts that generated Rust compiles; the behavior, set, generator and list expansions flattening in order, is carried by the named fixture."
+        },
+        "generator_adapters_and_consumers_compile": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/generator_iterator_surface.incn",
+          "notes": "Asserts that generated Rust compiles; the behavior, every adapter and consumer over a generator printing its result, is carried by the named fixture."
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/tests/reexported_projections.rs": {
       "disposition": "retire",
       "notes": "lowering through emission end to end.",
@@ -5139,6 +5165,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/frozen_collection_reads.rs": {
+      "disposition": "keep",
+      "notes": "typechecker tests of the reads a `const` frozen collection answers (membership, `FrozenSet.contains`, `FrozenList` indexing, #1757); no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/generic_model_bounds.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -6008,6 +6042,22 @@
         "frozen_dict_index_carries_the_value_type_issue1757": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/const_frozen_collection_reads.incn",
           "notes": "Asserts the recorded shape on the legacy IR (a `const` `FrozenDict` index read typed as the value type, `contains_key` as keyed membership); retires with `incan_ir`. The behavior, `TABLE[\"names\"]` and `TABLE.contains_key(...)` answering, is carried by the named fixture (#1757)."
+        },
+        "frozen_len_reads_the_int_length_issue1757": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings/const_frozen_collection_membership_and_iteration.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (`len()` on a `const` frozen collection lowers to the `len(c)` builtin); retires with `incan_ir`. The behavior, `NAMES.len() + NUMS.len() + TABLE.len() - IDS.len()` printing `6`, is carried by the named fixture (#1757)."
+        },
+        "frozen_list_index_reads_the_owned_element_issue1757": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings/const_frozen_collection_membership_and_iteration.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (a `const` `FrozenList` index read typed as its element, `'static` text and bytes converted to owned values); retires with `incan_ir`. The behavior, `NAMES[-1].upper()` printing `BETA` and `len(BLOBS[0])` printing `2`, is carried by the named fixture (#1757)."
+        },
+        "frozen_membership_reads_the_collection_test_issue1757": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings/const_frozen_collection_membership_and_iteration.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (`in` and `FrozenSet.contains` lower to collection membership over a borrowed frozen list or set, and keyed membership over a frozen dict); retires with `incan_ir`. The behavior, each membership test printing its answer, is carried by the named fixture (#1757)."
+        },
+        "iteration_sources_over_frozen_collections_read_owned_items_issue1757": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_collections_and_strings/const_frozen_collection_membership_and_iteration.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (comprehensions, generator clauses and `set()` over a `const` frozen collection read its `list(...)` conversion); retires with `incan_ir`. The behavior, `set(NAMES)` holding two items and a comprehension over a `FrozenDict` reading its keys, is carried by the named fixture (#1757)."
         },
         "set_constructor_over_a_generator_plans_the_iterator_trait_issue1744": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/set_constructor_over_generator.incn",

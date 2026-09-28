@@ -65,8 +65,8 @@ def main() -> None:
     )?;
     assert_eq!(
         code.matches("let__incan_static_arg_0=&name;").count(),
-        2,
-        "the lookups in `lookup` and `bump` view the reused key: {code}"
+        3,
+        "the lookups in `lookup`, `bump` and `direct` view the key: {code}"
     );
     assert_eq!(
         code.matches("let__incan_static_arg_0=name.clone();").count(),
@@ -75,7 +75,7 @@ def main() -> None:
     );
     assert!(
         code.contains("let__incan_static_arg_0=name;"),
-        "a key at its last read is moved into the temporary: {code}"
+        "a key at its last read, the membership test in `record`, is moved into the temporary: {code}"
     );
     assert!(
         code.contains(".insert(name,__incan_static_rhs)"),

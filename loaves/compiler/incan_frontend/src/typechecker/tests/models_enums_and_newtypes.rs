@@ -1007,3 +1007,36 @@ def main() -> None:
     }
     Ok(())
 }
+
+/// A program's own `class ValidationError`, `model Json` and `model Query` are constructed as those declarations, with
+/// their own fields: the stdlib constructor rules those names carry apply only to the stdlib types, which the program
+/// reaches by importing them (#1795).
+#[test]
+fn types_named_like_stdlib_surface_types_construct_as_declared_issue1795() -> Result<(), String> {
+    let source = r#"
+class ValidationError:
+    pub field: str
+    pub reason: str
+
+
+model Json:
+    body: str
+
+
+model Query:
+    text: str
+
+
+def main() -> None:
+    error = ValidationError(field="age", reason="negative")
+    payload = Json(body="{}")
+    query = Query(text="q")
+    println(error.field + error.reason + payload.body + query.text)
+"#;
+    check_str(source).map_err(|errors| {
+        format!(
+            "a module's own type must construct as its declaration: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        )
+    })
+}

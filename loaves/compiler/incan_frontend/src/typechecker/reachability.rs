@@ -11,7 +11,8 @@
 //! need a real control-flow graph, and guessing at them produces false "unreachable" reports on code that runs.
 //! Nested blocks are still covered, because every block reaches this boundary and is scanned on its own.
 
-use crate::ast::{Span, Spanned, Statement};
+use crate::ast::{Expr, Span, Spanned, Statement};
+use crate::ast_walk::{any_expr_in_body, any_expr_in_condition, any_expr_in_expr};
 use crate::diagnostics::lints;
 
 use super::TypeChecker;
@@ -37,6 +38,48 @@ fn unreachable_tail(body: &[Spanned<Statement>]) -> Option<UnreachableTail> {
         return_span,
         unreachable_span: rest.iter().fold(first.span, |region, stmt| region.merge(stmt.span)),
     })
+}
+
+/// Return the statements of one block that can run: every statement up to and including the block's first `return`.
+fn reachable_prefix(body: &[Spanned<Statement>]) -> &[Spanned<Statement>] {
+    match body.iter().position(|stmt| matches!(stmt.node, Statement::Return(_))) {
+        Some(return_index) => body.get(..=return_index).unwrap_or(body),
+        None => body,
+    }
+}
+
+/// Whether a statement block contains a `yield` that a run of the block can reach.
+///
+/// RFC 006 requires a generator function to have a reachable `yield`. Reachability is the block-local rule above: a
+/// statement after an unconditional `return` in its own block never runs, and every nested statement block is scanned
+/// under the same rule. An expression-level block (a `match` arm body, an `if` expression) is scanned whole.
+pub(super) fn body_has_reachable_yield(body: &[Spanned<Statement>]) -> bool {
+    reachable_prefix(body).iter().any(statement_has_reachable_yield)
+}
+
+/// Whether one statement contains a reachable `yield`: in its own expressions, or in a reachable statement of a block
+/// it holds.
+fn statement_has_reachable_yield(stmt: &Spanned<Statement>) -> bool {
+    let is_yield = |expr: &Expr| matches!(expr, Expr::Yield(_));
+    match &stmt.node {
+        Statement::If(if_stmt) => {
+            any_expr_in_condition(&if_stmt.condition, is_yield)
+                || body_has_reachable_yield(&if_stmt.then_body)
+                || if_stmt.elif_branches.iter().any(|(condition, body)| {
+                    any_expr_in_expr(&condition.node, is_yield) || body_has_reachable_yield(body)
+                })
+                || if_stmt.else_body.as_deref().is_some_and(body_has_reachable_yield)
+        }
+        Statement::While(while_stmt) => {
+            any_expr_in_condition(&while_stmt.condition, is_yield) || body_has_reachable_yield(&while_stmt.body)
+        }
+        Statement::For(for_stmt) => {
+            any_expr_in_expr(&for_stmt.iter.node, is_yield) || body_has_reachable_yield(&for_stmt.body)
+        }
+        Statement::Loop(loop_stmt) => body_has_reachable_yield(&loop_stmt.body),
+        Statement::Unsafe(unsafe_stmt) => body_has_reachable_yield(&unsafe_stmt.body),
+        _ => any_expr_in_body(std::slice::from_ref(stmt), is_yield),
+    }
 }
 
 impl TypeChecker {

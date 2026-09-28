@@ -1,0 +1,38 @@
+# behavior: flat_map expands each item through a callback that returns any iterable, a set, a generator or a list, over a list iterator and over a generator
+# retires: loaves/compiler/incan_emit/src/tests/reads_and_iterator_surface.rs::flat_map_expands_any_iterable_compiles
+# expect-stdout:
+#   4
+#   2
+#   4
+#   4
+#   4
+
+def numbers(limit: int) -> Generator[int]:
+    for value in range(limit):
+        yield value
+
+
+def pair_set(n: int) -> set[int]:
+    return {n, n + 10}
+
+
+def pair_gen(n: int) -> Generator[int]:
+    yield n
+    yield n + 1
+
+
+def pair_list(n: int) -> list[int]:
+    return [n, n]
+
+
+def main() -> None:
+    items = [1, 2]
+    from_sets: list[int] = items.iter().flat_map(pair_set).collect()
+    println(len(from_sets))
+    from_generators: list[int] = items.iter().flat_map(pair_gen).collect()
+    println(from_generators[1])
+    println(len(from_generators))
+    from_lists: list[int] = items.iter().flat_map(pair_list).collect()
+    println(len(from_lists))
+    over_generator: list[int] = numbers(2).flat_map(pair_gen).collect()
+    println(len(over_generator))

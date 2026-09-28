@@ -17,11 +17,13 @@ impl AstLowering {
     /// Build a builtin-family method call at `call_span`, returning it with its IR type.
     ///
     /// On module static storage, each argument is prepared for the temporary emission binds it to before it enters
-    /// the storage access (see [`Self::prepare_static_method_arg`]). A dict's `get` answers with the stored value
-    /// (`Option[V]`, `result_ty`): on static storage the storage access copies the entry out. On any other dict the
-    /// lookup reads the entry in place. When the checker recorded that the result is only read (a `match` or `if let`
-    /// whose bindings are only read), the call stays that in-place read and its IR type says so (`Option[&V]` in Rust);
-    /// otherwise it is completed with a copy of the entry it finds, `copied` for a `Copy` value and `cloned` otherwise.
+    /// the storage access (see [`Self::prepare_static_method_arg`]). A one-argument dict `get` answers with the
+    /// stored value (`Option[V]`, `result_ty`): on static storage the storage access copies the entry out. On any
+    /// other dict the lookup reads the entry in place. When the checker recorded that the result is only read (a
+    /// `match` or `if let` whose bindings are only read), the call stays that in-place read and its IR type says so
+    /// (`Option[&V]` in Rust); otherwise it is completed with a copy of the entry it finds, `copied` for a `Copy`
+    /// value and `cloned` otherwise. A two-argument `get(key, default)` (#1561) already answers with the value
+    /// itself, so this in-place/copy handling does not apply to it.
     pub(in crate::lower) fn known_method_call(
         &self,
         call_span: ast::Span,
@@ -38,11 +40,12 @@ impl AstLowering {
                 Self::prepare_static_method_arg(&receiver, &kind, &mut arg.expr, &receiver_reads);
             }
         }
-        let in_place_get_value = if !reads_static && matches!(kind, MethodKind::Collection(CollectionMethodKind::Get)) {
-            Self::dict_value_type(&receiver.ty)
-        } else {
-            None
-        };
+        let in_place_get_value =
+            if !reads_static && args.len() == 1 && matches!(kind, MethodKind::Collection(CollectionMethodKind::Get)) {
+                Self::dict_value_type(&receiver.ty)
+            } else {
+                None
+            };
         let call = IrExprKind::KnownMethodCall {
             receiver: Box::new(receiver),
             kind,

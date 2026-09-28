@@ -338,6 +338,11 @@ pub struct AstLowering {
     /// visible even when the dispatched trait differs from the receiver's -- `OrderedCollection[int]` dispatching
     /// `Collection::first` is still a trait-typed receiver.
     pub declared_trait_names: HashSet<String>,
+    /// Nominal type names this program declares: models, classes, newtypes and enums.
+    ///
+    /// A declaration is the program's own type whatever it is called, so a name-keyed stdlib surface rule (the
+    /// `ValidationError` constructor) never applies to it, whether it is lowered before or after the call (#1795).
+    pub declared_nominal_type_names: HashSet<String>,
     /// Declared return types of this program's functions, lowered from their annotations and keyed by declaration
     /// span.
     ///
@@ -811,6 +816,7 @@ impl AstLowering {
             current_source_module_name: None,
             adopted_traits_by_type: HashMap::new(),
             declared_trait_names: HashSet::new(),
+            declared_nominal_type_names: HashSet::new(),
             local_function_declared_returns: HashMap::new(),
             registry_package_identity: None,
             crate_nominal_context: None,
@@ -2592,6 +2598,17 @@ impl AstLowering {
             .iter()
             .filter_map(|decl| match &decl.node {
                 ast::Declaration::Trait(trait_decl) => Some(trait_decl.name.clone()),
+                _ => None,
+            })
+            .collect();
+        self.declared_nominal_type_names = program
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.node {
+                ast::Declaration::Model(model) => Some(model.name.clone()),
+                ast::Declaration::Class(class) => Some(class.name.clone()),
+                ast::Declaration::Newtype(newtype) => Some(newtype.name.clone()),
+                ast::Declaration::Enum(enum_decl) => Some(enum_decl.name.clone()),
                 _ => None,
             })
             .collect();

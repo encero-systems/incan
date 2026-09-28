@@ -821,13 +821,16 @@ impl TypeChecker {
     /// This intentionally recognizes both explicit trait-typed values (`Iterator[T]` / `Iterable[T]`) and builtin
     /// collection values that have an obvious frontend iterator element type. It is a typechecker-only surface helper;
     /// lowering and emission use the same protocol shape to route known iterator methods through dedicated backend
-    /// handling.
+    /// handling. A `Generator[T]` satisfies `Iterator[T]` (RFC 006, RFC 088), so it is an iterator value here.
     fn iterable_protocol_element_type(&self, ty: &ResolvedType) -> Option<ResolvedType> {
         match ty {
             ResolvedType::Generic(name, args)
                 if (Self::is_iterator_protocol_name(name) || Self::is_iterable_protocol_name(name))
                     && args.len() == 1 =>
             {
+                args.first().cloned()
+            }
+            ResolvedType::Generic(name, args) if Self::is_generator_name(name) && args.len() == 1 => {
                 args.first().cloned()
             }
             ResolvedType::Generic(name, args)
@@ -848,14 +851,21 @@ impl TypeChecker {
         }
     }
 
-    /// Return the element type for values that are already typed as `Iterator[T]`.
+    /// Return the element type for values that are already typed as `Iterator[T]`, a `Generator[T]` included.
     fn iterator_protocol_element_type(&self, ty: &ResolvedType) -> Option<ResolvedType> {
         match ty {
-            ResolvedType::Generic(name, args) if Self::is_iterator_protocol_name(name) && args.len() == 1 => {
+            ResolvedType::Generic(name, args)
+                if (Self::is_iterator_protocol_name(name) || Self::is_generator_name(name)) && args.len() == 1 =>
+            {
                 args.first().cloned()
             }
             _ => None,
         }
+    }
+
+    /// Return whether `name` is the RFC 006 `Generator` type.
+    fn is_generator_name(name: &str) -> bool {
+        collection_type_id(name) == Some(CollectionTypeId::Generator)
     }
 
     /// Validate fixed-arity RFC 088 method calls and report the same arity diagnostic style as other builtin calls.
@@ -946,14 +956,19 @@ impl TypeChecker {
         valid
     }
 
-    /// Validate `dict.contains_key(key)` (#1668) and `frozen_dict.contains_key(key)` (#1757): exactly one positional
-    /// probe whose type is compatible with the key type, so a mistyped probe fails here instead of as a rustc `Borrow`
-    /// error in the generated `contains_key`. The probe has no parameter name, so a named or unpacked argument is
-    /// refused with the ordinary call diagnostics. `callee` names the receiver family in those diagnostics.
-    fn validate_dict_contains_key_call(
+    /// Validate a membership probe call: `dict.contains_key(key)` (#1668), `frozen_dict.contains_key(key)` (#1757) and
+    /// `frozen_set.contains(item)`.
+    ///
+    /// The call takes exactly one positional probe whose type is compatible with `member_ty`, the key or element type,
+    /// so a mistyped probe fails here instead of as a rustc `Borrow` error in the generated lookup. The probe has no
+    /// parameter name, so a named or unpacked argument is refused with the ordinary call diagnostics. `callee` names
+    /// the receiver family in those diagnostics. When `text_probes` is set, a text member (`str` or `FrozenStr`) takes
+    /// any text probe, the rule a frozen collection's `'static` text follows.
+    fn validate_membership_probe_call(
         &mut self,
         callee: &str,
-        key_ty: &ResolvedType,
+        member_ty: &ResolvedType,
+        text_probes: bool,
         args: &[CallArg],
         arg_types: &[ResolvedType],
         span: Span,
@@ -981,16 +996,58 @@ impl TypeChecker {
             }
         };
         if let Some(actual) = arg_types.first()
-            && !matches!(key_ty, ResolvedType::Unknown)
-            && !self.types_compatible(actual, key_ty)
+            && !matches!(member_ty, ResolvedType::Unknown)
+            && !(text_probes && is_str_like(actual) && is_str_like(member_ty))
+            && !self.types_compatible(actual, member_ty)
         {
             self.errors.push(errors::call_argument_type_mismatch(
                 callee,
                 None,
-                &key_ty.to_string(),
+                &member_ty.to_string(),
                 &actual.to_string(),
                 expr.span,
             ));
+        }
+    }
+
+    /// Validate `dict.get(key, default)`: two positional arguments, a key of the key type and a default of the value
+    /// type, since the call is the value itself (the entry's, or `default` when no entry holds `key`).
+    fn validate_dict_get_with_default(
+        &mut self,
+        key_ty: &ResolvedType,
+        value_ty: &ResolvedType,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+    ) {
+        const CALLEE: &str = "Dict.get";
+        for ((arg, actual), expected) in args.iter().zip(arg_types).zip([key_ty, value_ty]) {
+            let expr = match arg {
+                CallArg::Positional(expr) => expr,
+                CallArg::Named(name, _) => {
+                    self.errors
+                        .push(errors::unknown_keyword_argument(CALLEE, &name.node, name.span));
+                    continue;
+                }
+                CallArg::PositionalUnpack(expr) => {
+                    self.errors
+                        .push(errors::call_unpack_without_rest(CALLEE, "*", expr.span));
+                    continue;
+                }
+                CallArg::KeywordUnpack(expr) => {
+                    self.errors
+                        .push(errors::call_unpack_without_rest(CALLEE, "**", expr.span));
+                    continue;
+                }
+            };
+            if !matches!(expected, ResolvedType::Unknown) && !self.types_compatible(actual, expected) {
+                self.errors.push(errors::call_argument_type_mismatch(
+                    CALLEE,
+                    None,
+                    &expected.to_string(),
+                    &actual.to_string(),
+                    expr.span,
+                ));
+            }
         }
     }
 
@@ -1210,6 +1267,13 @@ impl TypeChecker {
             .unwrap_or_else(|| elem.clone());
         let method_id = iterator_methods::from_str(method)?;
         use iterator_methods::IteratorMethodId as M;
+        // A generator's own RFC 006 methods (`map`, `filter`, `take`, `collect`) keep their generator-typed results;
+        // the rest of the RFC 088 surface reaches it as an `Iterator[T]`.
+        if matches!(base_ty, ResolvedType::Generic(name, _) if Self::is_generator_name(name))
+            && matches!(method_id, M::Map | M::Filter | M::Take | M::Collect)
+        {
+            return None;
+        }
 
         match method_id {
             M::Iter => {
@@ -4402,11 +4466,19 @@ impl TypeChecker {
                 }
                 ResolvedType::Str
             }
+            // A `const` `FrozenList[T]` is read like a list: `items[i]` is the element at an `int` index, counted from
+            // the end when negative, or an `IndexError` at run time (#1757).
+            ResolvedType::FrozenList(elem_ty) => {
+                if !is_intlike_for_index(&index_ty) {
+                    self.errors
+                        .push(errors::index_type_mismatch("int", &index_ty.to_string(), index.span));
+                }
+                *elem_ty
+            }
             // A `const` `FrozenDict[K, V]` is read like a dict: `table[key]` is the value, or a `KeyError` at run
             // time. A text key (`str` or `FrozenStr`) accepts any text probe (#1757).
             ResolvedType::FrozenDict(key_ty, value_ty) => {
-                let is_text = |ty: &ResolvedType| matches!(ty, ResolvedType::Str) || is_frozen_str(ty);
-                let text_probe_for_text_key = is_text(&index_ty) && is_text(&key_ty);
+                let text_probe_for_text_key = is_str_like(&index_ty) && is_str_like(&key_ty);
                 if !text_probe_for_text_key && !self.types_compatible(&index_ty, &key_ty) {
                     self.errors.push(errors::index_type_mismatch(
                         &key_ty.to_string(),
@@ -5929,12 +6001,25 @@ impl TypeChecker {
                     }
                 }
             }
-            ResolvedType::FrozenSet(_) => {
+            ResolvedType::FrozenSet(elem_ty) => {
                 if let Some(id) = frozen_set_methods::from_str(method) {
                     use frozen_set_methods::FrozenSetMethodId as M;
                     match id {
                         M::Len => return ResolvedType::Int,
-                        M::IsEmpty | M::Contains => return ResolvedType::Bool,
+                        M::IsEmpty => return ResolvedType::Bool,
+                        M::Contains => {
+                            // The probe follows the membership rule of `item in frozen_set`: an element, or any text
+                            // for a text element.
+                            self.validate_membership_probe_call(
+                                "FrozenSet.contains",
+                                elem_ty,
+                                true,
+                                args,
+                                &arg_types,
+                                span,
+                            );
+                            return ResolvedType::Bool;
+                        }
                     }
                 }
             }
@@ -5947,14 +6032,10 @@ impl TypeChecker {
                         M::ContainsKey => {
                             // The probe follows the key rule of `table[key]`: a text key (`str` or `FrozenStr`)
                             // takes any text probe (#1757).
-                            let is_text = |ty: &ResolvedType| matches!(ty, ResolvedType::Str) || is_frozen_str(ty);
-                            let probe_key_ty = match arg_types.first() {
-                                Some(probe_ty) if is_text(probe_ty) && is_text(key_ty) => probe_ty.clone(),
-                                _ => (**key_ty).clone(),
-                            };
-                            self.validate_dict_contains_key_call(
+                            self.validate_membership_probe_call(
                                 "FrozenDict.contains_key",
-                                &probe_key_ty,
+                                key_ty,
+                                true,
                                 args,
                                 &arg_types,
                                 span,
@@ -6166,15 +6247,36 @@ impl TypeChecker {
                     match id {
                         M::Keys => return list_ty(key),
                         M::Values => return list_ty(val),
+                        // `Dict.get(k, default)` is the value, or `default` when no entry holds `k`. The entry is
+                        // always copied out, so a value type that cannot be copied is refused
+                        // as a kept lookup is.
+                        M::Get if args.len() == 2 => {
+                            self.validate_dict_get_with_default(&key, &val, args, &arg_types);
+                            self.note_dict_lookup_value(span, &val);
+                            return val;
+                        }
                         // `dict.get(k)` answers with the stored value, static or not. Lowering reads the entry in
                         // place when the result is only read and copies it otherwise (`check_expr/dict_lookups.rs`).
                         M::Get => {
+                            if args.is_empty() {
+                                self.errors.push(errors::builtin_arity("Dict.get", 1, 0, span));
+                            } else if args.len() > 2 {
+                                self.errors
+                                    .push(errors::builtin_max_arity("Dict.get", 2, args.len(), span));
+                            }
                             self.note_dict_lookup_value(span, &val);
                             return option_ty(val.clone());
                         }
                         M::Insert => return ResolvedType::Unit,
                         M::ContainsKey => {
-                            self.validate_dict_contains_key_call("Dict.contains_key", &key, args, &arg_types, span);
+                            self.validate_membership_probe_call(
+                                "Dict.contains_key",
+                                &key,
+                                false,
+                                args,
+                                &arg_types,
+                                span,
+                            );
                             return ResolvedType::Bool;
                         }
                     }
@@ -6468,6 +6570,25 @@ impl TypeChecker {
             }
         }
 
+        // A method a generic placeholder's bound declares is typed by that bound, a protocol hook such as `__next__`
+        // included: `source.__next__()` on `Source with Iterator[T]` is an `Option[T]`, not the permissive `Unknown`
+        // below, so a value it yields keeps its type `T` downstream.
+        if self.is_generic_placeholder_type(&base_ty)
+            && let Some(placeholder_name) = self.generic_placeholder_name(&base_ty).map(str::to_string)
+            && let Some(ret) = self.resolve_generic_placeholder_method(
+                &placeholder_name,
+                method,
+                type_args,
+                args,
+                &arg_types,
+                span,
+                &base_ty,
+                expected_return_ty,
+            )
+        {
+            return ret;
+        }
+
         // Reflection magic helpers are modeled explicitly above and should error on unsupported receivers rather than
         // silently degrading to Unknown. Keep the older permissive fallback only for the remaining backend-only magic.
         if let Some(id) = magic_methods::from_str(method)
@@ -6495,20 +6616,6 @@ impl TypeChecker {
         // The Rust backend infers the required trait bounds (e.g., `x.clone()` → `T: Clone`).
         // At the Incan typechecker level we allow the call and return the same type variable.
         if self.is_generic_placeholder_type(&base_ty) {
-            if let Some(placeholder_name) = self.generic_placeholder_name(&base_ty).map(str::to_string)
-                && let Some(ret) = self.resolve_generic_placeholder_method(
-                    &placeholder_name,
-                    method,
-                    type_args,
-                    args,
-                    &arg_types,
-                    span,
-                    &base_ty,
-                    expected_return_ty,
-                )
-            {
-                return ret;
-            }
             if let Some(ret) = self.generic_reflection_magic_method_return_type(method) {
                 if let Some(id) = magic_methods::from_str(method) {
                     self.record_compiler_generated_member_identity(

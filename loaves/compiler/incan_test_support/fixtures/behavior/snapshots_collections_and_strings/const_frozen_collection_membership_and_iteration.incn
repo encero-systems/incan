@@ -1,0 +1,70 @@
+# behavior: a const FrozenList, FrozenSet and FrozenDict answer len, contains, membership, indexing, for loops, set() and comprehensions as list, set and dict do, and their str and bytes items read as owned str and bytes
+# retires: loaves/compiler/incan_emit/src/tests/reads_and_iterator_surface.rs::const_frozen_collection_reads_compile_issue1757
+# retires: loaves/compiler/incan_ir/src/lower/tests/collection_sources_and_static_reads.rs::frozen_len_reads_the_int_length_issue1757
+# retires: loaves/compiler/incan_ir/src/lower/tests/collection_sources_and_static_reads.rs::frozen_list_index_reads_the_owned_element_issue1757
+# retires: loaves/compiler/incan_ir/src/lower/tests/collection_sources_and_static_reads.rs::frozen_membership_reads_the_collection_test_issue1757
+# retires: loaves/compiler/incan_ir/src/lower/tests/collection_sources_and_static_reads.rs::iteration_sources_over_frozen_collections_read_owned_items_issue1757
+# expect-stdout:
+#   6
+#   true
+#   true
+#   false
+#   true
+#   true
+#   false
+#   alpha BETA
+#   2
+#   4
+#   9
+#   alpha
+#   beta
+#   3
+#   5
+#   2
+#   A B
+#   3
+
+const NAMES: FrozenList[str] = ["alpha", "beta"]
+const NUMS: FrozenList[int] = [3, 1, 2]
+const TAGS: FrozenSet[str] = {"a"}
+const IDS: FrozenSet[int] = {3}
+const TABLE: FrozenDict[str, int] = {"a": 1, "b": 2}
+const BLOBS: FrozenList[bytes] = [b"ab", b"cde"]
+const BY_NAME: FrozenDict[str, bytes] = {"x": b"xyz"}
+
+
+def main() -> None:
+    probe = "a"
+    println(NAMES.len() + NUMS.len() + TABLE.len() - IDS.len())
+    println(TAGS.contains(probe))
+    println("beta" in NAMES)
+    println(probe not in TAGS)
+    println(3 in IDS)
+    println(probe in TABLE)
+    println(4 in NUMS)
+    first: str = NAMES[0]
+    println(first + " " + NAMES[-1].upper())
+    println(len(BLOBS[0]))
+    one: bytes = BY_NAME["x"]
+    println(len(one) + 1)
+    mut total = 0
+    for n in NUMS:
+        total += n
+    for i in IDS:
+        total += i
+    println(total)
+    for name in NAMES:
+        println(name)
+    mut value_total = 0
+    for key in TABLE:
+        value_total += TABLE[key]
+    println(value_total)
+    mut sizes = 0
+    for blob in BLOBS:
+        sizes += len(blob)
+    println(sizes)
+    unique: set[str] = set(NAMES)
+    println(len(unique))
+    println(" ".join(sorted([key.upper() for key in TABLE])))
+    doubled = (n * 2 for n in NUMS)
+    println(len(list(doubled)))

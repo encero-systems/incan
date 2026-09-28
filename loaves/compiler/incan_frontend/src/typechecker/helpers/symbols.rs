@@ -32,6 +32,19 @@ impl TypeChecker {
         (self.symbols.lookup(name) == Some(*imported_symbol_id)).then_some(*id)
     }
 
+    /// Return the stdlib surface type a constructor callee spells, or `None` when the name is one of the program's own
+    /// module declarations.
+    ///
+    /// A module's own `class ValidationError` or `model Json` is constructed as that declaration, not through the
+    /// surface type's constructor rules: a stdlib surface type of the same name is reached only by importing it
+    /// (#1795).
+    pub(in crate::typechecker) fn constructor_surface_type(&self, name: &str) -> Option<SurfaceTypeId> {
+        if self.module_declared_type_names.contains(name) {
+            return None;
+        }
+        incan_lang::lang::surface::types::from_str(name)
+    }
+
     /// Return the active stdlib surface type imported under `name`, if the import has not been shadowed.
     pub(in crate::typechecker) fn active_surface_type_import(&self, name: &str) -> Option<SurfaceTypeId> {
         let (id, imported_symbol_id) = self.surface_type_import_bindings.get(name)?;

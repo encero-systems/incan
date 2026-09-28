@@ -243,6 +243,30 @@ impl IrImportItem {
     }
 }
 
+/// Return whether `item`, imported from `module_path`, binds a nominal type (a model, class, newtype, enum, trait or
+/// type alias) declared in one of the project's own source modules.
+///
+/// Such a binding is the program's own type under its local name ([`IrImportItem::source_binding_name`]), whatever
+/// that name is: a stdlib surface type of the same spelling (`FieldInfo`, `ValidationError`) is reached only through a
+/// `std` import (#1795). A `std` module, a `pub::` library and a Rust crate are not project source modules.
+pub fn imports_project_module_type(module_path: &[String], item: &IrImportItem) -> bool {
+    let from_project_module = module_path
+        .first()
+        .is_some_and(|root| root != incan_lang::lang::stdlib::STDLIB_ROOT);
+    from_project_module
+        && item.canonical.as_ref().is_some_and(|identity| {
+            matches!(
+                identity.kind,
+                SemanticSourceTargetKind::Model
+                    | SemanticSourceTargetKind::Class
+                    | SemanticSourceTargetKind::Newtype
+                    | SemanticSourceTargetKind::Enum
+                    | SemanticSourceTargetKind::Trait
+                    | SemanticSourceTargetKind::TypeAlias
+            ) && matches!(identity.origin, SymbolOrigin::Module(_))
+        })
+}
+
 /// Return whether an import targets a linker-visible source symbol with an Incan-owned projection.
 ///
 /// Top-level partial declarations emit ordinary Rust wrapper functions and therefore follow the same exact canonical

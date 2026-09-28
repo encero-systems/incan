@@ -18,8 +18,8 @@ use super::{FunctionSignature, IrSpan, IrType, Ownership};
 use incan_lang::interop::CoercionPolicy;
 use incan_lang::lang::builtins::{self as core_builtins, BuiltinFnId};
 use incan_lang::lang::surface::{
-    bytes_methods, dict_methods, frozen_dict_methods, iterator_methods, list_methods, result_methods, set_methods,
-    string_methods,
+    bytes_methods, dict_methods, frozen_dict_methods, frozen_set_methods, iterator_methods, list_methods,
+    result_methods, set_methods, string_methods,
 };
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
@@ -1058,8 +1058,9 @@ impl MethodKind {
             {
                 Some(Self::Iterator(IteratorMethodKind::Iter))
             }
-            // A frozen dict answers `contains_key` with the keyed membership a dict takes; its other methods (`len`,
-            // `is_empty`) are ordinary calls on the runtime wrapper (#1757).
+            // A frozen dict answers `contains_key` with the keyed membership a dict takes, and a frozen set answers
+            // `contains` with the membership a set takes; their `len` is `len(c)` and `is_empty` is an ordinary call
+            // on the runtime wrapper (#1757).
             IrType::NamedGeneric(type_name, _)
                 if collection_types::from_str(type_name) == Some(CollectionTypeId::FrozenDict)
                     && frozen_dict_methods::from_str(name)
@@ -1067,10 +1068,34 @@ impl MethodKind {
             {
                 Some(Self::Collection(CollectionMethodKind::Contains))
             }
+            IrType::NamedGeneric(type_name, _)
+                if collection_types::from_str(type_name) == Some(CollectionTypeId::FrozenSet)
+                    && frozen_set_methods::from_str(name) == Some(frozen_set_methods::FrozenSetMethodId::Contains) =>
+            {
+                Some(Self::Collection(CollectionMethodKind::Contains))
+            }
             IrType::NamedGeneric(type_name, _) | IrType::Struct(type_name)
                 if core_traits::from_qualified_str(type_name) == Some(TraitId::Iterator) =>
             {
                 iterator_method_kind(name).map(Self::Iterator)
+            }
+            // A generator satisfies `Iterator[T]`: the RFC 088 surface reaches it as an iterator, except its own RFC
+            // 006 methods (`map`, `filter`, `take`, `collect`), which stay generator-typed calls on the runtime
+            // wrapper.
+            IrType::NamedGeneric(type_name, _)
+                if collection_types::from_str(type_name) == Some(CollectionTypeId::Generator) =>
+            {
+                iterator_method_kind(name)
+                    .filter(|kind| {
+                        !matches!(
+                            kind,
+                            IteratorMethodKind::Map
+                                | IteratorMethodKind::Filter
+                                | IteratorMethodKind::Take
+                                | IteratorMethodKind::Collect
+                        )
+                    })
+                    .map(Self::Iterator)
             }
             _ => None,
         }

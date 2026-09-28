@@ -3639,6 +3639,27 @@ impl<'a> IrEmitter<'a> {
         }
         self.iterator_sum_used.replace(false);
         self.const_bindings.clear();
+        // Migration note (rust_source_backend_deprecation.md):
+        // - Compatibility issue: #1795 -- a `FieldInfo` or `ValidationError` a program imports from one of its own
+        //   modules was spelled as the runtime surface type, because only the declaring module counted as the owner.
+        // - Behavior evidence: the `user_types_named_like_stdlib_types` behavior fixture.
+        // - Semantic owner: the checked import identity (`imports_project_module_type` in `incan_ir`); this set only
+        //   records which names the program's own declarations and project imports bind.
+        // - Retirement condition: the Rust-source backend is deleted (#654); the replacement route resolves nominal
+        //   types through their canonical identities and has no bare-name spellings.
+        let imported_project_types = program
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.kind {
+                IrDeclKind::Import { path, items, .. } => Some((path, items)),
+                _ => None,
+            })
+            .flat_map(|(path, items)| {
+                items
+                    .iter()
+                    .filter(move |item| incan_ir::decl::imports_project_module_type(path, item))
+            })
+            .map(|item| item.source_binding_name().to_string());
         self.local_nominal_type_names = program
             .declarations
             .iter()
@@ -3653,6 +3674,7 @@ impl<'a> IrEmitter<'a> {
                 | IrDeclKind::Import { .. }
                 | IrDeclKind::Impl(_) => None,
             })
+            .chain(imported_project_types)
             .collect();
         // RFC 023: propagate rust.module() path from IR to emitter for @rust.extern delegation.
         if self.rust_module_path.is_none() {

@@ -9,8 +9,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/decls/functions.rs",
-      "sha256": "265d71c5f6932f6088d7f4a9a3b491e7c21ed3b2b414b84ab9dcf7b9f921378b",
-      "lines": 2061
+      "sha256": "aebf57ef836c1500346a77c7717e36cfacfd00e935c3d732394eaf5a0465415b",
+      "lines": 2077
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/decls/impls.rs",
@@ -39,8 +39,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/builtins.rs",
-      "sha256": "2360d74b81ca7462d09c845a3de3f46e8637d37fa1a075fb05f068111d841861",
-      "lines": 1098
+      "sha256": "03d9527ae9a3b55acc3b9173fa2707b992fe28d6768a05da3568d93b4c58d633",
+      "lines": 1112
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/calls.rs",
@@ -64,8 +64,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/indexing.rs",
-      "sha256": "cbb530421df19d181ccf693d523af62db7f5d13a25458796cd426d0e8fe1ae98",
-      "lines": 512
+      "sha256": "8f262f2dce1f92d8c52df107e9eb9d76796bf129c79102db63bf8e40dd88358d",
+      "lines": 523
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/interop_coercions.rs",
@@ -79,13 +79,13 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
-      "sha256": "7e0f8c57db8b0f0421d3fb8349443d888562b1a412b44b82c4c32864a987a743",
-      "lines": 1562
+      "sha256": "38e1fe4e7785f586ef39e9a05bc4f3ccbba1c344ddf6851f6be826e1425bd6b1",
+      "lines": 1600
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/collection_methods.rs",
-      "sha256": "fbebecdbc503fcd2bee8b1635e2e7263242e27cea4329756b7a55fc627c201c1",
-      "lines": 194
+      "sha256": "add6db8f400cb2f58d3148e63786a8859249a024c05b9aff4ab1b9fc6b0a2bb0",
+      "lines": 212
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/fast_paths.rs",
@@ -124,8 +124,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/program.rs",
-      "sha256": "a05c48fcd15e3a291588ae287d03c2eccc287879e2911b0f0e0ed1ededc03fa8",
-      "lines": 4706
+      "sha256": "5a7f1e2d0f90570e0afb0bcaab3a54aed4239954c82635405b7194cf391ba18b",
+      "lines": 4728
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
@@ -382,6 +382,52 @@
       "behavior_evidence": "incan_emit unit test generated_union_debug_delegates_to_member_issue1833",
       "semantic_owner": "Body IR union member types and the language display contract",
       "retirement_condition": "the Rust-source backend is removed under #654"
+    },
+    {
+      "kind": "change",
+      "pr": 1899,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/decls/functions.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/builtins.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/indexing.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/collection_methods.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/program.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1757, #1795, #1561",
+      "behavior_evidence": "behavior fixtures snapshots_collections_and_strings/const_frozen_collection_membership_and_iteration.incn and dict_get_with_default.incn, snapshots_stdlib/generator_iterator_surface.incn, snapshots_traits_and_generics/iterator_flat_map_over_iterables.incn and codegen_modules_and_imports/user_types_named_like_stdlib_types (combined-branch run); rustc-compiling emitter tests in incan_emit src/tests/reads_and_iterator_surface.rs; codegen snapshot std_derives_collection_compiled gains the Generator bridge impl",
+      "semantic_owner": "#1561: the checked facts lowering already carries (a FrozenList read typed as its element and the ownership planner list_read_element_type; the checked Dict.get(k, default) call typed V; the checker protocol typing of Generator[T] as an Iterator[T] value; the checked import identity imports_project_module_type); after the cutover Body IR states each read and binding from those facts",
+      "retirement_condition": "#654: the Rust-source backend is deleted; the replacement route reads frozen collections, dict defaults, generators and project-imported types from the recorded facts and needs no emitter spelling of its own"
+    },
+    {
+      "kind": "change",
+      "pr": 1899,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1561",
+      "behavior_evidence": "emission test dict_get_with_default_reads_the_value in incan_emit src/tests/reads_and_iterator_surface.rs (rustc-compiled) and the behavior fixture snapshots_collections_and_strings/dict_get_with_default.incn (combined-branch run)",
+      "semantic_owner": "#1561: the checked Dict.get(k, default) call typed V and the membership-probe ownership plan in the ownership planner; after the cutover Body IR states the static read from those facts",
+      "retirement_condition": "#654: the Rust-source backend is deleted; the replacement route reads a static dict entry from the recorded facts"
     }
   ]
 }

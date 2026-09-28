@@ -106,11 +106,12 @@ fn main() {
     );
     let _ = println!("{}", A);
     let _ = println!("{}", S);
-    let _ = println!("{}", L.len());
+    let _ = println!("{}", ::std::convert::identity(L.len() as i64));
     let _ = println!(
-        "{}", { { __incan_init_module_statics(); METADATA.with_mut(| __incan_static_value
-        | { __incan_static_value.canonical_forms.len() }) } }
+        "{}", ::std::convert::identity({ __incan_init_module_statics(); METADATA
+        .with_ref(| __incan_static_value | { (__incan_static_value.canonical_forms)
+        .clone() }) } .len() as i64)
     );
-    let _ = println!("{}", D.len());
+    let _ = println!("{}", ::std::convert::identity(D.len() as i64));
     let _ = println!("{} {}", T.0, T.1);
 }

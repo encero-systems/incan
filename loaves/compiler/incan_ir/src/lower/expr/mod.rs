@@ -12,6 +12,7 @@ mod default_owner_paths;
 mod destination_literals;
 mod display_operands;
 mod error_display;
+mod frozen_reads;
 mod helpers;
 mod pattern_alternatives;
 mod patterns;
@@ -25,8 +26,8 @@ use std::collections::HashMap;
 use super::super::decl::{FunctionParamDefault, IrTraitBound, IrTraitBoundOrigin, IrTypeParam};
 use super::super::expr::{
     BuiltinFn, CollectionMethodKind, IrCallArg, IrCallArgKind, IrDictEntry, IrExpr, IrExprKind, IrListEntry,
-    IrMethodDispatch, IrTraitDispatch, Literal as IrLiteral, MethodCallArgPolicy, MethodKind, NumericResizePolicy,
-    RaceArm, UnaryOp, VarAccess, VarRefKind,
+    IrMethodDispatch, IrTraitDispatch, IteratorMethodKind, Literal as IrLiteral, MethodCallArgPolicy, MethodKind,
+    NumericResizePolicy, RaceArm, UnaryOp, VarAccess, VarRefKind,
 };
 use super::super::types::IrType;
 use super::super::{IrCheckedCFunction, IrCheckedCType, IrStmt, IrStmtKind, Mutability, TypedExpr};
@@ -1819,17 +1820,26 @@ impl AstLowering {
                                 kind: IrCallArgKind::Positional,
                                 expr: item,
                             }];
+                            // A dict and every frozen collection answer membership with the collection family's own
+                            // test (#1757), whatever their method surface names it.
                             let contains_kind = MethodKind::for_receiver(&collection.ty, "contains").or_else(|| {
                                 let mut receiver_ty = &collection.ty;
                                 while let IrType::Ref(inner) | IrType::RefMut(inner) = receiver_ty {
                                     receiver_ty = inner.as_ref();
                                 }
-                                matches!(receiver_ty, IrType::Dict(_, _))
-                                    .then_some(MethodKind::Collection(CollectionMethodKind::Contains))
+                                (matches!(receiver_ty, IrType::Dict(_, _))
+                                    || frozen_reads::frozen_collection_item(receiver_ty).is_some())
+                                .then_some(MethodKind::Collection(CollectionMethodKind::Contains))
                             });
                             let contains_call = if let Some(kind) = contains_kind {
-                                self.known_method_call(r.span, collection, kind, contains_args, IrType::Bool)
-                                    .0
+                                self.known_method_call(
+                                    r.span,
+                                    frozen_reads::frozen_membership_receiver(collection),
+                                    kind,
+                                    contains_args,
+                                    IrType::Bool,
+                                )
+                                .0
                             } else {
                                 let arg_policy = self.regular_method_call_arg_policy(
                                     r.span,
@@ -2087,7 +2097,19 @@ impl AstLowering {
                             })
                     });
 
-                if let Some(policy) = numeric_resize_policy(&method_name)
+                if dispatch.is_none()
+                    && args_ir.is_empty()
+                    && frozen_reads::is_frozen_len_call(&receiver.ty, &method_name)
+                {
+                    // A frozen collection's `len()` is the `int` that `len(c)` produces.
+                    (
+                        IrExprKind::BuiltinCall {
+                            func: BuiltinFn::Len,
+                            args: vec![receiver],
+                        },
+                        expr_ty,
+                    )
+                } else if let Some(policy) = numeric_resize_policy(&method_name)
                     && args_ir.is_empty()
                     && lowered_type_args.is_empty()
                 {
@@ -2124,6 +2146,26 @@ impl AstLowering {
                     if kind == MethodKind::Collection(CollectionMethodKind::Count) && args_ir.is_empty() {
                         (Self::lower_list_item_count(receiver), expr_ty)
                     } else {
+                        let receiver = if kind == MethodKind::Collection(CollectionMethodKind::Contains) {
+                            frozen_reads::frozen_membership_receiver(receiver)
+                        } else {
+                            receiver
+                        };
+                        // A `flat_map` callback returning an iterable other than a list expands through `list(...)`.
+                        let args_ir = if kind == MethodKind::Iterator(IteratorMethodKind::FlatMap) {
+                            args_ir
+                                .into_iter()
+                                .enumerate()
+                                .map(|(position, mut arg)| {
+                                    if position == 0 {
+                                        arg.expr = Self::flat_map_list_callback(arg.expr, &expr_ty);
+                                    }
+                                    arg
+                                })
+                                .collect()
+                        } else {
+                            args_ir
+                        };
                         self.known_method_call(expr_span, receiver, kind, args_ir, expr_ty)
                     }
                 } else {
@@ -2282,7 +2324,8 @@ impl AstLowering {
                         elem_ty,
                     )
                 } else if let Some(value_ty) = frozen_dict_value_type(&obj.ty) {
-                    // A `const` `FrozenDict[K, V]` lookup yields its value type (#1757).
+                    // A `const` `FrozenDict[K, V]` lookup yields its value type (#1757), a `'static` text or bytes
+                    // value converted to the owned `str` or `bytes` the checker typed.
                     let lookup = TypedExpr::new(
                         IrExprKind::Index {
                             object: Box::new(obj),
@@ -2290,7 +2333,23 @@ impl AstLowering {
                         },
                         value_ty.clone(),
                     );
-                    (grouped_frozen_dict_lookup(lookup), value_ty)
+                    let read =
+                        frozen_reads::owned_frozen_read(TypedExpr::new(grouped_frozen_dict_lookup(lookup), value_ty));
+                    (read.kind, read.ty)
+                } else if let Some((CollectionTypeId::FrozenList, elem_ty)) =
+                    frozen_reads::frozen_collection_item(&obj.ty)
+                {
+                    // A `const` `FrozenList[T]` read yields its element, converted to the owned `str` or `bytes`
+                    // the checker typed when the element is `'static` text or bytes.
+                    let elem_ty = elem_ty.clone();
+                    let read = frozen_reads::owned_frozen_read(TypedExpr::new(
+                        IrExprKind::Index {
+                            object: Box::new(obj),
+                            index: Box::new(idx),
+                        },
+                        elem_ty,
+                    ));
+                    (read.kind, read.ty)
                 } else {
                     let elem_ty = match &obj.ty {
                         IrType::List(e) => (**e).clone(),

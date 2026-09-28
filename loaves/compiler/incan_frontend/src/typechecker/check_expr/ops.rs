@@ -638,6 +638,28 @@ impl TypeChecker {
                     return ResolvedType::Bool;
                 }
 
+                // A `const` frozen collection answers membership as its mutable form does: an element of a
+                // `FrozenList` or `FrozenSet`, a key of a `FrozenDict`. A text element or key takes any text probe.
+                let frozen_member_ty = match &right_ty {
+                    ResolvedType::FrozenList(elem) | ResolvedType::FrozenSet(elem) => Some(elem.as_ref()),
+                    ResolvedType::FrozenDict(key, _) => Some(key.as_ref()),
+                    _ => None,
+                };
+                if let Some(member_ty) = frozen_member_ty {
+                    let text_probe_for_text_member = lhs_is_str && is_str_like(member_ty);
+                    if !text_probe_for_text_member
+                        && !matches!(left_ty, ResolvedType::Unknown)
+                        && !self.types_compatible(&left_ty, member_ty)
+                    {
+                        self.errors.push(errors::type_mismatch(
+                            &member_ty.to_string(),
+                            &left_ty.to_string(),
+                            span,
+                        ));
+                    }
+                    return ResolvedType::Bool;
+                }
+
                 // List/Set membership: "<item> in <collection>"
                 if let ResolvedType::Generic(name, args) = &right_ty {
                     match collection_type_id(name.as_str()) {

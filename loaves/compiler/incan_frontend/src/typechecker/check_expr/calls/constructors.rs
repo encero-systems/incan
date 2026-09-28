@@ -421,7 +421,7 @@ impl TypeChecker {
         }
 
         if self.symbols.lookup(name).is_some()
-            && let Some(tid) = surface_types::from_str(name)
+            && let Some(tid) = self.constructor_surface_type(name)
         {
             if matches!(tid, SurfaceTypeId::ValidationError) {
                 let mut message_count = 0usize;

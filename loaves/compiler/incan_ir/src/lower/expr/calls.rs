@@ -3486,7 +3486,21 @@ impl AstLowering {
             if constructor == CollectionTypeId::List && args.is_empty() {
                 return Ok((IrExprKind::List(Vec::new()), result_ty));
             }
-            let args_ir = self.lower_call_args(args)?.into_iter().map(|arg| arg.expr).collect();
+            let args_ir = self
+                .lower_call_args(args)?
+                .into_iter()
+                .map(|arg| {
+                    // `set(c)` over a frozen collection of `'static` text or bytes, or over a `FrozenDict`, collects
+                    // the owned items (the keys of a dict) the checker typed, as a comprehension over it does.
+                    if constructor == CollectionTypeId::Set
+                        && super::frozen_reads::set_source_needs_owned_frozen_items(&arg.expr.ty)
+                    {
+                        super::frozen_reads::owned_frozen_iteration_source(arg.expr)
+                    } else {
+                        arg.expr
+                    }
+                })
+                .collect();
             return Ok((
                 IrExprKind::BuiltinCall {
                     func: BuiltinFn::CollectionConstructor(constructor),
@@ -4130,6 +4144,21 @@ impl AstLowering {
         }
     }
 
+    /// Whether a constructor callee names the stdlib `ValidationError`, which is built through its runtime
+    /// constructors.
+    ///
+    /// A type the program declares under that name, or imports under it from one of its own modules, is constructed as
+    /// the declaration it is (#1795); the checked import path is the authority for an imported name.
+    fn names_stdlib_validation_error(&self, name: &str) -> bool {
+        name == surface_types::as_str(surface_types::SurfaceTypeId::ValidationError)
+            && !self.declared_nominal_type_names.contains(name)
+            && self
+                .type_info
+                .as_ref()
+                .and_then(|info| info.import_binding_path(name))
+                .is_none_or(|path| path.first().map(String::as_str) == Some(STDLIB_ROOT))
+    }
+
     /// Lower a struct/model/class/newtype constructor call.
     pub fn lower_constructor_call(
         &mut self,
@@ -4142,7 +4171,7 @@ impl AstLowering {
             return Ok(hook_call);
         }
 
-        if name == surface_types::as_str(surface_types::SurfaceTypeId::ValidationError) {
+        if self.names_stdlib_validation_error(name) {
             let mut message = None;
             let mut code = None;
             for arg in args {

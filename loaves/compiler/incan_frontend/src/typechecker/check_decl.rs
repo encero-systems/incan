@@ -5954,7 +5954,10 @@ impl TypeChecker {
         }
 
         let has_yield = any_expr_in_body(&func.body, |expr| matches!(expr, Expr::Yield(_)));
-        if return_type.generator_element_type().is_some() && !has_yield && !body_has_return_value(&func.body) {
+        // RFC 006 requires a reachable `yield`: one after an unconditional `return` in its block never runs.
+        let has_reachable_yield = has_yield && super::reachability::body_has_reachable_yield(&func.body);
+        if return_type.generator_element_type().is_some() && !has_reachable_yield && !body_has_return_value(&func.body)
+        {
             self.errors
                 .push(errors::generator_requires_yield(&func.name, func.return_type.span));
         }
@@ -6416,8 +6419,14 @@ impl TypeChecker {
             .body
             .as_ref()
             .is_some_and(|body| any_expr_in_body(body, |expr| matches!(expr, Expr::Yield(_))));
+        // RFC 006 requires a reachable `yield`: one after an unconditional `return` in its block never runs.
+        let body_has_reachable_yield = body_has_yield
+            && method
+                .body
+                .as_deref()
+                .is_some_and(super::reachability::body_has_reachable_yield);
         if effective_return_type.generator_element_type().is_some()
-            && !body_has_yield
+            && !body_has_reachable_yield
             && method.body.as_deref().is_some_and(|body| !body_has_return_value(body))
         {
             self.errors

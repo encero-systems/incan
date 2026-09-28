@@ -734,12 +734,15 @@ impl<'a> IrEmitter<'a> {
 
     /// Materialize method-call arguments before entering a static storage lock.
     ///
-    /// This prevents lock reentry when argument expressions also read/write static-backed values.
+    /// This prevents lock reentry when argument expressions also read/write static-backed values. `probe_args` leading
+    /// arguments are lookup probes (the key of a dict `get`), which the lookup only borrows: they are materialized as
+    /// membership probes, so a place such as a local `str` is borrowed rather than moved out before a later use.
     fn materialize_storage_rooted_args<'site>(
         &self,
         args: &[IrCallArg],
         callable_signature: Option<&'site FunctionSignature>,
         base_use_site: ValueUseSite<'site>,
+        probe_args: usize,
     ) -> Result<(Vec<TokenStream>, Vec<IrCallArg>), EmitError> {
         let mut bindings = Vec::with_capacity(args.len());
         let mut rewritten = Vec::with_capacity(args.len());
@@ -747,7 +750,11 @@ impl<'a> IrEmitter<'a> {
             let name = format!("__incan_static_arg_{idx}");
             let ident = format_ident!("{}", name);
             let param = Self::signature_param_for_original_call_arg(args, idx, callable_signature);
-            let materialize_site = Self::storage_arg_materialization_use_site(base_use_site, param);
+            let materialize_site = if idx < probe_args {
+                ValueUseSite::MembershipProbe
+            } else {
+                Self::storage_arg_materialization_use_site(base_use_site, param)
+            };
             let emitted = self.emit_expr_for_use(&arg.expr, materialize_site)?;
             let mutable = param.is_some_and(|param| matches!(param.mutability, incan_ir::types::Mutability::Mutable));
             let binding = if mutable {
@@ -920,8 +927,18 @@ impl<'a> IrEmitter<'a> {
         args: &[IrCallArg],
     ) -> Result<TokenStream, EmitError> {
         if Self::expr_is_storage_rooted(receiver) {
+            // Migration note (rust_source_backend_deprecation.md):
+            // - Compatibility issue: #1561 -- `counts[name] = counts.get(name, 0) + 1` on a static dict moved `name`
+            //   into the lookup's pre-lock binding before the assignment's key read it again (E0382).
+            // - Behavior evidence: the `dict_get_with_default` behavior fixture and the emission test
+            //   `dict_get_with_default_reads_the_value`.
+            // - Semantic owner: the membership-probe ownership plan (`ValueUseSite::MembershipProbe`), which already
+            //   decides how a borrowed lookup probe is bound; this site only selects it for the `get` key.
+            // - Retirement condition: the Rust-source backend is deleted (#654); Body IR evaluates the lookup from the
+            //   same checked facts.
+            let probe_args = usize::from(matches!(kind, MethodKind::Collection(CollectionMethodKind::Get)));
             let (arg_bindings, rewritten_args) =
-                self.materialize_storage_rooted_args(args, None, ValueUseSite::MethodArg)?;
+                self.materialize_storage_rooted_args(args, None, ValueUseSite::MethodArg, probe_args)?;
             if matches!(kind, MethodKind::Collection(CollectionMethodKind::Get)) {
                 let rewritten_receiver = Self::rewrite_storage_root_expr(receiver, "__incan_static_value");
                 let arg_exprs: Vec<TypedExpr> = rewritten_args.iter().map(|a| a.expr.clone()).collect();
@@ -1104,7 +1121,7 @@ impl<'a> IrEmitter<'a> {
                 None,
             );
             let (arg_bindings, rewritten_args) =
-                self.materialize_storage_rooted_args(args, callable_signature, base_use_site)?;
+                self.materialize_storage_rooted_args(args, callable_signature, base_use_site, 0)?;
             let inner = self.emit_method_call_expr_with_result_use(
                 &rewritten_receiver,
                 method,
@@ -1395,6 +1412,8 @@ impl<'a> IrEmitter<'a> {
         Ok(quote! { incan_std_core::strings::str_slice(#r_borrow, #start_tokens, #end_tokens, None) })
     }
 
+    /// Emit `get` on a static collection read inside its storage closure: the entry, owned, or the value itself when
+    /// the call names a default.
     fn emit_static_collection_get(&self, receiver: &TypedExpr, args: &[TypedExpr]) -> Result<TokenStream, EmitError> {
         let r = self.emit_expr(receiver)?;
         let Some(arg) = args.first() else {
@@ -1404,11 +1423,30 @@ impl<'a> IrEmitter<'a> {
         match &receiver.ty {
             IrType::Dict(_, value_ty) => {
                 let key = collection_methods::emit_dict_lookup_key(receiver, arg, emitted_arg);
-                if value_ty.is_copy() {
-                    Ok(quote! { #r.get(#key).copied() })
+                let entry = if value_ty.is_copy() {
+                    quote! { #r.get(#key).copied() }
                 } else {
-                    Ok(quote! { #r.get(#key).cloned() })
+                    quote! { #r.get(#key).cloned() }
+                };
+                // Migration note (rust_source_backend_deprecation.md):
+                // - Compatibility issue: #1561 -- `counts.get(name, 0)` on a static dict dropped its default and read
+                //   the `Option` entry, so `counts.get(name, 0) + 1` in `static_storage.md` failed the build.
+                // - Behavior evidence: the `dict_get_with_default` behavior fixture and the emission test
+                //   `dict_get_with_default_reads_the_value`.
+                // - Semantic owner: the checked call (`Dict.get(k, default)` is `V`); this arm only spells the read
+                //   inside the static's storage closure.
+                // - Retirement condition: the Rust-source backend is deleted (#654); Body IR evaluates the read from
+                //   the same checked facts.
+                if let Some(default) = args.get(1) {
+                    let default = self.emit_expr_for_use(
+                        default,
+                        ValueUseSite::CollectionElement {
+                            target_ty: Some(value_ty),
+                        },
+                    )?;
+                    return Ok(quote! { #entry.unwrap_or(#default) });
                 }
+                Ok(entry)
             }
             IrType::List(elem_ty) => {
                 if elem_ty.is_copy() {

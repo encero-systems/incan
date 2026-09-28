@@ -23,6 +23,6 @@ fn main() {
             }
         }),
     );
-    let _ = println!("{}", RAW.len());
-    let _ = println!("{}", FROZEN.len());
+    let _ = println!("{}", ::std::convert::identity(RAW.len() as i64));
+    let _ = println!("{}", ::std::convert::identity(FROZEN.len() as i64));
 }

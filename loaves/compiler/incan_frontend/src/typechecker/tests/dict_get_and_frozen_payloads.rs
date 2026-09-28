@@ -484,6 +484,27 @@ def present(streams: dict[str, Generator[int]], key: str) -> bool:
     assert!(check_str(read).is_ok(), "a lookup that only reads the generator checks");
 }
 
+/// `INCAN-T0118`: `get(key, default)` always returns its own copy of the entry, so it is refused for a value type that
+/// cannot be copied, even though its result is never an `Option`.
+#[test]
+fn a_dict_get_with_a_default_of_a_generator_is_refused_with_its_stable_code() {
+    let source = r#"
+def numbers() -> Generator[int]:
+    yield 1
+
+
+def pick(streams: dict[str, Generator[int]], key: str) -> Generator[int]:
+    return streams.get(key, numbers())
+"#;
+    let errors = check_str_err(source, "a defaulted lookup of a generator must not check");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0118") && error.message.contains("Generator[int]")),
+        "the defaulted lookup is refused with INCAN-T0118, naming the value type, got {errors:?}"
+    );
+}
+
 /// A lookup whose binding calls a Rust method with a shared receiver stays read-only while the method's result is
 /// discarded, tested, compared, or passed to `len`, `print` or `println`. A result that is kept, here bound to a name
 /// and read after the dict changes, can hold on to the entry, so that lookup keeps its own copy: with a value type

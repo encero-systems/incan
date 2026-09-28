@@ -388,7 +388,7 @@ impl TypeChecker {
                             self.record_direct_callee_identity(name, callee.span);
                             return self.check_graph_constructor_call(name, &type_info, type_args, args, span);
                         }
-                        if let Some(tid) = surface_types::from_str(name) {
+                        if let Some(tid) = self.constructor_surface_type(name) {
                             if !type_args.is_empty() {
                                 self.errors
                                     .push(errors::explicit_call_site_type_args_not_supported(span));
@@ -634,7 +634,7 @@ impl TypeChecker {
             }
 
             let in_scope = self.symbols.lookup(name).is_some();
-            if in_scope && let Some(tid) = surface_types::from_str(name) {
+            if in_scope && let Some(tid) = self.constructor_surface_type(name) {
                 if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
                     return self.check_json_query_constructor_call(tid, args, span);
                 }
@@ -672,7 +672,7 @@ impl TypeChecker {
                     .expressions
                     .ident_kinds
                     .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
-                if in_scope && let Some(tid) = surface_types::from_str(name) {
+                if in_scope && let Some(tid) = self.constructor_surface_type(name) {
                     if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
                         return self.check_json_query_constructor_call(tid, args, span);
                     }

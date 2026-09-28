@@ -930,6 +930,89 @@ def broken() -> Generator[int]:
     );
 }
 
+/// A `yield` after an unconditional `return` in its own block never runs, so a function whose only `yield` is such a
+/// `yield` has no reachable `yield`, as RFC 006 requires of a generator function; a `yield` after a `return` that ends
+/// only a branch stays reachable.
+#[test]
+fn test_rfc006_generator_yield_after_return_is_unreachable() {
+    let source = r#"
+def never() -> Generator[int]:
+  return
+  yield 1
+
+def nested_never(flag: bool) -> Generator[int]:
+  if flag:
+    return
+    yield 2
+"#;
+
+    let errs = check_str_err(source, "expected unreachable generator yield diagnostics");
+    let missing_yield = errs
+        .iter()
+        .filter(|err| err.message.contains("must contain at least one `yield value`"))
+        .count();
+    assert_eq!(
+        missing_yield, 2,
+        "expected a missing-yield diagnostic for each function, got: {errs:?}"
+    );
+
+    assert_check_ok(
+        r#"
+def early(flag: bool) -> Generator[int]:
+  if flag:
+    return
+  yield 1
+"#,
+    );
+}
+
+/// A `Generator[T]` satisfies `Iterator[T]`, so it takes the RFC 088 adapters and terminal consumers beyond the RFC 006
+/// helpers, is accepted as the `zip` and `chain` partner and as a `flat_map` expansion, and keeps its own `map`,
+/// `filter`, `take` and `collect` typed as generator methods.
+#[test]
+fn test_rfc088_generator_takes_the_iterator_surface() {
+    let source = r#"
+def numbers(limit: int) -> Generator[int]:
+  for value in range(limit):
+    yield value
+
+def keep(n: int) -> bool:
+  return n > 0
+
+def add(acc: int, n: int) -> int:
+  return acc + n
+
+def pair(n: int) -> Generator[int]:
+  yield n
+  yield n
+
+def inc(n: int) -> int:
+  return n + 1
+
+def main() -> None:
+  counted: int = numbers(3).count()
+  total: int = numbers(3).sum()
+  folded: int = numbers(3).fold(0, add)
+  reduced: int = numbers(3).reduce(0, add)
+  found: Option[int] = numbers(3).find(keep)
+  any_kept: bool = numbers(3).any(keep)
+  all_kept: bool = numbers(3).all(keep)
+  indexed: list[tuple[int, int]] = numbers(3).enumerate().collect()
+  zipped: list[tuple[int, int]] = numbers(3).zip(numbers(3)).collect()
+  chained: list[int] = numbers(2).chain(numbers(2)).skip(1).collect()
+  flattened: list[int] = [1, 2].iter().flat_map(pair).collect()
+  batched: list[list[int]] = numbers(5).take_while(keep).skip_while(keep).batch(2).collect()
+  mapped: Generator[int] = numbers(3).map(inc)
+  kept: Generator[int] = numbers(3).filter(keep).take(2)
+  listed: list[int] = numbers(3).collect()
+  println(counted + total + folded + reduced + len(indexed) + len(zipped) + len(chained) + len(flattened))
+  println(found)
+  println(any_kept and all_kept)
+  println(len(batched) + len(listed) + len(list(mapped)) + len(list(kept)))
+"#;
+    assert_check_ok(source);
+}
+
 #[test]
 fn test_rfc006_yield_outside_generator_is_rejected() {
     let source = r#"
