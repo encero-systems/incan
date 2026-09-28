@@ -101,33 +101,8 @@ impl Formatter {
                 self.writer.newline();
             }
             Statement::Continue => self.writer.writeln("continue"),
-            Statement::TupleUnpack(unpack) => {
-                match unpack.binding {
-                    BindingKind::Let => self.writer.write("let "),
-                    BindingKind::Mutable => self.writer.write("mut "),
-                    BindingKind::Inferred | BindingKind::Reassign => {}
-                }
-                for (i, name) in unpack.names.iter().enumerate() {
-                    if i > 0 {
-                        self.writer.write(", ");
-                    }
-                    self.writer.write(name);
-                }
-                self.writer.write(" = ");
-                self.format_expr(&unpack.value.node);
-                self.writer.newline();
-            }
-            Statement::TupleAssign(assign) => {
-                for (i, target) in assign.targets.iter().enumerate() {
-                    if i > 0 {
-                        self.writer.write(", ");
-                    }
-                    self.format_expr(&target.node);
-                }
-                self.writer.write(" = ");
-                self.format_expr(&assign.value.node);
-                self.writer.newline();
-            }
+            Statement::TupleUnpack(unpack) => self.format_tuple_unpack(unpack, TupleValueLayout::Bare),
+            Statement::TupleAssign(assign) => self.format_tuple_assign(assign, TupleValueLayout::Bare),
             Statement::ChainedAssignment(ca) => {
                 match ca.binding {
                     BindingKind::Let => self.writer.write("let "),
@@ -326,6 +301,65 @@ impl Formatter {
                 self.writer.write(" = ");
                 self.format_expr(&value.node);
             }
+        }
+    }
+}
+
+/// How the right side of a tuple unpacking or tuple assignment is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TupleValueLayout {
+    /// Statement position: a tuple of two or more elements is written bare, `a, b = b, a`, which parses to the same
+    /// tuple as `a, b = (b, a)`.
+    Bare,
+    /// An item of a braced vocab body, where a comma separates items: a tuple keeps its parentheses.
+    Parenthesized,
+}
+
+impl Formatter {
+    /// Write `a, b = value` (with its `let` / `mut` spelling), laying the value out as `layout` says.
+    pub(super) fn format_tuple_unpack(&mut self, unpack: &TupleUnpackStmt, layout: TupleValueLayout) {
+        match unpack.binding {
+            BindingKind::Let => self.writer.write("let "),
+            BindingKind::Mutable => self.writer.write("mut "),
+            BindingKind::Inferred | BindingKind::Reassign => {}
+        }
+        for (i, name) in unpack.names.iter().enumerate() {
+            if i > 0 {
+                self.writer.write(", ");
+            }
+            self.writer.write(name);
+        }
+        self.writer.write(" = ");
+        self.format_tuple_statement_value(&unpack.value.node, layout);
+        self.writer.newline();
+    }
+
+    /// Write `target, target = value`, laying the value out as `layout` says.
+    pub(super) fn format_tuple_assign(&mut self, assign: &TupleAssignStmt, layout: TupleValueLayout) {
+        for (i, target) in assign.targets.iter().enumerate() {
+            if i > 0 {
+                self.writer.write(", ");
+            }
+            self.format_expr(&target.node);
+        }
+        self.writer.write(" = ");
+        self.format_tuple_statement_value(&assign.value.node, layout);
+        self.writer.newline();
+    }
+
+    /// Write the right side of a tuple statement: a tuple of two or more elements without parentheses when `layout` is
+    /// [`TupleValueLayout::Bare`]; an empty or one-element tuple, and every other value, as the expression it is.
+    fn format_tuple_statement_value(&mut self, value: &Expr, layout: TupleValueLayout) {
+        match value {
+            Expr::Tuple(items) if layout == TupleValueLayout::Bare && items.len() >= 2 => {
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        self.writer.write(", ");
+                    }
+                    self.format_expr(&item.node);
+                }
+            }
+            _ => self.format_expr(value),
         }
     }
 }

@@ -8,6 +8,7 @@ mod lowering_through_emission;
 mod mut_marker_publication;
 mod mut_ownership_regressions;
 mod packages;
+mod power_grouping_emission;
 mod reads_and_iterator_surface;
 mod reexported_projections;
 mod static_reads_and_frozen_strings;

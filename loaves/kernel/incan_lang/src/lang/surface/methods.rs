@@ -450,7 +450,7 @@ pub mod list_methods {
             ListMethodId::Remove,
             "remove",
             &[],
-            "Remove and return the element at the given index.",
+            "`remove(index) -> None`: remove the element at the given index.",
             RFC::_009,
             Since(0, 1),
         ),

@@ -12,14 +12,14 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 
 | Disposition | Tests | Files | Fixture cases |
 |---|---:|---:|---:|
-| keep | 3367 | 230 | 7 |
-| re-point | 508 | 53 | 854 |
-| retire | 1365 | 120 | 0 |
+| keep | 3381 | 234 | 7 |
+| re-point | 508 | 53 | 858 |
+| retire | 1367 | 121 | 0 |
 | unaffected | 1443 | 134 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **6683** | **537** | **866** |
+| **Total** | **6699** | **542** | **870** |
 
-- Retire-class tests: 1365, of which twinned 751, dies 270, open 344 (neither yet).
+- Retire-class tests: 1367, of which twinned 753, dies 270, open 344 (neither yet).
 - Retire-class files with open rows: 57 (a file whose retire tests are all twinned or recorded `dies` is done).
 - Files whose test region exceeds the split threshold of 1500 lines: 18, of which 6 in the durable corpus (keep or re-point).
 - Unreviewed files: 0.
@@ -73,7 +73,7 @@ The collector counts these in the text of each test function and of the file-loc
 | `loaves/compiler/incan_driver/tests/fixtures` | `**/*.incn` | 20 | re-point | #1561 | driver integration fixtures (generated_rust_* artifact projects, callability, native consumer); their owner tests are retire-class. |
 | `loaves/compiler/incan_emit/tests/codegen_snapshots` | `**/*.incn` | 180 | re-point | #1561 | snapshot corpus inputs considered as programs; the .snap outputs retire with codegen_snapshot_tests.rs. |
 | `loaves/compiler/incan_test_support/fixtures` | `*.incn` | 12 | re-point | #1561 | top-level regression programs run by CLI integration tests (rfc023/rfc030/rfc064/rfc088 behavior, reflection, model traits). |
-| `loaves/compiler/incan_test_support/fixtures/behavior/cli` | `<name>.incn or <name>/` | 104 | re-point | #1561 | behavior fixtures twinning the retire-class tests under loaves/toolchain/incan-cli (generated-text assertions after a build, IrCodegen smoke tests, an `--emit-rust`-only test), run by behavior_cli_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire test it twins in `# retires:` lines. |
+| `loaves/compiler/incan_test_support/fixtures/behavior/cli` | `<name>.incn or <name>/` | 108 | re-point | #1561 | behavior fixtures twinning the retire-class tests under loaves/toolchain/incan-cli (generated-text assertions after a build, IrCodegen smoke tests, an `--emit-rust`-only test), run by behavior_cli_tests.rs. A fixture is proved by running a program, so it is re-point today and stays valid after the route flips; each names the retire test it twins in `# retires:` lines. |
 | `loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies` | `<name>.incn or <name>/` | 15 | re-point | #1561 | behavior fixtures that are projects with in-fixture path dependencies (`[dependencies] <name> = { path = "deps/<name>" }`, reached through `pub::<name>`): the runner bakes every provider in dependency order before the run, with no Cargo authority, so a twin can prove what a consumer prints (or which diagnostic refuses it) across a package boundary. Run by behavior_cli_dependencies_tests.rs; a provider that would need Cargo (one that itself declares `[dependencies]`) fails its fixture at the suite's Cargo guard, so such fixtures stay parked. Each names the retire tests it twins in `# retires:` lines. |
 | `loaves/compiler/incan_test_support/fixtures/behavior/codegen_dependencies` | `<name>.incn or <name>/` | 1 | re-point | #1561 | behavior fixtures that are projects with an in-fixture `pub::` provider, twinning the incan_emit codegen tests that drove IrCodegen with a synthetic library manifest index; the runner bakes the provider before the run with no Cargo authority. Run by behavior_codegen_tests.rs; each names the retire tests it twins in `# retires:` lines. |
 | `loaves/compiler/incan_test_support/fixtures/behavior/codegen_functions_and_aliases` | `<name>.incn or <name>/` | 14 | re-point | #1561 | behavior fixtures twinning incan_emit's codegen.rs and small emit-test-file retire tests about functions, partials, aliases, statics, decorators, explicit type arguments, closures and magic methods; each program prints what the retired test's generated-text assertion was indirectly about. Run by behavior_codegen_tests.rs; each names the retire tests it twins in `# retires:` lines. |
@@ -278,7 +278,7 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_ex
 |---|---|---|---|---|---|
 | `replacement_refuses_a_nominal_pattern_after_its_exact_target_identity_is_removed` | keep | - | - | replacement | generated-text hit is a diagnostic string |
 
-### `loaves/compiler/incan_emit` (1029 tests in 73 files: keep 100, retire 927, unaffected 2)
+### `loaves/compiler/incan_emit` (1030 tests in 74 files: keep 100, retire 928, unaffected 2)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -324,6 +324,7 @@ Per-test overrides in `loaves/compiler/incan_driver/tests/replacement_backend_ex
 | `loaves/compiler/incan_emit/src/tests/lowering_through_emission.rs` | 2 | 332 | 332 | retire (retire 2) | 0/2 | 1 | - | #1561 | codegen 1, checker 2, parser 2, legacy_ir 2 | lowering through emission end to end. |
 | `loaves/compiler/incan_emit/src/tests/mut_marker_publication.rs` | 1 | 63 | 63 | retire | 0/1 | 0 | - | #1561 | codegen 1, checker 1, parser 1 | asserts the emitter's native-union projection of a published function type whose parameter carries the `mut` marker (#1790); retires with the Rust-source backend (#654), whose publication path it pins. |
 | `loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs` | 11 | 405 | 405 | retire | 0/11 | 0 | - | #1561 | codegen 11, parser 11 | compiled-Rust regressions for mutation and ownership shapes: an owned copy from a `mut` collection parameter (#1852), a `JoinHandle` field refused before loop lowering (#1853), a mutating method on a list element (#1857), a tuple index read after a list index (#1861), mutable iteration over `enumerate`, `zip`, dictionary values and a nested list (#1863), match/comprehension bindings and a closure's construction-time snapshot (#1864), mut-receiver loop shapes (#1869), and the `Clone` bound a generic `mut` argument copy needs (#1874); retires with the Rust-source backend (#654), whose ownership and iteration-shape emission these tests pin. |
+| `loaves/compiler/incan_emit/src/tests/power_grouping_emission.rs` | 1 | 62 | 62 | retire (retire 1) | 1/1 | 0 | - | #1561 | codegen 1, parser 1 | asserts the generated Rust text of a prefix operator over a power (#1786); retires with the Rust-source backend. |
 | `loaves/compiler/incan_emit/src/tests/reads_and_iterator_surface.rs` | 4 | 346 | 346 | retire (retire 4) | 4/4 | 0 | - | #1561 | codegen 4, parser 4 | compiles the Rust text emission gives `const` frozen collection reads, the RFC 088 surface on a generator, `dict.get(key, default)` and `flat_map` over any iterable; generated Rust dies with #654. |
 | `loaves/compiler/incan_emit/src/tests/reexported_projections.rs` | 5 | 301 | 301 | retire (retire 5) | 4/5 | 0 | - | #1561 | codegen 5 | lowering through emission end to end. |
 | `loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs` | 8 | 525 | 525 | retire (retire 8) | 7/8 | 0 | - | #1561 | codegen 7, parser 7, legacy_ir 1 | generated Rust for static collection reads and const string destinations, lowering through emission end to end. |
@@ -764,6 +765,12 @@ Per-test overrides in `loaves/compiler/incan_emit/src/tests/lowering_through_emi
 |---|---|---|---|---|---|
 | `foreign_union_keeps_its_producer_wrapper_identity` | retire | `dies` | asserts the emitted native-union wrapper name survives a manifest round trip, a facade forward and a consumer lowering, with forged owners and orders refused; the wrapper is a generated-Rust enum identity that dies with the native unions. | codegen, checker, parser, legacy_ir | - |
 | `rust_string_slice_import_add_assign_preserves_owned_rhs_issue896` | retire | - | - | checker, parser, legacy_ir | open (harness-deps): asserts the legacy binop plan (`str_concat`, borrowed args) for `out += str_slice_byte_range(text, 0, 1)` (#896). Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_core_string_slice_add_assign.incn` runs `concat_slice(\"abc\")` and prints `a`. A `rust::` program; waits for a Cargo-free bake under the compiler suite. |
+
+Per-test overrides in `loaves/compiler/incan_emit/src/tests/power_grouping_emission.rs`:
+
+| Test | Disposition | Twin | Dies | Lanes | Notes |
+|---|---|---|---|---|---|
+| `prefix_operator_over_a_power_emits_over_the_whole_power_issue1786` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/cli/operator_precedence_follows_the_parser_ladder.incn` | - | codegen, parser | Asserts `-x ** 2` emits the negation over the grouped power and `(-x) ** 2` raises the negated base; the fixture prints both values. |
 
 Per-test overrides in `loaves/compiler/incan_emit/src/tests/reads_and_iterator_surface.rs`:
 
@@ -1319,7 +1326,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `assignment_preserves_move_and_copy_without_clone` | retire | `dies` | asserts the assignment conversion policy over hand-built IR moves and Copy reads; a conversion-policy invariant of the dying emitter. | legacy_ir | - |
 | `assignment_preserves_string_and_borrowed_materialization_precedence` | retire | `dies` | asserts the assignment conversion policy's precedence over hand-built IR literals and borrows; a conversion-policy invariant of the dying emitter. | legacy_ir | - |
 
-### `loaves/compiler/incan_format` (191 tests in 9 files: keep 191)
+### `loaves/compiler/incan_format` (193 tests in 9 files: keep 193)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1328,12 +1335,12 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_format/src/tests/comments_and_blank_lines.rs` | 20 | 488 | 488 | keep | - | - | - | #1561 | formatter 18 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/tests/declarations.rs` | 28 | 755 | 755 | keep | - | - | - | #1561 | formatter 28 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/tests/entry_points_imports_and_spacing.rs` | 27 | 455 | 455 | keep | - | - | - | #1561 | checker 1, parser 1, formatter 21 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
-| `loaves/compiler/incan_format/src/tests/expressions_and_calls.rs` | 23 | 631 | 631 | keep | - | - | - | #1561 | parser 1, formatter 23 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
-| `loaves/compiler/incan_format/src/tests/statements_and_patterns.rs` | 14 | 281 | 281 | keep | - | - | - | #1561 | formatter 14 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/incan_format/src/tests/expressions_and_calls.rs` | 24 | 658 | 658 | keep | - | - | - | #1561 | parser 2, formatter 24 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
+| `loaves/compiler/incan_format/src/tests/statements_and_patterns.rs` | 15 | 306 | 306 | keep | - | - | - | #1561 | formatter 15 | split of incan_format/src/lib.rs; formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/src/writer.rs` | 37 | 565 | 389 | keep | - | - | - | #1561 | - | formatter; no emit/driver dependency. Reviewed at crate level. |
 | `loaves/compiler/incan_format/tests/property_tests.rs` | 7 | 411 | 385 | keep | - | - | - | #1561 | parser 4, formatter 6 | formatter; no emit/driver dependency. Reviewed at crate level. |
 
-### `loaves/compiler/incan_frontend` (1937 tests in 103 files: keep 1937)
+### `loaves/compiler/incan_frontend` (1939 tests in 104 files: keep 1939)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1379,6 +1386,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs` | 31 | 3197 | 1115 | keep | - | - | - | #1561 | parser 30 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/async_and_iteration.rs` | 56 | 1106 | 1106 | keep | - | - | - | #1561 | checker 41 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/bounds_and_derives.rs` | 39 | 1165 | 1165 | keep | - | - | - | #1561 | checker 21, parser 11 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
+| `loaves/compiler/incan_frontend/src/typechecker/tests/builtin_collection_method_arity.rs` | 2 | 97 | 97 | keep | - | - | - | #1561 | checker 2 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/calls_decorators_and_builtins.rs` | 50 | 1154 | 1154 | keep | - | - | - | #1561 | checker 27, parser 9 | split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/canonical_identity/declarations_and_scopes.rs` | 26 | 995 | 995 | keep | - | - | - | #1561 | checker 5 | split of typechecker/canonical_identity_tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
 | `loaves/compiler/incan_frontend/src/typechecker/tests/canonical_identity/duplicates_and_collisions.rs` | 12 | 605 | 605 | keep | - | - | - | #1561 | checker 11 | split of typechecker/canonical_identity_tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. |
@@ -1441,7 +1449,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_frontend/tests/semantic_digest_invariants.rs` | 9 | 293 | 293 | keep | - | - | - | #1561 | replacement 9, checker 9, parser 9 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 | `loaves/compiler/incan_frontend/tests/stdlib_module_trait_tests.rs` | 5 | 132 | 132 | keep | - | - | - | #1561 | checker 5, parser 5 | typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. Reviewed at crate level; generated-text hits are Incan source or diagnostics. |
 
-### `loaves/compiler/incan_ir` (299 tests in 41 files: keep 1, retire 298)
+### `loaves/compiler/incan_ir` (300 tests in 41 files: keep 1, retire 299)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1481,7 +1489,7 @@ Per-test overrides in `loaves/compiler/incan_emit/tests/zip_alias_codegen_tests.
 | `loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs` | 8 | 761 | 761 | retire (retire 8) | 6/8 | 0 | - | #1561 | legacy_ir 8 | the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level. |
 | `loaves/compiler/incan_ir/src/lower/tests/stdlib_const_defaults.rs` | 1 | 101 | 101 | retire (retire 1) | 1/1 | 0 | - | #1561 | legacy_ir 1 | the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level. |
 | `loaves/compiler/incan_ir/src/lower/tests/tuple_assignment.rs` | 8 | 703 | 703 | retire (retire 8) | 8/8 | 0 | - | #1561 | legacy_ir 8 | the Rust-source backend's own lowering of multi-target assignments into existing places (#1798, #1799, #1806); retires with `incan_ir`. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). |
-| `loaves/compiler/incan_ir/src/lower/tests/unary_operand_grouping.rs` | 2 | 149 | 149 | retire (retire 2) | 1/2 | 0 | - | #1561 | legacy_ir 2 | the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level. |
+| `loaves/compiler/incan_ir/src/lower/tests/unary_operand_grouping.rs` | 3 | 191 | 191 | retire (retire 3) | 2/3 | 0 | - | #1561 | legacy_ir 3 | the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level. |
 | `loaves/compiler/incan_ir/src/lower/tests/union_member_identity.rs` | 4 | 158 | 158 | retire (retire 4) | 1/4 | 0 | - | #1561 | checker 4, parser 4, legacy_ir 4 | the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level. |
 | `loaves/compiler/incan_ir/src/lower/tests/web_surface.rs` | 7 | 232 | 232 | retire (retire 7) | 3/7 | 0 | - | #1561 | checker 1, parser 1, legacy_ir 7 | the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level. |
 | `loaves/compiler/incan_ir/src/lower/types.rs` | 13 | 1973 | 343 | retire (retire 13) | 9/13 | 3 | - | #1561 | checker 1, legacy_ir 13 | the Rust-source backend's own lowering (`AstLowering`, `IrProgram`, `IrType`, Rust name spellings). Retire because its only consumers are `incan_emit` and the driver's `backend/ir` re-export, and `replacement/**` and `shadow/**` import nothing from it; flips to keep if #654 keeps the generated-project inspection path or the keep definition is read to include this lowering. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/). Reviewed at crate level. |
@@ -1874,6 +1882,7 @@ Per-test overrides in `loaves/compiler/incan_ir/src/lower/tests/unary_operand_gr
 | Test | Disposition | Twin | Dies | Lanes | Notes |
 |---|---|---|---|---|---|
 | `prefix_operator_over_an_operator_expression_lowers_a_grouped_operand_issue1763` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/cli/negation_keeps_its_operand_grouping.incn` | - | legacy_ir | Asserts the recorded shape on the legacy IR (an operator-shaped operand of `not`, unary `-` or `~` is handed to the emitter as one grouped value in its own type; an atomic operand stays as written); retires with `incan_ir`. The behavior, `not (1 == 2)` printing `true` and `-(2 + 3)` printing `-5`, is carried by the named fixture (#1763). |
+| `prefix_operator_over_a_power_lowers_a_grouped_power_issue1786` | retire | `loaves/compiler/incan_test_support/fixtures/behavior/cli/operator_precedence_follows_the_parser_ladder.incn` | - | legacy_ir | Asserts the legacy IR hands `-x ** 2` and `~x ** 2` to the emitter as a prefix operator over one grouped power; the fixture prints `-4` and `-5`. |
 
 Per-test overrides in `loaves/compiler/incan_ir/src/lower/tests/union_member_identity.rs`:
 
@@ -1924,7 +1933,7 @@ Per-test overrides in `loaves/compiler/incan_ir/src/types.rs`:
 | `loaves/compiler/incan_test_support/src/builtin_stdlib.rs` | 1 | 75 | 16 | unaffected | - | - | - | #1561 | - | test-support helper for the builtin stdlib inventory. |
 | `loaves/compiler/incan_test_support/src/emitted_symbol_artifact.rs` | 3 | 421 | 50 | retire | 0/3 | 0 | - | #1561 | - | helpers over emitted symbol projections (RFC 120 physical names). |
 
-### `loaves/kernel/incan_lang` (116 tests in 23 files: keep 116)
+### `loaves/kernel/incan_lang` (117 tests in 24 files: keep 117)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1941,6 +1950,7 @@ Per-test overrides in `loaves/compiler/incan_ir/src/types.rs`:
 | `loaves/kernel/incan_lang/src/lang/highlighting.rs` | 4 | 217 | 56 | keep | - | - | - | #1561 | - | language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_lang/src/lang/keywords.rs` | 3 | 939 | 25 | keep | - | - | - | #1561 | - | language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_lang/src/lang/stdlib.rs` | 11 | 1464 | 472 | keep | - | - | - | #1561 | checker 1 | language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level. |
+| `loaves/kernel/incan_lang/src/lang/surface/method_arity.rs` | 1 | 148 | 61 | keep | - | - | - | #1561 | - | the method registry's argument counts for the builtin collection methods (#1783); a language fact below the emitter, cannot reach codegen. |
 | `loaves/kernel/incan_lang/src/lang/surface/types.rs` | 5 | 806 | 161 | keep | - | - | - | #1561 | - | language registry (surface type derive support for Clone, Debug, Eq and Hash, #1754, #1758); below the emitter. |
 | `loaves/kernel/incan_lang/src/lang/text_codecs.rs` | 2 | 95 | 36 | keep | - | - | - | #1561 | - | language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_lang/src/lang/traits.rs` | 1 | 373 | 24 | keep | - | - | - | #1561 | - | language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level. |
@@ -1970,7 +1980,7 @@ Per-test overrides in `loaves/compiler/incan_ir/src/types.rs`:
 | `loaves/kernel/incan_semantics_core/src/stable_identity.rs` | 7 | 444 | 245 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 | `loaves/kernel/incan_semantics_core/src/types.rs` | 7 | 435 | 95 | keep | - | - | - | #1561 | - | semantics core (Body IR, receipts, authority); below the emitter. Reviewed at crate level. |
 
-### `loaves/kernel/incan_syntax` (321 tests in 15 files: keep 321)
+### `loaves/kernel/incan_syntax` (330 tests in 17 files: keep 330)
 
 | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
 |---|---:|---:|---:|---|---:|---:|---|---|---|---|
@@ -1983,9 +1993,11 @@ Per-test overrides in `loaves/compiler/incan_ir/src/types.rs`:
 | `loaves/kernel/incan_syntax/src/parser/tests/fstrings.rs` | 7 | 365 | 365 | keep | - | - | - | #1561 | checker 7, parser 7 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/functions_decorators_and_bindings.rs` | 23 | 556 | 556 | keep | - | - | - | #1561 | checker 16, parser 23 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/modules_and_imports.rs` | 48 | 915 | 915 | keep | - | - | - | #1561 | checker 31, parser 48 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
+| `loaves/kernel/incan_syntax/src/parser/tests/operator_precedence.rs` | 6 | 301 | 301 | keep | - | - | - | #1561 | checker 6, parser 6 | parser grouping of mixed operators checked against the operator registry precedence (#1786); lexer, parser and registry, below the emitter, cannot reach codegen. |
 | `loaves/kernel/incan_syntax/src/parser/tests/patterns_and_matching.rs` | 16 | 555 | 555 | keep | - | - | - | #1561 | checker 12, parser 16 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/soft_keywords_and_vocab_blocks.rs` | 20 | 655 | 655 | keep | - | - | - | #1561 | checker 5, parser 20 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/statements_and_blocks.rs` | 20 | 447 | 447 | keep | - | - | - | #1561 | checker 18, parser 20 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
+| `loaves/kernel/incan_syntax/src/parser/tests/tuple_assignments.rs` | 3 | 218 | 218 | keep | - | - | - | #1561 | checker 2, parser 3 | the bare-tuple value side of tuple assignment and unpacking (#1789); parser only, below the emitter, cannot reach codegen. |
 | `loaves/kernel/incan_syntax/src/parser/tests/type_declarations.rs` | 59 | 1162 | 1162 | keep | - | - | - | #1561 | checker 36, parser 59, formatter 2 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/types_and_bounds.rs` | 23 | 463 | 463 | keep | - | - | - | #1561 | checker 14, parser 23 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |
 | `loaves/kernel/incan_syntax/src/parser/tests/vocab_scoped_symbols.rs` | 14 | 824 | 824 | keep | - | - | - | #1561 | parser 14 | split of parser/tests.rs; lexer, parser and diagnostics catalog; below the emitter, cannot reach codegen. Reviewed at crate level. |

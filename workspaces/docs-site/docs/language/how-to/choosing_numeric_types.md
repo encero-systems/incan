@@ -179,6 +179,18 @@ def modulo[T with Remainder](a: T, b: T) -> T:
     return a % b
 ```
 
+## Raise a negative value to a power
+
+`**` binds tighter than a prefix `-` on its left, so `-x ** 2` negates the square of `x`. Parenthesize the base when you mean to raise the negated value:
+
+```incan
+x = 3
+negated_square = -x ** 2          # -9
+square_of_negative = (-x) ** 2    # 9
+```
+
+The same holds for prefix `~`. For the full precedence order, see the [operator table](../reference/language.md#operators).
+
 ## Avoid unsigned integers as validation
 
 Unsigned types describe representation. They are not a replacement for checking user input or business rules.

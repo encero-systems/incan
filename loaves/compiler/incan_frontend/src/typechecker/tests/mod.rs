@@ -57,6 +57,7 @@ mod helpers;
 
 mod async_and_iteration;
 mod bounds_and_derives;
+mod builtin_collection_method_arity;
 mod calls_decorators_and_builtins;
 mod canonical_identity;
 mod capabilities;

@@ -58,11 +58,13 @@ def main() -> None:
 
 - An integer literal outside the range of its integer type is refused (`INCAN-T0001`), as a declared value, an argument and a returned value alike. A suffixed literal outside the range of its suffix's type is refused.
 - A literal whose value is not finite in `f32` or `f64` is refused at a destination of that type (`INCAN-T0001`). At a `float` destination, a float literal may be infinite (`1e309`).
+- Numeric literals are written in decimal digits. A float literal has a `.` followed by a digit (`0.5`), an exponent (`1e3`), or both.
 - `_` separators do not change a literal's value.
 - A negated integer literal takes its destination's type as the literal does.
 - At an `Option` or union destination that holds one numeric type other than `int`, an integer literal takes that type: `1` is the float `1.0` at an `Option[float]` or `float | str` destination. At a destination that holds `int`, or two other numeric types, it is an `int`.
 - An integer literal argument of a generic function takes its parameter's type in the call: with `def pick[T](a: T, b: T) -> T`, `pick(2.5, 1)` and `pick(1, 2.5)` bind `T` to `float`, and `1` is `1.0`.
 - An `int` value is not assignable to a float type (see [Assignment between numeric types](#assignment-between-numeric-types)).
+- A float literal at an integer destination is refused (`INCAN-T0001`).
 
 ```incan
 def main() -> None:
@@ -190,11 +192,15 @@ A numeric argument to a Rust parameter of a primitive numeric type is accepted w
 | `**` | Two `f32` / two `f64` | `f32` / `f64` |
 | | An integer left operand and a non-negative integer literal exponent | `int` |
 | | Any other numeric pair | `float` |
+| `&`, <code>&#124;</code>, `^`, `<<`, `>>` | Two integer operands | `int` |
 | `==`, `!=`, `<`, `<=`, `>`, `>=` | Two numeric operands | `bool` |
 
 - `//` or `%` between two different unsigned types, or between an unsigned operand and an `int` value or a negative integer literal, is refused (`INCAN-T0001`).
+- `&`, `|`, `^`, `<<` and `>>` with a float operand are refused (`INCAN-T0001`).
 - `/` is true division. `//` rounds the quotient toward negative infinity. The result of `%` has the sign of the divisor, and `a == (a // b) * b + (a % b)`.
 - `/`, `//` and `%` with a zero divisor raise `ZeroDivisionError`, for integer and float operands alike.
+- An `int` `//` whose quotient is outside the `int` range, the minimum `int` divided by `-1`, raises `ValueError`. The minimum `int` `% -1` is `0`.
+- `**` binds tighter than a prefix `-` or `~` on its left and looser than one on its right: `-x ** 2` is `-(x ** 2)`, `~x ** 2` is `~(x ** 2)`, and `2 ** -1` is `2 ** (-1)`. The [operator table](language.md#operators) gives the precedence of every operator.
 - `+`, `-` and `*` between two values of one type parameter are accepted. `/`, `//`, `%` and `**` between two values of one type parameter are refused (`INCAN-T0109`), unless the parameter is bounded by a trait that defines the operator's method (`__div__`, `__floordiv__`, `__mod__` or `__pow__`); the operator then resolves through that trait.
 
 ```incan
@@ -223,7 +229,7 @@ def main() -> None:
 
 ## Compound assignment
 
-- `x op= y`, with `op` one of `+`, `-`, `*`, `/`, `//` and `%`, reassigns `x`, which is `mut` (`INCAN-T0001` otherwise).
+- `x op= y`, with `op` one of `+`, `-`, `*`, `/`, `//`, `%`, `&`, `|`, `^`, `<<` and `>>`, reassigns `x`, which is a `mut` binding or a `static` of its module (`INCAN-T0001` otherwise). `**=` is not an operator (`INCAN-P0001`).
 - `x op= y` has the assignability requirement of `x = x op y`: the result of `x op y` (see [Operators](#operators)) is assignable to the type of `x`, or the statement is refused (`INCAN-T0001`).
 
 ```incan

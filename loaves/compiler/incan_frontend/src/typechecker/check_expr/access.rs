@@ -959,11 +959,12 @@ impl TypeChecker {
     /// Validate a membership probe call: `dict.contains_key(key)` (#1668), `frozen_dict.contains_key(key)` (#1757) and
     /// `frozen_set.contains(item)`.
     ///
-    /// The call takes exactly one positional probe whose type is compatible with `member_ty`, the key or element type,
-    /// so a mistyped probe fails here instead of as a rustc `Borrow` error in the generated lookup. The probe has no
-    /// parameter name, so a named or unpacked argument is refused with the ordinary call diagnostics. `callee` names
-    /// the receiver family in those diagnostics. When `text_probes` is set, a text member (`str` or `FrozenStr`) takes
-    /// any text probe, the rule a frozen collection's `'static` text follows.
+    /// The probe's type must be compatible with `member_ty`, the key or element type, so a mistyped probe fails here
+    /// instead of as a rustc `Borrow` error in the generated lookup. The argument count and kinds are checked against
+    /// the registry arity with every builtin collection method's ([`Self::check_builtin_collection_method_args`]), so a
+    /// wrong count or a named or unpacked argument is already refused by the time this runs; `callee` names the
+    /// receiver family in the type-mismatch diagnostic. When `text_probes` is set, a text member (`str` or
+    /// `FrozenStr`) takes any text probe, the rule a frozen collection's `'static` text follows.
     fn validate_membership_probe_call(
         &mut self,
         callee: &str,
@@ -971,29 +972,9 @@ impl TypeChecker {
         text_probes: bool,
         args: &[CallArg],
         arg_types: &[ResolvedType],
-        span: Span,
     ) {
-        let [arg] = args else {
-            self.errors.push(errors::builtin_arity(callee, 1, args.len(), span));
+        let [CallArg::Positional(expr)] = args else {
             return;
-        };
-        let expr = match arg {
-            CallArg::Positional(expr) => expr,
-            CallArg::Named(name, _) => {
-                self.errors
-                    .push(errors::unknown_keyword_argument(callee, &name.node, name.span));
-                return;
-            }
-            CallArg::PositionalUnpack(expr) => {
-                self.errors
-                    .push(errors::call_unpack_without_rest(callee, "*", expr.span));
-                return;
-            }
-            CallArg::KeywordUnpack(expr) => {
-                self.errors
-                    .push(errors::call_unpack_without_rest(callee, "**", expr.span));
-                return;
-            }
         };
         if let Some(actual) = arg_types.first()
             && !matches!(member_ty, ResolvedType::Unknown)
@@ -5991,6 +5972,7 @@ impl TypeChecker {
             }
         }
 
+        self.check_builtin_collection_method_args(&base_ty, method, args, span);
         match &base_ty {
             ResolvedType::FrozenList(_) => {
                 if let Some(id) = frozen_list_methods::from_str(method) {
@@ -6010,14 +5992,7 @@ impl TypeChecker {
                         M::Contains => {
                             // The probe follows the membership rule of `item in frozen_set`: an element, or any text
                             // for a text element.
-                            self.validate_membership_probe_call(
-                                "FrozenSet.contains",
-                                elem_ty,
-                                true,
-                                args,
-                                &arg_types,
-                                span,
-                            );
+                            self.validate_membership_probe_call("FrozenSet.contains", elem_ty, true, args, &arg_types);
                             return ResolvedType::Bool;
                         }
                     }
@@ -6038,7 +6013,6 @@ impl TypeChecker {
                                 true,
                                 args,
                                 &arg_types,
-                                span,
                             );
                             return ResolvedType::Bool;
                         }
@@ -6219,13 +6193,6 @@ impl TypeChecker {
                             return ResolvedType::Unit;
                         }
                         M::Clone => {
-                            if !args.is_empty() {
-                                self.errors.push(errors::type_mismatch(
-                                    "no arguments",
-                                    &format!("{} argument(s)", args.len()),
-                                    span,
-                                ));
-                            }
                             if !self.is_copy_type(&elem) && !self.is_clone_type(&elem) {
                                 self.errors
                                     .push(errors::list_clone_requires_clone(&elem.to_string(), span));
@@ -6258,6 +6225,7 @@ impl TypeChecker {
                         // `dict.get(k)` answers with the stored value, static or not. Lowering reads the entry in
                         // place when the result is only read and copies it otherwise (`check_expr/dict_lookups.rs`).
                         M::Get => {
+                            self.refuse_non_positional_builtin_args("Dict.get", args);
                             if args.is_empty() {
                                 self.errors.push(errors::builtin_arity("Dict.get", 1, 0, span));
                             } else if args.len() > 2 {
@@ -6269,14 +6237,7 @@ impl TypeChecker {
                         }
                         M::Insert => return ResolvedType::Unit,
                         M::ContainsKey => {
-                            self.validate_membership_probe_call(
-                                "Dict.contains_key",
-                                &key,
-                                false,
-                                args,
-                                &arg_types,
-                                span,
-                            );
+                            self.validate_membership_probe_call("Dict.contains_key", &key, false, args, &arg_types);
                             return ResolvedType::Bool;
                         }
                     }

@@ -425,8 +425,9 @@ Class, model, trait, enum, newtype, field, alias and module declarations accept 
 
 ### Notes
 
-- **Precedence**: Higher binds tighter (e.g. `*` > `+`). Values are relative: only their order is significant.
-- **Associativity**: How operators of the same precedence group (left-to-right vs right-to-left).
+- **Precedence**: Higher binds tighter (e.g. `*` > `+`). Values are relative: only their order is significant. From loosest to tightest, one level per `<`: `or` < `and` < `not` < comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `not in`, `is`, `is not`, `|>`, `<|`) < ranges (`..`, `..=`) < `|` < `^` < `&` < shifts (`<<`, `>>`) < `+`, `-` < `*`, `/`, `//`, `%`, `@` < prefix `-`, `~` < `**`.
+- **Prefix operators**: `not` binds looser than the comparisons: `not a == b` is `not (a == b)`. `**` binds tighter than a prefix `-` or `~` on its left and looser than one on its right: `-x ** 2` is `-(x ** 2)`, `~x ** 2` is `~(x ** 2)`, and `2 ** -1` is `2 ** (-1)`. Prefix `-` binds like `~`.
+- **Associativity**: How operators of the same precedence group (left-to-right vs right-to-left). A prefix operator is `Right`: `not not a` is `not (not a)`. `None` means the operator does not chain: `a..b..c` is refused with `INCAN-P0001`.
 - **Fixity**: Whether the operator is used as a prefix unary operator or an infix binary operator.
 - **KeywordSpelling**: Whether the operator token is spelled as a reserved word (e.g. `and`, `not`).
 
@@ -467,13 +468,13 @@ Class, model, trait, enum, newtype, field, alias and module declarations accept 
 | CaretEq | `^=` | 10 | Left | Infix | false | RFC 028 | 0.3 | Stable |
 | ShlEq | `<<=` | 10 | Left | Infix | false | RFC 028 | 0.3 | Stable |
 | ShrEq | `>>=` | 10 | Left | Infix | false | RFC 028 | 0.3 | Stable |
-| DotDot | `..` | 30 | Left | Infix | false | RFC 000 | 0.1 | Stable |
-| DotDotEq | `..=` | 30 | Left | Infix | false | RFC 000 | 0.1 | Stable |
-| And | `and` | 35 | Left | Infix | true | RFC 000 | 0.1 | Stable |
-| Or | `or` | 35 | Left | Infix | true | RFC 000 | 0.1 | Stable |
-| Not | `not` | 45 | Left | Prefix | true | RFC 000 | 0.1 | Stable |
-| In | `in` | 35 | Left | Infix | true | RFC 000 | 0.1 | Stable |
-| Is | `is` | 35 | Left | Infix | true | RFC 000 | 0.1 | Stable |
+| DotDot | `..` | 42 | None | Infix | false | RFC 000 | 0.1 | Stable |
+| DotDotEq | `..=` | 42 | None | Infix | false | RFC 000 | 0.1 | Stable |
+| And | `and` | 25 | Left | Infix | true | RFC 000 | 0.1 | Stable |
+| Or | `or` | 20 | Left | Infix | true | RFC 000 | 0.1 | Stable |
+| Not | `not` | 30 | Right | Prefix | true | RFC 000 | 0.1 | Stable |
+| In | `in` | 40 | Left | Infix | true | RFC 000 | 0.1 | Stable |
+| Is | `is` | 40 | Left | Infix | true | RFC 000 | 0.1 | Stable |
 
 ## Punctuation
 
@@ -659,7 +660,7 @@ Class, model, trait, enum, newtype, field, alias and module declarations accept 
 | Swap | `swap` |  | Swap two elements by index. | RFC 009 | 0.1 | Stable |
 | Reserve | `reserve` |  | Reserve capacity for at least N more elements. | RFC 009 | 0.1 | Stable |
 | ReserveExact | `reserve_exact` |  | Reserve capacity for exactly N more elements. | RFC 009 | 0.1 | Stable |
-| Remove | `remove` |  | Remove and return the element at the given index. | RFC 009 | 0.1 | Stable |
+| Remove | `remove` |  | `remove(index) -> None`: remove the element at the given index. | RFC 009 | 0.1 | Stable |
 | Count | `count` |  | `items.count(value)` returns how many items equal `value`; `items.count()` with no argument is the iterator terminal and returns the number of items. Any other argument count is refused (`INCAN-T0001`). | RFC 009 | 0.1 | Stable |
 | Index | `index` |  | Return the index of a value (or error if not found). | RFC 009 | 0.1 | Stable |
 

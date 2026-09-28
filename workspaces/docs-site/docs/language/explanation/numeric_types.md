@@ -70,6 +70,10 @@ Rust APIs often encode numeric decisions in parameter types. If Rust expects `i6
 
 Keeping Rust interop on the same exact-or-lossless rule prevents a separate "interop cast system" from growing at the boundary. It also means code that typechecks for an Incan assignment is aligned with code that typechecks for a Rust scalar argument.
 
+## Power groups the way Python groups it
+
+`**` binds tighter than a prefix `-` or `~` on its left and looser than one on its right, so `-x ** 2` is `-(x ** 2)` and `2 ** -1` is `2 ** (-1)`. This is Python's grouping, and it matches mathematical notation, where −x² means the negation of x². Python code that writes `-x ** 2` for a negated square therefore computes the same value in Incan; raising a negative value to a power takes parentheses in both languages, as described in [Raise a negative value to a power](../how-to/choosing_numeric_types.md#raise-a-negative-value-to-a-power).
+
 ## Decimal is in scope, arithmetic is not yet
 
 Decimal types are included because fixed-scale values are central to data, finance, and analytics code. Precision and scale belong in the type because they define what values can be represented.
@@ -78,6 +82,6 @@ Decimal arithmetic is a separate language-design problem. Addition, multiplicati
 
 ## What this design does not claim
 
-This design does not make every numeric operation maximally precise, does not define arbitrary-precision integers, and does not turn `usize` into a general positive integer type. It also does not claim that aliases are always better than canonical names. Integer overflow in general exact-width arithmetic is not yet a separately documented language contract.
+This design does not make every numeric operation maximally precise, does not define arbitrary-precision integers, and does not turn `usize` into a general positive integer type. It also does not claim that aliases are always better than canonical names. Integer overflow in general exact-width arithmetic is not yet a separately documented language contract, and neither is a shift by a negative amount or by at least the bit width of its left operand, or an integer literal beyond the `int` range where no wider type is expected. The range of an `isize` or `usize` literal is checked against the pointer width of the machine that runs the compiler, which can differ from the target's.
 
 The rule of thumb is: use ordinary names for ordinary code, exact names for exact boundaries, aliases for schema vocabulary, and explicit resize methods whenever data loss is possible.
