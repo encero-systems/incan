@@ -9,14 +9,14 @@
 
 
 @derive(Debug)
-model Column[T]:
+model Column[T with Display]:
     sql: str
 
     def __mul__(self, other: T) -> Column[T]:
         return Column[T](sql=f"({self.sql} * {other})")
 
 
-def col[T](name: str) -> Column[T]:
+def col[T with Display](name: str) -> Column[T]:
     return Column[T](sql=name)
 
 

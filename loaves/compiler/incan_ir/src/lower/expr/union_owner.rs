@@ -11,7 +11,7 @@
 //! `Ok(member)` and `Err(member)` need no fact of their own: the emitter seeds them from the destination's `Result`
 //! type, which already carries the provider-owned union.
 
-use super::super::super::decl::FunctionParam;
+use super::super::super::decl::{FunctionParam, FunctionParamDefault};
 use super::super::super::expr::{
     IrCallArg, IrCallArgKind, IrDictEntry, IrExprKind, IrListEntry, MethodCallArgPolicy, VarAccess, VarRefKind,
 };
@@ -42,9 +42,13 @@ impl AstLowering {
                     .iter()
                     .find(|param| param.kind == ParamKind::Normal && param.name == name),
                 (IrCallArgKind::Positional, _) => {
+                    // A local partial's captured preset is overridden by name only, so positional arguments bind the
+                    // parameters after it.
                     let param = signature
                         .params
-                        .get(next_positional)
+                        .iter()
+                        .filter(|param| !matches!(param.default, Some(FunctionParamDefault::CapturedPartialPreset)))
+                        .nth(next_positional)
                         .filter(|param| param.kind == ParamKind::Normal);
                     next_positional += 1;
                     param
@@ -52,6 +56,9 @@ impl AstLowering {
                 _ => return,
             };
             if let Some(param) = param {
+                let placeholder = TypedExpr::new(IrExprKind::None, IrType::Unknown);
+                let value = std::mem::replace(&mut arg.expr, placeholder);
+                arg.expr = Self::wrap_value_in_option_destination(value, &param.ty);
                 Self::retain_union_owners_at(&mut arg.expr, &param.ty);
             }
         }
@@ -199,6 +206,13 @@ impl AstLowering {
     /// instantiation, as in an arm of a `match` expression, the constructor is instantiated at the provider's union
     /// when its one payload is a member of that union.
     fn retain_some_payload_union_owner(expr: &mut TypedExpr, owned: &IrType) {
+        if let IrExprKind::Call { args, .. } = &mut expr.kind
+            && let [argument] = args.as_mut_slice()
+            && matches!(argument.expr.kind, IrExprKind::None)
+            && matches!(owned, IrType::Option(_))
+        {
+            argument.expr.ty = owned.clone();
+        }
         if !matches!(owned, IrType::ExternalUnion { .. }) {
             return;
         }

@@ -130,6 +130,9 @@ impl GraphError {
     pub fn source(&self) -> Option<String> {
         return None::<_>;
     }
+    fn __str__(&self) -> String {
+        return self.message();
+    }
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
@@ -146,6 +149,11 @@ impl GraphError {
             },
         ];
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+impl std::fmt::Display for GraphError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.__str__())
     }
 }
 impl Error for GraphError {

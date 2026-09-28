@@ -3405,11 +3405,11 @@ pub model Stream[R] with Walk:
 pub model Holder[V]:
     pub value: V
 
-    def show(self) -> str:
-        return f"{self.value}"
+    def get(self) -> V:
+        return self.value
 
-    def render[T](self, value: T) -> str:
-        return f"{value}"
+    def first[T](self, items: list[T]) -> T:
+        return items[0]
 "#;
         let tokens = lexer::lex(source).map_err(|errors| format!("lex errors: {errors:?}"))?;
         let ast = parser::parse(&tokens).map_err(|errors| format!("parse errors: {errors:?}"))?;
@@ -3445,21 +3445,21 @@ pub model Holder[V]:
             owner_bounds
                 .bounds
                 .iter()
-                .any(|bound| bound.name == incan_lang::lang::trait_bounds::rust::DISPLAY && bound.inferred),
-            "Holder.V must publish the inferred Display impl-header bound: {owner_bounds:?}"
+                .any(|bound| bound.name == incan_lang::lang::trait_bounds::rust::CLONE && bound.inferred),
+            "Holder.V must publish the inferred Clone impl-header bound: {owner_bounds:?}"
         );
-        let render_bounds = holder
+        let first_bounds = holder
             .methods
             .iter()
-            .find(|method| method.name == "render")
+            .find(|method| method.name == "first")
             .and_then(|method| method.type_params.iter().find(|param| param.name == "T"))
-            .ok_or("missing Holder.render.T")?;
+            .ok_or("missing Holder.first.T")?;
         assert!(
-            render_bounds
+            first_bounds
                 .bounds
                 .iter()
-                .any(|bound| bound.name == incan_lang::lang::trait_bounds::rust::DISPLAY && bound.inferred),
-            "Holder.render.T must publish its inferred Display bound: {render_bounds:?}"
+                .any(|bound| bound.name == incan_lang::lang::trait_bounds::rust::CLONE && bound.inferred),
+            "Holder.first.T must publish its inferred Clone bound: {first_bounds:?}"
         );
         Ok(())
     }

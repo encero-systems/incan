@@ -2968,6 +2968,11 @@ pub enum DisplayPosition<'a> {
 /// has no printed form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnprintableValue<'a> {
+    /// A generic type parameter whose declaration does not require a display route.
+    TypeParameter {
+        /// The parameter's source name.
+        name: &'a str,
+    },
     /// A value of an anonymous union type (`int | str`), which prints once it is narrowed to one member.
     Union,
     /// A `Generator` value, whose items exist only as it is consumed.
@@ -2989,6 +2994,7 @@ impl UnprintableValue<'_> {
     /// never depends on how a type name is pronounced.
     fn describe(self, name: Option<&str>) -> String {
         let kind = match self {
+            Self::TypeParameter { name } => return format!("type parameter '{name}'"),
             Self::Union => "union value".to_string(),
             Self::Generator => "generator".to_string(),
             Self::Function => "function".to_string(),
@@ -3029,6 +3035,9 @@ pub fn value_has_no_printed_form(
         }
     };
     let hint = match value {
+        UnprintableValue::TypeParameter { name } => {
+            format!("Add a Display bound: `{name} with Display`")
+        }
         UnprintableValue::Union => {
             "Narrow it to one member first, with match or isinstance, and display that member".to_string()
         }
@@ -3054,6 +3063,9 @@ pub fn value_has_no_printed_form(
         }
     };
     let note = match value {
+        UnprintableValue::TypeParameter { .. } => {
+            "A generic body may display a type parameter only when its declaration requires Display, Error or a trait that supplies __str__"
+        }
         UnprintableValue::Nominal { .. } => {
             "A type provides Display through a __str__ method, the values of an enum that declares them, or the message() of an Error adopter; @derive(Display) provides nothing"
         }

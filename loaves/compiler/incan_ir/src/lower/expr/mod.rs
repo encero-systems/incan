@@ -191,6 +191,23 @@ fn grouped_frozen_dict_lookup(lookup: TypedExpr) -> IrExprKind {
     }
 }
 
+/// Group an indexed method receiver so a prefix dereference emitted for a `Copy` list or dict item applies to the
+/// lookup before the following method call. An item that is not `Copy` is cloned out by a method call, or reached in
+/// place by a mutating one, which binds as written, so it is left as the place it is.
+fn grouped_index_method_receiver(receiver: TypedExpr) -> TypedExpr {
+    if !matches!(receiver.kind, IrExprKind::Index { .. }) || !receiver.ty.is_copy() {
+        return receiver;
+    }
+    let ty = receiver.ty.clone();
+    TypedExpr::new(
+        IrExprKind::Block {
+            stmts: Vec::new(),
+            value: Some(Box::new(receiver)),
+        },
+        ty,
+    )
+}
+
 impl AstLowering {
     /// Select the physical method target while retaining any checked trait evidence needed after lowering.
     pub fn project_resolved_method_target(
@@ -2074,6 +2091,7 @@ impl AstLowering {
                 } else {
                     self.lower_expr_spanned(o)?
                 };
+                let receiver = grouped_index_method_receiver(receiver);
                 let mut args_ir = self.lower_call_args(args)?;
                 let lowered_type_args = self.lower_call_site_type_args(expr_span, type_args);
                 let method_name = self.resolve_method_rebinding(&receiver.ty, m);

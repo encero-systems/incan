@@ -68,20 +68,20 @@ fn require_bounds(context: &str, bounds: &[String], expected: &[&str]) -> Result
 }
 
 /// #1779: a generic caller forwarding its `T` to a method that formats it, or compares two of its values, needs the
-/// method's inferred `Display` or `PartialEq` bound.
+/// method's `Display` bound, which a displayed type parameter declares, or its inferred `PartialEq` bound.
 #[test]
 fn method_body_bounds_reach_a_forwarding_caller_issue1779() -> Result<(), String> {
     let ir = inferred_program(
         r#"
 model Client:
-    def send[T](self, value: T) -> None:
+    def send[T with Display](self, value: T) -> None:
         println(f"sent {value}")
 
     def same[T](self, a: T, b: T) -> bool:
         return a == b
 
 
-def send_once[T](client: Client, value: T) -> None:
+def send_once[T with Display](client: Client, value: T) -> None:
     client.send(value)
 
 
@@ -101,13 +101,14 @@ def check[T](client: Client, a: T, b: T) -> bool:
     )
 }
 
-/// #1779: a caller of any method of a generic model needs the whole impl header, which carries `Display` from the
-/// formatting method and `Clone` from the method returning its field, even when it calls only the second.
+/// #1779: a caller of any method of a generic model needs the whole impl header, which carries the `Display` the
+/// formatting method's parameter declares and `Clone` from the method returning its field, even when it calls only the
+/// second.
 #[test]
 fn impl_header_bounds_reach_a_caller_of_a_sibling_method_issue1779() -> Result<(), String> {
     let ir = inferred_program(
         r#"
-model Holder[V]:
+model Holder[V with Display]:
     value: V
 
     def show(self) -> str:
@@ -117,7 +118,7 @@ model Holder[V]:
         return self.value
 
 
-def first[U](held: Holder[U]) -> U:
+def first[U with Display](held: Holder[U]) -> U:
     return held.get()
 "#,
     )?;
@@ -128,8 +129,8 @@ def first[U](held: Holder[U]) -> U:
     )
 }
 
-/// #1280: a caller holding `Stream[T]` that calls the trait method formatting the stream's item needs `Display`
-/// beside the `Clone` it declares.
+/// #1280: a caller holding `Stream[T]` that calls the trait method formatting the stream's item needs the `Display`
+/// the stream declares beside `Clone`.
 #[test]
 fn trait_method_bounds_reach_a_caller_through_the_receiver_issue1280() -> Result<(), String> {
     let ir = inferred_program(
@@ -138,14 +139,14 @@ trait Walk:
     def walk(self) -> str: ...
 
 
-model Stream[R with Clone] with Walk:
+model Stream[R with (Clone, Display)] with Walk:
     item: R
 
     def walk(self) -> str:
         return f"walked {self.item}"
 
 
-def consume[T with Clone](stream: Stream[T]) -> str:
+def consume[T with (Clone, Display)](stream: Stream[T]) -> str:
     return stream.walk()
 "#,
     )?;
@@ -156,21 +157,25 @@ def consume[T with Clone](stream: Stream[T]) -> str:
     )
 }
 
-/// #1280: an impl declared in another module carries its inferred bound into a generic caller of this module.
+/// #1280: an impl declared in another module carries its bounds, the inferred `Clone` of the method returning its field
+/// included, into a generic caller of this module.
 #[test]
 fn external_impl_bounds_reach_a_generic_caller_issue1280() -> Result<(), String> {
     let shapes_source = r#"
-pub model Holder[V]:
+pub model Holder[V with Display]:
     pub value: V
 
     def show(self) -> str:
         return f"held {self.value}"
+
+    def get(self) -> V:
+        return self.value
 "#;
     let consumer_source = r#"
 from shapes import Holder
 
 
-def describe[U](held: Holder[U]) -> str:
+def describe[U with Display](held: Holder[U]) -> str:
     return held.show()
 "#;
     let shapes_ir = inferred_module(shapes_source, Some("shapes"))?;
@@ -189,6 +194,6 @@ def describe[U](held: Holder[U]) -> str:
     require_bounds(
         "describe",
         &function_bounds(&consumer_ir, "describe", "U")?,
-        &[rust_trait_bounds::DISPLAY],
+        &[rust_trait_bounds::DISPLAY, rust_trait_bounds::CLONE],
     )
 }

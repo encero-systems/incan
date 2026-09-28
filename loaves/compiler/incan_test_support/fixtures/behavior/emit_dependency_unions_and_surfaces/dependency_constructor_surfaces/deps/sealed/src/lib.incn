@@ -14,7 +14,7 @@ pub model Envelope:
         return f"{self.label} {self.secret}"
 
 
-pub model Columns[T, Stored]:
+pub model Columns[T, Stored with Display]:
     pub sql: str
     pub sample: Stored
 

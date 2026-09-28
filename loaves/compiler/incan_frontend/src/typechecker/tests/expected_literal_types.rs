@@ -487,6 +487,32 @@ def main() -> None:
     Ok(())
 }
 
+/// A string literal takes the sole `FrozenStr` member of a union destination in returns, arguments, and bindings.
+#[test]
+fn string_literal_takes_frozen_str_union_member_followups_a() -> Result<(), String> {
+    let source = r#"
+def frozen() -> FrozenStr | int:
+    return "lit"
+
+
+def takes(value: FrozenStr | int) -> None:
+    return
+
+
+def main() -> None:
+    value: FrozenStr | int = "bound"
+    takes("arg")
+"#;
+    let checker = checked(source)?;
+    for (after, literal) in [("return ", "\"lit\""), ("value:", "\"bound\""), ("takes(", "\"arg\"")] {
+        assert_eq!(
+            recorded_type(&checker, source, after, literal)?,
+            &ResolvedType::FrozenStr
+        );
+    }
+    Ok(())
+}
+
 /// #1862: an empty list literal passed to a generic `list[T]` parameter takes the element type another argument binds
 /// or the explicit type argument names, and keeps a type parameter of the caller's own body that the call passes on;
 /// when nothing binds `T`, the literal is refused at its own span, for an `Option[list[T]]` parameter and an empty

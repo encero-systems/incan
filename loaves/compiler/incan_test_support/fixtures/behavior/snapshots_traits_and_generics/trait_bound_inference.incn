@@ -1,4 +1,4 @@
-# behavior: generic functions whose bounds are inferred from ==, >, f-strings, dict keys, +, -, * and clone() run for int and str arguments (RFC 023)
+# behavior: generic functions whose bounds are inferred from ==, >, dict keys, +, -, * and clone(), beside a displayed type parameter that declares Display, run for int and str arguments (RFC 023)
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_trait_bound_inference_codegen
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_trait_bound_inference_more_codegen
 # expect-stdout:
@@ -23,7 +23,7 @@ def is_greater[T](a: T, b: T) -> bool:
     return a > b
 
 
-def show[T](x: T) -> str:
+def show[T with Display](x: T) -> str:
     return f"{x}"
 
 
@@ -51,7 +51,7 @@ def wrapper[T](a: T, b: T) -> bool:
     return are_equal(a, b)
 
 
-def show_eq[T with Eq](x: T) -> str:
+def show_eq[T with (Eq, Display)](x: T) -> str:
     return f"{x}"
 
 

@@ -1466,6 +1466,12 @@ pub struct CallArtifacts {
     /// argument of `str(value)`, and each `print`/`println` argument. The value is the `message()` call the checker
     /// resolved for the operand, so lowering emits the same call a written `value.message()` would.
     pub error_message_displays: HashMap<(usize, usize), ErrorMessageDisplay>,
+    /// Types this module declares whose values display through `message()`, keyed by type name.
+    ///
+    /// A model, class, enum or newtype that adopts `Error` and has no `Display` of its own displays its `message()`,
+    /// so it satisfies a `Display` bound. The value is the `message()` call the checker resolved on the type, which
+    /// lowering makes the body of the Rust `Display` it gives the type.
+    pub error_message_display_types: HashMap<String, ErrorMessageDisplay>,
 }
 
 /// The `message()` call one displayed `Error` adopter renders through (#1778).
@@ -2586,6 +2592,21 @@ impl TypeCheckInfo {
         self.calls
             .error_message_displays
             .insert((operand_span.start, operand_span.end), display);
+    }
+
+    /// Return the `message()` call a declared type displays through, or `None` when it has a `Display` of its own or
+    /// does not adopt `Error`.
+    ///
+    /// See [`CallArtifacts::error_message_display_types`].
+    pub fn error_message_display_type(&self, type_name: &str) -> Option<&ErrorMessageDisplay> {
+        self.calls.error_message_display_types.get(type_name)
+    }
+
+    /// Record the `message()` call a declared type displays through.
+    pub fn record_error_message_display_type(&mut self, type_name: &str, display: ErrorMessageDisplay) {
+        self.calls
+            .error_message_display_types
+            .insert(type_name.to_string(), display);
     }
 
     /// Record the compiler-owned builtin selected for one checked call.

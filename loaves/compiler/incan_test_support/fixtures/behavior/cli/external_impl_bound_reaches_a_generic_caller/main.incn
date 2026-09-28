@@ -8,7 +8,7 @@
 from shapes import Holder
 
 
-def describe[U](held: Holder[U]) -> str:
+def describe[U with Display](held: Holder[U]) -> str:
     return held.show()
 
 

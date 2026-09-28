@@ -72,14 +72,12 @@ impl<T> incan_std_core::reflection::HasFieldValueReflection for Column<T> {
         vec![("sql".to_string(), format!("{}", self.sql))]
     }
 }
-impl<T: std::fmt::Display> Column<T> {
-    pub fn __mul__(&self, other: T) -> Column<T> {
+impl<T> Column<T> {
+    pub fn __mul__(&self, _: T) -> Column<T> {
         return Column::<T> {
             sql: {
-                let __parts: [&str; 3usize] = ["(", " * ", ")"];
-                let __args: Vec<String> = vec![
-                    format!("{}", self.sql), format!("{}", other)
-                ];
+                let __parts: [&str; 2usize] = ["(", " * ?)"];
+                let __args: Vec<String> = vec![format!("{}", self.sql)];
                 incan_std_core::strings::fstring(&__parts, &__args)
             },
             __incan_phantom: std::marker::PhantomData,

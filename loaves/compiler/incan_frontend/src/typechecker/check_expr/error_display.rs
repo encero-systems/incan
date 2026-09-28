@@ -7,8 +7,10 @@
 //! comes from a trait default, for a value of a type parameter bounded by `Error`, and for `self` inside a default
 //! method of a trait that extends `Error`. The checker proves which operands take that route and resolves their
 //! `message()` call exactly as a written `value.message()` is resolved, trait dispatch included; lowering rewrites each
-//! recorded operand into that call. Nothing here refuses a program: a value with no printed form is refused by the
-//! display rule in `printed_form`, and every other operand keeps its existing display path.
+//! recorded operand into that call. A concrete adopter also satisfies a `Display` bound, so the checker resolves the
+//! same call once on each such type the module declares, and lowering gives the type a Rust `Display` that writes it.
+//! Nothing here refuses a program: a value with no printed form is refused by the display rule in `printed_form`, and
+//! every other operand keeps its existing display path.
 
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
 use incan_lang::lang::traits::{self as core_traits, TraitId};
@@ -61,6 +63,26 @@ impl TypeChecker {
         }
         if let Some(display) = self.resolve_error_message_call(operand_span, operand_ty) {
             self.type_info.record_error_message_display(operand_span, display);
+        }
+    }
+
+    /// Record that a model, class, enum or newtype this module declares displays through `message()`.
+    ///
+    /// Such a type adopts `Error` and has no `Display` of its own, so it satisfies a `Display` bound; lowering gives it
+    /// the Rust `Display` that bound needs, writing the `message()` call recorded here. `self_ty` is the type's own
+    /// `Self`, with its type parameters when it declares any, and `decl_span` the declaration's span. A type that does
+    /// not display through `message()`, or whose `message()` does not resolve to text, records nothing.
+    pub(in crate::typechecker) fn record_error_message_display_type(
+        &mut self,
+        type_name: &str,
+        self_ty: &ResolvedType,
+        decl_span: Span,
+    ) {
+        if !self.displays_through_error_message(self_ty) {
+            return;
+        }
+        if let Some(display) = self.resolve_error_message_call(decl_span, self_ty) {
+            self.type_info.record_error_message_display_type(type_name, display);
         }
     }
 
@@ -166,7 +188,7 @@ impl TypeChecker {
     }
 
     /// Return the trait bounds active for one type parameter, innermost scope first.
-    fn placeholder_bounds(&self, placeholder: &str) -> Vec<TypeBoundInfo> {
+    pub(in crate::typechecker::check_expr) fn placeholder_bounds(&self, placeholder: &str) -> Vec<TypeBoundInfo> {
         self.current_type_param_bound_details
             .iter()
             .rev()
@@ -175,7 +197,11 @@ impl TypeChecker {
     }
 
     /// Return whether one bound or adoption names `target` or a trait whose supertraits include it.
-    fn bound_reaches_trait(&self, bound: &TypeBoundInfo, target: TraitId) -> bool {
+    pub(in crate::typechecker::check_expr) fn bound_reaches_trait(
+        &self,
+        bound: &TypeBoundInfo,
+        target: TraitId,
+    ) -> bool {
         self.trait_reaches(&bound.name, target)
             || bound
                 .source_name
@@ -194,7 +220,7 @@ impl TypeChecker {
     }
 
     /// Return whether one bound or adoption, or any of its supertraits, declares `__str__`.
-    fn bound_supplies_str(&self, bound: &TypeBoundInfo) -> bool {
+    pub(in crate::typechecker::check_expr) fn bound_supplies_str(&self, bound: &TypeBoundInfo) -> bool {
         self.trait_supplies_str(&bound.name)
     }
 

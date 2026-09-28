@@ -23,11 +23,11 @@ model Decoded[T]:
     value: T
 
 
-def call_both[T, U](transform: (T) -> U, first: T, second: T) -> str:
+def call_both[T, U with Display](transform: (T) -> U, first: T, second: T) -> str:
     return f"{transform(first)} {transform(second)}"
 
 
-def label_twice[T](prefix: str, value: T) -> str:
+def label_twice[T with Display](prefix: str, value: T) -> str:
     joined = prefix + "-" + prefix
     return f"{joined} {value}"
 

@@ -518,7 +518,7 @@ impl AstLowering {
     ///
     /// Trait implementation headers are outside a Rust method or trait body, so a bare `Self` is not valid there.
     /// The IR must instead carry the adopter's nominal type, including its declared generic parameters.
-    fn trait_impl_owner_type(type_name: &str, type_params: &[ast::TypeParam]) -> IrType {
+    pub(in crate::lower) fn trait_impl_owner_type(type_name: &str, type_params: &[ast::TypeParam]) -> IrType {
         if type_params.is_empty() {
             IrType::Struct(type_name.to_string())
         } else {
@@ -592,6 +592,9 @@ impl AstLowering {
     }
 
     /// Lower model methods into an impl block.
+    ///
+    /// A model that adopts `Error` and has no `Display` of its own also gets the `__str__` that returns its `message()`
+    /// (see [`Self::error_message_str_method`]).
     pub(in crate::lower) fn lower_model_methods(
         &mut self,
         type_name: &str,
@@ -642,6 +645,7 @@ impl AstLowering {
                     PropertyLoweringMode::Inherent,
                 )?);
             }
+            lowered_methods.extend(self.error_message_str_method(type_name, type_params));
             Ok((lowered_methods, method_projections, source_method_projections))
         })();
         self.current_impl_type = prev;
@@ -1914,6 +1918,9 @@ impl AstLowering {
     }
 
     /// Lower class methods into an impl block.
+    ///
+    /// A class that adopts `Error` and has no `Display` of its own also gets the `__str__` that returns its `message()`
+    /// (see [`Self::error_message_str_method`]).
     pub(in crate::lower) fn lower_class_methods(
         &mut self,
         type_name: &str,
@@ -1964,6 +1971,7 @@ impl AstLowering {
                     PropertyLoweringMode::Inherent,
                 )?);
             }
+            lowered_methods.extend(self.error_message_str_method(type_name, type_params));
             Ok((lowered_methods, method_projections, source_method_projections))
         })();
         self.current_impl_type = prev;
@@ -1986,7 +1994,8 @@ impl AstLowering {
     /// Lower enum methods into an inherent impl block while preserving owner and method generic parameters.
     ///
     /// Enum method bodies share the same lowering rules as model/class methods, but this dedicated entry point keeps
-    /// RFC 050 declaration assembly explicit at the enum boundary.
+    /// RFC 050 declaration assembly explicit at the enum boundary. An enum that adopts `Error` and has no `Display` of
+    /// its own also gets the `__str__` that returns its `message()` (see [`Self::error_message_str_method`]).
     pub(in crate::lower) fn lower_enum_methods(
         &mut self,
         type_name: &str,
@@ -2023,7 +2032,8 @@ impl AstLowering {
             .map(|m| self.lower_decorated_or_plain_methods(type_name, m, Some(&type_param_names)))
             .collect::<Result<Vec<_>, LoweringError>>();
         self.current_impl_type = prev;
-        let lowered_methods = lowered?.into_iter().flatten().collect();
+        let mut lowered_methods: Vec<IrFunction> = lowered?.into_iter().flatten().collect();
+        lowered_methods.extend(self.error_message_str_method(type_name, type_params));
 
         Ok(IrImpl {
             target_type: type_name.to_string(),

@@ -75,7 +75,8 @@ impl TypeChecker {
     ///
     /// The rule answers for `bytes` and `FrozenBytes` (#1838: the two share one display contract), which have no
     /// printed form, and for a model, class, enum or newtype, which provides `Display` exactly as
-    /// [`Self::nominal_provides_display`] states.
+    /// [`Self::nominal_provides_display`] states. An `Error` adopter with no `Display` of its own satisfies the bound
+    /// through `message()`: lowering gives it the Rust `Display` that writes that text.
     pub(in crate::typechecker) fn display_bound_satisfied(&self, ty: &ResolvedType) -> Option<bool> {
         match ty {
             ResolvedType::Bytes => Some(false),
@@ -92,6 +93,17 @@ impl TypeChecker {
     /// A union value, a generator, a function, `bytes` or `FrozenBytes` (#1838: the two share one display contract),
     /// and a model, class, enum or newtype that provides no `Display` have none.
     fn unprintable_value<'ty>(&self, ty: &'ty ResolvedType) -> Option<UnprintableValue<'ty>> {
+        // Only a type parameter the enclosing declaration binds is judged by its bounds; a callee's type parameter that
+        // inference left open is not a value type the program wrote.
+        if let Some(type_param) = self.active_type_param_name(ty) {
+            let bounds = self.placeholder_bounds(type_param);
+            let has_display_route = bounds.iter().any(|bound| {
+                self.bound_reaches_trait(bound, TraitId::Display)
+                    || self.bound_reaches_trait(bound, TraitId::Error)
+                    || self.bound_supplies_str(bound)
+            });
+            return (!has_display_route).then_some(UnprintableValue::TypeParameter { name: type_param });
+        }
         match ty {
             _ if ty.is_union() => Some(UnprintableValue::Union),
             ResolvedType::Generic(name, _)

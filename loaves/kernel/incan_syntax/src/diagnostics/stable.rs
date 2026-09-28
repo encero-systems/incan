@@ -1107,6 +1107,21 @@ mod tests {
     }
 
     #[test]
+    fn kept_dict_lookup_refusal_uses_its_stable_code_followups_a() -> Result<(), Box<dyn std::error::Error>> {
+        let refusal = errors::kept_dict_lookup_value_cannot_be_copied("JoinHandle[int]", Span::default());
+        assert_eq!(code_for_error(&refusal, DiagnosticPhase::Typecheck), "INCAN-T0118");
+        let entry = explain("INCAN-T0118").ok_or("INCAN-T0118 must have a catalog explanation")?;
+        assert_eq!(entry.severity, "error");
+        assert_eq!(entry.phase, "typecheck");
+        assert!(
+            refusal.message.contains("JoinHandle[int]"),
+            "the refusal must name the stored value type, got {:?}",
+            refusal.message
+        );
+        Ok(())
+    }
+
+    #[test]
     fn immutable_argument_to_mut_parameter_uses_its_stable_code_issue1773() -> Result<(), String> {
         let binding = errors::immutable_argument_to_mut_parameter(
             errors::MutParameterLabel::Named("items"),

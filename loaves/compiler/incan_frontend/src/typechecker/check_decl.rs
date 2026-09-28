@@ -2182,10 +2182,12 @@ impl TypeChecker {
             Declaration::Model(model) => {
                 self.validate_protected_type_param_bindings(&model.type_params, decl.span);
                 self.check_model(model);
+                self.record_declared_error_message_display(&model.name, decl.span);
             }
             Declaration::Class(class) => {
                 self.validate_protected_type_param_bindings(&class.type_params, decl.span);
                 self.check_class(class);
+                self.record_declared_error_message_display(&class.name, decl.span);
             }
             Declaration::Trait(tr) => {
                 self.validate_protected_type_param_bindings(&tr.type_params, decl.span);
@@ -2200,10 +2202,12 @@ impl TypeChecker {
             Declaration::Newtype(nt) => {
                 self.validate_protected_type_param_bindings(&nt.type_params, decl.span);
                 self.check_newtype(nt);
+                self.record_declared_error_message_display(&nt.name, decl.span);
             }
             Declaration::Enum(en) => {
                 self.validate_protected_type_param_bindings(&en.type_params, decl.span);
                 self.check_enum(en);
+                self.record_declared_error_message_display(&en.name, decl.span);
             }
             Declaration::Function(func) => {
                 self.validate_protected_type_param_bindings(&func.type_params, decl.span);
@@ -2217,6 +2221,13 @@ impl TypeChecker {
             Declaration::Capability(cap) => self.check_capability_decl(cap, decl.span),
             Declaration::Docstring(_) => {} // Docstrings don't need checking
         }
+    }
+
+    /// Record the `message()` call a declared model, class, enum or newtype displays through, when it adopts `Error`
+    /// and has no `Display` of its own, so lowering can give it the Rust `Display` a `Display` bound needs.
+    fn record_declared_error_message_display(&mut self, type_name: &str, decl_span: Span) {
+        let self_ty = self.trait_conformance_self_type(type_name);
+        self.record_error_message_display_type(type_name, &self_ty, decl_span);
     }
 
     /// Reject protected builtin spellings in a declaration-owned generic parameter list.

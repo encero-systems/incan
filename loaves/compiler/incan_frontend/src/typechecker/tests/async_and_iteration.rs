@@ -22,6 +22,21 @@ async def main() -> None:
 }
 
 #[test]
+fn kept_dict_get_of_join_handle_is_refused_followups_a() {
+    let source = r#"
+from std.async.task import JoinHandle
+
+def take(handles: dict[str, JoinHandle[int]], key: str) -> Option[JoinHandle[int]]:
+  return handles.get(key)
+"#;
+    let errors = check_str_err(source, "kept dict.get of JoinHandle should be refused");
+    assert!(
+        errors.iter().any(|error| error.stable_code() == Some("INCAN-T0118")),
+        "expected INCAN-T0118 for kept dict.get of JoinHandle, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_local_async_function_named_sleep_shadows_no_builtin() {
     let source = r#"
 import std.async

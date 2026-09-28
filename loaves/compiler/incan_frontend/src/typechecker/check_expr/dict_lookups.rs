@@ -319,18 +319,32 @@ impl TypeChecker {
     /// parameter is given the `Clone` bound where a lookup copies it (see trait bound inference); a Rust type counts
     /// as not copyable only when its inspected metadata proves it implements no `Clone` (`is_clone_type` does not ask
     /// Rust, so it answers `false` for every Rust type); and a named stdlib surface type is never refused.
+    ///
+    /// "Looking through" a container answers for its held values, not the container itself, because a builtin
+    /// container's own `Clone` derives from theirs. That does not hold for every generic type: a generic stdlib or
+    /// Rust-backed wrapper such as `JoinHandle[T]` has no `Clone` whatever `T` is, so only the collection kinds whose
+    /// `Clone` genuinely reduces to their arguments' are looked through; any other generic type asks `is_clone_type`
+    /// for the whole type, which consults the derive registry for it.
     fn value_type_cannot_be_copied(&self, ty: &ResolvedType) -> bool {
         match ty {
             ResolvedType::RustPath(path) => self.rust_type_proven_not_clone(path),
             ResolvedType::TypeVar(_) => false,
-            ResolvedType::Generic(name, _)
-                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Generator) =>
+            ResolvedType::Generic(name, args)
+                if matches!(
+                    collection_type_id(name.as_str()),
+                    Some(
+                        CollectionTypeId::List
+                            | CollectionTypeId::Dict
+                            | CollectionTypeId::Set
+                            | CollectionTypeId::Tuple
+                            | CollectionTypeId::Option
+                            | CollectionTypeId::Result
+                    )
+                ) =>
             {
-                !self.is_clone_type(ty)
-            }
-            ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
                 args.iter().any(|arg| self.value_type_cannot_be_copied(arg))
             }
+            ResolvedType::Tuple(args) => args.iter().any(|arg| self.value_type_cannot_be_copied(arg)),
             ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => self.value_type_cannot_be_copied(inner),
             ResolvedType::FrozenDict(key, value) => {
                 self.value_type_cannot_be_copied(key) || self.value_type_cannot_be_copied(value)
@@ -339,6 +353,9 @@ impl TypeChecker {
             // `is_clone_type` answers `false` for most of them whatever their runtime type provides.
             ResolvedType::Named(name) if surface_types::from_str(name.as_str()).is_some() => false,
             ResolvedType::CallSiteInfer => false,
+            // Any other generic type, including a generic stdlib or Rust-backed wrapper (`JoinHandle[T]`,
+            // `RaceArm[R]`) and a nominal generic model or class, asks `is_clone_type` for the whole type: its
+            // `Clone` is a property of the type itself, not merely of its type arguments.
             other => !self.is_clone_type(other),
         }
     }

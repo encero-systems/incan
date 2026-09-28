@@ -6,8 +6,8 @@
 use std::collections::{HashMap, HashSet};
 
 use super::super::expr::{
-    IrCallArg, IrCallArgKind, IrExprKind, Literal as IrLiteral, MatchArm, MethodCallArgPolicy, Pattern as IrPattern,
-    VarAccess, VarRefKind,
+    BuiltinFn, IrCallArg, IrCallArgKind, IrExprKind, Literal as IrLiteral, MatchArm, MethodCallArgPolicy,
+    Pattern as IrPattern, VarAccess, VarRefKind,
 };
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::{IrType, isinstance_type_matches, isinstance_union_variant_indices};
@@ -1276,6 +1276,15 @@ impl AstLowering {
                     Some(value) => value,
                     None => self.lower_expr_spanned(&fa.value)?,
                 };
+                if matches!(value.kind, IrExprKind::String(_)) && value.ty == IrType::String {
+                    value = TypedExpr::new(
+                        IrExprKind::BuiltinCall {
+                            func: BuiltinFn::Str,
+                            args: vec![value],
+                        },
+                        IrType::String,
+                    );
+                }
                 // A `Some(member)` stored in a dependency model's field takes the union the provider declares (#1743).
                 if let AssignTarget::Field { object, .. } = &target {
                     self.retain_field_assignment_union_owner(object, &fa.field, &mut value);

@@ -8,14 +8,14 @@
 #   shown 4
 
 model Client:
-    def send[T](self, value: T) -> None:
+    def send[T with Display](self, value: T) -> None:
         println(f"sent {value}")
 
     def same[T](self, a: T, b: T) -> bool:
         return a == b
 
 
-def send_once[T](client: Client, value: T) -> None:
+def send_once[T with Display](client: Client, value: T) -> None:
     client.send(value)
 
 
@@ -23,11 +23,11 @@ def check[T](client: Client, a: T, b: T) -> bool:
     return client.same(a, b)
 
 
-def show[T](value: T) -> str:
+def show[T with Display](value: T) -> str:
     return f"shown {value}"
 
 
-def forward[T](value: T) -> str:
+def forward[T with Display](value: T) -> str:
     return show(value)
 
 

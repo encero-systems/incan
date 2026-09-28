@@ -12,14 +12,14 @@ trait Walk:
     def walk(self) -> str: ...
 
 
-model Stream[R with Clone] with Walk:
+model Stream[R with (Clone, Display)] with Walk:
     item: R
 
     def walk(self) -> str:
         return f"walked {self.item}"
 
 
-model Holder[V]:
+model Holder[V with Display]:
     value: V
 
     def show(self) -> str:
@@ -29,15 +29,15 @@ model Holder[V]:
         return self.value
 
 
-def consume[T with Clone](stream: Stream[T]) -> str:
+def consume[T with (Clone, Display)](stream: Stream[T]) -> str:
     return stream.walk()
 
 
-def describe[U](held: Holder[U]) -> str:
+def describe[U with Display](held: Holder[U]) -> str:
     return held.show()
 
 
-def first[U](held: Holder[U]) -> U:
+def first[U with Display](held: Holder[U]) -> U:
     return held.get()
 
 

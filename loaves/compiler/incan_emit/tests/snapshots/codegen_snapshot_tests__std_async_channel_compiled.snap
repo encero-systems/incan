@@ -82,6 +82,9 @@ impl<T> SendError<T> {
     pub fn source(&self) -> Option<String> {
         return None::<_>;
     }
+    fn __str__(&self) -> String {
+        return self.message();
+    }
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
@@ -98,6 +101,11 @@ impl<T> SendError<T> {
             },
         ];
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+impl<T> std::fmt::Display for SendError<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.__str__())
     }
 }
 impl<T> Error for SendError<T> {
@@ -160,12 +168,20 @@ impl RecvError {
     pub fn source(&self) -> Option<String> {
         return None::<_>;
     }
+    fn __str__(&self) -> String {
+        return self.message();
+    }
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
     ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
         static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 0] = [];
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+impl std::fmt::Display for RecvError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.__str__())
     }
 }
 impl Error for RecvError {

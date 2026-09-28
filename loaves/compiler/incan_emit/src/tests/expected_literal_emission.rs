@@ -377,3 +377,131 @@ def main() -> None:
     );
     Ok(())
 }
+
+/// A value passed to a nested `Option` parameter is wrapped once for every missing layer.
+#[test]
+fn nested_option_call_argument_is_wrapped_in_each_layer_followups_a() -> Result<(), String> {
+    let code = generate_collapsed(
+        r#"
+def nested(value: Option[Option[int]]) -> int:
+    return value.unwrap().unwrap_or(0)
+
+
+def main() -> None:
+    println(nested(5))
+"#,
+    )?;
+    assert!(
+        code.contains("Some(Some(5))"),
+        "the argument needs two Some layers:\n{code}"
+    );
+    Ok(())
+}
+
+/// `None` inside an explicit `Some` takes the nested destination's payload type.
+#[test]
+fn some_none_at_nested_option_destination_has_the_inner_type_followups_a() -> Result<(), String> {
+    let code = generate_collapsed(
+        r#"
+def main() -> None:
+    value: Option[Option[int]] = Some(None)
+    println(value.unwrap_or(None).unwrap_or(0))
+"#,
+    )?;
+    assert!(
+        code.contains("Some(None::<i64>)"),
+        "the inner None needs the nested payload type:\n{code}"
+    );
+    assert!(
+        !code.contains("None::<()"),
+        "no nested None may be typed as unit:\n{code}"
+    );
+    Ok(())
+}
+
+/// A string literal assigned to an owned `str` field is materialized as a `String`.
+#[test]
+fn string_literal_assigned_to_str_field_is_owned_followups_a() -> Result<(), String> {
+    let code = generate_collapsed(
+        r#"
+model Box:
+    label: str
+
+
+def main() -> None:
+    mut box = Box(label="x")
+    box.label = "y"
+    println(box.label)
+"#,
+    )?;
+    assert!(
+        code.contains("r#box.label = \"y\".to_string();"),
+        "the field write needs an owned string:\n{code}"
+    );
+    Ok(())
+}
+
+/// A method call on a copied list element applies the prefix dereference to the lookup before the method call.
+#[test]
+fn indexed_option_method_call_groups_the_lookup_followups_a() -> Result<(), String> {
+    let code = generate_collapsed(
+        r#"
+def main() -> None:
+    slots: list[Option[int]] = [Some(1)]
+    println(slots[0].unwrap_or(0))
+"#,
+    )?;
+    assert!(
+        code.contains("{ * incan_std_core::collections::list_get") && code.contains("} .unwrap_or(0)"),
+        "the lookup must be grouped before unwrap_or:\n{code}"
+    );
+    Ok(())
+}
+
+/// A type that adopts `Error` and has no `__str__` gets a Rust `Display` that writes its `message()`, so a generic
+/// display through a `Display` bound compiles and shows the message.
+#[test]
+fn error_message_display_implements_rust_display_followups_a() -> Result<(), String> {
+    let code = generate_collapsed(
+        r#"
+from std.traits.error import Error
+
+
+model Failure with Error:
+    detail: str
+
+    def message(self) -> str:
+        return self.detail
+
+
+def show[T with Display](value: T) -> str:
+    return f"{value}"
+
+
+def written(failure: Failure) -> str:
+    return failure.message()
+
+
+def main() -> None:
+    println(show(Failure(detail="bad")))
+    println(written(Failure(detail="bad")))
+"#,
+    )?;
+    // A long method name is wrapped onto its own line before the dot, which collapses to ` .`.
+    let code = code.replace(" .", ".");
+    let message_method = code
+        .split("return failure.")
+        .nth(1)
+        .and_then(|rest| rest.split("()").next())
+        .ok_or_else(|| format!("the written `failure.message()` must be a method call:\n{code}"))?;
+    assert_contains_all(
+        &code,
+        &[
+            "T: std::fmt::Display",
+            "impl std::fmt::Display for Failure { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { \
+             write!(f, \"{}\", self.__str__()) } }",
+            &format!("fn __str__(&self) -> String {{ return self.{message_method}(); }}"),
+        ],
+    );
+    Ok(())
+}

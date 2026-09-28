@@ -68,12 +68,20 @@ impl TimeoutError {
     pub fn source(&self) -> Option<String> {
         return None::<_>;
     }
+    fn __str__(&self) -> String {
+        return self.message();
+    }
     /// Returns field metadata for this type.
     pub fn __fields__(
         &self,
     ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
         static __INCAN_FIELDS: [incan_std_core::reflection::FieldInfo; 0] = [];
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
+impl std::fmt::Display for TimeoutError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.__str__())
     }
 }
 impl Error for TimeoutError {

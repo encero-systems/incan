@@ -434,3 +434,48 @@ def main() -> None:
     );
     Ok(())
 }
+
+/// A type that adopts `Error` and has no `__str__` satisfies a `Display` bound: a generic display of it checks, as the
+/// string-representation reference states.
+#[test]
+fn error_message_display_satisfies_display_bound_followups_a() -> Result<(), Box<dyn std::error::Error>> {
+    check_str(
+        r#"
+from std.traits.error import Error
+
+model Failure with Error:
+    detail: str
+
+    def message(self) -> str:
+        return self.detail
+
+def show[T with Display](value: T) -> str:
+    return f"{value}"
+
+def main() -> None:
+    println(show(Failure(detail="bad")))
+"#,
+    )
+    .map_err(|errors| format!("an Error adopter without __str__ must satisfy a Display bound, got: {errors:?}"))?;
+    Ok(())
+}
+
+/// Displaying an unbounded type parameter is refused where it is written instead of inventing a Rust bound later.
+#[test]
+fn unbounded_type_parameter_cannot_be_displayed_followups_a() -> Result<(), Box<dyn std::error::Error>> {
+    let errors = check_str(
+        r#"
+def show[T](value: T) -> str:
+    return f"{value}"
+"#,
+    )
+    .err()
+    .ok_or("displaying an unbounded type parameter must be refused")?;
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.stable_code() == Some("INCAN-T0103") && error.message.contains("type parameter 'T'")),
+        "expected a type-parameter display refusal, got {errors:?}"
+    );
+    Ok(())
+}

@@ -410,7 +410,16 @@ impl TypeChecker {
             }
             _ => None,
         };
-        let expected = numeric_destination.as_ref().or(expected);
+        let frozen_string_destination = match (&expr.node, expected) {
+            (Expr::Literal(Literal::String(_)), Some(expected_ty)) => {
+                self.string_literal_frozen_destination(expected_ty)
+            }
+            _ => None,
+        };
+        let expected = numeric_destination
+            .as_ref()
+            .or(frozen_string_destination.as_ref())
+            .or(expected);
         let ty = match (&expr.node, expected) {
             (_, Some(ResolvedType::TypeVar(_))) => return self.check_expr(expr),
             (Expr::Paren(inner), Some(expected_ty)) => self.check_expr_with_expected(inner, Some(expected_ty)),
@@ -581,6 +590,28 @@ impl TypeChecker {
         match held.as_slice() {
             [only] if !matches!(only, ResolvedType::Int) => Some(only.clone()),
             _ => None,
+        }
+    }
+
+    /// Return `FrozenStr` when it is the only string storage a union or `Option` destination offers a string literal.
+    fn string_literal_frozen_destination(&self, expected: &ResolvedType) -> Option<ResolvedType> {
+        let mut held = Vec::new();
+        Self::collect_held_string_types(&self.expand_type_aliases(expected.clone()), &mut held);
+        matches!(held.as_slice(), [ResolvedType::FrozenStr]).then_some(ResolvedType::FrozenStr)
+    }
+
+    /// Collect the distinct owned and frozen string types held inside `Option` layers and union members.
+    fn collect_held_string_types(ty: &ResolvedType, held: &mut Vec<ResolvedType>) {
+        if matches!(ty, ResolvedType::Str | ResolvedType::FrozenStr) {
+            if !held.contains(ty) {
+                held.push(ty.clone());
+            }
+        } else if let Some(inner) = ty.option_inner_type() {
+            Self::collect_held_string_types(inner, held);
+        } else if let Some(members) = ty.union_members() {
+            for member in members {
+                Self::collect_held_string_types(member, held);
+            }
         }
     }
 

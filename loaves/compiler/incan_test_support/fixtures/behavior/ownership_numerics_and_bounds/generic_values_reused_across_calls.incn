@@ -20,11 +20,11 @@ def send_twice[T](client: Client, value: T) -> list[T]:
     return first + second
 
 
-def take[T](value: T) -> str:
+def take[T with Display](value: T) -> str:
     return f"taken {value}"
 
 
-def read_cursor[T](other: Wrapper[T]) -> str:
+def read_cursor[T with Display](other: Wrapper[T]) -> str:
     return take(other.cursor) + f" kept {other.cursor}"
 
 

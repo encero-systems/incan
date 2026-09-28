@@ -851,7 +851,7 @@ fn test_statement_tuple_unpack_accepts_a_tuple_of_type_variables() {
     // `tuple[K, V]` is a tuple whose *elements* are type variables. The shape is known even though the element
     // types are not, so it destructures — this is the common `dict` item shape and must not regress.
     let source = r#"
-def split[K, V](pair: tuple[K, V]) -> None:
+def split[K with Display, V with Display](pair: tuple[K, V]) -> None:
     a, b = pair
     println(f"{a} {b}")
 "#;

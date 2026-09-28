@@ -16,7 +16,7 @@ class Box[T with Clone]:
         return other
 
 
-model Shelf[T]:
+model Shelf[T with Display]:
     item: T
     label: str = ""
 
