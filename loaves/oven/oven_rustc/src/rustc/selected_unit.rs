@@ -14,13 +14,14 @@ use oven_model::oven_interop::{
     OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION, OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION,
     OvenInteropExecutionProvenance, verify_interop_execution_receipt_identity,
 };
+use oven_store::publisher_execution::{OvenPublisherToolReceipt, verify_publisher_tool_receipt};
 
 use super::{
     OvenCompiledRustUnitIdentity, OvenRustcError, OvenSelectedRustFacetEnvironmentValue,
     OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph, OvenSelectedRustFacetLinkedLibrary,
-    OvenSelectedRustFacetLinkedLibraryKind, OvenSelectedRustFacetOwnerKind, OvenSelectedRustFacetPath,
-    OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetUnit, ValidatedOvenSelectedRustFacetGraph,
-    compiled_rust_unit_identities, digest_regular_file,
+    OvenSelectedRustFacetLinkedLibraryKind, OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind,
+    OvenSelectedRustFacetPath, OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetUnit,
+    ValidatedOvenSelectedRustFacetGraph, compiled_rust_unit_identities, digest_regular_file,
 };
 
 /// One physical root for an owner named by a validated selected facet graph.
@@ -48,6 +49,75 @@ pub struct OvenSelectedRustFacetSupplementalSourceMembers {
     pub source_root: OvenSelectedRustFacetPath,
     /// Exact portable members admitted by the higher-level execution record, relative to `source_root`.
     pub members: Vec<OvenSelectedRustFacetSourceMember>,
+}
+
+/// Receipt-bound generated inputs and their immutable owner for one consuming Rust unit.
+#[derive(Debug, Clone)]
+pub struct OvenPublisherToolGeneratedInputs {
+    /// Generated-output owner whose identity is the verified publisher receipt identity.
+    pub owner: OvenSelectedRustFacetOwner,
+    /// Asset-side products projected as compiler inputs; no executable fact crosses this boundary.
+    pub generated_inputs: Vec<OvenSelectedRustFacetGeneratedInput>,
+}
+
+/// Project verified publisher-tool products into one consumer's selected generated inputs.
+///
+/// The adapter admits no executable path or invocation authority. It requires the receipt to bind the selected host,
+/// target and consuming-unit identity, then makes the receipt identity the `GeneratedOutput` owner. A later physical
+/// materializer verifies every product byte below that owner before Rustc can read it.
+pub fn publisher_tool_generated_inputs(
+    receipt: &OvenPublisherToolReceipt,
+    host: &str,
+    target: &str,
+    consuming_unit: &str,
+) -> Result<OvenPublisherToolGeneratedInputs, OvenRustcError> {
+    verify_publisher_tool_receipt(receipt).map_err(|error| OvenRustcError::InvalidInput {
+        field: "publisher tool receipt",
+        message: error.to_string(),
+    })?;
+    if receipt.host != host || receipt.target != target {
+        return Err(OvenRustcError::InvalidInput {
+            field: "publisher tool receipt",
+            message: "host/target association does not match the selected consumer".to_string(),
+        });
+    }
+    if receipt
+        .consuming_units
+        .binary_search_by(|candidate| candidate.as_str().cmp(consuming_unit))
+        .is_err()
+    {
+        return Err(OvenRustcError::InvalidInput {
+            field: "publisher tool receipt",
+            message: format!("does not name consuming unit `{consuming_unit}`"),
+        });
+    }
+    let generated_inputs = receipt
+        .outputs
+        .iter()
+        .map(|output| OvenSelectedRustFacetGeneratedInput {
+            name: output.name.clone(),
+            source: OvenSelectedRustFacetPath {
+                owner: receipt.identity.clone(),
+                path: output.path.clone(),
+            },
+            digest: output.digest.clone(),
+            members: output
+                .members
+                .iter()
+                .map(|member| OvenSelectedRustFacetSourceMember {
+                    path: member.path.clone(),
+                    digest: member.digest.clone(),
+                })
+                .collect(),
+        })
+        .collect();
+    Ok(OvenPublisherToolGeneratedInputs {
+        owner: OvenSelectedRustFacetOwner {
+            identity: receipt.identity.clone(),
+            kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+        },
+        generated_inputs,
+    })
 }
 
 /// Exact additional members grouped by one selected owner/root pair.
@@ -1086,6 +1156,7 @@ mod tests {
     };
 
     const COMPILER_CLOSURE: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const PUBLISHER_TOOL_CONSUMER: &str = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
     fn source_owner() -> String {
         selected_graph_sha256(b"selected-unit source owner")
@@ -1782,6 +1853,107 @@ mod tests {
                 ..
             })
         ));
+        Ok(())
+    }
+
+    fn publisher_tool_receipt() -> Result<OvenPublisherToolReceipt, Box<dyn std::error::Error>> {
+        use oven_model::manifest::{RustFactArgument, RustFactArtifact, RustFactArtifactKind, RustFactExecutable};
+        use oven_store::digest_bytes;
+        use oven_store::publisher_execution::{OvenPublisherToolProduct, publisher_tool_receipt_identity};
+
+        let mut receipt = OvenPublisherToolReceipt {
+            identity: String::new(),
+            producer: "isle-meta".to_string(),
+            fact_owner: digest_bytes(b"cranelift source owner"),
+            executable: RustFactExecutable {
+                name: "isle".to_string(),
+                owner: digest_bytes(b"isle executable owner"),
+                path: "bin/isle".to_string(),
+                digest: digest_bytes(b"isle executable"),
+            },
+            arguments: vec![
+                RustFactArgument::Input {
+                    input: "definitions".to_string(),
+                },
+                RustFactArgument::Output {
+                    output: "generated-rust".to_string(),
+                },
+            ],
+            environment: Vec::new(),
+            inputs: vec![RustFactArtifact {
+                name: "definitions".to_string(),
+                kind: RustFactArtifactKind::File,
+                path: "isle/lower.isle".to_string(),
+                digest: digest_bytes(b"isle definitions"),
+                members: Vec::new(),
+            }],
+            outputs: vec![OvenPublisherToolProduct {
+                name: "generated-rust".to_string(),
+                kind: RustFactArtifactKind::File,
+                path: "generated/isle.rs".to_string(),
+                digest: digest_bytes(b"generated Rust"),
+                members: Vec::new(),
+            }],
+            host: "aarch64-apple-darwin".to_string(),
+            target: "aarch64-apple-darwin".to_string(),
+            consuming_units: vec![PUBLISHER_TOOL_CONSUMER.to_string()],
+        };
+        receipt.identity = publisher_tool_receipt_identity(&receipt)?;
+        Ok(receipt)
+    }
+
+    #[test]
+    fn publisher_tool_products_become_consumer_generated_inputs() -> Result<(), Box<dyn std::error::Error>> {
+        let receipt = publisher_tool_receipt()?;
+        let projected = publisher_tool_generated_inputs(
+            &receipt,
+            "aarch64-apple-darwin",
+            "aarch64-apple-darwin",
+            PUBLISHER_TOOL_CONSUMER,
+        )?;
+        assert_eq!(projected.owner.identity, receipt.identity);
+        assert_eq!(projected.owner.kind, OvenSelectedRustFacetOwnerKind::GeneratedOutput);
+        assert_eq!(projected.generated_inputs.len(), 1);
+        assert_eq!(projected.generated_inputs[0].source.owner, receipt.identity);
+        assert_eq!(projected.generated_inputs[0].source.path, "generated/isle.rs");
+        assert_eq!(projected.generated_inputs[0].digest, receipt.outputs[0].digest);
+        Ok(())
+    }
+
+    #[test]
+    fn publisher_tool_projection_refuses_tamper_target_and_unlisted_consumer() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let receipt = publisher_tool_receipt()?;
+        assert!(
+            publisher_tool_generated_inputs(
+                &receipt,
+                "aarch64-apple-darwin",
+                "x86_64-apple-darwin",
+                PUBLISHER_TOOL_CONSUMER,
+            )
+            .is_err()
+        );
+        assert!(
+            publisher_tool_generated_inputs(
+                &receipt,
+                "aarch64-apple-darwin",
+                "aarch64-apple-darwin",
+                "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            )
+            .is_err()
+        );
+
+        let mut tampered = receipt;
+        tampered.outputs[0].digest = selected_graph_sha256(b"tampered output");
+        assert!(
+            publisher_tool_generated_inputs(
+                &tampered,
+                "aarch64-apple-darwin",
+                "aarch64-apple-darwin",
+                PUBLISHER_TOOL_CONSUMER,
+            )
+            .is_err()
+        );
         Ok(())
     }
 }

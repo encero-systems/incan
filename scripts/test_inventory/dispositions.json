@@ -9497,6 +9497,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_store/tests/publisher_tool.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven publisher-tool hermetic execution and generated-product receipts; no generated Incan Rust dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/stdlib/async/rust/src/channel.rs": {
       "disposition": "unaffected",
       "notes": "stdlib runtime crate; no compiler-crate dependency. Reviewed at crate level.",

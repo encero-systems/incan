@@ -394,7 +394,7 @@ This checklist tracks the full RFC. The dev.6 ecosystem slice (#1561) delivers t
 - [ ] Warn once for build-script presence and retire executable script candidates and carriers.
 - [x] Carry declared cfg and committed generated inputs through planning, admission, and direct compilation (a registry record's `cfg` and `out` govern the unit in the policy engine, the publisher's observation must agree, and the runtime foundation carries the declared inputs consumers compile against).
 - [x] Harvest manifests and provenance from an explicit existing Cargo build (`oven harvest`, `bake-loafs --harvest-dir`; the release closure's 120 registry package versions are governed by incan.pub records harvested from its own capture).
-- [ ] Execute declared C/C++ and tool units only during publisher baking; refuse missing tools and undeclared outputs.
+- [ ] Execute declared C/C++ and tool units only during publisher baking; the macOS tool-unit executor and generated-input projection refuse consumer execution, missing or substituted tools, undeclared reads, and missing, escaped, or extra outputs, while native-link execution and end-to-end corpus admission remain open.
 - [ ] Preserve normal host procedural-macro compilation and expansion semantics.
 - [ ] Prove literal artifact equivalence under a recorded deterministic setup, including negative identity and integrity cases.
 

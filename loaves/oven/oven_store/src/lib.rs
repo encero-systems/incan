@@ -24,6 +24,7 @@ pub mod closure_proof;
 pub use oven_model::compiler_suite_env;
 pub mod process;
 pub mod progress;
+pub mod publisher_execution;
 pub mod store;
 pub mod store_mirror;
 #[cfg(any(test, feature = "test_support"))]
