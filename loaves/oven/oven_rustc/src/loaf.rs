@@ -391,7 +391,6 @@ pub fn stage_release_runtime_foundation_toolchain(
                 message: error.to_string(),
             }
         })?;
-    let closure_digest = evidence.closure_digest.clone();
     let mut retained = Vec::with_capacity(evidence.members.len());
     for member in evidence.members {
         let relative_path = PathBuf::from(member.relative_path);
@@ -417,8 +416,79 @@ pub fn stage_release_runtime_foundation_toolchain(
             digest: member.digest,
         });
     }
+    rehash_release_toolchain_members(destination, &retained)
+}
+
+/// Derive the compiler-closure identity from one canonical retained-member descriptor.
+///
+/// Publishers and validators share this projection so member ordering and logical path normalization cannot drift.
+/// The descriptor must contain only compiler-closure files; release evidence such as the selected graph belongs in
+/// the runtime foundation that consumes the Toolchain owner, not inside this member set.
+pub fn release_toolchain_compiler_closure_identity(
+    members: &[OvenReleaseToolchainMember],
+) -> Result<String, OvenLoafError> {
+    let mut digests = BTreeMap::new();
+    for member in members {
+        let relative_path = member
+            .relative_path
+            .to_str()
+            .ok_or_else(|| OvenLoafError::Preparation {
+                message: "compiler closure contains a non-UTF-8 member path".to_string(),
+            })?;
+        let normalized = relative_path.replace('\\', "/");
+        if digests.insert(normalized, member.digest.clone()).is_some() {
+            return Err(OvenLoafError::Preparation {
+                message: "compiler closure contains a duplicate member path".to_string(),
+            });
+        }
+    }
+    crate::rustc::direct_compiler::retention::direct_rustc_compiler_closure_digest(&digests).map_err(|error| {
+        OvenLoafError::Preparation {
+            message: error.to_string(),
+        }
+    })
+}
+
+/// Re-read staged compiler members and derive their identity from the bytes that will actually be retained.
+///
+/// Copying or signing can change bytes after source evidence was observed. Re-hashing the staged files closes that
+/// gap while retaining the bounded member coordinates selected by direct-Rustc closure discovery.
+fn rehash_release_toolchain_members(
+    root: &Path,
+    members: &[OvenReleaseToolchainMember],
+) -> Result<(String, Vec<OvenReleaseToolchainMember>), OvenLoafError> {
+    let mut retained = Vec::with_capacity(members.len());
+    for member in members {
+        if !safe_generation_relative_path(&member.relative_path) {
+            return Err(OvenLoafError::Preparation {
+                message: "compiler closure contains an unsafe member path".to_string(),
+            });
+        }
+        let path = root.join(&member.relative_path);
+        let metadata = fs::symlink_metadata(&path).map_err(|source| OvenLoafError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(OvenLoafError::Preparation {
+                message: format!(
+                    "retained compiler closure member is not a regular file: {}",
+                    path.display()
+                ),
+            });
+        }
+        let bytes = fs::read(&path).map_err(|source| OvenLoafError::Io {
+            path: path.clone(),
+            source,
+        })?;
+        retained.push(OvenReleaseToolchainMember {
+            relative_path: member.relative_path.clone(),
+            digest: digest_bytes(&bytes),
+        });
+    }
     retained.sort();
-    Ok((closure_digest, retained))
+    let identity = release_toolchain_compiler_closure_identity(&retained)?;
+    Ok((identity, retained))
 }
 
 /// Return the canonical descriptor digest publishers include in release compatibility evidence.
@@ -488,19 +558,11 @@ pub fn validate_release_runtime_foundation_member(
         }
         prior = Some(toolchain_member.relative_path.clone());
     }
-    let toolchain_digests = member
+    if !member
         .toolchain_members
         .iter()
-        .map(|toolchain_member| {
-            (
-                toolchain_member.relative_path.to_string_lossy().replace('\\', "/"),
-                toolchain_member.digest.clone(),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-    if !toolchain_digests.contains_key("bin/rustc")
-        || crate::rustc::direct_compiler::retention::direct_rustc_compiler_closure_digest(&toolchain_digests)
-            .map_err(|error| error.to_string())?
+        .any(|toolchain_member| toolchain_member.relative_path == Path::new("bin/rustc"))
+        || release_toolchain_compiler_closure_identity(&member.toolchain_members).map_err(|error| error.to_string())?
             != member.compiler_closure_identity
     {
         return Err("runtime-foundation compiler closure does not match its retained Toolchain members".to_string());
@@ -2345,8 +2407,9 @@ pub fn acquire_active_release_runtime_foundation(
 
 /// Return exact typed runtime members from an already committed release generation.
 ///
-/// This is an explicit-publisher reuse probe. It validates the envelope and both descriptors but acquires no
-/// execution paths; normal consumers use [`acquire_committed_release_runtime_foundation`] and retain its locks.
+/// This is an explicit-publisher reuse probe. It admits only a valid pair of descriptors but treats malformed or
+/// stale descriptor evidence as a cache miss so the publisher can atomically replace it. It acquires no execution
+/// paths; normal consumers use [`acquire_committed_release_runtime_foundation`] and remain fail-closed.
 pub fn committed_release_runtime_members(
     loaf_root: &Path,
 ) -> Result<Option<(OvenReleaseRuntimeFoundationMember, OvenReleaseRuntimeClosureMember)>, OvenLoafError> {
@@ -2370,16 +2433,11 @@ pub fn committed_release_runtime_members(
     else {
         return Ok(None);
     };
-    validate_release_runtime_foundation_member(&manifest, foundation).map_err(|message| {
-        OvenLoafError::InvalidLoaf {
-            path: manifest_path.clone(),
-            message,
-        }
-    })?;
-    validate_release_runtime_closure_member(&manifest, closure).map_err(|message| OvenLoafError::InvalidLoaf {
-        path: manifest_path,
-        message,
-    })?;
+    if validate_release_runtime_foundation_member(&manifest, foundation).is_err()
+        || validate_release_runtime_closure_member(&manifest, closure).is_err()
+    {
+        return Ok(None);
+    }
     Ok(Some((foundation.clone(), closure.clone())))
 }
 
@@ -3477,6 +3535,27 @@ mod tests {
             validate_release_runtime_foundation_member(&wrong_closure_manifest, &wrong_closure).is_err(),
             "the descriptor must recompute its compiler closure from retained member digests"
         );
+        let stale_closure = OvenReleaseRuntimeClosureMember {
+            schema_version: OVEN_RELEASE_RUNTIME_CLOSURE_MEMBER_SCHEMA_VERSION,
+            label: "rust-policy-closure".to_string(),
+            store_relative_path: PathBuf::from("runtime-closures/store"),
+            artifact_identity: digest_bytes(b"artifact"),
+            closure_identity: digest_bytes(b"closure"),
+            foundation_identity: wrong_closure.foundation_identity.clone(),
+            compiler_closure_identity: wrong_closure.compiler_closure_identity.clone(),
+        };
+        bind_release_runtime_closure_evidence(&mut wrong_closure_manifest.evidence, &stale_closure)?;
+        wrong_closure_manifest.runtime_foundation = Some(wrong_closure.clone());
+        wrong_closure_manifest.runtime_closure = Some(stale_closure);
+        let stale_root = tempfile::tempdir()?;
+        fs::write(
+            stale_root.path().join("envelope.json"),
+            serde_json::to_vec(&wrong_closure_manifest)?,
+        )?;
+        assert!(
+            super::committed_release_runtime_members(stale_root.path())?.is_none(),
+            "a publisher must replace invalid cached runtime descriptors rather than reuse them"
+        );
 
         let mut unbound = manifest.clone();
         unbound.evidence.clear();
@@ -3500,6 +3579,29 @@ mod tests {
         let mut foundation_nested = aliased_roots;
         foundation_nested.foundation_relative_path = foundation_nested.toolchain_root_relative_path.join("foundation");
         assert!(validate_release_runtime_foundation_member(&manifest, &foundation_nested).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn retained_toolchain_identity_rehashes_final_member_bytes() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let rustc = root.path().join("bin/rustc");
+        fs::create_dir_all(rustc.parent().ok_or("retained rustc has no parent")?)?;
+        fs::write(&rustc, b"unsigned rustc")?;
+        let recorded = vec![OvenReleaseToolchainMember {
+            relative_path: PathBuf::from("bin/rustc"),
+            digest: digest_bytes(b"unsigned rustc"),
+        }];
+
+        fs::write(&rustc, b"signed rustc")?;
+        let (identity, retained) = super::rehash_release_toolchain_members(root.path(), &recorded)?;
+        assert_eq!(retained[0].digest, digest_bytes(b"signed rustc"));
+        assert_eq!(identity, super::release_toolchain_compiler_closure_identity(&retained)?);
+        assert_ne!(
+            identity,
+            super::release_toolchain_compiler_closure_identity(&recorded)?,
+            "the recorded closure must describe final retained bytes rather than pre-signing bytes"
+        );
         Ok(())
     }
 

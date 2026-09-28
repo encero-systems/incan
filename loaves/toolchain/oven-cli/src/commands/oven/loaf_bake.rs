@@ -876,19 +876,8 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 relative_path: toolchain_relative,
                 root: toolchain_root,
                 compiler_closure_identity,
-                members: mut toolchain_members,
+                members: toolchain_members,
             } = toolchain;
-            let retained_selection = PathBuf::from("selection.json");
-            let selection_bytes = serde_json::to_vec(&finalized.graph.graph().selection)
-                .map_err(|error| CliError::failure(format!("could not encode retained Rust selection: {error}")))?;
-            fs::write(toolchain_root.join(&retained_selection), &selection_bytes).map_err(|error| {
-                CliError::failure(format!("could not retain the selected Rust target evidence: {error}"))
-            })?;
-            toolchain_members.push(OvenReleaseToolchainMember {
-                relative_path: retained_selection,
-                digest: oven_store::digest_bytes(&selection_bytes),
-            });
-            toolchain_members.sort();
             let foundation = runtime_foundation_from_compiled_loaf(finalized, &loaf, &compiler_closure_identity)
                 .map_err(oven_error)?;
             let asset = OvenRuntimeFoundationAsset::sealed(foundation, inventories).map_err(oven_error)?;
