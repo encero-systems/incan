@@ -979,9 +979,13 @@ toolchain-release-smoke: toolchain-release-build
 # DataFusion, and the clean rooms provision Rust twice -- so they run in front of a release, not every PR.
 # =============================================================================
 
-.PHONY: gate-incql  ## gate - Build the real IncQL consumer end to end (INCQL_CHECKOUT=..., INCAN=...)
+.PHONY: gate-incql  ## gate - Prove the pinned Cargo-free IncQL closure (INCQL_CHECKOUT=..., INCAN=..., INCQL_EQUIVALENCE_REPORT=...)
 gate-incql:
-	@bash scripts/gate_incql.sh --incan "$${INCAN:-"$(TARGET_DIR)/release/incan"}"
+	@test -n "$${INCQL_CHECKOUT:-}" || { echo "INCQL_CHECKOUT is required" >&2; exit 2; }
+	@test -n "$${INCAN:-}" || { echo "INCAN is required" >&2; exit 2; }
+	@test -n "$${INCQL_EQUIVALENCE_REPORT:-}" || { echo "INCQL_EQUIVALENCE_REPORT is required" >&2; exit 2; }
+	@bash scripts/gate_incql.sh --incql "$${INCQL_CHECKOUT}" --incan "$${INCAN}" \
+		--equivalence-report "$${INCQL_EQUIVALENCE_REPORT}"
 
 .PHONY: gate-cleanroom  ## gate - Install into containers with and without a mismatched Rust (DIST=...)
 gate-cleanroom:

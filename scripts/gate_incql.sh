@@ -1,36 +1,31 @@
 #!/usr/bin/env bash
 
-# Prove one Incan build against the real IncQL consumer before a release is trusted.
-#
-# A green compiler suite is not evidence that a release works: in August 2026 more than 2,600 tests passed while
-# IncQL was unbuildable for weeks, because two independently resolved compilations of `tokio` linked into one
-# binary and panicked with "no reactor running" at runtime. That failure is invisible to unit tests and visible
-# here, so this gate runs the flagship consumer end to end and inspects the produced binary.
-#
-# This is deliberately a local gate. IncQL pulls DataFusion, Substrait, and Prost, which is far too heavy to put in
-# front of every pull request; it belongs in front of a release instead.
+# Prove the pinned IncQL consumer closure against one released Incan toolchain and a Lane 7 attestation. This gate
+# is intentionally local and heavy. Its PATH guards make Cargo and publisher-only native/tool work unavailable;
+# the semantic locks and equivalence report then prove that every selected registry unit came from admitted assets.
 
 set -euo pipefail
 
 usage() {
     cat <<'EOF'
 Usage:
-  bash scripts/gate_incql.sh --incan PATH [options]
+  bash scripts/gate_incql.sh --incan PATH --incql PATH --equivalence-report PATH [options]
 
-Builds the IncQL library and its quickstart consumer with the named Incan compiler, from a clean consumer state,
-and fails unless the quickstart runs and links exactly one compiled `tokio`.
+Builds and runs the pinned IncQL quickstart through Oven, with Cargo and publisher tools unavailable, and verifies
+the complete admitted registry closure against the literal Cargo/Oven equivalence attestation.
 
 Options:
-  --incan PATH        Incan command to test (required)
-  --incql PATH        IncQL checkout (default: $INCQL_CHECKOUT, else ../tmp/incql-rc3-test beside this repo)
-  --incan-source PATH Incan source checkout IncQL's vocab companion expects (default: this repository)
-  --work PATH         Scratch directory holding the isolated Incan home (default: a fresh mktemp -d)
-  --incan-home PATH   Existing Incan home to build against, rather than an empty isolated one. Required when
-                      testing a released archive: its Loafs bind to the exact Rust the installer provisions, so
-                      an empty home has no matching toolchain and every Loaf is rejected as incompatible.
-  --keep-work         Leave the scratch directory in place for inspection
-  --allow-dirty       Run even though the IncQL checkout has uncommitted changes
-  -h, --help          Show this help
+  --incan PATH             Released Incan executable (required)
+  --incql PATH             IncQL checkout pinned by scripts/incql_gate_pin.json (required)
+  --equivalence-report PATH
+                           Attestation emitted by make test-oven-artifact-equivalence (required)
+  --pin PATH               Checkout/lock pin (default: scripts/incql_gate_pin.json)
+  --expect PATH            Consumer-graph expectations (default: scripts/incql_gate_expectations.toml)
+  --incan-source PATH      Incan source for IncQL's vocab companion (default: this repository)
+  --work PATH              Scratch directory and isolated Incan home (default: fresh mktemp -d)
+  --incan-home PATH        Existing installed toolchain home instead of the isolated home
+  --keep-work              Retain scratch state
+  -h, --help               Show this help
 EOF
 }
 
@@ -42,21 +37,25 @@ fail() {
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 incan=""
 incql="${INCQL_CHECKOUT:-}"
+equivalence_report="${INCQL_EQUIVALENCE_REPORT:-}"
+pin="$repo_root/scripts/incql_gate_pin.json"
+expect="$repo_root/scripts/incql_gate_expectations.toml"
 incan_source="$repo_root"
 work=""
 incan_home_override=""
 keep_work=0
-allow_dirty=0
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --incan) incan="${2:-}"; shift 2 ;;
         --incql) incql="${2:-}"; shift 2 ;;
+        --equivalence-report) equivalence_report="${2:-}"; shift 2 ;;
+        --pin) pin="${2:-}"; shift 2 ;;
+        --expect) expect="${2:-}"; shift 2 ;;
         --incan-source) incan_source="${2:-}"; shift 2 ;;
         --work) work="${2:-}"; shift 2 ;;
         --incan-home) incan_home_override="${2:-}"; shift 2 ;;
         --keep-work) keep_work=1; shift ;;
-        --allow-dirty) allow_dirty=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; fail "unknown argument: $1" ;;
     esac
@@ -65,38 +64,26 @@ done
 [ -n "$incan" ] || { usage >&2; fail "--incan is required"; }
 [ -x "$incan" ] || fail "--incan does not name an executable: $incan"
 incan="$(cd "$(dirname "$incan")" && pwd)/$(basename "$incan")"
-
-[ -n "$incql" ] || incql="$(cd "$repo_root/.." && pwd)/tmp/incql-rc3-test"
-[ -d "$incql" ] || fail "IncQL checkout not found: $incql (pass --incql or set INCQL_CHECKOUT)"
+[ -n "$incql" ] || { usage >&2; fail "--incql or INCQL_CHECKOUT is required"; }
+[ -d "$incql" ] || fail "IncQL checkout not found: $incql"
 incql="$(cd "$incql" && pwd)"
 quickstart="$incql/examples/quickstart"
 [ -d "$quickstart" ] || fail "IncQL quickstart consumer not found: $quickstart"
+[ -f "$pin" ] || fail "IncQL pin not found: $pin"
+[ -f "$expect" ] || fail "IncQL gate expectations not found: $expect"
+[ -n "$equivalence_report" ] || { usage >&2; fail "--equivalence-report or INCQL_EQUIVALENCE_REPORT is required"; }
+[ -f "$equivalence_report" ] || fail "equivalence report not found: $equivalence_report"
 [ -d "$incan_source" ] || fail "Incan source checkout not found: $incan_source"
+incan_source="$(cd "$incan_source" && pwd)"
 
-# A consumer checkout carrying local edits is not a reference subject: a failure cannot be attributed to the
-# compiler under test, and a pass proves nothing about the released consumer either. Refuse rather than produce a
-# result that reads like evidence. `--allow-dirty` is for deliberately testing a work-in-progress consumer.
-if [ "$allow_dirty" -eq 0 ] && git -C "$incql" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    # `oven.lock` is rewritten by the compiler itself, so a modified lockfile is evidence that the tool ran, not
-    # that someone edited the consumer. Flagging it would make this guard fire on every ordinary checkout. The
-    # pre-rename spelling stays filtered so a consumer checkout that still tracks one is not read as edited.
-    dirty="$(git -C "$incql" status --porcelain --untracked-files=no | grep -Ev ' (oven|incan)\.lock$' || true)"
-    if [ -n "$dirty" ]; then
-        printf 'gate_incql: the IncQL checkout has uncommitted changes, so a gate result would not be attributable:\n' >&2
-        printf '%s\n' "$dirty" >&2
-        fail "commit or set aside those changes, or pass --allow-dirty to test this working tree deliberately"
-    fi
-fi
+"$incan" oven gate registry-pin --pin "$pin" --checkout "$incql" \
+    || fail "IncQL checkout or lock differs from its pin"
 
 if [ -z "$work" ]; then
     work="$(mktemp -d)"
 fi
 mkdir -p "$work"
 work="$(cd "$work" && pwd)"
-# An empty home is right for a locally built compiler, which resolves its own stdlib source and seals Loafs against
-# whatever Rust is ambient. A released archive is the opposite: its Loafs are sealed against the exact Rust the
-# installer provisions into the toolchain's own home, so building against an empty home rejects every shipped Loaf
-# with "no compatible release-cohort Loaf". Point this at an installed home to test a real release.
 if [ -n "$incan_home_override" ]; then
     [ -d "$incan_home_override" ] || fail "--incan-home is not a directory: $incan_home_override"
     incan_home="$(cd "$incan_home_override" && pwd)"
@@ -104,8 +91,12 @@ else
     incan_home="$work/home"
 fi
 mkdir -p "$incan_home"
+created_incan_link=0
 
 cleanup() {
+    if [ "$created_incan_link" -eq 1 ] && [ -L "$incql/incan" ]; then
+        rm "$incql/incan"
+    fi
     if [ "$keep_work" -eq 0 ]; then
         rm -rf "$work"
     else
@@ -114,12 +105,60 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# IncQL's vocab companion resolves a sibling `incan` source checkout from inside the IncQL directory.
-ln -sfn "$incan_source" "$incql/incan"
+# The pinned IncQL vocab companion retains a source-relative dependency on Incan's vocab crate. The gate creates
+# only the expected link and removes it afterwards; an existing different path is refused rather than overwritten.
+if [ -e "$incql/incan" ] || [ -L "$incql/incan" ]; then
+    existing_incan_source="$(cd "$incql/incan" 2>/dev/null && pwd -P)" \
+        || fail "existing IncQL incan companion path is not a readable directory: $incql/incan"
+    [ "$existing_incan_source" = "$incan_source" ] \
+        || fail "existing IncQL incan companion path resolves to $existing_incan_source, expected $incan_source"
+else
+    ln -s "$incan_source" "$incql/incan"
+    created_incan_link=1
+fi
 
-# Residual consumer state can mask a broken selection path: the packaged-provider bug reproduced only from clean.
-printf '== Resetting consumer state ==\n'
-rm -rf "$quickstart/.incan" "$quickstart/target" "$quickstart/oven.lock" "$quickstart/incan.lock"
+# Refuse producer work in the consumer. C-family wrappers permit final executable linking but reject compilation
+# (`-c` or a source operand); generator/bootstrap/archive commands are unavailable in every form selected via PATH
+# or the conventional environment variables.
+guard="$work/consumer-command-guard"
+guard_log="$work/forbidden-commands.log"
+mkdir -p "$guard"
+: > "$guard_log"
+real_cc="$(command -v cc || true)"
+[ -n "$real_cc" ] || fail "no C linker driver is available for rustc's final executable link"
+cat > "$guard/forbid" <<'EOF'
+#!/bin/sh
+command_name="$(basename "$0")"
+printf 'gate_incql: forbidden consumer command: %s %s\n' "$command_name" "$*" | tee -a "$INCQL_OVEN_CONSUMER_GUARD_LOG" >&2
+exit 97
+EOF
+chmod +x "$guard/forbid"
+for command_name in cargo protoc cmake ar c++ g++ clang++; do
+    ln -s forbid "$guard/$command_name"
+done
+cat > "$guard/cc-link-only" <<'EOF'
+#!/bin/sh
+command_name="$(basename "$0")"
+for argument in "$@"; do
+    case "$argument" in
+        -c|*.c|*.cc|*.cpp|*.cxx|*.s|*.S)
+            printf 'gate_incql: forbidden consumer command: %s %s\n' "$command_name" "$*" \
+                | tee -a "$INCQL_OVEN_CONSUMER_GUARD_LOG" >&2
+            exit 97
+            ;;
+    esac
+done
+exec "$INCQL_OVEN_REAL_CC" "$@"
+EOF
+chmod +x "$guard/cc-link-only"
+for command_name in cc gcc clang; do
+    ln -s cc-link-only "$guard/$command_name"
+done
+
+# Residual outputs can conceal a fallback or stale semantic graph. The pinned source and lock remain untouched.
+printf '== Resetting consumer outputs ==\n'
+rm -rf "$incql/.incan" "$incql/target" "$incql/oven.lock" \
+    "$quickstart/.incan" "$quickstart/target" "$quickstart/oven.lock" "$quickstart/incan.lock"
 
 run_stage() {
     local label="$1"
@@ -128,76 +167,48 @@ run_stage() {
     local started elapsed
     printf '== %s ==\n' "$label"
     started="$(date +%s)"
-    ( cd "$directory" && INCAN_HOME="$incan_home" "$@" ) || fail "$label failed"
+    (
+        cd "$directory"
+        PATH="$guard:$PATH" \
+        CARGO="$guard/cargo" PROTOC="$guard/protoc" CMAKE="$guard/cmake" AR="$guard/ar" \
+        CC="$guard/cc" CXX="$guard/c++" \
+        INCAN_HOME="$incan_home" INCAN_OVEN_CARGO_GUARD_LOG="$guard_log" \
+        INCQL_OVEN_CONSUMER_GUARD_LOG="$guard_log" INCQL_OVEN_REAL_CC="$real_cc" \
+        "$@"
+    ) || fail "$label failed"
     elapsed="$(( $(date +%s) - started ))"
     printf '   %s: %ss\n' "$label" "$elapsed"
 }
 
 run_stage "Bake IncQL library" "$incql" "$incan" oven bake --project .
 run_stage "Bake quickstart consumer" "$quickstart" "$incan" oven bake --project .
+[ ! -s "$guard_log" ] || fail "consumer attempted forbidden Cargo or publisher work; see $guard_log"
+
+printf '== Checking complete admitted closure ==\n'
+"$incan" oven gate consumer-graph --expect "$expect" \
+    --equivalence-report "$equivalence_report" "$incql/oven.lock" "$quickstart/oven.lock" \
+    || fail "IncQL selected units are not one complete attested registry closure"
+
+# A Cargo-routed executable is a refusal, never secondary evidence. Only an Oven output can be the subject run.
+fallback="$(find "$quickstart/target/debug" -type f -perm -111 2>/dev/null | head -1 || true)"
+[ -z "$fallback" ] || fail "Cargo-layout fallback executable is present: $fallback"
+binary="$(find "$quickstart/target/oven" -type f -perm -111 \
+    -not -path '*/deps/*' -not -path '*/build/*' -not -name '*.d' 2>/dev/null | head -1 || true)"
+[ -n "$binary" ] || fail "could not locate an Oven quickstart executable under $quickstart/target/oven"
+printf '   executable: %s\n' "$binary"
 
 printf '== Running quickstart ==\n'
 run_output="$work/quickstart-run.txt"
-run_started="$(date +%s)"
-( cd "$quickstart" && INCAN_HOME="$incan_home" "$incan" run ) > "$run_output" 2>&1 \
-    || { cat "$run_output" >&2; fail "quickstart run failed"; }
-run_elapsed="$(( $(date +%s) - run_started ))"
+if ! run_stage "Run quickstart consumer" "$quickstart" "$incan" run > "$run_output" 2>&1; then
+    cat "$run_output" >&2
+    fail "quickstart run failed"
+fi
 cat "$run_output"
-printf '   run: %ss\n' "$run_elapsed"
-
 grep -q "IncQL quickstart completed" "$run_output" \
     || fail "quickstart ran but did not report completion; see $run_output"
+[ ! -s "$guard_log" ] || fail "quickstart attempted forbidden Cargo or publisher work; see $guard_log"
 
-# One compiled `tokio` per binary. Two distinct v0 mangling hashes mean two independently compiled instances, which
-# is the exact shape of the "no reactor running" panic: the runtime a task registers with is not the runtime that
-# polls it. Checking the produced binary is what makes this real; a successful build proves nothing about linkage.
-printf '== Checking for duplicate compiled tokio instances ==\n'
-# The linked executable lands under the Oven output directory; the Cargo-routed layout keeps one under
-# `target/debug` instead. Build scripts and dependency rlibs share those trees, so exclude them explicitly rather
-# than matching on the package name, which differs from the directory name.
-find_executable() {
-    find "$quickstart/target" -type f -perm -111 -path "$1" \
-        -not -path '*/deps/*' -not -path '*/build/*' -not -name 'build_script_build' -not -name '*.d' \
-        2>/dev/null | head -1
-}
-binary="$(find_executable '*/oven/debug/*')"
-[ -n "$binary" ] || binary="$(find_executable '*/oven/release/*')"
-[ -n "$binary" ] || binary="$(find_executable '*/target/debug/*')"
-[ -n "$binary" ] || fail "could not locate the quickstart binary to inspect under $quickstart/target"
-printf '   binary: %s\n' "$binary"
+"$incan" oven gate registry-pin --pin "$pin" --checkout "$incql" \
+    || fail "IncQL bake changed the pinned checkout or lock"
 
-# Two manglings have to be handled, and neither may be allowed to "pass" by finding nothing.
-#
-# v0 encodes the crate instance directly (`Cs<hash>_5tokio`), so distinct hashes count instances. A binary built
-# through the unified-Cargo fallback uses legacy mangling instead, where symbols carry no per-instance hash -- a v0
-# pattern matches zero symbols there and would report a reassuring `0` while verifying nothing. For that case count
-# the compiled rlibs Cargo produced for the binary's own profile, which is the same evidence stated directly.
-tokio_symbols="$(nm "$binary" 2>/dev/null | grep -c 'tokio' || true)"
-[ "${tokio_symbols:-0}" -gt 0 ] || fail "binary links no tokio symbols at all; the duplicate-instance check cannot be trusted here"
-
-tokio_hashes="$(nm "$binary" 2>/dev/null | grep -oE 'Cs[a-zA-Z0-9]+_5tokio' | sort -u || true)"
-tokio_count="$(printf '%s' "$tokio_hashes" | grep -c . || true)"
-evidence="v0 symbol hashes"
-
-if [ "${tokio_count:-0}" -eq 0 ]; then
-    # Legacy mangling: count rlibs within the profile this binary was built at, so a debug/release pair is not
-    # mistaken for two instances linked into one artifact.
-    case "$binary" in
-        */release/*) binary_profile="release" ;;
-        *) binary_profile="debug" ;;
-    esac
-    tokio_count="$(find "$quickstart/target" -path "*/${binary_profile}/deps/libtokio-*.rlib" 2>/dev/null \
-        | sed 's|.*/||' | sort -u | wc -l | tr -d ' ')"
-    evidence="compiled rlibs at the ${binary_profile} profile"
-    [ "${tokio_count:-0}" -gt 0 ] \
-        || fail "binary links tokio but neither v0 symbols nor compiled rlibs could be counted; cannot verify single-instance linkage"
-fi
-
-if [ "$tokio_count" -gt 1 ]; then
-    printf '%s\n' "$tokio_hashes" >&2
-    find "$quickstart/target" -name "libtokio-*.rlib" 2>/dev/null | sed 's/^/  /' >&2
-    fail "binary links ${tokio_count} compiled tokio instances; exactly one is required"
-fi
-printf '   compiled tokio instances: %s (by %s)\n' "$tokio_count" "$evidence"
-
-printf '\nIncQL gate passed (bake + run + single-tokio linkage).\n'
+printf '\nIncQL gate passed (pinned closure + Cargo-free admitted assets + executable run).\n'

@@ -1,0 +1,27 @@
+schema = 1
+consumer_only_packages = [
+  "ahash",
+  "bigdecimal",
+  "chrono-tz",
+  "crunchy",
+  "flatbuffers",
+  "liblzma-sys",
+  "paste",
+  "pbjson-types",
+  "protobuf-src",
+  "psm",
+  "schemars",
+  "stacker",
+  "substrait",
+  "tiny-keccak",
+]
+publisher_only_packages = ["protobuf-src"]
+forbidden_semantic_strings = ["cmake", "protobuf-src"]
+
+[[required_exact_packages]]
+package = "substrait"
+version = "0.62.2"
+
+[[required_exact_packages]]
+package = "substrait"
+version = "0.63.0"

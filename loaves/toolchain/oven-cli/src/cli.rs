@@ -40,6 +40,32 @@ pub enum OvenHarvestProfileArgument {
     Debug,
 }
 
+/// Release-evidence gates owned by Oven.
+#[derive(Subcommand, Debug)]
+pub enum OvenGateCommand {
+    /// Verify a checkout and its committed lock against a schema-1 registry pin
+    RegistryPin {
+        /// Schema-1 checkout and lock pin
+        #[arg(long, value_name = "PATH")]
+        pin: PathBuf,
+        /// Git checkout to verify
+        #[arg(long, value_name = "PATH")]
+        checkout: PathBuf,
+    },
+    /// Verify an admitted consumer graph against data-driven expectations and equivalence evidence
+    ConsumerGraph {
+        /// Schema-1 TOML gate expectations
+        #[arg(long, value_name = "PATH")]
+        expect: PathBuf,
+        /// Schema-1 artifact-equivalence attestation
+        #[arg(long = "equivalence-report", value_name = "PATH")]
+        equivalence_report: PathBuf,
+        /// Root and quickstart Oven locks whose registry records form the consumer graph
+        #[arg(value_name = "LOCK", required = true)]
+        locks: Vec<PathBuf>,
+    },
+}
+
 impl OvenHarvestProfileArgument {
     /// The profile name as a fact record and the publisher spell it.
     pub fn as_str(self) -> &'static str {
@@ -265,6 +291,11 @@ pub enum OvenCommand {
         /// Destination for schema-1 attestation evidence
         #[arg(long, value_name = "PATH")]
         output: PathBuf,
+    },
+    /// Run release-evidence gates over Oven-owned semantic state
+    Gate {
+        #[command(subcommand)]
+        command: OvenGateCommand,
     },
     /// Bake locked C/C++ interop shims and static inputs into one receipt-bound direct-rustc plan
     Interop {

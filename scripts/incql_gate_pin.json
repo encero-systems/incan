@@ -1,0 +1,8 @@
+{
+  "lock": {
+    "digest": "sha256:24dc985cc81332b6d8620407f8d95089a563381d296245d76d384f3463c337bb",
+    "path": "incan.lock"
+  },
+  "revision": "b1a5c57a6a3baa23339ffadf67992a3edbd888ee",
+  "schema": 1
+}
