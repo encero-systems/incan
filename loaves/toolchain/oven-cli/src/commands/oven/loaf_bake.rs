@@ -35,10 +35,12 @@ use oven_rustc::loaf::{
     stage_release_runtime_foundation_toolchain,
 };
 use oven_rustc::rustc::{
-    OvenRuntimeCompilerClosure, OvenRuntimeFoundationAsset, execute_runtime_foundation_rebuild,
+    OvenPublisherLinkProduct, OvenRuntimeCompilerClosure, OvenRuntimeFoundationAsset,
+    ValidatedOvenSelectedRustFacetGraph, execute_runtime_foundation_rebuild, finalize_publisher_link_product,
     publish_runtime_closure, publish_runtime_foundation_asset,
 };
 use oven_store::process::{BoundedProcessLimits, BoundedProcessTermination, run_bounded_process};
+use oven_store::publisher_execution::write_publisher_execution_receipt;
 use oven_store::store::{
     OvenArtifactKind, OvenArtifactMaterializedDirectory, OvenArtifactMaterializedFile, OvenArtifactPublishRequest,
     OvenStore, PublishedOvenStore,
@@ -94,6 +96,22 @@ struct StagedReleaseToolchain {
     compiler_closure_identity: String,
     /// Exact retained members below `root`.
     members: Vec<OvenReleaseToolchainMember>,
+}
+
+/// Finalize one publisher-only native product as an asset-side receipt and selected-unit link input.
+///
+/// This is deliberately part of the explicit Loaf publisher rather than any normal build path. The returned graph
+/// carries the receipt identity as the archive owner; callers publish `product_root` as that owner's immutable asset
+/// and provide the same root when the graph is physically materialized.
+pub(crate) fn finalize_publisher_native_link(
+    selected: ValidatedOvenSelectedRustFacetGraph,
+    consuming_unit_identity: &str,
+    product: &OvenPublisherLinkProduct,
+) -> CliResult<ValidatedOvenSelectedRustFacetGraph> {
+    write_publisher_execution_receipt(&product.receipt, &product.product_root)
+        .map_err(|error| CliError::failure(format!("could not finalize native publisher receipt: {error}")))?;
+    finalize_publisher_link_product(selected, consuming_unit_identity, Some(product))
+        .map_err(|error| CliError::failure(format!("could not bind native publisher product: {error}")))
 }
 
 /// Bake or exactly reuse one complete compiler-owned Alpha Loaf envelope.

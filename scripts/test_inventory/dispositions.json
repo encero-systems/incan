@@ -9385,6 +9385,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/oven/oven_rustc/src/rustc/direct_compiler.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; publisher-only native-link execution and receipt tests carry no compiler-crate dependency. Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/oven/oven_rustc/src/rustc/direct_compiler/retention.rs": {
       "disposition": "unaffected",
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). A source module (compiler-closure retention) with a `#[cfg(all(test, unix))]` region over a synthetic sysroot, measured by that region. Reviewed at crate level.",
@@ -9478,6 +9486,14 @@
       "notes": "Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level.",
       "owner": 1561,
       "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/oven/oven_store/src/publisher_execution.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven ring; shared bounded publisher execution and receipt tests carry no compiler-crate dependency. Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": true,
       "split_target": "",
       "twin": ""
     },

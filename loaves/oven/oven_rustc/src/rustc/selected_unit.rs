@@ -10,18 +10,21 @@ use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use oven_model::manifest::RustFactLibraryKind;
 use oven_model::oven_interop::{
     OVEN_INTEROP_EXECUTION_PROVENANCE_SCHEMA_VERSION, OVEN_INTEROP_EXECUTION_RECEIPT_SCHEMA_VERSION,
     OvenInteropExecutionProvenance, verify_interop_execution_receipt_identity,
 };
 use oven_store::publisher_execution::{OvenPublisherToolReceipt, verify_publisher_tool_receipt};
 
+use super::direct_compiler::OvenPublisherLinkProduct;
 use super::{
     OvenCompiledRustUnitIdentity, OvenRustcError, OvenSelectedRustFacetEnvironmentValue,
     OvenSelectedRustFacetGeneratedInput, OvenSelectedRustFacetGraph, OvenSelectedRustFacetLinkedLibrary,
     OvenSelectedRustFacetLinkedLibraryKind, OvenSelectedRustFacetOwner, OvenSelectedRustFacetOwnerKind,
     OvenSelectedRustFacetPath, OvenSelectedRustFacetSourceMember, OvenSelectedRustFacetUnit,
     ValidatedOvenSelectedRustFacetGraph, compiled_rust_unit_identities, digest_regular_file,
+    selected_graph_unit_identity,
 };
 
 /// One physical root for an owner named by a validated selected facet graph.
@@ -193,6 +196,177 @@ pub struct OvenMaterializedRustFacetGraph {
     target: OvenMaterializedRustTarget,
     units: BTreeMap<String, OvenMaterializedRustFacetUnit>,
     supplemental_source_roots: BTreeMap<(String, String), PathBuf>,
+}
+
+/// Attach one finished publisher-native product to its consuming selected unit and rekey the graph closure.
+///
+/// Passing no product is the ordinary-consumer path: it refuses immediately and never gains an executable or source
+/// root from which it could compile C. A present product must carry a valid receipt for the pre-product consumer
+/// identity, selected target and toolchain. The receipt identity becomes the generated-output owner folded into the
+/// final selected-unit identity, avoiding a receipt/unit identity cycle while retaining both authorities.
+pub fn finalize_publisher_link_product(
+    selected: ValidatedOvenSelectedRustFacetGraph,
+    consuming_unit_identity: &str,
+    product: Option<&OvenPublisherLinkProduct>,
+) -> Result<ValidatedOvenSelectedRustFacetGraph, OvenRustcError> {
+    let product = product.ok_or_else(|| OvenRustcError::InvalidInput {
+        field: "publisher link product",
+        message: "consumer bake requires an admitted finished archive and never compiles native sources".to_string(),
+    })?;
+    product
+        .receipt
+        .verify_identity()
+        .map_err(|error| OvenRustcError::InvalidInput {
+            field: "publisher link receipt",
+            message: error.to_string(),
+        })?;
+    let mut graph = selected.into_graph();
+    if product.target != graph.selection.intent.target
+        || product.receipt.target != graph.selection.intent.target
+        || product.receipt.toolchain != graph.selection.intent.toolchain
+        || product.receipt.consuming_unit_identity != consuming_unit_identity
+        || product.receipt.role != "link"
+    {
+        return Err(OvenRustcError::InvalidInput {
+            field: "publisher link product",
+            message: "receipt does not bind the selected consumer, target and toolchain".to_string(),
+        });
+    }
+    let receipt_output = product
+        .receipt
+        .outputs
+        .iter()
+        .find(|output| output.path == product.archive_relative_path)
+        .ok_or_else(|| OvenRustcError::InvalidInput {
+            field: "publisher link product",
+            message: "receipt does not declare the archive product".to_string(),
+        })?;
+    if receipt_output.digest != product.archive_digest {
+        return Err(OvenRustcError::InvalidInput {
+            field: "publisher link product",
+            message: "archive digest is detached from its receipt".to_string(),
+        });
+    }
+    let actual_digest = digest_regular_file(&product.archive_path, "publisher link archive")?;
+    if actual_digest != product.archive_digest {
+        return Err(OvenRustcError::ArtifactDigestMismatch {
+            path: product.archive_path.clone(),
+            expected: product.archive_digest.clone(),
+            actual: actual_digest,
+        });
+    }
+    let target_index = graph
+        .units
+        .iter()
+        .position(|unit| unit.identity == consuming_unit_identity)
+        .ok_or_else(|| OvenRustcError::InvalidInput {
+            field: "publisher link consumer",
+            message: format!("selected graph has no unit `{consuming_unit_identity}`"),
+        })?;
+    if graph.units.iter().any(|unit| {
+        unit.linked_libraries.iter().any(|library| match library {
+            OvenSelectedRustFacetLinkedLibrary::Archive { name, .. } => name == &product.library_name,
+            OvenSelectedRustFacetLinkedLibrary::Provider { details } => details.name == product.library_name,
+        })
+    }) {
+        return Err(OvenRustcError::InvalidInput {
+            field: "publisher link product",
+            message: format!(
+                "linked-library identity `{}` collides with an existing product",
+                product.library_name
+            ),
+        });
+    }
+    if graph
+        .owners
+        .iter()
+        .any(|owner| owner.identity == product.receipt.identity)
+    {
+        return Err(OvenRustcError::InvalidInput {
+            field: "publisher link product",
+            message: "receipt owner collides with an existing selected owner".to_string(),
+        });
+    }
+    graph.owners.push(OvenSelectedRustFacetOwner {
+        identity: product.receipt.identity.clone(),
+        kind: OvenSelectedRustFacetOwnerKind::GeneratedOutput,
+    });
+    let kind = match product.library_kind {
+        RustFactLibraryKind::Static => OvenSelectedRustFacetLinkedLibraryKind::Static,
+        RustFactLibraryKind::Dynamic => OvenSelectedRustFacetLinkedLibraryKind::Dynamic,
+    };
+    graph.units[target_index]
+        .linked_libraries
+        .push(OvenSelectedRustFacetLinkedLibrary::Archive {
+            name: product.library_name.clone(),
+            kind,
+            artifact: OvenSelectedRustFacetPath {
+                owner: product.receipt.identity.clone(),
+                path: product.archive_relative_path.clone(),
+            },
+            digest: product.archive_digest.clone(),
+        });
+    rekey_selected_graph(&mut graph)?;
+    graph.validated().map_err(|error| OvenRustcError::InvalidInput {
+        field: "publisher link selected graph",
+        message: error.to_string(),
+    })
+}
+
+/// Recompute every selected identity after one product changes a unit and therefore its dependent Merkle closure.
+fn rekey_selected_graph(graph: &mut OvenSelectedRustFacetGraph) -> Result<(), OvenRustcError> {
+    let original_identities = graph.units.iter().map(|unit| unit.identity.clone()).collect::<Vec<_>>();
+    let mut pending = (0..graph.units.len()).collect::<BTreeSet<_>>();
+    let mut remapped = BTreeMap::new();
+    while !pending.is_empty() {
+        let ready = pending
+            .iter()
+            .copied()
+            .filter(|index| {
+                graph.units[*index]
+                    .dependencies
+                    .iter()
+                    .all(|dependency| remapped.contains_key(&dependency.unit))
+            })
+            .collect::<Vec<_>>();
+        if ready.is_empty() {
+            return Err(OvenRustcError::InvalidInput {
+                field: "publisher link selected graph",
+                message: "has no dependency frontier while rekeying product consumers".to_string(),
+            });
+        }
+        for index in ready {
+            pending.remove(&index);
+            for dependency in &mut graph.units[index].dependencies {
+                dependency.unit =
+                    remapped
+                        .get(&dependency.unit)
+                        .cloned()
+                        .ok_or_else(|| OvenRustcError::InvalidInput {
+                            field: "publisher link selected graph",
+                            message: "dependency disappeared while rekeying".to_string(),
+                        })?;
+            }
+            let identity = selected_graph_unit_identity(&graph.selection, &graph.units[index]).map_err(|error| {
+                OvenRustcError::InvalidInput {
+                    field: "publisher link selected graph",
+                    message: error.to_string(),
+                }
+            })?;
+            remapped.insert(original_identities[index].clone(), identity.clone());
+            graph.units[index].identity = identity;
+        }
+    }
+    for root in graph.exposed_roots.values_mut() {
+        root.unit = remapped
+            .get(&root.unit)
+            .cloned()
+            .ok_or_else(|| OvenRustcError::InvalidInput {
+                field: "publisher link selected graph",
+                message: "exposed root disappeared while rekeying".to_string(),
+            })?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -1154,6 +1328,11 @@ mod tests {
         OvenSelectedRustFacetTargetSpec, OvenSelectedRustFacetUnitRole, compiled_rust_unit_identities,
         selected_graph_sha256, selected_graph_source_digest, selected_graph_unit_identity,
     };
+    use oven_model::manifest::RustFactLibraryKind;
+    use oven_store::publisher_execution::{
+        PUBLISHER_EXECUTION_RECEIPT_SCHEMA_VERSION, PublisherExecutionProduct, PublisherExecutionReceipt,
+        publisher_execution_receipt_identity,
+    };
 
     const COMPILER_CLOSURE: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const PUBLISHER_TOOL_CONSUMER: &str = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
@@ -1196,6 +1375,90 @@ mod tests {
                 digest: selected_graph_sha256(br#"{"arch":"x86_64","os":"linux","llvm-target":"x86_64-unknown-linux-gnu","target-pointer-width":"64"}"#),
             },
         }
+    }
+
+    /// An ordinary consumer cannot turn declared native work into execution when no admitted product exists.
+    #[test]
+    fn consumer_refuses_missing_publisher_link_product() -> Result<(), Box<dyn std::error::Error>> {
+        let graph = selected_graph()?;
+        let identity = graph
+            .graph()
+            .units
+            .first()
+            .ok_or("fixture graph has no unit")?
+            .identity
+            .clone();
+        let error = super::finalize_publisher_link_product(graph, &identity, None)
+            .err()
+            .ok_or("consumer accepted missing native product")?;
+        assert!(error.to_string().contains("never compiles native sources"));
+        Ok(())
+    }
+
+    /// A verified archive receipt becomes a selected owner and changes the consuming unit identity.
+    #[test]
+    fn publisher_link_product_is_bound_into_consuming_unit_identity() -> Result<(), Box<dyn std::error::Error>> {
+        let graph = selected_graph()?;
+        let original_identity = graph
+            .graph()
+            .units
+            .first()
+            .ok_or("fixture graph has no unit")?
+            .identity
+            .clone();
+        let product_root = tempfile::tempdir()?;
+        let archive_path = product_root.path().join("libfixture.a");
+        fs::write(&archive_path, b"native archive")?;
+        let archive_digest = selected_graph_sha256(b"native archive");
+        let mut receipt = PublisherExecutionReceipt {
+            schema_version: PUBLISHER_EXECUTION_RECEIPT_SCHEMA_VERSION,
+            identity: String::new(),
+            role: "link".to_string(),
+            name: "fixture-native".to_string(),
+            consuming_unit_identity: original_identity.clone(),
+            target: graph.graph().selection.intent.target.clone(),
+            toolchain: graph.graph().selection.intent.toolchain.clone(),
+            executable_owner: selected_graph_sha256(b"compiler owner"),
+            executable_digest: selected_graph_sha256(b"compiler"),
+            logical_argv: vec!["literal:libfixture.a".to_string()],
+            logical_environment: BTreeMap::new(),
+            inputs: BTreeMap::from([("source".to_string(), selected_graph_sha256(b"source"))]),
+            outputs: vec![PublisherExecutionProduct {
+                name: "archive".to_string(),
+                kind: oven_model::manifest::RustFactArtifactKind::File,
+                path: "libfixture.a".to_string(),
+                digest: archive_digest.clone(),
+                members: Vec::new(),
+            }],
+        };
+        receipt.identity = publisher_execution_receipt_identity(&receipt)?;
+        let product = super::OvenPublisherLinkProduct {
+            library_name: "fixture".to_string(),
+            library_kind: RustFactLibraryKind::Static,
+            target: graph.graph().selection.intent.target.clone(),
+            archive_relative_path: "libfixture.a".to_string(),
+            archive_path,
+            product_root: product_root.path().to_path_buf(),
+            archive_digest,
+            receipt: receipt.clone(),
+        };
+
+        let finalized = super::finalize_publisher_link_product(graph, &original_identity, Some(&product))?;
+        let unit = finalized.graph().units.first().ok_or("finalized graph has no unit")?;
+        assert_ne!(unit.identity, original_identity);
+        assert!(
+            finalized
+                .graph()
+                .owners
+                .iter()
+                .any(|owner| owner.identity == receipt.identity)
+        );
+        assert!(matches!(
+            unit.linked_libraries.as_slice(),
+            [OvenSelectedRustFacetLinkedLibrary::Archive { name, digest, .. }]
+                if name == "fixture" && digest == &selected_graph_sha256(b"native archive")
+        ));
+        Ok(())
     }
 
     fn selected_graph() -> Result<ValidatedOvenSelectedRustFacetGraph, Box<dyn std::error::Error>> {
