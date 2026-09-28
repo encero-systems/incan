@@ -1,5 +1,6 @@
 # behavior: a method partial calls its target method with the preset argument, whether it names the method directly or through a method alias, on a generic model and over a mut self method, and a call can override the preset
 # retires: loaves/compiler/incan_ir/src/lower/tests/method_partial_forwarding.rs::method_partial_forwards_on_a_receiver_typed_by_its_model_issue1765
+# retires: loaves/compiler/incan_emit/src/codegen.rs::method_partial_codegen_resolves_alias_target
 # expect-stdout:
 #   name
 #   name

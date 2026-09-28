@@ -1,4 +1,5 @@
 # behavior: a mut list parameter changed by an adopter's override, reached through a generic trait bound or through self in a trait default, changes the caller's mut list
+# retires: loaves/compiler/incan_emit/src/emit/decls/functions.rs::bodyless_trait_slot_drops_owned_mutable_rust_parameter_binding_issue1828
 # expect-stdout:
 #   3
 #   3

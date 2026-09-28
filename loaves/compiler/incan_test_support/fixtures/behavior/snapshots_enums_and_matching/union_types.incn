@@ -1,5 +1,8 @@
 # behavior: union-typed values narrow through isinstance chains, type patterns and None checks to the branch for their runtime type (RFC 029)
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::test_rfc029_union_types_codegen
+# retires: loaves/compiler/incan_emit/src/codegen.rs::followups_b_option_none_identity_emits_presence_predicates
+# retires: loaves/compiler/incan_emit/src/tests/union_member_identity.rs::isinstance_over_a_local_union_alias_narrows_through_the_wrapper_issue1796
+# retires: loaves/compiler/incan_emit/src/tests/union_member_identity.rs::none_test_over_a_local_optional_alias_narrows_to_the_payload_issue1796
 # expect-stdout:
 #   number FALLBACK
 #   42 FALLBACK

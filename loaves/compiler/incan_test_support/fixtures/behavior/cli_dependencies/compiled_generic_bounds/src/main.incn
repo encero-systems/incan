@@ -1,0 +1,23 @@
+# behavior: inferred and declared bounds of generic functions, inherent methods and trait defaults survive a package boundary, so the dependency and its concrete consumer build and run
+# retires: loaves/compiler/incan_emit/src/codegen.rs::compiled_library_inherent_method_bounds_reach_manifest_issue1819
+# retires: loaves/compiler/incan_emit/src/codegen.rs::compiled_callable_bounds_reach_consumer_issue1826
+# retires: loaves/compiler/incan_emit/src/codegen.rs::declared_trait_method_bounds_are_not_republished_as_inferred_issue1826
+# expect-stdout:
+#   1
+#   first
+#   2
+#   picked
+#   4
+#   3
+
+from pub::bounds import Holder, Lookup, Selector, first, apply
+
+
+def main() -> None:
+    holder = Holder[int](value=1)
+    println(holder.get())
+    println(holder.first(["first", "second"]))
+    println(first([2, 3]))
+    println(Selector(id=1).pick(["picked"]))
+    println(apply((value) => value + 1, 3))
+    println(len(Lookup(key="bad").describe((value) => value)))

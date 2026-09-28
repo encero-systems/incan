@@ -3,6 +3,15 @@
 # retires: loaves/compiler/incan_emit/src/emit/native_unions.rs::emitted_union_publication_is_scoped_to_module_and_span
 # retires: loaves/compiler/incan_emit/src/emit/native_unions.rs::native_union_local_nominals_keep_module_identity_through_forwarding
 # retires: loaves/compiler/incan_ir/src/lower/tests/union_member_identity.rs::shared_nominal_union_members_are_spelled_by_their_declaring_module_issue1796
+# retires: loaves/compiler/incan_emit/src/codegen.rs::union_over_an_unshared_nominal_keeps_its_wrapper_name_issue1796
+# retires: loaves/compiler/incan_emit/src/codegen.rs::a_sibling_importing_a_shared_nominal_builds_the_declaring_modules_wrapper_issue1796
+# retires: loaves/compiler/incan_emit/src/codegen.rs::a_union_over_a_shared_generic_nominal_still_generates_issue1796
+# retires: loaves/compiler/incan_emit/src/tests/union_member_identity.rs::a_module_reaching_both_unions_through_their_functions_uses_each_modules_wrapper_issue1796
+# retires: loaves/compiler/incan_emit/src/tests/union_member_identity.rs::a_union_reached_through_an_imported_function_uses_the_declaring_modules_wrapper_issue1796
+# retires: loaves/compiler/incan_emit/src/tests/union_member_identity.rs::a_union_over_a_generic_type_two_modules_declare_gets_one_wrapper_each_issue1796
+# retires: loaves/compiler/incan_emit/src/tests/union_member_identity.rs::a_return_into_an_imported_union_alias_builds_its_wrapper_issue1796
+# retires: loaves/compiler/incan_emit/src/tests/union_member_identity.rs::a_union_over_an_import_alias_names_the_imported_declaration_issue1796
+# retires: loaves/compiler/incan_emit/src/tests/union_member_identity.rs::a_union_over_an_import_alias_of_an_unshared_type_uses_the_declarations_wrapper_issue1796
 # expect-stdout:
 #   first product 1
 #   first number 2
