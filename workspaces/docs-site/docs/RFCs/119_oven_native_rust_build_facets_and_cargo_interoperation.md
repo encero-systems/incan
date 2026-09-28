@@ -111,19 +111,32 @@ The `crate` dependencies are ordinary Rust ecosystem inputs. They default to cra
 Suppose `helper-sys` needs a generated binding, a compiled C helper, and two compile-time flags that its `build.rs` used to probe for. Under Oven that script is inert: Oven does not compile it, run it, or read its directives, and reports its presence once as a warning. The Loaf states what the script would have discovered:
 
 ```toml
-[rust]
+[[rust.facts]]
+toolchain = "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+target = "aarch64-apple-darwin"
+profile = "release"
+features = []
 cfg = ["has_neon", "stable_intrinsics"]
-out = "committed"
 
-[rust.link]
-sources = ["c/helper.c"]
-link = "static=sys_helper"
+[[rust.facts.link]]
+name = "sys-helper"
+target = 'cfg(target_arch = "aarch64")'
+language = "c"
+executable = { name = "clang", owner = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", path = "bin/clang", digest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+arguments = [{ input = "helper-source" }]
+sources = [{ name = "helper-source", kind = "file", path = "c/helper.c", digest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }]
+library = { name = "sys_helper", kind = "static" }
 
-[rust.tool]
-bindgen = { inputs = ["include/helper.h"], outputs = ["generated/bindings.rs"] }
+[[rust.facts.tool]]
+name = "bindgen"
+target = 'cfg(target_arch = "aarch64")'
+executable = { name = "bindgen", owner = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", path = "bin/bindgen", digest = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }
+arguments = [{ input = "header" }, { literal = "--output" }, { output = "bindings" }]
+inputs = [{ name = "header", kind = "file", path = "include/helper.h", digest = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" }]
+outputs = [{ name = "bindings", kind = "file", path = "generated/bindings.rs" }]
 ```
 
-The example shows the semantic grouping; the authored TOML grammar must be fixed before implementation and documented in the manifest reference. Every field is plan-visible before anything runs. `cfg` and `out` are data: the plan shows normalized flags and owner-relative digests of the committed files or trees. `link` and `tool` are publisher-side bake work with complete declared input and output closures. Their products enter the same admitted selected-unit and store path as other generated and linked-library inputs; a consumer receives the finished archive and generated inputs and never executes either. A tool is a host-domain unit whose executable identity, inputs, outputs, selected target association, and receipt are part of the consuming closure.
+The nested arrays of tables are the authored grammar. Every field is plan-visible before anything runs. `cfg` and `out` are data: the plan shows normalized flags and owner-relative digests of the committed files or trees. `link` and `tool` are publisher-side bake work with complete declared input and output contracts. A `link` record declares its digested sources and the logical library it produces, not a built archive. A `tool` record declares digested inputs and logical outputs. Product bytes, product digests and producer receipts belong to the admitted asset and receipt rather than either fact table. Their products enter the same admitted selected-unit and store path as other generated and linked-library inputs; a consumer receives the finished archive and generated inputs and never executes either. A tool is a host-domain unit whose executable identity, inputs, outputs, selected target association, product asset and receipt are part of the consuming closure.
 
 The `cfg` list is deliberately the *answer* rather than the question. A build script asks "does this `rustc` have `core::error::Error`?" at every build; under Oven's frozen toolchain that answer is a constant, so the manifest records it once and the answer is re-derived when the freeze moves.
 
@@ -372,7 +385,7 @@ This checklist tracks the full RFC. The dev.6 ecosystem slice (#1561) delivers t
 
 ### Rust facet and graph
 
-- [ ] Settle and document the authored Rust-facet grammar and conventional defaults.
+- [x] Settle and document the authored `link` and `tool` grammar; the remaining conventional Rust-facet defaults stay open.
 - [ ] Verify selected crate-provider source, feature, toolchain, and host/target identities.
 - [ ] Prove direct library and binary compilation with locked, offline, and relocated consumption.
 
@@ -428,5 +441,6 @@ This checklist tracks the full RFC. The dev.6 ecosystem slice (#1561) delivers t
 - **Governed-mode containment applies only to the compiler process that hosts procedural macros, and delegates to existing platform-native primitives; Oven does not implement its own sandboxing:** on Linux, containment uses Landlock or delegates to an established userspace sandboxing tool such as bubblewrap rather than hand-rolled namespace/seccomp wiring; on macOS, `sandbox-exec`/Seatbelt profiles; on Windows, AppContainer or Job Objects. These are security-audited, already-existing primitives; Oven integrates with them rather than authoring new OS-level containment code, the same "reuse existing infrastructure" reasoning behind this RFC's proc-macro and generator decisions elsewhere. Where a build host has no viable primitive for a selected policy, governed mode is refused outright rather than silently weakened or emulated, exactly as this RFC's reference text already requires ("if the host cannot enforce the selected policy without changing behavior, Oven denies the governed operation"). Observe mode's Cargo-equivalent behavior is unaffected by this choice: observe mode records effects without enforcing containment, so it has no platform-primitive dependency at all.
 - **The native-mode conformance bar is the price of a real benefit, not friction for its own sake, and that benefit is native-mode-only:** Oven-native's value over plain Cargo is not "compiles any single cold build faster" — a native bake still invokes the same `rustc` Cargo would. The concrete payoff is avoiding *redundant* rebuild work across environments: reusing a receipt-compatible pre-warmed Loaf/provider/artifact closure across equivalent clean worktrees, CI runners, and implementation slices (see "IDE selection, provenance, and warm reuse") gives a significant speed advantage over raw Cargo under warm circumstances, on top of the receipted, auditable, unified Incan+Rust project model Cargo cannot offer at all. Neither benefit is available in Cargo-compatibility mode: `oven cargo ...` is Cargo being fully authoritative over its own manifest, lock, and side effects, with no Oven-owned graph, receipt, or content-addressed store to reuse against. A project keeping `Cargo.toml` and wrapping it with `oven cargo` gets Cargo's own native performance characteristics, not Oven's — the reuse and receipt benefits require adopting `loaf.toml`.
 - **Crate promotion from Cargo-only to Oven-native is a manifest and artifact proof, not a directive audit:** a registry crate graduates when it has a Loaf manifest whose `cfg`, `out`, `link`, and `tool` facts cover its required build inputs and products, and the conformance corpus proves literal artifact equivalence against the same crate built through Cargo-compatibility mode under the recorded deterministic setup. Harvest reads Cargo's output records once to propose the manifest. Unknown required records refuse rather than falling through to a directive interpreter. C/C++ compilers and declared tools may execute only as their own selected publisher-side units; they never authorize `build.rs`.
+- **Publisher work records declare work; assets declare products:** `[[rust.facts.link]]` and `[[rust.facts.tool]]` are arrays of typed work records. Their executable is identified by a stable name, immutable `sha256:` owner, owner-relative path and executable-byte `sha256:` digest. Link records bind digested sources and the logical library name and kind; tool records bind digested inputs and logical output contracts. Built archives, generated product bytes, product digests and producer receipts are admitted asset-side evidence, not fact-record fields. Set-like lists are sorted and duplicate-free, omitted lists equal empty lists, logical names are unique in their namespace, and no absolute path, host spelling or capture order enters the record.
 - **Build scripts are inert, and the manifest says what they said (2026-09-13):** earlier drafts planned to execute `build.rs` as a sandboxed host provider and interpret its directives. That design is superseded. A `build.rs` is retained only as source-inventory evidence and produces one warning; it is never a selected unit or execution input. Required compile-time flags, committed generated inputs, linked-library outputs, and generator products are represented by `cfg`, `out`, `link`, and `tool` facts. Publisher adoption may harvest those facts from a separately requested Cargo build, but ordinary Oven planning, baking, caching, publication, and consumption never compile, execute, or interpret the script. Proc-macro host execution remains a separate supported contract.
 - **No speculative naming for a future registry endpoint:** `incan.pub` is the registry for the foreseeable future. This RFC does not name, brand, or reserve a hypothetical second public endpoint; an unregistered domain speculatively mentioned in earlier drafts is removed rather than carried forward as a design question.

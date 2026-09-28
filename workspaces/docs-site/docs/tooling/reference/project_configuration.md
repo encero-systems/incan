@@ -166,6 +166,7 @@ output = "bridge_shim"
 ```
 
 The section has one field:
+The section accepts:
 
 | Field | Type | Description |
 | --- | --- | --- |
@@ -222,6 +223,7 @@ Each `[[interop.c.targets.shims]]` entry accepts:
 All declared paths must be normalized relative paths to regular package files. Absolute paths, parent traversal, symlinks, directories, backslashes, and ambient search paths are rejected.
 
 `incan lock` writes the normalized requirements and content hashes for package-owned files under `semantic.oven.interop`. This key contains resolved Oven facts and is versioned by the lockfile format. Locking does not resolve requirements, compile shims, download artifacts, or emit a platform handover plan. The explicit `incan oven interop bake` publisher verifies the lock, accepts selected compiler/SDK evidence, compiles declared C/C++ shims, seals static archives into the direct-`rustc` search path, and retains bundled runtime files plus declared system capabilities in the immutable plan provenance; it does not invoke Cargo or search host paths. Changing a declared file or requirement makes the lock stale; moving an unchanged package does not change its package-relative entries.
+`incan lock` writes normalized requirements and content hashes for package-owned files under the versioned `semantic.oven.interop` lock key. Locking does not resolve requirements, compile shims, download artifacts, or emit a platform handover plan. The explicit `incan oven interop bake` publisher verifies a current lock, accepts selected compiler/SDK evidence, compiles declared C/C++ shims, seals static archives into the direct-`rustc` search path, and retains bundled runtime files plus declared system capabilities in immutable plan provenance; it never invokes Cargo or searches host paths. Changing a declared file or requirement makes the lock stale; moving an unchanged package does not change its package-relative entries.
 
 For an end-to-end binding example, see [Checked C bindings](../../language/how-to/checked_c_bindings.md#freeze-oven-interop-requirements-for-a-target).
 
@@ -259,6 +261,7 @@ Fields:
 Env-level `requires-incan` narrows the project requirement for that environment. `incan env show <env>` and `incan env run <env> <script> --dry-run` display the effective requirement and whether the active compiler satisfies it; actual `incan env run` execution rejects unsatisfied constraints before spawning the script.
 
 Environment matrices are unsupported. Named environments may declare `requires-incan`.
+Environment matrices are not accepted. Named environments may declare `requires-incan`.
 
 Use the environment with:
 
@@ -403,6 +406,7 @@ test_helpers = { path = "../test-helpers" }
 ```
 
 Importing a dev-only crate from production code is refused at compile time.
+Importing a dev-only crate from production code is a compile-time error that names the crate and requires it to move to `[rust-dependencies]` or remain test-only.
 
 **Overlap rules**: If the same crate appears in both `[rust-dependencies]` and `[rust-dev-dependencies]`, the version, source, and default-features must match. Features are unioned, and the crate is treated as a normal dependency.
 
@@ -426,9 +430,52 @@ metrics = { version = "1.0", features = ["prometheus"], optional = true }
 
 These declarations are Cargo-compatibility inputs, not public Incan package features. Oven Alpha does not ask Cargo to activate an optional Rust dependency during a normal build. The selected toolchain Loaf must already authorize the requested Rust dependency/feature closure; otherwise the command stops with unsupported-envelope guidance. Use `[project.features]` for public Incan features, but do not use `dep:` there to name a Rust dependency: `dep:` activates an optional Incan dependency from `[dependencies]`.
 
+## `[[rust.facts.link]]` and `[[rust.facts.tool]]`
+
+Registry-authored `[[rust.facts]]` bindings may declare publisher-only native-link and generator work. Multiple declarations use nested arrays of tables; keyed tables and scalar spellings are invalid.
+
+```toml
+[[rust.facts]]
+toolchain = "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+target = "aarch64-apple-darwin"
+profile = "release"
+features = []
+cfg = []
+
+[[rust.facts.link]]
+name = "sys-helper"
+target = 'cfg(target_arch = "aarch64")'
+language = "c"
+executable = { name = "clang", owner = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", path = "bin/clang", digest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+arguments = [{ literal = "-O2" }, { input = "helper-source" }]
+environment = []
+sources = [{ name = "helper-source", kind = "file", path = "c/helper.c", digest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }]
+library = { name = "sys_helper", kind = "static" }
+
+[[rust.facts.tool]]
+name = "bindgen"
+target = 'cfg(target_os = "linux")'
+executable = { name = "bindgen", owner = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", path = "bin/bindgen", digest = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }
+arguments = [{ input = "header" }, { literal = "--output" }, { output = "bindings" }]
+environment = [{ name = "LANG", literal = "C" }]
+inputs = [{ name = "header", kind = "file", path = "include/helper.h", digest = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" }]
+outputs = [{ name = "bindings", kind = "file", path = "generated/bindings.rs" }]
+```
+
+`link` fields are `name`, `target`, `language`, `executable`, `arguments`, `environment`, `sources`, and `library`. `language` accepts `c`, `cpp`, or `assembly`; `library.kind` accepts `static` or `dynamic`. A link declaration names its complete digested source closure and the logical library it produces. It does not name an archive path, archive digest, product digest, or producer receipt; those belong to the admitted asset and receipt.
+
+`tool` fields are `name`, `target`, `executable`, `arguments`, `environment`, `inputs`, and `outputs`. Inputs are digested bytes. Outputs are a logical product contract with `name`, `kind`, and owner-relative `path`; their bytes and digests belong to the admitted asset.
+
+`executable` has the exact fields `name`, `owner`, `path`, and `digest`. `owner` and `digest` are lowercase `sha256:` identities, and `path` is relative to that immutable owner. Oven never serializes an absolute executable location or resolves ambient `PATH` during consumption.
+
+Each `arguments` entry has exactly one of `literal`, `input`, or `output`. Each `environment` entry has `name` and exactly one of `literal` or `input`. `sources`, `inputs`, and `outputs` have `name`, `kind`, and `path`; `kind` is `file` or `tree`. A source or input also has `digest`; a tree additionally has a sorted `members` list of `{ path, digest }` entries whose canonical catalog digest must equal the tree digest.
+
+`link`, `tool`, `environment`, `sources`, `inputs`, `outputs`, and tree `members` are sorted by their documented logical key and duplicate-free. One logical work name may occur only once across `link` and `tool` in a fact record, and an input and output cannot claim the same logical name. Omitting any list is identical to writing an empty list. Paths are portable owner-relative spellings: absolute, drive-qualified, UNC, URI, home-relative, traversal, empty-component, and symlink-substituted paths are refused. `target` is either an exact target triple or one `cfg(...)` predicate evaluated from supplied target evidence.
+
 ## Legacy alias tables
 
 `[rust.dependencies]` and `[rust.dev-dependencies]` are aliases for `[rust-dependencies]` and `[rust-dev-dependencies]`.
+`[rust.dependencies]` and `[rust.dev-dependencies]` are aliases for the canonical `[rust-dependencies]` and `[rust-dev-dependencies]` tables.
 
 ## Dependency sources
 
@@ -455,6 +502,7 @@ pinned = { git = "https://github.com/company/lib.git", rev = "abc1234" }
 
 !!! warning "Strict mode and git branches"
     `--locked` and `--frozen` reject git dependencies using `branch = "..."`. Git dependencies in these modes require `tag` or `rev`.
+With `--locked` or `--frozen`, a git dependency using `branch = "..."` is rejected; the accepted immutable selectors are `tag` and `rev`.
 
 ### Path
 
