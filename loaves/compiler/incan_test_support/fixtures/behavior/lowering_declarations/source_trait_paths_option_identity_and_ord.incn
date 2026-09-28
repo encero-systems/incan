@@ -1,0 +1,71 @@
+# behavior: source comparison traits dispatch their dunder methods through generic bounds, Option identity tests report presence without comparing payloads, and an Ord-bounded generic function sorts its values
+# retires: loaves/compiler/incan_ir/src/lower/tests/lane_followups_b.rs::followups_b_comparison_trait_adoptions_keep_source_trait_paths
+# retires: loaves/compiler/incan_ir/src/lower/tests/lane_followups_b.rs::followups_b_option_none_identity_lowers_to_presence_methods
+# retires: loaves/compiler/incan_ir/src/lower/tests/lane_followups_b.rs::followups_b_ord_type_parameter_bound_lowers_to_rust_ord
+# expect-stdout:
+#   true
+#   true
+#   5
+#   true
+#   true
+#   1
+
+from std.derives.comparison import Eq, Hash, Ord
+
+
+model Equal with Eq:
+    value: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.value == other.value
+
+
+model Ordered with Ord:
+    value: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.value == other.value
+
+    def __lt__(self, other: Self) -> bool:
+        return self.value < other.value
+
+
+model Hashed with Hash:
+    value: int
+
+    def __hash__(self) -> int:
+        return self.value
+
+
+def equal[T with Eq](left: T, right: T) -> bool:
+    return left == right
+
+
+def before[T with Ord](left: T, right: T) -> bool:
+    return left < right
+
+
+def hash_of[T with Hash](value: T) -> int:
+    return value.__hash__()
+
+
+def absent[T](value: Option[T]) -> bool:
+    return value is None
+
+
+def present[T](value: Option[T]) -> bool:
+    return value is not None
+
+
+def ordered[T with Ord](items: list[T]) -> list[T]:
+    return sorted(items)
+
+
+def main() -> None:
+    println(equal(Equal(value=1), Equal(value=1)))
+    println(before(Ordered(value=1), Ordered(value=2)))
+    println(hash_of(Hashed(value=5)))
+    missing: Option[int] = None
+    println(absent(missing))
+    println(present(Some(1)))
+    println(ordered([3, 1, 2])[0])

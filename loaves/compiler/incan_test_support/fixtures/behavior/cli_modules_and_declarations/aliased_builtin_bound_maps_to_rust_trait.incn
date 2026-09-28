@@ -1,4 +1,5 @@
 # behavior: a builtin trait imported under an alias (`Eq as Equality`) works as a generic bound on a type that derives it
+# retires: loaves/compiler/incan_ir/src/lower/mod.rs::aliased_builtin_bound_lowers_to_the_rust_mapped_trait
 # expect-stdout:
 #   1
 

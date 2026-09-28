@@ -1,6 +1,7 @@
 # behavior: arithmetic over two values of one integer type yields that type, an integer literal beside an exact-width value takes its type, signed // and % keep Python's flooring in that type, ** with a literal exponent keeps the base's type, and / still divides into a float
 # retires: loaves/compiler/incan_emit/src/conversions.rs::exact_integer_arithmetic_plans_keep_the_operand_type
 # retires: loaves/compiler/incan_emit/src/tests/numeric_operator_emission.rs::exact_width_integer_arithmetic_keeps_its_type
+# retires: loaves/compiler/incan_ir/src/lower/types.rs::exact_integer_arithmetic_keeps_its_operand_type
 # expect-stdout:
 #   -3 2 -21 49
 #   124 4

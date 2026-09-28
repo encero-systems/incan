@@ -1,0 +1,29 @@
+# behavior: defaults of a trait from a nested module construct that module's model, class, enum and newtype and read its const even when the adopter declares a same-named local model
+# retires: loaves/compiler/incan_ir/src/lower/tests/imported_trait_adoption_scope.rs::imported_trait_default_type_path_follows_the_declaring_module_issue1759
+# retires: loaves/compiler/incan_ir/src/lower/tests/imported_trait_adoption_scope.rs::imported_trait_default_const_follows_the_declaring_module_issue1873
+# retires: loaves/compiler/incan_ir/src/lower/tests/imported_trait_adoption_scope.rs::source_module_type_paths_list_the_module_nominal_types_issue1759
+# expect-stdout:
+#   2
+#   3
+#   true
+#   4
+#   7
+
+from geometry.shapes import Corner, Measured
+
+
+model Extent:
+    label: str
+
+
+model Card with Measured:
+    size: int
+
+
+def main() -> None:
+    card = Card(size=1)
+    println(card.extent().n)
+    println(card.frame().n)
+    println(card.corner() == Corner.Top)
+    println(card.distance().0)
+    println(card.limit())

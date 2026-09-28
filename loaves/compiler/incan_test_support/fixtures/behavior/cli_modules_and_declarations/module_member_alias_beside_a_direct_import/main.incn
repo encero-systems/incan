@@ -1,6 +1,7 @@
 # behavior: a module that imports a member directly for its own use and re-exports it through an alias of the module member hands consumers the alias (#1764)
 # retires: loaves/compiler/incan_emit/src/tests/reexported_projections.rs::module_member_alias_beside_a_direct_import_binds_publicly_issue1764
 # retires: loaves/compiler/incan_ir/src/lower/tests/reexported_projections.rs::module_member_alias_beside_a_direct_import_binds_publicly_issue1764
+# retires: loaves/compiler/incan_ir/src/lower/tests/import_paths.rs::source_module_member_alias_lowers_to_an_import_through_the_module_binding_issue1764
 # expect-stdout:
 #   42
 #   12

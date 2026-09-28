@@ -9,6 +9,7 @@
 # retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::arguments_read_after_a_static_method_call_are_kept_readable_issue1793
 # retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::arguments_read_again_by_the_generated_code_are_kept_readable_issue1793
 # retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::dict_get_answers_with_the_stored_value
+# retires: loaves/compiler/incan_ir/src/lower/tests/static_method_args.rs::arguments_of_a_local_collection_method_are_left_as_written_issue1793
 # expect-stdout:
 #   a=1
 #   b missing

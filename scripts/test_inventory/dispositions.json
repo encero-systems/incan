@@ -6352,6 +6352,10 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "frozen_collections_use_structured_display_issue1838": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/frozen_collections_display_structurally.incn",
+          "notes": "The legacy structured-display classification dies with `incan_ir`; the fixture prints singleton and ordered frozen collections through their public structural forms."
+        },
         "iterator_method_kind_for_receiver_classifies_rfc088_surface": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/iterator_adapter_surface.incn",
           "notes": "The `IteratorMethodKind` classifications die with the crate; the fixture drives every adapter and terminal of the table on `Iterator[int]` values from `list.iter()`."
@@ -6430,6 +6434,10 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "imported_alias_declaration_keeps_its_spelling_issue1710": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/facade_reexports_an_alias_without_its_target",
+          "notes": "The fixture imports and calls the provider's alias directly and through re-exporting facades."
+        },
         "renamed_reexport_hop_is_spelled_by_its_declaring_module_issue1710": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_functions_and_projections/reexport_chain",
           "notes": "twinned by the behavior fixture that retires it: the program prints what the lowering decision produces, so the generated-Rust assertion dies with #654 and the observable survives."
@@ -6446,7 +6454,7 @@
       "tests": {
         "decorated_method_static_signature_keeps_first_projected_surface_parameter": {
           "twin": "",
-          "notes": "open: asserts the Rust spelling (`ProviderHandle<(&mut i64, &mut i64)>`) and `OwnedMutable` mutability of a decorated method's static signature under a hand-inserted mutable-reference projection over `rust::std::vec::Vec`. The behavior, a decorated method taking a `mut` Rust generic parameter and running, is the same program as `loaves/toolchain/incan-cli/tests/integration_tests.rs::decorated_method_explicit_mutable_rust_generic_keeps_static_and_wrapper_abi` (itself retire/open) and its candidate `decorated_rust_generic_mutable_reference_args.incn` under the `cli/` behavior-candidates group. A `rust::` program; waits for a Cargo-free bake under the compiler suite."
+          "notes": "open (harness-deps): asserts the Rust spelling (`ProviderHandle<(&mut i64, &mut i64)>`) and `OwnedMutable` mutability of a decorated method's static signature under a hand-inserted mutable-reference projection over `rust::std::vec::Vec`. The behavior, a decorated method taking a `mut` Rust generic parameter and running, is the same program as `loaves/toolchain/incan-cli/tests/integration_tests.rs::decorated_method_explicit_mutable_rust_generic_keeps_static_and_wrapper_abi` (itself retire/open) and its candidate `decorated_rust_generic_mutable_reference_args.incn` under the `cli/` behavior-candidates group. A `rust::` program; waits for a Cargo-free bake under the compiler suite."
         },
         "same_spelled_static_and_instance_methods_both_lower_inherently_issue1709": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_functions_and_projections/same_spelling_type_owned_and_instance_methods.incn",
@@ -6528,23 +6536,23 @@
         },
         "lower_generic_box_as_ref_preserves_nominal_generic_receiver_args": {
           "twin": "",
-          "notes": "open: candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_box_generic_receiver.incn (the test's own program with a `main`: `Box[Node[T]].as_ref()` handed to a generic function returns the typed value). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
+          "notes": "open (harness-deps): candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_box_generic_receiver.incn (the test's own program with a `main`: `Box[Node[T]].as_ref()` handed to a generic function returns the typed value). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
         },
         "lower_method_call_applies_required_concrete_borrow_despite_arg_shape_hint": {
           "twin": "",
-          "notes": "open: candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_std_collections_argument_coercions.incn (`Vec.append` takes its argument by mutable reference). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
+          "notes": "open (harness-deps): candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_std_collections_argument_coercions.incn (`Vec.append` takes its argument by mutable reference). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
         },
         "lower_method_call_threads_arg_shape_hint_from_typechecker": {
           "twin": "",
-          "notes": "open: candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_std_collections_argument_coercions.incn (`HashMap.get` keeps its lookup argument's shape). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
+          "notes": "open (harness-deps): candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_std_collections_argument_coercions.incn (`HashMap.get` keeps its lookup argument's shape). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
         },
         "lower_method_call_wraps_args_with_rust_arg_coercion": {
           "twin": "",
-          "notes": "open: candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_std_collections_argument_coercions.incn (a `str` literal passed to `String.push_str`, which takes a borrowed str). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
+          "notes": "open (harness-deps): candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_std_collections_argument_coercions.incn (a `str` literal passed to `String.push_str`, which takes a borrowed str). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
         },
         "lower_nested_rust_associated_method_arg_keeps_type_like_receiver": {
           "twin": "",
-          "notes": "open: candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_std_time_receivers.incn (`Duration.from_millis(500)` as a method argument keeps its type-like receiver). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
+          "notes": "open (harness-deps): candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_std_time_receivers.incn (`Duration.from_millis(500)` as a method argument keeps its type-like receiver). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
         },
         "lower_rust_boundary_target_preserves_nested_borrowed_str_refs": {
           "twin": "dies",
@@ -6552,23 +6560,23 @@
         },
         "lower_rust_constant_method_receiver_as_value_not_type_like": {
           "twin": "",
-          "notes": "open: candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_std_time_receivers.incn (`UNIX_EPOCH.checked_add(...)`, the imported constant as a value receiver). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
+          "notes": "open (harness-deps): candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_std_time_receivers.incn (`UNIX_EPOCH.checked_add(...)`, the imported constant as a value receiver). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
         },
         "lower_rust_import_associated_method_keeps_type_like_receiver": {
           "twin": "",
-          "notes": "open: candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_std_time_receivers.incn (`Duration.from_secs(1).as_secs()`, the imported type as a type-like receiver). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
+          "notes": "open (harness-deps): candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_std_time_receivers.incn (`Duration.from_secs(1).as_secs()`, the imported type as a type-like receiver). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
         },
         "lower_rust_named_field_constructor_wraps_fields_with_rust_arg_coercion": {
           "twin": "",
-          "notes": "open: candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_named_field_constructor.incn (a `rust::std::ops::Range` constructed by named fields, read back); the test's hand-inserted Default-fill fact has no std struct to observe it on. A `rust::` program; waits for a Cargo-free bake under the compiler suite."
+          "notes": "open (harness-deps): candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rust_named_field_constructor.incn (a `rust::std::ops::Range` constructed by named fields, read back); the test's hand-inserted Default-fill fact has no std struct to observe it on. A `rust::` program; waits for a Cargo-free bake under the compiler suite."
         },
         "lower_rusttype_interop_adapter_uses_from_edge_for_rusttype_target": {
           "twin": "",
-          "notes": "open: candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rusttype_interop_edges.incn (a `str` passed where the `rusttype` is expected adapts through its `from str via` edge). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
+          "notes": "open (harness-deps): candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rusttype_interop_edges.incn (a `str` passed where the `rusttype` is expected adapts through its `from str via` edge). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
         },
         "lower_rusttype_interop_adapter_uses_into_edge_for_rusttype_argument": {
           "twin": "",
-          "notes": "open: candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rusttype_interop_edges.incn (a `rusttype` over `rust::std::string::String` passed where a `str` is expected adapts through its `into str via` edge). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
+          "notes": "open (harness-deps): candidate loaves/compiler/incan_test_support/fixtures/behavior_candidates/lowering/rusttype_interop_edges.incn (a `rusttype` over `rust::std::string::String` passed where a `str` is expected adapts through its `into str via` edge). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
         },
         "method_type_arg_uses_unique_sdk_provider_nominal_path": {
           "twin": "dies",
@@ -6697,6 +6705,10 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "aliased_builtin_bound_lowers_to_the_rust_mapped_trait": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/aliased_builtin_bound_maps_to_rust_trait.incn",
+          "notes": "The legacy Rust bound path dies with `incan_ir`; the fixture proves that an aliased builtin Eq bound admits and runs with a derived model."
+        },
         "aliased_stdlib_json_trait_dispatch_names_the_declaration_issue1712": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_newtypes_and_serde/partial_alias_derive.incn",
           "notes": "asserts the recorded dispatch path of a `to_json` call through an aliased `std.serde.json.Serialize` bound names the declaration, not the alias (#1712); the twin runs that program and prints the encoded value."
@@ -6917,6 +6929,10 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/same_named_default_consts_across_modules",
           "notes": "Asserts the recorded shape on the legacy IR for the crate-root module (`crate::SIZE`) and for a module the crate does not map (unchanged); retires with `incan_ir`. The root case is carried by the named fixture's `local()` (#1771)."
         },
+        "default_type_constructors_follow_their_declaring_modules_issue1843": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/default_type_constructors_keep_module_identity",
+          "notes": "The fixture calls defaults in two modules whose same-named models carry distinct values, so either constructor being redirected is observable."
+        },
         "module_items_a_default_names_are_spelled_through_their_module_issue1771": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/same_named_default_consts_across_modules",
           "notes": "Asserts the recorded shape on the legacy IR (a const a default or method-partial preset reads lowers to a crate path to its declaring module, a function it calls carries that module's canonical callee path); retires with `incan_ir`. The behavior is carried by the named fixture (#1771)."
@@ -6938,6 +6954,14 @@
         "imported_partial_call_fills_its_targets_residual_default_issue1760": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/imported_partial_keeps_target_defaults",
           "notes": "Asserts the recorded shape on the legacy IR (a call through an imported partial carries its target's default for each parameter the partial leaves open, at the package root and through a nested namespace); retires with `incan_ir`. The behavior is carried by the named fixture (#1760)."
+        },
+        "imported_partial_positional_call_keeps_later_preset_issue1848": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/dependency_partial_and_function_value",
+          "notes": "The fixture calls the dependency partial with a positional residual argument and prints the later provider-owned preset beside it."
+        },
+        "pub_dependency_module_member_function_value_keeps_canonical_identity_issue1840": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/dependency_partial_and_function_value",
+          "notes": "The fixture binds a dependency function reached through a module alias to a local and calls the local."
         },
         "some_member_takes_the_dependency_owned_union_at_every_destination_issue1743": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/some_member_into_dependency_option_union",
@@ -7002,6 +7026,10 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "debug_interpolation_and_str_adopters_keep_their_own_display_issue1778": {
+          "twin": "loaves/compiler/incan_frontend/src/typechecker/tests/error_display.rs::error_adopter_without_str_is_recorded_in_every_display_position_issue1778",
+          "notes": "The durable checker test uses the same source forms and asserts that debug interpolation and an adopter defining `__str__` are not rewritten to Error.message()."
+        },
         "error_adopter_without_str_displays_through_message_issue1778": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/error_adopter_displays_its_message.incn",
           "notes": "Asserts the recorded shape on the legacy IR (an f-string part, `str` argument and `print` argument of an `Error` adopter with no `__str__` become its `message()` call, spelled as a written call is); retires with `incan_ir`. The behavior, each display position printing the message, is carried by the named fixture (#1778)."
@@ -7017,6 +7045,10 @@
         "self_in_an_error_trait_default_displays_per_adopter_issue1778": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/error_adopter_displays_its_message.incn",
           "notes": "Asserts the recorded shape on the legacy IR (`{self}` in an `Error` subtrait's default displays `self.message()` in an adopter without `__str__` and itself in one with `__str__`); retires with `incan_ir`. The behavior is carried by the named fixture (#1778)."
+        },
+        "stdlib_io_error_interpolation_names_the_written_message_method_issue1778": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/error_adopter_displays_its_message.incn",
+          "notes": "The fixture prints the message of a standard-library IoError returned by BytesIO.read_exact."
         }
       },
       "twin": ""
@@ -7052,6 +7084,10 @@
           "notes": "Asserts the legacy IR gives `unwrap_or` on an `Option[str]` the source-owned argument policy and keeps the default on an `Option[int]`; the fixture prints the fallback of each form.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_expressions/option_str_unwrap_or_with_str_binding.incn"
         },
+        "suffixed_numeric_literals_keep_their_lowered_types_numeric_contract": {
+          "twin": "loaves/compiler/incan_frontend/src/body_ir/tests/operators_literals_and_assignment.rs::suffixed_numeric_literals_keep_their_body_ir_types_numeric_contract",
+          "notes": "The durable Body IR test lowers the same u16 and f32 suffixes as typed numeric constants without destination annotations."
+        },
         "tuple_literal_keeps_its_annotated_element_types_issue1847": {
           "notes": "Asserts the legacy IR types a tuple literal, and a nested one, by its annotation's element types; the fixture prints each element.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/annotated_tuple_literal_types_its_elements.incn"
@@ -7074,6 +7110,10 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "a_mut_parameter_does_not_keep_a_later_functions_same_named_parameter_from_moving": {
+          "twin": "dies",
+          "dies": "legacy ownership optimization only: whether the later function's final list-parameter read is represented as a move or a clone cannot be observed by an Incan program; either preserves the call result and source value semantics."
+        },
         "channel_ends_and_locks_keep_their_list_issue1844": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/passing_channel_senders_and_locks_on.incn",
           "notes": "Asserts the recorded shape on the legacy IR (loops passing senders and locks on keep iterating their list in place; a parenthesized list of handles iterates by value); retires with `incan_ir`. The behavior, senders and locks passed on with both lists read afterwards, is carried by the named fixture; the parenthesized list by `cli/awaiting_task_handles_of_nested_and_parenthesized_lists.incn` (#1844)."
@@ -7108,6 +7148,10 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/relative_import_from_a_nested_module",
           "notes": "Asserts the lowered shape on the legacy IR for `...`, two directories up from `app/store/`; retires with `incan_ir`. The behavior is carried by the named fixture's `app/store/nested.incn` (#1766)."
         },
+        "imported_single_segment_alias_stays_a_symbol_alias": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/imported_function_alias.incn",
+          "notes": "The fixture calls a public alias of an imported stdlib function."
+        },
         "module_member_alias_lowers_to_an_import_of_the_member_issue1764": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/module_member_alias_calls_the_member.incn",
           "notes": "Asserts the recorded shape on the legacy IR (an alias of a module member lowers to an import of that member under the alias's name and visibility); retires with `incan_ir`. The behavior, a public and a private alias of a `std.math` member calling it, is carried by the named fixture (#1764)."
@@ -7119,6 +7163,10 @@
         "rust_style_parent_import_lowers_to_the_same_module_issue1766": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/relative_import_from_a_nested_module",
           "notes": "Asserts the recorded shape on the legacy IR for the `super::` spelling of the same climb; retires with `incan_ir`. The behavior is carried by the named fixture's `store/rust_style.incn` (#1766)."
+        },
+        "source_module_member_alias_lowers_to_an_import_through_the_module_binding_issue1764": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/module_member_alias_beside_a_direct_import",
+          "notes": "The fixture's facade publishes `twice = h.double` through the module binding and the consumer calls it."
         }
       },
       "twin": ""
@@ -7134,6 +7182,10 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/module_derive_default_method_direct_call",
           "notes": "Asserts on the legacy IR that a direct call of a derive-bundle trait's method is routed to the recoverable projection the derived implementation provides; retires with `incan_ir`. The behavior, `item.tag()` printing the default's result under the plain and the aliased module binding, is carried by the named fixture (#1792)."
         },
+        "imported_trait_default_const_follows_the_declaring_module_issue1873": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/trait_default_nested_module_identity",
+          "notes": "The fixture's imported trait default reads and returns the nested trait module's private const from an adopter in another module."
+        },
         "imported_trait_default_names_its_module_types_by_path_issue1759": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/trait_default_names_its_own_module_types",
           "notes": "Asserts on the legacy IR that an imported trait default expanded into an adopter names its own module's model by the defining-module Rust path; retires with `incan_ir`. The behavior, the adopter printing the area of the model the default returns without importing it, is carried by the named fixture (#1759)."
@@ -7142,9 +7194,17 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/trait_default_reaches_its_module_names_across_modules",
           "notes": "Asserts on the legacy IR that an imported trait default expanded into an adopter reads its module's enum variant, matches on it, constructs a model its module imports and calls its module's helper, each by the declaring module's Rust path; retires with `incan_ir`. The behavior, the adopter printing the helper-built size, the matched corner and its own label, is carried by the named fixture (#1759)."
         },
+        "imported_trait_default_type_path_follows_the_declaring_module_issue1759": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/trait_default_nested_module_identity",
+          "notes": "The fixture imports a trait from a nested module and declares a local model with the same name as the model constructed by the default; the returned nested-module model remains distinct."
+        },
         "reexported_trait_binds_to_its_declaration_issue1759": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/trait_default_reaches_its_module_names_across_modules",
           "notes": "Asserts on the legacy IR that a trait imported through a re-exporting module, with and without defaults, gets the adopter's methods and its expanded defaults in its implementation; retires with `incan_ir`. The behavior, an adopter importing both traits from the re-exporting module and printing their results, is carried by the named fixture (#1759)."
+        },
+        "source_module_type_paths_list_the_module_nominal_types_issue1759": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/trait_default_nested_module_identity",
+          "notes": "The fixture executes imported defaults whose annotations and constructors name the trait module's model, class, enum and newtype."
         },
         "trait_default_helpers_are_visible_to_the_crate_issue1759": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/trait_default_reaches_its_module_names_across_modules",
@@ -7209,6 +7269,20 @@
       "owner": 1561,
       "split_required": false,
       "split_target": "",
+      "tests": {
+        "followups_b_comparison_trait_adoptions_keep_source_trait_paths": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/source_trait_paths_option_identity_and_ord.incn",
+          "notes": "The fixture calls Eq, Ord and Hash methods through generic source-trait bounds."
+        },
+        "followups_b_option_none_identity_lowers_to_presence_methods": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/source_trait_paths_option_identity_and_ord.incn",
+          "notes": "The fixture evaluates generic `is None` and `is not None` predicates over absent and present values."
+        },
+        "followups_b_ord_type_parameter_bound_lowers_to_rust_ord": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/source_trait_paths_option_identity_and_ord.incn",
+          "notes": "The fixture sorts an int list through an Ord-bounded generic function."
+        }
+      },
       "twin": ""
     },
     "loaves/compiler/incan_ir/src/lower/tests/list_count_forms.rs": {
@@ -7294,11 +7368,11 @@
         },
         "rust_derive_path_of_an_automatic_derive_is_emitted_once_issue1754": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/cli/rust_derived_clone_path_on_newtype_and_model.incn`: a newtype with `@rust.derive(\"std::clone::Clone\")` builds and a model holds it. Waits for the Cargo-free bake that `rust::` programs need: a `std::` path in `@rust.derive(...)` is a Rust derive probe, which needs source-current project inspection authority, and under the suite the program stops at `no source-current project inspection authority is available`. A bare `@rust.derive(Clone)` needs no probe but is already the automatic spelling, so it does not exercise the rule. Asserts that a `@rust.derive` path to a derive a newtype already carries joins the derive list once (#1754)."
+          "notes": "open (harness-deps): candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/cli/rust_derived_clone_path_on_newtype_and_model.incn`: a newtype with `@rust.derive(\"std::clone::Clone\")` builds and a model holds it. Waits for the Cargo-free bake that `rust::` programs need: a `std::` path in `@rust.derive(...)` is a Rust derive probe, which needs source-current project inspection authority, and under the suite the program stops at `no source-current project inspection authority is available`. A bare `@rust.derive(Clone)` needs no probe but is already the automatic spelling, so it does not exercise the rule. Asserts that a `@rust.derive` path to a derive a newtype already carries joins the derive list once (#1754)."
         },
         "rust_derive_paths_of_automatic_and_implied_derives_are_emitted_once_issue1754": {
           "twin": "",
-          "notes": "open: candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/cli/rust_derived_clone_path_on_newtype_and_model.incn`: a model with `@rust.derive(\"std::clone::Clone\")` builds. Waits for the Cargo-free bake that `rust::` programs need, for the same Rust derive probe as the newtype case above. Asserts that a model, class or enum names each automatic or implied derive once whatever `@rust.derive` path also names it (#1754)."
+          "notes": "open (harness-deps): candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/cli/rust_derived_clone_path_on_newtype_and_model.incn`: a model with `@rust.derive(\"std::clone::Clone\")` builds. Waits for the Cargo-free bake that `rust::` programs need, for the same Rust derive probe as the newtype case above. Asserts that a model, class or enum names each automatic or implied derive once whatever `@rust.derive` path also names it (#1754)."
         }
       },
       "twin": ""
@@ -7428,6 +7502,10 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/facade_reexports_an_alias_without_its_target",
           "notes": "Asserts the lowered import order (a public re-export of an alias comes ahead of a private import of its target); retires with `incan_ir`. The behavior is carried by the named fixture's `private_then_public` facade (#1750)."
         },
+        "private_imports_keep_their_order_and_spelling": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/facade_reexports_an_alias_without_its_target",
+          "notes": "The fixture imports the target and its alias privately in one consumer and calls both names."
+        },
         "target_reexported_beside_its_alias_binds_the_projection_first_issue1750": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/facade_reexports_an_alias_without_its_target",
           "notes": "Asserts the lowered import order (a re-exported target comes ahead of its re-exported alias in either source order); retires with `incan_ir`. The behavior is carried by the named fixture's `both_names` facade, which lists the alias first (#1750)."
@@ -7453,6 +7531,14 @@
         "a_read_only_lookup_matched_with_union_type_patterns_names_the_variants": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/static_dict_get_with_a_reused_str_parameter.incn",
           "notes": "Asserts the legacy IR patterns of union type patterns over an in-place lookup (`Some(<union variant>)`); retires with `incan_ir`. The behavior, `int(n)`/`str(t)` arms over a `dict[str, int | str]` lookup, is carried by the named fixture (#1793)."
+        },
+        "arguments_of_a_local_collection_method_are_left_as_written_issue1793": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/static_dict_get_with_a_reused_str_parameter.incn",
+          "notes": "The fixture calls get on local, parameter, generic and static dictionaries and prints the stored values while keeping reused keys readable."
+        },
+        "arguments_of_a_rust_collection_method_on_a_static_are_copied_issue1793": {
+          "twin": "",
+          "notes": "open (harness-deps): the behavior imports rust::std::collections::BTreeMap, so its candidate needs source-current Rust inspection and cannot run under the Cargo-free compiler-suite behavior harness."
         },
         "arguments_read_after_a_static_method_call_are_kept_readable_issue1793": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/static_dict_get_with_a_reused_str_parameter.incn",
@@ -7536,6 +7622,10 @@
           "notes": "Asserts the legacy IR hands `-x ** 2` and `~x ** 2` to the emitter as a prefix operator over one grouped power; the fixture prints `-4` and `-5`.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/operator_precedence_follows_the_parser_ladder.incn"
         },
+        "prefix_operator_over_an_atomic_operand_stays_ungrouped_issue1763": {
+          "twin": "dies",
+          "dies": "legacy source-rendering optimization only: adding or omitting parentheses around a name, call, membership test or nested prefix expression preserves the program's value and evaluation order, so no Incan program can observe this IR shape."
+        },
         "prefix_operator_over_an_operator_expression_lowers_a_grouped_operand_issue1763": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/negation_keeps_its_operand_grouping.incn",
           "notes": "Asserts the recorded shape on the legacy IR (an operator-shaped operand of `not`, unary `-` or `~` is handed to the emitter as one grouped value in its own type; an atomic operand stays as written); retires with `incan_ir`. The behavior, `not (1 == 2)` printing `true` and `-(2 + 3)` printing `-5`, is carried by the named fixture (#1763)."
@@ -7550,9 +7640,21 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "an_imported_nominal_of_another_package_keeps_its_spelling_issue1796": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/provider_nominal_types_and_unions_issue892",
+          "notes": "The fixture narrows two dependency-owned unions by their providers' same-spelled external nominal types; qualifying either as a local crate type breaks the build or the match."
+        },
+        "an_imported_shared_nominal_of_this_package_is_spelled_by_its_declaring_module_issue1796": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/imported_union_member_identity",
+          "notes": "The fixture imports Product from one of two same-package modules declaring it, places that declaration in another module's union and matches both members."
+        },
         "shared_nominal_union_members_are_spelled_by_their_declaring_module_issue1796": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_same_named_declarations_in_two_modules",
           "notes": "Asserts the recorded shape on the legacy IR (a union member nominal two modules of the crate declare is spelled by its declaring module); retires with `incan_ir`. The behavior, a dependency whose two modules each declare `Product` and `Answer = Product | int` building and serving both unions, is carried by the named fixture (#1796)."
+        },
+        "unshared_nominal_union_members_keep_their_spelling_issue1796": {
+          "twin": "dies",
+          "dies": "legacy carrier naming only: qualifying or leaving unqualified the sole Product declaration in a package cannot select another declaration and changes no source type, match result or runtime value; the generated union wrapper spelling dies with #654."
         }
       },
       "twin": ""
@@ -7564,9 +7666,25 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "a_local_json_declared_after_use_keeps_its_value_field_issue1768": {
+          "twin": "dies",
+          "dies": "unreachable legacy-lowering input: the checker refuses the forward type reference before lowering, so no build or run can observe how the retiring backend would spell its field read."
+        },
+        "a_local_type_named_html_is_not_the_web_response_issue1768": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/model_named_like_a_std_web_type.incn",
+          "notes": "The fixture defines and returns a local Html model and prints its own body field without importing std.web."
+        },
         "aliased_std_web_html_lowers_with_its_text_body_issue1768": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/web_html_response_type.incn",
           "notes": "Asserts the recorded shape on the legacy IR (an aliased `std.web` `Html` lowers to `Page<String>`); retires with `incan_ir`. The behavior, a function returning the aliased `Html` building and running, is carried by the named fixture (#1768)."
+        },
+        "an_imported_json_keeps_its_value_field_issue1768": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/imported_user_json_keeps_field",
+          "notes": "The fixture imports a user module's generic Json model, constructs it and reads its own value field."
+        },
+        "qualified_std_web_html_lowers_as_text_response_issue1824": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/web_html_response_type.incn",
+          "notes": "The fixture declares and calls a function returning Html through a std.web module binding."
         },
         "std_web_html_return_type_lowers_with_its_text_body_issue1768": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/web_html_response_type.incn",
@@ -7586,13 +7704,21 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "every_f64_spelling_lowers_to_float": {
+          "twin": "loaves/compiler/incan_frontend/src/typechecker/tests/numeric_assignment_and_compound.rs::float_and_f64_are_one_type_rfc009",
+          "notes": "The durable checker test accepts f64, float, double and fp64 in one source program and verifies they are mutually assignable."
+        },
         "exact_binary_float_arithmetic_keeps_its_native_ir_width": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/exact_float_width_arithmetic.incn",
           "notes": "`binary_result_type` dies with the crate; the fixture shows the width through the printed values (`0.1 + 0.2` is `0.3` in f32 and `0.30000000000000004` in f64) for every operator of the table."
         },
+        "exact_integer_arithmetic_keeps_its_operand_type": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/exact_width_integer_arithmetic_keeps_its_type.incn",
+          "notes": "The fixture executes exact-width integer arithmetic with same-type and literal operands, floor division, modulo and power, while ordinary division still yields float."
+        },
         "foreign_manifest_signatures_use_checked_native_routes": {
           "twin": "",
-          "notes": "open: asserts, on a hand-built manifest signature, that a provider's exported function type carrying a type of the provider's own dependency lowers through the checker's foreign remapping (`pub::pricing::__incan_provider_rust::catalog::Product`). The behavior needs a provider that itself declares `[dependencies]`, whose bake under the suite goes through the compatibility publisher and reaches Cargo (see *Provider bakes and Cargo* in the family README); the program shape is the `transitive_provider_chain/` candidate under the `dependencies/` behavior-candidates group. Waits for a Cargo-free bake, under the compiler suite, of a provider that declares `[dependencies]`."
+          "notes": "open (harness-deps): asserts, on a hand-built manifest signature, that a provider's exported function type carrying a type of the provider's own dependency lowers through the checker's foreign remapping (`pub::pricing::__incan_provider_rust::catalog::Product`). The behavior needs a provider that itself declares `[dependencies]`, whose bake under the suite goes through the compatibility publisher and reaches Cargo (see *Provider bakes and Cargo* in the family README); the program shape is the `transitive_provider_chain/` candidate under the `dependencies/` behavior-candidates group. Waits for a Cargo-free bake, under the compiler suite, of a provider that declares `[dependencies]`."
         },
         "lower_resolved_frozen_collections_freeze_nested_strings": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/frozen_collections_nested_strings.incn",
@@ -7663,7 +7789,7 @@
         },
         "provider_localization_preserves_foreign_external_union_issue892": {
           "twin": "",
-          "notes": "open: asserts, on a hand-built union owned by `other` whose member is `widgets::Widget`, that localizing `widgets` leaves the foreign union untouched. The program is a provider `other` that imports `widgets`' `Widget` and exports a union carrying it, narrowed in a consumer of both: `other` is then a provider that itself declares `[dependencies]`, whose bake under the suite goes through the compatibility publisher and reaches Cargo (see *Provider bakes and Cargo* in the family README), so the harness cannot bake it Cargo-free; the program shape is the `transitive_provider_chain/` candidate under the `dependencies/` behavior-candidates group. Waits for a Cargo-free bake, under the compiler suite, of a provider that declares `[dependencies]`. loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/provider_nominal_types_and_unions_issue892/ keeps two dependency-free providers' unions apart in one consumer, the same-spelled-member half of #892, not this test's foreign-member half."
+          "notes": "open (harness-deps): asserts, on a hand-built union owned by `other` whose member is `widgets::Widget`, that localizing `widgets` leaves the foreign union untouched. The program is a provider `other` that imports `widgets`' `Widget` and exports a union carrying it, narrowed in a consumer of both: `other` is then a provider that itself declares `[dependencies]`, whose bake under the suite goes through the compatibility publisher and reaches Cargo (see *Provider bakes and Cargo* in the family README), so the harness cannot bake it Cargo-free; the program shape is the `transitive_provider_chain/` candidate under the `dependencies/` behavior-candidates group. Waits for a Cargo-free bake, under the compiler suite, of a provider that declares `[dependencies]`. loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/provider_nominal_types_and_unions_issue892/ keeps two dependency-free providers' unions apart in one consumer, the same-spelled-member half of #892, not this test's foreign-member half."
         }
       },
       "twin": "dies"
@@ -7778,6 +7904,20 @@
       "owner": 1561,
       "split_required": false,
       "split_target": "",
+      "tests": {
+        "content_identity_binds_bytes_and_chunk_boundaries": {
+          "twin": "dies",
+          "dies": "test-only identity helper for generated host-artifact bytes: no Incan source can observe its chunk framing or digest once physical generated-symbol inspection retires with #654."
+        },
+        "generic_match_requires_exact_item_path_and_u64_suffix": {
+          "twin": "dies",
+          "dies": "test-only demangled-symbol matcher for proving a generated generic host specialization: the item-path and host type-suffix evidence is not an Incan language observable and retires with physical symbol inspection under #654."
+        },
+        "host_bridge_match_rejects_path_and_identifier_lookalikes": {
+          "twin": "dies",
+          "dies": "test-only demangled-symbol matcher for generated host-bridge evidence: accepting or rejecting host path lookalikes is not observable from Incan source once physical symbol inspection retires with #654."
+        }
+      },
       "twin": ""
     },
     "loaves/compiler/rust_inspect/src/cache_tests.rs": {
@@ -10359,8 +10499,8 @@
       "tests": {
         "every_submode_survives_desugar_typecheck_and_lowering_then_refuses_emission": {
           "disposition": "retire",
-          "twin": "",
-          "notes": "asserts an emitter refusal; the refusal moves to the replacement route's source profile"
+          "twin": "dies",
+          "dies": "the exact late refusal belongs only to the retiring Rust-source emitter; parse, desugar, typecheck, hole ownership and LSP behavior remain in this file's keep-class tests, while the replacement route owns its separate unsupported-source profile."
         }
       },
       "twin": ""
