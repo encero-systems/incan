@@ -2439,7 +2439,11 @@ impl AstLowering {
                         },
                         result_ty,
                     )
-                } else if let IrType::Tuple(items) = &obj.ty {
+                } else if let IrType::Tuple(items) = match &obj.ty {
+                    // A `mut` tuple parameter is a reference to the caller's tuple; its elements are still fields.
+                    IrType::Ref(inner) | IrType::RefMut(inner) => inner.as_ref(),
+                    other => other,
+                } {
                     let index = Self::extract_int_literal(i)
                         .and_then(|raw| {
                             let len = i64::try_from(items.len()).ok()?;
@@ -2455,13 +2459,8 @@ impl AstLowering {
                         message: "typechecked tuple index did not resolve to a tuple field".to_string(),
                         span: super::super::IrSpan::default(),
                     })?;
-                    (
-                        IrExprKind::Field {
-                            object: Box::new(obj),
-                            field: index.to_string(),
-                        },
-                        elem_ty,
-                    )
+                    let element = TypedExpr::tuple_element(obj, index, elem_ty);
+                    (element.kind, element.ty)
                 } else if let Some(value_ty) = frozen_dict_value_type(&obj.ty) {
                     // A `const` `FrozenDict[K, V]` lookup yields its value type (#1757), a `'static` text or bytes
                     // value converted to the owned `str` or `bytes` the checker typed.

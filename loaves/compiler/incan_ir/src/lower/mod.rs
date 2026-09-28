@@ -4711,6 +4711,7 @@ mod tests {
     mod static_method_args;
     mod stdlib_const_defaults;
     mod tuple_assignment;
+    mod tuple_element_places;
     mod unary_operand_grouping;
     mod union_member_identity;
     mod web_surface;

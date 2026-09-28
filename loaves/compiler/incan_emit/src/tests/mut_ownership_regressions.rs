@@ -30,6 +30,38 @@ pub(super) fn compile_generated_rust(source: &str) -> TestResult {
     let input = directory.path().join("fixture.rs");
     let output = directory.path().join("libfixture.rlib");
     std::fs::write(&input, source)?;
+    let mut command = generated_rust_rustc("lib")?;
+    let result = command.arg(&input).arg("-o").arg(output).output()?;
+    assert!(
+        result.status.success(),
+        "{}\n{source}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    Ok(())
+}
+
+/// Build generated Rust as a program against the runtime this test binary links, run it, and return its standard
+/// output, so a behavior assertion is the program's own.
+pub(super) fn run_generated_program(source: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let input = directory.path().join("fixture.rs");
+    let program = directory.path().join("fixture");
+    std::fs::write(&input, source)?;
+    let mut command = generated_rust_rustc("bin")?;
+    let built = command.arg(&input).arg("-o").arg(&program).output()?;
+    if !built.status.success() {
+        return Err(format!("{}\n{source}", String::from_utf8_lossy(&built.stderr)).into());
+    }
+    let ran = std::process::Command::new(&program).output()?;
+    if !ran.status.success() {
+        return Err(format!("program failed: {}\n{source}", String::from_utf8_lossy(&ran.stderr)).into());
+    }
+    Ok(String::from_utf8(ran.stdout)?)
+}
+
+/// Return a `rustc` invocation for one generated crate of `crate_type`, with the runtime crates the generated code
+/// names in scope.
+fn generated_rust_rustc(crate_type: &str) -> Result<std::process::Command, Box<dyn std::error::Error>> {
     let capability = compiler_suite_env::OvenCompilerSuiteCapability::from_environment(
         compiler_suite_env::OVEN_COMPILER_SUITE_CAPABILITY_ENV,
     )?;
@@ -42,11 +74,8 @@ pub(super) fn compile_generated_rust(source: &str) -> TestResult {
                 .unwrap_or_else(|| "rustc".into())
         });
     let mut command = std::process::Command::new(rustc);
-    command.args([
-        "--edition=2024",
-        "--crate-type=lib",
-        "--crate-name=mut_ownership_fixture",
-    ]);
+    command.args(["--edition=2024", "--crate-name=mut_ownership_fixture"]);
+    command.arg(format!("--crate-type={crate_type}"));
     if let Some(capability) = capability {
         for path in capability.dependency_search_paths {
             command.arg("-L").arg(format!("dependency={}", path.display()));
@@ -85,13 +114,7 @@ pub(super) fn compile_generated_rust(source: &str) -> TestResult {
             .arg("--extern")
             .arg(format!("incan_derive={}", derive.display()));
     }
-    let result = command.arg(&input).arg("-o").arg(output).output()?;
-    assert!(
-        result.status.success(),
-        "{}\n{source}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-    Ok(())
+    Ok(command)
 }
 
 /// Find the newest matching dependency artifact beside the current test binary.

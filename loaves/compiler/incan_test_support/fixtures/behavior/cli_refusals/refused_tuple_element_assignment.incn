@@ -1,0 +1,11 @@
+# behavior: an element of a tuple is not assignable by a plain, a compound or a tuple assignment, whether the tuple's type is written or inferred
+# expect-diagnostic: INCAN-T0001
+
+def main() -> None:
+    pair: tuple[int, int] = (1, 0)
+    pair[0] = 5
+    pair[1] += 1
+    inferred = (1, 0)
+    mut other = 0
+    inferred[0], other = (3, 4)
+    println(other)

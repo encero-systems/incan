@@ -13,7 +13,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use super::super::{EmitError, IrEmitter};
-use incan_ir::expr::{IrExprKind, TypedExpr};
+use incan_ir::expr::{IrExprKind, TypedExpr, positional_field_index};
 use incan_ir::stmt::AssignTarget;
 use incan_ir::types::IrType;
 
@@ -43,6 +43,21 @@ impl<'a> IrEmitter<'a> {
         };
 
         Ok(quote! { *incan_std_core::collections::list_get_mut(#list_mut, #idx_i64) })
+    }
+
+    /// Emit the member a field place names: a tuple element or tuple-struct field by its position (`.0`), as lowering
+    /// spelled it, and any other field by name.
+    fn emit_place_member(field: &str) -> TokenStream {
+        match positional_field_index(field) {
+            Some(position) => {
+                let position = syn::Index::from(position);
+                quote! { #position }
+            }
+            None => {
+                let name = Self::rust_ident(field);
+                quote! { #name }
+            }
+        }
     }
 
     /// Emit an IR expression in lvalue (assignment-target) context.
@@ -84,7 +99,7 @@ impl<'a> IrEmitter<'a> {
             }
             IrExprKind::Field { object, field } => {
                 let o = self.emit_lvalue_expr(object)?;
-                let f = Self::rust_ident(field);
+                let f = Self::emit_place_member(field);
                 // Only parenthesize when needed.
                 //
                 // `emit_lvalue_expr` may emit a leading `*` for list indexing (`*list_get_mut(..)`).
@@ -128,7 +143,7 @@ impl<'a> IrEmitter<'a> {
             }
             AssignTarget::Field { object, field } => {
                 let o = self.emit_lvalue_expr(object)?;
-                let f = Self::rust_ident(field);
+                let f = Self::emit_place_member(field);
                 // Same precedence rule as in `emit_lvalue_expr`: only parenthesize when the receiver may start with a
                 // unary `*` (e.g. list index lvalues).
                 if matches!(object.kind, IrExprKind::Index { .. }) {

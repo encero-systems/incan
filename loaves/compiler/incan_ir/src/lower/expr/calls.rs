@@ -4591,14 +4591,7 @@ impl AstLowering {
                 .iter()
                 .enumerate()
                 .map(|(idx, ty)| {
-                    TypedExpr::new(
-                        IrExprKind::Field {
-                            object: Box::new(expr.clone()),
-                            field: idx.to_string(),
-                        },
-                        self.lower_resolved_type(ty),
-                    )
-                    .with_span(expr.span)
+                    TypedExpr::tuple_element(expr.clone(), idx, self.lower_resolved_type(ty)).with_span(expr.span)
                 })
                 .collect(),
         };

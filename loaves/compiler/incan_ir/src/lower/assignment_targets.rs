@@ -384,18 +384,16 @@ impl AstLowering {
 
     /// Read element `index` of a tuple temporary, moving it out: every element is read exactly once.
     fn tuple_temporary_element(&self, temporary: &str, index: usize, ty: IrType) -> TypedExpr {
-        TypedExpr::new(
-            IrExprKind::Field {
-                object: Box::new(TypedExpr::new(
-                    IrExprKind::Var {
-                        name: temporary.to_string(),
-                        access: VarAccess::Move,
-                        ref_kind: VarRefKind::Value,
-                    },
-                    self.lookup_var(temporary),
-                )),
-                field: index.to_string(),
-            },
+        TypedExpr::tuple_element(
+            TypedExpr::new(
+                IrExprKind::Var {
+                    name: temporary.to_string(),
+                    access: VarAccess::Move,
+                    ref_kind: VarRefKind::Value,
+                },
+                self.lookup_var(temporary),
+            ),
+            index,
             ty,
         )
     }

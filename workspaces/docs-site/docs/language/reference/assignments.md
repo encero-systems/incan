@@ -30,6 +30,7 @@ This page specifies binding and assignment statements.
 | --- | --- | --- |
 | Any | A reassigned binding is not `mut` | `INCAN-T0001` |
 | Any | The value's type does not fit a target | `INCAN-T0001` |
+| Any | A target is an element of a tuple or a `str` | `INCAN-T0001` |
 | `a, b = value` | The tuple's length differs from the number of targets | `INCAN-T0001` |
 | `a = b = value` | The targets have different types, and the value has no fully known type and is not built only from literals and empty constructors (`None`, `[]`, `{}`, `list()`, a number) | `INCAN-T0001` |
 | `a = b = value` | A target is not a name | `INCAN-P0001` |

@@ -4366,6 +4366,23 @@ impl TypeChecker {
         self.record_rust_return_coercion_from_display(sig.return_type.as_str(), incan_ret, span);
     }
 
+    /// Return the constant a tuple index spells: an integer literal, a negated one, which counts from the end, or
+    /// either in parentheses.
+    ///
+    /// Lowering reads the same spellings when it turns the index into an element position, so every index accepted
+    /// here resolves to a position there.
+    fn constant_tuple_index(index: &Spanned<Expr>) -> Option<i64> {
+        match &index.node {
+            Expr::Literal(Literal::Int(literal)) => Some(literal.value),
+            Expr::Unary(UnaryOp::Neg, operand) => match &operand.node {
+                Expr::Literal(Literal::Int(literal)) => literal.value.checked_neg(),
+                _ => None,
+            },
+            Expr::Paren(inner) => Self::constant_tuple_index(inner),
+            _ => None,
+        }
+    }
+
     /// Normalize a tuple index (supports negative indices) and emit bounds errors.
     fn resolve_tuple_index(&mut self, raw_idx: i64, len: usize, span: Span) -> Option<usize> {
         let len_i = len as i64;
@@ -4513,11 +4530,11 @@ impl TypeChecker {
                 Some(CollectionTypeId::Tuple) => {
                     // `Tuple[T1, ...]` (and `tuple[...]` normalized) behaves like a tuple.
                     let elems = args;
-                    let Expr::Literal(Literal::Int(raw_idx)) = &index.node else {
+                    let Some(raw_idx) = Self::constant_tuple_index(index) else {
                         self.errors.push(errors::tuple_index_requires_int_literal(index.span));
                         return ResolvedType::Unknown;
                     };
-                    if let Some(idx) = self.resolve_tuple_index(raw_idx.value, elems.len(), span) {
+                    if let Some(idx) = self.resolve_tuple_index(raw_idx, elems.len(), span) {
                         return elems.get(idx).cloned().unwrap_or(ResolvedType::Unknown);
                     }
                     ResolvedType::Unknown
@@ -4566,11 +4583,11 @@ impl TypeChecker {
             }
             ResolvedType::Tuple(elems) => {
                 // Guardrail: tuple indexing must be an integer literal so we can bounds-check.
-                let Expr::Literal(Literal::Int(raw_idx)) = &index.node else {
+                let Some(raw_idx) = Self::constant_tuple_index(index) else {
                     self.errors.push(errors::tuple_index_requires_int_literal(index.span));
                     return ResolvedType::Unknown;
                 };
-                if let Some(idx) = self.resolve_tuple_index(raw_idx.value, elems.len(), span) {
+                if let Some(idx) = self.resolve_tuple_index(raw_idx, elems.len(), span) {
                     return elems.get(idx).cloned().unwrap_or(ResolvedType::Unknown);
                 }
                 ResolvedType::Unknown

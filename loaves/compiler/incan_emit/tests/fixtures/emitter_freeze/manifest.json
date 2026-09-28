@@ -74,8 +74,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/lvalue.rs",
-      "sha256": "b4f532d181b496dc6fc8eea978865d59c87381d44155298cb881bee5070ad744",
-      "lines": 182
+      "sha256": "227a23e0b618e7a62060dfdf821ed0a82eda31bb456e41e3c72cecb6d40f150a",
+      "lines": 197
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
@@ -505,6 +505,21 @@
       "behavior_evidence": "rustc-compiled emitter tests default_static_read_beside_a_same_named_caller_static_builds, default_static_read_in_method_defaults_across_modules_builds, default_static_read_through_imports_and_nested_defaults_builds, default_static_list_reads_beside_a_same_named_caller_static_build and cross_module_default_reading_static_keeps_projection_issue1842 (codegen.rs), zip_loop_iterates_only_the_changed_operand_in_place, in_place_derived_loop_items_copy_their_copy_tuple_elements and mut_self_call_inside_a_larger_expression_iterates_in_place (tests/mut_ownership_regressions.rs, beside the unchanged #1863/#1869 tests); lowering tests statics_a_default_reads_are_named_through_their_module and mut_self_calls_borrow_their_receiver_root_mutably; behavior fixtures cli_modules_and_declarations/default_static_reads_across_modules, ownership_parameters_and_receivers/zip_loop_changing_one_operand_in_place.incn and ownership_parameters_and_receivers/mut_self_call_on_a_loop_item_inside_an_expression.incn",
       "semantic_owner": "lowering facts the emitter now only spells: StaticRead.owner_module_path (a static a parameter default reads, named through its declaring module by its projection), VarAccess::BorrowMut on the binding at the root of a mut self call receiver (from the checker fact mutable_receiver_method_calls), and the derived-loop plan plan_mutating_derived_loop in ownership.rs; the emitter-side receiver walker and the name-keyed mutable_method_receivers set are removed",
       "retirement_condition": "#654: the Rust-source backend is deleted; Body IR carries the declaring module of a static read and the in-place plan of a loop, and the replacement route reads both"
+    },
+    {
+      "kind": "change",
+      "pr": null,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/lvalue.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1561",
+      "behavior_evidence": "emit tests tuple_element_places (tuple_element_method_changes_the_tuple_in_place_issue1561, tuple_element_of_a_field_changes_in_place_issue1561, writes_through_a_tuple_element_change_the_tuple_issue1561, mut_tuple_parameter_elements_are_places_issue1561) build and run the generated Rust; behavior fixtures ownership_values_and_fields/tuple_elements_changed_in_place.incn and ownership_parameters_and_receivers/mut_tuple_parameter_elements_changed_in_place.incn",
+      "semantic_owner": "#1561: lowering spells a tuple element place as a field named by its position (TypedExpr::tuple_element) and incan_ir::expr::positional_field_index reads the position back; this lvalue adapter only spells that position as a positional member instead of an identifier",
+      "retirement_condition": "#654: the Rust-source backend is deleted; Body IR projects tuple element places from the source model"
     }
   ]
 }

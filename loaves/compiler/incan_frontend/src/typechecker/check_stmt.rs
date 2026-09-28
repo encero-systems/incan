@@ -407,6 +407,13 @@ impl TypeChecker {
                     match &target.node {
                         Expr::Index(_, _) | Expr::Field(_, _) => {
                             // Index and field expressions are valid lvalues; type compatibility is checked below.
+                            // An element target is refused where `x[i] = value` is: a tuple's or a string's element,
+                            // for one.
+                            if let Expr::Index(object, _) = &target.node
+                                && let Some(object_ty) = self.type_info.expr_type(object.span).cloned()
+                            {
+                                self.refuse_unassignable_element_receiver(&object_ty, target.span);
+                            }
                             // A place rooted at the receiver is a write through `self` like any other (#1723).
                             if let Some(place) = Self::self_rooted_place(target) {
                                 self.reject_write_through_immutable_self(&place, SelfMutation::Assignment, target.span);
@@ -625,81 +632,55 @@ impl TypeChecker {
         }
 
         // Verify object is indexable and types match
+        if self.refuse_unassignable_element_receiver(&obj_ty, span) {
+            return;
+        }
         match &obj_ty {
-            ResolvedType::Generic(name, args) => match collection_type_id(name.as_str()) {
-                Some(CollectionTypeId::List) => {
-                    // List[T] - index must be int, value must be T
-                    if !matches!(index_ty, ResolvedType::Int) {
-                        self.errors.push(errors::index_type_mismatch(
-                            "int",
-                            &index_ty.to_string(),
-                            index_assign.index.span,
-                        ));
-                    }
-                    if let Some(elem_ty) = args.first()
-                        && !self.types_compatible(&value_ty, elem_ty)
-                    {
-                        self.errors.push(errors::index_value_type_mismatch(
-                            &elem_ty.to_string(),
-                            &value_ty.to_string(),
-                            index_assign.value.span,
-                        ));
-                    }
+            ResolvedType::Generic(name, args) if collection_type_id(name.as_str()) == Some(CollectionTypeId::List) => {
+                // List[T] - index must be int, value must be T
+                if !matches!(index_ty, ResolvedType::Int) {
+                    self.errors.push(errors::index_type_mismatch(
+                        "int",
+                        &index_ty.to_string(),
+                        index_assign.index.span,
+                    ));
                 }
-                Some(CollectionTypeId::Dict) => {
-                    // Dict[K, V] - index must be K, value must be V
-                    if let Some(key_ty) = args.first()
-                        && !self.types_compatible(&index_ty, key_ty)
-                    {
-                        self.errors.push(errors::index_type_mismatch(
-                            &key_ty.to_string(),
-                            &index_ty.to_string(),
-                            index_assign.index.span,
-                        ));
-                    }
-                    if let Some(val_ty) = args.get(1)
-                        && !self.types_compatible(&value_ty, val_ty)
-                    {
-                        self.errors.push(errors::index_value_type_mismatch(
-                            &val_ty.to_string(),
-                            &value_ty.to_string(),
-                            index_assign.value.span,
-                        ));
-                    }
+                if let Some(elem_ty) = args.first()
+                    && !self.types_compatible(&value_ty, elem_ty)
+                {
+                    self.errors.push(errors::index_value_type_mismatch(
+                        &elem_ty.to_string(),
+                        &value_ty.to_string(),
+                        index_assign.value.span,
+                    ));
                 }
-                _ => {
-                    if self.is_user_operator_receiver(&obj_ty) {
-                        if self
-                            .resolve_index_set_dunder(
-                                &obj_ty,
-                                &index_assign.index,
-                                &index_ty,
-                                &index_assign.value,
-                                &value_ty,
-                                span,
-                            )
-                            .is_none()
-                        {
-                            self.errors
-                                .push(errors::missing_method(&obj_ty.to_string(), "__setitem__", span));
-                        }
-                    } else {
-                        self.errors.push(errors::not_indexable(&obj_ty.to_string(), span));
-                    }
-                }
-            },
-            ResolvedType::Tuple(_) => {
-                // Tuples are immutable - cannot assign to index
-                self.errors.push(errors::tuple_field_assignment(span));
             }
-            ResolvedType::Str => {
-                // Strings are immutable in Incan
-                self.errors.push(errors::string_index_assignment_not_allowed(span));
+            ResolvedType::Generic(name, args) if collection_type_id(name.as_str()) == Some(CollectionTypeId::Dict) => {
+                // Dict[K, V] - index must be K, value must be V
+                if let Some(key_ty) = args.first()
+                    && !self.types_compatible(&index_ty, key_ty)
+                {
+                    self.errors.push(errors::index_type_mismatch(
+                        &key_ty.to_string(),
+                        &index_ty.to_string(),
+                        index_assign.index.span,
+                    ));
+                }
+                if let Some(val_ty) = args.get(1)
+                    && !self.types_compatible(&value_ty, val_ty)
+                {
+                    self.errors.push(errors::index_value_type_mismatch(
+                        &val_ty.to_string(),
+                        &value_ty.to_string(),
+                        index_assign.value.span,
+                    ));
+                }
             }
             ResolvedType::Unknown => {
                 // Don't report additional errors on unknown types
             }
-            ty if self.is_user_operator_receiver(ty) => {
+            // Every other receiver left by the refusal above is a type that defines its own element write.
+            ty => {
                 if self
                     .resolve_index_set_dunder(ty, &index_assign.index, &index_ty, &index_assign.value, &value_ty, span)
                     .is_none()
@@ -708,10 +689,34 @@ impl TypeChecker {
                         .push(errors::missing_method(&ty.to_string(), "__setitem__", span));
                 }
             }
-            _ => {
-                self.errors.push(errors::not_indexable(&obj_ty.to_string(), span));
-            }
         }
+    }
+
+    /// Refuse a write to an element of a value of type `obj_ty` when no element of such a value is assignable, and
+    /// return whether the write was refused.
+    ///
+    /// A list, a dict, a type that defines its own element write and an unknown type are left to the caller. A tuple in
+    /// either spelling and a string are immutable, and any other type, such as a frozen collection, is not indexable
+    /// for a write. `x[i] = value` and an element target of `a, x[i] = value` share this rule, so a tuple
+    /// assignment never writes an element that a single assignment refuses (#1561).
+    fn refuse_unassignable_element_receiver(&mut self, obj_ty: &ResolvedType, span: Span) -> bool {
+        let refusal = match obj_ty {
+            ResolvedType::Generic(name, _) => match collection_type_id(name.as_str()) {
+                Some(CollectionTypeId::List | CollectionTypeId::Dict) => None,
+                // A written `tuple[A, B]` is immutable like a tuple literal's type below.
+                Some(CollectionTypeId::Tuple) => Some(errors::tuple_field_assignment(span)),
+                _ if self.is_user_operator_receiver(obj_ty) => None,
+                _ => Some(errors::not_indexable(&obj_ty.to_string(), span)),
+            },
+            ResolvedType::Tuple(_) => Some(errors::tuple_field_assignment(span)),
+            ResolvedType::Str => Some(errors::string_index_assignment_not_allowed(span)),
+            ResolvedType::Unknown => None,
+            ty if self.is_user_operator_receiver(ty) => None,
+            _ => Some(errors::not_indexable(&obj_ty.to_string(), span)),
+        };
+        let refused = refusal.is_some();
+        self.errors.extend(refusal);
+        refused
     }
 
     /// Validate an assignment statement, then remember a local bound directly to a module static (see
