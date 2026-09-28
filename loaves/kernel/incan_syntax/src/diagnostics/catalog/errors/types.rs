@@ -515,16 +515,28 @@ pub fn route_handler_parameter_unbound(
 /// return serializes `T` as the response body, so `T`, and every model or class it is built from, must derive `json`.
 /// A model or class declared without it checked and then could not be registered as a handler. `handler` is the
 /// function's name, `wrapper` the declared wrapper type as written, and `payload` the model or class that lacks the
-/// derive. `INCAN-T0112` is its stable code.
-pub fn route_payload_without_json_form(handler: &str, wrapper: &str, payload: &str, span: Span) -> CompileError {
+/// derive, or, when `builtin` is set, the `decimal` or frozen type that has no JSON form at all (#1561).
+/// `INCAN-T0112` is its stable code.
+pub fn route_payload_without_json_form(
+    handler: &str,
+    wrapper: &str,
+    payload: &str,
+    builtin: bool,
+    span: Span,
+) -> CompileError {
+    let hint = if builtin {
+        format!("Use a type with a JSON form in place of '{payload}', such as 'str', 'float', 'list' or 'dict'")
+    } else {
+        format!(
+            "Derive JSON support on '{payload}': add '@derive(json)' above its declaration, with 'from std.serde import json'"
+        )
+    };
     CompileError::type_error(
         format!("Route handler '{handler}' uses '{wrapper}', but '{payload}' has no JSON form"),
         span,
     )
     .with_stable_code("INCAN-T0112")
-    .with_hint(format!(
-        "Derive JSON support on '{payload}': add '@derive(json)' above its declaration, with 'from std.serde import json'"
-    ))
+    .with_hint(hint)
     .with_note(
         "A route's 'Json[T]', 'Query[T]' and 'Path[T]' parameters deserialize the request into 'T', and a 'Json[T]' \
          return serializes 'T' as the response body, so every model or class in 'T' must derive 'json'",
@@ -3324,6 +3336,45 @@ pub fn element_has_no_printed_form(
         .with_note(
             "Inside a tuple, list, dict, set, frozen collection, Option or Result every element displays as its {value:?} structure; a generator, a function or bytes has none",
         )
+}
+
+/// A value an f-string `{value:?}` part cannot render, because its type has no `Debug` form (#1561).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UndebuggableValue<'a> {
+    /// A `Generator` value, whose items exist only as it is consumed.
+    Generator,
+    /// A function or closure value.
+    Function,
+    /// A value whose type, or a type inside it, implements no `Debug`, such as a `JoinHandle[T]`.
+    Type {
+        /// The type that implements no `Debug`, as the checker names it.
+        type_name: &'a str,
+    },
+}
+
+/// Report an f-string `{value:?}` part whose value has no `Debug` form (#1561).
+///
+/// `{value:?}` renders a value's structure through `Debug`. A generator, a function, and a value whose type (or a type
+/// inside it) implements no `Debug` have no such structure, so the part is refused the way a `{value}` part with no
+/// printed form is. `name` is the operand when the source spells it as a plain name (or `self`), `None` for any other
+/// expression. `INCAN-T0103` is its stable code.
+pub fn value_has_no_debug_form(name: Option<&str>, value: UndebuggableValue<'_>, span: Span) -> CompileError {
+    let what = match (value, name) {
+        (UndebuggableValue::Generator, Some(name)) => format!("the generator '{name}'"),
+        (UndebuggableValue::Generator, None) => "a generator".to_string(),
+        (UndebuggableValue::Function, Some(name)) => format!("the function '{name}'"),
+        (UndebuggableValue::Function, None) => "a function".to_string(),
+        (UndebuggableValue::Type { type_name }, _) => format!("a value of type '{type_name}'"),
+    };
+    let hint = match value {
+        UndebuggableValue::Generator => "Collect its items first with list(...); a list shows its elements",
+        UndebuggableValue::Function => "Call it and interpolate the result",
+        UndebuggableValue::Type { .. } => "Interpolate a value read from it instead, such as one of its fields",
+    };
+    CompileError::type_error(format!("f-string cannot interpolate {what} with ':?'"), span)
+        .with_stable_code("INCAN-T0103")
+        .with_hint(hint)
+        .with_note("An f-string {value:?} part renders the value's structure through Debug, and this value has none")
 }
 
 pub fn tuple_field_assignment(span: Span) -> CompileError {

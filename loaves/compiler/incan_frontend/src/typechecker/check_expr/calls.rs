@@ -861,6 +861,10 @@ impl TypeChecker {
         self.record_c_raw_owned_resource_transfers(&symbol, args);
         self.type_info.record_call_site_callable_params(span, &parameters);
         let return_type = Self::c_raw_call_return_type(&binding, &symbol.return_type);
+        if matches!(&return_type, ResolvedType::Named(identity) if identity == c_abi::SCOPED_C_STRING_VIEW_TYPE_ID) {
+            // The view may only be bound to a local or copied at once; anything else lets it escape (RFC 116).
+            self.unbound_scoped_c_string_views.insert((span.start, span.end));
+        }
         self.type_info.c_abi.raw_calls.push(CBindingRawCall {
             span,
             owner: self.current_c_abi_raw_call_owner.clone(),
@@ -1516,11 +1520,22 @@ impl TypeChecker {
         args: &[CallArg],
         span: Span,
     ) -> Option<ResolvedType> {
-        if method != "copy_utf8"
-            || !matches!(self.check_expr(base), ResolvedType::Named(identity) if identity == c_abi::SCOPED_C_STRING_VIEW_TYPE_ID)
-        {
+        if method != "copy_utf8" {
             return None;
         }
+        // The receiver of `copy_utf8` is the one position a view may be read in (RFC 116).
+        let mut receiver = base;
+        while let Expr::Paren(inner) = &receiver.node {
+            receiver = inner;
+        }
+        let receiver_key = (receiver.span.start, receiver.span.end);
+        self.scoped_c_string_view_receivers.insert(receiver_key);
+        let base_ty = self.check_expr(base);
+        self.scoped_c_string_view_receivers.remove(&receiver_key);
+        if !matches!(base_ty, ResolvedType::Named(identity) if identity == c_abi::SCOPED_C_STRING_VIEW_TYPE_ID) {
+            return None;
+        }
+        self.unbound_scoped_c_string_views.remove(&receiver_key);
         let [CallArg::Named(name, _)] = args else {
             self.errors.push(CompileError::type_error(
                 "a scoped C string view requires copy_utf8(max_bytes=<positive int>)".to_string(),

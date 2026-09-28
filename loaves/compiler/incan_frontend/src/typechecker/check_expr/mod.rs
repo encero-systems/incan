@@ -330,8 +330,9 @@ impl TypeChecker {
     ///
     /// A `{value}` part displays under the rule `print`/`println` arguments and `str(...)` share (see
     /// [`Self::check_display_operand`]); an `Error` adopter with no `__str__` is recorded to render its `message()`
-    /// (#1778). A `{value:?}` part asks for the value's structure through `Debug` and is left alone. A part with any
-    /// other format spec (`{value:x}`) names a specifier the language does not support and is refused outright.
+    /// (#1778). A `{value:?}` part asks for the value's structure through `Debug`, and a value with none is refused the
+    /// same way (see [`Self::check_debug_operand`]). A part with any other format spec (`{value:x}`) names a specifier
+    /// the language does not support and is refused outright.
     fn check_fstring_parts(&mut self, parts: &[FStringPart]) {
         for part in parts {
             let FStringPart::Expr { expr, format } = part else {
@@ -343,7 +344,7 @@ impl TypeChecker {
                     self.record_error_message_display(expr.span, &ty);
                     self.check_display_operand(errors::DisplayPosition::Interpolation, expr, &ty);
                 }
-                FStringFormat::Debug => {}
+                FStringFormat::Debug => self.check_debug_operand(expr, &ty),
                 FStringFormat::Unsupported(spec) => self
                     .errors
                     .push(errors::unsupported_fstring_format_specifier(spec, expr.span)),

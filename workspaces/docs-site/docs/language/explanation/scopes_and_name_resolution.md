@@ -292,16 +292,16 @@ add1 = (x) => x + 1
 
 Closures introduce their own function scope (parameters are local to the closure body). Names from outer scopes can be **read** by normal lexical lookup.
 
-Plain assignment inside a closure behaves the same as elsewhere: if the name exists already, it’s treated as a reassignment (so it requires the outer binding to be `mut`). Use `let` for a new immutable closure-local binding or `mut` for a new mutable one.
+A closure body is a single expression, so a closure assigns no names of its own. It reads each outer local it names as the value that local held when the closure was constructed, and a later change to the outer binding does not reach it (see [Closure captures](../reference/functions.md#closure-captures)).
 
 Example:
 
 ```incan
 def closure_capture() -> int:
     mut x = 1
-    inc = () => x = x + 1  # reassigns outer x (so outer x must be mut)
-    inc()
-    return x  # 2
+    read_x = () => x
+    x = 5
+    return read_x()  # 1: the value x held when read_x was constructed
 ```
 
 > Note: Incan does not expose Python-style `global` / `nonlocal` declarations.

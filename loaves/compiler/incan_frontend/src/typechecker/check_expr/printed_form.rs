@@ -19,8 +19,9 @@ use incan_lang::lang::types::collections::CollectionTypeId;
 use super::TypeChecker;
 use crate::ast::{Expr, Span, Spanned};
 use crate::diagnostics::CompileError;
-use crate::diagnostics::errors::{self, DisplayPosition, UnprintableValue};
+use crate::diagnostics::errors::{self, DisplayPosition, UndebuggableValue, UnprintableValue};
 use crate::symbols::{ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo};
+use crate::typechecker::derive_requirements::DeriveSupport;
 use crate::typechecker::helpers::{collection_type_id, is_frozen_bytes};
 
 /// How deep a class's `extends` chain is followed when looking for an inherited `__str__`.
@@ -53,6 +54,46 @@ impl TypeChecker {
             errors::element_has_no_printed_form(position, name, &operand_ty.to_string(), element, operand.span)
         } else {
             return;
+        };
+        self.errors.push(error);
+    }
+
+    /// Refuse an f-string `{value:?}` part whose value has no `Debug` form (#1561).
+    ///
+    /// `{value:?}` renders the value's structure through `Debug`. A generator and a function have none, and neither
+    /// does a value whose type, or a type inside it, implements no `Debug` by the derive relation (a
+    /// `JoinHandle[T]`, or a list of them). A type the relation cannot classify is left alone.
+    pub(in crate::typechecker::check_expr) fn check_debug_operand(
+        &mut self,
+        operand: &Spanned<Expr>,
+        operand_ty: &ResolvedType,
+    ) {
+        let operand_ty = self.expand_type_aliases(operand_ty.clone());
+        let name = match &operand.node {
+            Expr::Ident(name) => Some(name.as_str()),
+            Expr::SelfExpr => Some("self"),
+            _ => None,
+        };
+        let error = match &operand_ty {
+            ResolvedType::Generic(type_name, _)
+                if collection_type_id(type_name.as_str()) == Some(CollectionTypeId::Generator) =>
+            {
+                errors::value_has_no_debug_form(name, UndebuggableValue::Generator, operand.span)
+            }
+            ResolvedType::Function(..) => {
+                errors::value_has_no_debug_form(name, UndebuggableValue::Function, operand.span)
+            }
+            _ => match self.derive_support(&operand_ty, DeriveId::Debug) {
+                DeriveSupport::Missing(holder) => {
+                    let type_name = holder.to_string();
+                    errors::value_has_no_debug_form(
+                        name,
+                        UndebuggableValue::Type { type_name: &type_name },
+                        operand.span,
+                    )
+                }
+                DeriveSupport::Supported | DeriveSupport::Unknown => return,
+            },
         };
         self.errors.push(error);
     }

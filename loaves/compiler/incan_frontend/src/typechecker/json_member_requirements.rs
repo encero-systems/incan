@@ -5,6 +5,8 @@
 //! `model` or `class` member that neither derives nor adopts it used to pass the check and fail the build instead
 //! (#1886, #1867). This module refuses that member at check time.
 //!
+//! `decimal` and the frozen types have no JSON form at all, so a member that holds one is refused too (#1561).
+//!
 //! The relation is [`TypeChecker::type_without_json_form`]'s, extended in the one way a declaration's members differ
 //! from a route payload: an `enum` or newtype member serializes through its contents, since lowering gives such a
 //! member the serde derive of the declaration that holds it, so the search goes on into its payloads or underlying
@@ -15,9 +17,39 @@ use crate::ast::Span;
 use crate::diagnostics::errors::{self, DerivedMember};
 use crate::symbols::{ResolvedType, TypeBoundInfo, TypeInfo};
 use incan_lang::lang::stdlib::{self, StdlibJsonTraitId};
+use incan_lang::lang::types::numerics;
 
 use super::TypeChecker;
 use super::helpers::collection_type_id;
+
+/// The type inside a member type that has no JSON form for a protocol.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum JsonFormGap {
+    /// A `model` or `class` that neither derives nor adopts the protocol trait, by name.
+    Nominal(String),
+    /// `decimal` or a frozen type, which no protocol serializes, as the checker spells it (#1561).
+    Builtin(String),
+}
+
+/// Return the spelling of a builtin type with no JSON form, `decimal` or a frozen type (#1561), or `None` for any other
+/// type.
+///
+/// Neither the decimal runtime type nor the frozen types implement the JSON protocols, so a declaration that holds one
+/// and provides `Serialize` or `Deserialize` cannot build. Their contents are not searched: the type itself has no
+/// form.
+pub(in crate::typechecker) fn builtin_type_without_json_form(ty: &ResolvedType) -> Option<String> {
+    match ty {
+        ResolvedType::FrozenStr
+        | ResolvedType::FrozenBytes
+        | ResolvedType::FrozenList(_)
+        | ResolvedType::FrozenSet(_)
+        | ResolvedType::FrozenDict(_, _) => Some(ty.to_string()),
+        ResolvedType::Generic(name, _) if numerics::decimal_constructor_from_str(name).is_some() => {
+            Some(ty.to_string())
+        }
+        _ => None,
+    }
+}
 
 /// The source name of a `std.serde.json` protocol trait, for diagnostics.
 fn protocol_name(protocol: StdlibJsonTraitId) -> &'static str {
@@ -92,20 +124,23 @@ impl TypeChecker {
         })
     }
 
-    /// Return the spelling of the first type inside a member type of a declaration that provides `protocol` which
-    /// certainly has no JSON form for it, or `None` when every part has, or may have, one.
+    /// Return the first type inside a member type of a declaration that provides `protocol` which certainly has no JSON
+    /// form for it, or `None` when every part has, or may have, one.
     ///
-    /// Collections, `Option`, `Result`, tuples and the frozen collections carry their elements, and a generic
-    /// nominal needs its type arguments to provide the trait too. A `model` or `class` is decided by
-    /// [`Self::nominal_certainly_lacks_json_form`]. An `enum` or newtype that does not provide the trait itself is
-    /// searched through its payloads or underlying value, which it serializes; one that provides it is checked at its
-    /// own declaration. `visiting` stops a type that contains itself.
+    /// `decimal` and the frozen types have none ([`builtin_type_without_json_form`]). Collections, `Option`, `Result`
+    /// and tuples carry their elements, and a generic nominal needs its type arguments to provide the trait too. A
+    /// `model` or `class` is decided by [`Self::nominal_certainly_lacks_json_form`]. An `enum` or newtype that does
+    /// not provide the trait itself is searched through its payloads or underlying value, which it serializes; one
+    /// that provides it is checked at its own declaration. `visiting` stops a type that contains itself.
     fn member_type_without_json_form(
         &self,
         ty: &ResolvedType,
         protocol: StdlibJsonTraitId,
         visiting: &mut Vec<String>,
-    ) -> Option<String> {
+    ) -> Option<JsonFormGap> {
+        if let Some(builtin) = builtin_type_without_json_form(ty) {
+            return Some(JsonFormGap::Builtin(builtin));
+        }
         match ty {
             ResolvedType::Named(name) => self.nominal_member_without_json_form(name, &[], protocol, visiting),
             ResolvedType::Generic(name, args) => {
@@ -119,12 +154,6 @@ impl TypeChecker {
             ResolvedType::Tuple(items) => items
                 .iter()
                 .find_map(|item| self.member_type_without_json_form(item, protocol, visiting)),
-            ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => {
-                self.member_type_without_json_form(inner, protocol, visiting)
-            }
-            ResolvedType::FrozenDict(key, value) => self
-                .member_type_without_json_form(key, protocol, visiting)
-                .or_else(|| self.member_type_without_json_form(value, protocol, visiting)),
             _ => None,
         }
     }
@@ -136,9 +165,9 @@ impl TypeChecker {
         args: &[ResolvedType],
         protocol: StdlibJsonTraitId,
         visiting: &mut Vec<String>,
-    ) -> Option<String> {
+    ) -> Option<JsonFormGap> {
         if self.nominal_certainly_lacks_json_form(name, protocol) {
-            return Some(name.to_string());
+            return Some(JsonFormGap::Nominal(name.to_string()));
         }
         let contents = match self.lookup_type_info(name) {
             Some(TypeInfo::Enum(info)) if !self.adoptions_provide_json_protocol(&info.trait_adoptions, protocol) => {
@@ -182,18 +211,28 @@ impl TypeChecker {
                 continue;
             }
             for (member, member_ty, span) in members {
-                let Some(holder) = self.member_type_without_json_form(member_ty, protocol, &mut Vec::new()) else {
-                    continue;
+                let error = match self.member_type_without_json_form(member_ty, protocol, &mut Vec::new()) {
+                    None => continue,
+                    Some(JsonFormGap::Nominal(holder)) => errors::member_type_lacks_json_protocol(
+                        owner_kind,
+                        owner_name,
+                        *member,
+                        &member_ty.to_string(),
+                        &holder,
+                        protocol_name(protocol),
+                        *span,
+                    ),
+                    Some(JsonFormGap::Builtin(holder)) => errors::member_type_has_no_json_form(
+                        owner_kind,
+                        owner_name,
+                        *member,
+                        &member_ty.to_string(),
+                        &holder,
+                        protocol_name(protocol),
+                        *span,
+                    ),
                 };
-                self.errors.push(errors::member_type_lacks_json_protocol(
-                    owner_kind,
-                    owner_name,
-                    *member,
-                    &member_ty.to_string(),
-                    &holder,
-                    protocol_name(protocol),
-                    *span,
-                ));
+                self.errors.push(error);
             }
         }
     }

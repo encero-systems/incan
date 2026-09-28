@@ -34,7 +34,7 @@ A `binding` declares `Name` as a private declaration of its module. Its body hol
 | [`struct`](#structs) | A C structure layout. |
 
 - Refused (`INCAN-P0001`): a missing or non-literal `header`, a missing `link`, a repeated field, a field other than `header` and `link`, and header arguments on `binding`.
-- Refused (`INCAN-I0001`): an empty `header`, a `link` in another form, two members of one kind with the same name, and a member with decorators or header arguments.
+- Refused (`INCAN-T0001`): an empty `header`, a `link` in another form, two members of one kind with the same name, and a member with decorators or header arguments.
 
 ## C types
 
@@ -55,8 +55,8 @@ A `binding` declares `Name` as a private declaration of its module. Its body hol
 
 - `R` is a `resource` member of the same binding. `T` in `c.ConstPtr[T]` and `c.MutPtr[T]` is a C type from this table; `T` in `c.Out[T]` is a scalar or `c.Owned[R]`; `T` in `c.InOut[T]` is a scalar. The scalars are the `c.i*`, `c.u*`, `c.f*`, `c.Size`, `c.c_char` and `c.c_int` types.
 - `c.i128` and `c.u128` require a verification target whose Clang accepts `__int128`.
-- `Option[T]` admits only `c.Owned[R]`. A nullable pointer, `Option[c.ConstPtr[T]]` or `Option[c.MutPtr[T]]`, is refused (`INCAN-I0001`).
-- A type outside this table in a signature or a struct field, and `c.Out` or `c.InOut` outside a parameter, is refused (`INCAN-I0001`). `None` as a parameter, field, pointer or slot type is refused at [verification](#verification) (`INCAN-T0001`).
+- `Option[T]` admits only `c.Owned[R]`. A nullable pointer, `Option[c.ConstPtr[T]]` or `Option[c.MutPtr[T]]`, is refused (`INCAN-T0001`).
+- A type outside this table in a signature or a struct field, and `c.Out` or `c.InOut` outside a parameter, is refused (`INCAN-T0001`). `None` as a parameter, field, pointer or slot type is refused at [verification](#verification) (`INCAN-T0001`).
 
 ## Symbols
 
@@ -73,7 +73,7 @@ symbol name(parameter: Type, ...) -> Type:
 - `native` is required: one non-empty string literal, the C function's name.
 - `bounds` is optional and appears at most once. See [Spans](#spans).
 - `outcome` declarations are optional. See [Output positions](#output-positions).
-- Refused (`INCAN-I0001`): a missing return type; a parameter without a type or with a default value; a missing, empty or repeated `native`; a field other than `native` and `bounds`; and a body statement that is neither a field nor an `outcome`.
+- Refused (`INCAN-T0001`): a missing return type; a parameter without a type or with a default value; a missing, empty or repeated `native`; a field other than `native` and `bounds`; and a body statement that is neither a field nor an `outcome`.
 
 ### Calls
 
@@ -94,7 +94,7 @@ resource Name:
 ```
 
 - `native` is the C type's name, as an identifier or as `struct tag`. `release` names a symbol of the same binding whose only parameter is `c.Owned[Name]`.
-- Refused (`INCAN-I0001`): a signature on the resource, a missing or repeated field, a field other than `native` and `release`, and a `release` symbol with another parameter list.
+- Refused (`INCAN-T0001`): a signature on the resource, a missing or repeated field, a field other than `native` and `release`, and a `release` symbol with another parameter list.
 
 | Parameter or result | At a call |
 | --- | --- |
@@ -115,7 +115,7 @@ enum Name:
 
 - Every variant has the same scalar carrier type and names a C constant, a C identifier that the header defines.
 - `Binding.Name.Variant` is an `int` expression whose value is the constant's value on the verification target.
-- Refused (`INCAN-I0001`): an enum without variants, variants with different carrier types, a carrier outside the scalars, a value that is not a name or a dotted name, and a signature on the enum.
+- Refused (`INCAN-T0001`): an enum without variants, variants with different carrier types, a carrier outside the scalars, a value that is not a name or a dotted name, and a signature on the enum.
 - `Binding.Name.Other`, for a variant the enum does not declare, is refused (`INCAN-T0001`).
 
 ## Structs
@@ -129,7 +129,7 @@ struct Name:
 - `native` is the C type's name, as an identifier or as `struct tag`.
 - Each field line names a C field on both sides of `=` and gives its type.
 - A struct is valid in a symbol signature; a call to that symbol is refused (see [Calls](#calls)).
-- Refused (`INCAN-I0001`): a missing, empty or repeated `native`; a struct without fields; a field line in another form; and a field type outside the C types.
+- Refused (`INCAN-T0001`): a missing, empty or repeated `native`; a struct without fields; a field line in another form; and a field type outside the C types.
 
 ## Output positions
 
@@ -144,7 +144,7 @@ A `c.Out[T]` or `c.InOut[T]` parameter takes a slot created in the calling funct
 - A slot is assigned directly to a local, and that local is passed to one output parameter of one call.
 - `outcome Enum.Variant:` names a variant of an enum of the same binding whose carrier is the symbol's result type. `initializes` lists `c.Out` parameters; `updates` and `invalidates` list `c.InOut` parameters. Every `c.Out` parameter is in some outcome's `initializes`.
 - `take()` reads a slot once. A `c.Out` slot is readable inside `if result == Binding.Enum.Variant:`, where `result` is the local holding the call's result and that outcome initializes the slot. A `c.InOut` slot is readable after the call when no outcome invalidates it; otherwise it is readable inside the `if` of an outcome that does not invalidate it.
-- Refused (`INCAN-I0001`): an outcome without exactly one `Enum.Variant` value or with a signature; an outcome that names an unknown enum, variant or parameter; a variant whose carrier is not the result type; an outcome field that is not a list of distinct parameter names, or that lists a parameter of the other kind or one listed in another field of the outcome; a repeated outcome or outcome field; a field other than `initializes`, `updates` and `invalidates`; and a `c.Out` parameter that no outcome initializes.
+- Refused (`INCAN-T0001`): an outcome without exactly one `Enum.Variant` value or with a signature; an outcome that names an unknown enum, variant or parameter; a variant whose carrier is not the result type; an outcome field that is not a list of distinct parameter names, or that lists a parameter of the other kind or one listed in another field of the outcome; a repeated outcome or outcome field; a field other than `initializes`, `updates` and `invalidates`; and a `c.Out` parameter that no outcome initializes.
 - Refused (`INCAN-T0001`): `c.out` without exactly one type argument or with value arguments; `c.inout` without exactly one positional value or with type arguments; an output argument that is not a slot local; a slot of the other kind; a slot whose type is not the parameter's; a slot passed to an earlier call; one slot passed twice in a call; and `take()` with arguments, before the call, a second time, or where the slot is not readable.
 
 ```incan
@@ -196,7 +196,8 @@ def open_handle() -> int:
 | `view.copy_utf8(max_bytes=n)` | Inside `unsafe:`, on the result of a symbol whose result type is `c.ConstPtr[c.c_char]`; `n: int`. Returns `Result[str, str]`: `Ok` with the text before the first NUL in the first `n` bytes, or `Err` when the result is a null pointer, `n` is not positive, no NUL is in the first `n` bytes, or the text is not UTF-8. |
 
 - The result of a `c.ConstPtr[c.c_char]` symbol has one operation, `copy_utf8`. Its type has no spelling, so a parameter or return annotation cannot name it.
-- Refused (`INCAN-T0001`): `c.cstr` without exactly one positional `str` argument or with type arguments; `as_const_ptr()` outside `unsafe:` or with arguments; and `copy_utf8` outside `unsafe:`, without exactly one argument named `max_bytes`, or with a bound that is not an `int`.
+- The result is the receiver of `copy_utf8`, or the value of an assignment to a local; that local is read only as the receiver of `copy_utf8`, outside any closure the assignment is not in.
+- Refused (`INCAN-T0001`): `c.cstr` without exactly one positional `str` argument or with type arguments; `as_const_ptr()` outside `unsafe:` or with arguments; `copy_utf8` outside `unsafe:`, without exactly one argument named `max_bytes`, or with a bound that is not an `int`; and a result, or a local holding one, that is returned, stored in a value or collection, passed as an argument, assigned to another name, or read in a closure.
 
 ```incan
 from std.interop import c
@@ -214,6 +215,29 @@ def string_length(value: str) -> Result[usize, str]:
         return Ok(LibC.string_length(text.as_const_ptr()))
 ```
 
+```incan
+from std.interop import c
+
+binding Env:
+    header = "stdlib.h"
+    link = c.system_library("c")
+
+    symbol lookup(name: c.ConstPtr[c.c_char]) -> c.ConstPtr[c.c_char]:
+        native = "getenv"
+
+def home() -> Result[str, str]:
+    name = c.cstr("HOME")?
+    unsafe:
+        view = Env.lookup(name.as_const_ptr())
+        return view.copy_utf8(max_bytes=4096)                    # accepted
+
+def leak() -> Result[None, str]:
+    name = c.cstr("HOME")?
+    unsafe:
+        views = [Env.lookup(name.as_const_ptr())]                # refused: the result is stored (INCAN-T0001)
+    return Ok(None)
+```
+
 ## Spans
 
 A span passes a buffer to a symbol as a pointer and a count.
@@ -229,7 +253,7 @@ A span passes a buffer to a symbol as a pointer and a count.
 - `bounds = { pointer: count }` pairs each `c.ConstPtr` or `c.MutPtr` parameter of `c.u8` or `c.f32` with a `c.Size` parameter. Every such pointer parameter is named in `bounds` exactly once.
 - In a call, a paired pointer argument is the pointer method of a span local, and its count argument is the count method of the same local.
 - `into_bytes(written)` and `into_f32s(written)` consume the span. They return `Ok` with the first `written` elements, or `Err` when `written` is negative or exceeds the capacity.
-- Refused (`INCAN-I0001`): a `bounds` value that is not a non-empty dict of parameter names; a repeated `bounds`; a pointer parameter of `c.u8` or `c.f32` that `bounds` does not name exactly once; a `bounds` name that is not such a pointer parameter; a count parameter that is unknown or not `c.Size`; and `bounds` on a symbol without such a pointer parameter.
+- Refused (`INCAN-T0001`): a `bounds` value that is not a non-empty dict of parameter names; a repeated `bounds`; a pointer parameter of `c.u8` or `c.f32` that `bounds` does not name exactly once; a `bounds` name that is not such a pointer parameter; a count parameter that is unknown or not `c.Size`; and `bounds` on a symbol without such a pointer parameter.
 - Refused (`INCAN-T0001`): a constructor without exactly one positional argument of its type, or with type arguments; a span not assigned directly to a local; a span local used other than as a method receiver; a method call outside `unsafe:`; arguments to a pointer or count method; `as_mut_ptr()` on a local that is not `mut`; a finish method without one positional integer; a use of a span after its finish method; and a call whose paired pointer and count arguments are not the matching methods of one span local.
 
 ```incan

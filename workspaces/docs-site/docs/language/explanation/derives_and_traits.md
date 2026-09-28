@@ -109,7 +109,7 @@ A newtype's own type parameters work differently. A newtype stores nothing but i
 
 ## Bounds you write and bounds the compiler infers
 
-A bound you write on a type's parameter, such as `model Stream[R with Clone]`, is part of that type's contract, so every generic declaration that uses the type with its own type parameter repeats it. A bound that only a body needs is different. Formatting a value in an f-string needs `Display`, comparing with `==` needs `PartialEq`, and returning a field of a generic model needs `Clone`. The compiler infers these from the body, so neither the declaration nor a generic caller in the same project spells them.
+A bound you write on a type's parameter, such as `model Stream[R with Clone]`, is part of that type's contract, so every generic declaration that uses the type with its own type parameter repeats it. A bound that only a body needs is different. Formatting a value with `{value:?}` needs `Debug`, comparing with `==` needs `PartialEq`, and returning a field of a generic model needs `Clone`. The compiler infers these from the body, so neither the declaration nor a generic caller in the same project spells them. Displaying a value with `{value}`, `str` or `print` is the exception: it needs a bound the declaration writes, such as `T with Display`, because not every type has a display text.
 
 Inference reaches through method calls. A method's requirements include those of every other method of the same model, because they share one implementation block:
 
@@ -118,7 +118,7 @@ model Holder[V]:
     value: V
 
     def show(self) -> str:
-        return f"{self.value}"
+        return f"{self.value:?}"
 
     def get(self) -> V:
         return self.value
@@ -127,7 +127,7 @@ def first[U](held: Holder[U]) -> U:
     return held.get()
 ```
 
-`first` writes no bound on `U`, yet it needs `Display` (from `show`) and `Clone` (from `get`), and the compiler supplies both.
+`first` writes no bound on `U`, yet it needs `Debug` (from `show`) and `Clone` (from `get`), and the compiler supplies both.
 
 Reading an element works the same way. A generic function or method that reads an element of a `list[T]` by index or of a `dict[K, T]` by key, or slices a `list[T]`, produces a value of its own, so the compiler gives the generated function the `Clone` capability on `T` that the copy needs. Most Incan types have it; a type that cannot be copied, such as a task handle (`JoinHandle`) or a `Generator`, does not.
 

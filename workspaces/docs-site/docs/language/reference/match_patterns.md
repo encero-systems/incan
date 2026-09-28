@@ -32,12 +32,13 @@ This page specifies the patterns of `match`, `if let`, and `while let`: each pat
 - A binding pattern binds its name to the matched value as an immutable binding.
 - A tuple pattern has one sub-pattern per element of the subject's tuple type, in order.
 
-Refused (`INCAN-T0001`): a binding pattern named `print` or `println`.
+Refused (`INCAN-T0001`): a binding pattern named `print` or `println`, and a tuple pattern with more or fewer sub-patterns than the subject's tuple type has elements.
 
 ```incan
 def first(pair: tuple[int, str]) -> str:
     match pair:
         (0, text) => return text        # accepted
+        (0, text, _) => return text     # refused: the tuple has two elements
         print => return "other"         # refused: print is a protected builtin name
         _ => return "none"
 ```
@@ -79,7 +80,7 @@ def ratio(value: float) -> str:
 - `Variant` is a variant of the subject's type or a variant alias. `Enum.Variant` qualifies it with the subject's enum, and a variant without a payload is written `Enum.Variant`.
 - Sub-patterns are positional, one per payload value. `Some(p)`, `Ok(p)` and `Err(p)` have one sub-pattern.
 
-Refused (`INCAN-T0001`): a variant the subject's enum does not declare, a qualifier other than the subject's enum, a named sub-pattern, more sub-patterns than the variant has payload values, and a `Some`, `Ok` or `Err` pattern without exactly one sub-pattern.
+Refused (`INCAN-T0001`): a variant the subject's enum does not declare, a qualifier other than the subject's enum, a named sub-pattern, more or fewer sub-patterns than the variant has payload values (`Enum.Variant` without parentheses has none), and a `Some`, `Ok` or `Err` pattern without exactly one sub-pattern.
 
 ```incan
 enum Shape:
@@ -93,6 +94,7 @@ def area(shape: Shape) -> float:
         Square(side) => return 0.0           # refused: Shape declares no Square
         Circle(radius=r) => return 0.0       # refused: named sub-pattern
         Circle(r, s) => return 0.0           # refused: Circle has one payload value
+        Shape.Circle => return 0.0           # refused: Circle has one payload value
 ```
 
 ## Record patterns

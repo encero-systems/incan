@@ -90,7 +90,15 @@ Refused (`INCAN-T0001`): an index or slice part that is not an `int`, and an ass
 | `to_string() -> str` | The receiver itself. |
 | `encode(encoding: str = "utf-8") -> bytes` | The text's UTF-8 bytes. `encoding` accepts `"utf-8"` and `"utf8"`, compared case-insensitively with `_` read as `-`. A literal label naming any other codec is refused (`INCAN-T0001`); a run-time label naming another codec raises `ValueError`. |
 
-Each method takes its arguments by position; `encoding` may also be passed by name: `s.encode(encoding="utf-8")`.
+Each method takes its arguments by position; `encoding` may also be passed by name: `s.encode(encoding="utf-8")`. Refused (`INCAN-T0001`): any other named argument, and an unpacked argument, on a `str` or `FrozenStr` receiver.
+
+```incan
+def main() -> None:
+    text = "a,b"
+    println(text.replace("a", "b"))              # accepted
+    data = text.encode(encoding="utf-8")         # accepted
+    println(text.replace(old="a", new="b"))      # refused: named argument (INCAN-T0001)
+```
 
 ## `str` operators
 
@@ -133,6 +141,19 @@ An f-string interpolates any expression between `{` and `}`; the value is format
 | --- | --- |
 | `{value}` | The value's display text (see [Display](#display)) |
 | `{value:?}` | `Debug`: the value's structure, for example `Point { x: 10, y: 20 }` |
+
+Refused in a `{value:?}` part (`INCAN-T0103`): a `Generator`, a function, and a value whose type, or a type inside it, implements no `Debug`, such as a `JoinHandle[T]`.
+
+```incan
+def numbers() -> Generator[int]:
+    yield 1
+
+def main() -> None:
+    items = [1, 2]
+    println(f"{items:?}")         # accepted
+    gen = numbers()
+    println(f"{gen:?}")           # refused: a generator has no Debug form (INCAN-T0103)
+```
 
 See [String representation](./derives/string_representation.md) for how a type provides `Display` and `Debug`.
 

@@ -100,6 +100,7 @@ mod rust_metadata_and_methods;
 mod rust_supertraits;
 mod rust_trait_import_candidates;
 mod rust_trait_qualified_calls;
+mod stated_contract_checks;
 mod statements_and_bindings;
 mod stdlib_default_const_paths;
 mod stdlib_surfaces;

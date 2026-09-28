@@ -2459,12 +2459,13 @@ impl CodegraphBuilder {
     fn finish(mut self) -> Vec<CodegraphRecord> {
         self.materialize_registry_reexport_projections();
         let degraded = self.records.iter().any(record_degraded) || !self.diagnostics.is_empty();
+        let languages = represented_languages(&self.records);
         let mut records = vec![CodegraphRecord::Header(CodegraphHeaderRecord {
             schema_version: CODEGRAPH_SCHEMA_VERSION,
             compiler_version: INCAN_VERSION.to_string(),
             mode: self.mode,
             root_path: self.root_path,
-            languages: vec![CodegraphLanguage::Incan],
+            languages,
             package: self.package,
             semantic_contexts: self.semantic_contexts,
             degraded,
@@ -2950,6 +2951,45 @@ fn c_binding_struct_field_record(field: &CBindingStructField) -> CodegraphCBindi
     CodegraphCBindingStructField {
         name: field.name.clone(),
         ty: c_binding_type_record(&field.ty),
+    }
+}
+
+/// Return the languages the export's facts are written in, `incan` first (RFC 106: the header lists the languages
+/// represented by the export, and `language` is an attribute of each fact).
+///
+/// Incan is always represented: every export carries the Incan file and module facts of its sources. Rust is
+/// represented when any fact is a Rust one, such as the import of a `rust::` item or a reference resolved into a Rust
+/// crate (#1561).
+fn represented_languages(records: &[CodegraphRecord]) -> Vec<CodegraphLanguage> {
+    let rust = records
+        .iter()
+        .any(|record| record_language(record) == Some(CodegraphLanguage::Rust));
+    let mut languages = vec![CodegraphLanguage::Incan];
+    if rust {
+        languages.push(CodegraphLanguage::Rust);
+    }
+    languages
+}
+
+/// Return the language one fact is written in, or `None` for the header, which describes the export.
+fn record_language(record: &CodegraphRecord) -> Option<CodegraphLanguage> {
+    match record {
+        CodegraphRecord::Header(_) => None,
+        CodegraphRecord::File(record) => Some(record.language),
+        CodegraphRecord::Namespace(record) => Some(record.language),
+        CodegraphRecord::Module(record) => Some(record.language),
+        CodegraphRecord::Declaration(record) => Some(record.language),
+        CodegraphRecord::Import(record) => Some(record.language),
+        CodegraphRecord::Export(record) => Some(record.language),
+        CodegraphRecord::Reference(record) => Some(record.language),
+        CodegraphRecord::Call(record) => Some(record.language),
+        CodegraphRecord::Containment(record) => Some(record.language),
+        CodegraphRecord::Diagnostic(record) => Some(record.language),
+        CodegraphRecord::Registry(record) => Some(record.language),
+        CodegraphRecord::CBinding(record) => Some(record.language),
+        CodegraphRecord::CBindingCall(record) => Some(record.language),
+        CodegraphRecord::CBindingFacade(record) => Some(record.language),
+        CodegraphRecord::Capability(record) => Some(record.language),
     }
 }
 
@@ -4385,6 +4425,45 @@ pub def pick(value: int, fallback: int) -> int:
             CodegraphLanguage::Incan,
             "an ordinary Incan import must not be relabeled by this change"
         );
+        Ok(())
+    }
+
+    /// #1561: the header lists every language the export's facts are written in, so an export with a Rust import
+    /// fact lists `rust` beside `incan`, and one without lists `incan` alone.
+    #[test]
+    fn header_languages_list_the_languages_of_the_facts_issue1561() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "from rust::std::option import Option as RustOption\nfrom std.collections import Deque\n";
+        let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+        let module = ParsedModule {
+            name: "probe".to_string(),
+            path_segments: vec!["probe".to_string()],
+            file_path: PathBuf::from("probe.incn"),
+            source: source.to_string(),
+            ast: program.clone(),
+        };
+        let mut records = Vec::new();
+        for declaration in &program.declarations {
+            let Declaration::Import(import) = &declaration.node else {
+                continue;
+            };
+            records.push(CodegraphRecord::Import(import_record(
+                &module,
+                "m",
+                "i",
+                import,
+                declaration.span,
+                Vec::new(),
+                CodegraphProvenance::Syntax,
+                false,
+            )));
+        }
+        assert_eq!(
+            represented_languages(&records),
+            vec![CodegraphLanguage::Incan, CodegraphLanguage::Rust]
+        );
+        records.retain(|record| record_language(record) == Some(CodegraphLanguage::Incan));
+        assert_eq!(represented_languages(&records), vec![CodegraphLanguage::Incan]);
         Ok(())
     }
 

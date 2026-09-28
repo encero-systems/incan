@@ -111,6 +111,22 @@ impl TypeChecker {
             }
             return ResolvedType::Unknown;
         }
+        if let SymbolKind::Variable(info) = &sym.kind
+            && matches!(&info.ty, ResolvedType::Named(identity) if identity == incan_lang::lang::c_abi::SCOPED_C_STRING_VIEW_TYPE_ID)
+        {
+            // A scoped C text view is read only as the receiver of `copy_utf8`, in the closure depth it was bound at
+            // (RFC 116); any other read would let it outlive the memory it points into.
+            let receiver = self.scoped_c_string_view_receivers.contains(&(span.start, span.end));
+            let bound_depth = self
+                .scoped_c_string_view_bindings
+                .get(&(sym.span.start, sym.span.end))
+                .copied()
+                .unwrap_or(0);
+            if !receiver || self.closure_depth > bound_depth {
+                self.errors.push(errors::scoped_c_string_view_escapes(span));
+                return ResolvedType::Unknown;
+            }
+        }
         let source_target = self.source_target_for_symbol(name, &sym.kind);
 
         let (kind, ty) = match &sym.kind {

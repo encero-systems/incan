@@ -1,6 +1,6 @@
 # std.traits.* (reference)
 
-`std.traits` declares the standard trait contracts for conversions, operators, errors, indexing and callable values. Its modules are `std.traits.convert`, `std.traits.ops`, `std.traits.error`, `std.traits.indexing` and `std.traits.callable`; the root module `std.traits` re-exports the common traits.
+`std.traits` declares the standard trait contracts for conversions, operators, errors, indexing and callable values. Its modules are `std.traits.convert`, `std.traits.ops`, `std.traits.error`, `std.traits.indexing` and `std.traits.callable`; the root module `std.traits` re-exports the common traits, and `std.traits.prelude` names the same root module.
 
 !!! info "Related pages"
     - The protocol-by-protocol reference: [Stdlib traits overview].
@@ -10,10 +10,10 @@
 
 ## Importing std.traits
 
-A trait is imported by name from the module that declares it, or from `std.traits` when `std.traits` re-exports it.
+A trait is imported by name from the module that declares it, or from `std.traits` (or `std.traits.prelude`, the same module) when `std.traits` re-exports it.
 
 - Refused (`INCAN-P0001`): a wildcard import.
-- Refused (`INCAN-I0001`): a name that the named module neither declares nor re-exports, and a `std.traits.prelude` path, which names no module.
+- Refused (`INCAN-I0001`): a name that the named module neither declares nor re-exports.
 
 ```incan
 from std.traits.convert import From, Into, TryFrom, TryInto   # accepted
@@ -23,7 +23,7 @@ from std.traits.indexing import Index, IndexMut, Sliceable    # accepted
 from std.traits.callable import Callable0, Callable1          # accepted
 from std.traits import Sum, Callable2                         # accepted
 from std.traits import GetItem                                # refused: std.traits does not re-export GetItem (INCAN-I0001)
-from std.traits.prelude import Error                          # refused: std.traits.prelude is not a module (INCAN-I0001)
+from std.traits.prelude import Error, Into                    # accepted
 from std.traits import *                                      # refused: wildcard import (INCAN-P0001)
 ```
 

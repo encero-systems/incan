@@ -48,7 +48,7 @@ A source span has `file`, an inclusive `start` and an exclusive `end` byte offse
 | `compiler_version` | The producing compiler's version. |
 | `mode` | `strict` or `allow_errors`. |
 | `root_path` | The requested path. |
-| `languages` | `["incan"]`. |
+| `languages` | The languages of the export's records: `["incan"]`, or `["incan", "rust"]` when a record's `language` is `"rust"`. |
 | `package` | `name`, `version` and `root_path` from the nearest `loaf.toml`, each `null` when absent; `null` without a manifest. |
 | `semantic_contexts` | One entry per project in the export; omitted when empty. |
 | `degraded` | See [Modes and degraded state](#modes-and-degraded-state). |

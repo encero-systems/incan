@@ -6001,9 +6001,11 @@ impl TypeChecker {
             );
         }
 
+        // Every `str` method other than `encode` (checked above) takes its arguments by position (#1561).
         if matches!(base_ty, ResolvedType::Str)
             && let Some((id, ret)) = runtime_string_method_identity_and_return(method)
         {
+            self.refuse_non_positional_builtin_args(&format!("str.{}", string_methods::as_str(id)), args);
             if type_args.is_empty()
                 && HelperOp::for_selected_string_method(id).is_some()
                 && self.validate_selected_string_helper_call(id, args, &arg_types, span)
@@ -6016,6 +6018,7 @@ impl TypeChecker {
         if is_frozen_str(&base_ty)
             && let Some(ret) = string_method_return(method, true)
         {
+            self.refuse_non_positional_builtin_args(&format!("FrozenStr.{method}"), args);
             return ret;
         }
         if is_frozen_bytes(&base_ty)

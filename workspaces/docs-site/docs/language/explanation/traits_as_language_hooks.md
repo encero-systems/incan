@@ -105,6 +105,8 @@ It does *not* necessarily mean “multiple functions with the same name and diff
 
 In Incan, most extensibility is intended to flow through traits and explicit, checkable contracts.
 
+Adopting one trait several times with different type arguments is how a type offers more than one statically checked shape of the same syntax. A table that adopts `Index[str, str]` and `Index[int, str]` answers `table["name"]` and `table[0]`, and the key's type picks the `__getitem__` at check time, with no dispatch at run time. That is not general method overloading: two same-name hooks from unrelated trait families are still refused, because nothing would say which one a call means.
+
 ## A concrete mental model
 
 You can think of hook traits as giving user-defined types the same “surface ergonomics” that built-in types have.

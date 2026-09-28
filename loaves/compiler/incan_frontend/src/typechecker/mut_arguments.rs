@@ -808,8 +808,10 @@ impl TypeChecker {
         }
     }
 
-    /// Enter a closure checked inside the current body; a caller-visible parameter it changes is refused as held.
+    /// Enter a closure checked inside the current body; a caller-visible parameter it changes is refused as held, and a
+    /// scoped C text view it reads is refused as captured.
     pub(in crate::typechecker) fn enter_mut_param_closure(&mut self) {
+        self.closure_depth += 1;
         if let Some(body) = &mut self.mut_params.current {
             body.closure_depth += 1;
         }
@@ -817,6 +819,7 @@ impl TypeChecker {
 
     /// Leave a closure entered with [`Self::enter_mut_param_closure`].
     pub(in crate::typechecker) fn exit_mut_param_closure(&mut self) {
+        self.closure_depth = self.closure_depth.saturating_sub(1);
         if let Some(body) = &mut self.mut_params.current {
             body.closure_depth = body.closure_depth.saturating_sub(1);
         }

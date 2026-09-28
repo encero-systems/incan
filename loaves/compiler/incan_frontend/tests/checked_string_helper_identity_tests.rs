@@ -234,42 +234,44 @@ fn selected_string_helper_identity_gaps_refuse_at_the_original_call_span_issue12
     Ok(())
 }
 
-/// Keep parser-admitted call forms outside the selected helper contract until their binding semantics are explicit.
+/// A `str` method takes its arguments by position (#1561): the check refuses named and unpacked arguments before any
+/// helper identity is selected. A parser-admitted form the check accepts but the selected-helper contract does not
+/// cover, explicit type arguments, keeps no identity and is refused by Body IR at the call's own span.
 #[test]
 fn selected_string_helper_no_identity_call_forms_refuse_at_the_original_span_issue1256()
 -> Result<(), Box<dyn std::error::Error>> {
-    let cases = [
+    let refused_by_the_check = [
         (
             "named arguments",
             "def transform(text: str) -> str:\n  return text.replace(old=\"a\", new=\"b\")\n",
-            "text.replace(old=\"a\", new=\"b\")",
+            "Unexpected keyword argument 'old'",
         ),
         (
             "positional unpack",
             "def transform(text: str, parts: list[str]) -> str:\n  return text.replace(*parts)\n",
-            "text.replace(*parts)",
+            "Cannot use `*` unpacking",
         ),
         (
             "keyword unpack",
             "def transform(text: str) -> str:\n  return text.replace(**{\"old\": \"a\", \"new\": \"b\"})\n",
-            "text.replace(**{\"old\": \"a\", \"new\": \"b\"})",
-        ),
-        (
-            "explicit type arguments",
-            "def transform(text: str) -> str:\n  return text.upper[int]()\n",
-            "text.upper[int]()",
+            "Cannot use `**` unpacking",
         ),
     ];
-
-    for (case_name, source, call) in cases {
-        let (program, checker, module_path) = checked_source(source)?;
-        let span = call_span(source, call)?;
-        if checker.type_info().resolved_string_helper_call(span).is_some() {
-            return Err(format!("{case_name}: no-identity call form must not retain a selected helper").into());
+    for (case_name, source, expected) in refused_by_the_check {
+        let (_, errors) = checked_source_with_error_messages(source)?;
+        if !errors.iter().any(|message| message.contains(expected)) {
+            return Err(format!("{case_name}: the check must refuse the call form, got {errors:?}").into());
         }
-        let module = build_body_ir_module_v0(&program, &module_path, checker.type_info());
-        assert_refusal_at_call_span(&module, "transform", span)?;
     }
+
+    let source = "def transform(text: str) -> str:\n  return text.upper[int]()\n";
+    let (program, checker, module_path) = checked_source(source)?;
+    let span = call_span(source, "text.upper[int]()")?;
+    if checker.type_info().resolved_string_helper_call(span).is_some() {
+        return Err("explicit type arguments must not retain a selected helper".into());
+    }
+    let module = build_body_ir_module_v0(&program, &module_path, checker.type_info());
+    assert_refusal_at_call_span(&module, "transform", span)?;
     Ok(())
 }
 

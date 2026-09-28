@@ -1,6 +1,6 @@
 # `std.async`
 
-`std.async` provides task spawning, timeouts, races, channels, and synchronization primitives in the modules `std.async.time`, `std.async.task`, `std.async.race`, `std.async.channel` and `std.async.sync`. The root module `std.async` re-exports the common surface.
+`std.async` provides task spawning, timeouts, races, channels, and synchronization primitives in the modules `std.async.time`, `std.async.task`, `std.async.race`, `std.async.channel` and `std.async.sync`. The root module `std.async` re-exports the common surface; `std.async.prelude` names the same module.
 
 A function of this module that takes a task requires the task's result to have the type its signature declares and to satisfy the `Send` and `Static` bounds shown there.
 
@@ -8,13 +8,14 @@ A function of this module that takes a task requires the task's result to have t
 
 - `async` and `await` are keywords after an import whose path begins with `std.async`, such as `import std.async` or `from std.async.time import sleep`; see [Soft keywords](../imports_and_modules.md#soft-keywords).
 - `from std.async import NAME` imports a name that the root module re-exports; the names are listed under [`std.async` re-exports](#stdasync-re-exports).
-- Refused (`INCAN-I0001`): a name that the named module neither declares nor re-exports, and a `std.async.prelude` path, which names no module.
+- `std.async.prelude` is the root module under another path: `from std.async.prelude import NAME` imports the same names as `from std.async import NAME`, and `import std.async.prelude` binds `prelude` to the root module.
+- Refused (`INCAN-I0001`): a name that the named module neither declares nor re-exports.
 
 ```incan
 from std.async import spawn, sleep, JoinHandle         # accepted
+from std.async.prelude import spawn, Mutex             # accepted
 from std.async.channel import SenderPermit             # accepted
 from std.async import SenderPermit                     # refused: std.async does not re-export SenderPermit (INCAN-I0001)
-from std.async.prelude import spawn                    # refused: std.async.prelude is not a module (INCAN-I0001)
 ```
 
 ## Task arguments
@@ -133,15 +134,17 @@ from std.async.task import JoinHandle, TaskJoinError, spawn, spawn_blocking, yie
 
 #### Loops over task handles
 
-A `for` loop over a list binding takes the items out of the list, leaving it empty, when all of these hold:
+A `for` loop hands on its handles when each item is a `JoinHandle[T]`, or a tuple or collection that contains one, and the loop body uses by value a loop binding that holds a handle: it awaits it, passes it as an argument to a function, method or constructor other than a builtin function, assigns it to another name, returns or yields it, breaks with it, puts it in a new tuple, list or set or as a value in a new dict, or iterates it (a list of handles) in a nested `for` loop that hands on its items.
 
-- the list is a local binding, the binding of an enclosing `for` loop that itself takes its list's items, or a parameter not marked `mut`;
-- each item is a `JoinHandle[T]`, or a tuple or collection that contains one;
-- the loop body uses by value a loop binding that holds a handle: it awaits it, passes it as an argument to a function, method or constructor other than a builtin function, assigns it to another name, returns or yields it, breaks with it, puts it in a new tuple, list or set or as a value in a new dict, or iterates it (a list of handles) in a nested `for` loop that takes its items.
+What such a loop iterates decides how it receives the handles:
 
-A `for` loop over a list literal, a list comprehension or a call result receives each handle by value in the same way. A `for` loop over a list element, a field, a `list`, `dict` or `set` method such as `values()`, `enumerate(...)`, `zip(...)`, a `mut` parameter, or the variable of a `for` loop that reads its items in place is refused (`INCAN-T0119`), since none of those give up ownership of the handle.
+| Iterable | The loop |
+| --- | --- |
+| A local list binding, a parameter not marked `mut`, or the variable of an enclosing loop that owns its items (that loop takes its items or receives them by value) | Takes the handles out of the list, leaving it empty. |
+| A list literal or comprehension, a `Generator`, a value iterated through an iteration protocol, or the result of an `await`, of a call other than `enumerate(...)` and `zip(...)`, or of a method of a type other than a builtin collection | Receives each handle by value. |
+| Anything else, such as a list element, a field, a `list`, `dict` or `set` method like `values()`, `enumerate(...)`, `zip(...)`, a `mut` parameter, the variable of a loop that reads its items in place, or a static | Refused (`INCAN-T0119`). |
 
-Refused (`INCAN-T0119`):
+After a loop that takes the handles out of a list binding, these are refused (`INCAN-T0119`):
 
 - a read of the list inside the loop body;
 - a read of the list after the loop, until an assignment gives the name a new list on every path after the loop, with no branch, `break` or `continue` able to skip it;
@@ -182,6 +185,28 @@ async def main() -> None:
             Err(_) => println("join failed")
     handles = [spawn(work())]
     println(len(handles))            # accepted
+```
+
+```incan
+import std.async
+from std.async.task import JoinHandle, spawn
+
+async def work() -> int:
+    return 1
+
+def launch() -> list[JoinHandle[int]]:
+    return [spawn(work())]
+
+async def main() -> None:
+    for handle in launch():                     # accepted: a call result
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
+    table = {"a": spawn(work())}
+    for handle in table.values():               # refused: values() reads the dict in place (INCAN-T0119)
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
 ```
 
 ### `TaskJoinError`

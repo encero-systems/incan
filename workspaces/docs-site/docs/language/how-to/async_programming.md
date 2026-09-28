@@ -41,7 +41,7 @@ def main() -> None:
     println("Starting...")
 ```
 
-Import each name from the `std.async` module that declares it, such as `std.async.time` or `std.async.task`, or import the common surface from `std.async.prelude`.
+Import each name from the `std.async` module that declares it, such as `std.async.time` or `std.async.task`, for narrow dependencies, or import the common surface from `std.async` itself; `std.async.prelude` is another path to that same root module.
 
 ## Core Concepts
 

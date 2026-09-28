@@ -273,8 +273,8 @@ const VALUE_WITHOUT_PRINTED_FORM: DiagnosticCatalogEntry = DiagnosticCatalogEntr
     title: "Value with no printed form",
     severity: "error",
     phase: "typecheck",
-    summary: "A displayed value (a `print` or `println` argument, the argument of `str(...)`, an f-string `{value}` part, or a type argument for a `Display` bound) has no printed form: a union value, a generator, a function, `bytes`, or a model, class, enum or newtype that provides no `Display`.",
-    explanation: "`print`, `println`, `str`, an f-string `{value}` and a `Display` bound share one display rule. Scalars and `str` display their own text; a tuple, list, dict, set, `Option` or `Result` displays its structure (`(10, 20)`, `[1, 2, 3]`, `Some(1)`, `Err(\"bad\")`) in the four value positions. A model, class, enum or newtype displays through `Display`, which it provides by a `__str__(self) -> str` method, by each variant's value when it is an enum that declares values, or by `message()` when it adopts `Error` and has no `__str__`; `@derive(Display)` provides nothing. Every other value has no printed form, and displaying one in any position is refused: a union value until it is narrowed to one member, a generator until its items are collected, a function until it is called, `bytes` until they are decoded, and a model, class, enum or newtype until it provides `Display`. `{value:?}` renders a value's structure through `Debug` instead.",
+    summary: "A displayed value (a `print` or `println` argument, the argument of `str(...)`, an f-string `{value}` part, or a type argument for a `Display` bound) has no printed form: a union value, a generator, a function, `bytes`, or a model, class, enum or newtype that provides no `Display`. Or an f-string `{value:?}` part renders a value with no `Debug` form: a generator, a function, or a value whose type implements no `Debug`.",
+    explanation: "`print`, `println`, `str`, an f-string `{value}` and a `Display` bound share one display rule. Scalars and `str` display their own text; a tuple, list, dict, set, `Option` or `Result` displays its structure (`(10, 20)`, `[1, 2, 3]`, `Some(1)`, `Err(\"bad\")`) in the four value positions. A model, class, enum or newtype displays through `Display`, which it provides by a `__str__(self) -> str` method, by each variant's value when it is an enum that declares values, or by `message()` when it adopts `Error` and has no `__str__`; `@derive(Display)` provides nothing. Every other value has no printed form, and displaying one in any position is refused: a union value until it is narrowed to one member, a generator until its items are collected, a function until it is called, `bytes` until they are decoded, and a model, class, enum or newtype until it provides `Display`. `{value:?}` renders a value's structure through `Debug` instead; a generator, a function, and a value whose type, or a type inside it, implements no `Debug` (such as a `JoinHandle[T]`) have no such structure, and a `{value:?}` part over one is refused too.",
     examples: &[
         "def show(value: int | str) -> None:\n    println(value)",
         "model Point:\n    x: int\n    y: int\n\ndef main() -> None:\n    println(Point(x=1, y=2))",
@@ -466,8 +466,8 @@ const ROUTE_PAYLOAD_WITHOUT_JSON_FORM: DiagnosticCatalogEntry = DiagnosticCatalo
     title: "Route payload type has no JSON form",
     severity: "error",
     phase: "typecheck",
-    summary: "A `@route` handler's `Json[T]`, `Query[T]` or `Path[T]` payload type does not derive `json`.",
-    explanation: "The route wrappers convert their payload at the handler boundary through serde: a `Json[T]` parameter deserializes the request body as JSON, a `Query[T]` parameter the URL-encoded query string, and a `Path[T]` parameter the path segments; a `Json[T]` return serializes `T` as the JSON response body. A model or class gets that serde support from `@derive(json)` (or by adopting the needed `std.serde.json` trait), and so does every model or class the payload is built from, such as `Search` in `Json[list[Search]]`. A payload declared without it checked before but could not be built: the route registration needed the conversion and had none. The check refuses only a model or class whose declaration certainly has no JSON form; any other payload is left to the build.",
+    summary: "A `@route` handler's `Json[T]`, `Query[T]` or `Path[T]` payload type does not derive `json`, or holds `decimal` or a frozen type, which have no JSON form.",
+    explanation: "The route wrappers convert their payload at the handler boundary through serde: a `Json[T]` parameter deserializes the request body as JSON, a `Query[T]` parameter the URL-encoded query string, and a `Path[T]` parameter the path segments; a `Json[T]` return serializes `T` as the JSON response body. A model or class gets that serde support from `@derive(json)` (or by adopting the needed `std.serde.json` trait), and so does every model or class the payload is built from, such as `Search` in `Json[list[Search]]`. A payload declared without it checked before but could not be built: the route registration needed the conversion and had none. `decimal` and the frozen types (`FrozenStr`, `FrozenBytes`, `FrozenList`, `FrozenSet`, `FrozenDict`) have no JSON form at all, so a payload that holds one is refused too. The check refuses only a model or class whose declaration certainly has no JSON form, and those builtin types; any other payload is left to the build.",
     examples: &[
         "from std.web import route, Json, Query\nimport std.async\n\nmodel Search:\n    q: str\n\n@route(\"/search\")\nasync def search(query: Query[Search]) -> Json[Search]:\n    return Json(query.value)",
     ],
@@ -778,12 +778,23 @@ pub fn code_for_error(error: &CompileError, phase: DiagnosticPhase) -> &'static 
 }
 
 /// Classify diagnostics that are emitted during typechecking but originate from import declaration spans.
+///
+/// An import the source wrote owns its span. A vocabulary declaration such as `binding` lowers to several declarations
+/// that all carry the block's span, an import of the vocabulary's support names among them; that import does not own
+/// the span, so a refusal inside the block keeps the typecheck phase (#1561). Such an import is recognized by a
+/// declaration of another kind with the same span, which a written import never has.
 pub fn phase_for_typecheck_span(program: &Program, span: Span) -> DiagnosticPhase {
-    if program
-        .declarations
-        .iter()
-        .any(|declaration| matches!(declaration.node, Declaration::Import(_)) && spans_overlap(span, declaration.span))
-    {
+    let lowered_with_another_declaration = |import_span: Span| {
+        program
+            .declarations
+            .iter()
+            .any(|other| !matches!(other.node, Declaration::Import(_)) && other.span == import_span)
+    };
+    if program.declarations.iter().any(|declaration| {
+        matches!(declaration.node, Declaration::Import(_))
+            && spans_overlap(span, declaration.span)
+            && !lowered_with_another_declaration(declaration.span)
+    }) {
         DiagnosticPhase::Import
     } else {
         DiagnosticPhase::Typecheck
@@ -918,6 +929,60 @@ mod tests {
         );
     }
 
+    /// #1561: a vocabulary declaration such as `binding` lowers to an import and a class that share the block's span;
+    /// a refusal inside the block is a typecheck refusal (`INCAN-T0001`), not an import refusal (`INCAN-I0001`).
+    #[test]
+    fn refusal_inside_a_lowered_vocabulary_block_keeps_the_typecheck_phase() {
+        let block = Span::new(40, 120);
+        let program = Program {
+            declarations: vec![
+                Spanned::new(
+                    Declaration::Import(ImportDecl {
+                        visibility: Visibility::Private,
+                        kind: ImportKind::From {
+                            module: crate::ast::ImportPath::simple(vec!["std".to_string(), "interop".to_string()]),
+                            items: Vec::new(),
+                        },
+                        alias: None,
+                    }),
+                    Span::new(0, 30),
+                ),
+                Spanned::new(
+                    Declaration::Import(ImportDecl {
+                        visibility: Visibility::Private,
+                        kind: ImportKind::From {
+                            module: crate::ast::ImportPath::simple(vec!["std".to_string(), "interop".to_string()]),
+                            items: Vec::new(),
+                        },
+                        alias: None,
+                    }),
+                    block,
+                ),
+                Spanned::new(Declaration::Docstring("lowered class".to_string()), block),
+            ],
+            ..Program::default()
+        };
+        let refusal = errors::python_import_unsupported("numpy", Span::new(60, 70));
+
+        assert_eq!(
+            phase_for_typecheck_span(&program, Span::new(60, 70)),
+            DiagnosticPhase::Typecheck
+        );
+        assert_eq!(
+            code_for_error(
+                &CompileError::type_error("empty header".to_string(), Span::new(60, 70)),
+                phase_for_typecheck_span(&program, Span::new(60, 70))
+            ),
+            "INCAN-T0001"
+        );
+        assert_eq!(
+            phase_for_typecheck_span(&program, Span::new(4, 8)),
+            DiagnosticPhase::Import,
+            "a written import keeps its span"
+        );
+        assert_eq!(code_for_error(&refusal, DiagnosticPhase::Import), "INCAN-I0001");
+    }
+
     #[test]
     fn stable_diagnostic_preserves_structured_facts_and_related_spans() {
         let error = CompileError::type_error("type mismatch".to_string(), Span::new(8, 13))
@@ -1025,7 +1090,15 @@ mod tests {
             code_for_error(&self_mutation, DiagnosticPhase::Typecheck),
             "INCAN-T0102"
         );
-        for display in [&print_union, &str_of_model, &interpolated_union, &bound_enum] {
+        let debug_generator =
+            errors::value_has_no_debug_form(Some("numbers"), errors::UndebuggableValue::Generator, Span::default());
+        for display in [
+            &print_union,
+            &str_of_model,
+            &interpolated_union,
+            &bound_enum,
+            &debug_generator,
+        ] {
             assert_eq!(code_for_error(display, DiagnosticPhase::Typecheck), "INCAN-T0103");
         }
         assert_eq!(code_for_error(&bare_tuple, DiagnosticPhase::Typecheck), "INCAN-T0104");
@@ -1241,7 +1314,8 @@ mod tests {
             Span::default(),
         );
         let operator = errors::operator_has_no_type_parameter_bound("%", "T", "__mod__", Span::default());
-        let payload = errors::route_payload_without_json_form("search", "Query[Search]", "Search", Span::default());
+        let payload =
+            errors::route_payload_without_json_form("search", "Query[Search]", "Search", false, Span::default());
 
         assert_eq!(code_for_error(&return_type, DiagnosticPhase::Typecheck), "INCAN-T0107");
         assert_eq!(code_for_error(&unbound, DiagnosticPhase::Typecheck), "INCAN-T0108");

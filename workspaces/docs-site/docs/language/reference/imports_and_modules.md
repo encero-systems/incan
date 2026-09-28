@@ -1,6 +1,6 @@
 # Imports and modules (reference)
 
-This page specifies import forms, module paths and files, what an import binds, the reserved name prefix, exports and re-exports, package namespaces, the `std` root, soft keywords, Rust crate imports, and `import this`. Refusals of an import are reported with `INCAN-I0001`, syntax errors with `INCAN-P0001`, and refusals made when a project builds or locks with `INCAN-C0001`, unless a rule below names another code.
+This page specifies import forms, module paths and files, what an import binds, the reserved name prefix, exports and re-exports, package namespaces, the `std` root, soft keywords, Rust crate imports, `import python`, and `import this`. Refusals of an import are reported with `INCAN-I0001`, syntax errors with `INCAN-P0001`, and refusals made when a project builds or locks with `INCAN-C0001`, unless a rule below names another code.
 
 ## Import forms
 
@@ -148,7 +148,7 @@ A module exports:
 - each module-level declaration marked `pub`, and each variant and variant alias of a `pub` enum;
 - each name that a `from M import ...` of the module binds, with or without `pub`, and each name a `from rust::... import ...` binds.
 
-`from M import X` binds `X` only when `M` exports it. Refused (`INCAN-I0001`): a name `M` does not export, such as a declaration without `pub`, or a module that `M` binds with `import`.
+`from M import X`, and `import M::X` where `M::X` is not a module, bind `X` only when `M` exports it. Refused (`INCAN-I0001`): a name `M` does not export, such as a declaration without `pub`, or a module that `M` binds with `import`.
 
 ```incan
 # a.incn
@@ -167,7 +167,9 @@ from a import f
 ```incan
 # main.incn
 from b import f          # accepted
+import a::f              # accepted
 from a import hidden     # refused: hidden is not pub (INCAN-I0001)
+import a::hidden         # refused: hidden is not pub (INCAN-I0001)
 ```
 
 ## Re-exports
@@ -224,6 +226,7 @@ from pub::codecs.encoding import encode                        # refused: base64
 
 - `from std import name` binds the standard-library module `std.name`. A name that is not a standard-library module is refused.
 - `import std.fs` and every other bare `std...` path name the Incan standard library; the Rust standard library is `rust::std`.
+- `std.NAMESPACE.prelude` names the module `std.NAMESPACE`: `from std.async.prelude import spawn` imports what `from std.async import spawn` does. `std.prelude` is a module of its own.
 - An unknown `std.*` module is refused.
 
 ```incan
@@ -264,6 +267,14 @@ These refusals are reported when the project builds or locks (`INCAN-C0001`). `r
 import rust::my_crate @ "1.0"
 import rust::tokio @ "1.0" with ["full"]
 from rust::sqlx @ "0.7" with ["runtime-tokio", "postgres"] import Pool
+```
+
+## `import python`
+
+`import python "PACKAGE" [as NAME]` parses and is always refused (`INCAN-I0001`).
+
+```incan
+import python "requests" as pyreq    # refused (INCAN-I0001)
 ```
 
 ## `import this`

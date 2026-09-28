@@ -740,12 +740,8 @@ impl TypeChecker {
                     .filter(|a| matches!(a, PatternArg::Positional(_)))
                     .count();
 
-                let incan_resolution = self.incan_enum_constructor_payload_types(
-                    expected_ty,
-                    variant_name,
-                    positional_count,
-                    enum_qualifier_opt,
-                );
+                let incan_resolution =
+                    self.incan_enum_constructor_payload_types(expected_ty, variant_name, enum_qualifier_opt);
                 let rust_resolution =
                     self.rust_enum_constructor_payload_types(expected_ty, name.node.as_str(), positional_count);
                 let field_types: Option<Vec<ResolvedType>> =
@@ -759,6 +755,18 @@ impl TypeChecker {
                         if incan_resolution.is_some() {
                             self.record_incan_enum_pattern_identity(expected_ty, variant_name, name.span);
                             self.record_incan_enum_pattern_path(expected_ty, variant_name, name.span);
+                            // One sub-pattern per payload value (#1561); a named sub-pattern is refused on its own.
+                            let all_positional =
+                                sub_patterns.iter().all(|arg| matches!(arg, PatternArg::Positional(_)));
+                            if all_positional && positional_count != fields.len() {
+                                self.errors.push(errors::pattern_arity_mismatch(
+                                    &format!("The pattern '{}'", name.node),
+                                    "payload value",
+                                    fields.len(),
+                                    positional_count,
+                                    pattern.span,
+                                ));
+                            }
                         }
                         self.check_constructor_subpatterns_enum_like(
                             name.node.as_str(),
@@ -797,6 +805,16 @@ impl TypeChecker {
                 // second unvisited, so their names were never bound (#1714).
                 let (subject_ty, borrow) = borrowed_pattern_subject(expected_ty);
                 if let TupleShape::Tuple(elem_types) = classify_tuple_shape(subject_ty) {
+                    // One sub-pattern per element (#1561).
+                    if sub_patterns.len() != elem_types.len() {
+                        self.errors.push(errors::pattern_arity_mismatch(
+                            "A tuple pattern",
+                            "element",
+                            elem_types.len(),
+                            sub_patterns.len(),
+                            pattern.span,
+                        ));
+                    }
                     for (pat, elem_ty) in sub_patterns.iter().zip(elem_types.iter()) {
                         self.check_pattern(pat, &borrowed_pattern_payload(elem_ty.clone(), borrow));
                     }
@@ -1059,12 +1077,11 @@ impl TypeChecker {
     ///
     /// Qualified patterns such as `Color.Red` should not depend on a module-level `Red` symbol being importable or
     /// winning same-scope shadowing. The scrutinee already tells us which enum is being matched, so resolve the
-    /// variant from that enum's table.
+    /// variant from that enum's table. The caller compares the pattern's sub-pattern count with the payload count.
     fn incan_enum_constructor_payload_types(
         &self,
         expected_ty: &ResolvedType,
         variant_name: &str,
-        positional_count: usize,
         enum_qualifier_opt: Option<&str>,
     ) -> Option<Vec<ResolvedType>> {
         let enum_name = match expected_ty {
@@ -1090,20 +1107,18 @@ impl TypeChecker {
             ResolvedType::Generic(_, type_args) => type_param_subst_map(&enum_info.type_params, type_args),
             _ => HashMap::new(),
         };
-        let fields = enum_info
-            .variant_fields
-            .get(canonical_variant)
-            .map(|fields| {
-                fields
-                    .iter()
-                    .map(|field| substitute_resolved_type(field, &substitutions))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        if positional_count > fields.len() {
-            return None;
-        }
-        Some(fields)
+        Some(
+            enum_info
+                .variant_fields
+                .get(canonical_variant)
+                .map(|fields| {
+                    fields
+                        .iter()
+                        .map(|field| substitute_resolved_type(field, &substitutions))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+        )
     }
 
     /// Tuple-variant payload types for `match` patterns on Rust-backed enum surfaces.

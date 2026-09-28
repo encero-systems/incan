@@ -3537,6 +3537,23 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/rust_2024_keyword_identifiers.rs": {
+      "disposition": "retire",
+      "notes": "generated-Rust identifiers spelled like a Rust 2024 reserved word (`gen`) are raw identifiers; each program is compiled by rustc (#1561).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "gen_named_function_parameter_and_field_build_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/gen_named_function_field_and_module",
+          "notes": "Compiles a function, parameter, keyword argument, field and closure-captured local named `gen` with rustc; the named fixture runs each of them."
+        },
+        "gen_named_module_builds_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/gen_named_function_field_and_module",
+          "notes": "Compiles a module named `gen` reached by `from gen import ...` and `import gen`; the named fixture imports and calls it both ways."
+        }
+      }
+    },
     "loaves/compiler/incan_emit/src/tests/static_reads_and_frozen_strings.rs": {
       "disposition": "retire",
       "notes": "generated Rust for static collection reads and const string destinations, lowering through emission end to end.",
@@ -4934,11 +4951,11 @@
         },
         "test_std_traits_callable_compiled_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_traits_surface.incn",
-          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` is not importable by a program: `from std.traits.prelude import Error` is refused with `Unknown stdlib module std.traits.prelude` (the hint's own known-modules list names it) and the `from std.traits.prelude import *` form documented in `workspaces/docs-site/docs/language/reference/stdlib/traits.md` is a parse error, so the prelude's compilation is covered by the traits it re-exports and the docs claim is wrong (#1728). The stdlib module snapshots die with #654."
+          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` names the `std.traits` module, whose compilation is covered by the traits it re-exports; importing through the prelude path is carried by `cli_modules_and_declarations/namespace_prelude_imports.incn` (#1561). The stdlib module snapshots die with #654."
         },
         "test_std_traits_convert_compiled_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_traits_surface.incn",
-          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` is not importable by a program: `from std.traits.prelude import Error` is refused with `Unknown stdlib module std.traits.prelude` (the hint's own known-modules list names it) and the `from std.traits.prelude import *` form documented in `workspaces/docs-site/docs/language/reference/stdlib/traits.md` is a parse error, so the prelude's compilation is covered by the traits it re-exports and the docs claim is wrong (#1728). The stdlib module snapshots die with #654."
+          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` names the `std.traits` module, whose compilation is covered by the traits it re-exports; importing through the prelude path is carried by `cli_modules_and_declarations/namespace_prelude_imports.incn` (#1561). The stdlib module snapshots die with #654."
         },
         "test_std_traits_convert_usage_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/std_traits_convert_usage.incn",
@@ -4946,19 +4963,19 @@
         },
         "test_std_traits_error_compiled_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_traits_surface.incn",
-          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` is not importable by a program: `from std.traits.prelude import Error` is refused with `Unknown stdlib module std.traits.prelude` (the hint's own known-modules list names it) and the `from std.traits.prelude import *` form documented in `workspaces/docs-site/docs/language/reference/stdlib/traits.md` is a parse error, so the prelude's compilation is covered by the traits it re-exports and the docs claim is wrong (#1728). The stdlib module snapshots die with #654."
+          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` names the `std.traits` module, whose compilation is covered by the traits it re-exports; importing through the prelude path is carried by `cli_modules_and_declarations/namespace_prelude_imports.incn` (#1561). The stdlib module snapshots die with #654."
         },
         "test_std_traits_indexing_compiled_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_traits_surface.incn",
-          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` is not importable by a program: `from std.traits.prelude import Error` is refused with `Unknown stdlib module std.traits.prelude` (the hint's own known-modules list names it) and the `from std.traits.prelude import *` form documented in `workspaces/docs-site/docs/language/reference/stdlib/traits.md` is a parse error, so the prelude's compilation is covered by the traits it re-exports and the docs claim is wrong (#1728). The stdlib module snapshots die with #654."
+          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` names the `std.traits` module, whose compilation is covered by the traits it re-exports; importing through the prelude path is carried by `cli_modules_and_declarations/namespace_prelude_imports.incn` (#1561). The stdlib module snapshots die with #654."
         },
         "test_std_traits_ops_compiled_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_traits_surface.incn",
-          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` is not importable by a program: `from std.traits.prelude import Error` is refused with `Unknown stdlib module std.traits.prelude` (the hint's own known-modules list names it) and the `from std.traits.prelude import *` form documented in `workspaces/docs-site/docs/language/reference/stdlib/traits.md` is a parse error, so the prelude's compilation is covered by the traits it re-exports and the docs claim is wrong (#1728). The stdlib module snapshots die with #654."
+          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` names the `std.traits` module, whose compilation is covered by the traits it re-exports; importing through the prelude path is carried by `cli_modules_and_declarations/namespace_prelude_imports.incn` (#1561). The stdlib module snapshots die with #654."
         },
         "test_std_traits_prelude_compiled_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_traits_surface.incn",
-          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` is not importable by a program: `from std.traits.prelude import Error` is refused with `Unknown stdlib module std.traits.prelude` (the hint's own known-modules list names it) and the `from std.traits.prelude import *` form documented in `workspaces/docs-site/docs/language/reference/stdlib/traits.md` is a parse error, so the prelude's compilation is covered by the traits it re-exports and the docs claim is wrong (#1728). The stdlib module snapshots die with #654."
+          "notes": "twinned by one program adopting ops (Add, Neg, Sub: `30 -5 18`), Error, Index, Callable1 and convert traits. `std.traits.prelude` names the `std.traits` module, whose compilation is covered by the traits it re-exports; importing through the prelude path is carried by `cli_modules_and_declarations/namespace_prelude_imports.incn` (#1561). The stdlib module snapshots die with #654."
         },
         "test_std_uuid_compiled_codegen": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/std_uuid.incn",
@@ -6376,6 +6393,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/stated_contract_checks.rs": {
+      "disposition": "keep",
+      "notes": "typechecker contracts the reference states: namespace prelude imports, `import python`, `import M::X` visibility, pattern arity, positional `str` method arguments, writes through read-only bindings, escaping C text views, JSON members with no JSON form and `{value:?}` over values with no Debug form; no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/statements_and_bindings.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -7361,6 +7386,10 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/module_member_alias_calls_the_member.incn",
           "notes": "Asserts the recorded shape on the legacy IR (an alias of a module member lowers to an import of that member under the alias's name and visibility); retires with `incan_ir`. The behavior, a public and a private alias of a `std.math` member calling it, is carried by the named fixture (#1764)."
         },
+        "namespace_prelude_module_import_binds_the_name_it_spells_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/namespace_prelude_imports.incn",
+          "notes": "Asserts the lowered shape on the legacy IR (`import std.async.prelude` imports `std.async` under the alias `prelude`); retires with `incan_ir`. The named fixture calls `prelude.sleep` through that binding (#1561)."
+        },
         "relative_import_lowers_to_the_crate_absolute_module_the_checker_bound_issue1766": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/relative_import_from_a_nested_module",
           "notes": "Asserts the recorded shape on the legacy IR (a relative import reaches the emitter as the crate-absolute path of the module the checker bound); retires with `incan_ir`. The behavior, `from ..db.schema import Database` in `store/relative.incn` printing `relative:7`, is carried by the named fixture (#1766)."
@@ -8294,6 +8323,14 @@
     "loaves/kernel/incan_lang/src/lang/keywords.rs": {
       "disposition": "keep",
       "notes": "language registry (stdlib inventory, interop metadata, version); below the emitter. Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/kernel/incan_lang/src/lang/rust_keywords.rs": {
+      "disposition": "keep",
+      "notes": "language registry (the Rust keywords generated identifiers escape); below the emitter.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",

@@ -5994,6 +5994,7 @@ impl TypeChecker {
                 },
                 SemanticSourceTargetKind::Parameter,
             );
+            self.record_read_only_binding(param.node.is_mut, param.span);
             self.record_write_target_identity(param.span, &param.node.name);
         }
 
@@ -6512,6 +6513,7 @@ impl TypeChecker {
                 },
                 SemanticSourceTargetKind::Parameter,
             );
+            self.record_read_only_binding(param.node.is_mut, param.span);
             self.record_write_target_identity(param.span, &param.node.name);
         }
 

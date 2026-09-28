@@ -498,6 +498,21 @@ pub struct TypeChecker {
     /// Locals bound directly to a module static (`live = counts`), which read the static's storage like the static
     /// itself does.
     static_alias_bindings: HashSet<SymbolId>,
+    /// Declaration spans of the read-only bindings a field or element write may not go through (#1561): a local
+    /// declared without `mut`, by `let` or by a first plain assignment, and a parameter not marked `mut`. Loop and
+    /// pattern bindings are not recorded; a write through one follows the place it binds.
+    read_only_binding_spans: HashSet<(usize, usize)>,
+    /// How many closure bodies enclose the expression being checked.
+    closure_depth: usize,
+    /// Spans of the expressions being checked as the receiver of `copy_utf8(max_bytes=...)`, the one position a scoped
+    /// C text view may be read in (RFC 116).
+    scoped_c_string_view_receivers: HashSet<(usize, usize)>,
+    /// Calls that returned a scoped C text view in the statement being checked and are neither bound to a local nor
+    /// the receiver of `copy_utf8`; each one left at the end of the statement escapes (RFC 116).
+    unbound_scoped_c_string_views: HashSet<(usize, usize)>,
+    /// Locals bound to a scoped C text view, by declaration span, with the closure depth they were bound at: a read
+    /// from a deeper closure captures the view (RFC 116).
+    scoped_c_string_view_bindings: HashMap<(usize, usize), usize>,
     /// Resource bindings transferred to an owning C ABI parameter in the current local checking flow.
     pub transferred_c_resource_bindings: HashMap<String, Span>,
     /// Lists whose items a `for` loop of the current body takes, and that body's `for` pattern bindings (#1844).
@@ -876,6 +891,11 @@ impl TypeChecker {
             consumed_iterator_bindings: HashMap::new(),
             pending_uncopyable_dict_lookups: Vec::new(),
             static_alias_bindings: HashSet::new(),
+            read_only_binding_spans: HashSet::new(),
+            closure_depth: 0,
+            scoped_c_string_view_receivers: HashSet::new(),
+            unbound_scoped_c_string_views: HashSet::new(),
+            scoped_c_string_view_bindings: HashMap::new(),
             transferred_c_resource_bindings: HashMap::new(),
             for_item_taking: for_item_taking::ForItemTaking::default(),
             unbound_c_abi_span_constructors: HashMap::new(),
@@ -6781,6 +6801,11 @@ impl TypeChecker {
         self.pending_uncopyable_dict_lookups.clear();
         self.mutable_bindings.clear();
         self.static_alias_bindings.clear();
+        self.read_only_binding_spans.clear();
+        self.closure_depth = 0;
+        self.scoped_c_string_view_receivers.clear();
+        self.unbound_scoped_c_string_views.clear();
+        self.scoped_c_string_view_bindings.clear();
         self.testing_marker_import_bindings.clear();
         self.surface_function_import_bindings.clear();
         self.surface_type_import_bindings.clear();

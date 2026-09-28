@@ -19,7 +19,7 @@ pub trait Clone:
         scores: List[int]
 
     user1 = User(name="Alice", scores=[100, 95])
-    user2 = user1.clone()  # Deep copy
+    mut user2 = user1.clone()  # Deep copy
 
     user2.name="Bob"
     println(user1.name)  # Still "Alice"

@@ -126,6 +126,43 @@ pub fn member_type_lacks_json_protocol(
     ))
 }
 
+/// Refuse a member of a declaration that provides a `std.serde.json` trait whose type, or a type inside it, is a
+/// builtin with no JSON form: `decimal` or a frozen type (#1561).
+///
+/// `member_type` is the member's whole type and `holder_type` the builtin inside it; the rest is as for
+/// [`member_type_lacks_json_protocol`]. `INCAN-T0001` is its code.
+pub fn member_type_has_no_json_form(
+    owner_kind: &str,
+    owner_name: &str,
+    member: DerivedMember<'_>,
+    member_type: &str,
+    holder_type: &str,
+    protocol: &str,
+    span: Span,
+) -> CompileError {
+    let member_text = member_description(owner_kind, owner_name, member);
+    let subject = if member_type == holder_type {
+        "which".to_string()
+    } else {
+        format!("whose '{holder_type}'")
+    };
+    CompileError::type_error(
+        format!("{member_text} has type '{member_type}', {subject} has no JSON form"),
+        span,
+    )
+    .with_hint(format!(
+        "Give '{owner_name}' a {member_kind} of a type with a JSON form, such as 'str', 'float', 'list' or 'dict'",
+        member_kind = match member {
+            DerivedMember::Field(_) => "field",
+            DerivedMember::VariantPayload(_) => "payload",
+            DerivedMember::Underlying => "underlying type",
+        }
+    ))
+    .with_note(format!(
+        "The {owner_kind} '{owner_name}' provides '{protocol}', which needs '{protocol}' of every field, variant payload and underlying value; 'decimal' and the frozen types have no JSON form"
+    ))
+}
+
 /// The position in a hashed collection whose type must implement `Eq` and `Hash`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HashedCollectionRole {

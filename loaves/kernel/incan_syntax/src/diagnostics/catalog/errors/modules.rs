@@ -29,6 +29,18 @@ pub fn unknown_stdlib_module(module: &str, span: Span) -> CompileError {
         .with_hint("To import from the Rust standard library, use: `from rust::std::... import ...`")
 }
 
+/// `import python "package"` names no module the compiler can provide (#1561).
+///
+/// The grammar reserves the form, but no Python interop exists behind it: the import would bind a name that nothing
+/// resolves and the build would fail on it, so the check refuses it.
+pub fn python_import_unsupported(package: &str, span: Span) -> CompileError {
+    CompileError::new(
+        format!("`import python \"{package}\"` is not supported: Incan has no Python interop"),
+        span,
+    )
+    .with_hint("Import an Incan module (`import pkg`, `from pub::pkg import item`) or a Rust crate (`from rust::crate import item`)")
+}
+
 /// A known SDK provider owns this module, but the project did not enable its component.
 pub fn sdk_component_disabled(module: &str, component: &str, span: Span) -> CompileError {
     CompileError::new(

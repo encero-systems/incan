@@ -205,7 +205,7 @@ pub def test_resolved_identity_and_transitive_feature_union() -> None:
     left = node("left")
     right = node("right")
     shared = exact_node("shared-package", "1.2.3", "registry:shared-package@1.2.3")
-    catalogs = catalogs_from(sources)
+    mut catalogs = catalogs_from(sources)
     catalogs[package_key(shared.package)] = require_ok(
         read_dependency_catalog("[features]\nalpha=[]\nbeta=[]\n", "Cargo.toml"),
     )
@@ -548,7 +548,7 @@ pub def test_selected_package_name_and_version_must_match_manifest_slot() -> Non
     """Protects manifest slot identity checks against selected name and version drift."""
     parent = node("root")
     wrong = exact_node("different", "2.0.0", "registry:different@2.0.0")
-    catalogs = catalogs_from({"root": "[dependencies]\nchild={version='1'}\n"})
+    mut catalogs = catalogs_from({"root": "[dependencies]\nchild={version='1'}\n"})
     catalogs[package_key(wrong.package)] = require_ok(read_dependency_catalog("", "Cargo.toml"))
     match propagate_features(
         catalogs,
@@ -564,7 +564,7 @@ pub def test_selected_package_name_and_version_must_match_manifest_slot() -> Non
             assert "package name disagrees" in error.message()
 
     wrong_version = exact_node("child", "2.0.0", "registry:child@2.0.0")
-    version_catalogs = catalogs_from({"root": "[dependencies]\nchild={version='1'}\n"})
+    mut version_catalogs = catalogs_from({"root": "[dependencies]\nchild={version='1'}\n"})
     version_catalogs[package_key(wrong_version.package)] = require_ok(read_dependency_catalog("", "Cargo.toml"))
     match propagate_features(
         version_catalogs,

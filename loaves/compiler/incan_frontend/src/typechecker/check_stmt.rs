@@ -405,18 +405,27 @@ impl TypeChecker {
 
                     // Check that target is a valid lvalue
                     match &target.node {
-                        Expr::Index(_, _) | Expr::Field(_, _) => {
+                        Expr::Index(object, _) | Expr::Field(object, _) => {
                             // Index and field expressions are valid lvalues; type compatibility is checked below.
                             // An element target is refused where `x[i] = value` is: a tuple's or a string's element,
-                            // for one.
-                            if let Expr::Index(object, _) = &target.node
+                            // for one. A place rooted at the receiver is a write through `self` like any other
+                            // (#1723), and a place rooted at a read-only binding is refused like a single field or
+                            // element write.
+                            if matches!(target.node, Expr::Index(_, _))
                                 && let Some(object_ty) = self.type_info.expr_type(object.span).cloned()
                             {
                                 self.refuse_unassignable_element_receiver(&object_ty, target.span);
                             }
-                            // A place rooted at the receiver is a write through `self` like any other (#1723).
                             if let Some(place) = Self::self_rooted_place(target) {
                                 self.reject_write_through_immutable_self(&place, SelfMutation::Assignment, target.span);
+                            }
+                            let writes_builtin_slot = matches!(target.node, Expr::Field(_, _))
+                                || self
+                                    .type_info
+                                    .expr_type(object.span)
+                                    .is_some_and(|ty| Self::index_assignment_slot_types(ty).is_some());
+                            if writes_builtin_slot {
+                                self.refuse_write_through_read_only_binding(object, target.span);
                             }
                             self.note_mut_param_write(target);
                         }
@@ -442,6 +451,7 @@ impl TypeChecker {
             }
         }
         self.reject_unbound_c_abi_span_constructors();
+        self.reject_unbound_scoped_c_string_views(&stmt.node);
         // A call nested somewhere other than a direct binding or a bare statement may still be fixed by its
         // context (an argument's declared type, a typed return); only the two shapes above are refused (#1720).
         self.open_rust_generic_calls.clear();
@@ -461,6 +471,59 @@ impl TypeChecker {
             Expr::Index(base, _) => Self::self_rooted_place(base).map(|place| format!("{place}[...]")),
             _ => None,
         }
+    }
+
+    /// Remember the declaration span of a binding declared without `mut`, whose place a field or element write may not
+    /// go through (see [`Self::refuse_write_through_read_only_binding`]).
+    pub(in crate::typechecker) fn record_read_only_binding(&mut self, is_mutable: bool, declaration_span: Span) {
+        if !is_mutable {
+            self.read_only_binding_spans
+                .insert((declaration_span.start, declaration_span.end));
+        }
+    }
+
+    /// Return the name a written place is rooted at, `items` for `items[0].count`, or `None` for a place rooted at
+    /// anything else, such as `self` or a call result.
+    fn written_place_root(expr: &Spanned<Expr>) -> Option<&str> {
+        match &expr.node {
+            Expr::Ident(name) => Some(name),
+            Expr::Paren(inner) | Expr::Field(inner, _) | Expr::Index(inner, _) => Self::written_place_root(inner),
+            _ => None,
+        }
+    }
+
+    /// Refuse a field or element write through a binding declared without `mut` (#1561).
+    ///
+    /// A binding is immutable unless declared `mut`, and that covers what it holds: a local declared by `let` or a
+    /// first plain assignment, or a parameter not marked `mut`, gives no write access to its fields and elements. A
+    /// local bound directly to a module static is an alias of the static's storage and writes through to it, and a
+    /// loop or pattern binding follows the place it binds, so neither is refused here. `object` is the place whose
+    /// field or element is written.
+    pub(in crate::typechecker) fn refuse_write_through_read_only_binding(
+        &mut self,
+        object: &Spanned<Expr>,
+        span: Span,
+    ) {
+        let Some(root) = Self::written_place_root(object) else {
+            return;
+        };
+        let Some(symbol_id) = self.symbols.lookup(root) else {
+            return;
+        };
+        if self.static_alias_bindings.contains(&symbol_id) {
+            return;
+        }
+        let Some(symbol) = self.symbols.get(symbol_id) else {
+            return;
+        };
+        if !matches!(symbol.kind, SymbolKind::Variable(_))
+            || !self
+                .read_only_binding_spans
+                .contains(&(symbol.span.start, symbol.span.end))
+        {
+            return;
+        }
+        self.errors.push(errors::mutation_without_mut(root, span));
     }
 
     /// Refuse a write to `place`, a place rooted at `self`, when the enclosing method takes a plain `self` (#1723).
@@ -487,6 +550,7 @@ impl TypeChecker {
     fn check_field_assignment(&mut self, field_assign: &FieldAssignmentStmt, span: Span) {
         // Check the object expression
         let obj_ty = self.check_expr(&field_assign.object);
+        self.refuse_write_through_read_only_binding(&field_assign.object, field_assign.target_span);
         self.note_mut_param_write(&field_assign.object);
         self.refuse_mut_param_held_by(&field_assign.value);
         let field = &field_assign.field;
@@ -623,6 +687,9 @@ impl TypeChecker {
             self.reject_write_through_immutable_self(&format!("{place}[...]"), SelfMutation::Assignment, span);
         }
         let slot_types = Self::index_assignment_slot_types(&obj_ty);
+        if slot_types.is_some() {
+            self.refuse_write_through_read_only_binding(&index_assign.object, span);
+        }
         // Check the index expression
         let index_ty = self.check_expr_with_expected(&index_assign.index, slot_types.as_ref().map(|(key, _)| key));
         // Check the value expression
@@ -871,11 +938,13 @@ impl TypeChecker {
         } else {
             self.symbols.define(symbol);
         }
+        self.record_read_only_binding(is_mutable, target_span);
         self.record_write_target_identity(target_span, &assign.name);
         self.note_function_value_binding(target_span, &assign.value);
         self.bind_c_abi_output_slot_assignment(&assign.name, assign.value.span);
         self.bind_c_abi_span_assignment(&assign.name, assign.value.span);
         self.bind_c_abi_raw_result_assignment(&assign.name, assign.value.span);
+        self.bind_scoped_c_string_view_assignment(target_span, assign.value.span);
         if assign.ty.is_none() {
             // An annotation is itself what fixes the arguments; only an unannotated binding is watched (#1720).
             self.bind_open_rust_generic_assignment(&assign.name, assign.value.span);
@@ -981,6 +1050,7 @@ impl TypeChecker {
         } else {
             self.symbols.define(symbol);
         }
+        self.record_read_only_binding(is_mutable, target_span);
         self.record_write_target_identity(target_span, name);
         if is_mutable {
             self.mutable_bindings.insert(name.to_string());
@@ -1046,6 +1116,38 @@ impl TypeChecker {
                     .to_string(),
                 Span::new(start, end),
             ));
+        }
+    }
+
+    /// Bind a scoped C text view to the new local whose value it is, at the current closure depth (RFC 116).
+    ///
+    /// The local may then be read as the receiver of `copy_utf8` only; see `check_ident`.
+    fn bind_scoped_c_string_view_assignment(&mut self, binding_span: Span, value_span: Span) {
+        if self
+            .unbound_scoped_c_string_views
+            .remove(&(value_span.start, value_span.end))
+        {
+            self.scoped_c_string_view_bindings
+                .insert((binding_span.start, binding_span.end), self.closure_depth);
+        }
+    }
+
+    /// Refuse each scoped C text view the statement just checked neither bound to a local nor copied (RFC 116).
+    ///
+    /// A view that is returned, stored, passed on or placed in a value would outlive the memory it points into. A bare
+    /// expression statement that only discards the view is not an escape.
+    fn reject_unbound_scoped_c_string_views(&mut self, statement: &Statement) {
+        if let Statement::Expr(expr) = statement {
+            self.unbound_scoped_c_string_views
+                .remove(&(expr.span.start, expr.span.end));
+        }
+        let mut escaped = std::mem::take(&mut self.unbound_scoped_c_string_views)
+            .into_iter()
+            .collect::<Vec<_>>();
+        escaped.sort_unstable();
+        for (start, end) in escaped {
+            self.errors
+                .push(errors::scoped_c_string_view_escapes(Span::new(start, end)));
         }
     }
 

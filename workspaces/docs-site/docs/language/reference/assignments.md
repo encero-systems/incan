@@ -27,6 +27,7 @@ This page specifies binding and assignment statements.
 - The right side of an assignment is evaluated once, before any target is written; a chained assignment of a literal value to targets of different types, below, is the exception.
 - In a chained assignment, each target receives the value in its own type. When the targets have different types, a value built only from literals and empty constructors (`None`, `[]`, `{}`, `list()`, a number) is evaluated once for each target, in that target's type.
 - A field or element write through `self` inside a method, compound forms included, requires a `mut self` receiver (`INCAN-T0102`).
+- A field write, and a `list` element or `dict` entry write, through any other name, compound and tuple forms included, requires that name to be declared `mut`: a binding declared with `mut`, or a parameter marked `mut`. A local bound directly to a module `static` writes through to the static (see [Static storage](static_storage.md#aliases)), and a `for` loop or pattern binding writes to the item it binds.
 
 ## Refusals
 
@@ -40,6 +41,7 @@ This page specifies binding and assignment statements.
 | Any | A declared name is `print` or `println` | `INCAN-T0001` |
 | `mut name = value` | `value` is a tuple | `INCAN-T0001` |
 | `target.field = value` | `target`'s type declares no field `field`, or `target` is a tuple | `INCAN-T0001` |
+| `target.field = value`, `target[index] = value` | The name the write goes through (`p` in `p.x` and in `p.rows[0]`) is a local declared without `mut`, by `let` or a first plain assignment, or a parameter not marked `mut`; an element write only when it writes a `list` element or a `dict` entry | `INCAN-T0001` |
 | `target[index] = value` | `target` is a `str` or a tuple, the index is not an `int` for a `list` or not a key for a `dict`, or `target`'s type has no `__setitem__` | `INCAN-T0001` |
 | `a, b = value` | `value` is not a tuple, or the tuple's length differs from the number of targets | `INCAN-T0001` |
 | `a, b = value` | A target is not a name, a field or an element | `INCAN-T0001` |
@@ -64,6 +66,8 @@ def examples(items: list[int], maybe: Option[int]) -> int:
     result[1] += 1                     # accepted
     mut point = Point(x=1, y=2)
     point.x = 3                        # accepted
+    let origin = Point(x=0, y=0)
+    origin.x = 1                       # refused: origin is not mut
     mut limit: Option[int] = maybe
     a = limit = 5                      # accepted
     let fixed = 10

@@ -195,3 +195,39 @@ fn imported_single_segment_alias_stays_a_symbol_alias() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// #1561: `import std.async.prelude` imports the `std.async` module under the name it spells, `prelude`, the binding
+/// the checker gives it; `from std.async.prelude import sleep` imports from `std.async`.
+#[test]
+fn namespace_prelude_module_import_binds_the_name_it_spells_issue1561() -> Result<(), String> {
+    let module = parse_module(
+        "import std.async\nimport std.async.prelude\nfrom std.async.prelude import sleep\n",
+        "prelude imports",
+    )?;
+    let ir = lower_module_at(&["main"], &module, &[])?;
+    let std_async = vec!["std".to_string(), "async".to_string()];
+    let module_imports = ir
+        .declarations
+        .iter()
+        .filter_map(|decl| match &decl.kind {
+            IrDeclKind::Import { path, alias, items, .. } if items.is_empty() => Some((path.clone(), alias.clone())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        module_imports.contains(&(std_async.clone(), Some("prelude".to_string()))),
+        "`import std.async.prelude` must bind `prelude` to std.async: {module_imports:?}"
+    );
+    assert!(
+        module_imports.contains(&(std_async.clone(), None)),
+        "`import std.async` keeps its own binding: {module_imports:?}"
+    );
+    let imports = lowered_imports(&ir);
+    assert!(
+        imports
+            .iter()
+            .any(|(_, path, _, items)| path == &std_async && items.iter().any(|item| item.name == "sleep")),
+        "`from std.async.prelude import sleep` must import from std.async: {imports:?}"
+    );
+    Ok(())
+}
