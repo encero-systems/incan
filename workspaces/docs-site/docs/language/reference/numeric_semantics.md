@@ -65,7 +65,7 @@ def main() -> None:
 - An integer literal argument of a generic function takes its parameter's type in the call: with `def pick[T](a: T, b: T) -> T`, `pick(2.5, 1)` and `pick(1, 2.5)` bind `T` to `float`, and `1` is `1.0`.
 - An `int` value is not assignable to a float type (see [Assignment between numeric types](#assignment-between-numeric-types)).
 - A float literal at an integer destination is refused (`INCAN-T0001`).
-- An unsuffixed integer literal operand of `+`, `-`, `*`, `//` or `%` takes the exact-width integer type of the other operand (see [Operators](#operators)).
+- An unsuffixed integer literal operand of `+`, `-`, `*`, `//`, `%`, `&`, `|` or `^` takes the exact-width integer type of the other operand (see [Operators](#operators)).
 
 ```incan
 def main() -> None:
@@ -222,13 +222,15 @@ A numeric argument to a Rust parameter of a primitive numeric type is accepted w
 | `**` | An integer left operand and a non-negative integer literal exponent | The left operand's type |
 | | Two `f32` | `f32` |
 | | Any other numeric pair | `float` |
-| `&`, <code>&#124;</code>, `^`, `<<`, `>>` | Two integer operands | `int` |
+| `&`, <code>&#124;</code>, `^` | Two operands of one integer type | That integer type |
+| `<<`, `>>` | Two integer operands | The left operand's type |
 | `==`, `!=`, `<`, `<=`, `>`, `>=` | Two numeric operands | `bool` |
 
-- `+`, `-`, `*`, `//` and `%` between two different integer types are refused (`INCAN-T0001`), with a hint naming `resize()` and `try_resize()`. `int` and `i64` are one type.
-- An unsuffixed integer literal operand of `+`, `-`, `*`, `//` or `%` takes the type of an exact-width integer operand on the other side. A literal outside that type's range is refused (`INCAN-T0001`).
+- `+`, `-`, `*`, `//`, `%`, `&`, `|` and `^` between two different integer types are refused (`INCAN-T0001`), with a hint naming `resize()` and `try_resize()`. `int` and `i64` are one type.
+- An unsuffixed integer literal operand of `+`, `-`, `*`, `//`, `%`, `&`, `|` or `^` takes the type of an exact-width integer operand on the other side. A literal outside that type's range is refused (`INCAN-T0001`).
 - Two different integer types compare in the narrowest integer type holding both: the wider of the two, or the narrowest signed type holding both (`i16` for `i8` and `u8`, `i128` for `i64` and `u64`). A pair no integer type holds, `u128` with a signed type or `isize` or `usize` with another integer type, is refused (`INCAN-T0001`). An unsuffixed integer literal operand of a comparison takes the other operand's integer type when it holds the literal's value.
 - A prefix `-` keeps the type of its signed integer or float operand. A prefix `-` on an unsigned integer operand is refused (`INCAN-T0001`).
+- A prefix `~` keeps the type of its integer operand.
 - `&`, `|`, `^`, `<<` and `>>` with a float operand are refused (`INCAN-T0001`).
 - `/` is true division. `//` rounds the quotient toward negative infinity. The result of `%` has the sign of the divisor, and `a == (a // b) * b + (a % b)`.
 - `/`, `//` and `%` with a zero divisor raise `ZeroDivisionError`, for signed integer, unsigned integer and float operands alike.
@@ -270,6 +272,11 @@ def main() -> None:
     smaller = small < count                      # accepted
     huge: u128 = 1
     unsure = huge == count                       # refused: no integer type holds u128 and int
+    mask: u8 = 12
+    low: u8 = mask & 3                           # accepted
+    moved: u8 = mask << count                    # accepted
+    flipped: u8 = ~mask                          # accepted
+    either = mask | size                         # refused: u8 and u16
 ```
 
 ## Compound assignment
@@ -294,6 +301,7 @@ def main() -> None:
     s *= 2.0                                     # refused: s * 2.0 is a float
     mut b: u8 = 7
     b //= 2                                      # accepted
+    b |= 1                                       # accepted: b | 1 is a u8
 ```
 
 ## NaN and infinity

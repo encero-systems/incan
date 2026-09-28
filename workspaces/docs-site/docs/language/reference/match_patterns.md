@@ -141,6 +141,30 @@ def tag(pair: tuple[int, str]) -> str:
         _ => return "other"
 ```
 
+## Match values
+
+A `match` has one type, which every arm produces.
+
+- An arm whose body is an expression produces that expression's value. An arm whose body is a block produces no value, and a block whose last statement is `return`, `break` or `continue` takes no part.
+- A literal arm of a `match` written to a place of a declared type (an annotated binding, a `return`, an argument) takes that type. When the type is numeric or an `Option` that holds no union, each arm is assignable to it and the `match` has it. Otherwise the arms unify: an arm assignable to another arm's type takes that type, so `i8` and `int` arms make an `int` match, and `Some(1)` and `None` arms an `Option[int]` one, and the `match` is then assignable to the place as any value is.
+- A narrower numeric arm is widened, and a payload arm is wrapped in `Some`, in the arm itself (see [Assignment between numeric types](numeric_semantics.md#assignment-between-numeric-types)).
+
+Refused (`INCAN-T0001`): arms that share no type, in any position, a `match` used as a statement included.
+
+```incan
+def pick(n: int, small: i8, wide: int) -> int:
+    chosen = match n:               # accepted: an int
+        0 => small
+        _ => wide
+    return chosen
+
+def label(n: int) -> str:
+    text = match n:                 # refused: a str arm and an int arm
+        0 => "zero"
+        _ => 5
+    return text
+```
+
 ## Coverage
 
 The unguarded arms of a `match` cover its subject. A guarded arm never counts toward coverage, an alternation counts as one arm per alternative, and a group counts as the pattern it groups. An arm whose pattern is `_` or a binding covers any subject. Otherwise:

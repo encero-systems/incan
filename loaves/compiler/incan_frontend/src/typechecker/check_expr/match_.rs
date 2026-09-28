@@ -169,12 +169,23 @@ impl TypeChecker {
         }
     }
 
-    /// Type-check a `match` expression and return its resolved type.
+    /// Type-check a `match` expression and return its resolved type: the one type its arms unify to.
+    ///
+    /// Every arm produces the match's value, in statement position too, since the generated match needs one type
+    /// across its arms. An expression arm is checked against `expected`, the type of the place the match is written to
+    /// when there is one, so a literal arm takes that type as it does at the place itself. A block arm produces no
+    /// value (`None`): it takes part only when it can complete, and a block that ends in `return`, `break` or
+    /// `continue` cannot. The arm types unify as [`Self::unify_branch_value_types`] states: a narrower numeric arm is
+    /// widened and a payload arm is wrapped in `Some` in the arm itself, and arms that share no type are refused with
+    /// a type mismatch. Each arm is written to the expected type directly when that type is numeric or an `Option`
+    /// that holds no union, the adaptations lowering makes in an arm; otherwise the arms unify among themselves and
+    /// the whole match is written to the place, since an arm is not made a union member or any other type in place.
     pub(in crate::typechecker::check_expr) fn check_match(
         &mut self,
         subject: &Spanned<Expr>,
         arms: &[Spanned<MatchArm>],
         _span: Span,
+        expected: Option<&ResolvedType>,
     ) -> ResolvedType {
         let subject_ty = self.check_expr(subject);
         let subject_binding = if let Expr::Ident(name) = &subject.node {
@@ -188,7 +199,7 @@ impl TypeChecker {
 
         self.check_match_exhaustiveness(&subject_ty, arms, _span);
 
-        let mut arm_types = Vec::new();
+        let mut arm_values = Vec::new();
 
         for arm in arms {
             let narrowed_subject_ty = remaining_union_members
@@ -219,14 +230,21 @@ impl TypeChecker {
                 self.validate_truthiness_condition(&guard_ty, guard.span);
             }
 
-            let arm_ty = match &arm.node.body {
-                MatchBody::Expr(e) => self.check_expr(e),
+            match &arm.node.body {
+                MatchBody::Expr(e) => {
+                    let arm_ty = match expected {
+                        Some(expected) => self.check_expr_with_expected(e, Some(expected)),
+                        None => self.check_expr(e),
+                    };
+                    arm_values.push((arm_ty, e.span));
+                }
                 MatchBody::Block(stmts) => {
                     self.check_statement_block(stmts);
-                    ResolvedType::Unit
+                    if !block_cannot_complete(stmts) {
+                        arm_values.push((ResolvedType::Unit, arm.span));
+                    }
                 }
-            };
-            arm_types.push(arm_ty);
+            }
 
             self.symbols.exit_scope();
 
@@ -238,7 +256,15 @@ impl TypeChecker {
         }
         self.note_dict_lookup_match(subject, arms);
 
-        arm_types.first().cloned().unwrap_or(ResolvedType::Unit)
+        let arm_destination = expected
+            .map(|expected| self.expand_type_aliases(expected.clone()))
+            .filter(|expected| {
+                (expected.is_option() || crate::typechecker::numeric_type_id_for_compat(expected).is_some())
+                    && !Self::type_holds_union(expected)
+            });
+        self.unify_branch_value_types(&arm_values, arm_destination.as_ref())
+            .or_else(|| arm_values.first().map(|(ty, _)| ty.clone()))
+            .unwrap_or(ResolvedType::Unit)
     }
 
     /// Return the type represented by the as-yet-uncovered union members for wildcard and binding arms.
@@ -1172,5 +1198,34 @@ enum RustEnumPatternResolution {
 impl RustEnumPatternResolution {
     fn payloads(fields: Vec<ResolvedType>) -> Self {
         Self::PayloadTypes(fields)
+    }
+}
+
+/// Whether a statement block cannot complete, because its last statement leaves it: a `return`, `break` or `continue`.
+///
+/// A `match` arm with such a body produces no value of its own, so it does not take part in unifying the arm types.
+fn block_cannot_complete(stmts: &[Spanned<Statement>]) -> bool {
+    stmts.last().is_some_and(|stmt| {
+        matches!(
+            stmt.node,
+            Statement::Return(_) | Statement::Break(_) | Statement::Continue
+        )
+    })
+}
+
+impl TypeChecker {
+    /// Whether a type is or holds an anonymous union anywhere inside it, as an `Option` payload, a collection element
+    /// or a tuple item.
+    fn type_holds_union(ty: &ResolvedType) -> bool {
+        match ty {
+            _ if ty.is_union() => true,
+            ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => args.iter().any(Self::type_holds_union),
+            ResolvedType::FrozenList(inner)
+            | ResolvedType::FrozenSet(inner)
+            | ResolvedType::Ref(inner)
+            | ResolvedType::RefMut(inner) => Self::type_holds_union(inner),
+            ResolvedType::FrozenDict(key, value) => Self::type_holds_union(key) || Self::type_holds_union(value),
+            _ => false,
+        }
     }
 }

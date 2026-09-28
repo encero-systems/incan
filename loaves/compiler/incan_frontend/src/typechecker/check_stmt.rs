@@ -141,10 +141,10 @@ impl TypeChecker {
     /// Check the value of a compound assignment `x op= y` against the type `var_ty` of the local or static it writes.
     ///
     /// Numeric operands are checked as `x = x op y`: the operator's result type from the operator result table, then
-    /// the assignment rule. So `s *= s` on an `f32` binding keeps `f32` and `n += 1` on an `i32` binding adds two `i32`
-    /// values, and both are accepted, while `x /= 2` on an `int` binding stays refused because its `float` result is
-    /// not assignable to `int` (#1812). A user operator receiver resolves through its in-place or binary hook, and any
-    /// other value must be assignable to the binding.
+    /// the assignment rule. So `s *= s` on an `f32` binding keeps `f32`, and `n += 1` and `n |= 1` on an `i32` binding
+    /// combine two `i32` values, and all are accepted, while `x /= 2` on an `int` binding stays refused because its
+    /// `float` result is not assignable to `int` (#1812). A user operator receiver resolves through its in-place or
+    /// binary hook, and any other value must be assignable to the binding.
     fn check_compound_assignment_value(
         &mut self,
         compound: &CompoundAssignmentStmt,
@@ -167,7 +167,13 @@ impl TypeChecker {
                 BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr
             ) && matches!((lhs, rhs), (NumericTy::Int, NumericTy::Int))
             {
-                ResolvedType::Int
+                let target = Spanned::new(Expr::Ident(compound.name.clone()), compound.name_span);
+                self.integer_bitwise_result_type(
+                    (&target, var_ty),
+                    binop,
+                    (&compound.value, value_ty),
+                    compound.value.span,
+                )
             } else {
                 self.errors.push(errors::type_mismatch(
                     "supported compound operator operands",

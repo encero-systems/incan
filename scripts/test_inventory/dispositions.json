@@ -3266,6 +3266,10 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "dict_and_set_types_bound_their_hashed_type_parameter_issue1758": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_numerics_and_bounds/generic_functions_hash_through_dict_and_set_types.incn",
+          "notes": "Compiles, with rustc, generic callers that hash their type parameter through a dict or set annotation, an index write, `add`, `insert`, a forwarding caller and a generic class's dict field; the named fixture runs each with a hashable type argument (#1758)."
+        },
         "external_impl_bounds_reach_a_generic_caller_issue1280": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/external_impl_bound_reaches_a_generic_caller",
           "notes": "Asserts the header of a generic model's method declared in another module reaches a generic caller of this module; the named module fixture runs that call for an int and a str payload."
@@ -3346,7 +3350,11 @@
       "tests": {
         "accepted_numeric_widenings_build": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/numeric_widening_reaches_every_destination.incn",
-          "notes": "Compiles every accepted lossless widening with rustc; the named fixture runs one program through each destination, probe and mixed comparison (RFC 009)."
+          "notes": "Compiles every accepted lossless widening with rustc; the named fixture runs one program through each destination, a yielded item, match arms and loop break values of two integer types, each probe and a mixed comparison (RFC 009)."
+        },
+        "bitwise_operators_keep_the_integer_type_build": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/bitwise_operators_keep_the_integer_type.incn",
+          "notes": "Compiles bit arithmetic over one integer type, shifts by any integer type, `~` and every compound bit assignment on a `u8` with rustc; the named fixture prints each result in its own type (RFC 009)."
         },
         "exact_width_integer_arithmetic_keeps_its_type": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/exact_width_integer_arithmetic_keeps_its_type.incn",

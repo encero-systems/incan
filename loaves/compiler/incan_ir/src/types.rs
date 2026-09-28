@@ -208,8 +208,8 @@ pub fn same_exact_binary_float_type(left: &IrType, right: &IrType) -> Option<IrT
 ///
 /// RFC 009: same-type integer arithmetic yields that type. The typechecker has already refused operands of two
 /// different integer types and given an integer literal beside an exact-width integer that integer's type, so an
-/// exact-width operand still paired with `int` here stands beside `int`'s own identity (`i64`) or a literal the
-/// checker did not reach. `None` means neither operand is an exact-width integer and the ordinary `int` result applies.
+/// exact-width operand still paired with `int` here stands beside a literal the checker did not reach. `None` means
+/// neither operand is an exact-width integer and the ordinary `int` result applies.
 pub fn exact_integer_arithmetic_type(left: &IrType, right: &IrType) -> Option<IrType> {
     let exact = |ty: &IrType| matches!(ty, IrType::Numeric(id) if numerics::is_integer(*id));
     let integer = |ty: &IrType| matches!(ty, IrType::Int) || exact(ty);
@@ -225,11 +225,13 @@ pub fn exact_integer_arithmetic_type(left: &IrType, right: &IrType) -> Option<Ir
 impl IrType {
     /// Return the IR type of one numeric registry id.
     ///
-    /// RFC 009 makes `float` an alias of `f64`, and an alias creates no separate type identity, so the `f64` id is
-    /// [`IrType::Float`] and generated code treats an `f64` value exactly as a `float` one. Every other numeric id
-    /// keeps its exact-width type; the registry's `bool` entry is [`IrType::Bool`].
+    /// RFC 009 makes `int` an alias of `i64` and `float` an alias of `f64`, and an alias creates no separate type
+    /// identity, so the `i64` id is [`IrType::Int`] and the `f64` id is [`IrType::Float`], whichever spelling names
+    /// them, and generated code treats an `i64` value exactly as an `int` one and an `f64` value as a `float` one.
+    /// Every other numeric id keeps its exact-width type; the registry's `bool` entry is [`IrType::Bool`].
     pub fn from_numeric_id(id: NumericTypeId) -> IrType {
         match id {
+            NumericTypeId::I64 => IrType::Int,
             NumericTypeId::F64 => IrType::Float,
             NumericTypeId::Bool => IrType::Bool,
             _ => IrType::Numeric(id),
@@ -245,16 +247,6 @@ impl IrType {
             IrType::Numeric(NumericTypeId::Bool) => None,
             IrType::Numeric(id) => Some(*id),
             _ => None,
-        }
-    }
-
-    /// Return the IR type a numeric registry spelling names, given the id the registry resolved it to.
-    ///
-    /// The spelling `int` keeps [`IrType::Int`]; every other spelling resolves through [`Self::from_numeric_id`].
-    pub fn from_numeric_spelling(spelling: &str, id: NumericTypeId) -> IrType {
-        match spelling {
-            "int" => IrType::Int,
-            _ => Self::from_numeric_id(id),
         }
     }
 

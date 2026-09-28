@@ -770,51 +770,68 @@ impl TypeChecker {
             return satisfies;
         }
 
+        // Every exact-width numeric type provides what its Rust primitive does: each one clones, copies, displays,
+        // debugs, defaults and compares, and the integer types also have total equality, ordering and hashing, which
+        // `f32` lacks as `float` does. A value that displays satisfies `Display` (see the display rule).
+        let exact_numeric = matches!(ty, ResolvedType::Numeric(_));
+        let exact_integer = matches!(ty, ResolvedType::Numeric(id) if numerics::is_integer(*id));
         match builtin_traits::from_str(bound) {
-            Some(TraitId::Clone | TraitId::Debug | TraitId::Display) => matches!(
-                ty,
-                ResolvedType::Int
-                    | ResolvedType::Float
-                    | ResolvedType::Bool
-                    | ResolvedType::Str
-                    | ResolvedType::Bytes
-                    | ResolvedType::FrozenStr
-                    | ResolvedType::FrozenBytes
-                    | ResolvedType::Unit
-            ),
-            Some(TraitId::Default) => matches!(
-                ty,
-                ResolvedType::Int
-                    | ResolvedType::Float
-                    | ResolvedType::Bool
-                    | ResolvedType::Str
-                    | ResolvedType::Bytes
-                    | ResolvedType::FrozenStr
-                    | ResolvedType::FrozenBytes
-                    | ResolvedType::Unit
-            ),
+            Some(TraitId::Clone | TraitId::Debug | TraitId::Display) => {
+                exact_numeric
+                    || matches!(
+                        ty,
+                        ResolvedType::Int
+                            | ResolvedType::Float
+                            | ResolvedType::Bool
+                            | ResolvedType::Str
+                            | ResolvedType::Bytes
+                            | ResolvedType::FrozenStr
+                            | ResolvedType::FrozenBytes
+                            | ResolvedType::Unit
+                    )
+            }
+            Some(TraitId::Default) => {
+                exact_numeric
+                    || matches!(
+                        ty,
+                        ResolvedType::Int
+                            | ResolvedType::Float
+                            | ResolvedType::Bool
+                            | ResolvedType::Str
+                            | ResolvedType::Bytes
+                            | ResolvedType::FrozenStr
+                            | ResolvedType::FrozenBytes
+                            | ResolvedType::Unit
+                    )
+            }
             Some(TraitId::Awaitable) => self.type_satisfies_awaitable_bound(ty, None),
-            Some(TraitId::Eq | TraitId::Ord | TraitId::Hash) => matches!(
-                ty,
-                ResolvedType::Int
-                    | ResolvedType::Bool
-                    | ResolvedType::Str
-                    | ResolvedType::Bytes
-                    | ResolvedType::FrozenStr
-                    | ResolvedType::FrozenBytes
-                    | ResolvedType::Unit
-            ),
-            Some(TraitId::PartialEq | TraitId::PartialOrd) => matches!(
-                ty,
-                ResolvedType::Int
-                    | ResolvedType::Float
-                    | ResolvedType::Bool
-                    | ResolvedType::Str
-                    | ResolvedType::Bytes
-                    | ResolvedType::FrozenStr
-                    | ResolvedType::FrozenBytes
-                    | ResolvedType::Unit
-            ),
+            Some(TraitId::Eq | TraitId::Ord | TraitId::Hash) => {
+                exact_integer
+                    || matches!(
+                        ty,
+                        ResolvedType::Int
+                            | ResolvedType::Bool
+                            | ResolvedType::Str
+                            | ResolvedType::Bytes
+                            | ResolvedType::FrozenStr
+                            | ResolvedType::FrozenBytes
+                            | ResolvedType::Unit
+                    )
+            }
+            Some(TraitId::PartialEq | TraitId::PartialOrd) => {
+                exact_numeric
+                    || matches!(
+                        ty,
+                        ResolvedType::Int
+                            | ResolvedType::Float
+                            | ResolvedType::Bool
+                            | ResolvedType::Str
+                            | ResolvedType::Bytes
+                            | ResolvedType::FrozenStr
+                            | ResolvedType::FrozenBytes
+                            | ResolvedType::Unit
+                    )
+            }
             _ => false,
         }
     }

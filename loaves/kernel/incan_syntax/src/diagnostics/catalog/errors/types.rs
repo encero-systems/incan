@@ -3128,6 +3128,47 @@ pub fn value_has_no_printed_form(
         .with_note(note)
 }
 
+/// Report a displayed tuple, list, dict, set, frozen collection, `Option` or `Result` that holds a value with no
+/// printed form (#1748).
+///
+/// Inside a structure every element displays as its `{value:?}` structure, and a generator, a function and a `bytes`
+/// value have none, at any depth: the structure is refused in every display position as the element itself is.
+/// `container` is the displayed value's type, `name` the operand when the source spells it as a plain name (or `self`),
+/// and `element` the kind of the element with no printed form. `INCAN-T0103` is its stable code.
+pub fn element_has_no_printed_form(
+    position: DisplayPosition<'_>,
+    name: Option<&str>,
+    container: &str,
+    element: UnprintableValue<'_>,
+    span: Span,
+) -> CompileError {
+    let what = match name {
+        Some(name) => format!("'{name}'"),
+        None => format!("a value of type '{container}'"),
+    };
+    let element_what = element.describe(None);
+    let message = match position {
+        DisplayPosition::Print { builtin } => format!("'{builtin}' cannot print {what}, which holds {element_what}"),
+        DisplayPosition::Str => format!("'str' cannot convert {what} to text, since it holds {element_what}"),
+        DisplayPosition::Interpolation => format!("f-string cannot interpolate {what}, which holds {element_what}"),
+        DisplayPosition::Bound { callee, type_param } => format!(
+            "Call to '{callee}' cannot bind {what} to '{type_param}', which requires 'Display', since it holds {element_what}"
+        ),
+    };
+    let hint = match element {
+        UnprintableValue::Generator => "Collect the generator's items into a list first; a list displays its elements",
+        UnprintableValue::Function => "Hold what the function returns instead of the function",
+        UnprintableValue::Bytes => "Decode the bytes to text first with decode()",
+        _ => "Display the elements that have a printed form",
+    };
+    CompileError::type_error(message, span)
+        .with_stable_code("INCAN-T0103")
+        .with_hint(hint)
+        .with_note(
+            "Inside a tuple, list, dict, set, frozen collection, Option or Result every element displays as its {value:?} structure; a generator, a function or bytes has none",
+        )
+}
+
 pub fn tuple_field_assignment(span: Span) -> CompileError {
     CompileError::type_error("Cannot assign to tuple field - tuples are immutable".to_string(), span)
         .with_hint("Create a new tuple instead of modifying an existing one")

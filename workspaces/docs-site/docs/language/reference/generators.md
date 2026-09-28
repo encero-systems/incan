@@ -22,7 +22,7 @@ def numbers() -> Generator[int]:
 
 Rules:
 
-- `yield expr` requires `expr` to type-check as `T`.
+- `yield expr` requires the type of `expr` to be assignable to `T` as a returned value's type is to a return type; a value of a narrower numeric type is widened to `T` (see [Assignment between numeric types](numeric_semantics.md#assignment-between-numeric-types)).
 - `yield` is valid only in the body of a generator function or a fixture.
 - A bare `return` ends the generator.
 - `return value` is refused in a generator function.

@@ -1,0 +1,59 @@
+# behavior: a generic function or method that keeps its type parameter's values in a dict or set, through an annotation, an index write, `add` or `insert`, runs for any hashable type argument, and so does a generic caller forwarding its own type parameter
+# retires: loaves/compiler/incan_emit/src/tests/generic_caller_bounds.rs::dict_and_set_types_bound_their_hashed_type_parameter_issue1758
+# expect-stdout:
+#   2 1
+#   2 2
+#   3
+#   1
+#   2
+
+def count[T](items: list[T]) -> dict[T, int]:
+    mut counts: dict[T, int] = {}
+    for item in items:
+        counts[item] = 1
+    return counts
+
+
+def distinct[T](items: list[T]) -> int:
+    mut seen = set()
+    for item in items:
+        seen.add(item)
+    return len(seen)
+
+
+def keyed[T](items: list[T]) -> int:
+    mut table = {}
+    for item in items:
+        table.insert(item, 1)
+    return len(table)
+
+
+def relay[U](items: list[U]) -> int:
+    return len(count(items))
+
+
+class Index[K, V]:
+    entries: dict[K, V]
+
+    def put(mut self, key: K, value: V) -> None:
+        self.entries[key] = value
+
+    def size(self) -> int:
+        return len(self.entries)
+
+
+def fill[K, V](mut index: Index[K, V], key: K, value: V) -> int:
+    index.put(key, value)
+    return index.size()
+
+
+def main() -> None:
+    counts = count(["a", "b", "a"])
+    last = counts["a"]
+    println(f"{len(counts)} {last}")
+    names = ["x", "y"]
+    println(f"{distinct([1, 2, 1])} {keyed(names)}")
+    println(relay([1, 2, 3]))
+    mut index: Index[str, int] = Index(entries={})
+    println(fill(index, "a", 1))
+    println(fill(index, "b", 2))

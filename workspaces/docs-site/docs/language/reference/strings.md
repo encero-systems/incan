@@ -125,7 +125,7 @@ See [String representation](./derives/string_representation.md) for how a type p
 | `Result` | `Ok(2)` or `Err("bad")` |
 | `FrozenList`, `FrozenSet`, `FrozenDict` | As `list`, `set` and `dict`: `[1, 2, 3]`, `{1, 2}`, `{"a": 1}` |
 
-- Inside a tuple, list, dict, set, frozen collection, `Option` or `Result`, every element or payload displays as its `{value:?}` structure: a `str` is quoted (`["a", "b"]`), a `float` keeps its decimal point and uses an unsigned exponent from `1e16` up and below `1e-4` (`[100.0, 1e16]`), a model or class shows its fields even when its type defines `__str__` (`[Point { x: 1, y: 2 }]`), and an enum value shows its variant (`[Red]`). The entry order of a set or a dict is unspecified.
+- Inside a tuple, list, dict, set, frozen collection, `Option` or `Result`, every element or payload displays as its `{value:?}` structure: a `str` is quoted (`["a", "b"]`), a `float` keeps its decimal point and uses an unsigned exponent from `1e16` up and below `1e-4` (`[100.0, 1e16]`), a model or class shows its fields even when its type defines `__str__` (`[Point { x: 1, y: 2 }]`), an enum value shows its variant (`[Red]`), and a union value shows its member's structure. The entry order of a set or a dict is unspecified.
 - A `float` always shows a decimal point or an exponent. An integral value keeps its decimal point (`100.0`); the shortest digits that round-trip are used (`1.5`, `0.30000000000000004`); positional notation holds while the magnitude is at least `1e-4` and below `1e16` (`10000000000.0`), and outside that range the value uses an exponent with an explicit sign and at least two digits (`1e+16`, `1.5e-07`); the non-finite values are `inf`, `-inf` and `nan`.
 - An `f32` displays the shortest digits that round-trip in positional notation, with no forced decimal point (`100`, `1.5`). An `f64` is a `float` and displays as one.
 
@@ -135,7 +135,8 @@ Refused in every display position (`INCAN-T0103`):
 - a `Generator`;
 - a function;
 - `bytes`, `FrozenBytes`;
-- a `model`, `class`, `enum` or `newtype` value whose type provides no `Display`: it defines no `__str__`, is not an enum that declares values, and does not adopt `Error`. `@derive(Display)` provides nothing.
+- a `model`, `class`, `enum` or `newtype` value whose type provides no `Display`: it defines no `__str__`, is not an enum that declares values, and does not adopt `Error`. `@derive(Display)` provides nothing;
+- a tuple, list, dict, set, frozen collection, `Option` or `Result` that holds a `Generator`, a function, `bytes` or `FrozenBytes` at any depth.
 
 ```incan
 model Point:
@@ -167,7 +168,7 @@ def main() -> None:
 
 ### `Display` bounds
 
-A type argument for a type parameter bounded by `Display` (`def show[T with Display](value: T)`) satisfies the bound when it provides `Display` by the rule above. `int`, `float`, `bool`, `str` and `FrozenStr` satisfy it.
+A type argument for a type parameter bounded by `Display` (`def show[T with Display](value: T)`) satisfies the bound when it provides `Display` by the rule above. `int`, `float`, the exact-width numeric types, `bool`, `str` and `FrozenStr` satisfy it.
 
 - Refused (`INCAN-T0103`): a type argument whose values have no printed form, as listed above.
 - Refused (`INCAN-T0001`): a tuple, list, dict, set, `Option` or `Result` type argument. Each displays its structure in a display position but does not provide `Display`.

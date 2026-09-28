@@ -6,8 +6,10 @@
 //! lowers to); a model, class, enum or newtype displays through `Display`, which it provides by a `__str__` method, by
 //! its variants' values when it is an enum that declares them, or by `message()` when it adopts `Error`.
 //! `@derive(Display)` provides nothing. A value with none of those has no printed form, so the checker refuses it in
-//! every position with `INCAN-T0103` instead of leaving the build to fail on it. A `Display` bound asks the same of a
-//! type argument, except that a structural value has no `Display` of its own.
+//! every position with `INCAN-T0103` instead of leaving the build to fail on it. Inside a structural value every
+//! element displays as its `{value:?}` structure, and a generator, a function and `bytes` have none there either, so a
+//! structure holding one is refused alike. A `Display` bound asks the same of a type argument, except that a
+//! structural value has no `Display` of its own.
 
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
 use incan_lang::lang::traits::{self as core_traits, TraitId};
@@ -29,6 +31,9 @@ impl TypeChecker {
     /// `position` is where the source displays it and words the message; `operand` names the value in the message
     /// when the source spells it as a plain name or as `self`. Every value with a printed form, and every type the
     /// checker cannot classify (a type parameter, a Rust type, an unknown), is left alone.
+    ///
+    /// A structural value is refused as well when it holds, at any depth, an element with no printed form (see
+    /// [`Self::unprintable_element`]).
     pub(in crate::typechecker::check_expr) fn check_display_operand(
         &mut self,
         position: DisplayPosition<'_>,
@@ -36,15 +41,18 @@ impl TypeChecker {
         operand_ty: &ResolvedType,
     ) {
         let operand_ty = self.expand_type_aliases(operand_ty.clone());
-        let Some(value) = self.unprintable_value(&operand_ty) else {
-            return;
-        };
         let name = match &operand.node {
             Expr::Ident(name) => Some(name.as_str()),
             Expr::SelfExpr => Some("self"),
             _ => None,
         };
-        let error = errors::value_has_no_printed_form(position, name, value, operand.span);
+        let error = if let Some(value) = self.unprintable_value(&operand_ty) {
+            errors::value_has_no_printed_form(position, name, value, operand.span)
+        } else if let Some(element) = self.unprintable_element(&operand_ty) {
+            errors::element_has_no_printed_form(position, name, &operand_ty.to_string(), element, operand.span)
+        } else {
+            return;
+        };
         self.errors.push(error);
     }
 
@@ -123,6 +131,41 @@ impl TypeChecker {
             }
             _ => None,
         }
+    }
+
+    /// Classify the first element with no printed form that a structural value holds at any depth, or return `None`.
+    ///
+    /// A tuple, list, dict, set, frozen collection, `Option` or `Result` displays each element, key, value or payload
+    /// as its `{value:?}` structure, and so does a union member held there. A generator, a function and `bytes` have
+    /// none. Every other element displays: a model, class or enum shows its fields or its variant, whatever `Display`
+    /// its type provides, so the top-level rule for nominal values does not apply inside a structure.
+    fn unprintable_element(&self, ty: &ResolvedType) -> Option<UnprintableValue<'static>> {
+        let elements: Vec<&ResolvedType> = match ty {
+            ResolvedType::Tuple(items) => items.iter().collect(),
+            ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => vec![inner.as_ref()],
+            ResolvedType::FrozenDict(key, value) => vec![key.as_ref(), value.as_ref()],
+            ResolvedType::Generic(name, args)
+                if ty.is_union()
+                    || collection_type_id(name.as_str()).is_some_and(|id| id != CollectionTypeId::Generator) =>
+            {
+                args.iter().collect()
+            }
+            _ => return None,
+        };
+        elements.into_iter().find_map(|element| {
+            let element = self.expand_type_aliases(element.clone());
+            match &element {
+                ResolvedType::Generic(name, _)
+                    if collection_type_id(name.as_str()) == Some(CollectionTypeId::Generator) =>
+                {
+                    Some(UnprintableValue::Generator)
+                }
+                ResolvedType::Function(..) => Some(UnprintableValue::Function),
+                ResolvedType::Bytes => Some(UnprintableValue::Bytes),
+                _ if is_frozen_bytes(&element) => Some(UnprintableValue::Bytes),
+                _ => self.unprintable_element(&element),
+            }
+        })
     }
 
     /// Whether the values of a model, class, enum or newtype provide `Display`, or `None` when `type_name` names none

@@ -716,7 +716,8 @@ pub struct ExpressionArtifacts {
     /// module-local `std.logging.get_logger(...)` call so source metadata can become the logger name.
     pub ambient_logger_bindings: HashSet<(usize, usize)>,
     /// The type of the place a value is written to, keyed by the value span, when the value needs adapting to it: a
-    /// field or index assignment, a model or class constructor field, or a `return` (#1858, RFC 009).
+    /// field or index assignment, a model or class constructor field, a `return`, a `yield`, or a `match` arm or
+    /// `break` value of the construct's type (#1858, RFC 009).
     ///
     /// The checker accepts a value of an `Option`'s payload type there (`box.count = 5` for an `Option[int]` field),
     /// and a numeric value of a type that losslessly widens to the place's numeric type or union member

@@ -479,3 +479,74 @@ def show[T](value: T) -> str:
     );
     Ok(())
 }
+
+/// Inside a tuple, list, dict, set, `Option` or `Result` every element displays as its structure, and a generator, a
+/// function and `bytes` have none at any depth, so the structure holding one is refused in every display position; a
+/// union, an enum or a model element displays.
+#[test]
+fn structures_holding_an_element_with_no_printed_form_are_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let refused = printed_form_refusals(
+        r#"
+def numbers() -> Generator[int]:
+    yield 1
+
+def double(n: int) -> int:
+    return n * 2
+
+def main() -> None:
+    gens = [numbers()]
+    print(gens)
+    raw = b"hi"
+    println((raw, 1))
+    maybe = Some(double)
+    println(f"{maybe}")
+    table = {"a": [numbers()]}
+    text = str(table)
+"#,
+    )?;
+    assert_eq!(
+        refused.iter().map(|(message, _)| message.as_str()).collect::<Vec<_>>(),
+        vec![
+            "'print' cannot print 'gens', which holds a generator",
+            "'println' cannot print a value of type '(bytes, int)', which holds a bytes value",
+            "f-string cannot interpolate 'maybe', which holds a function",
+            "'str' cannot convert 'table' to text, since it holds a generator",
+        ]
+    );
+    check_str(
+        r#"
+enum Color:
+    Red
+
+model Point:
+    x: int
+
+def main() -> None:
+    member: int | str = 1
+    print([member])
+    println([Color.Red], [Point(x=1)], (Some(1), 2))
+"#,
+    )
+    .map_err(|errors| format!("structures of displayable elements must print, got: {errors:?}"))?;
+    Ok(())
+}
+
+/// Every exact-width numeric type satisfies a `Display` bound, as it displays by the rule above; `i64` is `int`.
+#[test]
+fn exact_width_numerics_satisfy_a_display_bound() -> Result<(), Box<dyn std::error::Error>> {
+    check_str(
+        r#"
+def show[T with Display](value: T) -> str:
+    return f"{value}"
+
+def main() -> None:
+    small: i32 = 3
+    byte: u8 = 250
+    single: f32 = 1.5
+    long_count: long = 7
+    println(show(small) + show(byte) + show(single) + show(long_count))
+"#,
+    )
+    .map_err(|errors| format!("exact-width numerics must satisfy Display, got: {errors:?}"))?;
+    Ok(())
+}

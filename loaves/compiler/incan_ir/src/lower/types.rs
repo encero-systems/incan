@@ -817,7 +817,7 @@ impl AstLowering {
                 }
 
                 if let Some(id) = numerics::from_str(n) {
-                    return IrType::from_numeric_spelling(n, id);
+                    return IrType::from_numeric_id(id);
                 }
 
                 if let Some(id) = stringlike::from_str(n) {
@@ -1264,7 +1264,7 @@ impl AstLowering {
                 }
 
                 if let Some(id) = numerics::from_str(n) {
-                    return IrType::from_numeric_spelling(n, id);
+                    return IrType::from_numeric_id(id);
                 }
 
                 if let Some(id) = stringlike::from_str(n) {
@@ -1535,15 +1535,19 @@ impl AstLowering {
             | ast::BinaryOp::NotIn
             | ast::BinaryOp::Is
             | ast::BinaryOp::IsNot => IrType::Bool,
-            ast::BinaryOp::BitAnd
-            | ast::BinaryOp::BitOr
-            | ast::BinaryOp::BitXor
-            | ast::BinaryOp::Shl
-            | ast::BinaryOp::Shr => {
-                if matches!((left, right), (IrType::Int, IrType::Int)) {
-                    IrType::Int
-                } else {
-                    IrType::Unknown
+            // RFC 009: bit arithmetic keeps its operands' one integer type, and a shift its left operand's type.
+            ast::BinaryOp::BitAnd | ast::BinaryOp::BitOr | ast::BinaryOp::BitXor => {
+                match (ir_type_to_numeric_ty(left), ir_type_to_numeric_ty(right)) {
+                    (Some(NumericTy::Int), Some(NumericTy::Int)) => {
+                        exact_integer_arithmetic_type(left, right).unwrap_or(IrType::Int)
+                    }
+                    _ => IrType::Unknown,
+                }
+            }
+            ast::BinaryOp::Shl | ast::BinaryOp::Shr => {
+                match (ir_type_to_numeric_ty(left), ir_type_to_numeric_ty(right)) {
+                    (Some(NumericTy::Int), Some(NumericTy::Int)) => left.clone(),
+                    _ => IrType::Unknown,
                 }
             }
             ast::BinaryOp::MatMul | ast::BinaryOp::PipeForward | ast::BinaryOp::PipeBackward => IrType::Unknown,

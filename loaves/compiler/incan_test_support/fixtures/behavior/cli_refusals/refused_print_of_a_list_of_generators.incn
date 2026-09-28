@@ -1,0 +1,11 @@
+# behavior: printing a list that holds a generator is refused at check time, since a generator has no printed form inside a structure either
+# expect-diagnostic: INCAN-T0103
+
+def numbers(limit: int) -> Generator[int]:
+    for value in range(limit):
+        yield value
+
+
+def main() -> None:
+    generators = [numbers(3)]
+    print(generators)

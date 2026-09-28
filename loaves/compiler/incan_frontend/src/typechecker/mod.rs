@@ -1029,48 +1029,77 @@ impl TypeChecker {
 
     /// Resolve the final type of a `loop:` expression from the `break` types observed in its body.
     ///
-    /// When an outer expected type exists, every `break` must be compatible with it. Otherwise this picks the
-    /// narrowest compatible type seen across all `break` statements and emits a type mismatch when no single result
-    /// type can satisfy every branch.
+    /// The `break` values unify as [`Self::unify_branch_value_types`] states, against the outer expected type when
+    /// one exists; a loop with no `break` has no value and is refused.
     pub fn resolve_loop_break_result_type(
         &mut self,
         loop_span: Span,
         expected_break_ty: Option<&ResolvedType>,
         break_types: &[(ResolvedType, Span)],
     ) -> ResolvedType {
-        let Some((first_ty, _)) = break_types.first() else {
+        if break_types.is_empty() {
             self.errors.push(errors::loop_expression_requires_break(loop_span));
             return ResolvedType::Unknown;
-        };
+        }
+        self.unify_branch_value_types(break_types, expected_break_ty)
+            .unwrap_or(ResolvedType::Unknown)
+    }
 
-        // ---- Context: outer expression already constrains the loop result type ----
-        if let Some(expected) = expected_break_ty {
-            for (ty, span) in break_types {
-                if !self.types_compatible(ty, expected) {
+    /// Return the one type the values of the branches of a value-producing construct unify to: the `break` values of
+    /// a `loop:` expression, or the arms of a `match` expression.
+    ///
+    /// With `expected`, the type of the place the construct is written to, every value must be assignable to it and
+    /// the construct yields it. Without it, each value either is assignable to the type unified so far, or the type
+    /// unified so far is assignable to it and it becomes the result, so `i8` and `int` values unify to `int` and
+    /// `Some(5)` and `None` to `Option[int]`. A value that fits neither way is refused with a type mismatch at its span
+    /// and the construct yields `Unknown`. An `Unknown` value has already been refused or is not yet known and a
+    /// `Never` value does not complete, so neither takes part; `None` means no value took part.
+    ///
+    /// Every value whose type is not the result is recorded as written to a place of the result type
+    /// ([`Self::record_value_destination_if_compatible`]), so lowering widens a narrower numeric value and wraps an
+    /// `Option` payload in that branch itself. The branches of the generated construct then share one type, as Rust
+    /// requires of the arms of a `match` and the values of a `loop`.
+    pub(in crate::typechecker) fn unify_branch_value_types(
+        &mut self,
+        values: &[(ResolvedType, Span)],
+        expected: Option<&ResolvedType>,
+    ) -> Option<ResolvedType> {
+        let mut participating = values
+            .iter()
+            .filter(|(ty, _)| !matches!(ty, ResolvedType::Unknown | ResolvedType::Never));
+        let result_ty = match expected {
+            Some(expected) => {
+                if let Some((ty, span)) = participating.find(|(ty, _)| !self.types_compatible(ty, expected)) {
                     self.errors
                         .push(errors::type_mismatch(&expected.to_string(), &ty.to_string(), *span));
-                    return ResolvedType::Unknown;
+                    return Some(ResolvedType::Unknown);
                 }
+                expected.clone()
             }
-            return expected.clone();
+            None => {
+                let (first_ty, _) = participating.next()?;
+                let mut result_ty = first_ty.clone();
+                for (ty, span) in participating {
+                    if self.types_compatible(ty, &result_ty) {
+                        continue;
+                    }
+                    if self.types_compatible(&result_ty, ty) {
+                        result_ty = ty.clone();
+                        continue;
+                    }
+                    self.errors
+                        .push(errors::type_mismatch(&result_ty.to_string(), &ty.to_string(), *span));
+                    return Some(ResolvedType::Unknown);
+                }
+                result_ty
+            }
+        };
+        for (ty, span) in values {
+            if *ty != result_ty {
+                self.record_value_destination_if_compatible(*span, ty, &result_ty);
+            }
         }
-
-        // ---- Context: infer a common result type from the observed `break` values ----
-        let mut result_ty = first_ty.clone();
-        for (ty, span) in break_types.iter().skip(1) {
-            if self.types_compatible(ty, &result_ty) {
-                continue;
-            }
-            if self.types_compatible(&result_ty, ty) {
-                result_ty = ty.clone();
-                continue;
-            }
-            self.errors
-                .push(errors::type_mismatch(&result_ty.to_string(), &ty.to_string(), *span));
-            return ResolvedType::Unknown;
-        }
-
-        result_ty
+        Some(result_ty)
     }
 
     /// Opt into semantic rust-inspect extraction for this checker.
@@ -2664,10 +2693,11 @@ impl TypeChecker {
     /// compatible with it and the destination is an `Option` (after alias expansion) or the value is numeric (#1858,
     /// RFC 009).
     ///
-    /// The write sites that record this (field and index assignment, a model or class constructor field, `return`)
-    /// accept a value of the `Option`'s payload type, and a numeric value whose type losslessly widens to the numeric
-    /// type or union member the destination holds. Lowering wraps that value in the `Some` layers the destination adds
-    /// and widens it. A value already of an `Option` destination's type is recorded too; lowering leaves it as it is.
+    /// The write sites that record this (field and index assignment, a model or class constructor field, `return`,
+    /// `yield`, and a `match` arm or `break` value of the construct's type) accept a value of the `Option`'s payload
+    /// type, and a numeric value whose type losslessly widens to the numeric type or union member the destination
+    /// holds. Lowering wraps that value in the `Some` layers the destination adds and widens it. A value already of an
+    /// `Option` destination's type is recorded too; lowering leaves it as it is.
     pub(in crate::typechecker) fn record_value_destination_if_compatible(
         &mut self,
         value_span: Span,

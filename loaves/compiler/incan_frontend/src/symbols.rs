@@ -2110,25 +2110,17 @@ pub enum ResolvedType {
 impl ResolvedType {
     /// Return the semantic type of one numeric registry id.
     ///
-    /// RFC 009 makes `float` an alias of `f64`, and an alias creates no separate type identity, so the `f64` id is
-    /// [`ResolvedType::Float`] wherever it comes from: a type spelling, a literal suffix, or library metadata. Every
-    /// other numeric id keeps its exact-width type; the registry's `bool` entry is [`ResolvedType::Bool`].
+    /// RFC 009 makes `int` an alias of `i64` and `float` an alias of `f64`, and an alias creates no separate type
+    /// identity, so the `i64` id is [`ResolvedType::Int`] and the `f64` id is [`ResolvedType::Float`] wherever they
+    /// come from: any spelling of the type (`int`, `i64`, `long`, `bigint`; `float`, `f64`, `double`, `fp64`), a
+    /// literal suffix, or library metadata. Every other numeric id keeps its exact-width type; the registry's `bool`
+    /// entry is [`ResolvedType::Bool`].
     pub fn from_numeric_id(id: NumericTypeId) -> ResolvedType {
         match id {
+            NumericTypeId::I64 => ResolvedType::Int,
             NumericTypeId::F64 => ResolvedType::Float,
             NumericTypeId::Bool => ResolvedType::Bool,
             _ => ResolvedType::Numeric(id),
-        }
-    }
-
-    /// Return the semantic type a numeric registry spelling names, given the id the registry resolved it to.
-    ///
-    /// The spelling `int` keeps [`ResolvedType::Int`], which is compatible with `i64` both ways. Every other spelling
-    /// resolves through [`Self::from_numeric_id`], so `f64`, `float`, `double` and `fp64` are all `float`.
-    pub fn from_numeric_spelling(spelling: &str, id: NumericTypeId) -> ResolvedType {
-        match spelling {
-            "int" => ResolvedType::Int,
-            _ => Self::from_numeric_id(id),
         }
     }
 
@@ -2414,7 +2406,7 @@ where
         Type::Dotted(segments) => resolve_qualified_type(segments).unwrap_or(ResolvedType::Unknown),
         Type::Simple(name) => {
             if let Some(id) = numerics::from_str(name.as_str()) {
-                return ResolvedType::from_numeric_spelling(name, id);
+                return ResolvedType::from_numeric_id(id);
             }
             if let Some(id) = stringlike::from_str(name.as_str()) {
                 return match id {
@@ -2999,10 +2991,6 @@ mod tests {
         let symbols = SymbolTable::new();
 
         assert_eq!(
-            resolve_type(&Type::Simple("i64".to_string()), &symbols),
-            ResolvedType::Numeric(NumericTypeId::I64)
-        );
-        assert_eq!(
             resolve_type(&Type::Simple("integer".to_string()), &symbols),
             ResolvedType::Numeric(NumericTypeId::I32)
         );
@@ -3014,6 +3002,20 @@ mod tests {
             resolve_type(&Type::Simple("real".to_string()), &symbols),
             ResolvedType::Numeric(NumericTypeId::F32)
         );
+    }
+
+    /// RFC 009: `int` is an alias of `i64`, so every `i64` spelling resolves to the one `int` type.
+    #[test]
+    fn resolve_type_maps_every_i64_spelling_to_int() {
+        let symbols = SymbolTable::new();
+
+        for spelling in ["i64", "int", "long", "bigint"] {
+            assert_eq!(
+                resolve_type(&Type::Simple(spelling.to_string()), &symbols),
+                ResolvedType::Int,
+                "{spelling}"
+            );
+        }
     }
 
     /// RFC 009: `float` is an alias of `f64`, so every `f64` spelling resolves to the one `float` type.

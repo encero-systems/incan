@@ -295,7 +295,7 @@ impl TypeChecker {
             Expr::Partial(partial) => self.check_partial_expr(partial, expr.span),
             Expr::Surface(surface_expr) => self.check_surface_expr(surface_expr, expr.span),
             Expr::Try(inner) => self.check_try(inner, expr.span),
-            Expr::Match(subject, arms) => self.check_match(subject, arms, expr.span),
+            Expr::Match(subject, arms) => self.check_match(subject, arms, expr.span, None),
             Expr::If(if_expr) => self.check_if_expr(if_expr, expr.span),
             Expr::Loop(loop_expr) => self.check_loop_expr(loop_expr, None, expr.span),
             Expr::Generator(generator) => self.check_generator_expr(generator, expr.span),
@@ -330,7 +330,11 @@ impl TypeChecker {
                     super::YieldContext::Generator { element_ty } => {
                         if let Some(inner) = inner {
                             let yield_ty = self.check_expr_with_expected(inner, Some(&element_ty));
-                            if !self.types_compatible(&yield_ty, &element_ty) {
+                            if self.types_compatible(&yield_ty, &element_ty) {
+                                // A yielded item is written to the generator's element type as a returned value is
+                                // to the return type: a narrower numeric is widened to it (RFC 009).
+                                self.record_value_destination_if_compatible(inner.span, &yield_ty, &element_ty);
+                            } else {
                                 self.errors.push(errors::type_mismatch(
                                     &element_ty.to_string(),
                                     &yield_ty.to_string(),
@@ -502,6 +506,9 @@ impl TypeChecker {
             (Expr::Dict(entries), expected_ty) => self.check_dict_with_expected(entries, expected_ty),
             (Expr::Set(elems), expected_ty) => self.check_set_with_expected(elems, expected_ty),
             (Expr::Loop(loop_expr), expected_ty) => self.check_loop_expr(loop_expr, expected_ty, expr.span),
+            (Expr::Match(subject, arms), Some(expected_ty)) => {
+                self.check_match(subject, arms, expr.span, Some(expected_ty))
+            }
             _ => return self.check_expr(expr),
         };
 

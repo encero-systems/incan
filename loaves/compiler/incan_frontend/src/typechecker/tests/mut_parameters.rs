@@ -716,3 +716,36 @@ fn refusals_by_callee(refusals: &[CompileError]) -> Vec<String> {
         })
         .collect()
 }
+
+/// RFC 009: `int` is an alias of `i64`, so a `mut` parameter spelled `i64`, `long` or `bigint` is the function's own
+/// copy as a `mut int` one is: its body may rebind it, and a function type cannot mark it.
+#[test]
+fn every_int_spelling_is_a_copied_scalar_parameter() -> Result<(), String> {
+    checked(
+        r#"
+def bump(mut n: i64) -> i64:
+    n += 1
+    return n
+
+def grow(mut n: long) -> int:
+    n = n * 2
+    return n
+
+def shrink(mut n: bigint) -> bigint:
+    n -= 1
+    return n
+
+def main() -> None:
+    count: int = 1
+    println(bump(count) + grow(count) + shrink(count))
+"#,
+    )?;
+    let errors = check_errors("def apply(f: (mut i64) -> None) -> None:\n    pass\n");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("`mut` cannot mark the `i64` parameter of a function type")),
+        "a function type cannot mark an i64 parameter, as it cannot mark an int one, got {errors:?}"
+    );
+    Ok(())
+}

@@ -895,3 +895,67 @@ fn runtime_future_bound_relation_refuses_only_function_values_issue1772() -> Res
     }
     Ok(())
 }
+
+/// A generic function that hashes its type parameter through a `dict` or `set` type, an index write into a dict, or a
+/// keyed method of a set or dict refuses, at the call, a type argument without `Eq` and `Hash`; a hashable one is
+/// accepted (#1758).
+#[test]
+fn hashing_through_collection_types_index_writes_and_keyed_methods_is_inferred_issue1758() -> Result<(), String> {
+    let errors = refused(
+        r#"
+def by_annotation[T](items: list[T]) -> dict[T, int]:
+    mut counts: dict[T, int] = {}
+    for item in items:
+        counts[item] = 1
+    return counts
+
+def by_index_write[T](items: list[T]) -> int:
+    mut counts = {}
+    for item in items:
+        counts[item] = 1
+    return len(counts)
+
+def by_add[T](items: list[T]) -> int:
+    mut seen = set()
+    for item in items:
+        seen.add(item)
+    return len(seen)
+
+def by_insert[T](items: list[T]) -> int:
+    mut counts = {}
+    for item in items:
+        counts.insert(item, 1)
+    return len(counts)
+
+def by_parameter[K](table: dict[K, int], key: K) -> bool:
+    return key in table
+
+def main() -> None:
+    println(len(by_annotation([1.5])))
+    println(by_index_write([1.5]))
+    println(by_add([1.5]))
+    println(by_insert([1.5]))
+    println(len(by_annotation([1, 2])))
+    println(by_add(["a"]))
+"#,
+        "a generic function hashing a float through a dict or set must be refused at the call",
+    )?;
+    for callee in [
+        "'by_annotation' uses its type parameter 'T'",
+        "'by_index_write' uses its type parameter 'T'",
+        "'by_add' uses its type parameter 'T'",
+        "'by_insert' uses its type parameter 'T'",
+    ] {
+        if !has_refusal(&errors, "INCAN-T0114", &[callee, "'float' cannot be its type argument"]) {
+            return Err(format!(
+                "expected a T0114 refusal containing {callee:?}, got: {errors:?}"
+            ));
+        }
+    }
+    if with_code(&errors, "INCAN-T0114").len() != 4
+        || errors.iter().any(|error| error.stable_code() != Some("INCAN-T0114"))
+    {
+        return Err(format!("only the four float calls must be refused, got: {errors:?}"));
+    }
+    Ok(())
+}

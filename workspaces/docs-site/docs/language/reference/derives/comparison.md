@@ -52,7 +52,7 @@ The element type of a `set` and the key type of a `dict` implement `Eq` and `Has
 - a set literal `{a, b}` and a dict literal `{k: v}`;
 - a dict comprehension `{k: v for ...}`;
 - `set(source)`;
-- the type argument of a call to a generic function or method that uses its type parameter as a set element or dict key.
+- the type argument of a call to a generic function or method that uses its type parameter as a set element or dict key: in a `set` or `dict` type it holds (a parameter, the return type, a local), in a set or dict literal, a dict comprehension or `set(source)`, as the key of an index write `d[key] = value`, as the first argument of a set or dict method, such as `add`, `insert` or `get`, or by passing it to another such function or method.
 
 A `FrozenSet` element and a `FrozenDict` key carry no requirement.
 

@@ -48,7 +48,7 @@ A closure reads an outer local from the value captured when the closure is const
 
 ### `mut` parameters
 
-`mut` on a parameter makes it a mutable binding in the function's body. A parameter of type `int`, `float` or `bool`, also through a type alias, is the function's own copy: the body may change and rebind it, its changes stay local, and it is not marked in the function type. A parameter of any other type, except a Rust type and `*args` or `**kwargs`, is marked: the function's changes to it reach the caller, and the function type marks it, `(mut T, ...) -> R`.
+`mut` on a parameter makes it a mutable binding in the function's body. A parameter of type `int`, `float` or `bool`, under any spelling of the type (`i64`, `long` and `bigint` are `int`; `f64`, `double` and `fp64` are `float`) and also through a type alias, is the function's own copy: the body may change and rebind it, its changes stay local, and it is not marked in the function type. A parameter of any other type, except a Rust type and `*args` or `**kwargs`, is marked: the function's changes to it reach the caller, and the function type marks it, `(mut T, ...) -> R`.
 
 | Declaration                                     | Function type                  |
 | ----------------------------------------------- | ------------------------------ |
