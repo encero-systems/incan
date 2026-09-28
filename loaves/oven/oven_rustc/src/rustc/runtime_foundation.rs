@@ -1714,7 +1714,19 @@ mod tests {
         fs::write(toolchain_root.join("bin/rustc"), b"rustc")?;
         write_foundation_materialization_fixture(&staged_compiled_root, compiled_toolchain.path())?;
 
+        let mut toolchain_paths = Vec::new();
+        crate::loaf::collect_regular_member_paths(&toolchain_root, &toolchain_root, &mut toolchain_paths)?;
+        let toolchain_members = toolchain_paths
+            .into_iter()
+            .map(|relative_path| {
+                let digest = digest_bytes(&fs::read(toolchain_root.join(&relative_path))?);
+                Ok(crate::loaf::OvenReleaseToolchainMember { relative_path, digest })
+            })
+            .collect::<Result<Vec<_>, std::io::Error>>()?;
+        let compiler_closure_identity = crate::loaf::release_toolchain_compiler_closure_identity(&toolchain_members)?;
+
         let mut foundation = foundation()?;
+        foundation.compiler_closure_digest = compiler_closure_identity.clone();
         for (relative_path, bytes) in [
             ("registry-sources/serde-1.0.0/src/lib.rs", fixture_source_bytes("serde")),
             (
@@ -1802,15 +1814,6 @@ mod tests {
             physical_bytes: compiled_physical_bytes,
             path: generation_relative.join(compiled_relative).join("loaf.json"),
         };
-        let mut toolchain_paths = Vec::new();
-        crate::loaf::collect_regular_member_paths(&toolchain_root, &toolchain_root, &mut toolchain_paths)?;
-        let toolchain_members = toolchain_paths
-            .into_iter()
-            .map(|relative_path| {
-                let digest = digest_bytes(&fs::read(toolchain_root.join(&relative_path))?);
-                Ok(crate::loaf::OvenReleaseToolchainMember { relative_path, digest })
-            })
-            .collect::<Result<Vec<_>, std::io::Error>>()?;
         let runtime_member = OvenReleaseRuntimeFoundationMember {
             schema_version: OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_SCHEMA_VERSION,
             label: OVEN_RELEASE_RUNTIME_FOUNDATION_MEMBER_LABEL.to_string(),
@@ -1819,7 +1822,7 @@ mod tests {
             compiled_loaf_identity: loaf_identity,
             compiled_plan_identity: plan_identity,
             toolchain_owner_identity: toolchain_owner(),
-            compiler_closure_identity: asset.foundation.compiler_closure_digest.clone(),
+            compiler_closure_identity,
             toolchain_root_relative_path: "toolchain".into(),
             toolchain_members,
         };

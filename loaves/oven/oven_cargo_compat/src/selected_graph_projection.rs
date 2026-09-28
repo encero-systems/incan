@@ -2889,9 +2889,8 @@ mod tests {
         Ok(())
     }
 
-    /// The finalized capture receipt is derived from the pruned capture, so it is not the identity the projection
-    /// rooted the registry sources under; the foundation must take its artifact owner from the graph's Constituent
-    /// owner, or the asset later finds it absent from the owner table.
+    /// The foundation must take its artifact owner from the graph's Constituent owner rather than from the capture
+    /// receipt, even when portable closure identity makes those digests equal for this projection.
     #[test]
     fn runtime_foundation_artifact_owner_is_the_graph_constituent() -> Result<(), Box<dyn std::error::Error>> {
         use oven_rustc::loaf::{
@@ -2909,10 +2908,6 @@ mod tests {
             .iter()
             .find(|owner| owner.kind == OvenSelectedRustFacetOwnerKind::Constituent)
             .ok_or("the finalized graph names a Constituent owner")?;
-        assert_ne!(
-            constituent.identity, finalized.capture_receipt.identity,
-            "pruning renumbers the build-script closure, so the finalized capture receipt is a different identity"
-        );
         let [unit] = graph.units.as_slice() else {
             return Err("the release-shaped graph has one unit".into());
         };

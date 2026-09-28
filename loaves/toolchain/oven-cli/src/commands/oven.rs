@@ -6084,10 +6084,21 @@ mod tests {
             OvenCompilerSuiteTargetCapabilities::for_target(
                 "incan-cli",
                 "test",
-                "loaves/toolchain/incan-cli/tests/integration_tests.rs"
+                "loaves/toolchain/incan-cli/tests/integration_codegen_imports_and_results_tests.rs"
             )
             .explicit_bake_cargo
         );
+        for removed_root in [
+            "loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs",
+            "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs",
+            "loaves/toolchain/incan-cli/tests/cli_workspace_and_lock_tests.rs",
+            "loaves/toolchain/incan-cli/tests/rfc031_pub_import_integration_tests.rs",
+        ] {
+            assert!(
+                !OvenCompilerSuiteTargetCapabilities::for_target("incan-cli", "test", removed_root).explicit_bake_cargo,
+                "{removed_root}"
+            );
+        }
         assert!(
             !OvenCompilerSuiteTargetCapabilities::for_target(
                 "incan_driver",

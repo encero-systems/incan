@@ -84,7 +84,19 @@ impl OvenCompilerSuiteTargetCapabilities {
             ) | (
                 "incan-cli",
                 "test",
-                "loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs"
+                "loaves/toolchain/incan-cli/tests/cli_language_call_regression_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/cli_language_reflection_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/cli_language_union_regression_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/cli_language_value_regression_tests.rs"
             ) | (
                 "incan-cli",
                 "test",
@@ -92,7 +104,15 @@ impl OvenCompilerSuiteTargetCapabilities {
             ) | (
                 "incan-cli",
                 "test",
-                "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs"
+                "loaves/toolchain/incan-cli/tests/cli_rust_borrow_interop_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/cli_rust_expression_interop_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/cli_rust_generic_interop_tests.rs"
             ) | (
                 "incan-cli",
                 "test",
@@ -104,11 +124,83 @@ impl OvenCompilerSuiteTargetCapabilities {
             ) | (
                 "incan-cli",
                 "test",
-                "loaves/toolchain/incan-cli/tests/cli_workspace_and_lock_tests.rs"
+                "loaves/toolchain/incan-cli/tests/cli_lock_policy_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/cli_workspace_command_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/cli_workspace_scope_tests.rs"
             ) | (
                 "incan-cli",
                 "test",
                 "loaves/toolchain/incan-cli/tests/integration_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/integration_codegen_async_and_modules_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/integration_codegen_constants_and_interop_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/integration_codegen_hash_and_io_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/integration_codegen_imports_and_results_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/integration_codegen_language_and_fs_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/integration_codegen_ownership_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/integration_codegen_stdlib_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/integration_format_and_cli_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/integration_language_runtime_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/integration_lexer_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/integration_numeric_semantics_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/integration_runtime_types_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/integration_sdk_interop_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/integration_test_runner_basics_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/integration_test_runner_fixtures_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/integration_test_runner_scheduling_tests.rs"
             ) | (
                 "incan-cli",
                 "test",
@@ -128,7 +220,39 @@ impl OvenCompilerSuiteTargetCapabilities {
             ) | (
                 "incan-cli",
                 "test",
-                "loaves/toolchain/incan-cli/tests/rfc031_pub_import_integration_tests.rs"
+                "loaves/toolchain/incan-cli/tests/rfc031_boundary_parity_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/rfc031_checked_c_resource_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/rfc031_checked_c_span_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/rfc031_manifest_diagnostics_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/rfc031_pub_model_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/rfc031_rust_interop_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/rfc031_stdlib_facade_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/rfc031_vocab_desugar_tests.rs"
+            ) | (
+                "incan-cli",
+                "test",
+                "loaves/toolchain/incan-cli/tests/rfc031_vocab_integration_tests.rs"
             )
         );
         Self {

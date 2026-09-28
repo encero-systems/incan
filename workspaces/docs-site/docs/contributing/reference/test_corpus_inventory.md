@@ -2986,7 +2986,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | `loaves/oven/oven_cargo_compat/src/loaf_bake/vocab_support.rs` | 3 | 1023 | 290 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/registry_sources.rs` | 2 | 699 | 129 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/rustc_trace.rs` | 5 | 494 | 103 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_cargo_compat/src/selected_graph_projection.rs` | 22 | 4091 | 1612 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_cargo_compat/src/selected_graph_projection.rs` | 22 | 4086 | 1607 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_cargo_compat/src/selected_unit_capture.rs` | 11 | 2370 | 783 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
 
     #### `loaves/oven/oven_interop` (20 tests in 1 file: unaffected 20)
@@ -3026,7 +3026,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     | `loaves/oven/oven_rustc/src/rustc/inspection.rs` | 32 | 2657 | 1991 | unaffected | - | - | required | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_rustc/src/rustc/runtime_closure.rs` | 8 | 1086 | 509 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_rustc/src/rustc/runtime_executor.rs` | 10 | 1435 | 819 | unaffected | - | - | - | #1561 | run 4 | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
-    | `loaves/oven/oven_rustc/src/rustc/runtime_foundation.rs` | 26 | 2147 | 1473 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
+    | `loaves/oven/oven_rustc/src/rustc/runtime_foundation.rs` | 26 | 2150 | 1476 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_rustc/src/rustc/selected_unit.rs` | 13 | 1788 | 717 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_rustc/src/rustc/substitution.rs` | 10 | 702 | 335 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
     | `loaves/oven/oven_rustc/src/rustc/toolchain.rs` | 5 | 659 | 73 | unaffected | - | - | - | #1561 | - | Oven ring; no compiler-crate dependency (scripts/check_oven_ring.py). Reviewed at crate level. |
@@ -3103,7 +3103,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
-    | `loaves/toolchain/oven-cli/src/commands/oven.rs` | 58 | 6854 | 3333 | unaffected | - | - | required | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
+    | `loaves/toolchain/oven-cli/src/commands/oven.rs` | 58 | 6865 | 3344 | unaffected | - | - | required | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/case_partition.rs` | 6 | 379 | 171 | unaffected | - | - | - | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/harvest.rs` | 3 | 437 | 69 | unaffected | - | - | - | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/suite_environment.rs` | 2 | 899 | 32 | unaffected | - | - | - | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
