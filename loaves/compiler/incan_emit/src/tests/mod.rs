@@ -1,5 +1,7 @@
 //! Tests that cross from lowering into emission.
 
+mod capturing_closures;
+mod comprehension_item_places;
 mod dependency_method_unions;
 mod derived_display_emission;
 mod dict_value_places;
@@ -18,6 +20,7 @@ mod reads_and_iterator_surface;
 mod record_pattern_emission;
 mod reexported_projections;
 mod rust_2024_keyword_identifiers;
+mod slice_hooks;
 mod static_reads_and_frozen_strings;
 mod trait_parameters_and_element_bounds;
 mod trait_slot_mut_parameters;

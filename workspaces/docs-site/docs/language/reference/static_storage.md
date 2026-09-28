@@ -60,6 +60,7 @@ def lookup(name: str) -> Option[int]:
 A new local bound directly to a static, `x = s`, `let x = s` or `mut x = s`, is an alias of the static's cell. The same holds when the binding is annotated with the static's type, spelled directly or through a type alias.
 
 - A mutating method call and a field or index assignment through the alias change the static.
+- A `for` loop, a comprehension or a pattern that changes the static's items through a name it binds, over the alias as over the static, is refused (`INCAN-T0001`; see [Assignments](assignments.md#refusals)).
 - An assignment to the alias rebinds the local; the static keeps its value.
 - A binding annotated with another type that accepts the static's value, such as `Option[int]` for an `int` static, holds a copy of the value.
 
@@ -97,6 +98,7 @@ import counters::hits
 | Statics that depend on each other in a cycle | `INCAN-T0001` |
 | An initializer that assigns to a static through a function it calls | `INCAN-T0001` |
 | An assignment or compound assignment to an imported static's name, `hits = 0` or `hits += 1`, including as a target of a tuple or chained assignment | `INCAN-T0001` |
+| A `for` loop, comprehension or pattern that changes the items of a static, or of a local bound to one, through a name it binds | `INCAN-T0001` |
 | `from counters import hits` of a static declared without `pub` | `INCAN-I0001` |
 | An assignment or compound assignment to a `const` | `INCAN-T0001` |
 | `get` on a static dict, or on a dict field of a static, whose value type cannot be copied, such as a `Generator` (see [Kept and in-place dict lookups](language.md#kept-and-in-place-dict-lookups)) | `INCAN-T0118` |

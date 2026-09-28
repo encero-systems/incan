@@ -280,8 +280,14 @@ impl TypeChecker {
     pub fn check_statement(&mut self, stmt: &Spanned<Statement>) {
         match &stmt.node {
             Statement::Assignment(assign) => self.check_assignment(assign, stmt.span),
-            Statement::FieldAssignment(field_assign) => self.check_field_assignment(field_assign, stmt.span),
-            Statement::IndexAssignment(index_assign) => self.check_index_assignment(index_assign, stmt.span),
+            Statement::FieldAssignment(field_assign) => {
+                self.check_field_assignment(field_assign, stmt.span);
+                self.refuse_capturing_reassignment(None, &field_assign.value, field_assign.value.span);
+            }
+            Statement::IndexAssignment(index_assign) => {
+                self.check_index_assignment(index_assign, stmt.span);
+                self.refuse_capturing_reassignment(None, &index_assign.value, index_assign.value.span);
+            }
             Statement::Return(expr) => self.check_return(expr.as_ref(), stmt.span),
             Statement::If(if_stmt) => self.check_if_stmt(if_stmt),
             Statement::Loop(loop_stmt) => self.check_loop_stmt(loop_stmt, stmt.span),
@@ -341,6 +347,7 @@ impl TypeChecker {
                     }
                     // Type check the value expression
                     let value_ty = self.check_expr(&compound.value);
+                    self.refuse_capturing_reassignment(Some(&compound.name), &compound.value, compound.name_span);
 
                     self.check_compound_assignment_value(compound, &var_ty, &value_ty, stmt.span);
                 } else if let Some(static_info) = self.lookup_static_info(&compound.name).cloned() {
@@ -448,6 +455,7 @@ impl TypeChecker {
                 // The value is refused before the chain's targets are bound, so a target cannot shadow the parameter.
                 self.refuse_mut_param_held_by(&ca.value);
                 self.check_chained_assignment(ca, stmt.span);
+                self.refuse_capturing_reassignment(None, &ca.value, ca.value.span);
             }
         }
         self.reject_unbound_c_abi_span_constructors();
@@ -492,12 +500,49 @@ impl TypeChecker {
         }
     }
 
+    /// Refuse a change at `span`, inside a closure, through the local `symbol_id` (named `name`) that the closure
+    /// captures from its enclosing callable (#1561). Returns whether it was refused.
+    ///
+    /// A closure reads each outer local it names as the value the local holds when the closure is constructed, so a
+    /// change the closure makes through one would change the closure's own copy, which the local never sees. A
+    /// caller-visible `mut` parameter, and a view into one, are refused as held by the closure instead (see
+    /// `note_param_change`).
+    pub(in crate::typechecker) fn refuse_change_through_closure_capture(
+        &mut self,
+        symbol_id: SymbolId,
+        name: &str,
+        span: Span,
+    ) -> bool {
+        if !self.local_is_captured_by_closure(symbol_id) || self.reaches_caller_visible_param(name) {
+            return false;
+        }
+        let error = errors::change_through_closure_capture(name, span);
+        let already_reported = self
+            .errors
+            .iter()
+            .any(|existing| existing.span == error.span && existing.message == error.message);
+        if !already_reported {
+            self.errors.push(error);
+        }
+        true
+    }
+
+    /// Return whether the local `symbol_id` resolves to is held by a callable enclosing the closure being checked, so
+    /// that the closure captures it.
+    pub(in crate::typechecker) fn local_is_captured_by_closure(&self, symbol_id: SymbolId) -> bool {
+        !self.checks_standard_library_source()
+            && self.symbols.get(symbol_id).is_some_and(|symbol| {
+                matches!(symbol.kind, SymbolKind::Variable(_)) && self.symbols.read_crosses_callable_scope(symbol.scope)
+            })
+    }
+
     /// Refuse a field or element write through a binding declared without `mut` (#1561).
     ///
     /// A binding is immutable unless declared `mut`, and that covers what it holds: a local declared by `let` or a
     /// first plain assignment, or a parameter not marked `mut`, gives no write access to its fields and elements. A
     /// local bound directly to a module static is an alias of the static's storage and writes through to it, and a
-    /// loop or pattern binding follows the place it binds, so neither is refused here. `object` is the place whose
+    /// loop or pattern binding follows the place it binds, so neither is refused here. A change through a local a
+    /// closure captures is refused (see [`Self::refuse_change_through_closure_capture`]). `object` is the place whose
     /// field or element is written.
     pub(in crate::typechecker) fn refuse_write_through_read_only_binding(
         &mut self,
@@ -510,7 +555,10 @@ impl TypeChecker {
         let Some(symbol_id) = self.symbols.lookup(root) else {
             return;
         };
-        if self.static_alias_bindings.contains(&symbol_id) {
+        if self.refuse_change_through_closure_capture(symbol_id, root, span) {
+            return;
+        }
+        if self.static_alias_bindings.contains_key(&symbol_id) {
             return;
         }
         let Some(symbol) = self.symbols.get(symbol_id) else {
@@ -788,9 +836,20 @@ impl TypeChecker {
 
     /// Validate an assignment statement, then remember a local bound directly to a module static (see
     /// [`Self::note_static_alias_binding`]).
+    ///
+    /// A new binding of a capturing callable takes the callable's own type, and a reassignment of one, or to one, is
+    /// refused (see `capturing_callables.rs`).
     fn check_assignment(&mut self, assign: &AssignmentStmt, span: Span) {
         self.check_assignment_binding(assign, span);
         self.note_static_alias_binding(assign);
+        let declares = self
+            .lookup_symbol(&assign.name)
+            .is_some_and(|symbol| symbol.span == assign.name_span);
+        if declares {
+            self.note_capturing_binding(&assign.value, assign.name_span, span);
+        } else {
+            self.refuse_capturing_reassignment(Some(&assign.name), &assign.value, assign.name_span);
+        }
     }
 
     /// Validate assignment statements, including declarations, reassignments, and local annotation compatibility.
@@ -1268,6 +1327,9 @@ impl TypeChecker {
         }
         if let (Some(e), Some(expected)) = (expr, self.symbols.current_return_type().cloned()) {
             self.record_value_destination_if_compatible(e.span, &return_ty, &expected);
+            if matches!(expected, ResolvedType::Function(..)) {
+                self.check_capturing_return(e);
+            }
         }
     }
 

@@ -1383,3 +1383,90 @@ fn local_partial_of_a_generic_callable_refuses_a_free_type_parameter_and_bad_typ
     }
     Ok(())
 }
+
+/// A local partial may name a method of a value, `partial user.label(prefix="x")` (RFC 084): of a local, of `self`, of
+/// a field, through a method alias and on a generic type, whose type parameters take the receiver's type arguments. The
+/// partial has the method's parameters, each preset one defaulted, and its return type (#1561).
+#[test]
+fn local_partial_of_a_method_of_a_value_is_accepted_issue1561() -> Result<(), String> {
+    let source = r#"
+model User:
+    name: str
+
+    def label(self, prefix: str, suffix: str) -> str:
+        return prefix + self.name + suffix
+
+    tag = label
+
+model Box[T]:
+    value: T
+
+    def pair(self, other: T, sep: str) -> list[T]:
+        return [self.value, other]
+
+class Team:
+    pub lead: User
+
+    def banner(self) -> str:
+        shout = partial self.lead.label(suffix="!")
+        return shout("> ")
+
+def main() -> None:
+    user = User(name="ann")
+    tag = partial user.label(prefix="x")
+    text: str = tag(suffix="!")
+    other: str = tag("?", prefix="y")
+    aliased = partial user.tag(suffix=".")
+    dotted: str = aliased("<")
+    b = Box(value=1)
+    joined = partial b.pair(sep="-")
+    items: list[int] = joined(2)
+    println(f"{text} {other} {dotted} {items}")
+"#;
+    check_str(source).map_err(|errors| {
+        format!(
+            "a local partial of a method of a value must check, got: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        )
+    })
+}
+
+/// A local partial of a method of a value holds its own copy of the receiver, so a method that takes `mut self` is
+/// refused, as a closure's change to a capture is; so are an overloaded method and a generic method, and a preset of
+/// the wrong type (#1561).
+#[test]
+fn local_partial_of_a_method_of_a_value_refuses_what_it_cannot_hold_issue1561() -> Result<(), String> {
+    let cases: [(&str, &str); 4] = [
+        (
+            "class Counter:\n    pub count: int\n\n    def add(mut self, by: int) -> None:\n        self.count += by\n\ndef main() -> None:\n    mut c = Counter(count=0)\n    step = partial c.add(by=1)\n",
+            "a local partial of the method 'add' is not supported: it takes 'mut self'",
+        ),
+        (
+            "model M:\n    x: int\n\n    def get[T](self, value: T, n: int) -> T:\n        return value\n\ndef main() -> None:\n    m = M(x=1)\n    g = partial m.get(n=1)\n",
+            "a local partial of the method 'get' is not supported: it is generic",
+        ),
+        (
+            "model M:\n    x: int\n\n    def show(self, n: int) -> str:\n        return str(n)\n\n    def show(self, n: str) -> str:\n        return n\n\ndef main() -> None:\n    m = M(x=1)\n    g = partial m.show(n=1)\n",
+            "a local partial of the method 'show' is not supported: it is overloaded",
+        ),
+        (
+            "model M:\n    x: int\n\n    def scale(self, by: int, extra: int) -> int:\n        return self.x * by\n\ndef main() -> None:\n    m = M(x=1)\n    g = partial m.scale(by=\"two\")\n",
+            "expected 'int', found 'str'",
+        ),
+    ];
+    for (source, needle) in cases {
+        let errors = check_str(source)
+            .err()
+            .ok_or_else(|| format!("expected a refusal for:\n{source}"))?;
+        if !errors
+            .iter()
+            .any(|error| error.message.to_lowercase().contains(&needle.to_lowercase()))
+        {
+            return Err(format!(
+                "expected an error containing {needle:?} for:\n{source}\ngot: {:?}",
+                errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+            ));
+        }
+    }
+    Ok(())
+}

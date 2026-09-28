@@ -2851,9 +2851,16 @@ impl AstLowering {
                 // functions, consts and statics, which the closure reaches by path, so it is not searched. Each
                 // block's read counters still include this closure's own reads, so a count above them is a later
                 // read.
+                // A closure its function returns outlives the call that built it, so it holds its own copy of every
+                // outer local it reads (#1561).
+                let returned = self
+                    .type_info
+                    .as_ref()
+                    .is_some_and(|info| info.is_returned_closure(expr_span));
                 let read_after_construction = |name: &str| {
                     let own_reads = closure_read_counts.get(name).copied().unwrap_or(0);
-                    self.non_linear_context_depth > 0
+                    returned
+                        || self.non_linear_context_depth > 0
                         || self
                             .remaining_ident_reads
                             .iter()
@@ -3079,6 +3086,11 @@ impl AstLowering {
                     .map(|st| Ok(Box::new(self.lower_expr_spanned(st)?)))
                     .transpose()?;
 
+                // A user type's slice calls its `__getslice__` hook with each part as an `Option[int]` (#1561).
+                if let Some(method) = self.resolved_slice_hook(expr_span) {
+                    return Ok(self.lower_slice_hook_call(expr_span, &method, target_expr, [start, end, step]));
+                }
+
                 let result_ty = match &target_expr.ty {
                     IrType::List(inner) => IrType::List(inner.clone()),
                     IrType::String => IrType::String,
@@ -3103,209 +3115,351 @@ impl AstLowering {
 
             // ---- Yield (placeholder) ----
             ast::Expr::Yield(_) => (IrExprKind::Unit, IrType::Unknown),
-            ast::Expr::Partial(partial) => {
-                let Some(incan_frontend::symbols::ResolvedType::Function(target_params, _)) = self
-                    .type_info
-                    .as_ref()
-                    .and_then(|info| info.expr_type(partial.target.span).cloned())
-                else {
-                    return Err(LoweringError {
-                        message: "Partial callable target is missing typechecker signature metadata".to_string(),
-                        span: partial.target.span.into(),
-                    });
-                };
-                let signature = self
-                    .partial_expr_callable_signature(partial, expr_span)?
-                    .ok_or_else(|| LoweringError {
-                        message: "Partial callable preset expression is missing typechecker projection metadata"
-                            .to_string(),
-                        span: expr_span.into(),
-                    })?;
-                // A model, class or newtype named as the target is its constructor: the closure constructs the value
-                // the way a direct call does, instead of calling the type name.
-                let constructor_target = match &partial.target.node {
-                    ast::Expr::Ident(name)
-                        if self.ident_kind_for_lowering(&partial.target) == Some(IdentKind::TypeName) =>
-                    {
-                        Some(name.clone())
-                    }
-                    _ => None,
-                };
-                let target = match constructor_target {
-                    Some(_) => None,
-                    None => Some(self.lower_expr_spanned(&partial.target)?),
-                };
+            ast::Expr::Partial(partial) => self.lower_local_partial(partial, expr_span)?,
+        };
+        Ok(TypedExpr::new(kind, ty))
+    }
 
-                // Evaluate every preset exactly once before the closure is constructed. The generated closure is
-                // `move`, so a later mutation of the source local cannot change an omitted preset argument.
-                let mut capture_stmts = Vec::with_capacity(partial.args.len());
-                let mut captures = HashMap::with_capacity(partial.args.len());
-                let mut capture_names = Vec::with_capacity(partial.args.len());
-                for (index, preset) in partial.args.iter().enumerate() {
-                    let value = self.lower_expr_spanned(&preset.value)?;
-                    let ty = value.ty.clone();
-                    let capture_name = format!("__incan_partial_preset_{index}_{}", preset.name);
-                    capture_stmts.push(IrStmt::new(IrStmtKind::Let {
-                        name: capture_name.clone(),
-                        ty: ty.clone(),
-                        type_annotation: None,
-                        mutability: Mutability::Immutable,
-                        value,
-                    }));
-                    captures.insert(preset.name.clone(), (capture_name.clone(), ty));
-                    capture_names.push(capture_name);
-                }
+    /// Lower a local partial expression (RFC 084) to the closure that calls its target with the presets it holds.
+    ///
+    /// Every preset, and the receiver of a method target, is evaluated once, before the closure is constructed. Each
+    /// preset parameter of the closure is optional and falls back to its preset.
+    fn lower_local_partial(
+        &mut self,
+        partial: &ast::PartialExpr,
+        expr_span: ast::Span,
+    ) -> Result<(IrExprKind, IrType), LoweringError> {
+        let Some(incan_frontend::symbols::ResolvedType::Function(target_params, _)) = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(partial.target.span).cloned())
+        else {
+            return Err(LoweringError {
+                message: "Partial callable target is missing typechecker signature metadata".to_string(),
+                span: partial.target.span.into(),
+            });
+        };
+        let signature = self
+            .partial_expr_callable_signature(partial, expr_span)?
+            .ok_or_else(|| LoweringError {
+                message: "Partial callable preset expression is missing typechecker projection metadata".to_string(),
+                span: expr_span.into(),
+            })?;
+        // A model, class or newtype named as the target is its constructor: the closure constructs the value
+        // the way a direct call does, instead of calling the type name.
+        let constructor_target = match &partial.target.node {
+            ast::Expr::Ident(name) if self.ident_kind_for_lowering(&partial.target) == Some(IdentKind::TypeName) => {
+                Some(name.clone())
+            }
+            _ => None,
+        };
+        // A method of a value named as the target (`partial user.label(prefix="x")`) is called on the receiver the
+        // partial holds, evaluated once when the partial is built (RFC 084).
+        let method_receiver = self.lower_partial_method_receiver(partial)?;
+        let target = match (&constructor_target, &method_receiver) {
+            (None, None) => Some(self.lower_expr_spanned(&partial.target)?),
+            _ => None,
+        };
 
-                let closure_params: Vec<(String, IrType)> = signature
-                    .params
-                    .iter()
-                    .map(|param| (param.name.clone(), param.ty.clone()))
-                    .collect();
-                let mut forward_args = Vec::with_capacity(target_params.len());
-                for (idx, target_param) in target_params.iter().enumerate() {
-                    let Some(name) = target_param.name.as_ref() else {
-                        return Err(LoweringError {
-                            message: format!(
-                                "Partial callable target has unsupported anonymous parameter at index {idx}"
-                            ),
-                            span: partial.target.span.into(),
-                        });
-                    };
-                    let target_ty =
-                        Self::lower_param_container_type(target_param.kind, self.lower_resolved_type(&target_param.ty));
-                    let parameter = signature.params.get(idx).ok_or_else(|| LoweringError {
-                        message: format!(
-                            "Partial callable target parameter '{name}' is absent from its callable signature"
-                        ),
-                        span: partial.target.span.into(),
-                    })?;
-                    let value = if matches!(
-                        parameter.default.as_ref(),
-                        Some(FunctionParamDefault::CapturedPartialPreset)
-                    ) {
-                        let (capture_name, capture_ty) = captures.get(name).ok_or_else(|| LoweringError {
-                            message: format!("Partial callable preset '{name}' has no construction-time capture"),
-                            span: expr_span.into(),
-                        })?;
-                        let fallback = TypedExpr::new(
-                            IrExprKind::Closure {
-                                params: Vec::new(),
-                                body: Box::new(TypedExpr::new(
-                                    IrExprKind::MethodCall {
-                                        receiver: Box::new(TypedExpr::new(
-                                            IrExprKind::Var {
-                                                name: capture_name.clone(),
-                                                access: VarAccess::Read,
-                                                ref_kind: VarRefKind::Value,
-                                            },
-                                            capture_ty.clone(),
-                                        )),
-                                        method: "clone".to_string(),
-                                        dispatch: None,
-                                        type_args: Vec::new(),
-                                        args: Vec::new(),
-                                        callable_signature: None,
-                                        arg_policy: MethodCallArgPolicy::Default,
-                                    },
-                                    capture_ty.clone(),
-                                )),
-                                captures: Vec::new(),
-                                annotate_param_types: false,
-                            },
-                            IrType::Function {
-                                params: Vec::new(),
-                                ret: Box::new(capture_ty.clone()),
-                            },
-                        );
-                        TypedExpr::new(
+        // Evaluate every preset exactly once before the closure is constructed. The generated closure is
+        // `move`, so a later mutation of the source local cannot change an omitted preset argument.
+        let mut capture_stmts = Vec::with_capacity(partial.args.len() + 1);
+        let mut captures = HashMap::with_capacity(partial.args.len());
+        let mut capture_names = Vec::with_capacity(partial.args.len() + 1);
+        if let Some(receiver) = &method_receiver {
+            capture_stmts.push(receiver.binding.clone());
+            capture_names.push(PartialMethodReceiver::NAME.to_string());
+        }
+        for (index, preset) in partial.args.iter().enumerate() {
+            let value = self.lower_expr_spanned(&preset.value)?;
+            let ty = value.ty.clone();
+            let capture_name = format!("__incan_partial_preset_{index}_{}", preset.name);
+            capture_stmts.push(IrStmt::new(IrStmtKind::Let {
+                name: capture_name.clone(),
+                ty: ty.clone(),
+                type_annotation: None,
+                mutability: Mutability::Immutable,
+                value,
+            }));
+            captures.insert(preset.name.clone(), (capture_name.clone(), ty));
+            capture_names.push(capture_name);
+        }
+
+        let closure_params: Vec<(String, IrType)> = signature
+            .params
+            .iter()
+            .map(|param| (param.name.clone(), param.ty.clone()))
+            .collect();
+        let mut forward_args = Vec::with_capacity(target_params.len());
+        for (idx, target_param) in target_params.iter().enumerate() {
+            let Some(name) = target_param.name.as_ref() else {
+                return Err(LoweringError {
+                    message: format!("Partial callable target has unsupported anonymous parameter at index {idx}"),
+                    span: partial.target.span.into(),
+                });
+            };
+            let target_ty =
+                Self::lower_param_container_type(target_param.kind, self.lower_resolved_type(&target_param.ty));
+            let parameter = signature.params.get(idx).ok_or_else(|| LoweringError {
+                message: format!("Partial callable target parameter '{name}' is absent from its callable signature"),
+                span: partial.target.span.into(),
+            })?;
+            let value = if matches!(
+                parameter.default.as_ref(),
+                Some(FunctionParamDefault::CapturedPartialPreset)
+            ) {
+                let (capture_name, capture_ty) = captures.get(name).ok_or_else(|| LoweringError {
+                    message: format!("Partial callable preset '{name}' has no construction-time capture"),
+                    span: expr_span.into(),
+                })?;
+                let fallback = TypedExpr::new(
+                    IrExprKind::Closure {
+                        params: Vec::new(),
+                        body: Box::new(TypedExpr::new(
                             IrExprKind::MethodCall {
                                 receiver: Box::new(TypedExpr::new(
                                     IrExprKind::Var {
-                                        name: name.clone(),
+                                        name: capture_name.clone(),
                                         access: VarAccess::Read,
                                         ref_kind: VarRefKind::Value,
                                     },
-                                    parameter.ty.clone(),
+                                    capture_ty.clone(),
                                 )),
-                                method: "unwrap_or_else".to_string(),
+                                method: "clone".to_string(),
                                 dispatch: None,
                                 type_args: Vec::new(),
-                                args: vec![IrCallArg {
-                                    name: None,
-                                    kind: IrCallArgKind::Positional,
-                                    expr: fallback,
-                                }],
+                                args: Vec::new(),
                                 callable_signature: None,
                                 arg_policy: MethodCallArgPolicy::Default,
                             },
-                            target_ty,
-                        )
-                    } else {
-                        TypedExpr::new(
+                            capture_ty.clone(),
+                        )),
+                        captures: Vec::new(),
+                        annotate_param_types: false,
+                    },
+                    IrType::Function {
+                        params: Vec::new(),
+                        ret: Box::new(capture_ty.clone()),
+                    },
+                );
+                TypedExpr::new(
+                    IrExprKind::MethodCall {
+                        receiver: Box::new(TypedExpr::new(
                             IrExprKind::Var {
                                 name: name.clone(),
                                 access: VarAccess::Read,
                                 ref_kind: VarRefKind::Value,
                             },
-                            target_ty,
-                        )
-                    };
-                    forward_args.push(IrCallArg {
-                        name: Some(name.clone()),
-                        kind: IrCallArgKind::Named,
-                        expr: value,
-                    });
-                }
-                let body = match (constructor_target, target) {
-                    (Some(constructor), _) => {
-                        self.local_partial_constructor_body(&constructor, forward_args, &signature.return_type)?
-                    }
-                    // An imported target is called through its canonical path, as a direct call of it is, so the
-                    // call binds its named arguments against the imported declaration's signature.
-                    (None, Some(target)) => TypedExpr::new(
-                        IrExprKind::Call {
-                            func: Box::new(target),
-                            type_args: self.lower_call_site_type_args(expr_span, &partial.type_args),
-                            args: forward_args,
-                            callable_signature: None,
-                            canonical_path: self.imported_callee_path_for_expr(&partial.target),
-                        },
-                        signature.return_type.clone(),
-                    ),
-                    (None, None) => {
-                        return Err(LoweringError {
-                            message: "Partial callable target was neither a constructor nor lowered".to_string(),
-                            span: partial.target.span.into(),
-                        });
-                    }
-                };
-                let closure = TypedExpr::new(
-                    IrExprKind::Closure {
-                        params: closure_params.clone(),
-                        body: Box::new(body),
-                        captures: capture_names,
-                        // A local partial has no surrounding Rust callable type to infer its parameters. Emit their
-                        // source-checked IR types, including `Option<T>` for overrideable preset slots.
-                        annotate_param_types: true,
+                            parameter.ty.clone(),
+                        )),
+                        method: "unwrap_or_else".to_string(),
+                        dispatch: None,
+                        type_args: Vec::new(),
+                        args: vec![IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::Positional,
+                            expr: fallback,
+                        }],
+                        callable_signature: None,
+                        arg_policy: MethodCallArgPolicy::Default,
                     },
-                    IrType::Function {
-                        params: closure_params.into_iter().map(|(_, ty)| ty).collect(),
-                        ret: Box::new(signature.return_type.clone()),
-                    },
-                );
-                (
-                    IrExprKind::Block {
-                        stmts: capture_stmts,
-                        value: Some(Box::new(closure)),
-                    },
-                    IrType::Function {
-                        params: signature.params.into_iter().map(|param| param.ty).collect(),
-                        ret: Box::new(signature.return_type),
-                    },
+                    target_ty,
                 )
+            } else {
+                TypedExpr::new(
+                    IrExprKind::Var {
+                        name: name.clone(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    target_ty,
+                )
+            };
+            forward_args.push(IrCallArg {
+                name: Some(name.clone()),
+                kind: IrCallArgKind::Named,
+                expr: value,
+            });
+        }
+        let body = match (constructor_target, target) {
+            (Some(constructor), _) => {
+                self.local_partial_constructor_body(&constructor, forward_args, &signature.return_type)?
+            }
+            // An imported target is called through its canonical path, as a direct call of it is, so the
+            // call binds its named arguments against the imported declaration's signature.
+            (None, Some(target)) => TypedExpr::new(
+                IrExprKind::Call {
+                    func: Box::new(target),
+                    type_args: self.lower_call_site_type_args(expr_span, &partial.type_args),
+                    args: forward_args,
+                    callable_signature: None,
+                    canonical_path: self.imported_callee_path_for_expr(&partial.target),
+                },
+                signature.return_type.clone(),
+            ),
+            (None, None) => {
+                let Some(receiver) = method_receiver else {
+                    return Err(LoweringError {
+                        message: "Partial callable target was neither a constructor nor lowered".to_string(),
+                        span: partial.target.span.into(),
+                    });
+                };
+                self.partial_method_call(partial.target.span, receiver, forward_args, &signature.return_type)
             }
         };
-        Ok(TypedExpr::new(kind, ty))
+        let closure = TypedExpr::new(
+            IrExprKind::Closure {
+                params: closure_params.clone(),
+                body: Box::new(body),
+                captures: capture_names,
+                // A local partial has no surrounding Rust callable type to infer its parameters. Emit their
+                // source-checked IR types, including `Option<T>` for overrideable preset slots.
+                annotate_param_types: true,
+            },
+            IrType::Function {
+                params: closure_params.into_iter().map(|(_, ty)| ty).collect(),
+                ret: Box::new(signature.return_type.clone()),
+            },
+        );
+        Ok((
+            IrExprKind::Block {
+                stmts: capture_stmts,
+                value: Some(Box::new(closure)),
+            },
+            IrType::Function {
+                params: signature.params.into_iter().map(|param| param.ty).collect(),
+                ret: Box::new(signature.return_type),
+            },
+        ))
+    }
+
+    /// Lower the receiver of a local partial whose target is a method of a value (`partial user.label(...)`), bound to
+    /// the local the partial's closure holds; `None` when the target is no such method (RFC 084).
+    fn lower_partial_method_receiver(
+        &mut self,
+        partial: &ast::PartialExpr,
+    ) -> Result<Option<PartialMethodReceiver>, LoweringError> {
+        let Some(method) = self.type_info.as_ref().and_then(|info| {
+            info.expressions
+                .local_partial_method_targets
+                .get(&(partial.target.span.start, partial.target.span.end))
+                .cloned()
+        }) else {
+            return Ok(None);
+        };
+        let ast::Expr::Field(base, _) = &partial.target.node else {
+            return Ok(None);
+        };
+        let receiver = self.lower_expr_spanned(base)?;
+        let ty = receiver.ty.clone();
+        let binding = IrStmt::new(IrStmtKind::Let {
+            name: PartialMethodReceiver::NAME.to_string(),
+            ty: ty.clone(),
+            type_annotation: None,
+            mutability: Mutability::Immutable,
+            value: receiver,
+        });
+        Ok(Some(PartialMethodReceiver { method, binding, ty }))
+    }
+
+    /// Build the call a local partial of a method of a value makes: the method, called on the receiver the partial
+    /// holds, with the forwarded arguments in the method's parameter order (RFC 084).
+    fn partial_method_call(
+        &self,
+        target_span: ast::Span,
+        receiver: PartialMethodReceiver,
+        forward_args: Vec<IrCallArg>,
+        return_type: &IrType,
+    ) -> TypedExpr {
+        let held = TypedExpr::new(
+            IrExprKind::Var {
+                name: PartialMethodReceiver::NAME.to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            receiver.ty,
+        );
+        let (method, dispatch) = self.project_resolved_method_target(target_span, &receiver.method, &held, None);
+        let args = forward_args
+            .into_iter()
+            .map(|arg| IrCallArg {
+                name: None,
+                kind: IrCallArgKind::Positional,
+                expr: arg.expr,
+            })
+            .collect();
+        TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(held),
+                method,
+                dispatch,
+                type_args: Vec::new(),
+                args,
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            return_type.clone(),
+        )
+    }
+
+    /// Return the hook the checker resolved `obj[start:end:step]` at `expr_span` to, when `obj`'s type defines
+    /// `__getslice__` (#1561).
+    fn resolved_slice_hook(&self, expr_span: ast::Span) -> Option<String> {
+        self.type_info
+            .as_ref()
+            .and_then(|info| info.resolved_operator_call(expr_span))
+            .filter(|resolved_operator| resolved_operator.kind == ResolvedOperatorKind::Slice)
+            .map(|resolved_operator| resolved_operator.method.clone())
+    }
+
+    /// Lower a slice on a user type to the call of its `__getslice__` hook `method`, passing each part as an
+    /// `Option[int]`: `Some` of a written part, `None` for an omitted one (#1561).
+    fn lower_slice_hook_call(
+        &self,
+        expr_span: ast::Span,
+        method: &str,
+        target: TypedExpr,
+        parts: [Option<Box<TypedExpr>>; 3],
+    ) -> TypedExpr {
+        let args = parts
+            .into_iter()
+            .map(|part| {
+                let option_ty = IrType::Option(Box::new(IrType::Int));
+                let expr = match part {
+                    Some(value) => Self::some_constructor_call(*value, option_ty),
+                    None => TypedExpr::new(IrExprKind::None, option_ty),
+                };
+                IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr,
+                }
+            })
+            .collect();
+        let dispatch = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.resolved_method_call(expr_span).cloned())
+            .map(|resolved| self.lower_resolved_method_dispatch(resolved.dispatch, &target));
+        let result_ty = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(expr_span))
+            .map(|ty| self.lower_resolved_type(ty))
+            .unwrap_or(IrType::Unknown);
+        let (method, dispatch) = self.project_resolved_method_target(expr_span, method, &target, dispatch);
+        TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(target),
+                method,
+                dispatch,
+                type_args: Vec::new(),
+                args,
+                callable_signature: self.callable_signature_for_call_span(expr_span),
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            result_ty,
+        )
     }
 
     /// Build the construction a local partial of a model, class or newtype constructor forwards to.
@@ -3419,6 +3573,19 @@ fn numeric_resize_policy(method: &str) -> Option<NumericResizePolicy> {
         "saturating_resize" => Some(NumericResizePolicy::Saturating),
         _ => None,
     }
+}
+
+/// The receiver a local partial of a method of a value holds (RFC 084): the method it calls, the binding of the
+/// receiver's value, evaluated once when the partial is built, and the receiver's type.
+struct PartialMethodReceiver {
+    method: String,
+    binding: IrStmt,
+    ty: IrType,
+}
+
+impl PartialMethodReceiver {
+    /// The local the partial's closure holds the receiver in.
+    const NAME: &'static str = "__incan_partial_receiver";
 }
 
 #[cfg(test)]

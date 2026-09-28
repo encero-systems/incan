@@ -11,10 +11,11 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use super::super::{EmitError, IrEmitter};
-use crate::emit::statements::expr_contains_mutation;
+use crate::emit::statements::{expr_contains_mutation, pattern_mutated_bindings_in_expr};
 use crate::ownership::{
     ComprehensionIterationPlan, dict_comprehension_key_needs_clone, plan_dict_comprehension_iteration,
-    plan_list_comprehension_iteration, plan_opaque_comprehension_source, plan_owned_iterator_source,
+    plan_list_comprehension_iteration, plan_mutating_derived_loop, plan_opaque_comprehension_source,
+    plan_owned_iterator_source,
 };
 use incan_ir::expr::{
     BuiltinFn, CollectionMethodKind, FormatPart, IrCallArg, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry,
@@ -47,7 +48,15 @@ impl<'a> IrEmitter<'a> {
 
         match head {
             IrGeneratorClause::For { pattern, iterable } => {
-                let pattern_tokens = self.emit_pattern(pattern);
+                // A generator owns the items it yields from; one its element or a later clause changes is `mut`
+                // (#1561).
+                let later_clauses = tail.iter().map(|clause| match clause {
+                    IrGeneratorClause::For { iterable, .. } => Some(iterable.as_ref()),
+                    IrGeneratorClause::If(condition) => Some(condition),
+                });
+                let changed =
+                    Self::comprehension_changed_bindings(pattern, std::iter::once(Some(element)).chain(later_clauses));
+                let pattern_tokens = self.emit_pattern_with_mutable_bindings(pattern, &changed);
                 let iter = self.emit_generator_iterable(iterable)?;
                 let body = self.emit_generator_chain(element, tail)?;
                 Ok(quote! {
@@ -96,6 +105,18 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Return the names `pattern` binds that one of `parts` (a comprehension's element, key, value or filter) changes.
+    fn comprehension_changed_bindings<'e>(
+        pattern: &Pattern,
+        parts: impl IntoIterator<Item = Option<&'e TypedExpr>>,
+    ) -> HashSet<String> {
+        parts
+            .into_iter()
+            .flatten()
+            .flat_map(|part| pattern_mutated_bindings_in_expr(pattern, part))
+            .collect()
+    }
+
     /// Return whether an iterable expression already yields owned generator items.
     fn is_generator_iterable(iterable: &TypedExpr) -> bool {
         matches!(&iterable.ty, IrType::NamedGeneric(name, _)
@@ -120,7 +141,10 @@ impl<'a> IrEmitter<'a> {
         filter: Option<&TypedExpr>,
     ) -> Result<TokenStream, EmitError> {
         // ---- Context: iterator setup ----
-        let pattern_tokens = self.emit_pattern(pattern);
+        // A binding the element or the filter changes is `mut`: an item read in place is changed in its source, and an
+        // item of a temporary is the comprehension's own (#1561).
+        let changed = Self::comprehension_changed_bindings(pattern, [Some(element), filter]);
+        let pattern_tokens = self.emit_pattern_with_mutable_bindings(pattern, &changed);
         let elem = self.emit_expr(element)?;
         let body_can_propagate = Self::expr_contains_try(element) || filter.is_some_and(Self::expr_contains_try);
 
@@ -139,6 +163,18 @@ impl<'a> IrEmitter<'a> {
             // The binding is a `&mut` item; a mutating helper borrows it mutably, which needs the binding declared
             // `mut` (the extra reference coerces back to the item).
             let pattern_tokens = self.emit_pattern_with_mutable_bindings(pattern, &HashSet::from([name.clone()]));
+            if body_can_propagate {
+                return self.emit_direct_list_comp_loop(iter, pattern_tokens, elem, filter);
+            }
+            return self.emit_direct_list_comp(iter, pattern_tokens, elem, filter);
+        }
+
+        // A derived iterable (`enumerate`, `zip`, `values()`, an element) whose items the element or filter changes is
+        // read in place as a `for` loop over it is (#1561).
+        if !changed.is_empty()
+            && let Some(plan) = plan_mutating_derived_loop(iterable, pattern, &changed, |ty| self.type_is_user_enum(ty))
+        {
+            let iter = self.emit_mutating_derived_for_iterable(&plan)?;
             if body_can_propagate {
                 return self.emit_direct_list_comp_loop(iter, pattern_tokens, elem, filter);
             }
@@ -248,7 +284,10 @@ impl<'a> IrEmitter<'a> {
         filter: Option<&TypedExpr>,
     ) -> Result<TokenStream, EmitError> {
         // ---- Context: iterator setup ----
-        let pattern_tokens = self.emit_pattern(pattern);
+        // As for a list comprehension, a changed binding is `mut` and its items are read in place when they belong to a
+        // place (#1561).
+        let changed = Self::comprehension_changed_bindings(pattern, [Some(key), Some(value), filter]);
+        let pattern_tokens = self.emit_pattern_with_mutable_bindings(pattern, &changed);
         let key_tokens = self.emit_expr(key)?;
         let value_tokens = self.emit_expr(value)?;
         let body_can_propagate = Self::expr_contains_try(key)
@@ -266,7 +305,26 @@ impl<'a> IrEmitter<'a> {
             quote! { #key_tokens }
         };
 
-        if let Some(iter) = self.emit_direct_comprehension_iterable(iterable)? {
+        let in_place = if changed.is_empty() {
+            None
+        } else if matches!(pattern, Pattern::Var(_))
+            && matches!(iterable.ty, IrType::List(_) | IrType::RefMut(_))
+            && matches!(
+                iterable.kind,
+                IrExprKind::Var { .. } | IrExprKind::Field { .. } | IrExprKind::Index { .. }
+            )
+        {
+            let source = self.emit_lvalue_expr(iterable)?;
+            Some(quote! { (#source).iter_mut() })
+        } else {
+            plan_mutating_derived_loop(iterable, pattern, &changed, |ty| self.type_is_user_enum(ty))
+                .map(|plan| self.emit_mutating_derived_for_iterable(&plan))
+                .transpose()?
+        };
+        if let Some(iter) = in_place.map_or_else(
+            || self.emit_direct_comprehension_iterable(iterable),
+            |iter| Ok(Some(iter)),
+        )? {
             if body_can_propagate {
                 return self.emit_direct_dict_comp_loop(iter, pattern_tokens, cloned_key, value_tokens, filter);
             }

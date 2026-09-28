@@ -42,6 +42,7 @@
 //! - [`symbols`](super::symbols) – symbol table and scope management
 //! - [`diagnostics`](super::diagnostics) – error types and pretty printing
 
+mod capturing_callables;
 mod check_decl;
 mod check_expr;
 mod check_stmt;
@@ -496,8 +497,8 @@ pub struct TypeChecker {
     /// unless the lookup turned out to be only read (see `check_expr/dict_lookups.rs`).
     pending_uncopyable_dict_lookups: Vec<(Span, String)>,
     /// Locals bound directly to a module static (`live = counts`), which read the static's storage like the static
-    /// itself does.
-    static_alias_bindings: HashSet<SymbolId>,
+    /// itself does, with the name of the static each one aliases.
+    static_alias_bindings: HashMap<SymbolId, String>,
     /// Declaration spans of the read-only bindings a field or element write may not go through (#1561): a local
     /// declared without `mut`, by `let` or by a first plain assignment, and a parameter not marked `mut`. Loop and
     /// pattern bindings are not recorded; a write through one follows the place it binds.
@@ -517,6 +518,10 @@ pub struct TypeChecker {
     pub transferred_c_resource_bindings: HashMap<String, Span>,
     /// Lists whose items a `for` loop of the current body takes, and that body's `for` pattern bindings (#1844).
     for_item_taking: for_item_taking::ForItemTaking,
+    /// Closures that capture local values, and the parameters and returns of this module that hold them (#1561).
+    capturing_callables: capturing_callables::CapturingCallables,
+    /// Whether the program being checked is a module of the standard library, whatever its module path.
+    standard_library_source: bool,
     /// Checked span constructors waiting for the enclosing direct assignment to name their only legal owner.
     pub unbound_c_abi_span_constructors: HashMap<(usize, usize), CAbiSpanKind>,
     /// Opaque checked typed span carriers keyed by their direct source local.
@@ -890,7 +895,7 @@ impl TypeChecker {
             current_immutable_self_method: None,
             consumed_iterator_bindings: HashMap::new(),
             pending_uncopyable_dict_lookups: Vec::new(),
-            static_alias_bindings: HashSet::new(),
+            static_alias_bindings: HashMap::new(),
             read_only_binding_spans: HashSet::new(),
             closure_depth: 0,
             scoped_c_string_view_receivers: HashSet::new(),
@@ -898,6 +903,8 @@ impl TypeChecker {
             scoped_c_string_view_bindings: HashMap::new(),
             transferred_c_resource_bindings: HashMap::new(),
             for_item_taking: for_item_taking::ForItemTaking::default(),
+            capturing_callables: capturing_callables::CapturingCallables::default(),
+            standard_library_source: false,
             unbound_c_abi_span_constructors: HashMap::new(),
             c_abi_span_bindings: HashMap::new(),
             consumed_c_abi_span_bindings: HashMap::new(),
@@ -2616,6 +2623,11 @@ impl TypeChecker {
         let plan =
             ProviderPlan::for_in_memory_sdk_manifest(self.provider_plan.library_manifest_index().clone(), manifest);
         self.set_provider_plan(Arc::new(plan));
+    }
+
+    /// Mark the program being checked as a module of the standard library, which a module path under `std` also marks.
+    pub fn set_standard_library_source(&mut self, standard_library_source: bool) {
+        self.standard_library_source = standard_library_source;
     }
 
     /// Record the module path owning this checker's declarations.
@@ -6859,6 +6871,9 @@ impl TypeChecker {
         self.merge_supertrait_requires_into_traits();
         self.validate_static_dependencies();
         self.collect_testing_fixture_names(program);
+        // Every signature is collected, so the function-typed parameters and returns that hold capturing closures
+        // can be decided before any call or body is checked (#1561).
+        self.plan_closure_holding_callables(program);
 
         // Second pass: check consts first so their resolved types are available to later checks.
         self.validate_source_type_names = true;

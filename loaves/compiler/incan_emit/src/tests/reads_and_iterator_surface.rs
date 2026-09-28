@@ -18,11 +18,18 @@ fn generate(source: &str) -> Result<String, Box<dyn std::error::Error>> {
 
 /// Generate one stdlib source module as the Rust a project build mounts under `crate::__incan_std`.
 ///
-/// The module's own stdlib version check is dropped: the program that mounts it carries one already.
+/// The checker checks it as the standard library's own source, as a project build does. The module's own stdlib
+/// version check is dropped: the program that mounts it carries one already.
 fn generate_stdlib_module(relative_path: &str) -> Result<String, Box<dyn std::error::Error>> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let source = std::fs::read_to_string(root.join(relative_path))?;
-    Ok(generate(&source)?.replace("incan_std_core::__incan_stdlib_version_check!", "// "))
+    let tokens = lexer::lex(&source).map_err(|errors| format!("lex failed: {errors:?}"))?;
+    let program = parser::parse(&tokens).map_err(|errors| format!("parse failed: {errors:?}"))?;
+    let mut codegen = IrCodegen::new();
+    codegen.set_standard_library_source(true);
+    Ok(codegen
+        .try_generate(&program)?
+        .replace("incan_std_core::__incan_stdlib_version_check!", "// "))
 }
 
 /// Mount the stdlib modules generated iterator code reaches through `crate::__incan_std`, when it reaches any: the

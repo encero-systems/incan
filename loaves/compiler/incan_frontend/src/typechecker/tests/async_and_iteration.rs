@@ -1165,3 +1165,24 @@ def broken(xs: List[int]) -> Generator[int]:
         "expected generator expression filter diagnostic, got: {errs:?}"
     );
 }
+
+/// `await` of a stdlib async function called through a module binding types as the awaitable a direct import gives,
+/// under `import std.async.time` and `import std.async.prelude`, awaited and passed to `spawn` (#1561).
+#[test]
+fn awaiting_an_async_function_through_a_module_binding_issue1561() {
+    assert_check_ok(
+        r#"
+import std.async.time
+import std.async.prelude
+
+async def main() -> None:
+    await time.sleep(0.01)
+    await time.sleep_ms(1)
+    await prelude.sleep(0.01)
+    handle = prelude.spawn(time.sleep_ms(1))
+    match await handle:
+        Ok(_) => println("done")
+        Err(_) => println("failed")
+"#,
+    );
+}

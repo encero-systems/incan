@@ -729,6 +729,14 @@ fn implementation_type_param_export(type_param: &IrTypeParam) -> Result<Implemen
                         IrTraitBoundOrigin::Standard => ImplementationTraitBoundOriginExport::Standard,
                         IrTraitBoundOrigin::RustCapability => ImplementationTraitBoundOriginExport::RustCapability,
                         IrTraitBoundOrigin::SourceCallable => ImplementationTraitBoundOriginExport::SourceCallable,
+                        // A function type's `Fn` bound spells a parameter or return type, never an implementation
+                        // header, so it has no manifest form.
+                        IrTraitBoundOrigin::FunctionType => {
+                            return Err(format!(
+                                "a function type's `{}` bound cannot bound an implementation header",
+                                bound.trait_path
+                            ));
+                        }
                     },
                 })
             })
@@ -822,6 +830,9 @@ pub struct IrCodegen<'a> {
     canonical_emission_package_identity: Option<String>,
     /// Canonical source-module path for the root program when its parsed AST lacks a source path.
     root_source_module_name: Option<String>,
+    /// Whether the programs being generated are modules of the standard library, which the checker checks under the
+    /// standard library's own rules.
+    standard_library_source: bool,
     /// Shared stdlib source metadata cache reused across the repeated internal typecheck/lowering passes that codegen
     /// performs for multi-module builds.
     stdlib_cache: StdlibAstCache,
@@ -1021,6 +1032,7 @@ impl<'a> IrCodegen<'a> {
             registry_package_identity: None,
             canonical_emission_package_identity: None,
             root_source_module_name: None,
+            standard_library_source: false,
             stdlib_cache: StdlibAstCache::new(),
             prechecked_main_type_info: None,
             prechecked_dependency_type_info: HashMap::new(),
@@ -1604,6 +1616,12 @@ impl<'a> IrCodegen<'a> {
         self.root_source_module_name = name;
     }
 
+    /// Mark the programs being generated as modules of the standard library, checked under the standard library's own
+    /// rules, for a module generated without its `std.` module path.
+    pub fn set_standard_library_source(&mut self, standard_library_source: bool) {
+        self.standard_library_source = standard_library_source;
+    }
+
     /// Set dependency module paths that should typecheck with public source import rules.
     ///
     /// CLI test batches can emit individual test files as generated dependency modules so each file keeps its own Rust
@@ -1707,6 +1725,7 @@ impl<'a> IrCodegen<'a> {
     /// Apply codegen's shared project context to an internal typechecker pass.
     fn configure_typechecker(&self, tc: &mut incan_frontend::typechecker::TypeChecker, module_path: Option<&[String]>) {
         tc.stdlib_cache = self.stdlib_cache.clone();
+        tc.set_standard_library_source(self.standard_library_source);
         let package_identity = incan_frontend::module::declaration_package_identity(
             self.canonical_emission_package_identity.as_deref(),
             module_path,

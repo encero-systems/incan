@@ -1109,6 +1109,17 @@ impl AstLowering {
         }
     }
 
+    /// Make the closure `value` evaluates to spell its parameter types, through the block that snapshots its captures.
+    fn spell_closure_param_types(value: &mut TypedExpr) {
+        match &mut value.kind {
+            IrExprKind::Closure {
+                annotate_param_types, ..
+            } => *annotate_param_types = true,
+            IrExprKind::Block { value: Some(inner), .. } => Self::spell_closure_param_types(inner),
+            _ => {}
+        }
+    }
+
     /// Lower a single statement to IR.
     ///
     /// Handles all statement types including:
@@ -1175,6 +1186,18 @@ impl AstLowering {
                         type_annotation.clone().unwrap_or_else(|| lowered_value.ty.clone()),
                         type_annotation,
                     )
+                };
+                // A new local bound to a closure that captures local values takes the closure's own type, which no
+                // function-type annotation spells, so the closure spells its parameter types instead (#1561).
+                let new_binding_annotation = if self
+                    .type_info
+                    .as_ref()
+                    .is_some_and(|info| info.binds_capturing_callable(stmt_span))
+                {
+                    Self::spell_closure_param_types(&mut lowered_value);
+                    None
+                } else {
+                    new_binding_annotation
                 };
 
                 match a.binding {

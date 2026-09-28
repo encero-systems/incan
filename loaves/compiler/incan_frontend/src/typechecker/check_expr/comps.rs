@@ -57,12 +57,15 @@ impl TypeChecker {
         _span: Span,
     ) -> ResolvedType {
         self.symbols.enter_scope(ScopeKind::Block);
+        let mut previous_views = None;
 
         for clause in &generator.clauses {
             match clause {
                 ComprehensionClause::For { pattern, iter } => {
                     let iter_ty = self.check_expr(iter);
                     let elem_ty = self.infer_iterator_element_type_from_expr(iter, &iter_ty);
+                    // The iterated place is resolved before the clause's bindings shadow it.
+                    let item_views = self.generator_item_views(iter, &pattern.node);
                     // Record the element type at the pattern's own span, exactly as `check_for_stmt` does for a
                     // statement `for` (#1125). Body IR reads a clause pattern's type back through
                     // `TypeCheckInfo::expr_type`, so without this a destructuring clause binds names typed
@@ -70,6 +73,8 @@ impl TypeChecker {
                     // source destructured by a statement `for` would bind them concretely (#1161).
                     self.record_expr_type(pattern.span, elem_ty.clone());
                     self.define_for_pattern_bindings(pattern, &elem_ty);
+                    let entered = self.enter_item_views(item_views);
+                    previous_views.get_or_insert(entered);
                 }
                 ComprehensionClause::If(condition) => {
                     let cond_ty = self.check_expr(condition);
@@ -79,6 +84,9 @@ impl TypeChecker {
         }
 
         let result_elem_ty = self.check_expr(&generator.expr);
+        if let Some(previous) = previous_views {
+            self.exit_pattern_views(previous);
+        }
         self.symbols.exit_scope();
 
         generator_ty(result_elem_ty)
@@ -112,11 +120,14 @@ impl TypeChecker {
     pub(in crate::typechecker::check_expr) fn check_dict_comp(&mut self, comp: &DictComp, _span: Span) -> ResolvedType {
         let iter_ty = self.check_expr(&comp.iter);
         let elem_ty = self.infer_iterator_element_type_from_expr(&comp.iter, &iter_ty);
+        // A dict comprehension reads the items it changes in place, as a list comprehension does (#1561).
+        let item_views = self.read_only_comprehension_item_views(&comp.iter, &comp.pattern.node);
 
         self.symbols.enter_scope(ScopeKind::Block);
         // See `check_generator_expr` for why the element type is recorded at the pattern's span.
         self.record_expr_type(comp.pattern.span, elem_ty.clone());
         self.define_for_pattern_bindings(&comp.pattern, &elem_ty);
+        let previous_views = self.enter_item_views(item_views);
 
         if let Some(filter) = &comp.filter {
             self.check_expr(filter);
@@ -124,6 +135,7 @@ impl TypeChecker {
 
         let key_ty = self.check_expr(&comp.key);
         let val_ty = self.check_expr(&comp.value);
+        self.exit_pattern_views(previous_views);
         self.symbols.exit_scope();
         self.refuse_unhashable_collection_member(HashedCollectionRole::DictKey, &key_ty, comp.key.span);
 
@@ -135,8 +147,9 @@ impl TypeChecker {
         &mut self,
         params: &[Spanned<Param>],
         body: &Spanned<Expr>,
-        _: Span,
+        span: Span,
     ) -> ResolvedType {
+        self.note_closure_captures(params, body, span);
         self.symbols.enter_scope(ScopeKind::Function);
 
         let prev_in_async_body = self.in_async_body;
@@ -195,6 +208,7 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
 
+        self.note_closure_captures(params, body, span);
         self.symbols.enter_scope(ScopeKind::Function);
 
         let prev_in_async_body = self.in_async_body;

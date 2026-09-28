@@ -767,6 +767,11 @@ pub struct ExpressionArtifacts {
     /// variant alias names, so it records the path lowering spells the pattern with (`Shape::Filled`): the same path a
     /// qualified pattern over the canonical variant has, which is what the generated program can name.
     pub pattern_variant_paths: HashMap<(usize, usize), String>,
+    /// The method a local partial's target names on a value (`partial user.label(prefix="x")`), keyed by the target
+    /// span, by the name its declaration has (after a method alias) (RFC 084).
+    ///
+    /// Lowering evaluates the target's receiver once, when the partial is built, and calls this method on it.
+    pub local_partial_method_targets: HashMap<(usize, usize), String>,
 }
 
 /// Source-reference resolution facts keyed by source spans.
@@ -1476,6 +1481,27 @@ pub struct CallArtifacts {
     pub resolved_string_helper_calls: HashMap<(usize, usize), StringMethodId>,
     /// Direct closures whose contextual parameter types came from a canonical source `CallableN` bound.
     pub source_callable_closures: HashSet<(usize, usize)>,
+    /// Function-typed parameters of this module's functions and methods that hold any callable of their type, since
+    /// the body only calls them, keyed by the parameter's span (#1561).
+    ///
+    /// Lowering spells each such parameter `impl Fn(A) -> R`, which holds a closure that captures local values as well
+    /// as a named function; any other function-typed parameter is a function pointer.
+    pub closure_holding_params: HashSet<(usize, usize)>,
+    /// Functions and methods of this module whose one returned value is a closure that captures local values, keyed by
+    /// the span of their declared function return type, which lowering spells `impl Fn(A) -> R` (#1561).
+    pub closure_returning_callables: HashSet<(usize, usize)>,
+    /// New local bindings whose value is a closure that captures local values, a local partial or the closure a
+    /// closure-returning function returns, keyed by the assignment statement span (#1561).
+    ///
+    /// The binding takes the value's own type, so lowering does not spell the binding's function-type annotation, and
+    /// spells the parameter types of a closure bound there instead.
+    pub capturing_callable_bindings: HashSet<(usize, usize)>,
+    /// Arguments for a closure-holding parameter that name a local bound to a capturing callable, keyed by the
+    /// argument's span: lowering passes them by reference, so the local stays usable after the call (#1561).
+    pub borrowed_callable_arguments: HashSet<(usize, usize)>,
+    /// Closures a closure-returning function returns, keyed by the closure's span (#1561). Such a closure outlives the
+    /// call that built it, so lowering moves a copy of every local it reads into it.
+    pub returned_closures: HashSet<(usize, usize)>,
     /// Display operands that render through `message()`, keyed by the operand's expression span (#1778).
     ///
     /// A model or class has a textual form only through `__str__`. A type that adopts `Error` and has no `Display` of
@@ -1665,6 +1691,8 @@ pub enum ResolvedOperatorKind {
     Binary,
     Unary,
     Index,
+    /// `obj[start:end:step]` on a type that defines `__getslice__` (`Sliceable[T]`).
+    Slice,
     IndexAssign,
     Truthiness,
     Len,
@@ -2575,6 +2603,35 @@ impl TypeCheckInfo {
         self.calls
             .constructor_field_bindings
             .insert((span.start, span.end), binding);
+    }
+
+    /// Return whether the function-typed parameter declared at `span` holds any callable of its type, so lowering
+    /// spells it `impl Fn(A) -> R` (#1561).
+    pub fn is_closure_holding_param(&self, span: Span) -> bool {
+        self.calls.closure_holding_params.contains(&(span.start, span.end))
+    }
+
+    /// Return whether the function or method whose function return type is written at `span` returns a closure that
+    /// captures local values, so lowering spells the return type `impl Fn(A) -> R` (#1561).
+    pub fn is_closure_returning_type(&self, span: Span) -> bool {
+        self.calls.closure_returning_callables.contains(&(span.start, span.end))
+    }
+
+    /// Return whether the assignment statement at `span` binds a new local to a capturing callable, whose own type the
+    /// binding takes (#1561).
+    pub fn binds_capturing_callable(&self, span: Span) -> bool {
+        self.calls.capturing_callable_bindings.contains(&(span.start, span.end))
+    }
+
+    /// Return whether the closure at `span` is returned by its function, and so holds its own copy of every local it
+    /// reads (#1561).
+    pub fn is_returned_closure(&self, span: Span) -> bool {
+        self.calls.returned_closures.contains(&(span.start, span.end))
+    }
+
+    /// Return whether the argument at `span` is passed by reference to a closure-holding parameter (#1561).
+    pub fn is_borrowed_callable_argument(&self, span: Span) -> bool {
+        self.calls.borrowed_callable_arguments.contains(&(span.start, span.end))
     }
 
     /// Return whether a canonical source `CallableN` bound supplied this closure's contextual parameter types.

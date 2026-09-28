@@ -155,6 +155,12 @@ enum ReadOnlyPlace {
     Parameter(String),
     /// A module static.
     Static(String),
+    /// A local bound directly to a module static, which names the static's own storage: the local, then the static.
+    StaticAlias(String, String),
+    /// The items of a place a generator expression reads, which it holds as copies: the place's root name.
+    GeneratorItems(String),
+    /// A local a closure captures from its enclosing callable, which the closure holds as its own copy.
+    Captured(String),
     /// `self` in a plain-`self` method.
     SelfReceiver,
     /// A dict value, which a pattern binds as a copy.
@@ -303,6 +309,11 @@ impl TypeChecker {
         MutParamBodyState(self.mut_params.current.replace(next))
     }
 
+    /// Return the declaration identity of the function or method whose body is being checked, if any.
+    pub(in crate::typechecker) fn current_body_identity(&self) -> Option<&CanonicalSymbolId> {
+        self.mut_params.current.as_ref().map(|body| &body.identity)
+    }
+
     /// Leave a body entered with [`Self::enter_mut_param_body`].
     pub(in crate::typechecker) fn exit_mut_param_body(&mut self, previous: MutParamBodyState) {
         self.mut_params.current = previous.0;
@@ -337,6 +348,11 @@ impl TypeChecker {
         self.view_source_of(name).and_then(|source| source.param)
     }
 
+    /// Return whether a change through the binding `name` reaches a caller-visible parameter of the current body.
+    pub(in crate::typechecker) fn reaches_caller_visible_param(&self, name: &str) -> bool {
+        self.caller_visible_param_reached_by(name).is_some()
+    }
+
     /// Return what a change through the place root `root` reaches.
     ///
     /// A caller-visible parameter or a view answers as [`Self::view_source_of`] does. Any other binding answers by its
@@ -351,6 +367,19 @@ impl TypeChecker {
                 }
                 let symbol_id = self.symbols.lookup(name)?;
                 let symbol = self.symbols.get(symbol_id)?;
+                // A local bound to a static names the static's storage, which a loop or a pattern changes no more than
+                // it changes the static itself (#1561).
+                if let Some(static_name) = self.static_alias_bindings.get(&symbol_id) {
+                    return Some(ViewSource::with_access(ViewAccess::ReadOnly(
+                        ReadOnlyPlace::StaticAlias(name.clone(), static_name.clone()),
+                    )));
+                }
+                // A local a closure captures is the closure's own copy, which a change never carries back (#1561).
+                if self.local_is_captured_by_closure(symbol_id) {
+                    return Some(ViewSource::with_access(ViewAccess::ReadOnly(ReadOnlyPlace::Captured(
+                        name.clone(),
+                    ))));
+                }
                 let access = match &symbol.kind {
                     SymbolKind::Variable(info) if info.is_mutable => ViewAccess::Writable,
                     SymbolKind::Variable(_)
@@ -496,6 +525,17 @@ impl TypeChecker {
         iter: &Spanned<Expr>,
         pattern: &Pattern,
     ) -> Vec<(String, ViewSource)> {
+        self.derived_iterable_views(iter, pattern)
+            .into_iter()
+            .filter(|(_, source, _)| matches!(source.access, ViewAccess::ReadOnly(_)))
+            .map(|(name, source, _)| (name, source))
+            .collect()
+    }
+
+    /// Return a view, for each variable of `for <pattern> in iter` that a derived iterable reads in place, into the
+    /// place its item belongs to, whatever that place permits, with the root name of that place; see
+    /// [`Self::read_only_derived_loop_views`].
+    fn derived_iterable_views(&self, iter: &Spanned<Expr>, pattern: &Pattern) -> Vec<(String, ViewSource, String)> {
         let mut node = iter;
         while let Expr::Paren(inner) = &node.node {
             node = inner;
@@ -563,9 +603,6 @@ impl TypeChecker {
             let Some(source) = self.in_place_source(place) else {
                 continue;
             };
-            if !matches!(source.access, ViewAccess::ReadOnly(_)) {
-                continue;
-            }
             let bound = match (part, pattern) {
                 (Some(part), Pattern::Tuple(items)) => items.get(part).map(|item| &item.node),
                 _ => Some(pattern),
@@ -574,40 +611,81 @@ impl TypeChecker {
             if let Some(bound) = bound {
                 collect_pattern_bindings(bound, &mut names);
             }
+            // A place with no named root is rooted at `self` (`in_place_source` reached a source).
+            let root = place_root_name(place).unwrap_or(keywords::as_str(KeywordId::SelfKw));
             for name in names {
-                if !views.iter().any(|(viewed, _): &(String, ViewSource)| *viewed == name) {
-                    views.push((name, source.clone()));
+                if !views
+                    .iter()
+                    .any(|(viewed, _, _): &(String, ViewSource, String)| *viewed == name)
+                {
+                    views.push((name, source.clone(), root.to_string()));
                 }
             }
         }
         views
     }
 
-    /// Return a view for the name a list comprehension's `for` clause binds when the comprehension reads its items in
+    /// Return a view for each name a list comprehension's `for` clause binds when the comprehension reads its items in
     /// place from a place that does not permit a change (#1561).
     ///
-    /// A list comprehension whose element or filter changes the item a plain name binds reads the items of a list place
-    /// in place, as a `for` loop does, so a change through the name to a place declared without `mut` is refused like
-    /// one through a loop variable. A destructuring pattern, and an iterable that is no place, bind items of their own.
+    /// A list comprehension whose element or filter changes its items reads them in place, as a `for` loop does: the
+    /// items of a list place a plain name binds, and the items a derived iterable (`enumerate`, `zip`, `values()`, a
+    /// list reached through an element) reads in place ([`Self::read_only_derived_loop_views`]). A change through the
+    /// name to a place declared without `mut` is refused like one through a loop variable. An iterable that is no place
+    /// binds items of its own.
     pub(in crate::typechecker) fn read_only_comprehension_item_views(
         &self,
         iter: &Spanned<Expr>,
         pattern: &Pattern,
     ) -> Vec<(String, ViewSource)> {
-        let Pattern::Binding(name) = pattern else {
-            return Vec::new();
+        let direct = match pattern {
+            Pattern::Binding(name)
+                if self
+                    .type_info
+                    .expr_type(iter.span)
+                    .is_some_and(list_of_changeable_elements) =>
+            {
+                self.in_place_source(iter)
+                    .filter(|source| matches!(source.access, ViewAccess::ReadOnly(_)))
+                    .map(|source| vec![(name.clone(), source)])
+                    .unwrap_or_default()
+            }
+            _ => Vec::new(),
         };
-        if !self
+        if direct.is_empty() {
+            self.read_only_derived_loop_views(iter, pattern)
+        } else {
+            direct
+        }
+    }
+
+    /// Return a view for each name a generator expression's `for` clause binds from the items of a place (#1561).
+    ///
+    /// A generator reads the items of a list place, directly or through a derived iterable, as copies it holds for its
+    /// lazy evaluation, so a change through such a name would change a copy: it is refused whatever the place permits.
+    /// An iterable that is no place yields items the generator owns, which it may change.
+    pub(in crate::typechecker) fn generator_item_views(
+        &self,
+        iter: &Spanned<Expr>,
+        pattern: &Pattern,
+    ) -> Vec<(String, ViewSource)> {
+        let copied =
+            |root: &str| ViewSource::with_access(ViewAccess::ReadOnly(ReadOnlyPlace::GeneratorItems(root.to_string())));
+        let direct = self
             .type_info
             .expr_type(iter.span)
             .is_some_and(list_of_changeable_elements)
-        {
-            return Vec::new();
+            && self.in_place_source(iter).is_some();
+        if direct {
+            let root = place_root_name(iter).unwrap_or(keywords::as_str(KeywordId::SelfKw));
+            let mut names = Vec::new();
+            collect_pattern_bindings(pattern, &mut names);
+            return names.into_iter().map(|name| (name, copied(root))).collect();
         }
-        self.in_place_source(iter)
-            .filter(|source| matches!(source.access, ViewAccess::ReadOnly(_)))
-            .map(|source| vec![(name.clone(), source)])
-            .unwrap_or_default()
+        self.derived_iterable_views(iter, pattern)
+            .into_iter()
+            .map(|(name, _, root)| (name, copied(&root)))
+            .collect()
     }
 
     /// Make each named binding, already defined, a view described by its source until [`Self::exit_pattern_views`]
@@ -812,6 +890,11 @@ impl TypeChecker {
                     ReadOnlyPlace::Binding(name) => ReadOnlyScrutinee::Binding(name),
                     ReadOnlyPlace::Parameter(name) => ReadOnlyScrutinee::Parameter(name),
                     ReadOnlyPlace::Static(name) => ReadOnlyScrutinee::Static(name),
+                    ReadOnlyPlace::StaticAlias(alias, static_name) => {
+                        ReadOnlyScrutinee::StaticAlias { alias, static_name }
+                    }
+                    ReadOnlyPlace::GeneratorItems(place) => ReadOnlyScrutinee::GeneratorItems(place),
+                    ReadOnlyPlace::Captured(name) => ReadOnlyScrutinee::Captured(name),
                     ReadOnlyPlace::SelfReceiver => ReadOnlyScrutinee::SelfReceiver,
                     ReadOnlyPlace::DictValue => ReadOnlyScrutinee::DictValue,
                 };
@@ -1424,6 +1507,16 @@ impl TypeChecker {
             }
             _ => return ArgumentPlace::Temporary,
         };
+        // A closure holds its own copy of a local it captures, so a change the call makes would not reach the local
+        // (#1561); a caller-visible parameter is refused as held by the closure instead.
+        if let Some(symbol_id) = self.symbols.lookup(root)
+            && self.local_is_captured_by_closure(symbol_id)
+            && !self.reaches_caller_visible_param(root)
+        {
+            return ArgumentPlace::Detached {
+                place: MutArgumentPlace::Captured(root.to_string()),
+            };
+        }
         if through_element {
             return ArgumentPlace::Detached {
                 place: MutArgumentPlace::Element,

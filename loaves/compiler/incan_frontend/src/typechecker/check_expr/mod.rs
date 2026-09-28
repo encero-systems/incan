@@ -75,8 +75,20 @@ impl TypeChecker {
     /// is not generic. The instantiated target type is recorded at the target for lowering, and a generic function's
     /// type arguments at the partial for the call the partial makes.
     fn check_partial_expr(&mut self, partial: &PartialExpr, span: Span) -> ResolvedType {
-        let (target_ty, generic_target) = match self.partial_constructor_target_type(&partial.target) {
-            Some(constructor) => constructor,
+        let method_target = match self.partial_method_target_type(&partial.target) {
+            Ok(method_target) => method_target,
+            Err(()) => {
+                for arg in &partial.args {
+                    self.check_expr(&arg.value);
+                }
+                return ResolvedType::Unknown;
+            }
+        };
+        let (target_ty, generic_target) = match method_target
+            .map(|method_ty| (method_ty, None))
+            .or_else(|| self.partial_constructor_target_type(&partial.target))
+        {
+            Some(target) => target,
             None => {
                 let previous_span = self
                     .generic_partial_target_span
@@ -254,6 +266,128 @@ impl TypeChecker {
         // A local partial retains its complete callable signature. Presets become defaulted, name-overrideable
         // slots; `is_partial_preset` preserves the separate positional rule that starts at the residual arguments.
         ResolvedType::Function(Self::local_partial_params(projected, &partial.args), Box::new(ret))
+    }
+
+    /// Return the callable type of a local partial's target that is a method of a value (`partial user.label(...)`),
+    /// with the receiver's type substituted for `Self` and for the type's own type parameters (RFC 084).
+    ///
+    /// The receiver is a place: a local, `self`, or a field of one. The partial evaluates it once, when it is built,
+    /// and holds its own copy, as a closure holds a local it captures, so a method that changes its receiver (`mut
+    /// self`) is refused: its change would reach only the copy. An overloaded method, which RFC 084 does not admit as a
+    /// target, and a generic method, whose type arguments nothing could fix, are refused too. Each refusal is reported
+    /// here and answers `Err`. Any other target answers `Ok(None)`, for the ordinary target rules. The method's
+    /// identity and its resolved name are recorded at the target for lowering, which calls it on the held receiver.
+    fn partial_method_target_type(&mut self, target: &Spanned<Expr>) -> Result<Option<ResolvedType>, ()> {
+        let Expr::Field(base, member) = &target.node else {
+            return Ok(None);
+        };
+        if !self.partial_receiver_is_a_value_place(base) {
+            return Ok(None);
+        }
+        let receiver_ty = self.check_expr(base);
+        let (type_name, receiver_args) = match &receiver_ty {
+            ResolvedType::Named(name) => (name.clone(), Vec::new()),
+            ResolvedType::Generic(name, args) => (name.clone(), args.clone()),
+            _ => return Ok(None),
+        };
+        let Some((type_params, method, info, overloaded)) =
+            self.lookup_semantic_type_info(&type_name).and_then(|type_info| {
+                let (type_params, aliases, methods, overloads) = match type_info {
+                    TypeInfo::Model(model) => (
+                        &model.type_params,
+                        Some(&model.method_aliases),
+                        &model.methods,
+                        &model.method_overloads,
+                    ),
+                    TypeInfo::Class(class) => (
+                        &class.type_params,
+                        Some(&class.method_aliases),
+                        &class.methods,
+                        &class.method_overloads,
+                    ),
+                    TypeInfo::Newtype(newtype) => (
+                        &newtype.type_params,
+                        Some(&newtype.method_aliases),
+                        &newtype.methods,
+                        &newtype.method_overloads,
+                    ),
+                    TypeInfo::Enum(enum_info) => (
+                        &enum_info.type_params,
+                        None,
+                        &enum_info.methods,
+                        &enum_info.method_overloads,
+                    ),
+                    TypeInfo::Builtin | TypeInfo::TypeAlias => return None,
+                };
+                let method = aliases
+                    .and_then(|aliases| aliases.get(member))
+                    .cloned()
+                    .unwrap_or_else(|| member.clone());
+                let info = methods.get(&method)?.clone();
+                let overloaded = overloads.get(&method).is_some_and(|overloads| overloads.len() > 1);
+                Some((type_params.clone(), method, info, overloaded))
+            })
+        else {
+            return Ok(None);
+        };
+        let refusal = if overloaded {
+            Some("it is overloaded, and a partial presets one callable")
+        } else if !info.type_params.is_empty() {
+            Some("it is generic, and nothing the partial writes fixes its type parameters")
+        } else if info.receiver == Some(Receiver::Mutable) {
+            Some(
+                "it takes 'mut self', and the partial holds its own copy of the receiver, so the change would not reach it",
+            )
+        } else {
+            None
+        };
+        if let Some(reason) = refusal {
+            self.errors
+                .push(errors::local_partial_method_target_refused(member, reason, target.span));
+            return Err(());
+        }
+        if info.receiver.is_none() {
+            return Ok(None);
+        }
+        let bindings = type_param_subst_map_call_site(&type_params, &receiver_args);
+        let params = info
+            .params
+            .iter()
+            .map(|param| CallableParam {
+                ty: substitute_resolved_type(
+                    &self.substitute_self_in_resolved_type(param.ty.clone(), &receiver_ty),
+                    &bindings,
+                ),
+                ..param.clone()
+            })
+            .collect::<Vec<_>>();
+        let ret = substitute_resolved_type(
+            &self.substitute_self_in_resolved_type(info.return_type.clone(), &receiver_ty),
+            &bindings,
+        );
+        let method_ty = ResolvedType::Function(params, Box::new(ret));
+        if let Some(identity) = info.identity {
+            self.type_info.record_resolved_identity(target.span, identity);
+        }
+        self.type_info
+            .expressions
+            .local_partial_method_targets
+            .insert((target.span.start, target.span.end), method);
+        self.record_expr_type(target.span, method_ty.clone());
+        Ok(Some(method_ty))
+    }
+
+    /// Return whether a local partial's target base names a value the partial can hold: a local, `self`, or a field
+    /// of one, through parentheses. A module, a type name and any other expression are not.
+    fn partial_receiver_is_a_value_place(&self, base: &Spanned<Expr>) -> bool {
+        match &base.node {
+            Expr::SelfExpr => true,
+            Expr::Ident(name) => self
+                .lookup_symbol(name)
+                .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Variable(_))),
+            Expr::Field(inner, _) | Expr::Paren(inner) => self.partial_receiver_is_a_value_place(inner),
+            _ => false,
+        }
     }
 
     /// Return whether a span is the target of the local partial being checked, where a generic function may be named
@@ -595,6 +729,7 @@ impl TypeChecker {
 
         // Record for downstream stages (lowering/codegen).
         self.record_expr_type(expr.span, ty.clone());
+        self.refuse_capturing_callables_held_in(expr);
         ty
     }
 
@@ -743,6 +878,7 @@ impl TypeChecker {
             self.refuse_collection_literal_without_one_member(&ty, expected, expr.span);
         }
         self.record_expr_type(expr.span, ty.clone());
+        self.refuse_capturing_callables_held_in(expr);
         ty
     }
 

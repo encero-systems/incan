@@ -389,6 +389,31 @@ impl AstLowering {
         self.lower_type_with_type_params(ty, type_param_names)
     }
 
+    /// Return whether the checker proved that the function-typed parameter declared at `span` holds any callable of its
+    /// type (#1561).
+    pub(in crate::lower) fn is_closure_holding_param(&self, span: ast::Span) -> bool {
+        self.type_info
+            .as_ref()
+            .is_some_and(|info| info.is_closure_holding_param(span))
+    }
+
+    /// Return whether the checker proved that the function return type written at `span` holds the capturing closure
+    /// its function returns (#1561).
+    pub(in crate::lower) fn is_closure_returning_type(&self, span: ast::Span) -> bool {
+        self.type_info
+            .as_ref()
+            .is_some_and(|info| info.is_closure_returning_type(span))
+    }
+
+    /// Spell a function type `(A) -> R` as `impl Fn(A) -> R`, which holds any callable of the type, closures that
+    /// capture included (#1561). Any other type is returned unchanged.
+    pub(in crate::lower) fn closure_holding_type(ty: IrType) -> IrType {
+        match ty {
+            IrType::Function { params, ret } => IrType::ImplTrait(IrTraitBound::function_type(params, *ret)),
+            other => other,
+        }
+    }
+
     /// Lower a callable return type, preserving trait annotations as Rust `impl Trait` where needed.
     pub(in crate::lower) fn lower_callable_return_type(
         &self,

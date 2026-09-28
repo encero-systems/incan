@@ -1112,10 +1112,52 @@ pub enum ReadOnlyScrutinee<'a> {
     Parameter(&'a str),
     /// A module static, which a bound name cannot change in place.
     Static(&'a str),
+    /// A local bound directly to a module static, which names the static's own storage.
+    StaticAlias { alias: &'a str, static_name: &'a str },
+    /// The items of a place a generator expression reads, which it holds as copies; the place's root name.
+    GeneratorItems(&'a str),
+    /// A local a closure captures, which the closure holds as its own copy.
+    Captured(&'a str),
     /// `self` in a method that takes a plain `self` receiver.
     SelfReceiver,
     /// A dict value, which a pattern binds as a copy.
     DictValue,
+}
+
+/// Refuse a closure that captures local values where a function type holds only a named function or a closure that
+/// captures nothing (#1561).
+///
+/// `what` names the value and ends where the sentence continues ("A closure that captures local values", "'g', which
+/// holds a closure that captures local values,"); `slot` says where it is held ("stored in a list").
+pub fn capturing_callable_in_function_slot(what: &str, slot: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("{what} cannot be {slot}"), span)
+        .with_hint("Bind the closure to a new local and call it there, or pass it to a parameter its function only calls")
+        .with_note(
+            "A function type holds a named function or a closure that captures nothing. A closure that captures local values is held by a new local, by a function-typed parameter of a function of this module that only calls the parameter and is only called by name, and by the one 'return' of such a function",
+        )
+}
+
+/// Refuse a method of a value as a local partial's target (RFC 084): an overloaded method, a generic method, or one
+/// that takes `mut self`. `reason` says which, as the end of the sentence the message starts.
+pub fn local_partial_method_target_refused(method: &str, reason: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("A local partial of the method '{method}' is not supported: {reason}"),
+        span,
+    )
+}
+
+/// Refuse a change, inside a closure, through a local the closure captures from its enclosing callable (#1561).
+///
+/// A closure reads each outer local it names as the value the local holds when the closure is constructed, so a change
+/// through `name` would change the closure's own copy and never reach the local. A method that changes its receiver,
+/// and a field or element write, are refused alike.
+pub fn change_through_closure_capture(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Cannot change '{name}' inside a closure - the closure captures its own copy of it"),
+        span,
+    )
+    .with_hint(format!("Change '{name}' outside the closure"))
+    .with_note("A closure reads each outer local it names as the value the local holds when the closure is constructed")
 }
 
 /// Refuse a change through a name a `match`, `if let` or `while let` pattern, or a `for` loop, binds from a place that
@@ -1141,7 +1183,19 @@ pub fn change_through_binding_of_read_only_place(
         ),
         ReadOnlyScrutinee::Static(name) => (
             format!("the static '{name}', which is changed only through its own name"),
-            format!("Bind the value to a 'mut' variable, change it, and assign it back to '{name}'"),
+            format!("Change a copy of its value in a 'mut' variable, then assign the copy back to '{name}'"),
+        ),
+        ReadOnlyScrutinee::Captured(name) => (
+            format!("'{name}', which the closure captures as its own copy"),
+            format!("Change '{name}' outside the closure"),
+        ),
+        ReadOnlyScrutinee::GeneratorItems(place) => (
+            format!("'{place}' by a generator expression, which holds copies of the items it reads"),
+            format!("Change the items of '{place}' in a list comprehension or a 'for' loop"),
+        ),
+        ReadOnlyScrutinee::StaticAlias { alias, static_name } => (
+            format!("'{alias}', which names the static '{static_name}', which is changed only through its own name"),
+            format!("Change a copy of its value in a 'mut' variable, then assign the copy back to '{static_name}'"),
         ),
         ReadOnlyScrutinee::SelfReceiver => (
             "'self', which this method takes as plain 'self'".to_string(),
@@ -1210,6 +1264,8 @@ pub enum MutArgumentPlace {
     /// A `for` loop variable, which cannot be declared `mut`: its name, and whether the loop's pattern destructures
     /// each element (`for xs, n in pairs:`).
     LoopVariable { name: String, destructured: bool },
+    /// A local a closure captures from its enclosing callable, which the closure holds as its own copy.
+    Captured(String),
 }
 
 /// How an `INCAN-T0117` refusal names the `mut` parameter: by its declared name, or by its position when the callee is
@@ -1329,6 +1385,9 @@ fn mut_argument_hint(place: &MutArgumentPlace, parameter: MutParameterLabel<'_>)
             name,
             destructured: true,
         } => format!("A 'for' loop variable cannot be declared 'mut', so '{name}' cannot be passed to this parameter"),
+        MutArgumentPlace::Captured(name) => format!(
+            "A closure holds its own copy of '{name}', which it captures, so the call could not change '{name}': make the call outside the closure"
+        ),
     }
 }
 

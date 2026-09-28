@@ -625,6 +625,11 @@ pub enum IrTraitBoundOrigin {
     /// closures. Keeping the nominal source trait in generic signatures also permits ordinary Incan models that adopt
     /// `CallableN` to cross the same boundary without call-site rewriting.
     SourceCallable,
+    /// The `Fn` bound of a function type that holds any callable of that type, closures that capture included
+    /// (#1561): `type_args` are the parameter types and the `Output` associated type is the return type, spelled
+    /// `Fn(A, B) -> R`. It is the bound of an `impl Fn(...) -> R` parameter or return type
+    /// ([`IrTraitBound::function_type`]), never of a type parameter or an implementation header.
+    FunctionType,
 }
 
 impl IrTraitBound {
@@ -671,6 +676,16 @@ impl IrTraitBound {
             type_args,
             assoc_types: Vec::new(),
             origin,
+        }
+    }
+
+    /// Create the `Fn(params...) -> ret` bound of a function type that holds any callable of that type (#1561).
+    pub fn function_type(params: Vec<IrType>, ret: IrType) -> Self {
+        Self {
+            trait_path: "Fn".to_string(),
+            type_args: params,
+            assoc_types: vec![("Output".to_string(), ret)],
+            origin: IrTraitBoundOrigin::FunctionType,
         }
     }
 

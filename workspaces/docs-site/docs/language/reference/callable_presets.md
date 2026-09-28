@@ -45,6 +45,28 @@ Every preset is a named argument; a positional preset is a syntax error, `INCAN-
 
 A top-level target that is a const, a static, a module, an enum variant, a call expression, a local variable, a closure, a field or an unbound method is error `INCAN-T0001`. A local partial expression whose target is not callable, or is a variable or parameter holding a callable, is error `INCAN-T0001`.
 
+A method of a value as a local partial's target is a method that takes `self`, of a local, of `self`, or of a field of one. The partial holds the receiver as it is when the partial is built, and calls the method on it. A method that takes `mut self`, an overloaded method and a generic method are error `INCAN-T0001`.
+
+```incan
+model User:
+    name: str
+
+    def label(self, prefix: str, suffix: str) -> str:
+        return prefix + self.name + suffix
+
+class Counter:
+    pub count: int
+
+    def add(mut self, by: int) -> None:
+        self.count += by
+
+def main() -> None:
+    user = User(name="ann")
+    tag = partial user.label(prefix="x")          # accepted
+    mut counter = Counter(count=0)
+    step = partial counter.add(by=1)              # refused: add takes mut self (INCAN-T0001)
+```
+
 ## Signature
 
 A partial has the target's signature with these changes:
@@ -57,7 +79,7 @@ A partial has the target's signature with these changes:
 - a method partial has the target method's receiver;
 - a top-level partial of a generic callable stays generic over the type parameters its presets leave free.
 
-A local partial expression's value is a callable with the target's parameters and return type, each preset parameter defaulted to its preset value.
+A local partial expression's value is a callable with the target's parameters and return type, each preset parameter defaulted to its preset value. It holds its presets, so a function-typed slot holds it where it holds a closure that captures local values (see [Closures that capture local values](functions.md#closures-that-capture-local-values)).
 
 A local partial expression of a generic callable instantiates it: each type parameter takes the type argument the partial writes (`partial pair[int](a=1)`) or, when it writes none, the one its preset values fix. A type parameter neither fixes is error `INCAN-T0001`, and a type argument that does not meet its parameter's bounds is refused as it is in a call.
 

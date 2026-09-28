@@ -54,8 +54,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/comprehensions.rs",
-      "sha256": "3c2927c75fd8089689f0eecdf8b83db5a809b35d05c81f25cb3865a11601c72f",
-      "lines": 899
+      "sha256": "f365aa01bd2fe4a9cd8388cc917ffa563be13b455b82bce370a43a0a8c394955",
+      "lines": 957
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/format.rs",
@@ -129,13 +129,13 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
-      "sha256": "df73b0a0ba13ecdfce5004bf9a3f3a71c724e40426d8f643c59c1c409bec4fc9",
-      "lines": 1986
+      "sha256": "8a8b4def9362ac58976f19efb1150d2c1914f986775f595817759cc07a51d35b",
+      "lines": 1990
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/types.rs",
-      "sha256": "5bf2e51819535393c243270b8d927b8b75321912a70fbe8636204bcd794ceaf5",
-      "lines": 707
+      "sha256": "833b7c29efd0f620fd53179148017cef0b4aff57b2c72b94e10fc6462767a4d0",
+      "lines": 721
     }
   ],
   "changes": [
@@ -554,6 +554,29 @@
       "behavior_evidence": "unit tests dict_value_changes_in_place_through_a_mut_dict_issue1561 and dict_value_of_a_model_changes_in_place_issue1561 in loaves/compiler/incan_emit/src/tests/dict_value_places.rs, which build and run the program and fail without the change (E0596/E0594 on HashMap indexing, E0308 on the key, E0277 on a str literal key through a mut dict parameter); behavior fixture ownership_values_and_fields/dict_values_changed_in_place.incn",
       "semantic_owner": "#1561: the checked place facts (a dict value named by d[key] is a writable place of a mut dict) and the ownership planner's key probe ownership::plan_dict_lookup_key; the emitter only spells the lookup through incan_std_core::collections::dict_get_mut",
       "retirement_condition": "the Rust-source backend is deleted (#654); the replacement route writes the dict entry in place from the same checked place facts"
+    },
+    {
+      "kind": "change",
+      "pr": null,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/comprehensions.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/types.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1561",
+      "behavior_evidence": "incan_emit --lib tests::comprehension_item_places::comprehensions_change_their_items_in_place_issue1561, tests::comprehension_item_places::comprehensions_change_the_items_of_a_temporary_issue1561 and tests::capturing_closures::capturing_closures_build_where_their_own_type_is_kept_issue1561 (each builds and runs the generated Rust); behavior fixtures ownership_values_and_fields/comprehensions_changing_their_items.incn and cli_values_and_calls/capturing_closures_in_function_types.incn",
+      "semantic_owner": "The checker facts closure_holding_params and closure_returning_callables (typechecker/capturing_callables.rs), lowered to IrTraitBound::function_type; the in-place plan ownership::plan_mutating_derived_loop, shared with for loops",
+      "retirement_condition": "The dev.7 backend (#1675) spells function types and comprehension item places from Body IR; the Fn-bound spelling in emit_trait_bound and the comprehension use of plan_mutating_derived_loop and of the changed-binding mut markers go with the legacy emitter"
     }
   ]
 }

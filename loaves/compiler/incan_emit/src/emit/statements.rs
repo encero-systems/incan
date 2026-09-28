@@ -1659,9 +1659,13 @@ impl<'a> IrEmitter<'a> {
         Ok(iter_plan.apply(iter))
     }
 
-    /// Emit the iterator of a `for` loop over a derived iterable whose body changes its items, as `plan` reads each
-    /// source: a source read in place is emitted as its place, any other as an ordinary loop over it would iterate it.
-    fn emit_mutating_derived_for_iterable(&self, plan: &MutatingDerivedLoopPlan<'_>) -> Result<TokenStream, EmitError> {
+    /// Emit the iterator of a `for` loop or a list comprehension over a derived iterable whose body changes its items,
+    /// as `plan` reads each source: a source read in place is emitted as its place, any other as an ordinary loop over
+    /// it would iterate it.
+    pub(in crate::emit) fn emit_mutating_derived_for_iterable(
+        &self,
+        plan: &MutatingDerivedLoopPlan<'_>,
+    ) -> Result<TokenStream, EmitError> {
         plan.assemble(|source, shape| match shape {
             DerivedLoopSourceShape::Place => self.emit_lvalue_expr(source),
             DerivedLoopSourceShape::Iterable(iter_plan) => self.emit_for_iterable(source, iter_plan),

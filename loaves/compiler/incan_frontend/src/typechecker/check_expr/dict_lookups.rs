@@ -111,11 +111,11 @@ impl TypeChecker {
     /// Lowering reads such a local through the static's storage access like the static itself, so its lookups always
     /// copy the entry out and are never recorded as read-only.
     pub(in crate::typechecker) fn note_static_alias_binding(&mut self, assign: &AssignmentStmt) {
-        if matches!(assign.value.node, Expr::Ident(_))
+        if let Expr::Ident(static_name) = &assign.value.node
             && self.type_info.ident_kind(assign.value.span) == Some(IdentKind::Static)
             && let Some(id) = self.symbols.lookup(&assign.name)
         {
-            self.static_alias_bindings.insert(id);
+            self.static_alias_bindings.insert(id, static_name.clone());
         }
     }
 
@@ -168,7 +168,7 @@ impl TypeChecker {
                     || self
                         .symbols
                         .lookup(name)
-                        .is_some_and(|id| self.static_alias_bindings.contains(&id))
+                        .is_some_and(|id| self.static_alias_bindings.contains_key(&id))
             }
             Expr::Field(object, _) | Expr::Index(object, _) | Expr::Paren(object) => {
                 self.expr_reads_static_storage(object)

@@ -18,10 +18,18 @@ fn behavior_cli_refusals_fixtures_hold() -> Result<(), Box<dyn std::error::Error
 }
 
 /// Programs refused at check time for a change through a place that does not permit it: a binding declared without
-/// `mut`, a parameter not marked `mut`, or the items of such a place that a `for` loop changes.
+/// `mut`, a parameter not marked `mut`, the items of such a place that a `for` loop changes, a static a local names, a
+/// local a closure captures, the items a generator expression copies, and the receiver a local partial holds.
 #[test]
 fn behavior_cli_refusals_mutation_fixtures_hold() -> Result<(), Box<dyn std::error::Error>> {
     assert_area_green("cli_refusals_mutation")
+}
+
+/// Programs refused at check time for a value or a call the language does not admit: a closure that captures local
+/// values in a function-typed slot that holds only functions, and slice syntax on a type without `__getslice__`.
+#[test]
+fn behavior_cli_refusals_values_and_calls_fixtures_hold() -> Result<(), Box<dyn std::error::Error>> {
+    assert_area_green("cli_refusals_values_and_calls")
 }
 
 /// Literals, collections, assignments, patterns, numerics, mut parameters, and the task handles, channel senders and

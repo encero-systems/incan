@@ -333,6 +333,20 @@ impl<'a> IrEmitter<'a> {
         if matches!(bound.origin, incan_ir::decl::IrTraitBoundOrigin::RustCapability) && bound.trait_path == "Static" {
             return quote! { 'static };
         }
+        // A function type that holds any callable of its type is spelled with Rust's `Fn(A) -> R` sugar (#1561).
+        if matches!(bound.origin, incan_ir::decl::IrTraitBoundOrigin::FunctionType) {
+            let params = bound
+                .type_args
+                .iter()
+                .map(|param| self.emit_type(param))
+                .collect::<Vec<_>>();
+            let ret = bound
+                .assoc_types
+                .iter()
+                .map(|(_, ret)| self.emit_type(ret))
+                .collect::<Vec<_>>();
+            return quote! { Fn(#(#params),*) #(-> #ret)* };
+        }
 
         // Parse the trait path into segments.
         let absolute = bound.trait_path.starts_with("::");

@@ -489,6 +489,7 @@ impl TypeChecker {
         if method_info.is_async {
             self.warn_if_unawaited_async_call(method, call_site_span);
         }
+        self.check_capturing_call_arguments(method_info.identity.as_ref(), method, &method_info.params, args);
 
         self.emit_explicit_bound_errors(
             method,

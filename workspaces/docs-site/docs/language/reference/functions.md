@@ -46,6 +46,48 @@ h: (str) -> int = double          # refused: INCAN-T0001
 
 A closure reads each outer local it names as the value that local holds when the closure is constructed. A later change to the outer binding does not change the value the closure reads. How a closure captures a local: [Closures](../explanation/closures.md#how-a-closure-captures-outer-locals).
 
+A closure does not change an outer local it reads, a local bound to a static included: a call of a method that changes it, a write to a field or element of it, a loop, comprehension or pattern that changes its items, and passing it to a `mut` parameter the call changes are refused with `INCAN-T0001`, the argument with `INCAN-T0117`. A closure changes a static through the static's own name.
+
+```incan
+def main() -> None:
+    mut items: list[int] = []
+    add = () => items.append(1)         # refused: the closure changes a local it reads (INCAN-T0001)
+    count = () => len(items)            # accepted
+```
+
+### Closures that capture local values
+
+A closure that reads a local of an enclosing function, a parameter or `self`, captures it; a local partial holds its presets. Such a callable, a *capturing callable*, is held by these function-typed slots:
+
+| Slot | Contract |
+| --- | --- |
+| A new local binding | Accepted, annotated with a function type or not. The local is not reassigned afterwards. |
+| The callee of a call | Accepted. |
+| An argument for a parameter of function type | Accepted when the parameter is declared without `mut` and is not `*args`, and the function or method that declares it only calls it, outside any closure or generator expression, and qualifies (below). |
+| A `return` value | Accepted when the function or method has one `return`, whose value is a closure that reads a parameter or a local of the function and not `self`, or a local partial, and qualifies (below). |
+
+A function qualifies when it is declared in the same module, is neither `pub`, `async`, generic, decorated nor a generator, and is not used as a decorator; its name is only called, never read as a value. A method qualifies when it is declared in a model, class, newtype or enum of the same module, takes `self` or `mut self`, is neither `async`, generic, decorated, overloaded nor a generator, and implements no method of a trait the type adopts; no member read without a call spells its name in the module, and its class neither extends nor is extended by another class.
+
+Every other function-typed slot refuses a capturing callable with `INCAN-T0001`: an element of a list, set, dict or tuple, a yielded value, an argument of a construction or of `Some`, `Ok` and `Err`, a preset of a local partial, the value of an `if` branch or a `match` arm, an assignment to an existing name, field or element, an assignment to a local that holds one, a parameter of a callable value, and a parameter or return of any other function declared in the project or in a library. A named function and a closure that captures nothing are accepted in every function-typed slot.
+
+```incan
+def apply(f: (int) -> int, x: int) -> int:
+    return f(x)
+
+def keep(f: (int) -> int) -> list[(int) -> int]:
+    return [f]
+
+def make_adder(n: int) -> (int) -> int:
+    return (x) => x + n                 # accepted
+
+def main() -> None:
+    n = 5
+    g: (int) -> int = (x) => x + n      # accepted
+    apply(g, 1)                         # accepted
+    keep((x) => x + n)                  # refused: keep stores its parameter (INCAN-T0001)
+    fs: list[(int) -> int] = [g]        # refused: a list element (INCAN-T0001)
+```
+
 ### `mut` parameters
 
 `mut` on a parameter makes it a mutable binding in the function's body. A parameter of type `int`, `float` or `bool`, under any spelling of the type (`i64`, `long` and `bigint` are `int`; `f64`, `double` and `fp64` are `float`) and also through a type alias, is the function's own copy: the body may change and rebind it, its changes stay local, and it is not marked in the function type. A parameter of any other type, except a Rust type and `*args` or `**kwargs`, is marked: the function's changes to it reach the caller, and the function type marks it, `(mut T, ...) -> R`.

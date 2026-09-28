@@ -240,3 +240,162 @@ def main() -> None:
 "#
     ));
 }
+
+/// A local bound to a static names the static's storage, so a `for` loop, a comprehension or a pattern that changes
+/// its items through it is refused like one over the static itself, whether the local is declared `mut` or not; a
+/// changing call through the local itself still changes the static (#1561).
+#[test]
+fn loops_changing_the_items_of_a_static_through_an_alias_are_refused_issue1561() {
+    let source = r#"
+static ROWS: list[list[int]] = [[1]]
+
+
+def main() -> None:
+    mut live = ROWS
+    live.append([2])
+    for row in live:
+        row.append(2)
+    for i, row in enumerate(live):
+        row.append(i)
+    let fixed = ROWS
+    for row in fixed:
+        row.append(3)
+    popped = [row.pop() for row in live]
+    match live[0]:
+        xs => xs.append(4)
+"#;
+    assert_eq!(
+        refusal_messages(source),
+        [
+            "Cannot change 'row' - it is bound from 'live', which names the static 'ROWS', which is changed only through its own name",
+            "Cannot change 'row' - it is bound from 'live', which names the static 'ROWS', which is changed only through its own name",
+            "Cannot change 'row' - it is bound from 'fixed', which names the static 'ROWS', which is changed only through its own name",
+            "Cannot change 'row' - it is bound from 'live', which names the static 'ROWS', which is changed only through its own name",
+            "Cannot change 'xs' - it is bound from 'live', which names the static 'ROWS', which is changed only through its own name",
+        ]
+    );
+}
+
+/// A list or dict comprehension that changes its items reads them in place, directly or through `enumerate`, `zip`,
+/// `values()` or an element, as a `for` loop does, so over a place declared without `mut` it is refused. A generator
+/// expression holds copies of the items of a place it reads, so a change through its variable is refused whatever
+/// the place permits. Items of a temporary are the comprehension's or the generator's own (#1561).
+#[test]
+fn comprehensions_changing_their_items_follow_the_place_issue1561() {
+    let source = r#"
+def fresh() -> list[list[int]]:
+    return [[1]]
+
+
+def main() -> None:
+    rows: list[list[int]] = [[1, 2]]
+    extra: list[int] = [1]
+    a = [row.pop() for i, row in enumerate(rows)]
+    b = [row.pop() + n for row, n in zip(rows, extra)]
+    table: dict[str, list[int]] = {"a": [1]}
+    c = [value.pop() for value in table.values()]
+    groups: list[list[list[int]]] = [[[1]]]
+    d = [row.pop() for row in groups[0]]
+    e = {len(row): row.pop() for row in rows}
+    f = {i: row.pop() for i, row in enumerate(rows)}
+    mut live: list[list[int]] = [[1]]
+    g = (row.pop() for row in live)
+    h = (row.pop() for i, row in enumerate(live))
+    k = [row.pop() for row in fresh()]
+    m = (row.pop() for row in fresh())
+    n = [row.pop() for i, row in enumerate(live)]
+    p = {i: row.pop() for i, row in enumerate(live)}
+"#;
+    assert_eq!(
+        refusal_messages(source),
+        [
+            "Cannot change 'row' - it is bound from 'rows', which is immutable",
+            "Cannot change 'row' - it is bound from 'rows', which is immutable",
+            "Cannot change 'value' - it is bound from 'table', which is immutable",
+            "Cannot change 'row' - it is bound from 'groups', which is immutable",
+            "Cannot change 'row' - it is bound from 'rows', which is immutable",
+            "Cannot change 'row' - it is bound from 'rows', which is immutable",
+            "Cannot change 'row' - it is bound from 'live' by a generator expression, which holds copies of the items it reads",
+            "Cannot change 'row' - it is bound from 'live' by a generator expression, which holds copies of the items it reads",
+        ]
+    );
+}
+
+/// A closure holds its own copy of each outer local it captures, so a change it makes through one is refused: a
+/// changing method call, a changing call through a field or element, a comprehension that changes the items of a
+/// captured list, and passing a captured local to a `mut` parameter the call changes (`INCAN-T0117`), whether the
+/// local is declared `mut` or not, is bound to a static, and however deeply the closure is nested. Reading a capture,
+/// changing a closure's own value and changing a static by its own name are accepted (#1561).
+#[test]
+fn changes_through_closure_captures_are_refused_issue1561() {
+    let source = r#"
+class Counter:
+    pub count: int
+
+    def bump(mut self) -> None:
+        self.count += 1
+
+
+static SEEN: list[int] = []
+
+
+def extend(mut xs: list[int]) -> None:
+    xs.append(1)
+
+
+def main() -> None:
+    mut items: list[int] = []
+    add = () => items.append(1)
+    mut counter = Counter(count=0)
+    bump = () => counter.bump()
+    mut rows: list[list[int]] = [[1]]
+    first = () => rows[0].append(2)
+    nested = () => (() => items.append(3))()
+    popped = () => [row.pop() for row in rows]
+    grow = () => extend(items)
+    size = () => len(items) + counter.count
+    own = () => [1, 2].pop()
+    note = () => SEEN.append(4)
+    live = SEEN
+    through_alias = () => live.append(5)
+    println(size())
+"#;
+    let errors = check_str(source).err().unwrap_or_default();
+    let messages = errors
+        .iter()
+        .map(|error| (error.stable_code(), error.message.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        messages,
+        [
+            (
+                None,
+                "Cannot change 'items' inside a closure - the closure captures its own copy of it"
+            ),
+            (
+                None,
+                "Cannot change 'counter' inside a closure - the closure captures its own copy of it"
+            ),
+            (
+                None,
+                "Cannot change 'rows' inside a closure - the closure captures its own copy of it"
+            ),
+            (
+                None,
+                "Cannot change 'items' inside a closure - the closure captures its own copy of it"
+            ),
+            (
+                None,
+                "Cannot change 'row' - it is bound from 'rows', which the closure captures as its own copy"
+            ),
+            (
+                None,
+                "Cannot change 'live' inside a closure - the closure captures its own copy of it"
+            ),
+            (
+                Some("INCAN-T0117"),
+                "Argument for the 'mut' parameter 'xs' of 'extend' must be a mutable binding"
+            ),
+        ]
+    );
+}

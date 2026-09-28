@@ -1020,7 +1020,7 @@ mod control_flow;
 
 mod stmt;
 
-mod free_vars;
+pub(crate) mod free_vars;
 mod provider_ops;
 mod refusals;
 

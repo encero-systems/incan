@@ -381,8 +381,9 @@ def main() -> None:
     println(handler(counter))
 "#,
     )?;
+    // `apply` only calls `step`, so the parameter holds any callable of its type (#1561).
     assert!(
-        rust.contains("step:fn(&mutCounter)->i64") && rust.contains("returnstep(counter);"),
+        rust.contains("step:implFn(&mutCounter)->i64") && rust.contains("returnstep(counter);"),
         "a callable-typed parameter takes and passes the caller's value: {rust}"
     );
     assert!(

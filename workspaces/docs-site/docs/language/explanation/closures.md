@@ -34,7 +34,7 @@ transform = double             # store in a variable
 ops = [double, (x) => x + 1]   # mix named functions and closures
 ```
 
-Both forms are interchangeable wherever a function type is expected. Use a direct reference when the function already exists; use a closure for short inline logic.
+Both forms are interchangeable wherever a function type is expected, as long as the closure captures nothing. A closure that reads a local of the function around it carries that value with it, so it has a type of its own: a new local, a parameter its function only calls and a function's one `return` hold it, and a list or a field does not ([Closures that capture local values](../reference/functions.md#closures-that-capture-local-values)). Use a direct reference when the function already exists; use a closure for short inline logic.
 
 ## When to use closures
 
@@ -105,4 +105,4 @@ For explicit typing, use a named function instead.
 
 ## How a closure captures outer locals
 
-A closure reads an outer local as the value that local holds when the closure is constructed. When code after the closure also needs that local, such as a later statement of the same block or the next pass of an enclosing loop, the closure receives its own snapshot of the value, so a later change to the outer binding does not reach the closure. The exact rule is in [Closure captures](../reference/functions.md#closure-captures).
+A closure reads an outer local as the value that local holds when the closure is constructed. When code after the closure also needs that local, such as a later statement of the same block or the next pass of an enclosing loop, the closure receives its own snapshot of the value, so a later change to the outer binding does not reach the closure. For the same reason a closure does not change a local it reads: the change would land in the closure's copy, not in the local, so it is refused. The exact rule is in [Closure captures](../reference/functions.md#closure-captures).

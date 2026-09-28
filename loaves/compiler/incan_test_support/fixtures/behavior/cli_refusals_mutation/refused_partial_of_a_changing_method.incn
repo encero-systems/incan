@@ -1,0 +1,15 @@
+# behavior: a local partial of a method that takes mut self is refused at check time, since the partial holds its own copy of the receiver
+# expect-diagnostic: INCAN-T0001
+
+class Counter:
+    pub count: int
+
+    def add(mut self, by: int) -> None:
+        self.count += by
+
+
+def main() -> None:
+    mut counter = Counter(count=0)
+    step = partial counter.add(by=1)
+    step()
+    println(counter.count)

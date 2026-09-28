@@ -3141,6 +3141,40 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/capturing_closures.rs": {
+      "disposition": "retire",
+      "notes": "builds and runs the generated Rust of closures that capture local values where the checker holds them: a new local, an argument for a function-typed parameter its function only calls, the one return of a function or method, and a local partial of a method of a value (#1561); retires with the Rust-source backend.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "capturing_closures_build_where_their_own_type_is_kept_issue1561": {
+          "notes": "Runs a capturing closure as an annotated local called and passed twice, as an argument for a function and a method that only call their parameter, and returned from a function and a method; the fixture prints each result.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/capturing_closures_in_function_types.incn"
+        },
+        "local_partials_of_methods_of_values_build_issue1561": {
+          "notes": "Runs local partials of methods of values, through a method alias, on a generic type and on `self`; the fixture prints each call.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_functions_and_aliases/local_partials_of_methods_of_values.incn"
+        }
+      }
+    },
+    "loaves/compiler/incan_emit/src/tests/comprehension_item_places.rs": {
+      "disposition": "retire",
+      "notes": "builds and runs the generated Rust of list and dict comprehensions that change their items in place through `enumerate`, `zip`, `values()`, an element and directly, and of comprehensions and generator expressions over temporaries (#1561); retires with the Rust-source backend.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "comprehensions_change_the_items_of_a_temporary_issue1561": {
+          "notes": "Runs comprehensions and a generator expression that change the items of a temporary; the fixture prints each result.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_values_and_fields/comprehensions_changing_their_items.incn"
+        },
+        "comprehensions_change_their_items_in_place_issue1561": {
+          "notes": "Runs comprehensions that change their items through derived iterables and dict comprehensions over a list; the fixture prints each result and the changed lists.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_values_and_fields/comprehensions_changing_their_items.incn"
+        }
+      }
+    },
     "loaves/compiler/incan_emit/src/tests/dependency_method_unions.rs": {
       "disposition": "retire",
       "notes": "lowering through emission end to end.",
@@ -3205,11 +3239,15 @@
     },
     "loaves/compiler/incan_emit/src/tests/emitted_spellings.rs": {
       "disposition": "retire",
-      "notes": "asserts the Rust text emission gives keyword identifiers, a program type named like a runtime surface type, `set()` over a generator, `const` `FrozenDict` reads and an explicit channel element type; generated Rust dies with #654.",
+      "notes": "asserts the Rust text emission gives keyword identifiers, a program type named like a runtime surface type, `set()` over a generator, `const` `FrozenDict` reads an explicit channel element type and the future of an async function called through a module binding; generated Rust dies with #654.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
       "tests": {
+        "awaiting_a_module_function_through_its_binding_awaits_its_future_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/await_through_a_module_binding.incn",
+          "notes": "Asserts generated Rust text; the behavior, awaiting and spawning standard-library async functions called through their module binding, is carried by the named fixture (#1561)."
+        },
         "const_frozen_dict_reads_use_the_frozen_lookup_issue1757": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/const_frozen_collection_reads.incn",
           "notes": "Asserts generated Rust text; the behavior is carried by the named fixture (#1757)."
@@ -3577,6 +3615,19 @@
         "gen_named_module_builds_issue1561": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/gen_named_function_field_and_module",
           "notes": "Compiles a module named `gen` reached by `from gen import ...` and `import gen`; the named fixture imports and calls it both ways."
+        }
+      }
+    },
+    "loaves/compiler/incan_emit/src/tests/slice_hooks.rs": {
+      "disposition": "retire",
+      "notes": "builds and runs the generated Rust of slice syntax on a type that defines `__getslice__`, on a generic type too, and of `list` and `str` slices written with `::` (#1561); retires with the Rust-source backend.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "slice_syntax_calls_the_getslice_hook_issue1561": {
+          "notes": "Runs slices of a `Sliceable` type, whose hook reports the parts it receives, and `list` and `str` slices written with `::`; the fixture prints each slice.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/slice_syntax_calls_the_getslice_hook.incn"
         }
       }
     },
@@ -6118,6 +6169,14 @@
     "loaves/compiler/incan_frontend/src/typechecker/tests/checked_facts_and_registries.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/closures_in_function_types.rs": {
+      "disposition": "keep",
+      "notes": "typechecker only: a closure that captures local values is accepted as a new local, as an argument for a function-typed parameter its function only calls and as the one return of a function, and refused with `INCAN-T0001` in every other function-typed slot (#1561); no emit/driver dependency.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -10901,7 +10960,13 @@
     },
     "loaves/compiler/incan_test_support/fixtures/behavior/cli_refusals_mutation": {
       "disposition": "re-point",
-      "notes": "behavior fixtures whose observable is a check-time refusal of a change through a place that does not permit it: a changing method call through a binding declared without `mut` or a parameter not marked `mut`, and a `for` loop that changes the items of such a place. Run by behavior_cli_tests.rs; a fixture is proved by checking a program, so it is re-point today and stays valid after the route flips.",
+      "notes": "behavior fixtures whose observable is a check-time refusal of a change through a place that does not permit it: a changing method call through a binding declared without `mut` or a parameter not marked `mut`, a `for` loop that changes the items of such a place or of a static through a local bound to it, a closure that changes a local it captures, a generator expression that changes the items it copies, and a local partial of a `mut self` method. Run by behavior_cli_tests.rs; a fixture is proved by checking a program, so it is re-point today and stays valid after the route flips.",
+      "owner": 1561,
+      "pattern": "<name>.incn or <name>/"
+    },
+    "loaves/compiler/incan_test_support/fixtures/behavior/cli_refusals_values_and_calls": {
+      "disposition": "re-point",
+      "notes": "behavior fixtures whose observable is a check-time refusal of a value or a call the language does not admit: a closure that captures local values in a function-typed slot that holds only functions and closures that capture nothing, and slice syntax on a type without `__getslice__`. Run by behavior_cli_tests.rs; a fixture is proved by checking a program, so it is re-point today and stays valid after the route flips.",
       "owner": 1561,
       "pattern": "<name>.incn or <name>/"
     },

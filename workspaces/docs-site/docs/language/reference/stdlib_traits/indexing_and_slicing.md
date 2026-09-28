@@ -6,7 +6,7 @@ This page specifies the traits of `std.traits.indexing` for `obj[key]`, `obj[key
 | --- | --- | --- | --- |
 | `Index[K, V]` | `std.traits.indexing` | `__getitem__(self, key: K) -> V` | `obj[key]` |
 | `IndexMut[K, V]` | `std.traits.indexing` | `__setitem__(self, key: K, value: V) -> None` | `obj[key] = value` |
-| `Sliceable[T]` | `std.traits.indexing` | `__getslice__(self, start: Option[int], end: Option[int], step: Option[int]) -> list[T]` | — |
+| `Sliceable[T]` | `std.traits.indexing` | `__getslice__(self, start: Option[int], end: Option[int], step: Option[int]) -> list[T]` | `obj[start:end:step]` |
 | `GetItem[Key, Output]` | `std.traits.ops` | `__getitem__(self, key: Key) -> Output` | `obj[key]` |
 | `SetItem[Key, Value]` | `std.traits.ops` | `__setitem__(self, key: Key, value: Value) -> None` | `obj[key] = value` |
 
@@ -48,5 +48,25 @@ def main() -> None:
 
 ## Slicing
 
-- **Syntax**: `obj[start:end:step]`, on a `str` or a `list[T]`; the forms and their results are specified in [Strings: Indexing and slicing](../strings.md#indexing-and-slicing).
-- **Trait**: `Sliceable[T]`, whose hook is `__getslice__(self, start: Option[int], end: Option[int], step: Option[int]) -> list[T]`; a type that adopts it defines the hook.
+- **Syntax**: `obj[start:end:step]`; each part is optional, and a slice that omits its end may write its two colons together (`obj[::step]`, `obj[start::step]`).
+- **Hook**: `__getslice__(self, start: Option[int], end: Option[int], step: Option[int]) -> list[T]`
+- **Trait**: `Sliceable[T]`; a type that adopts it defines the hook.
+
+On a `str` or a `list[T]`, the forms and their results are specified in [Strings: Indexing and slicing](../strings.md#indexing-and-slicing). On a type that defines `__getslice__`, `obj[start:end:step]` calls it with `Some(part)` for each part written and `None` for each part omitted, and has the hook's return type.
+
+Refused (`INCAN-T0001`): slice syntax on a model, class, enum or newtype that defines no `__getslice__`, and a part that is not an `int`.
+
+```incan
+from std.traits.indexing import Sliceable
+
+model Window with Sliceable[int]:
+    items: list[int]
+
+    def __getslice__(self, start: Option[int], end: Option[int], step: Option[int]) -> list[int]:
+        return self.items[start.unwrap_or(0):]
+
+def main() -> None:
+    w = Window(items=[1, 2, 3])
+    tail = w[1:]        # accepted: w.__getslice__(Some(1), None, None)
+    every = w[::2]      # accepted: w.__getslice__(None, None, Some(2))
+```

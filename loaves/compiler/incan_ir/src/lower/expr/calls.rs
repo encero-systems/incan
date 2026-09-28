@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use super::super::super::decl::{FunctionParam, FunctionParamDefault};
 use super::super::super::expr::{
     BuiltinFn, IrCallArg, IrCallArgKind, IrDictEntry, IrExprKind, IrInteropCoercionKind, IrListEntry,
-    Literal as IrLiteral, MatchArm, MethodCallArgPolicy, Pattern, VarAccess, VarRefKind,
+    Literal as IrLiteral, MatchArm, MethodCallArgPolicy, Pattern, UnaryOp, VarAccess, VarRefKind,
 };
 use super::super::super::stmt::IrStmtKind;
 use super::super::super::types::IrType;
@@ -4536,16 +4536,22 @@ impl AstLowering {
         let mut lowered = Vec::new();
         for arg in args {
             match arg {
-                ast::CallArg::Positional(e) => lowered.push(IrCallArg {
-                    name: None,
-                    kind: IrCallArgKind::Positional,
-                    expr: self.lower_expr_spanned(e)?,
-                }),
-                ast::CallArg::Named(name, e) => lowered.push(IrCallArg {
-                    name: Some(name.node.clone()),
-                    kind: IrCallArgKind::Named,
-                    expr: self.lower_expr_spanned(e)?,
-                }),
+                ast::CallArg::Positional(e) => {
+                    let expr = self.lower_call_arg_value(e)?;
+                    lowered.push(IrCallArg {
+                        name: None,
+                        kind: IrCallArgKind::Positional,
+                        expr,
+                    });
+                }
+                ast::CallArg::Named(name, e) => {
+                    let expr = self.lower_call_arg_value(e)?;
+                    lowered.push(IrCallArg {
+                        name: Some(name.node.clone()),
+                        kind: IrCallArgKind::Named,
+                        expr,
+                    });
+                }
                 ast::CallArg::PositionalUnpack(e) => {
                     let expr = self.lower_expr_spanned(e)?;
                     if let Some(FixedUnpackPlan::Positional(item_types)) =
@@ -4577,6 +4583,28 @@ impl AstLowering {
             }
         }
         Ok(lowered)
+    }
+
+    /// Lower one positional or named argument's value. A local bound to a capturing callable that the checker passes
+    /// to a closure-holding parameter is borrowed, since the parameter takes any callable by value and the local stays
+    /// usable after the call (#1561).
+    fn lower_call_arg_value(&mut self, value: &ast::Spanned<ast::Expr>) -> Result<TypedExpr, LoweringError> {
+        let lowered = self.lower_expr_spanned(value)?;
+        if !self
+            .type_info
+            .as_ref()
+            .is_some_and(|info| info.is_borrowed_callable_argument(value.span))
+        {
+            return Ok(lowered);
+        }
+        let ty = lowered.ty.clone();
+        Ok(TypedExpr::new(
+            IrExprKind::UnaryOp {
+                op: UnaryOp::Ref,
+                operand: Box::new(lowered),
+            },
+            IrType::Ref(Box::new(ty)),
+        ))
     }
 
     /// Expand a typechecker-proven `*expr` shape into ordinary positional IR arguments.

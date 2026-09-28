@@ -18,8 +18,8 @@ use crate::typechecker::helpers::{
 };
 use crate::typechecker::receiver_change::ReceiverChange;
 use crate::typechecker::type_info::{
-    CBindingEnumAccess, ResolvedMethodCall, RustArgCoercionInfo, RustArgCoercionKind, RustMethodTraitImportUse,
-    RustTraitImportInfo,
+    CBindingEnumAccess, ResolvedMethodCall, ResolvedOperatorKind, RustArgCoercionInfo, RustArgCoercionKind,
+    RustMethodTraitImportUse, RustTraitImportInfo,
 };
 use crate::typechecker::{IdentKind, MemberBindingSurface, canonical_public_library_type_name};
 use incan_lang::interop::{
@@ -29,6 +29,7 @@ use incan_lang::interop::{
 use incan_lang::lang::derives::DeriveId;
 use incan_lang::lang::magic_methods;
 use incan_lang::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_lang::lang::surface::string_methods::{self, SelectedStringMethodArgumentKind, StringMethodId};
 use incan_lang::lang::surface::types as surface_types;
@@ -51,6 +52,9 @@ use syn::{GenericArgument, PathArguments, ReturnType, Type as SynType, TypeParam
 use super::calls::PublicModuleConstructorContext;
 
 use super::{GenericPartialTarget, TypeChecker};
+
+/// The hook `obj[start:end:step]` calls on a user type, which `Sliceable[T]` declares.
+const SLICE_HOOK: &str = "__getslice__";
 
 /// Rust's prelude-provided associated constructor name.
 ///
@@ -3506,7 +3510,11 @@ impl TypeChecker {
     /// For method **bodies**, `TypeChecker::concretize_self_type_in_annotation` in `check_decl.rs` maps `Self` to the
     /// owner's `self_ty` while checking the implementation. At a **call site**, `Self` means the instantiated
     /// receiver (for example `DataFrame[Order]` when calling on `x: DataFrame[Order]`).
-    fn substitute_self_in_resolved_type(&self, ty: ResolvedType, receiver: &ResolvedType) -> ResolvedType {
+    pub(in crate::typechecker::check_expr) fn substitute_self_in_resolved_type(
+        &self,
+        ty: ResolvedType,
+        receiver: &ResolvedType,
+    ) -> ResolvedType {
         match ty {
             ResolvedType::SelfType => self.concrete_type_for_trait_self(receiver),
             ResolvedType::Generic(name, args) => ResolvedType::Generic(
@@ -4611,7 +4619,7 @@ impl TypeChecker {
         &mut self,
         base: &Spanned<Expr>,
         slice: &SliceExpr,
-        _span: Span,
+        span: Span,
     ) -> ResolvedType {
         let base_ty = self.check_expr(base);
 
@@ -4633,6 +4641,20 @@ impl TypeChecker {
         };
 
         match base_ty {
+            ty if self.is_user_operator_receiver(&ty) => {
+                let errors_before = self.errors.len();
+                check_component(start_ty.as_ref(), slice.start.as_deref(), &mut self.errors);
+                check_component(end_ty.as_ref(), slice.end.as_deref(), &mut self.errors);
+                check_component(step_ty.as_ref(), slice.step.as_deref(), &mut self.errors);
+                if self.errors.len() > errors_before {
+                    return ResolvedType::Unknown;
+                }
+                self.resolve_slice_dunder(&ty, slice, span).unwrap_or_else(|| {
+                    self.errors
+                        .push(errors::missing_method(&ty.to_string(), SLICE_HOOK, span));
+                    ResolvedType::Unknown
+                })
+            }
             ResolvedType::Generic(name, args) => match collection_type_id(name.as_str()) {
                 Some(CollectionTypeId::List) => {
                     // Validate slice bounds/step for lists as well (indices must be int-like).
@@ -4663,6 +4685,44 @@ impl TypeChecker {
             }
             _ => ResolvedType::Unknown,
         }
+    }
+
+    /// Resolve `base[start:end:step]` on a user type through its `__getslice__` hook (`Sliceable[T]`), recording the
+    /// operator call for lowering.
+    ///
+    /// The hook takes each part as an `Option[int]`: `Some` of the written part, `None` for an omitted one. The parts
+    /// are checked once as `int` by the caller; the hook is resolved against placeholder `Option[int]` arguments at
+    /// a zero-width span after the slice, so no fact of a written part is checked or recorded twice. Returns `None`
+    /// when the type defines no `__getslice__`.
+    fn resolve_slice_dunder(&mut self, base_ty: &ResolvedType, slice: &SliceExpr, span: Span) -> Option<ResolvedType> {
+        let placeholder_span = Span::new(span.end, span.end);
+        let placeholder = |present: bool| {
+            let value = if present {
+                Expr::Call(
+                    Box::new(Spanned::new(
+                        Expr::Ident(constructors::as_str(ConstructorId::Some).to_string()),
+                        placeholder_span,
+                    )),
+                    Vec::new(),
+                    vec![CallArg::Positional(Spanned::new(
+                        Expr::Literal(Literal::Int(IntLiteral::synthetic(0))),
+                        placeholder_span,
+                    ))],
+                )
+            } else {
+                Expr::Literal(Literal::None)
+            };
+            CallArg::Positional(Spanned::new(value, placeholder_span))
+        };
+        let args = [slice.start.is_some(), slice.end.is_some(), slice.step.is_some()]
+            .into_iter()
+            .map(placeholder)
+            .collect::<Vec<_>>();
+        let arg_types = vec![option_ty(ResolvedType::Int); args.len()];
+        let ret = self.resolve_operator_dunder(base_ty, SLICE_HOOK, &args, &arg_types, span, None)?;
+        self.type_info
+            .record_resolved_operator_call(span, SLICE_HOOK, ResolvedOperatorKind::Slice);
+        Some(ret)
     }
 
     /// Type-check a field access (`base.field`) and return the field type.
@@ -5660,14 +5720,17 @@ impl TypeChecker {
                         // re-deriving a target from the qualifier and member spellings.
                         self.type_info
                             .record_call_site_callable_params_exact(span, &info.params);
-                        self.validate_stdlib_module_function_call(
+                        let result = self.validate_stdlib_module_function_call(
                             callable.as_str(),
                             &info,
                             type_args,
                             args,
                             span,
                             expected_return_ty,
-                        )
+                        );
+                        let identity = self.type_info.resolved_identity(span).cloned();
+                        self.check_capturing_call_arguments(identity.as_ref(), &callable, &info.params, args);
+                        result
                     }
                     (SymbolKind::FunctionOverloads(overloads), _) => {
                         self.record_source_target(span, source_module_path, source_name, "function");
