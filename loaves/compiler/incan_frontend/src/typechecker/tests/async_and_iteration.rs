@@ -587,6 +587,53 @@ def flatten(items: Iterator[int]) -> list[str]:
     assert_check_ok(source);
 }
 
+/// The source-authored `Iterator.flat_map` contract accepts callbacks returning any `Iterable[U]`, matching the
+/// compiler-owned iterator surface for builtin collections and generators.
+#[test]
+fn stdlib_iterator_flat_map_accepts_every_iterable_callback_result() {
+    let source = r#"
+from std.derives.collection import Iterator
+
+
+const FROZEN: FrozenList[int] = [1, 2]
+
+
+model Counter with Iterator[int]:
+  current: int
+
+  def __next__(mut self) -> Option[int]:
+    if self.current == 0:
+      return None
+    self.current -= 1
+    return Some(self.current)
+
+
+def as_set(n: int) -> set[int]:
+  return {n}
+
+
+def as_generator(n: int) -> Generator[int]:
+  yield n
+
+
+def as_frozen(_n: int) -> FrozenList[int]:
+  return FROZEN
+
+
+def flatten_set(items: Counter) -> Iterator[int]:
+  return items.flat_map(as_set)
+
+
+def flatten_generator(items: Counter) -> Iterator[int]:
+  return items.flat_map(as_generator)
+
+
+def flatten_frozen(items: Counter) -> Iterator[int]:
+  return items.flat_map(as_frozen)
+"#;
+    assert_check_ok(source);
+}
+
 #[test]
 fn test_rfc088_iterator_terminal_methods_have_frontend_types() {
     let source = r#"

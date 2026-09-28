@@ -10,6 +10,7 @@ use incan_lang::NumericTy;
 use incan_lang::lang::errors as runtime_errors;
 use incan_lang::lang::keywords;
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
+use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::SurfaceStmtTypeCheck;
 use incan_semantics_core::rust_tuple_arity;
@@ -2024,9 +2025,29 @@ impl TypeChecker {
 
     /// Infer the item type for built-in iterable surfaces.
     ///
-    /// This captures language-level iteration semantics, such as strings yielding one-character `str` values and
-    /// bytes yielding `int` values, before the backend chooses the Rust iterator adapter that implements them.
+    /// This captures language-level iteration semantics, such as strings yielding one-character `str` values, bytes
+    /// yielding `int` values, and a type parameter bounded by `Iterable[T]` yielding `T`, before the backend chooses
+    /// the Rust iterator adapter that implements them.
     pub fn infer_iterator_element_type(&self, iter_ty: &ResolvedType) -> ResolvedType {
+        if let Some(type_param) = self.active_type_param_name(iter_ty) {
+            for frame in self.current_type_param_bound_details.iter().rev() {
+                let Some(bounds) = frame.get(type_param) else {
+                    continue;
+                };
+                if let Some(item) = bounds.iter().find_map(|bound| {
+                    let trait_id = builtin_traits::from_qualified_str(&bound.name)
+                        .or_else(|| builtin_traits::from_str(Self::type_bound_source_name(bound)))?;
+                    if matches!(trait_id, TraitId::Iterable | TraitId::Iterator | TraitId::IntoIterator) {
+                        bound.type_args.first().cloned()
+                    } else {
+                        None
+                    }
+                }) {
+                    return item;
+                }
+                break;
+            }
+        }
         match iter_ty {
             ResolvedType::FrozenList(elem) | ResolvedType::FrozenSet(elem) => elem.as_ref().clone(),
             ResolvedType::FrozenDict(key, _) => key.as_ref().clone(),

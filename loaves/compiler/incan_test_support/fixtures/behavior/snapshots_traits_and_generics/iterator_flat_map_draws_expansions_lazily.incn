@@ -1,0 +1,27 @@
+# behavior: flat_map draws each expansion one item at a time: taking the first item runs only the first step of the first expansion, and taking past an expansion's end opens the next source item's expansion no further than the items taken
+# retires: loaves/compiler/incan_ir/src/lower/tests/collection_sources_and_static_reads.rs::flat_map_callbacks_hand_the_adapter_a_nested_iterator
+# expect-stdout:
+#   10
+#   1
+#   50
+#   5
+
+static produced: list[int] = []
+
+
+def note(value: int) -> int:
+    produced.append(value)
+    return value
+
+
+def tracked(n: int) -> Generator[int]:
+    return (note(n * 10 + step) for step in [0, 1, 2])
+
+
+def main() -> None:
+    first: list[int] = [1, 2, 3].iter().flat_map(tracked).take(1).collect()
+    println(first[0])
+    println(len(produced))
+    crossing: list[int] = [4, 5].iter().flat_map(tracked).take(4).collect()
+    println(crossing[3])
+    println(len(produced))

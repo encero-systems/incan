@@ -2,6 +2,7 @@
 //! `@derive(Validate)`, enums and value enums, enum-variant constructors, newtype trait adoption and associated types,
 //! validated newtypes, and the #1370 type-parameter rule.
 
+use super::helpers::parse_program;
 use super::*;
 
 #[test]
@@ -1039,4 +1040,65 @@ def main() -> None:
             errors.iter().map(|error| &error.message).collect::<Vec<_>>()
         )
     })
+}
+
+/// A type imported from another project module remains that declaration when its name is also used by a stdlib
+/// surface constructor. The stdlib rules apply only to the active stdlib binding, not to the spelling alone.
+#[test]
+fn project_imported_stdlib_named_types_construct_as_declared() -> Result<(), String> {
+    let provider = parse_program(
+        r#"
+pub class ValidationError:
+    pub field: str
+    pub reason: str
+
+
+pub model Json:
+    pub body: str
+
+
+pub model Query:
+    pub text: str
+"#,
+        "domain",
+    );
+    let consumer = parse_program(
+        r#"
+from domain import Json, Query, ValidationError
+
+
+def main() -> None:
+    error = ValidationError(field="age", reason="negative")
+    payload = Json(body="{}")
+    query = Query(text="q")
+    println(error.field + error.reason + payload.body + query.text)
+"#,
+        "main",
+    );
+    let mut checker = TypeChecker::new();
+    checker.register_dependency_module_path_segments("domain", vec!["domain".to_string()]);
+    checker.set_current_module_path(Some(vec!["main".to_string()]));
+    checker
+        .check_with_imports(&consumer, &[("domain", &provider)])
+        .map_err(|errors| {
+            format!(
+                "an imported project type must construct as its declaration: {:?}",
+                errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+            )
+        })?;
+
+    assert_check_ok(
+        r#"
+from std.web import Json, Query
+
+
+def main() -> None:
+    payload = Json(value=1)
+    query = Query(value=1)
+    failure = ValidationError("invalid")
+    println(payload.value + query.value)
+    println(failure)
+"#,
+    );
+    Ok(())
 }

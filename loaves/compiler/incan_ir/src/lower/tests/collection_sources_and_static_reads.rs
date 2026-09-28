@@ -1,9 +1,9 @@
 //! Reads that lowering hands the emitter already typed and shaped: a local bound straight from a module static
 //! (#1777), the reads of a `const` frozen collection (#1757): lookups, indexing, `len()`, membership and iteration
-//! sources, and `set()` over a generator (#1744).
+//! sources, `set()` over a generator (#1744), and the nested iterator a `flat_map` callback hands its adapter.
 
 use super::*;
-use crate::expr::BuiltinFn;
+use crate::expr::{BuiltinFn, IrGeneratorClause, IteratorMethodKind};
 use crate::types::SetConstructorIteration;
 use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
 
@@ -568,4 +568,139 @@ def doubled() -> list[int]:
         return Err(format!("the generator starts with a `for` clause, got {clauses:?}"));
     };
     owned_items(&**iterable, CollectionTypeId::FrozenList, IrType::Int)
+}
+
+/// Return the callback that the `flat_map` call in the named function's returned adapter chain passes its adapter.
+fn returned_flat_map_callback<'a>(ir: &'a IrProgram, name: &str) -> Result<&'a TypedExpr, String> {
+    let returned = returned_value(ir, name)?;
+    let mut call = returned;
+    loop {
+        match &call.kind {
+            IrExprKind::KnownMethodCall {
+                kind: MethodKind::Iterator(IteratorMethodKind::FlatMap),
+                args,
+                ..
+            } => {
+                return args
+                    .first()
+                    .map(|arg| &arg.expr)
+                    .ok_or_else(|| format!("`{name}` must pass `flat_map` its callback"));
+            }
+            IrExprKind::KnownMethodCall { receiver, .. } => call = receiver,
+            _ => return Err(format!("`{name}` must return a `flat_map` chain, got {returned:?}")),
+        }
+    }
+}
+
+/// A `flat_map` callback hands the adapter the nested iterator it polls one item at a time, never a collected list: a
+/// callback returning a generator is passed as written, a list expansion is iterated through `.iter()`, a frozen one
+/// through `.iter()` over its owned items, a set expansion through a generator expression over it, and a closure
+/// literal keeps its own parameters with its body wrapped.
+#[test]
+fn flat_map_callbacks_hand_the_adapter_a_nested_iterator() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+const WORDS: FrozenList[str] = ["a", "b"]
+
+
+def pair_gen(n: int) -> Generator[int]:
+    yield n
+    yield n + 1
+
+
+def pair_set(n: int) -> set[int]:
+    return {n, n + 10}
+
+
+def pair_list(n: int) -> list[int]:
+    return [n, n]
+
+
+def words(_n: int) -> FrozenList[str]:
+    return WORDS
+
+
+def from_generators(items: list[int]) -> Iterator[int]:
+    return items.iter().flat_map(pair_gen)
+
+
+def from_sets(items: list[int]) -> Iterator[int]:
+    return items.iter().flat_map(pair_set)
+
+
+def from_lists(items: list[int]) -> Iterator[int]:
+    return items.iter().flat_map(pair_list)
+
+
+def from_frozen(items: list[int]) -> Iterator[str]:
+    return items.iter().flat_map(words)
+
+
+def from_closure(items: list[int]) -> list[int]:
+    return items.iter().flat_map((n) => [n, n]).collect()
+"#,
+    )?;
+
+    let from_generators = returned_flat_map_callback(&ir, "from_generators")?;
+    assert!(
+        !matches!(from_generators.kind, IrExprKind::Closure { .. }),
+        "a generator expansion is the nested iterator itself, got {from_generators:?}"
+    );
+
+    let from_sets = returned_flat_map_callback(&ir, "from_sets")?;
+    let IrExprKind::Closure { body, .. } = &from_sets.kind else {
+        return Err(format!(
+            "a set expansion must be wrapped in a closure, got {from_sets:?}"
+        ));
+    };
+    let IrExprKind::Generator { clauses, .. } = &body.kind else {
+        return Err(format!(
+            "a set expansion must be drawn through a generator, got {body:?}"
+        ));
+    };
+    assert!(
+        matches!(clauses.as_slice(), [IrGeneratorClause::For { iterable, .. }] if matches!(iterable.ty, IrType::Set(_))),
+        "the generator must iterate the set the callback returns, got {clauses:?}"
+    );
+
+    for (name, item_ty) in [("from_lists", IrType::Int), ("from_frozen", IrType::String)] {
+        let callback = returned_flat_map_callback(&ir, name)?;
+        let IrExprKind::Closure { body, .. } = &callback.kind else {
+            return Err(format!(
+                "`{name}` must wrap its expansion in a closure, got {callback:?}"
+            ));
+        };
+        let IrExprKind::KnownMethodCall {
+            receiver,
+            kind: MethodKind::Iterator(IteratorMethodKind::Iter),
+            ..
+        } = &body.kind
+        else {
+            return Err(format!("`{name}` must iterate its list expansion, got {body:?}"));
+        };
+        assert_eq!(
+            receiver.ty,
+            IrType::List(Box::new(item_ty)),
+            "`{name}` must iterate an owned list of the flattened items"
+        );
+    }
+
+    let from_closure = returned_flat_map_callback(&ir, "from_closure")?;
+    let IrExprKind::Closure { params, body, .. } = &from_closure.kind else {
+        return Err(format!("`from_closure` must stay a closure, got {from_closure:?}"));
+    };
+    assert!(
+        matches!(&body.kind, IrExprKind::KnownMethodCall {
+            receiver,
+            kind: MethodKind::Iterator(IteratorMethodKind::Iter),
+            ..
+        } if matches!(receiver.ty, IrType::List(_))),
+        "a closure literal's list body must be iterated in place, got {body:?}"
+    );
+    assert_eq!(
+        params.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
+        ["n"],
+        "a closure literal keeps its own parameter, so Rust infers its type from the adapter's callback slot"
+    );
+    Ok(())
 }

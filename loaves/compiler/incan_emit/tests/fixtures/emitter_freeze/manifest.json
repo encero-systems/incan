@@ -94,8 +94,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/iterator_methods.rs",
-      "sha256": "960aef9b98c9950601955dcfa9d0eca602698ed9777ed00af4393aca349d598c",
-      "lines": 366
+      "sha256": "509dfe2093a73c49c9039f9ad257641762fa2135e6c1e1bb7196a79b479b48b2",
+      "lines": 377
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/string_methods.rs",
@@ -443,6 +443,21 @@
       "behavior_evidence": "followups_b_serde_derives_are_crate_rooted_when_stdlib_serde_is_imported",
       "semantic_owner": "compiler-owned derive path identity in IR",
       "retirement_condition": "the Rust-source emitter is removed or consumes pre-rendered absolute derive identities"
+    },
+    {
+      "kind": "change",
+      "pr": 1902,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/iterator_methods.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1561",
+      "behavior_evidence": "behavior fixture snapshots_traits_and_generics/iterator_flat_map_draws_expansions_lazily.incn (take(1) over a recording generator expansion draws one item) beside iterator_flat_map_over_iterables.incn; lowering test flat_map_callbacks_hand_the_adapter_a_nested_iterator in incan_ir; rustc-compiling emitter test flat_map_expands_any_iterable_compiles; codegen snapshot std_derives_collection_compiled shows FlatMapIterator holding the nested iterator and its marker",
+      "semantic_owner": "#1561: FlatMapIterator in std.derives.collection owns the adapter state and its fields; lowering (flat_map_iterator_callback) hands it a callback that returns the nested iterator; this literal only spells the fields",
+      "retirement_condition": "#654: the Rust-source backend is deleted; Body IR constructs the adapter from the source model"
     }
   ]
 }

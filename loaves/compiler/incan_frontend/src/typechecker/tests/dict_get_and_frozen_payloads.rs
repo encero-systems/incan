@@ -505,6 +505,64 @@ def pick(streams: dict[str, Generator[int]], key: str) -> Generator[int]:
     );
 }
 
+/// #1830: the `std.web` owners that publish no `Clone` cannot be copied out of a dict by a kept `get`; a lookup whose
+/// result is only inspected in place remains valid.
+#[test]
+fn web_owner_dict_gets_refuse_kept_results_and_allow_read_only_results() {
+    let kept = r#"
+from std.web import App, Request, Response
+
+
+def pick_app(values: dict[str, App], key: str) -> Option[App]:
+    return values.get(key)
+
+
+def pick_response(values: dict[str, Response], key: str) -> Option[Response]:
+    return values.get(key)
+
+
+def pick_request(values: dict[str, Request], key: str) -> Option[Request]:
+    return values.get(key)
+"#;
+    let errors = check_str_err(kept, "kept lookups of non-Clone web owners must not check");
+    assert_eq!(
+        errors.len(),
+        3,
+        "one refusal is reported for each kept lookup: {errors:?}"
+    );
+    for type_name in ["App", "Response", "Request"] {
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.stable_code() == Some("INCAN-T0118") && error.message.contains(type_name)),
+            "the kept lookup of {type_name} is refused with INCAN-T0118: {errors:?}"
+        );
+    }
+
+    let read_only = r#"
+from std.web import App, Request, Response
+
+
+def has_app(values: dict[str, App], key: str) -> bool:
+    match values.get(key):
+        Some(_) => return true
+        None => return false
+
+
+def has_response(values: dict[str, Response], key: str) -> bool:
+    match values.get(key):
+        Some(_) => return true
+        None => return false
+
+
+def has_request(values: dict[str, Request], key: str) -> bool:
+    match values.get(key):
+        Some(_) => return true
+        None => return false
+"#;
+    assert_check_ok(read_only);
+}
+
 /// A lookup whose binding calls a Rust method with a shared receiver stays read-only while the method's result is
 /// discarded, tested, compared, or passed to `len`, `print` or `println`. A result that is kept, here bound to a name
 /// and read after the dict changes, can hold on to the entry, so that lookup keeps its own copy: with a value type

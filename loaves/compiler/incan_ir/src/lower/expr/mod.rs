@@ -2242,14 +2242,15 @@ impl AstLowering {
                         } else {
                             receiver
                         };
-                        // A `flat_map` callback returning an iterable other than a list expands through `list(...)`.
+                        // A `flat_map` callback hands the adapter a nested iterator it polls, whatever iterable
+                        // the callback returns.
                         let args_ir = if kind == MethodKind::Iterator(IteratorMethodKind::FlatMap) {
                             args_ir
                                 .into_iter()
                                 .enumerate()
                                 .map(|(position, mut arg)| {
                                     if position == 0 {
-                                        arg.expr = Self::flat_map_list_callback(arg.expr, &expr_ty);
+                                        arg.expr = self.flat_map_iterator_callback(arg.expr, &expr_ty);
                                     }
                                     arg
                                 })

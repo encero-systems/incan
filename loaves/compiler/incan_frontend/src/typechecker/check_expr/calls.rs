@@ -23,7 +23,7 @@ use incan_lang::lang::c_abi;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::keywords::{self, KeywordId};
 use incan_lang::lang::stdlib;
-use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
+use incan_lang::lang::surface::types::SurfaceTypeId;
 use incan_lang::lang::traits::{self, TraitId};
 use incan_semantics_core::SemanticSourceTargetKind;
 use std::collections::{HashMap, HashSet};
@@ -405,7 +405,9 @@ impl TypeChecker {
                                 return self.check_json_query_constructor_call(tid, args, span);
                             }
                             if matches!(tid, SurfaceTypeId::Html) {
-                                return ResolvedType::Named(surface_types::as_str(tid).to_string());
+                                // The value is typed by the binding the call spells, so `Page(...)` under
+                                // `from std.web import Html as Page` is a `Page`, as its annotations are.
+                                return ResolvedType::Named(name.clone());
                             }
                             if matches!(tid, SurfaceTypeId::ValidationError) {
                                 return self.check_constructor(name, args, span);
@@ -639,7 +641,7 @@ impl TypeChecker {
                     return self.check_json_query_constructor_call(tid, args, span);
                 }
                 if matches!(tid, SurfaceTypeId::Html) {
-                    return ResolvedType::Named(surface_types::as_str(tid).to_string());
+                    return ResolvedType::Named(name.clone());
                 }
             }
 
@@ -677,7 +679,7 @@ impl TypeChecker {
                         return self.check_json_query_constructor_call(tid, args, span);
                     }
                     if matches!(tid, SurfaceTypeId::Html) {
-                        return ResolvedType::Named(surface_types::as_str(tid).to_string());
+                        return ResolvedType::Named(name.clone());
                     }
                 }
                 return constructor_ty;

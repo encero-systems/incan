@@ -14,8 +14,10 @@ use crate::ast_walk::{any_expr_in_body, any_expr_in_expr};
 use crate::diagnostics::errors;
 use crate::symbols::ResolvedType;
 use crate::typechecker::IdentKind;
+use crate::typechecker::derive_requirements::DeriveSupport;
 use crate::typechecker::helpers::collection_type_id;
 use incan_lang::interop::RustItemKind;
+use incan_lang::lang::derives::DeriveId;
 use incan_lang::lang::surface::types as surface_types;
 use incan_lang::lang::traits::{self, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
@@ -318,7 +320,8 @@ impl TypeChecker {
     /// This asks the relation `is_clone_type` answers, looking through containers, with three differences: a type
     /// parameter is given the `Clone` bound where a lookup copies it (see trait bound inference); a Rust type counts
     /// as not copyable only when its inspected metadata proves it implements no `Clone` (`is_clone_type` does not ask
-    /// Rust, so it answers `false` for every Rust type); and a named stdlib surface type is never refused.
+    /// Rust, so it answers `false` for every Rust type); and a named stdlib surface type is refused only when the
+    /// surface registry records that it lacks `Clone`.
     ///
     /// "Looking through" a container answers for its held values, not the container itself, because a builtin
     /// container's own `Clone` derives from theirs. That does not hold for every generic type: a generic stdlib or
@@ -349,9 +352,11 @@ impl TypeChecker {
             ResolvedType::FrozenDict(key, value) => {
                 self.value_type_cannot_be_copied(key) || self.value_type_cannot_be_copied(value)
             }
-            // A named stdlib surface type (`FieldInfo`, `Mutex`, ...) or an unresolved slot has no answer here, since
-            // `is_clone_type` answers `false` for most of them whatever their runtime type provides.
-            ResolvedType::Named(name) if surface_types::from_str(name.as_str()).is_some() => false,
+            // An unrecorded surface capability stays admitted (`FieldInfo`, for example), while a surface owner the
+            // derive registry proves non-Clone (`App`, `Response`, `Request`) cannot be copied by a kept lookup.
+            ResolvedType::Named(name) if surface_types::from_str(name.as_str()).is_some() => {
+                matches!(self.derive_support(ty, DeriveId::Clone), DeriveSupport::Missing(_))
+            }
             ResolvedType::CallSiteInfer => false,
             // Any other generic type, including a generic stdlib or Rust-backed wrapper (`JoinHandle[T]`,
             // `RaceArm[R]`) and a nominal generic model or class, asks `is_clone_type` for the whole type: its

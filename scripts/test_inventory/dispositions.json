@@ -6725,6 +6725,10 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/const_frozen_collection_reads.incn",
           "notes": "Asserts the recorded shape on the legacy IR (a comprehension over a `const` `FrozenList[str]` iterates the source's `list(...)` conversion); retires with `incan_ir`. The behavior, `\" \".join([name for name in NAMES])` printing `alpha beta`, is carried by the named fixture (#1757)."
         },
+        "flat_map_callbacks_hand_the_adapter_a_nested_iterator": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/iterator_flat_map_draws_expansions_lazily.incn",
+          "notes": "Asserts the recorded shape on the legacy IR (a `flat_map` callback hands the adapter a nested iterator: a generator as written, `.iter()` over a list or frozen expansion, a generator expression over a set); retires with `incan_ir`. The behavior, `flat_map(tracked).take(1)` drawing one item from a recording expansion, is carried by the named fixture."
+        },
         "frozen_dict_copy_value_lookup_is_grouped_issue1757": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli/const_frozen_collection_reads.incn",
           "notes": "Asserts the recorded shape on the legacy IR (a `const` `FrozenDict` lookup of a `Copy` value is grouped so a conversion applies to the whole read); retires with `incan_ir`. The behavior, `label: str = LABELS[\"x\"]` printing `ex`, is carried by the named fixture (#1757)."

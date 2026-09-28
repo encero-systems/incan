@@ -140,6 +140,13 @@ impl TypeChecker {
             .iter()
             .map(|arg| substitute_resolved_type(arg, bindings))
             .collect::<Vec<_>>();
+        // RFC 088 gives builtin collections and generators the `Iterable[T]` protocol without a source-level
+        // adoption entry. Reuse the assignment relation that owns those protocol conversions so a generic bound sees
+        // the same iterable set as a parameter or return annotation.
+        if builtin_traits::from_str(&bound.name) == Some(TraitId::Iterable) && expected_args.len() == 1 {
+            let expected = ResolvedType::Generic(builtin_traits::as_str(TraitId::Iterable).to_string(), expected_args);
+            return self.types_compatible(ty, &expected);
+        }
         if builtin_traits::from_str(&bound.name).is_some() {
             return self.type_satisfies_nominal_trait_bound_with_args(ty, &bound.name, &expected_args);
         }

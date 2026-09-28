@@ -3743,37 +3743,63 @@ impl<T: Clone, Source: Iterator<T>> Iterator<T> for FilterIterator<T, Source> {
 }
 /// Lazy state for `Iterator.flat_map()`.
 ///
-/// Maintains the currently active nested iterator so nested values are yielded
-/// before another source item is expanded.
+/// `current` holds the nested iterator of the latest expansion, as its only
+/// item, while that iterator may still yield, and is empty otherwise. Each
+/// request polls the nested iterator for one item, so an expansion is never
+/// collected ahead of the consumer and is advanced no further than the items
+/// requested. The next source item is expanded only once the nested iterator
+/// is exhausted.
+///
+/// The marker field preserves the item type in generated metadata and is
+/// never inspected while polling.
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
-pub struct FlatMapIterator<T, Source: Iterator<T>, U> {
+pub struct FlatMapIterator<T, Source: Iterator<T>, U, Nested: Iterator<U>> {
     pub source: Source,
-    pub f: fn(T) -> Vec<U>,
-    pub current: Vec<U>,
-    pub index: i64,
+    pub f: fn(T) -> Nested,
+    pub current: Vec<Nested>,
+    pub marker: Option<U>,
 }
-impl<T, Source: Iterator<T>, U> incan_std_core::reflection::HasClassName
-for FlatMapIterator<T, Source, U> {
+impl<
+    T,
+    Source: Iterator<T>,
+    U,
+    Nested: Iterator<U>,
+> incan_std_core::reflection::HasClassName for FlatMapIterator<T, Source, U, Nested> {
     fn __class_name__(&self) -> &'static str {
         <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<T, Source: Iterator<T>, U> incan_std_core::reflection::HasTypeClassName
-for FlatMapIterator<T, Source, U> {
+impl<
+    T,
+    Source: Iterator<T>,
+    U,
+    Nested: Iterator<U>,
+> incan_std_core::reflection::HasTypeClassName
+for FlatMapIterator<T, Source, U, Nested> {
     fn __class_name__() -> &'static str {
         "FlatMapIterator"
     }
 }
-impl<T, Source: Iterator<T>, U> incan_std_core::reflection::HasFieldMetadata
-for FlatMapIterator<T, Source, U> {
+impl<
+    T,
+    Source: Iterator<T>,
+    U,
+    Nested: Iterator<U>,
+> incan_std_core::reflection::HasFieldMetadata
+for FlatMapIterator<T, Source, U, Nested> {
     fn __fields__(
         &self,
     ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
         <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<T, Source: Iterator<T>, U> incan_std_core::reflection::HasTypeFieldMetadata
-for FlatMapIterator<T, Source, U> {
+impl<
+    T,
+    Source: Iterator<T>,
+    U,
+    Nested: Iterator<U>,
+> incan_std_core::reflection::HasTypeFieldMetadata
+for FlatMapIterator<T, Source, U, Nested> {
     fn __fields__() -> incan_std_core::frozen::FrozenList<
         incan_std_core::reflection::FieldInfo,
     > {
@@ -3792,7 +3818,7 @@ for FlatMapIterator<T, Source, U> {
                 alias: None,
                 description: None,
                 wire_name: incan_std_core::frozen::FrozenStr::new("f"),
-                type_name: incan_std_core::frozen::FrozenStr::new("(T) -> list[U]"),
+                type_name: incan_std_core::frozen::FrozenStr::new("(T) -> Nested"),
                 has_default: false,
                 extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
@@ -3801,48 +3827,62 @@ for FlatMapIterator<T, Source, U> {
                 alias: None,
                 description: None,
                 wire_name: incan_std_core::frozen::FrozenStr::new("current"),
-                type_name: incan_std_core::frozen::FrozenStr::new("list[U]"),
+                type_name: incan_std_core::frozen::FrozenStr::new("list[Nested]"),
                 has_default: false,
                 extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
             incan_std_core::reflection::FieldInfo {
-                name: incan_std_core::frozen::FrozenStr::new("index"),
+                name: incan_std_core::frozen::FrozenStr::new("marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_std_core::frozen::FrozenStr::new("index"),
-                type_name: incan_std_core::frozen::FrozenStr::new("int"),
-                has_default: false,
+                wire_name: incan_std_core::frozen::FrozenStr::new("marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[U]"),
+                has_default: true,
                 extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone, Source: Iterator<T>, U: Clone> FlatMapIterator<T, Source, U> {
-    /// Return the next item from the current nested list, or open a new one.
+impl<
+    T: Clone,
+    Source: Iterator<T>,
+    U,
+    Nested: Iterator<U>,
+> FlatMapIterator<T, Source, U, Nested> {
+    /// Return the next item of the open nested iterator, expanding source items until one yields.
     pub fn __next__(&mut self) -> Option<U> {
-        let _ = "\n        Return the next item from the current nested list, or open a new one.\n        ";
+        let _ = "\n        Return the next item of the open nested iterator, expanding source items until one yields.\n        ";
         loop {
-            if self.index < ::std::convert::identity(self.current.len() as i64) {
-                let item = incan_std_core::collections::list_get(
-                        &self.current,
-                        (self.index) as i64,
-                    )
-                    .clone();
-                self.index = self.index + 1;
-                return Some(item);
+            if ::std::convert::identity(self.current.len() as i64) > 0 {
+                let mut nested = incan_std_core::collections::__private::list_pop(
+                    &mut self.current,
+                );
+                let _ = match nested.__next__() {
+                    Some(item) => {
+                        return self._keep_open(nested, item);
+                    }
+                    None => {
+                        let _ = ();
+                    }
+                };
             }
             let _ = match self.source.__next__() {
                 Some(item) => {
                     let f = self.f.clone();
-                    self.current = f(item.clone());
-                    self.index = 0;
+                    let _ = self.current.push(f(item.clone()));
                 }
                 None => {
                     return None::<_>;
                 }
             };
         }
+    }
+    /// Keep `iterator` as the open nested iterator and return `item`, the item it just yielded.
+    pub fn _keep_open(&mut self, iterator: Nested, item: U) -> Option<U> {
+        let _ = "\n        Keep `iterator` as the open nested iterator and return `item`, the item it just yielded.\n        ";
+        self.current = vec![iterator];
+        return Some(item);
     }
     /// Returns field metadata for this type.
     pub fn __fields__(
@@ -3863,7 +3903,7 @@ impl<T: Clone, Source: Iterator<T>, U: Clone> FlatMapIterator<T, Source, U> {
                 alias: None,
                 description: None,
                 wire_name: incan_std_core::frozen::FrozenStr::new("f"),
-                type_name: incan_std_core::frozen::FrozenStr::new("(T) -> list[U]"),
+                type_name: incan_std_core::frozen::FrozenStr::new("(T) -> Nested"),
                 has_default: false,
                 extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
@@ -3872,48 +3912,56 @@ impl<T: Clone, Source: Iterator<T>, U: Clone> FlatMapIterator<T, Source, U> {
                 alias: None,
                 description: None,
                 wire_name: incan_std_core::frozen::FrozenStr::new("current"),
-                type_name: incan_std_core::frozen::FrozenStr::new("list[U]"),
+                type_name: incan_std_core::frozen::FrozenStr::new("list[Nested]"),
                 has_default: false,
                 extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
             incan_std_core::reflection::FieldInfo {
-                name: incan_std_core::frozen::FrozenStr::new("index"),
+                name: incan_std_core::frozen::FrozenStr::new("marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_std_core::frozen::FrozenStr::new("index"),
-                type_name: incan_std_core::frozen::FrozenStr::new("int"),
-                has_default: false,
+                wire_name: incan_std_core::frozen::FrozenStr::new("marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[U]"),
+                has_default: true,
                 extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone, Source: Iterator<T>, U: Clone> FlatMapIterator<T, Source, U> {
+impl<
+    T: Clone,
+    Source: Iterator<T>,
+    U,
+    Nested: Iterator<U>,
+> FlatMapIterator<T, Source, U, Nested> {
     #[inline(never)]
     pub fn __next__(&mut self) -> Option<U> {
         self.__next__()
     }
 }
-impl<T: Clone, Source: Iterator<T>, U: Clone> Iterator<U>
-for FlatMapIterator<T, Source, U> {
+impl<T: Clone, Source: Iterator<T>, U, Nested: Iterator<U>> Iterator<U>
+for FlatMapIterator<T, Source, U, Nested> {
     fn __next__(&mut self) -> Option<U> {
-        let _ = "\n        Return the next item from the current nested list, or open a new one.\n        ";
+        let _ = "\n        Return the next item of the open nested iterator, expanding source items until one yields.\n        ";
         loop {
-            if self.index < ::std::convert::identity(self.current.len() as i64) {
-                let item = incan_std_core::collections::list_get(
-                        &self.current,
-                        (self.index) as i64,
-                    )
-                    .clone();
-                self.index = self.index + 1;
-                return Some(item);
+            if ::std::convert::identity(self.current.len() as i64) > 0 {
+                let mut nested = incan_std_core::collections::__private::list_pop(
+                    &mut self.current,
+                );
+                let _ = match nested.__next__() {
+                    Some(item) => {
+                        return self._keep_open(nested, item);
+                    }
+                    None => {
+                        let _ = ();
+                    }
+                };
             }
             let _ = match self.source.__next__() {
                 Some(item) => {
                     let f = self.f.clone();
-                    self.current = f(item.clone());
-                    self.index = 0;
+                    let _ = self.current.push(f(item.clone()));
                 }
                 None => {
                     return None::<_>;

@@ -56,6 +56,25 @@ fn a_union_over_another_modules_same_named_type_is_refused_issue1796() -> Result
     Ok(())
 }
 
+/// A plain value enters an imported union only when it is the declaration that the union's source module selected.
+/// A same-named declaration imported into the consumer is not that member.
+#[test]
+fn a_plain_same_named_value_from_another_module_is_refused_for_an_imported_union() -> Result<(), String> {
+    let source = "import first\nfrom second import Product\n\n\ndef main() -> None:\n    answer: first.Answer = Product(value=\"wrong module\")\n";
+    let errors = match check_consumer(source) {
+        Ok(()) => return Err("second.Product must not enter first.Answer".to_string()),
+        Err(errors) => errors,
+    };
+    if !errors.iter().any(|error| {
+        crate::diagnostics::code_for_error(error, crate::diagnostics::DiagnosticPhase::Typecheck) == "INCAN-T0001"
+    }) {
+        return Err(format!(
+            "the incompatible union member must use INCAN-T0001: {errors:?}"
+        ));
+    }
+    Ok(())
+}
+
 /// #1796: the same declaration reached through any spelling is one union member, so a module's own union still
 /// accepts its values, a union written with an imported or aliased `Product` is that module's union, and narrowing
 /// and type patterns select the member by the declaration the written name resolves to.

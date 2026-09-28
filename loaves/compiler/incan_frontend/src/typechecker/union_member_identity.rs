@@ -380,10 +380,10 @@ impl TypeChecker {
 
     /// Return whether a bare nominal spelling names the declaration `declaration_name` of `module_path`.
     fn bare_name_names_declaration(&self, bare: &str, module_path: &[String], declaration_name: &str) -> bool {
-        bare == declaration_name
-            || self
-                .nominal_declaration_in_scope(bare)
-                .is_some_and(|(module, declaration)| module == module_path && declaration == declaration_name)
+        match self.nominal_declaration_in_scope(bare) {
+            Some((module, declaration)) => module == module_path && declaration == declaration_name,
+            None => bare == declaration_name,
+        }
     }
 
     /// Return the metadata of the declaration a module-qualified union member names.
