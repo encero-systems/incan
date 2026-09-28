@@ -1,0 +1,14 @@
+# behavior: a @staticmethod that declares a self receiver is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+
+class Counter:
+    count: int
+
+    @staticmethod
+    def make(self) -> int:
+        return 1
+
+
+def main() -> None:
+    println(Counter.make())

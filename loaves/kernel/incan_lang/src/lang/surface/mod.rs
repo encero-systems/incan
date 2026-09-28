@@ -12,6 +12,7 @@
 pub mod collection_helpers;
 pub mod constructors;
 pub mod functions;
+pub mod method_arity;
 pub mod methods;
 pub mod types;
 

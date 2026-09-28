@@ -1,0 +1,17 @@
+# behavior: a model that adopts the Hash trait and defines __hash__ without @derive(Hash) is refused as a set element, since a set hashes a type only through the derive
+# expect-diagnostic: INCAN-T0114
+
+from std.derives.comparison import Hash
+
+
+@derive(Eq)
+model Key with Hash:
+    id: int
+
+    def __hash__(self) -> int:
+        return self.id
+
+
+def main() -> None:
+    seen: set[Key] = {Key(id=1), Key(id=1)}
+    println(len(seen))

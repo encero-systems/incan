@@ -1,0 +1,12 @@
+# behavior: match arms in a nested module over a local `int | str` union, a local enum and an Option each select the right arm
+# retires: loaves/compiler/incan_emit/src/emit/types.rs::relative_enum_patterns_keep_local_union_qualification
+# expect-stdout:
+#   int 1 circle some 3
+#   str two square none
+
+from api.shapes import Shape, describe
+
+
+def main() -> None:
+    println(describe(1, Shape.Circle, Some(3)))
+    println(describe("two", Shape.Square, None))

@@ -1,19 +1,23 @@
-# behavior: exact f32 and f64 values are observed through println, str() and f-strings (an integral f32 prints as 4 where the ordinary float path prints nan), an extern finite check passes a finite value through, scalars extracted from a model field, an Option field and a list are finite, and a NaN parsed into an exact f64 return aborts the run at that conversion before the callee is entered
+# behavior: exact f32 values and f64 values are observed through println, str() and f-strings (an integral f32 prints as 4 where an f64, which is a float, prints as 1.0), an extern finite check passes a finite f32 through, scalars extracted from a model field, an Option field and a list are finite, and a NaN parsed into an f64 return flows on as the float it is
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::exact_float_public_and_rust_ingress_is_guarded_before_observation
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::exact_float_scalars_extracted_from_aggregates_are_guarded_before_use
 # expect-stdout:
 #   2.5
-#   3
+#   3.0
 #   2.5
 #   true
 #   nan
 #   false
 #   4
-#   1
+#   1.0
 #   4
 #   false
 #   true
-# expect-exit: 101
+#   2.5
+#   nan
+#   2.5
+#   false
+#   finished
 
 rust.module("incan_std_core::num")
 
@@ -64,4 +68,4 @@ def main() -> None:
     samples = ExactSamples(narrow=narrow, wide=1.5, maybe=Some(narrow))
     println(observe_aggregate(samples, [0.5]))
     println(observe_exact(narrow, parsed_exact("nan")))
-    println("unreachable")
+    println("finished")

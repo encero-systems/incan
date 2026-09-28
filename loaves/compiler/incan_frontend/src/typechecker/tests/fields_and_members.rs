@@ -1123,7 +1123,7 @@ class Grid:
         self.cells[0] = 0
 
     def swap_dimensions(self) -> None:
-        self.width, self.height = (self.height, self.width)
+        self.width, self.height = self.height, self.width
 "#;
     let messages = self_mutation_messages(
         source,

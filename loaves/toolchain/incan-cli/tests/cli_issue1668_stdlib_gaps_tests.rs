@@ -33,7 +33,7 @@ def lookup(mut files: Dict[str, str], key: str) -> str:
     return "missing"
 
 def count(mut hits: Dict[str, int], key: str) -> int:
-    return hits.get(key).copied().unwrap_or(0)
+    return hits.get(key).unwrap_or(0)
 
 def describe(verdict: Verdict) -> str:
     mut label = "pending"

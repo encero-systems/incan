@@ -821,13 +821,16 @@ impl TypeChecker {
     /// This intentionally recognizes both explicit trait-typed values (`Iterator[T]` / `Iterable[T]`) and builtin
     /// collection values that have an obvious frontend iterator element type. It is a typechecker-only surface helper;
     /// lowering and emission use the same protocol shape to route known iterator methods through dedicated backend
-    /// handling.
+    /// handling. A `Generator[T]` satisfies `Iterator[T]` (RFC 006, RFC 088), so it is an iterator value here.
     fn iterable_protocol_element_type(&self, ty: &ResolvedType) -> Option<ResolvedType> {
         match ty {
             ResolvedType::Generic(name, args)
                 if (Self::is_iterator_protocol_name(name) || Self::is_iterable_protocol_name(name))
                     && args.len() == 1 =>
             {
+                args.first().cloned()
+            }
+            ResolvedType::Generic(name, args) if Self::is_generator_name(name) && args.len() == 1 => {
                 args.first().cloned()
             }
             ResolvedType::Generic(name, args)
@@ -848,14 +851,21 @@ impl TypeChecker {
         }
     }
 
-    /// Return the element type for values that are already typed as `Iterator[T]`.
+    /// Return the element type for values that are already typed as `Iterator[T]`, a `Generator[T]` included.
     fn iterator_protocol_element_type(&self, ty: &ResolvedType) -> Option<ResolvedType> {
         match ty {
-            ResolvedType::Generic(name, args) if Self::is_iterator_protocol_name(name) && args.len() == 1 => {
+            ResolvedType::Generic(name, args)
+                if (Self::is_iterator_protocol_name(name) || Self::is_generator_name(name)) && args.len() == 1 =>
+            {
                 args.first().cloned()
             }
             _ => None,
         }
+    }
+
+    /// Return whether `name` is the RFC 006 `Generator` type.
+    fn is_generator_name(name: &str) -> bool {
+        collection_type_id(name) == Some(CollectionTypeId::Generator)
     }
 
     /// Validate fixed-arity RFC 088 method calls and report the same arity diagnostic style as other builtin calls.
@@ -946,51 +956,90 @@ impl TypeChecker {
         valid
     }
 
-    /// Validate `dict.contains_key(key)` (#1668) and `frozen_dict.contains_key(key)` (#1757): exactly one positional
-    /// probe whose type is compatible with the key type, so a mistyped probe fails here instead of as a rustc `Borrow`
-    /// error in the generated `contains_key`. The probe has no parameter name, so a named or unpacked argument is
-    /// refused with the ordinary call diagnostics. `callee` names the receiver family in those diagnostics.
-    fn validate_dict_contains_key_call(
+    /// Validate a membership probe call: `dict.contains_key(key)` (#1668), `frozen_dict.contains_key(key)` (#1757) and
+    /// `frozen_set.contains(item)`.
+    ///
+    /// The probe's type must be compatible with `member_ty`, the key or element type, so a mistyped probe fails here
+    /// instead of as a rustc `Borrow` error in the generated lookup. The argument count and kinds are checked against
+    /// the registry arity with every builtin collection method's ([`Self::check_builtin_collection_method_args`]), so a
+    /// wrong count or a named or unpacked argument is already refused by the time this runs; `callee` names the
+    /// receiver family in the type-mismatch diagnostic. When `text_probes` is set, a text member (`str` or
+    /// `FrozenStr`) takes any text probe, the rule a frozen collection's `'static` text follows.
+    fn validate_membership_probe_call(
         &mut self,
         callee: &str,
-        key_ty: &ResolvedType,
+        member_ty: &ResolvedType,
+        text_probes: bool,
         args: &[CallArg],
         arg_types: &[ResolvedType],
-        span: Span,
     ) {
-        let [arg] = args else {
-            self.errors.push(errors::builtin_arity(callee, 1, args.len(), span));
+        let [CallArg::Positional(expr)] = args else {
             return;
         };
-        let expr = match arg {
-            CallArg::Positional(expr) => expr,
-            CallArg::Named(name, _) => {
-                self.errors
-                    .push(errors::unknown_keyword_argument(callee, &name.node, name.span));
-                return;
-            }
-            CallArg::PositionalUnpack(expr) => {
-                self.errors
-                    .push(errors::call_unpack_without_rest(callee, "*", expr.span));
-                return;
-            }
-            CallArg::KeywordUnpack(expr) => {
-                self.errors
-                    .push(errors::call_unpack_without_rest(callee, "**", expr.span));
-                return;
-            }
+        let Some(actual) = arg_types.first() else {
+            return;
         };
-        if let Some(actual) = arg_types.first()
-            && !matches!(key_ty, ResolvedType::Unknown)
-            && !self.types_compatible(actual, key_ty)
+        if matches!(member_ty, ResolvedType::Unknown) || (text_probes && is_str_like(actual) && is_str_like(member_ty))
         {
+            return;
+        }
+        if self.types_compatible(actual, member_ty) {
+            // A numeric probe of a narrower type is widened to the member type where it is lowered (RFC 009).
+            self.record_value_destination_if_compatible(expr.span, actual, member_ty);
+        } else {
             self.errors.push(errors::call_argument_type_mismatch(
                 callee,
                 None,
-                &key_ty.to_string(),
+                &member_ty.to_string(),
                 &actual.to_string(),
                 expr.span,
             ));
+        }
+    }
+
+    /// Validate `dict.get(key, default)`: two positional arguments, a key of the key type and a default of the value
+    /// type, since the call is the value itself (the entry's, or `default` when no entry holds `key`).
+    fn validate_dict_get_with_default(
+        &mut self,
+        key_ty: &ResolvedType,
+        value_ty: &ResolvedType,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+    ) {
+        const CALLEE: &str = "Dict.get";
+        for ((arg, actual), expected) in args.iter().zip(arg_types).zip([key_ty, value_ty]) {
+            let expr = match arg {
+                CallArg::Positional(expr) => expr,
+                CallArg::Named(name, _) => {
+                    self.errors
+                        .push(errors::unknown_keyword_argument(CALLEE, &name.node, name.span));
+                    continue;
+                }
+                CallArg::PositionalUnpack(expr) => {
+                    self.errors
+                        .push(errors::call_unpack_without_rest(CALLEE, "*", expr.span));
+                    continue;
+                }
+                CallArg::KeywordUnpack(expr) => {
+                    self.errors
+                        .push(errors::call_unpack_without_rest(CALLEE, "**", expr.span));
+                    continue;
+                }
+            };
+            if matches!(expected, ResolvedType::Unknown) {
+                continue;
+            }
+            if self.types_compatible(actual, expected) {
+                self.record_value_destination_if_compatible(expr.span, actual, expected);
+            } else {
+                self.errors.push(errors::call_argument_type_mismatch(
+                    CALLEE,
+                    None,
+                    &expected.to_string(),
+                    &actual.to_string(),
+                    expr.span,
+                ));
+            }
         }
     }
 
@@ -1210,6 +1259,13 @@ impl TypeChecker {
             .unwrap_or_else(|| elem.clone());
         let method_id = iterator_methods::from_str(method)?;
         use iterator_methods::IteratorMethodId as M;
+        // A generator's own RFC 006 methods (`map`, `filter`, `take`, `collect`) keep their generator-typed results;
+        // the rest of the RFC 088 surface reaches it as an `Iterator[T]`.
+        if matches!(base_ty, ResolvedType::Generic(name, _) if Self::is_generator_name(name))
+            && matches!(method_id, M::Map | M::Filter | M::Take | M::Collect)
+        {
+            return None;
+        }
 
         match method_id {
             M::Iter => {
@@ -3256,6 +3312,8 @@ impl TypeChecker {
                         let err_ok = args.get(1).is_none_or(|t| self.is_clone_type(t));
                         ok_ok && err_ok
                     }
+                    // A generator is a one-shot runtime iterator; it has no copy.
+                    Some(CollectionTypeId::Generator) => false,
                     _ => args.iter().all(|t| self.is_clone_type(t)),
                 }
             }
@@ -3773,10 +3831,11 @@ impl TypeChecker {
                     receiver_ty: call.receiver_ty,
                     expected_return_ty: call.expected_return_ty,
                 };
+                let trait_adoptions = self.newtype_trait_adoptions_for_type_methods(type_name, &nt);
                 let ret = self.resolve_source_owner_method_without_arg_prepass(
                     &nt.methods,
                     &nt.method_overloads,
-                    &nt.trait_adoptions,
+                    &trait_adoptions,
                     &resolved_call,
                 )?;
                 if nt.is_rusttype {
@@ -4360,7 +4419,10 @@ impl TypeChecker {
                 }
                 Some(CollectionTypeId::Dict) if args.len() >= 2 => {
                     let key_ty = &args[0];
-                    if !self.types_compatible(&index_ty, key_ty) {
+                    if self.types_compatible(&index_ty, key_ty) {
+                        // A numeric key of a narrower type is widened to the key type where it is lowered (RFC 009).
+                        self.record_value_destination_if_compatible(index.span, &index_ty, key_ty);
+                    } else {
                         self.errors.push(errors::index_type_mismatch(
                             &key_ty.to_string(),
                             &index_ty.to_string(),
@@ -4399,12 +4461,22 @@ impl TypeChecker {
                 }
                 ResolvedType::Str
             }
+            // A `const` `FrozenList[T]` is read like a list: `items[i]` is the element at an `int` index, counted from
+            // the end when negative, or an `IndexError` at run time (#1757).
+            ResolvedType::FrozenList(elem_ty) => {
+                if !is_intlike_for_index(&index_ty) {
+                    self.errors
+                        .push(errors::index_type_mismatch("int", &index_ty.to_string(), index.span));
+                }
+                *elem_ty
+            }
             // A `const` `FrozenDict[K, V]` is read like a dict: `table[key]` is the value, or a `KeyError` at run
             // time. A text key (`str` or `FrozenStr`) accepts any text probe (#1757).
             ResolvedType::FrozenDict(key_ty, value_ty) => {
-                let is_text = |ty: &ResolvedType| matches!(ty, ResolvedType::Str) || is_frozen_str(ty);
-                let text_probe_for_text_key = is_text(&index_ty) && is_text(&key_ty);
-                if !text_probe_for_text_key && !self.types_compatible(&index_ty, &key_ty) {
+                let text_probe_for_text_key = is_str_like(&index_ty) && is_str_like(&key_ty);
+                if !text_probe_for_text_key && self.types_compatible(&index_ty, &key_ty) {
+                    self.record_value_destination_if_compatible(index.span, &index_ty, &key_ty);
+                } else if !text_probe_for_text_key {
                     self.errors.push(errors::index_type_mismatch(
                         &key_ty.to_string(),
                         &index_ty.to_string(),
@@ -5228,6 +5300,69 @@ impl TypeChecker {
         })
     }
 
+    /// Return the type a builtin receiver's method takes its argument at `index` as, where the method stores the
+    /// argument in the receiver, looks it up among the receiver's elements or keys, or returns it as the receiver's
+    /// payload (#1859).
+    ///
+    /// `list[T].append(x)` stores `x` as a `T` and `extend` takes a `list[T]`, `dict[K, V].insert(k, v)` and
+    /// `set[T].add(x)` store their arguments as the key, value and element types, `list[T].contains(x)`, `count(x)`
+    /// and `index(x)`, `set[T].contains(x)`, and `dict[K, V].get(k)` and `contains_key(k)` look `x` or `k` up as an
+    /// element or a key (`get`'s default is a `V`), `Option[T].unwrap_or(x)` and `Result[T, E].unwrap_or(x)` return
+    /// `x` as the `T`, and `powf` on a `float` or `f32` takes an exponent of the receiver's own type. The argument is
+    /// checked against that type, so an integer literal there takes the float type a float slot expects, as it does in
+    /// a declaration, and a numeric argument of a narrower type is widened to it (RFC 009). An `Option` of a reference
+    /// (the `Option[&V]` of `dict.get`) and every other method give no expectation.
+    fn builtin_method_argument_expectation(base_ty: &ResolvedType, method: &str, index: usize) -> Option<ResolvedType> {
+        use incan_lang::lang::types::numerics::NumericTypeId;
+        let base_ty = match base_ty {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
+            other => other,
+        };
+        match base_ty {
+            ResolvedType::Float | ResolvedType::Numeric(NumericTypeId::F32) => (index == 0
+                && float_methods::from_str(method) == Some(float_methods::FloatMethodId::Powf))
+            .then(|| base_ty.clone()),
+            ResolvedType::Generic(name, args) => match (collection_type_id(name.as_str()), args.as_slice()) {
+                (Some(CollectionTypeId::List), [element]) => match (list_methods::from_str(method)?, index) {
+                    (list_methods::ListMethodId::Append, 0) => Some(element.clone()),
+                    (list_methods::ListMethodId::Extend, 0) => Some(list_ty(element.clone())),
+                    (
+                        list_methods::ListMethodId::Contains
+                        | list_methods::ListMethodId::Count
+                        | list_methods::ListMethodId::Index,
+                        0,
+                    ) => Some(element.clone()),
+                    _ => None,
+                },
+                (Some(CollectionTypeId::Dict), [key, value]) => match (dict_methods::from_str(method)?, index) {
+                    (
+                        dict_methods::DictMethodId::Insert
+                        | dict_methods::DictMethodId::Get
+                        | dict_methods::DictMethodId::ContainsKey,
+                        0,
+                    ) => Some(key.clone()),
+                    (dict_methods::DictMethodId::Insert | dict_methods::DictMethodId::Get, 1) => Some(value.clone()),
+                    _ => None,
+                },
+                (Some(CollectionTypeId::Set), [element]) => (index == 0
+                    && matches!(
+                        set_methods::from_str(method),
+                        Some(set_methods::SetMethodId::Add | set_methods::SetMethodId::Contains)
+                    ))
+                .then(|| element.clone()),
+                (Some(CollectionTypeId::Option), [payload]) => (index == 0
+                    && option_methods::from_str(method) == Some(option_methods::OptionMethodId::UnwrapOr)
+                    && !matches!(payload, ResolvedType::Ref(_) | ResolvedType::RefMut(_)))
+                .then(|| payload.clone()),
+                (Some(CollectionTypeId::Result), [ok, _]) => (index == 0
+                    && result_methods::from_str(method) == Some(ResultMethodId::UnwrapOr))
+                .then(|| ok.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Type-check `receiver.method(...)` once the receiver, method name, explicit type arguments, and value arguments
     /// have been identified, against an optional type for the destination the result is being produced for.
     ///
@@ -5621,6 +5756,14 @@ impl TypeChecker {
                     self.check_expr_with_expected(arg_expr, Some(&expected))
                 } else if let Some(payload_ty) = variant_payload_ty {
                     self.check_expr_with_expected(arg_expr, Some(payload_ty))
+                } else if matches!(arg, CallArg::Positional(_))
+                    && !is_closure
+                    && let Some(expected) = Self::builtin_method_argument_expectation(&base_ty, method, index)
+                {
+                    let arg_ty = self.check_expr_with_expected(arg_expr, Some(&expected));
+                    // A numeric argument of a narrower type is widened to the slot's type where it is lowered.
+                    self.record_value_destination_if_compatible(arg_expr.span, &arg_ty, &expected);
+                    arg_ty
                 } else {
                     self.check_method_arg_with_rust_callable_alias(arg, contextual_rust_callable.as_ref())
                 }
@@ -5798,15 +5941,10 @@ impl TypeChecker {
         }
 
         // Builtin methods for builtin types (so we don't report missing methods).
-        if (matches!(base_ty, ResolvedType::Float)
-            || matches!(
-                base_ty,
-                ResolvedType::Numeric(
-                    incan_lang::lang::types::numerics::NumericTypeId::F32
-                        | incan_lang::lang::types::numerics::NumericTypeId::F64
-                )
-            ))
-            && let Some(id) = float_methods::from_str(method)
+        if matches!(
+            base_ty,
+            ResolvedType::Float | ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F32)
+        ) && let Some(id) = float_methods::from_str(method)
         {
             use float_methods::FloatMethodId as M;
             match id {
@@ -5865,6 +6003,7 @@ impl TypeChecker {
             }
         }
 
+        self.check_builtin_collection_method_args(&base_ty, method, args, span);
         match &base_ty {
             ResolvedType::FrozenList(_) => {
                 if let Some(id) = frozen_list_methods::from_str(method) {
@@ -5875,12 +6014,18 @@ impl TypeChecker {
                     }
                 }
             }
-            ResolvedType::FrozenSet(_) => {
+            ResolvedType::FrozenSet(elem_ty) => {
                 if let Some(id) = frozen_set_methods::from_str(method) {
                     use frozen_set_methods::FrozenSetMethodId as M;
                     match id {
                         M::Len => return ResolvedType::Int,
-                        M::IsEmpty | M::Contains => return ResolvedType::Bool,
+                        M::IsEmpty => return ResolvedType::Bool,
+                        M::Contains => {
+                            // The probe follows the membership rule of `item in frozen_set`: an element, or any text
+                            // for a text element.
+                            self.validate_membership_probe_call("FrozenSet.contains", elem_ty, true, args, &arg_types);
+                            return ResolvedType::Bool;
+                        }
                     }
                 }
             }
@@ -5893,17 +6038,12 @@ impl TypeChecker {
                         M::ContainsKey => {
                             // The probe follows the key rule of `table[key]`: a text key (`str` or `FrozenStr`)
                             // takes any text probe (#1757).
-                            let is_text = |ty: &ResolvedType| matches!(ty, ResolvedType::Str) || is_frozen_str(ty);
-                            let probe_key_ty = match arg_types.first() {
-                                Some(probe_ty) if is_text(probe_ty) && is_text(key_ty) => probe_ty.clone(),
-                                _ => (**key_ty).clone(),
-                            };
-                            self.validate_dict_contains_key_call(
+                            self.validate_membership_probe_call(
                                 "FrozenDict.contains_key",
-                                &probe_key_ty,
+                                key_ty,
+                                true,
                                 args,
                                 &arg_types,
-                                span,
                             );
                             return ResolvedType::Bool;
                         }
@@ -5913,13 +6053,21 @@ impl TypeChecker {
             _ => {}
         }
 
-        // Option[T] helpers.
-        //
-        // NOTE: `Dict.get(k)` is backed by Rust `HashMap::get`, which returns `Option<&V>`.
-        // We model that as `Option[&V]` internally, so helpers like `.copied()` can typecheck in the same way they do
-        // in Rust.
+        // Option[T] helpers. `copied` applies to an `Option` of a Rust reference (a Rust API's result); `dict.get`
+        // answers with the value itself, so it has nothing to copy.
         if base_ty.is_option() {
             let inner = base_ty.option_inner_type().cloned().unwrap_or(ResolvedType::Unknown);
+            if matches!(method, "copied" | "cloned")
+                && !matches!(inner, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
+                && matches!(&base.node, Expr::MethodCall(_, name, _, _) if name == "get")
+            {
+                self.errors.push(
+                    errors::missing_method(&base_ty.to_string(), method, span).with_hint(format!(
+                        "`get` returns the stored value itself, so `.{method}()` has nothing to do; remove it"
+                    )),
+                );
+                return ResolvedType::Unknown;
+            }
             match option_methods::from_str(method) {
                 Some(option_methods::OptionMethodId::Copied) => {
                     // Rust: `Option<&T>::copied() -> Option<T>` (for `T: Copy`).
@@ -6076,13 +6224,6 @@ impl TypeChecker {
                             return ResolvedType::Unit;
                         }
                         M::Clone => {
-                            if !args.is_empty() {
-                                self.errors.push(errors::type_mismatch(
-                                    "no arguments",
-                                    &format!("{} argument(s)", args.len()),
-                                    span,
-                                ));
-                            }
                             if !self.is_copy_type(&elem) && !self.is_clone_type(&elem) {
                                 self.errors
                                     .push(errors::list_clone_requires_clone(&elem.to_string(), span));
@@ -6104,13 +6245,30 @@ impl TypeChecker {
                     match id {
                         M::Keys => return list_ty(key),
                         M::Values => return list_ty(val),
-                        // `Dict.get(k)` is backed by Rust `HashMap::get`, which returns `Option<&V>`.
-                        // Model this as an internal reference so chained Rust-idiom helpers (like `.copied()`)
-                        // typecheck consistently with codegen.
-                        M::Get => return option_ty(ResolvedType::Ref(Box::new(val.clone()))),
+                        // `Dict.get(k, default)` is the value, or `default` when no entry holds `k`. The entry is
+                        // always copied out, so a value type that cannot be copied is refused
+                        // as a kept lookup is.
+                        M::Get if args.len() == 2 => {
+                            self.validate_dict_get_with_default(&key, &val, args, &arg_types);
+                            self.note_dict_lookup_value(span, &val);
+                            return val;
+                        }
+                        // `dict.get(k)` answers with the stored value, static or not. Lowering reads the entry in
+                        // place when the result is only read and copies it otherwise (`check_expr/dict_lookups.rs`).
+                        M::Get => {
+                            self.refuse_non_positional_builtin_args("Dict.get", args);
+                            if args.is_empty() {
+                                self.errors.push(errors::builtin_arity("Dict.get", 1, 0, span));
+                            } else if args.len() > 2 {
+                                self.errors
+                                    .push(errors::builtin_max_arity("Dict.get", 2, args.len(), span));
+                            }
+                            self.note_dict_lookup_value(span, &val);
+                            return option_ty(val.clone());
+                        }
                         M::Insert => return ResolvedType::Unit,
                         M::ContainsKey => {
-                            self.validate_dict_contains_key_call("Dict.contains_key", &key, args, &arg_types, span);
+                            self.validate_membership_probe_call("Dict.contains_key", &key, false, args, &arg_types);
                             return ResolvedType::Bool;
                         }
                     }
@@ -6247,10 +6405,11 @@ impl TypeChecker {
                 }
                 TypeInfo::Newtype(newtype) => {
                     let resolved_method = self.resolve_newtype_method_name(&newtype, method);
+                    let trait_adoptions = self.newtype_trait_adoptions_for_type_methods(type_name, &newtype);
                     if let Some(ret) = self.resolve_named_method(
                         &newtype.methods,
                         Some(&newtype.method_overloads),
-                        Some(&newtype.trait_adoptions),
+                        Some(&trait_adoptions),
                         resolved_method,
                         receiver_surface,
                         type_args,
@@ -6359,10 +6518,11 @@ impl TypeChecker {
                     }
                     TypeInfo::Newtype(nt) => {
                         let resolved_method = self.resolve_newtype_method_name(&nt, method);
+                        let trait_adoptions = self.newtype_trait_adoptions_for_type_methods(type_name, &nt);
                         if let Some(ret) = self.resolve_named_method(
                             &nt.methods,
                             Some(&nt.method_overloads),
-                            Some(&nt.trait_adoptions),
+                            Some(&trait_adoptions),
                             resolved_method,
                             receiver_surface,
                             type_args,
@@ -6402,6 +6562,25 @@ impl TypeChecker {
             }
         }
 
+        // A method a generic placeholder's bound declares is typed by that bound, a protocol hook such as `__next__`
+        // included: `source.__next__()` on `Source with Iterator[T]` is an `Option[T]`, not the permissive `Unknown`
+        // below, so a value it yields keeps its type `T` downstream.
+        if self.is_generic_placeholder_type(&base_ty)
+            && let Some(placeholder_name) = self.generic_placeholder_name(&base_ty).map(str::to_string)
+            && let Some(ret) = self.resolve_generic_placeholder_method(
+                &placeholder_name,
+                method,
+                type_args,
+                args,
+                &arg_types,
+                span,
+                &base_ty,
+                expected_return_ty,
+            )
+        {
+            return ret;
+        }
+
         // Reflection magic helpers are modeled explicitly above and should error on unsupported receivers rather than
         // silently degrading to Unknown. Keep the older permissive fallback only for the remaining backend-only magic.
         if let Some(id) = magic_methods::from_str(method)
@@ -6429,20 +6608,6 @@ impl TypeChecker {
         // The Rust backend infers the required trait bounds (e.g., `x.clone()` → `T: Clone`).
         // At the Incan typechecker level we allow the call and return the same type variable.
         if self.is_generic_placeholder_type(&base_ty) {
-            if let Some(placeholder_name) = self.generic_placeholder_name(&base_ty).map(str::to_string)
-                && let Some(ret) = self.resolve_generic_placeholder_method(
-                    &placeholder_name,
-                    method,
-                    type_args,
-                    args,
-                    &arg_types,
-                    span,
-                    &base_ty,
-                    expected_return_ty,
-                )
-            {
-                return ret;
-            }
             if let Some(ret) = self.generic_reflection_magic_method_return_type(method) {
                 if let Some(id) = magic_methods::from_str(method) {
                     self.record_compiler_generated_member_identity(

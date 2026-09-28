@@ -1250,11 +1250,27 @@ impl<'a> IrEmitter<'a> {
             let rest = bound_tokens.iter().skip(1).map(|b| quote! { + #b });
             quote! { : #first #(#rest)* }
         };
+        // Migration note (rust_source_backend_deprecation.md):
+        // - Compatibility issue: #1561 -- a `Generator[T]`, which satisfies `Iterator[T]` (RFC 006, RFC 088), reached
+        //   the RFC 088 adapters and an `Iterator[T]` parameter as the runtime wrapper, which implements only Rust's
+        //   `Iterator`, so every adapter, terminal consumer and `Iterator[T]` argument over a generator was refused by
+        //   rustc (E0277).
+        // - Behavior evidence: the `generator_iterator_surface` behavior fixture and the emission test
+        //   `generator_adapters_and_consumers_compile`.
+        // - Semantic owner: the checker's protocol typing (a generator is an `Iterator[T]` value) and lowering's
+        //   iterator method classification; this impl only lets the runtime wrapper answer `__next__`.
+        // - Retirement condition: the Rust-source backend is deleted (#654); the replacement route runs generators
+        //   through the same iteration protocol as every other iterator.
         let iterator_mut_forwarding = if trait_decl.name == iterator_trait_name {
             quote! {
                 impl<T, I: #iterator_trait<T> + ?Sized> #iterator_trait<T> for &mut I {
                     fn __next__(&mut self) -> Option<T> {
                         (**self).__next__()
+                    }
+                }
+                impl<T> #iterator_trait<T> for incan_std_core::iter::Generator<T> {
+                    fn __next__(&mut self) -> Option<T> {
+                        ::std::iter::Iterator::next(self)
                     }
                 }
             }
@@ -2010,6 +2026,52 @@ mod tests {
             compact.contains("fnreplace(&self,mutitems:ProviderHandle<(&mutWidget,&mutGadget)>)"),
             "trait default methods must keep a writable owned Rust handle, got: {emitted}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn bodyless_trait_slot_drops_owned_mutable_rust_parameter_binding_issue1828()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let items_ty = IrType::NamedGeneric("Vec".to_string(), vec![IrType::Int]);
+        let func = IrFunction {
+            name: "replace".to_string(),
+            docstring: None,
+            params: vec![
+                FunctionParam {
+                    name: "self".to_string(),
+                    ty: IrType::SelfType,
+                    mutability: Mutability::Immutable,
+                    is_self: true,
+                    kind: incan_frontend::ast::ParamKind::Normal,
+                    default: None,
+                },
+                FunctionParam {
+                    name: "items".to_string(),
+                    ty: items_ty,
+                    mutability: Mutability::OwnedMutable,
+                    is_self: false,
+                    kind: incan_frontend::ast::ParamKind::Normal,
+                    default: None,
+                },
+            ],
+            return_type: IrType::Unit,
+            body: Vec::new(),
+            is_async: false,
+            is_generator: false,
+            visibility: Visibility::Private,
+            type_params: Vec::new(),
+            is_extern: false,
+            rust_extern_name: None,
+            rust_attributes: Vec::new(),
+            lint_allows: Vec::new(),
+        };
+
+        let emitted = emitter.emit_trait_method(&func)?.to_string();
+        let compact = emitted.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+        assert!(compact.contains("fnreplace(&self,items:Vec<i64>);"), "{emitted}");
+        assert!(!compact.contains("mutitems"), "{emitted}");
         Ok(())
     }
 }

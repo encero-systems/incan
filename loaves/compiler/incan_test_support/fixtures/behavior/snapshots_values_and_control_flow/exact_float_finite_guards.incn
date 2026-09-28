@@ -1,14 +1,16 @@
-# behavior: an ordinary float carries NaN through parsing and printing, while an exact f64 or f32 result refuses a non-finite value at its first observable use
+# behavior: a float, an f64 included since it is a float, carries NaN through parsing and printing and prints with its decimal point, while an f32 result refuses a non-finite value at its first observable use
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::exact_float_boundaries_emit_finite_guards_without_changing_ordinary_float
 # retires: loaves/compiler/incan_emit/tests/codegen_snapshot_tests.rs::exact_float_arithmetic_is_validated_before_every_observable_use
+# retires: loaves/compiler/incan_emit/src/tests/numeric_operator_emission.rs::f64_values_are_ordinary_floats
 # expect-stdout:
 #   nan
 #   1.5
 #   2.5
 #   6
-#   6
+#   6.0
 #   true
-#   6
+#   6.0
+#   nan
 # expect-exit: 101
 
 pub def parsed_exact(value: str) -> f64:
@@ -54,3 +56,4 @@ def main() -> None:
     println(compared_f32(2.0, 3.0))
     printed_f64(2.0, 3.0)
     println(parsed_exact("nan"))
+    println(returned_f32(3e38, 3e38))

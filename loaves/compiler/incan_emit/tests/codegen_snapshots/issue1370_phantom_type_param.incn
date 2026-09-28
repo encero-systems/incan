@@ -5,7 +5,7 @@ model Column[T]:
   sql: str
 
   def __mul__(self, other: T) -> Column[T]:
-    return Column[T](sql=f"({self.sql} * {other})")
+    return Column[T](sql=f"({self.sql} * ?)")
 
 def col[T](name: str) -> Column[T]:
   return Column[T](sql=name)

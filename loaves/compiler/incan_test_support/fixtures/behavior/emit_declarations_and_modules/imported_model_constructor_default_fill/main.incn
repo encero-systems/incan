@@ -1,0 +1,14 @@
+# behavior: a model imported from another module constructed with a subset of its named fields fills the omitted fields with their declared defaults
+# retires: loaves/compiler/incan_emit/src/emit/expressions/structs_enums.rs::imported_named_struct_can_emit_metadata_proven_default_fill
+# expect-stdout:
+#   7 none 0
+#   0 named 1
+
+from records import Record
+
+
+def main() -> None:
+    first = Record(count=7)
+    println(f"{first.count} {first.label} {len(first.tags)}")
+    other = Record(label="named", tags=["a"])
+    println(f"{other.count} {other.label} {len(other.tags)}")

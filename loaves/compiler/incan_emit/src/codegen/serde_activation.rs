@@ -1,5 +1,7 @@
 //! Serde derive and JSON activation planning for IR code generation.
 
+use std::collections::HashMap;
+
 use incan_frontend::ast::{Declaration, Program};
 use incan_frontend::decorator_resolution;
 use incan_lang::lang::decorators::{self, DecoratorId};
@@ -7,6 +9,25 @@ use incan_lang::lang::stdlib;
 
 const SERDE_SERIALIZE_DERIVE: &str = "serde::Serialize";
 const SERDE_DESERIALIZE_DERIVE: &str = "serde::Deserialize";
+
+/// Resolve a derive argument's spelling to the path it names: the whole spelling through its import (`Serialize`,
+/// `json`), or a module-qualified spelling through its first segment's import (`json.Serialize`, `serde.json`), as the
+/// checker resolves it (#1885).
+fn resolve_derive_argument(name: &str, import_aliases: &HashMap<String, Vec<String>>) -> Vec<String> {
+    if let Some(path) = import_aliases.get(name) {
+        return path.clone();
+    }
+    if let Some((head, rest)) = name.split_once('.')
+        && let Some(prefix) = import_aliases.get(head)
+    {
+        return prefix
+            .iter()
+            .cloned()
+            .chain(rest.split('.').map(str::to_string))
+            .collect();
+    }
+    vec![name.to_string()]
+}
 
 /// Return whether any loaded module derives serde serialize or deserialize through resolved JSON derive imports.
 pub fn collect_serde_derives(main: &Program, deps: &[(&str, &Program)]) -> (bool, bool) {
@@ -33,13 +54,10 @@ pub fn collect_serde_derives(main: &Program, deps: &[(&str, &Program)]) -> (bool
                     let incan_frontend::ast::DecoratorArg::Positional(expr) = arg else {
                         continue;
                     };
-                    let incan_frontend::ast::Expr::Ident(name) = &expr.node else {
+                    let Some(name) = decorator_resolution::derive_argument_name(&expr.node) else {
                         continue;
                     };
-                    let resolved = import_aliases
-                        .get(name)
-                        .cloned()
-                        .unwrap_or_else(|| vec![name.to_string()]);
+                    let resolved = resolve_derive_argument(&name, &import_aliases);
                     match stdlib::stdlib_json_trait_id_from_path(&resolved) {
                         Some(stdlib::StdlibJsonTraitId::Serialize) => {
                             has_serialize = true;

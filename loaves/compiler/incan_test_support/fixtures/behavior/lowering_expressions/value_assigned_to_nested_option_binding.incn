@@ -1,0 +1,27 @@
+# behavior: a value assigned to a nested Option binding is wrapped in each Option layer, in a declaration and a reassignment
+# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::value_assigned_to_a_nested_option_binding_is_wrapped_in_each_layer_issue1860
+# retires: loaves/compiler/incan_ir/src/lower/tests/expected_literal_types.rs::value_assigned_to_a_nested_option_binding_lowers_to_nested_some_issue1860
+# expect-stdout:
+#   5
+#   0
+#   1
+#   6
+#   none
+
+def main() -> None:
+    a: Option[Option[int]] = 5
+    println(a.unwrap().unwrap())
+    mut b: Option[Option[list[int]]] = None
+    b = []
+    println(len(b.unwrap().unwrap()))
+    c: Option[Option[list[int]]] = [1]
+    println(len(c.unwrap().unwrap()))
+    mut inner: Option[Option[int]] = None
+    inner = 6
+    match inner:
+        Some(value) => println(value.unwrap_or(7))
+        None => println("none")
+    outer: Option[Option[int]] = None
+    match outer:
+        Some(value) => println(value.unwrap_or(7))
+        None => println("none")

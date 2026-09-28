@@ -587,6 +587,116 @@ def use_trait_typed_value() -> Item:
     );
 }
 
+/// #1866: a trait written inside another type in a signature or a local annotation is refused at check time, naming
+/// the trait and the type it sits in, for a stdlib trait and a user trait alike, in a return, a parameter, a method
+/// and a trait method signature, a tuple and a local. Such an annotation used to pass the check and
+/// lower to a bare trait inside the Rust type (E0782). A whole parameter or return type naming the trait, and a
+/// bounded type parameter inside another type, stay accepted.
+#[test]
+fn a_trait_written_inside_another_type_is_refused_issue1866() -> Result<(), String> {
+    let preamble = r#"
+from std.serde import json
+from std.serde.json import Serialize
+
+trait Shape:
+  def area(self) -> int: ...
+
+@derive(Serialize)
+model Payload:
+  value: int
+"#;
+    let rows = [
+        (
+            "Serialize",
+            "Option[Serialize]",
+            "def maybe() -> Option[Serialize]:\n  return Some(Payload(value=1))\n",
+        ),
+        (
+            "Serialize",
+            "List[Serialize]",
+            "def many() -> list[Serialize]:\n  return [Payload(value=1)]\n",
+        ),
+        (
+            "Serialize",
+            "List[Serialize]",
+            "def count(items: list[Serialize]) -> int:\n  return len(items)\n",
+        ),
+        (
+            "Serialize",
+            "Option[Serialize]",
+            "def qualified() -> Option[json.Serialize]:\n  return None\n",
+        ),
+        (
+            "Serialize",
+            "Result[Serialize, str]",
+            "def fallible() -> Result[Serialize, str]:\n  return Err(\"no\")\n",
+        ),
+        (
+            "Serialize",
+            "Dict[str, Serialize]",
+            "def keyed(values: dict[str, Serialize]) -> int:\n  return 1\n",
+        ),
+        (
+            "Shape",
+            "Option[Shape]",
+            "def maybe_shape(shape: Option[Shape]) -> int:\n  return 1\n",
+        ),
+        (
+            "Shape",
+            "Tuple[Shape, int]",
+            "def pair() -> tuple[Shape, int]:\n  return pair()\n",
+        ),
+        (
+            "Shape",
+            "List[Shape]",
+            "model Canvas:\n  size: int\n\n  def shapes(self) -> list[Shape]:\n    return []\n",
+        ),
+        (
+            "Shape",
+            "List[Shape]",
+            "trait Gallery:\n  def shapes(self) -> list[Shape]: ...\n",
+        ),
+        (
+            "Serialize",
+            "Option[Serialize]",
+            "def local() -> None:\n  held: Option[Serialize] = None\n",
+        ),
+    ];
+    let mut mismatches = Vec::new();
+    for (trait_type, annotation, declaration) in rows {
+        let source = format!("{preamble}\n{declaration}");
+        let Err(errs) = check_str(&source) else {
+            mismatches.push(format!("`{declaration}` should be refused"));
+            continue;
+        };
+        let expected = format!("Trait '{trait_type}' cannot be used inside the type '{annotation}'");
+        if !errs.iter().any(|err| err.message == expected) {
+            mismatches.push(format!(
+                "expected `{expected}` for `{declaration}`, got {:?}",
+                errs.iter().map(|err| &err.message).collect::<Vec<_>>()
+            ));
+        }
+    }
+    if !mismatches.is_empty() {
+        return Err(mismatches.join("\n"));
+    }
+
+    let accepted = format!(
+        r#"{preamble}
+def whole(value: Serialize) -> Serialize:
+  return value
+
+def bounded[T with Serialize](items: list[T]) -> Option[T]:
+  return None
+
+def main() -> None:
+  println(json_stringify(whole(Payload(value=1))))
+  println(len([Payload(value=2)]))
+"#
+    );
+    check_str(&accepted).map_err(|errs| format!("whole and bounded trait annotations stay accepted: {errs:?}"))
+}
+
 #[test]
 fn test_types_compatible_generic_trait_annotation_extra_concrete_type_params() -> Result<(), Vec<CompileError>> {
     let source = r#"

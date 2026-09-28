@@ -7,7 +7,7 @@ expression: normalize_projected_symbols_for_readable_codegen(& rust_code)
 // __INCAN_INSERT_MODS__
 
 incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[derive(Default, Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
+#[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Settings {
     retries: i64,
     label: String,
@@ -69,6 +69,14 @@ impl incan_std_core::reflection::HasFieldValueReflection for Settings {
             ("retries".to_string(), format!("{}", self.retries)), ("label".to_string(),
             format!("{}", self.label))
         ]
+    }
+}
+impl Default for Settings {
+    fn default() -> Settings {
+        return Settings {
+            retries: 0,
+            label: "".to_string(),
+        };
     }
 }
 fn make<T: std::default::Default>() -> T {

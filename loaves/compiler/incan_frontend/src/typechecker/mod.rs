@@ -49,10 +49,12 @@ mod collect;
 mod collection_annotations;
 mod const_eval;
 mod decorated_method_receivers;
+mod derive_contract;
 mod derive_requirements;
 mod for_item_taking;
 mod hash_key_inference;
 mod helpers;
+mod json_member_requirements;
 mod mut_arguments;
 mod mut_marker;
 mod nominal_type_param_bounds;
@@ -61,6 +63,7 @@ mod reserved_names;
 pub mod stdlib_loader;
 mod trait_bound_relations;
 mod type_info;
+mod union_member_identity;
 mod validate_rust_module;
 mod web_routes;
 
@@ -114,6 +117,7 @@ use incan_lang::lang::builtins::{self, BuiltinFnId};
 use incan_lang::lang::c_abi;
 use incan_lang::lang::conventions;
 use incan_lang::lang::decorators::{self as core_decorators, DecoratorId};
+use incan_lang::lang::derives::{self as builtin_derives, DeriveId};
 use incan_lang::lang::errors as runtime_errors;
 use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::functions::SurfaceFnId;
@@ -486,6 +490,12 @@ pub struct TypeChecker {
     current_immutable_self_method: Option<String>,
     /// Iterator bindings consumed by terminal RFC 088 methods in the current local checking flow.
     pub consumed_iterator_bindings: HashMap<String, Span>,
+    /// `dict.get(key)` calls whose value type cannot be copied, with that type's name; refused at the end of checking
+    /// unless the lookup turned out to be only read (see `check_expr/dict_lookups.rs`).
+    pending_uncopyable_dict_lookups: Vec<(Span, String)>,
+    /// Locals bound directly to a module static (`live = counts`), which read the static's storage like the static
+    /// itself does.
+    static_alias_bindings: HashSet<SymbolId>,
     /// Resource bindings transferred to an owning C ABI parameter in the current local checking flow.
     pub transferred_c_resource_bindings: HashMap<String, Span>,
     /// Lists whose items a `for` loop of the current body takes, and that body's `for` pattern bindings (#1844).
@@ -671,6 +681,9 @@ pub struct TypeChecker {
     /// alongside the flat name — the same thing `IrCodegen::add_module_with_path_segments` does for emission — lets an
     /// identity name the module that actually answered.
     pub dependency_module_path_segments: HashMap<String, Vec<String>>,
+    /// Which modules of the current check declare each nominal type name, so a union member of a name several of them
+    /// declare names its declaration (#1796).
+    nominal_declarations: union_member_identity::NominalDeclarationContext,
     /// Module-owned direct partial projection metadata captured while that module is being imported.
     pub dependency_direct_member_partial_projections: HashMap<String, HashMap<String, PartialProjectionInfo>>,
     /// RFC 024 derivable-module metadata from imported source modules, keyed by module path.
@@ -799,6 +812,12 @@ pub struct TypeChecker {
     /// surfaces. Keep that from becoming a process-level stack overflow; the guard returns `false` once a cycle is
     /// deep enough that the checker cannot prove compatibility.
     type_compatibility_depth: Cell<usize>,
+    /// How many types deep the current compatibility check is inside another type (a type argument, a tuple element,
+    /// a callable parameter or return, a referenced type, or a member of a union value).
+    ///
+    /// Lossless numeric widening converts one value, so it applies only at depth zero; see
+    /// [`TypeChecker::nested_types_compatible`].
+    nested_type_compatibility_depth: Cell<usize>,
     /// Feature-gated cache for rust-inspect semantic metadata extraction (RFC 041).
     #[cfg(feature = "rust_inspect")]
     pub rust_inspect_cache: RustMetadataCache,
@@ -847,6 +866,8 @@ impl TypeChecker {
             mut_params: mut_arguments::MutParamFacts::default(),
             current_immutable_self_method: None,
             consumed_iterator_bindings: HashMap::new(),
+            pending_uncopyable_dict_lookups: Vec::new(),
+            static_alias_bindings: HashSet::new(),
             transferred_c_resource_bindings: HashMap::new(),
             for_item_taking: for_item_taking::ForItemTaking::default(),
             unbound_c_abi_span_constructors: HashMap::new(),
@@ -910,6 +931,7 @@ impl TypeChecker {
             dependency_direct_member_identities: HashMap::new(),
             dependency_member_reexports: HashMap::new(),
             dependency_module_path_segments: HashMap::new(),
+            nominal_declarations: union_member_identity::NominalDeclarationContext::default(),
             dependency_direct_member_partial_projections: HashMap::new(),
             dependency_derivable_modules: HashMap::new(),
             dependency_module_traits: HashMap::new(),
@@ -942,6 +964,7 @@ impl TypeChecker {
             supertrait_closure: HashMap::new(),
             pending_trait_supertraits: Vec::new(),
             type_compatibility_depth: Cell::new(0),
+            nested_type_compatibility_depth: Cell::new(0),
             #[cfg(feature = "rust_inspect")]
             rust_inspect_cache: RustMetadataCache::new(),
             #[cfg(feature = "rust_inspect")]
@@ -2637,6 +2660,32 @@ impl TypeChecker {
         }
     }
 
+    /// Record `destination` as the type the value at `value_span` is written to, when the value's type `value_ty` is
+    /// compatible with it and the destination is an `Option` (after alias expansion) or the value is numeric (#1858,
+    /// RFC 009).
+    ///
+    /// The write sites that record this (field and index assignment, a model or class constructor field, `return`)
+    /// accept a value of the `Option`'s payload type, and a numeric value whose type losslessly widens to the numeric
+    /// type or union member the destination holds. Lowering wraps that value in the `Some` layers the destination adds
+    /// and widens it. A value already of an `Option` destination's type is recorded too; lowering leaves it as it is.
+    pub(in crate::typechecker) fn record_value_destination_if_compatible(
+        &mut self,
+        value_span: Span,
+        value_ty: &ResolvedType,
+        destination: &ResolvedType,
+    ) {
+        let destination = self.expand_type_aliases(destination.clone());
+        let adapts =
+            destination.is_option() || (numeric_type_id_for_compat(value_ty).is_some() && *value_ty != destination);
+        if !adapts || !self.types_compatible(value_ty, &destination) {
+            return;
+        }
+        self.type_info
+            .expressions
+            .value_destination_types
+            .insert((value_span.start, value_span.end), destination);
+    }
+
     /// Record the final checked type selected for one assignment binding.
     pub fn record_assignment_binding_type(&mut self, span: Span, ty: ResolvedType) {
         self.type_info
@@ -2795,7 +2844,9 @@ impl TypeChecker {
     ///   - `symbols.get(id)` → `Option<&Symbol>`
     ///   - `match sym.kind { SymbolKind::Type(info) => ... }`
     pub fn lookup_type_info(&self, name: &str) -> Option<&TypeInfo> {
-        let id = self.symbols.lookup(name)?;
+        let Some(id) = self.symbols.lookup(name) else {
+            return self.module_qualified_nominal_type_info(name);
+        };
         let sym = self.symbols.get(id)?;
         match &sym.kind {
             SymbolKind::Type(info) => Some(info),
@@ -3008,11 +3059,16 @@ impl TypeChecker {
             TypeInfo::Newtype(n) => (n.trait_adoptions.as_slice(), Some(n.derives.as_slice())),
             _ => return false,
         };
+        // The trait the bound names, as a module and a trait name: an adoption that records the module it came from is
+        // compared by that identity, so a type declared in another module satisfies `serde.json.Serialize` whatever the
+        // declaring module called the trait (`json.Serialize` through its own import, #1887).
+        let bound_identity = self.resolve_bound_trait_path(trait_name);
         for t in adopted {
             if self.trait_name_matches(&t.name, trait_name)
                 || t.source_name
                     .as_deref()
                     .is_some_and(|source_name| self.trait_name_matches(source_name, trait_name))
+                || adoption_names_bound_identity(t, bound_identity.as_ref())
             {
                 return true;
             }
@@ -3034,17 +3090,53 @@ impl TypeChecker {
         false
     }
 
-    /// Explicit `with Trait[...]` entries plus trait-like `@derive` entries for method lookup.
+    /// Explicit `with Trait[...]` entries plus trait-like `@derive` entries and the automatic `Clone` of a `model`,
+    /// `class` or `enum`, for method lookup on one of those.
+    ///
+    /// Every model, class and enum derives `Clone` without `@derive(Clone)`, so `value.clone()` resolves through the
+    /// builtin trait whether or not the derive is spelled (#1870).
     pub fn trait_adoptions_for_type_methods(
         &self,
         adopted: &[TypeBoundInfo],
         derives: &[String],
     ) -> Vec<TypeBoundInfo> {
+        let automatic_clone = builtin_derives::as_str(DeriveId::Clone);
+        self.with_derive_trait_adoptions(adopted, derives.iter().map(String::as_str).chain([automatic_clone]))
+    }
+
+    /// Explicit `with Trait[...]` entries of a newtype plus trait-like `@derive` entries and its automatic `Clone`, for
+    /// method lookup on it.
+    ///
+    /// A newtype derives `Clone` automatically when its underlying type implements it (#1754), so `value.clone()`
+    /// resolves whenever the derive relation says the newtype is `Clone` (#1870).
+    pub(in crate::typechecker) fn newtype_trait_adoptions_for_type_methods(
+        &self,
+        name: &str,
+        info: &NewtypeInfo,
+    ) -> Vec<TypeBoundInfo> {
+        let clone = builtin_derives::as_str(DeriveId::Clone);
+        let automatic_clone = (!info.is_rusttype
+            && self.derive_support(&ResolvedType::Named(name.to_string()), DeriveId::Clone)
+                == derive_requirements::DeriveSupport::Supported)
+            .then_some(clone);
+        self.with_derive_trait_adoptions(
+            &info.trait_adoptions,
+            info.derives.iter().map(String::as_str).chain(automatic_clone),
+        )
+    }
+
+    /// Append to `adopted` each derive in `derives` that names a trait in scope, once, as a trait adoption.
+    fn with_derive_trait_adoptions<'a>(
+        &self,
+        adopted: &[TypeBoundInfo],
+        derives: impl Iterator<Item = &'a str>,
+    ) -> Vec<TypeBoundInfo> {
         let mut out = adopted.to_vec();
-        for d in derives {
-            if self.lookup_semantic_trait_info(d).is_some() && !out.iter().any(|t| t.name == *d) {
+        for derive in derives {
+            if self.lookup_semantic_trait_info(derive).is_some() && !out.iter().any(|adoption| adoption.name == derive)
+            {
                 out.push(TypeBoundInfo {
-                    name: d.clone(),
+                    name: derive.to_string(),
                     source_name: None,
                     type_args: Vec::new(),
                     module_path: None,
@@ -4937,6 +5029,33 @@ impl TypeChecker {
             _ => None,
         })?;
         module_path.extend(nested_module.iter().cloned());
+        if !nested_module.is_empty() {
+            // A spelling through a submodule (`serde.json.Serialize` after `from std import serde`) proves the member
+            // the way `from std.serde import json` then `json.Serialize` does, so it retains that submodule's facts
+            // the same way an import of the submodule would (#1887).
+            self.cache_stdlib_module_import_semantics(&ImportPath::simple(module_path.clone()));
+        }
+
+        // Compiler-known surface types have no source declaration for the stdlib cache to return. Their registry
+        // ownership is nevertheless the same proof a direct `from std.web import Html` uses, so retain that stable
+        // builtin identity and canonical resolved spelling for a qualified annotation as well (#1824).
+        if let Some(surface_type) = surface_types::from_str(name)
+            && surface_types::stdlib_module_path(surface_type).is_some_and(|owner| owner == module_path.join("."))
+        {
+            let canonical = surface_types::as_str(surface_type).to_string();
+            return Some(QualifiedTypeReferenceInfo {
+                identity: CanonicalSymbolId {
+                    namespace: SymbolNamespace::OrdinaryLexical,
+                    origin: SymbolOrigin::Builtin,
+                    declaration_name: canonical.clone(),
+                    kind: SemanticSourceTargetKind::Builtin,
+                    scope_discriminant: None,
+                    declaration_span: HirSourceSpan::new(0, 0),
+                },
+                module_path,
+                resolved: ResolvedType::Named(canonical),
+            });
+        }
 
         // ---- Public library module: the checked manifest owns both the identity and the qualified type name ----
         if module_path.len() >= 2 && module_path.first().is_some_and(|part| part == "pub") {
@@ -5244,6 +5363,7 @@ impl TypeChecker {
             &|segments| self.qualified_type_annotation_resolved_type(segments),
         );
         self.record_mutable_rust_type_argument_projection(ty);
+        let resolved = self.normalize_union_member_identity(resolved);
         let resolved = self.expand_type_aliases(resolved);
         // Only the checking pass sees every declaration's derives; collection may resolve a name declared further on.
         if self.validate_source_type_names {
@@ -5259,7 +5379,7 @@ impl TypeChecker {
     fn qualified_type_annotation_resolved_type(&self, segments: &[String]) -> Option<ResolvedType> {
         self.type_info
             .qualified_type_reference(&segments.join("."))
-            .map(|reference| reference.resolved.clone())
+            .map(|reference| self.qualified_reference_member_spelling(reference.resolved.clone(), &reference.identity))
     }
 
     /// Preserve a metadata-directed mutable-reference projection for one imported Rust generic annotation.
@@ -5827,7 +5947,7 @@ impl TypeChecker {
 
     /// Return whether a simple type name is reserved for a parameterized numeric family.
     fn reserved_numeric_type_name(name: &str) -> bool {
-        matches!(name, "decimal" | "numeric")
+        numerics::decimal_constructor_from_str(name).is_some()
     }
 
     /// Resolve and validate a parameterized decimal type annotation.
@@ -5835,7 +5955,7 @@ impl TypeChecker {
         let Type::Generic(name, args) = &ty.node else {
             return None;
         };
-        let constructor = numerics::decimal_constructor_from_str(name.as_str())?;
+        numerics::decimal_constructor_from_str(name.as_str())?;
         if args.len() != 2 {
             self.errors.push(CompileError::type_error(
                 format!("{name}[...] expects exactly 2 integer parameters: precision and scale"),
@@ -5871,7 +5991,12 @@ impl TypeChecker {
             ));
             return Some(ResolvedType::Unknown);
         }
-        let canonical = numerics::decimal_constructor_info_for(constructor).canonical;
+        // Every registered decimal constructor is one type identity. In particular, RFC 009 defines
+        // `decimal128[p, s]` as an alias rather than a distinct nominal type.
+        let canonical = numerics::decimal_constructor_info_for(
+            incan_lang::lang::types::numerics::DecimalTypeConstructorId::Decimal,
+        )
+        .canonical;
         Some(ResolvedType::Generic(
             canonical.to_string(),
             vec![
@@ -6613,6 +6738,8 @@ impl TypeChecker {
         self.type_info = TypeCheckInfo::default();
         self.warnings.clear();
         self.errors.clear();
+        self.pending_uncopyable_dict_lookups.clear();
+        self.static_alias_bindings.clear();
         self.testing_marker_import_bindings.clear();
         self.surface_function_import_bindings.clear();
         self.surface_type_import_bindings.clear();
@@ -6626,7 +6753,9 @@ impl TypeChecker {
         self.source_import_targets.clear();
         self.surface_context = SurfaceContext::from_program(program);
         self.supertrait_closure.clear();
+        self.enter_nominal_declaring_module(program);
         if !preserve_dependency_semantics {
+            self.clear_nominal_declaring_modules();
             self.hash_key_type_params.clear();
             self.transitive_pub_types.clear();
             self.public_library_type_identities.clear();
@@ -6678,6 +6807,7 @@ impl TypeChecker {
             }
         }
         self.resolve_mut_arguments();
+        self.refuse_copying_dict_lookups_of_uncopyable_values();
 
         self.type_info
             .c_abi
@@ -6697,6 +6827,8 @@ impl TypeChecker {
         // ---- RFC 120: export the minted declaration identities for later stages ----
         self.export_declaration_identities();
         self.export_checked_import_bindings();
+        self.export_unique_nominal_declaring_modules();
+        self.export_type_alias_targets();
         self.record_binding_collision_diagnostics();
 
         if self.provider_plan.public_artifacts().next().is_some() {
@@ -6836,6 +6968,7 @@ impl TypeChecker {
             .cloned()
             .unwrap_or_else(|| vec![module_name.to_string()]);
         self.set_current_module_path(Some(dependency_module_path));
+        let previous_nominal_declarations = self.enter_nominal_declaring_module(module_ast);
         self.surface_context = SurfaceContext::from_program(module_ast);
         self.symbols.begin_dependency_interface_bindings();
         self.seed_dependency_interface_bindings(module_ast, true);
@@ -6901,6 +7034,7 @@ impl TypeChecker {
         self.current_module_function_symbols = previous_module_function_symbols;
         self.symbols.finish_dependency_interface_bindings();
         self.type_aliases = previous_type_aliases;
+        self.restore_nominal_declaring_module(previous_nominal_declarations);
         self.set_current_module_path(previous_module_path);
     }
 
@@ -6919,6 +7053,7 @@ impl TypeChecker {
             .cloned()
             .unwrap_or_else(|| vec![module_name.to_string()]);
         self.set_current_module_path(Some(dependency_module_path));
+        let previous_nominal_declarations = self.enter_nominal_declaring_module(module_ast);
         self.surface_context = SurfaceContext::from_program(module_ast);
         self.symbols.begin_dependency_interface_bindings();
         self.seed_dependency_interface_bindings(module_ast, false);
@@ -6984,6 +7119,7 @@ impl TypeChecker {
         self.current_module_function_symbols = previous_module_function_symbols;
         self.symbols.finish_dependency_interface_bindings();
         self.type_aliases = previous_type_aliases;
+        self.restore_nominal_declaring_module(previous_nominal_declarations);
         self.set_current_module_path(previous_module_path);
     }
 
@@ -8117,6 +8253,7 @@ impl TypeChecker {
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
         self.seed_sdk_provider_symbols();
+        self.record_nominal_declaring_modules(program, dependencies);
         for (name, dep_ast) in dependencies {
             if Self::is_generated_stdlib_dependency_module(name) {
                 continue;
@@ -8169,6 +8306,7 @@ impl TypeChecker {
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
         self.seed_sdk_provider_symbols();
+        self.record_nominal_declaring_modules(program, dependencies);
         self.predeclare_dependency_interfaces(dependencies, false);
         for (name, dep_ast) in dependencies {
             if Self::is_generated_stdlib_dependency_module(name) {
@@ -8373,6 +8511,14 @@ impl TypeChecker {
             return true;
         }
 
+        if let Some(matches) = self.module_qualified_nominals_compatible(actual, expected) {
+            return matches;
+        }
+
+        if let Some(matches) = helpers::decimal_types_compatible(actual, expected) {
+            return matches;
+        }
+
         if let Some(matches) = self.rust_type_identities_compatible(actual, expected) {
             return matches;
         }
@@ -8385,14 +8531,14 @@ impl TypeChecker {
             (_, expected) if self.is_generic_placeholder_type(expected) => true,
             (ResolvedType::CallSiteInfer, _) | (_, ResolvedType::CallSiteInfer) => true,
             (ResolvedType::TypeToken(actual_inner), ResolvedType::TypeToken(expected_inner)) => {
-                self.types_compatible(actual_inner, expected_inner)
+                self.nested_types_compatible(actual_inner, expected_inner)
             }
             (ResolvedType::SelfType, ResolvedType::Generic(trait_name, _))
                 if self.current_trait_name.as_deref() == Some(trait_name.as_str()) =>
             {
                 true
             }
-            (actual, expected) if numeric_lossless_compatible(actual, expected) => true,
+            (actual, expected) if self.numeric_values_compatible(actual, expected) => true,
             (
                 ResolvedType::Generic(actual_name, actual_members),
                 ResolvedType::Generic(expected_name, expected_members),
@@ -8400,12 +8546,12 @@ impl TypeChecker {
                 actual_members.iter().all(|actual_member| {
                     expected_members
                         .iter()
-                        .any(|expected_member| self.types_compatible(actual_member, expected_member))
+                        .any(|expected_member| self.nested_types_compatible(actual_member, expected_member))
                 })
             }
-            (ResolvedType::Generic(name, members), expected) if name == UNION_TYPE_NAME => {
-                members.iter().all(|member| self.types_compatible(member, expected))
-            }
+            (ResolvedType::Generic(name, members), expected) if name == UNION_TYPE_NAME => members
+                .iter()
+                .all(|member| self.nested_types_compatible(member, expected)),
             (actual, ResolvedType::Generic(name, members))
                 if name == UNION_TYPE_NAME
                     && actual.is_option()
@@ -8432,7 +8578,7 @@ impl TypeChecker {
                         || trait_name == builtin_traits::as_str(TraitId::Iterator)
                         || trait_name == builtin_traits::as_str(TraitId::IntoIterator)) =>
             {
-                actual_args.len() == 1 && self.types_compatible(&actual_args[0], &expected_args[0])
+                actual_args.len() == 1 && self.nested_types_compatible(&actual_args[0], &expected_args[0])
             }
 
             // ---- Context: RFC 042 — `expected` is a trait reference (`Named` or nullary trait on RHS) ----
@@ -8481,7 +8627,7 @@ impl TypeChecker {
                 expected_args
                     .iter()
                     .zip(instantiated.iter())
-                    .all(|(e, a)| self.types_compatible(a, e))
+                    .all(|(e, a)| self.nested_types_compatible(a, e))
             }
 
             // RFC 088: builtin collection iterables and `Iterator[T]` values satisfy `Iterable[T]`.
@@ -8500,17 +8646,17 @@ impl TypeChecker {
                                 | CollectionTypeId::FrozenSet
                         )
                     );
-                actual_is_iterable && self.types_compatible(&actual_args[0], &expected_args[0])
+                actual_is_iterable && self.nested_types_compatible(&actual_args[0], &expected_args[0])
             }
             (ResolvedType::FrozenList(actual), ResolvedType::Generic(trait_name, expected_args))
                 if trait_name == builtin_traits::as_str(TraitId::Iterable) && expected_args.len() == 1 =>
             {
-                self.types_compatible(actual, &expected_args[0])
+                self.nested_types_compatible(actual, &expected_args[0])
             }
             (ResolvedType::FrozenSet(actual), ResolvedType::Generic(trait_name, expected_args))
                 if trait_name == builtin_traits::as_str(TraitId::Iterable) && expected_args.len() == 1 =>
             {
-                self.types_compatible(actual, &expected_args[0])
+                self.nested_types_compatible(actual, &expected_args[0])
             }
 
             // RFC 042: `Concrete[T]` assignable to generic trait annotation `Trait[T]` (and similar).
@@ -8539,7 +8685,7 @@ impl TypeChecker {
                 expected_args
                     .iter()
                     .zip(instantiated_args.iter())
-                    .all(|(e, a)| self.types_compatible(a, e))
+                    .all(|(e, a)| self.nested_types_compatible(a, e))
             }
 
             // ---- Context: RFC 042 — `Named` actual vs `Trait` / `Trait[T…]` expected (incl. trait upcast) ----
@@ -8556,7 +8702,7 @@ impl TypeChecker {
                     expected_args
                         .iter()
                         .zip(instantiated_args.iter())
-                        .all(|(e, a)| self.types_compatible(a, e))
+                        .all(|(e, a)| self.nested_types_compatible(a, e))
                 } else {
                     let Some(instantiated_args) = self.instantiated_trait_args_for_type(type_name, &[], trait_name)
                     else {
@@ -8568,7 +8714,7 @@ impl TypeChecker {
                     expected_args
                         .iter()
                         .zip(instantiated_args.iter())
-                        .all(|(expected, actual)| self.types_compatible(actual, expected))
+                        .all(|(expected, actual)| self.nested_types_compatible(actual, expected))
                 }
             }
             // Allow bare surface generic types (e.g. `Json`) to match `Json[T]` when used without args.
@@ -8601,7 +8747,7 @@ impl TypeChecker {
             // Internal references: `&mut T` may satisfy `&T`, but not the reverse.
             (ResolvedType::Ref(a), ResolvedType::Ref(b))
             | (ResolvedType::RefMut(a), ResolvedType::Ref(b))
-            | (ResolvedType::RefMut(a), ResolvedType::RefMut(b)) => self.types_compatible(a, b),
+            | (ResolvedType::RefMut(a), ResolvedType::RefMut(b)) => self.nested_types_compatible(a, b),
             // Frozen const-eval values are compatible with their frozen wrappers. Ordinary runtime strings do not
             // implicitly become frozen values here; const-eval is responsible for freezing literal values first.
             (ResolvedType::FrozenStr, ResolvedType::FrozenStr) => true,
@@ -8639,40 +8785,40 @@ impl TypeChecker {
             {
                 true
             }
-            (ResolvedType::FrozenList(a), ResolvedType::FrozenList(b)) => self.types_compatible(a, b),
+            (ResolvedType::FrozenList(a), ResolvedType::FrozenList(b)) => self.nested_types_compatible(a, b),
             (ResolvedType::FrozenList(a), ResolvedType::Generic(name, args))
                 if collection_type_id(name.as_str()) == Some(CollectionTypeId::FrozenList) && args.len() == 1 =>
             {
-                self.types_compatible(a, &args[0])
+                self.nested_types_compatible(a, &args[0])
             }
             (ResolvedType::Generic(name, args), ResolvedType::FrozenList(b))
                 if collection_type_id(name.as_str()) == Some(CollectionTypeId::FrozenList) && args.len() == 1 =>
             {
-                self.types_compatible(&args[0], b)
+                self.nested_types_compatible(&args[0], b)
             }
-            (ResolvedType::FrozenSet(a), ResolvedType::FrozenSet(b)) => self.types_compatible(a, b),
+            (ResolvedType::FrozenSet(a), ResolvedType::FrozenSet(b)) => self.nested_types_compatible(a, b),
             (ResolvedType::FrozenSet(a), ResolvedType::Generic(name, args))
                 if collection_type_id(name.as_str()) == Some(CollectionTypeId::FrozenSet) && args.len() == 1 =>
             {
-                self.types_compatible(a, &args[0])
+                self.nested_types_compatible(a, &args[0])
             }
             (ResolvedType::Generic(name, args), ResolvedType::FrozenSet(b))
                 if collection_type_id(name.as_str()) == Some(CollectionTypeId::FrozenSet) && args.len() == 1 =>
             {
-                self.types_compatible(&args[0], b)
+                self.nested_types_compatible(&args[0], b)
             }
             (ResolvedType::FrozenDict(k1, v1), ResolvedType::FrozenDict(k2, v2)) => {
-                self.types_compatible(k1, k2) && self.types_compatible(v1, v2)
+                self.nested_types_compatible(k1, k2) && self.nested_types_compatible(v1, v2)
             }
             (ResolvedType::FrozenDict(k1, v1), ResolvedType::Generic(name, args))
                 if collection_type_id(name.as_str()) == Some(CollectionTypeId::FrozenDict) && args.len() >= 2 =>
             {
-                self.types_compatible(k1, &args[0]) && self.types_compatible(v1, &args[1])
+                self.nested_types_compatible(k1, &args[0]) && self.nested_types_compatible(v1, &args[1])
             }
             (ResolvedType::Generic(name, args), ResolvedType::FrozenDict(k2, v2))
                 if collection_type_id(name.as_str()) == Some(CollectionTypeId::FrozenDict) && args.len() >= 2 =>
             {
-                self.types_compatible(&args[0], k2) && self.types_compatible(&args[1], v2)
+                self.nested_types_compatible(&args[0], k2) && self.nested_types_compatible(&args[1], v2)
             }
             // Treat `Tuple` as both:
             // - a concrete tuple type: `Tuple[T1, T2, ...]`
@@ -8692,7 +8838,7 @@ impl TypeChecker {
                     && elems
                         .iter()
                         .zip(args.iter())
-                        .all(|(t1, t2)| self.types_compatible(t1, t2))
+                        .all(|(t1, t2)| self.nested_types_compatible(t1, t2))
             }
             (ResolvedType::Generic(name, args), ResolvedType::Tuple(elems))
                 if collection_type_id(name.as_str()) == Some(CollectionTypeId::Tuple) =>
@@ -8701,12 +8847,15 @@ impl TypeChecker {
                     && elems
                         .iter()
                         .zip(args.iter())
-                        .all(|(t1, t2)| self.types_compatible(t1, t2))
+                        .all(|(t1, t2)| self.nested_types_compatible(t1, t2))
             }
             (ResolvedType::Generic(n1, a1), ResolvedType::Generic(n2, a2)) => {
                 n1 == n2
                     && a1.len() == a2.len()
-                    && a1.iter().zip(a2.iter()).all(|(t1, t2)| self.types_compatible(t1, t2))
+                    && a1
+                        .iter()
+                        .zip(a2.iter())
+                        .all(|(t1, t2)| self.nested_types_compatible(t1, t2))
             }
             (ResolvedType::Function(p1, r1), ResolvedType::Function(p2, r2)) => {
                 // The `mut` marker decides how the argument is passed, so it must agree exactly (#1790).
@@ -8716,10 +8865,14 @@ impl TypeChecker {
                             && t1.is_mut == t2.is_mut
                             && self.callable_param_types_compatible(&t1.ty, &t2.ty)
                     })
-                    && self.types_compatible(r1, r2)
+                    && self.nested_types_compatible(r1, r2)
             }
             (ResolvedType::Tuple(e1), ResolvedType::Tuple(e2)) => {
-                e1.len() == e2.len() && e1.iter().zip(e2.iter()).all(|(t1, t2)| self.types_compatible(t1, t2))
+                e1.len() == e2.len()
+                    && e1
+                        .iter()
+                        .zip(e2.iter())
+                        .all(|(t1, t2)| self.nested_types_compatible(t1, t2))
             }
             // Rust names one item several ways (`std::boxed::Box`, `alloc::boxed::Box`, a dependency's re-export of
             // `alloc`). rust-inspect records the ancestral spelling; Incan source imports the `std` one. Compare in the
@@ -8734,6 +8887,32 @@ impl TypeChecker {
         }
     }
 
+    /// Check compatibility of a type written inside another type: a type argument, a tuple element, a callable
+    /// parameter or return, a referenced type, or a member of a union value.
+    ///
+    /// A numeric type there matches only its own canonical type (`int` and `i64` are one type). RFC 009's lossless
+    /// widening converts one value, and generated code converts it where the value reaches its destination; the values
+    /// a collection, tuple, `Option` value or callable holds or produces have no such conversion, so `list[i8]` is not
+    /// a `list[int]` and `(int) -> i8` is not an `(int) -> int`.
+    fn nested_types_compatible(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
+        let depth = self.nested_type_compatibility_depth.get();
+        self.nested_type_compatibility_depth.set(depth + 1);
+        let compatible = self.types_compatible(actual, expected);
+        self.nested_type_compatibility_depth.set(depth);
+        compatible
+    }
+
+    /// Return whether a numeric value type is compatible with a numeric destination type: through lossless widening
+    /// for a value (see the assignment table in the numeric semantics reference), and only by canonical identity inside
+    /// another type (see [`Self::nested_types_compatible`]).
+    fn numeric_values_compatible(&self, actual: &ResolvedType, expected: &ResolvedType) -> bool {
+        if self.nested_type_compatibility_depth.get() == 0 {
+            return numeric_lossless_compatible(actual, expected);
+        }
+        let actual_id = numeric_type_id_for_compat(actual);
+        actual_id.is_some() && actual_id == numeric_type_id_for_compat(expected)
+    }
+
     /// Function parameters must preserve borrow shape exactly.
     ///
     /// Ordinary value compatibility is intentionally permissive at Rust boundaries, but callback signatures are called
@@ -8743,11 +8922,11 @@ impl TypeChecker {
         match (actual, expected) {
             (ResolvedType::Ref(actual_inner), ResolvedType::Ref(expected_inner))
             | (ResolvedType::RefMut(actual_inner), ResolvedType::RefMut(expected_inner)) => {
-                self.types_compatible(actual_inner, expected_inner)
+                self.nested_types_compatible(actual_inner, expected_inner)
             }
             (ResolvedType::Ref(_) | ResolvedType::RefMut(_), _)
             | (_, ResolvedType::Ref(_) | ResolvedType::RefMut(_)) => false,
-            _ => self.types_compatible(actual, expected),
+            _ => self.nested_types_compatible(actual, expected),
         }
     }
 }
@@ -8837,6 +9016,23 @@ fn numeric_lossless_compatible(actual: &ResolvedType, expected: &ResolvedType) -
         return false;
     };
     numeric_type_losslessly_widens_to(actual_id, expected_id)
+}
+
+/// Whether a trait adoption that records its trait's module names the trait a bound resolved to.
+///
+/// `bound` is the bound's `(module path, trait name)` in the checking module. The adoption's trait name is its source
+/// name when it has one (`Serialize` for an adoption the declaring module spelled `json.Serialize`), so the comparison
+/// does not depend on which names the checking module has imported. An adoption without a recorded module, or a bound
+/// that does not resolve, answers `false` and is left to the name comparisons.
+fn adoption_names_bound_identity(adoption: &TypeBoundInfo, bound: Option<&(Vec<String>, String)>) -> bool {
+    let (Some(module_path), Some((bound_module, bound_trait))) = (adoption.module_path.as_ref(), bound) else {
+        return false;
+    };
+    let trait_name = adoption
+        .source_name
+        .as_deref()
+        .unwrap_or_else(|| adoption.name.rsplit('.').next().unwrap_or(adoption.name.as_str()));
+    module_path == bound_module && trait_name == bound_trait
 }
 
 /// Map an ordinary or exact numeric type to its canonical numeric id for compatibility checks.

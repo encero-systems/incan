@@ -398,3 +398,266 @@ def main() -> None:
     );
     Ok(())
 }
+
+/// Return the derives of the named model or class.
+fn lowered_struct_derives<'a>(ir: &'a IrProgram, name: &str) -> Result<&'a [String], String> {
+    ir.declarations
+        .iter()
+        .find_map(|decl| match &decl.kind {
+            IrDeclKind::Struct(owner) if owner.name == name => Some(owner.derives.as_slice()),
+            _ => None,
+        })
+        .ok_or_else(|| format!("missing model or class `{name}`"))
+}
+
+/// #1887: after `from std import serde`, `serde.json.Serialize` lowers like `json.Serialize`. A bound and a parameter
+/// carry the trait as written plus the serde capability, a return is the two-bound Rust type, `value.to_json()`
+/// dispatches through the stdlib trait, and adopting the trait with `with` implements it and derives the capability.
+/// The qualifier used to resolve only when its module was one imported name, so each position lowered without the
+/// capability.
+#[test]
+fn serde_json_spelling_through_the_serde_module_lowers_like_json_serialize_issue1887() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+from std import serde
+
+model Adopter with serde.json.Serialize:
+  value: int
+
+def encode[T with serde.json.Serialize](value: T) -> str:
+  return value.to_json()
+
+def describe(value: serde.json.Serialize) -> str:
+  return json_stringify(value)
+
+def make() -> serde.json.Serialize:
+  return Adopter(value=3)
+
+def main() -> None:
+  println(encode(Adopter(value=1)))
+  println(describe(Adopter(value=2)))
+  println(make().to_json())
+"#,
+    )?;
+    let expected = vec![vec!["serde.json.Serialize".to_string(), SERDE_SERIALIZE.to_string()]];
+    assert_eq!(bound_paths(&lowered_function(&ir, "encode")?.type_params), expected);
+    assert_eq!(
+        bound_paths(&lowered_function(&ir, "describe")?.type_params),
+        expected,
+        "the hidden parameter of a trait-typed argument is bounded like a written one"
+    );
+    assert_eq!(
+        lowered_function(&ir, "make")?.return_type,
+        IrType::RustDisplay(format!("impl {STDLIB_SERIALIZE_PATH} + {SERDE_SERIALIZE}"))
+    );
+    assert_eq!(returned_dispatch_trait_path(&ir, "encode")?, STDLIB_SERIALIZE_PATH);
+    assert_eq!(implemented_traits(&ir, "Adopter"), vec!["serde.json.Serialize"]);
+    let derives = lowered_struct_derives(&ir, "Adopter")?;
+    assert!(
+        derives.iter().any(|derive| derive == "serde::Serialize"),
+        "adopting the trait derives its serde capability: {derives:?}"
+    );
+    Ok(())
+}
+
+/// #1885: a module-qualified derive lowers as the bare one does: a model, a class, an enum and a newtype deriving
+/// `json.Serialize` or `json.Deserialize` implement the stdlib trait and derive its serde capability, and so does one
+/// deriving through a submodule (`serde.json.Serialize`). The qualified spelling used to lower to neither.
+#[test]
+fn qualified_json_derives_implement_the_stdlib_traits_issue1885() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+from std.serde import json
+
+@derive(json.Serialize, json.Deserialize)
+model Payload:
+  value: int
+
+@derive(json.Serialize)
+class Record:
+  value: int
+
+@derive(json.Serialize)
+enum Color:
+  Red
+  Blue
+
+@derive(json.Serialize)
+type UserId = newtype int
+
+def main() -> None:
+  println(Payload(value=1).to_json())
+  println(Record(value=2).to_json())
+  println(Color.Red.to_json())
+  println(UserId(3).to_json())
+"#,
+    )?;
+    assert_eq!(
+        implemented_traits(&ir, "Payload"),
+        vec!["json.Serialize", "json.Deserialize"]
+    );
+    for owner in ["Record", "Color", "UserId"] {
+        assert_eq!(implemented_traits(&ir, owner), vec!["json.Serialize"], "`{owner}`");
+    }
+    let payload = lowered_struct_derives(&ir, "Payload")?;
+    for capability in ["serde::Serialize", "serde::Deserialize"] {
+        assert!(
+            payload.iter().any(|derive| derive == capability),
+            "the qualified derive derives `{capability}`: {payload:?}"
+        );
+    }
+    let record = lowered_struct_derives(&ir, "Record")?;
+    assert!(
+        record.iter().any(|derive| derive == "serde::Serialize"),
+        "a class's qualified derive derives the capability: {record:?}"
+    );
+
+    let through_submodule = lower_checked_source(
+        r#"
+from std import serde
+
+@derive(serde.json.Serialize)
+model Payload:
+  value: int
+
+def main() -> None:
+  println(Payload(value=1).to_json())
+"#,
+    )?;
+    assert_eq!(
+        implemented_traits(&through_submodule, "Payload"),
+        vec!["serde.json.Serialize"]
+    );
+    let derives = lowered_struct_derives(&through_submodule, "Payload")?;
+    assert!(
+        derives.iter().any(|derive| derive == "serde::Serialize"),
+        "a derive through a submodule derives the capability: {derives:?}"
+    );
+    Ok(())
+}
+
+/// Return the supertraits of the named trait declaration, as Rust paths.
+fn lowered_supertrait_paths(ir: &IrProgram, name: &str) -> Result<Vec<String>, String> {
+    ir.declarations
+        .iter()
+        .find_map(|decl| match &decl.kind {
+            IrDeclKind::Trait(trait_decl) if trait_decl.name == name => {
+                Some(trait_decl.supertraits.iter().map(|(path, _)| path.clone()).collect())
+            }
+            _ => None,
+        })
+        .ok_or_else(|| format!("missing trait `{name}`"))
+}
+
+/// #1845: a `std.serde.json` supertrait lowers to the stdlib trait as written plus its serde capability, under the
+/// bare import, an alias and the module-qualified name, as the same trait in a bound does. The bare spelling used to
+/// lower to `serde::Serialize` alone, which does not provide the `to_json()` a default method calls through it.
+#[test]
+fn json_protocol_supertraits_carry_the_trait_and_its_serde_capability_issue1845() -> Result<(), String> {
+    let spellings = [
+        ("from std.serde.json import Serialize", "Serialize"),
+        ("from std.serde.json import Serialize as JsonSerialize", "JsonSerialize"),
+        ("from std.serde import json", "json.Serialize"),
+    ];
+    for (import, written) in spellings {
+        let ir = lower_checked_source(&format!(
+            r#"
+{import}
+
+trait Loggable with {written}:
+  def log(self) -> str:
+    return self.to_json()
+
+def main() -> None:
+  pass
+"#
+        ))?;
+        assert_eq!(
+            lowered_supertrait_paths(&ir, "Loggable")?,
+            vec![written.to_string(), SERDE_SERIALIZE.to_string()],
+            "`trait Loggable with {written}`"
+        );
+    }
+    Ok(())
+}
+
+/// #1845: a trait an adopter reaches more than once is implemented once. A model that derives `Serialize` and adopts
+/// a trait whose supertrait is `Serialize` used to get two `impl Serialize` blocks (E0119), and so did a model adopting
+/// two traits that share a supertrait, and a model whose derive (or automatic `Clone`) implements a builtin supertrait
+/// of a trait it adopts. An adopter that reaches `Serialize` only through the supertrait derives its serde capability,
+/// as a direct `with Serialize` adoption does.
+#[test]
+fn a_trait_reached_twice_is_implemented_once_issue1845() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+from std.serde.json import Serialize
+
+trait Loggable with Serialize:
+  def log(self) -> str:
+    return self.to_json()
+
+@derive(Serialize)
+model Payload with Loggable:
+  value: int
+
+class Record with Loggable:
+  value: int
+
+trait Named:
+  def name(self) -> str:
+    return "shared"
+
+trait First with Named:
+  def first(self) -> int:
+    return 1
+
+trait Second with Named:
+  def second(self) -> int:
+    return 2
+
+model Both with First, Second:
+  value: int
+
+trait Keyed with Eq:
+  def key(self) -> int:
+    return 1
+
+@derive(Eq)
+model Key with Keyed:
+  value: int
+
+trait Copyable with Clone:
+  def dup(self) -> Self:
+    return self.clone()
+
+model Copied with Copyable:
+  value: int
+
+def main() -> None:
+  println(Payload(value=1).log())
+  println(Record(value=2).log())
+  println(Both(value=0).first() + Both(value=0).second())
+  println(Key(value=3).key())
+  println(Copied(value=4).dup().value)
+"#,
+    )?;
+    assert_eq!(implemented_traits(&ir, "Payload"), vec!["Loggable", "Serialize"]);
+    assert_eq!(implemented_traits(&ir, "Record"), vec!["Loggable", "Serialize"]);
+    assert_eq!(implemented_traits(&ir, "Both"), vec!["First", "Named", "Second"]);
+    assert_eq!(
+        implemented_traits(&ir, "Key"),
+        vec!["Keyed"],
+        "a derived `Eq` is not implemented again through the supertrait"
+    );
+    assert_eq!(
+        implemented_traits(&ir, "Copied"),
+        vec!["Copyable"],
+        "a model's automatic `Clone` is not implemented again through the supertrait"
+    );
+    let record = lowered_struct_derives(&ir, "Record")?;
+    assert!(
+        record.iter().any(|derive| derive == "serde::Serialize"),
+        "an adopter reaching `Serialize` through a supertrait derives its capability: {record:?}"
+    );
+    Ok(())
+}

@@ -1,0 +1,33 @@
+# behavior: a module's own class ValidationError, model Json and model Query are constructed as those declarations, and a ValidationError and FieldInfo imported from the program's own module keep their own fields
+# expect-stdout:
+#   age: negative
+#   custom
+#   {}
+#   q
+
+from models import FieldInfo, ValidationError, bad_age, info
+
+
+model Json:
+    body: str
+
+
+model Query:
+    text: str
+
+
+def describe(error: ValidationError) -> str:
+    return error.field + ": " + error.reason
+
+
+def label_of(item: FieldInfo) -> str:
+    return item.label
+
+
+def main() -> None:
+    println(describe(bad_age()))
+    println(label_of(info("custom")))
+    payload = Json(body="{}")
+    println(payload.body)
+    query = Query(text="q")
+    println(query.text)

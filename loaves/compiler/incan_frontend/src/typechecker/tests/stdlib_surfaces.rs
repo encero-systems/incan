@@ -30,6 +30,33 @@ def use_body(body: Json[CreateUser]) -> str:
     assert!(check_str(source).is_ok());
 }
 
+/// #1824: a web surface type reached through a module binding names the same compiler-known type as a direct import,
+/// including generic wrappers and the `from std import web` module spelling.
+#[test]
+fn module_qualified_web_surface_types_are_accepted_issue1824() {
+    assert_check_ok(
+        r#"
+import std.web as web
+from std.web import Html, Json
+
+def render(value: str) -> web.Html:
+  return Html(value)
+
+def payload(value: int) -> web.Json[int]:
+  return Json(value)
+"#,
+    );
+    assert_check_ok(
+        r#"
+from std import web
+from std.web import Html
+
+def render(value: str) -> web.Html:
+  return Html(value)
+"#,
+    );
+}
+
 #[test]
 fn test_web_wrapper_invalid_constructor_args() {
     let source = r#"

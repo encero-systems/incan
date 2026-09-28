@@ -3,15 +3,16 @@
 //! `count` is both a list method (`items.count(value)`, how many items equal `value`) and an iterator terminal
 //! (`items.count()`, how many items there are). Both are valid on a list, and the argument count picks one: no argument
 //! is the terminal, one value is the list method. `index(value)` has only the list form. A call whose argument count
-//! fits no form is refused with a diagnostic naming the forms that exist. This is resolution between two builtin
-//! surfaces, not overloading of user-declared methods.
+//! fits no form is refused with a diagnostic naming the forms that exist. Every argument is positional, as for every
+//! builtin collection method (#1783). This is resolution between two builtin surfaces, not overloading of
+//! user-declared methods.
 
 use crate::ast::{CallArg, Span};
 use crate::diagnostics::errors;
 use crate::symbols::ResolvedType;
 use crate::typechecker::helpers::collection_type_id;
 use incan_lang::lang::surface::{iterator_methods, list_methods};
-use incan_lang::lang::types::collections::CollectionTypeId;
+use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
 use super::TypeChecker;
 
@@ -45,6 +46,8 @@ impl TypeChecker {
             _ => return None,
         };
         let iterator_form = iterator_methods::from_str(method).is_some_and(iterator_methods::is_terminal);
+        let callee = format!("{}.{method}", collections::as_str(CollectionTypeId::List));
+        self.refuse_non_positional_builtin_args(&callee, args);
 
         if args.is_empty() && iterator_form {
             return self.resolve_iterator_protocol_method_call(base_ty, method, args, arg_types, span);

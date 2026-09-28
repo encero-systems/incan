@@ -7,7 +7,7 @@
 use core::fmt::Write as _;
 use core::fmt::{self, Display};
 
-use incan_lang::errors::{ErrorKind, IncanError};
+use incan_lang::errors::{ErrorKind, IncanError, ZeroDivisionOperation};
 use incan_lang::lang;
 
 /// Raise a runtime error (implemented as a panic) with canonical formatting.
@@ -90,11 +90,12 @@ pub fn raise_key_error(msg: &str) -> ! {
     raise(IncanError::with_message(ErrorKind::KeyError, msg))
 }
 
-/// Raise a canonical `ZeroDivisionError: float division by zero`.
+/// Raise a canonical `ZeroDivisionError` carrying the message for the operator and operand family that met the zero
+/// divisor (`division by zero`, `integer division or modulo by zero`, `float division by zero`, ...).
 #[cold]
 #[track_caller]
-pub fn raise_zero_division() -> ! {
-    raise(IncanError::zero_division())
+pub fn raise_zero_division(operation: ZeroDivisionOperation) -> ! {
+    raise(IncanError::zero_division(operation))
 }
 
 /// Raise a Python-like JSON serialization error.

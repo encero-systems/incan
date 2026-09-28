@@ -1,7 +1,10 @@
 //! A literal takes the type its destination expects: the elements of a tuple literal take the destination's element
 //! types (#1847), a list or dict literal inside an `Option` or union destination takes that destination's collection
 //! type, or is refused when the destination holds two such types and the literal's elements do not say which (#1832),
-//! and an integer literal in a float slot takes the float type (#1831), for a declaration and a reassignment alike.
+//! and an integer literal in a float slot takes the float type (#1831), for a declaration and a reassignment alike, an
+//! element or dict value assignment (#1854), an `Option` or union destination, a builtin method argument and a generic
+//! call argument (#1859). A value written to an `Option` place records that place's type (#1858), and an empty
+//! literal passed to a generic parameter takes the call's instantiation or is refused when nothing binds it (#1862).
 
 use super::*;
 
@@ -32,6 +35,24 @@ fn recorded_type<'checker>(
         .type_info()
         .expr_type(Span::new(start, start + text.len()))
         .ok_or_else(|| format!("no type recorded for `{text}` after `{after}`"))
+}
+
+/// Return the `Option` place type the checker recorded for the value written at the first appearance of `text` after
+/// `after` in `source`.
+fn recorded_option_destination<'checker>(
+    checker: &'checker TypeChecker,
+    source: &str,
+    after: &str,
+    text: &str,
+) -> Result<Option<&'checker ResolvedType>, String> {
+    let anchor = source.find(after).ok_or_else(|| format!("missing `{after}`"))?;
+    let start = source[anchor..]
+        .find(text)
+        .map(|offset| anchor + offset)
+        .ok_or_else(|| format!("missing `{text}` after `{after}`"))?;
+    Ok(checker
+        .type_info()
+        .value_destination_type(Span::new(start, start + text.len())))
 }
 
 /// Build `name[args...]` for a builtin collection type.
@@ -294,5 +315,265 @@ def main() -> None:
             .any(|error| error.message.contains("Assignment to 'f' has type mismatch")),
         "expected the int value to be refused, got {errors:?}"
     );
+    Ok(())
+}
+
+/// #1854: an integer literal written to an element of a `list[float]` takes the float type, as it does in the list's
+/// declaration, through a negation, a nested list and an `f32` element, and so does one written to a value of a
+/// `dict[str, float]`; an `int` value written to such an element is still refused.
+#[test]
+fn integer_literal_written_to_a_float_element_takes_the_float_type_issue1854() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+    mut xs: list[float] = [1, 2]
+    xs[0] = 3
+    xs[1] = -4
+    mut grid: list[list[float]] = [[1.5]]
+    grid[0][0] = 5
+    mut narrow: list[f32] = [1.5]
+    narrow[0] = 6
+    mut scores: dict[str, float] = {}
+    scores["a"] = 7
+    println(xs[0] + grid[0][0] + scores["a"])
+"#;
+    let checker = checked(source)?;
+    assert_eq!(recorded_type(&checker, source, "xs[0] = ", "3")?, &ResolvedType::Float);
+    assert_eq!(recorded_type(&checker, source, "xs[1] = ", "-4")?, &ResolvedType::Float);
+    assert_eq!(
+        recorded_type(&checker, source, "grid[0][0] = ", "5")?,
+        &ResolvedType::Float
+    );
+    assert_eq!(
+        recorded_type(&checker, source, "narrow[0] = ", "6")?,
+        &ResolvedType::Numeric(NumericTypeId::F32)
+    );
+    assert_eq!(
+        recorded_type(&checker, source, "scores[\"a\"] = ", "7")?,
+        &ResolvedType::Float
+    );
+
+    let errors = check_str_err(
+        "def main() -> None:\n    n = 1\n    mut xs: list[float] = [0.5]\n    xs[0] = n\n",
+        "an int value written to a float element must be refused",
+    );
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Cannot assign 'int' to collection element of type 'float'")),
+        "expected the int value to be refused, got {errors:?}"
+    );
+    Ok(())
+}
+
+/// #1858: a value of an `Option`'s payload type written to an `Option` place records the place's type, for a
+/// `return`, through a type alias, a field assignment, a constructor field and an element assignment; a value already
+/// of the place's type records it too, and a value written to a place that is not an `Option` records nothing.
+#[test]
+fn value_written_to_an_option_place_records_the_place_type_issue1858() -> Result<(), String> {
+    let source = r#"
+type MaybeInt = Option[int]
+
+model Box:
+    items: Option[list[int]] = None
+    count: Option[int] = None
+    total: int = 0
+
+
+def make() -> Option[int]:
+    return 5
+
+
+def aliased() -> MaybeInt:
+    return 6
+
+
+def main() -> None:
+    mut box = Box(count=7)
+    box.items = [1]
+    box.total = 8
+    mut slots: list[Option[int]] = [None]
+    slots[0] = 9
+    box.count = Some(10)
+    println(make().unwrap_or(0) + aliased().unwrap_or(0) + box.total + slots[0].unwrap_or(0))
+"#;
+    let checker = checked(source)?;
+    let option_int = option(ResolvedType::Int);
+    assert_eq!(
+        recorded_option_destination(&checker, source, "return ", "5")?,
+        Some(&option_int)
+    );
+    assert_eq!(
+        recorded_option_destination(&checker, source, "def aliased", "6")?,
+        Some(&option_int)
+    );
+    assert_eq!(
+        recorded_option_destination(&checker, source, "count=", "7")?,
+        Some(&option_int)
+    );
+    assert_eq!(
+        recorded_option_destination(&checker, source, "box.items = ", "[1]")?,
+        Some(&option(list(ResolvedType::Int)))
+    );
+    assert_eq!(
+        recorded_option_destination(&checker, source, "slots[0] = ", "9")?,
+        Some(&option_int)
+    );
+    assert_eq!(
+        recorded_option_destination(&checker, source, "box.count = ", "Some(10)")?,
+        Some(&option_int)
+    );
+    assert_eq!(
+        recorded_option_destination(&checker, source, "box.total = ", "8")?,
+        None
+    );
+    Ok(())
+}
+
+/// #1859: an integer literal takes the float type of a float slot at an `Option[float]` or `float | str` destination,
+/// an `Option[float]` parameter, the payload of `Ok` at a `Result[float, str]`, the argument of `append` on a
+/// `list[float]`, `insert` on a `dict[str, float]` and `unwrap_or` on an `Option[float]`, the exponent of `powf`, and
+/// an argument of a generic call whose other argument binds its type parameter to `float`, whichever comes first; at a
+/// destination holding `int` it stays an `int`.
+#[test]
+fn integer_literal_takes_the_float_type_in_more_float_slots_issue1859() -> Result<(), String> {
+    let source = r#"
+def pick[T](a: T, b: T) -> T:
+    return a
+
+
+def takes(value: Option[float]) -> float:
+    return value.unwrap_or(0.0)
+
+
+def main() -> None:
+    x = 1.5
+    squared = x.powf(2)
+    maybe: Option[float] = 3
+    either: float | str = 4
+    result: Result[float, str] = Ok(5)
+    mut xs: list[float] = []
+    xs.append(6)
+    mut d: dict[str, float] = {}
+    d.insert("k", 7)
+    fallback = maybe.unwrap_or(8)
+    first = pick(2.5, 9)
+    second = pick(10, 2.5)
+    wide: int | float = 11
+    println(squared + takes(12) + fallback + first + second + xs[0] + d["k"] + result.unwrap_or(0.0))
+"#;
+    let checker = checked(source)?;
+    for (after, literal) in [
+        ("powf(", "2"),
+        ("maybe: Option[float] = ", "3"),
+        ("either: float | str = ", "4"),
+        ("Ok(", "5"),
+        ("append(", "6"),
+        ("insert(\"k\", ", "7"),
+        ("maybe.unwrap_or(", "8"),
+        ("pick(2.5, ", "9"),
+        ("second = pick(", "10"),
+        ("takes(", "12"),
+    ] {
+        assert_eq!(
+            recorded_type(&checker, source, after, literal)?,
+            &ResolvedType::Float,
+            "`{literal}` after `{after}` must take the float type"
+        );
+    }
+    assert_eq!(
+        recorded_type(&checker, source, "wide: int | float = ", "11")?,
+        &ResolvedType::Int
+    );
+    Ok(())
+}
+
+/// A string literal takes the sole `FrozenStr` member of a union destination in returns, arguments, and bindings.
+#[test]
+fn string_literal_takes_frozen_str_union_member_followups_a() -> Result<(), String> {
+    let source = r#"
+def frozen() -> FrozenStr | int:
+    return "lit"
+
+
+def takes(value: FrozenStr | int) -> None:
+    return
+
+
+def main() -> None:
+    value: FrozenStr | int = "bound"
+    takes("arg")
+"#;
+    let checker = checked(source)?;
+    for (after, literal) in [("return ", "\"lit\""), ("value:", "\"bound\""), ("takes(", "\"arg\"")] {
+        assert_eq!(
+            recorded_type(&checker, source, after, literal)?,
+            &ResolvedType::FrozenStr
+        );
+    }
+    Ok(())
+}
+
+/// #1862: an empty list literal passed to a generic `list[T]` parameter takes the element type another argument binds
+/// or the explicit type argument names, and keeps a type parameter of the caller's own body that the call passes on;
+/// when nothing binds `T`, the literal is refused at its own span, for an `Option[list[T]]` parameter and an empty
+/// dict literal too.
+#[test]
+fn empty_literal_argument_takes_the_generic_instantiation_issue1862() -> Result<(), String> {
+    let source = r#"
+def first_or[T](items: list[T], default: T) -> T:
+    return default
+
+
+def count[T](items: list[T]) -> int:
+    return len(items)
+
+
+def outer[T](value: T) -> T:
+    return first_or([], value)
+
+
+def main() -> None:
+    println(first_or([], 5))
+    println(count[str]([]))
+    println(outer(3))
+"#;
+    let checker = checked(source)?;
+    assert_eq!(
+        recorded_type(&checker, source, "println(first_or(", "[]")?,
+        &list(ResolvedType::Int)
+    );
+    assert_eq!(
+        recorded_type(&checker, source, "count[str](", "[]")?,
+        &list(ResolvedType::Str)
+    );
+    assert_eq!(
+        recorded_type(&checker, source, "return first_or(", "[]")?,
+        &list(ResolvedType::Named("T".to_string()))
+    );
+
+    for (source, literal) in [
+        (
+            "def count[T](items: list[T]) -> int:\n    return len(items)\n\ndef main() -> None:\n    println(count([]))\n",
+            "[]",
+        ),
+        (
+            "def count[T](items: Option[list[T]]) -> int:\n    return 0\n\ndef main() -> None:\n    println(count([]))\n",
+            "[]",
+        ),
+        (
+            "def size[K, V](items: dict[K, V]) -> int:\n    return len(items)\n\ndef main() -> None:\n    println(size({}))\n",
+            "{}",
+        ),
+    ] {
+        let errors = check_str_err(source, "an empty literal leaving a type parameter open must be refused");
+        let start = source.rfind(literal).ok_or("missing refused literal")?;
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("Cannot infer type parameter")
+                    && error.span == Span::new(start, start + literal.len())),
+            "expected `{literal}` to be refused at its own span in:\n{source}\ngot {errors:?}"
+        );
+    }
     Ok(())
 }

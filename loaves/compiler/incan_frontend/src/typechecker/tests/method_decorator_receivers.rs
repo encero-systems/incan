@@ -783,3 +783,50 @@ def main() -> int:
     );
     Ok(())
 }
+
+/// Issue #1836: methods publish the `mut` marker on their parameters just as functions do, so consumers enforce
+/// caller-visible mutation and lower the call with the same argument policy as the producer.
+#[test]
+fn mut_marker_on_compiled_library_methods_issue1836() -> Result<(), Box<dyn std::error::Error>> {
+    let producer = parse_program(
+        r#"
+pub class Bag:
+  def add_to(self, mut items: list[int]) -> None:
+    items.append(1)
+
+pub model Holder:
+  value: int
+
+  def fill(self, mut items: list[int]) -> None:
+    items.append(self.value)
+"#,
+        "issue1836 method marker producer",
+    );
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["lib".to_string()]));
+    checker.set_current_package_identity(Some("bags".to_string()));
+    checker
+        .check_program(&producer)
+        .map_err(|errs| format!("producer check failed: {errs:?}"))?;
+    let exports = crate::library_exports::collect_checked_public_exports(&producer, &checker);
+    let json = LibraryManifest::from_checked_exports("bags", "0.1.0", &exports).to_json_string()?;
+    let manifest = LibraryManifest::from_json_str(&json)?;
+
+    let class_method = manifest
+        .exports
+        .classes
+        .iter()
+        .find(|class| class.name == "Bag")
+        .and_then(|class| class.methods.iter().find(|method| method.name == "add_to"))
+        .ok_or("missing `Bag.add_to`")?;
+    let model_method = manifest
+        .exports
+        .models
+        .iter()
+        .find(|model| model.name == "Holder")
+        .and_then(|model| model.methods.iter().find(|method| method.name == "fill"))
+        .ok_or("missing `Holder.fill`")?;
+    assert_eq!(class_method.params.first().map(|param| param.is_mut), Some(true));
+    assert_eq!(model_method.params.first().map(|param| param.is_mut), Some(true));
+    Ok(())
+}

@@ -1,0 +1,26 @@
+# behavior: dict.get(key, default) is the value, or the default when no entry holds the key, on a module static and on a local dict
+# retires: loaves/compiler/incan_emit/src/tests/reads_and_iterator_surface.rs::dict_get_with_default_reads_the_value
+# expect-stdout:
+#   2
+#   1
+#   0
+#   ex
+#   none
+
+static counts: dict[str, int] = {}
+
+
+def record(name: str) -> None:
+    counts[name] = counts.get(name, 0) + 1
+
+
+def main() -> None:
+    record("a")
+    record("a")
+    record("b")
+    println(counts["a"])
+    println(counts.get("b", 0))
+    println(counts.get("missing", 0))
+    labels = {"x": "ex"}
+    println(labels.get("x", "none"))
+    println(labels.get("y", "none"))

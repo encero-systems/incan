@@ -165,6 +165,11 @@ impl<T, I: Iterator<T> + ?Sized> Iterator<T> for &mut I {
         (**self).__next__()
     }
 }
+impl<T> Iterator<T> for incan_std_core::iter::Generator<T> {
+    fn __next__(&mut self) -> Option<T> {
+        ::std::iter::Iterator::next(self)
+    }
+}
 /// Single-pass iteration that can fail while fetching the next item.
 ///
 /// `__next__` returns `Ok(Some(item))` for a value, `Ok(None)` for ordinary exhaustion, and `Err(error)` for a
@@ -926,8 +931,8 @@ for FilterFallibleIterator<T, E, Source, StoredPredicate> {
 }
 impl<
     T: Clone,
-    E: Clone,
-    Source: FallibleIterator<T, E> + Clone,
+    E,
+    Source: FallibleIterator<T, E>,
     StoredPredicate: Clone + Callable1<T, bool>,
 > FilterFallibleIterator<T, E, Source, StoredPredicate> {
     /// Return the next accepted item, ordinary exhaustion, or source error.
@@ -1000,8 +1005,8 @@ impl<
 }
 impl<
     T: Clone,
-    E: Clone,
-    Source: FallibleIterator<T, E> + Clone,
+    E,
+    Source: FallibleIterator<T, E>,
     StoredPredicate: Clone + Callable1<T, bool>,
 > FilterFallibleIterator<T, E, Source, StoredPredicate> {
     #[inline(never)]
@@ -1380,8 +1385,8 @@ for FlatMapFallibleIterator<T, E, Source, Output, StoredExpand> {
 }
 impl<
     T: Clone,
-    E: Clone,
-    Source: FallibleIterator<T, E> + Clone,
+    E,
+    Source: FallibleIterator<T, E>,
     Output: Clone,
     StoredExpand: Clone + Callable1<T, Vec<Output>>,
 > FlatMapFallibleIterator<T, E, Source, Output, StoredExpand> {
@@ -1481,8 +1486,8 @@ impl<
 }
 impl<
     T: Clone,
-    E: Clone,
-    Source: FallibleIterator<T, E> + Clone,
+    E,
+    Source: FallibleIterator<T, E>,
     Output: Clone,
     StoredExpand: Clone + Callable1<T, Vec<Output>>,
 > FlatMapFallibleIterator<T, E, Source, Output, StoredExpand> {
@@ -2250,8 +2255,8 @@ for InspectFallibleIterator<T, E, Source, StoredObserver> {
 }
 impl<
     T: Clone,
-    E: Clone,
-    Source: FallibleIterator<T, E> + Clone,
+    E,
+    Source: FallibleIterator<T, E>,
     StoredObserver: Clone + Callable1<T, ()>,
 > InspectFallibleIterator<T, E, Source, StoredObserver> {
     /// Observe and return one successful item, or forward exhaustion or error.
@@ -2321,8 +2326,8 @@ impl<
 }
 impl<
     T: Clone,
-    E: Clone,
-    Source: FallibleIterator<T, E> + Clone,
+    E,
+    Source: FallibleIterator<T, E>,
     StoredObserver: Clone + Callable1<T, ()>,
 > InspectFallibleIterator<T, E, Source, StoredObserver> {
     #[inline(never)]
@@ -3159,9 +3164,9 @@ for InspectErrFallibleIterator<T, E, Source, StoredErrorObserver> {
     }
 }
 impl<
-    T: Clone,
+    T,
     E: Clone,
-    Source: FallibleIterator<T, E> + Clone,
+    Source: FallibleIterator<T, E>,
     StoredErrorObserver: Clone + Callable1<E, ()>,
 > InspectErrFallibleIterator<T, E, Source, StoredErrorObserver> {
     /// Observe and return one source error, or forward an item or exhaustion.
@@ -3227,9 +3232,9 @@ impl<
     }
 }
 impl<
-    T: Clone,
+    T,
     E: Clone,
-    Source: FallibleIterator<T, E> + Clone,
+    Source: FallibleIterator<T, E>,
     StoredErrorObserver: Clone + Callable1<E, ()>,
 > InspectErrFallibleIterator<T, E, Source, StoredErrorObserver> {
     #[inline(never)]
@@ -3667,7 +3672,7 @@ for FilterIterator<T, Source> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone, Source: Iterator<T> + Clone> FilterIterator<T, Source> {
+impl<T: Clone, Source: Iterator<T>> FilterIterator<T, Source> {
     /// Return the next source item accepted by the predicate.
     pub fn __next__(&mut self) -> Option<T> {
         let _ = "\n        Return the next source item accepted by the predicate.\n        ";
@@ -3712,13 +3717,13 @@ impl<T: Clone, Source: Iterator<T> + Clone> FilterIterator<T, Source> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone, Source: Iterator<T> + Clone> FilterIterator<T, Source> {
+impl<T: Clone, Source: Iterator<T>> FilterIterator<T, Source> {
     #[inline(never)]
     pub fn __next__(&mut self) -> Option<T> {
         self.__next__()
     }
 }
-impl<T: Clone, Source: Iterator<T> + Clone> Iterator<T> for FilterIterator<T, Source> {
+impl<T: Clone, Source: Iterator<T>> Iterator<T> for FilterIterator<T, Source> {
     fn __next__(&mut self) -> Option<T> {
         let _ = "\n        Return the next source item accepted by the predicate.\n        ";
         loop {
@@ -3738,37 +3743,63 @@ impl<T: Clone, Source: Iterator<T> + Clone> Iterator<T> for FilterIterator<T, So
 }
 /// Lazy state for `Iterator.flat_map()`.
 ///
-/// Maintains the currently active nested iterator so nested values are yielded
-/// before another source item is expanded.
+/// `current` holds the nested iterator of the latest expansion, as its only
+/// item, while that iterator may still yield, and is empty otherwise. Each
+/// request polls the nested iterator for one item, so an expansion is never
+/// collected ahead of the consumer and is advanced no further than the items
+/// requested. The next source item is expanded only once the nested iterator
+/// is exhausted.
+///
+/// The marker field preserves the item type in generated metadata and is
+/// never inspected while polling.
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
-pub struct FlatMapIterator<T, Source: Iterator<T>, U> {
+pub struct FlatMapIterator<T, Source: Iterator<T>, U, Nested: Iterator<U>> {
     pub source: Source,
-    pub f: fn(T) -> Vec<U>,
-    pub current: Vec<U>,
-    pub index: i64,
+    pub f: fn(T) -> Nested,
+    pub current: Vec<Nested>,
+    pub marker: Option<U>,
 }
-impl<T, Source: Iterator<T>, U> incan_std_core::reflection::HasClassName
-for FlatMapIterator<T, Source, U> {
+impl<
+    T,
+    Source: Iterator<T>,
+    U,
+    Nested: Iterator<U>,
+> incan_std_core::reflection::HasClassName for FlatMapIterator<T, Source, U, Nested> {
     fn __class_name__(&self) -> &'static str {
         <Self as incan_std_core::reflection::HasTypeClassName>::__class_name__()
     }
 }
-impl<T, Source: Iterator<T>, U> incan_std_core::reflection::HasTypeClassName
-for FlatMapIterator<T, Source, U> {
+impl<
+    T,
+    Source: Iterator<T>,
+    U,
+    Nested: Iterator<U>,
+> incan_std_core::reflection::HasTypeClassName
+for FlatMapIterator<T, Source, U, Nested> {
     fn __class_name__() -> &'static str {
         "FlatMapIterator"
     }
 }
-impl<T, Source: Iterator<T>, U> incan_std_core::reflection::HasFieldMetadata
-for FlatMapIterator<T, Source, U> {
+impl<
+    T,
+    Source: Iterator<T>,
+    U,
+    Nested: Iterator<U>,
+> incan_std_core::reflection::HasFieldMetadata
+for FlatMapIterator<T, Source, U, Nested> {
     fn __fields__(
         &self,
     ) -> incan_std_core::frozen::FrozenList<incan_std_core::reflection::FieldInfo> {
         <Self as incan_std_core::reflection::HasTypeFieldMetadata>::__fields__()
     }
 }
-impl<T, Source: Iterator<T>, U> incan_std_core::reflection::HasTypeFieldMetadata
-for FlatMapIterator<T, Source, U> {
+impl<
+    T,
+    Source: Iterator<T>,
+    U,
+    Nested: Iterator<U>,
+> incan_std_core::reflection::HasTypeFieldMetadata
+for FlatMapIterator<T, Source, U, Nested> {
     fn __fields__() -> incan_std_core::frozen::FrozenList<
         incan_std_core::reflection::FieldInfo,
     > {
@@ -3787,7 +3818,7 @@ for FlatMapIterator<T, Source, U> {
                 alias: None,
                 description: None,
                 wire_name: incan_std_core::frozen::FrozenStr::new("f"),
-                type_name: incan_std_core::frozen::FrozenStr::new("(T) -> list[U]"),
+                type_name: incan_std_core::frozen::FrozenStr::new("(T) -> Nested"),
                 has_default: false,
                 extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
@@ -3796,48 +3827,62 @@ for FlatMapIterator<T, Source, U> {
                 alias: None,
                 description: None,
                 wire_name: incan_std_core::frozen::FrozenStr::new("current"),
-                type_name: incan_std_core::frozen::FrozenStr::new("list[U]"),
+                type_name: incan_std_core::frozen::FrozenStr::new("list[Nested]"),
                 has_default: false,
                 extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
             incan_std_core::reflection::FieldInfo {
-                name: incan_std_core::frozen::FrozenStr::new("index"),
+                name: incan_std_core::frozen::FrozenStr::new("marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_std_core::frozen::FrozenStr::new("index"),
-                type_name: incan_std_core::frozen::FrozenStr::new("int"),
-                has_default: false,
+                wire_name: incan_std_core::frozen::FrozenStr::new("marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[U]"),
+                has_default: true,
                 extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone, Source: Iterator<T> + Clone, U: Clone> FlatMapIterator<T, Source, U> {
-    /// Return the next item from the current nested list, or open a new one.
+impl<
+    T: Clone,
+    Source: Iterator<T>,
+    U,
+    Nested: Iterator<U>,
+> FlatMapIterator<T, Source, U, Nested> {
+    /// Return the next item of the open nested iterator, expanding source items until one yields.
     pub fn __next__(&mut self) -> Option<U> {
-        let _ = "\n        Return the next item from the current nested list, or open a new one.\n        ";
+        let _ = "\n        Return the next item of the open nested iterator, expanding source items until one yields.\n        ";
         loop {
-            if self.index < ::std::convert::identity(self.current.len() as i64) {
-                let item = incan_std_core::collections::list_get(
-                        &self.current,
-                        (self.index) as i64,
-                    )
-                    .clone();
-                self.index = self.index + 1;
-                return Some(item);
+            if ::std::convert::identity(self.current.len() as i64) > 0 {
+                let mut nested = incan_std_core::collections::__private::list_pop(
+                    &mut self.current,
+                );
+                let _ = match nested.__next__() {
+                    Some(item) => {
+                        return self._keep_open(nested, item);
+                    }
+                    None => {
+                        let _ = ();
+                    }
+                };
             }
             let _ = match self.source.__next__() {
                 Some(item) => {
                     let f = self.f.clone();
-                    self.current = f(item.clone());
-                    self.index = 0;
+                    let _ = self.current.push(f(item.clone()));
                 }
                 None => {
                     return None::<_>;
                 }
             };
         }
+    }
+    /// Keep `iterator` as the open nested iterator and return `item`, the item it just yielded.
+    pub fn _keep_open(&mut self, iterator: Nested, item: U) -> Option<U> {
+        let _ = "\n        Keep `iterator` as the open nested iterator and return `item`, the item it just yielded.\n        ";
+        self.current = vec![iterator];
+        return Some(item);
     }
     /// Returns field metadata for this type.
     pub fn __fields__(
@@ -3858,7 +3903,7 @@ impl<T: Clone, Source: Iterator<T> + Clone, U: Clone> FlatMapIterator<T, Source,
                 alias: None,
                 description: None,
                 wire_name: incan_std_core::frozen::FrozenStr::new("f"),
-                type_name: incan_std_core::frozen::FrozenStr::new("(T) -> list[U]"),
+                type_name: incan_std_core::frozen::FrozenStr::new("(T) -> Nested"),
                 has_default: false,
                 extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
@@ -3867,48 +3912,56 @@ impl<T: Clone, Source: Iterator<T> + Clone, U: Clone> FlatMapIterator<T, Source,
                 alias: None,
                 description: None,
                 wire_name: incan_std_core::frozen::FrozenStr::new("current"),
-                type_name: incan_std_core::frozen::FrozenStr::new("list[U]"),
+                type_name: incan_std_core::frozen::FrozenStr::new("list[Nested]"),
                 has_default: false,
                 extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
             incan_std_core::reflection::FieldInfo {
-                name: incan_std_core::frozen::FrozenStr::new("index"),
+                name: incan_std_core::frozen::FrozenStr::new("marker"),
                 alias: None,
                 description: None,
-                wire_name: incan_std_core::frozen::FrozenStr::new("index"),
-                type_name: incan_std_core::frozen::FrozenStr::new("int"),
-                has_default: false,
+                wire_name: incan_std_core::frozen::FrozenStr::new("marker"),
+                type_name: incan_std_core::frozen::FrozenStr::new("Option[U]"),
+                has_default: true,
                 extra: incan_std_core::frozen::FrozenDict::new(&[]),
             },
         ];
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone, Source: Iterator<T> + Clone, U: Clone> FlatMapIterator<T, Source, U> {
+impl<
+    T: Clone,
+    Source: Iterator<T>,
+    U,
+    Nested: Iterator<U>,
+> FlatMapIterator<T, Source, U, Nested> {
     #[inline(never)]
     pub fn __next__(&mut self) -> Option<U> {
         self.__next__()
     }
 }
-impl<T: Clone, Source: Iterator<T> + Clone, U: Clone> Iterator<U>
-for FlatMapIterator<T, Source, U> {
+impl<T: Clone, Source: Iterator<T>, U, Nested: Iterator<U>> Iterator<U>
+for FlatMapIterator<T, Source, U, Nested> {
     fn __next__(&mut self) -> Option<U> {
-        let _ = "\n        Return the next item from the current nested list, or open a new one.\n        ";
+        let _ = "\n        Return the next item of the open nested iterator, expanding source items until one yields.\n        ";
         loop {
-            if self.index < ::std::convert::identity(self.current.len() as i64) {
-                let item = incan_std_core::collections::list_get(
-                        &self.current,
-                        (self.index) as i64,
-                    )
-                    .clone();
-                self.index = self.index + 1;
-                return Some(item);
+            if ::std::convert::identity(self.current.len() as i64) > 0 {
+                let mut nested = incan_std_core::collections::__private::list_pop(
+                    &mut self.current,
+                );
+                let _ = match nested.__next__() {
+                    Some(item) => {
+                        return self._keep_open(nested, item);
+                    }
+                    None => {
+                        let _ = ();
+                    }
+                };
             }
             let _ = match self.source.__next__() {
                 Some(item) => {
                     let f = self.f.clone();
-                    self.current = f(item.clone());
-                    self.index = 0;
+                    let _ = self.current.push(f(item.clone()));
                 }
                 None => {
                     return None::<_>;
@@ -4744,7 +4797,7 @@ for TakeWhileIterator<T, Source> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone, Source: Iterator<T> + Clone> TakeWhileIterator<T, Source> {
+impl<T: Clone, Source: Iterator<T>> TakeWhileIterator<T, Source> {
     /// Yield source items until the predicate rejects one.
     pub fn __next__(&mut self) -> Option<T> {
         let _ = "\n        Yield source items until the predicate rejects one.\n        ";
@@ -4802,14 +4855,13 @@ impl<T: Clone, Source: Iterator<T> + Clone> TakeWhileIterator<T, Source> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone, Source: Iterator<T> + Clone> TakeWhileIterator<T, Source> {
+impl<T: Clone, Source: Iterator<T>> TakeWhileIterator<T, Source> {
     #[inline(never)]
     pub fn __next__(&mut self) -> Option<T> {
         self.__next__()
     }
 }
-impl<T: Clone, Source: Iterator<T> + Clone> Iterator<T>
-for TakeWhileIterator<T, Source> {
+impl<T: Clone, Source: Iterator<T>> Iterator<T> for TakeWhileIterator<T, Source> {
     fn __next__(&mut self) -> Option<T> {
         let _ = "\n        Yield source items until the predicate rejects one.\n        ";
         if self.done {
@@ -4895,7 +4947,7 @@ for SkipWhileIterator<T, Source> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone, Source: Iterator<T> + Clone> SkipWhileIterator<T, Source> {
+impl<T: Clone, Source: Iterator<T>> SkipWhileIterator<T, Source> {
     /// Discard source items until the predicate rejects one, then yield normally.
     pub fn __next__(&mut self) -> Option<T> {
         let _ = "\n        Discard source items until the predicate rejects one, then yield normally.\n        ";
@@ -4951,14 +5003,13 @@ impl<T: Clone, Source: Iterator<T> + Clone> SkipWhileIterator<T, Source> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone, Source: Iterator<T> + Clone> SkipWhileIterator<T, Source> {
+impl<T: Clone, Source: Iterator<T>> SkipWhileIterator<T, Source> {
     #[inline(never)]
     pub fn __next__(&mut self) -> Option<T> {
         self.__next__()
     }
 }
-impl<T: Clone, Source: Iterator<T> + Clone> Iterator<T>
-for SkipWhileIterator<T, Source> {
+impl<T: Clone, Source: Iterator<T>> Iterator<T> for SkipWhileIterator<T, Source> {
     fn __next__(&mut self) -> Option<T> {
         let _ = "\n        Discard source items until the predicate rejects one, then yield normally.\n        ";
         while self.skipping {
@@ -5045,7 +5096,7 @@ for BatchIterator<T, Source> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone, Source: Iterator<T> + Clone> BatchIterator<T, Source> {
+impl<T: Clone, Source: Iterator<T>> BatchIterator<T, Source> {
     /// Build and return the next non-empty batch.
     pub fn __next__(&mut self) -> Option<Vec<T>> {
         let _ = "\n        Build and return the next non-empty batch.\n        ";
@@ -5102,14 +5153,13 @@ impl<T: Clone, Source: Iterator<T> + Clone> BatchIterator<T, Source> {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl<T: Clone, Source: Iterator<T> + Clone> BatchIterator<T, Source> {
+impl<T: Clone, Source: Iterator<T>> BatchIterator<T, Source> {
     #[inline(never)]
     pub fn __next__(&mut self) -> Option<Vec<T>> {
         self.__next__()
     }
 }
-impl<T: Clone, Source: Iterator<T> + Clone> Iterator<Vec<T>>
-for BatchIterator<T, Source> {
+impl<T: Clone, Source: Iterator<T>> Iterator<Vec<T>> for BatchIterator<T, Source> {
     fn __next__(&mut self) -> Option<Vec<T>> {
         let _ = "\n        Build and return the next non-empty batch.\n        ";
         if self.size <= 0 {

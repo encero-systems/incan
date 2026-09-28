@@ -1,0 +1,85 @@
+# behavior: a trait whose supertrait is std.serde.json Serialize serves to_json and json_stringify for a model that also derives Serialize and for a class that adopts it alone, and a model adopting two traits that share a supertrait, or a trait whose builtin supertrait it derives, builds (#1845)
+# retires: loaves/compiler/incan_ir/src/lower/tests/json_protocol_bounds.rs::json_protocol_supertraits_carry_the_trait_and_its_serde_capability_issue1845
+# retires: loaves/compiler/incan_ir/src/lower/tests/json_protocol_bounds.rs::a_trait_reached_twice_is_implemented_once_issue1845
+# expect-stdout:
+#   {"value":1}
+#   {"value":2}
+#   {"value":3}
+#   {"value":4}
+#   3
+#   1
+#   5
+
+from std.serde.json import Serialize
+
+
+trait Loggable with Serialize:
+    def log(self) -> str:
+        return self.to_json()
+
+
+@derive(Serialize)
+model Payload with Loggable:
+    value: int
+
+
+class Record with Loggable:
+    value: int
+
+
+trait Named:
+    def name(self) -> str:
+        return "shared"
+
+
+trait First with Named:
+    def first(self) -> int:
+        return 1
+
+
+trait Second with Named:
+    def second(self) -> int:
+        return 2
+
+
+model Both with First, Second:
+    value: int
+
+
+trait Keyed with Eq:
+    def key(self) -> int:
+        return 1
+
+
+@derive(Eq)
+model Key with Keyed:
+    value: int
+
+
+def same[T with Keyed](left: T, right: T) -> bool:
+    return left == right
+
+
+trait Copyable with Clone:
+    def dup(self) -> Self:
+        return self.clone()
+
+
+model Copied with Copyable:
+    value: int
+
+
+def show[T with Loggable](value: T) -> str:
+    return json_stringify(value)
+
+
+def main() -> None:
+    println(Payload(value=1).log())
+    println(show(Payload(value=2)))
+    println(Record(value=3).log())
+    println(show(Record(value=4)))
+    both = Both(value=0)
+    println(both.first() + both.second())
+    if same(Key(value=1), Key(value=1)):
+        println(Key(value=1).key())
+    println(Copied(value=5).dup().value)

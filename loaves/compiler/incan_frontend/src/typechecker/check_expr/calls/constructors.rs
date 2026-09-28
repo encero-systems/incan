@@ -2,7 +2,7 @@
 
 use super::TypeChecker;
 use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned, Type};
-use crate::diagnostics::errors;
+use crate::diagnostics::errors::{self, TypeArgumentOrigin};
 use crate::resolved_type_subst::type_param_subst_map_call_site;
 use crate::symbols::{CallableParam, FieldInfo, ResolvedType, SymbolKind, TypeInfo, ValueEnumInfo};
 use crate::typechecker::helpers::option_ty;
@@ -61,6 +61,7 @@ impl TypeChecker {
             }
 
             let value_ty = self.check_expr_with_expected(expr, Some(&field_info.ty));
+            self.record_value_destination_if_compatible(expr.span, &value_ty, &field_info.ty);
 
             if provided.contains_key(&canonical_name) {
                 self.errors.push(errors::duplicate_field_in_call(
@@ -116,6 +117,12 @@ impl TypeChecker {
         if every_required_field_supplied {
             self.record_constructor_field_binding_for_lowering(type_name, &bound_fields, &provided, call_span);
         }
+        self.refuse_unsatisfied_nominal_type_arguments(
+            type_name,
+            &type_bindings,
+            TypeArgumentOrigin::Inferred,
+            call_span,
+        );
 
         self.constructor_result_type_with_bindings(type_name, &type_bindings)
     }
@@ -414,7 +421,7 @@ impl TypeChecker {
         }
 
         if self.symbols.lookup(name).is_some()
-            && let Some(tid) = surface_types::from_str(name)
+            && let Some(tid) = self.constructor_surface_type(name)
         {
             if matches!(tid, SurfaceTypeId::ValidationError) {
                 let mut message_count = 0usize;
@@ -486,6 +493,15 @@ impl TypeChecker {
                             value.span,
                         ));
                     }
+                    // The type arguments a generic newtype's value implies must satisfy its declared bounds (#1867).
+                    let mut type_bindings = std::collections::HashMap::new();
+                    self.infer_type_param_bindings(&newtype.underlying, &value_ty, &mut type_bindings);
+                    self.refuse_unsatisfied_nominal_type_arguments(
+                        name,
+                        &type_bindings,
+                        TypeArgumentOrigin::Inferred,
+                        span,
+                    );
                     return self.constructor_result_type(name);
                 }
                 let ctor_fields: Option<std::collections::HashMap<String, FieldInfo>> =

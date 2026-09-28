@@ -6,8 +6,8 @@
 use std::collections::{HashMap, HashSet};
 
 use super::super::expr::{
-    IrCallArg, IrCallArgKind, IrExprKind, Literal as IrLiteral, MatchArm, MethodCallArgPolicy, Pattern as IrPattern,
-    VarAccess, VarRefKind,
+    BuiltinFn, IrCallArg, IrCallArgKind, IrExprKind, Literal as IrLiteral, MatchArm, MethodCallArgPolicy,
+    Pattern as IrPattern, VarAccess, VarRefKind,
 };
 use super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::types::{IrType, isinstance_type_matches, isinstance_union_variant_indices};
@@ -328,6 +328,26 @@ impl AstLowering {
         }
     }
 
+    /// Return the type a narrowing condition tests its subject binding against.
+    ///
+    /// That is the binding's lowered type, unless that type names a transparent alias the binding does not expand,
+    /// such as a parameter annotated `answer: Answer` with `type Answer = Item | int`: narrowing then reads the type
+    /// the checker proved for the subject expression, which is the alias's union or option. Without that, an
+    /// `isinstance` over an alias-typed union fell back to a plain test and read the narrowed member's fields from
+    /// the wrapper itself (#1796).
+    fn narrowing_subject_type(&self, binding: &str, subject: &Spanned<ast::Expr>) -> IrType {
+        let declared = self.lookup_var(binding);
+        if declared.is_union() || matches!(declared, IrType::Option(_)) {
+            return declared;
+        }
+        self.type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(subject.span))
+            .map(|checked| self.lower_resolved_type(checked))
+            .filter(|checked| checked.is_union() || matches!(checked, IrType::Option(_)))
+            .unwrap_or(declared)
+    }
+
     /// Return whether a known concrete value can satisfy an `isinstance(..., T)` target.
     fn isinstance_member_matches(member: &IrType, target_ty: &IrType) -> bool {
         isinstance_type_matches(member, target_ty)
@@ -352,7 +372,7 @@ impl AstLowering {
             _ => return None,
         }
         let target_ty = self.resolved_isinstance_target_type(condition)?;
-        let union_ty = self.lookup_var(binding);
+        let union_ty = self.narrowing_subject_type(binding, value);
         let variant_indices = isinstance_union_variant_indices(&union_ty, &target_ty)?;
         let members = union_ty.union_members()?;
         let matching_variants = variant_indices
@@ -506,7 +526,7 @@ impl AstLowering {
         let ast::Expr::Ident(binding) = &value.node else {
             return None;
         };
-        let IrType::Option(inner_ty) = self.lookup_var(binding) else {
+        let IrType::Option(inner_ty) = self.narrowing_subject_type(binding, value) else {
             return None;
         };
 
@@ -537,7 +557,7 @@ impl AstLowering {
             _ => return None,
         }
         let target_ty = self.resolved_isinstance_target_type(condition)?;
-        let IrType::Option(inner_ty) = self.lookup_var(binding) else {
+        let IrType::Option(inner_ty) = self.narrowing_subject_type(binding, value) else {
             return None;
         };
 
@@ -1147,6 +1167,9 @@ impl AstLowering {
                             (AssignTarget::StaticBinding(_), Some(static_name)) => {
                                 self.make_static_binding_expr(static_name, ty.clone())
                             }
+                            (AssignTarget::Var { ty: binding_ty, .. }, _) => {
+                                Self::adapt_value_to_binding(lowered_value.clone(), binding_ty)
+                            }
                             _ => lowered_value.clone(),
                         };
                         self.update_local_callable_signature(&a.name, local_callable_signature);
@@ -1172,6 +1195,9 @@ impl AstLowering {
                                     (AssignTarget::StaticBinding(_), Some(static_name)) => {
                                         self.make_static_binding_expr(static_name, ty.clone())
                                     }
+                                    (AssignTarget::Var { ty: binding_ty, .. }, _) => {
+                                        Self::adapt_value_to_binding(lowered_value.clone(), binding_ty)
+                                    }
                                     _ => lowered_value.clone(),
                                 };
                                 self.update_local_callable_signature(&a.name, local_callable_signature);
@@ -1188,7 +1214,7 @@ impl AstLowering {
                         let value = if let Some(static_name) = new_binding_static_alias {
                             self.make_static_binding_expr(static_name, ty.clone())
                         } else {
-                            lowered_value.clone()
+                            Self::adapt_value_to_binding(lowered_value.clone(), &ty)
                         };
                         // Otherwise, create a new immutable binding in the current scope.
                         IrStmtKind::Let {
@@ -1207,7 +1233,7 @@ impl AstLowering {
                         let value = if let Some(static_name) = new_binding_static_alias {
                             self.make_static_binding_expr(static_name, ty.clone())
                         } else {
-                            lowered_value.clone()
+                            Self::adapt_value_to_binding(lowered_value.clone(), &ty)
                         };
                         IrStmtKind::Let {
                             name: a.name.clone(),
@@ -1224,7 +1250,7 @@ impl AstLowering {
                         let value = if let Some(static_name) = new_binding_static_alias {
                             self.make_static_binding_expr(static_name, ty.clone())
                         } else {
-                            lowered_value
+                            Self::adapt_value_to_binding(lowered_value, &ty)
                         };
                         IrStmtKind::Let {
                             name: a.name.clone(),
@@ -1238,8 +1264,27 @@ impl AstLowering {
             }
 
             ast::Statement::FieldAssignment(fa) => {
+                // Through static storage the value is evaluated before the path (see `ast_path_reads_static_storage`),
+                // so its reads are counted first.
+                let early_value = if self.ast_path_reads_static_storage(&fa.object) {
+                    Some(self.lower_expr_spanned(&fa.value)?)
+                } else {
+                    None
+                };
                 let target = self.field_assign_target(&fa.object, &fa.field, fa.target_span)?;
-                let mut value = self.lower_expr_spanned(&fa.value)?;
+                let mut value = match early_value {
+                    Some(value) => value,
+                    None => self.lower_expr_spanned(&fa.value)?,
+                };
+                if matches!(value.kind, IrExprKind::String(_)) && value.ty == IrType::String {
+                    value = TypedExpr::new(
+                        IrExprKind::BuiltinCall {
+                            func: BuiltinFn::Str,
+                            args: vec![value],
+                        },
+                        IrType::String,
+                    );
+                }
                 // A `Some(member)` stored in a dependency model's field takes the union the provider declares (#1743).
                 if let AssignTarget::Field { object, .. } = &target {
                     self.retain_field_assignment_union_owner(object, &fa.field, &mut value);
@@ -1248,16 +1293,28 @@ impl AstLowering {
             }
 
             ast::Statement::IndexAssignment(ia) => {
-                let object = self.lower_expr_spanned(&ia.object)?;
-                let index = self.lower_expr_spanned(&ia.index)?;
-                let value = self.lower_expr_spanned(&ia.value)?;
-
-                if let Some(resolved_operator) = self
+                let resolved_index_assign = self
                     .type_info
                     .as_ref()
                     .and_then(|info| info.resolved_operator_call(stmt_span).cloned())
-                    && resolved_operator.kind == ResolvedOperatorKind::IndexAssign
-                {
+                    .filter(|resolved_operator| resolved_operator.kind == ResolvedOperatorKind::IndexAssign);
+                // A plain assignment through static storage evaluates the value before the path and the index (see
+                // `ast_path_reads_static_storage`), so its reads are counted first: `counts[name] =
+                // counts.get(name).unwrap_or(0) + 1` reads `name` last as the key (#1793). An `__setitem__` call
+                // evaluates its arguments in order.
+                let early_value = if resolved_index_assign.is_none() && self.ast_path_reads_static_storage(&ia.object) {
+                    Some(self.lower_expr_spanned(&ia.value)?)
+                } else {
+                    None
+                };
+                let object = self.lower_expr_spanned(&ia.object)?;
+                let index = self.lower_expr_spanned(&ia.index)?;
+                let value = match early_value {
+                    Some(value) => value,
+                    None => self.lower_expr_spanned(&ia.value)?,
+                };
+
+                if let Some(resolved_operator) = resolved_index_assign {
                     let dispatch = self
                         .type_info
                         .as_ref()

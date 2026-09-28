@@ -239,8 +239,22 @@ fn emit_len(emitter: &IrEmitter<'_>, arg: &TypedExpr) -> Result<TokenStream, Emi
     if is_string_iterable_type(&arg.ty) || is_frozen_string_iterable_type(&arg.ty) {
         Ok(quote! { incan_std_core::strings::str_len(&(#value)) })
     } else {
-        Ok(quote! { ::std::convert::identity(#value.len() as i64) })
+        // A copied element read (`*list_get(..)`) is grouped so `.len()` applies to the element, not to the read.
+        let receiver = if starts_with_prefix_operator(&value) {
+            quote! { (#value) }
+        } else {
+            value
+        };
+        Ok(quote! { ::std::convert::identity(#receiver.len() as i64) })
     }
+}
+
+/// Whether emitted tokens begin with a prefix operator (`*`, `&`, `-`, `!`) that a method call would bind inside.
+fn starts_with_prefix_operator(tokens: &TokenStream) -> bool {
+    matches!(
+        tokens.clone().into_iter().next(),
+        Some(proc_macro2::TokenTree::Punct(punct)) if matches!(punct.as_char(), '*' | '&' | '-' | '!')
+    )
 }
 
 /// Emit integer `abs` with one checked language behavior in every Rust build profile.

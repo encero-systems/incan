@@ -3,6 +3,39 @@
 
 use super::*;
 
+/// #1856: the runtime task handle's synchronous cancellation method is part of the checked surface.
+#[test]
+fn join_handle_abort_is_accepted_issue1856() {
+    assert_check_ok(
+        r#"
+from std.async import spawn, sleep
+
+async def work() -> int:
+  await sleep(10.0)
+  return 1
+
+async def main() -> None:
+  handle = spawn(work())
+  handle.abort()
+"#,
+    );
+}
+
+#[test]
+fn kept_dict_get_of_join_handle_is_refused_followups_a() {
+    let source = r#"
+from std.async.task import JoinHandle
+
+def take(handles: dict[str, JoinHandle[int]], key: str) -> Option[JoinHandle[int]]:
+  return handles.get(key)
+"#;
+    let errors = check_str_err(source, "kept dict.get of JoinHandle should be refused");
+    assert!(
+        errors.iter().any(|error| error.stable_code() == Some("INCAN-T0118")),
+        "expected INCAN-T0118 for kept dict.get of JoinHandle, got: {errors:?}"
+    );
+}
+
 #[test]
 fn test_local_async_function_named_sleep_shadows_no_builtin() {
     let source = r#"
@@ -554,6 +587,53 @@ def flatten(items: Iterator[int]) -> list[str]:
     assert_check_ok(source);
 }
 
+/// The source-authored `Iterator.flat_map` contract accepts callbacks returning any `Iterable[U]`, matching the
+/// compiler-owned iterator surface for builtin collections and generators.
+#[test]
+fn stdlib_iterator_flat_map_accepts_every_iterable_callback_result() {
+    let source = r#"
+from std.derives.collection import Iterator
+
+
+const FROZEN: FrozenList[int] = [1, 2]
+
+
+model Counter with Iterator[int]:
+  current: int
+
+  def __next__(mut self) -> Option[int]:
+    if self.current == 0:
+      return None
+    self.current -= 1
+    return Some(self.current)
+
+
+def as_set(n: int) -> set[int]:
+  return {n}
+
+
+def as_generator(n: int) -> Generator[int]:
+  yield n
+
+
+def as_frozen(_n: int) -> FrozenList[int]:
+  return FROZEN
+
+
+def flatten_set(items: Counter) -> Iterator[int]:
+  return items.flat_map(as_set)
+
+
+def flatten_generator(items: Counter) -> Iterator[int]:
+  return items.flat_map(as_generator)
+
+
+def flatten_frozen(items: Counter) -> Iterator[int]:
+  return items.flat_map(as_frozen)
+"#;
+    assert_check_ok(source);
+}
+
 #[test]
 fn test_rfc088_iterator_terminal_methods_have_frontend_types() {
     let source = r#"
@@ -910,6 +990,89 @@ def broken() -> Generator[int]:
             .any(|err| err.message.contains("must contain at least one `yield value`")),
         "expected missing generator yield diagnostic, got: {errs:?}"
     );
+}
+
+/// A `yield` after an unconditional `return` in its own block never runs, so a function whose only `yield` is such a
+/// `yield` has no reachable `yield`, as RFC 006 requires of a generator function; a `yield` after a `return` that ends
+/// only a branch stays reachable.
+#[test]
+fn test_rfc006_generator_yield_after_return_is_unreachable() {
+    let source = r#"
+def never() -> Generator[int]:
+  return
+  yield 1
+
+def nested_never(flag: bool) -> Generator[int]:
+  if flag:
+    return
+    yield 2
+"#;
+
+    let errs = check_str_err(source, "expected unreachable generator yield diagnostics");
+    let missing_yield = errs
+        .iter()
+        .filter(|err| err.message.contains("must contain at least one `yield value`"))
+        .count();
+    assert_eq!(
+        missing_yield, 2,
+        "expected a missing-yield diagnostic for each function, got: {errs:?}"
+    );
+
+    assert_check_ok(
+        r#"
+def early(flag: bool) -> Generator[int]:
+  if flag:
+    return
+  yield 1
+"#,
+    );
+}
+
+/// A `Generator[T]` satisfies `Iterator[T]`, so it takes the RFC 088 adapters and terminal consumers beyond the RFC 006
+/// helpers, is accepted as the `zip` and `chain` partner and as a `flat_map` expansion, and keeps its own `map`,
+/// `filter`, `take` and `collect` typed as generator methods.
+#[test]
+fn test_rfc088_generator_takes_the_iterator_surface() {
+    let source = r#"
+def numbers(limit: int) -> Generator[int]:
+  for value in range(limit):
+    yield value
+
+def keep(n: int) -> bool:
+  return n > 0
+
+def add(acc: int, n: int) -> int:
+  return acc + n
+
+def pair(n: int) -> Generator[int]:
+  yield n
+  yield n
+
+def inc(n: int) -> int:
+  return n + 1
+
+def main() -> None:
+  counted: int = numbers(3).count()
+  total: int = numbers(3).sum()
+  folded: int = numbers(3).fold(0, add)
+  reduced: int = numbers(3).reduce(0, add)
+  found: Option[int] = numbers(3).find(keep)
+  any_kept: bool = numbers(3).any(keep)
+  all_kept: bool = numbers(3).all(keep)
+  indexed: list[tuple[int, int]] = numbers(3).enumerate().collect()
+  zipped: list[tuple[int, int]] = numbers(3).zip(numbers(3)).collect()
+  chained: list[int] = numbers(2).chain(numbers(2)).skip(1).collect()
+  flattened: list[int] = [1, 2].iter().flat_map(pair).collect()
+  batched: list[list[int]] = numbers(5).take_while(keep).skip_while(keep).batch(2).collect()
+  mapped: Generator[int] = numbers(3).map(inc)
+  kept: Generator[int] = numbers(3).filter(keep).take(2)
+  listed: list[int] = numbers(3).collect()
+  println(counted + total + folded + reduced + len(indexed) + len(zipped) + len(chained) + len(flattened))
+  println(found)
+  println(any_kept and all_kept)
+  println(len(batched) + len(listed) + len(list(mapped)) + len(list(kept)))
+"#;
+    assert_check_ok(source);
 }
 
 #[test]

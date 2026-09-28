@@ -137,7 +137,9 @@ impl TypeChecker {
     /// A constructor pattern over a union may name either one concrete member (`A(value)`) or a transparent alias whose
     /// expanded union members are a subset of the scrutinee union (`Base(value)` where `Input = Union[Base, int]`).
     fn union_pattern_target_type(&self, expected_ty: &ResolvedType, name: &str) -> Option<ResolvedType> {
-        let target_ty = self.expand_type_aliases(resolve_type(&Type::Simple(name.to_string()), &self.symbols));
+        let target_ty = self.union_member_target_spelling(
+            self.expand_type_aliases(resolve_type(&Type::Simple(name.to_string()), &self.symbols)),
+        );
         let members = Self::expected_union_members(expected_ty)?;
 
         if let Some(target_members) = target_ty.union_members()
@@ -234,6 +236,7 @@ impl TypeChecker {
                 self.remove_covered_union_members(remaining, &arm.node.pattern, &subject_ty);
             }
         }
+        self.note_dict_lookup_match(subject, arms);
 
         arm_types.first().cloned().unwrap_or(ResolvedType::Unit)
     }
@@ -241,7 +244,9 @@ impl TypeChecker {
     /// Return the type represented by the as-yet-uncovered union members for wildcard and binding arms.
     fn match_arm_remainder_type(&self, pattern: &Spanned<Pattern>, remaining: &[ResolvedType]) -> Option<ResolvedType> {
         match &pattern.node {
-            Pattern::Wildcard | Pattern::Binding(_) if !remaining.is_empty() => Some(union_ty(remaining.to_vec())),
+            Pattern::Wildcard | Pattern::Binding(_) if !remaining.is_empty() => {
+                Some(Self::localize_union_member(union_ty(remaining.to_vec())))
+            }
             Pattern::Group(inner) => self.match_arm_remainder_type(inner, remaining),
             _ => None,
         }
@@ -304,19 +309,23 @@ impl TypeChecker {
         subject_ty: &ResolvedType,
     ) {
         match &pattern.node {
-            Pattern::Constructor(name, _) => {
+            Pattern::Constructor(name, sub_patterns) => {
                 let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.node.as_str());
                 if enum_qualifier_opt.is_none()
                     && let Some(member_ty) = self.union_pattern_target_type(subject_ty, ctor_name)
                 {
                     if let Some(target_members) = member_ty.union_members() {
                         remaining.retain(|member| {
-                            !target_members
-                                .iter()
-                                .any(|target| self.match_union_member_matches(member, target))
+                            !target_members.iter().any(|target| {
+                                self.match_union_member_matches(member, target)
+                                    && self.union_type_pattern_payload_is_exhaustive(sub_patterns, target)
+                            })
                         });
                     } else {
-                        remaining.retain(|member| !self.match_union_member_matches(member, &member_ty));
+                        remaining.retain(|member| {
+                            !self.match_union_member_matches(member, &member_ty)
+                                || !self.union_type_pattern_payload_is_exhaustive(sub_patterns, &member_ty)
+                        });
                     }
                 }
             }
@@ -328,6 +337,52 @@ impl TypeChecker {
             Pattern::Group(inner) => self.remove_covered_union_members(remaining, inner, subject_ty),
             Pattern::Wildcard | Pattern::Binding(_) => remaining.clear(),
             _ => {}
+        }
+    }
+
+    /// Return whether a union type pattern covers every value of the member it names.
+    ///
+    /// `int(n)` covers the `int` member, while `int(0)` leaves every other integer uncovered. The nested pattern is
+    /// the payload stored by the generated union wrapper, so it is judged by the same pattern-matrix walk used for an
+    /// enum variant payload rather than treating the outer type name as proof of complete coverage (#1876).
+    fn union_type_pattern_payload_is_exhaustive(&self, sub_patterns: &[PatternArg], member_ty: &ResolvedType) -> bool {
+        let rows = sub_patterns
+            .iter()
+            .find_map(|arg| match arg {
+                PatternArg::Positional(pattern) => Some(vec![vec![Some(&pattern.node)]]),
+                PatternArg::Named(_, _) => None,
+            })
+            .unwrap_or_default();
+        self.coverage_rows_exhaustive(rows, std::slice::from_ref(member_ty), 0)
+    }
+
+    /// Check the one positional payload accepted by `Some`, `Ok`, and `Err` patterns.
+    fn check_single_payload_constructor_pattern(
+        &mut self,
+        constructor: &Spanned<String>,
+        sub_patterns: &[PatternArg],
+        payload_ty: &ResolvedType,
+    ) {
+        if sub_patterns.len() != 1 {
+            self.errors.push(errors::builtin_arity(
+                &constructor.node,
+                1,
+                sub_patterns.len(),
+                constructor.span,
+            ));
+        }
+        let mut checked_positional = false;
+        for arg in sub_patterns {
+            match arg {
+                PatternArg::Positional(pattern) if !checked_positional => {
+                    self.check_pattern(pattern, payload_ty);
+                    checked_positional = true;
+                }
+                PatternArg::Positional(_) => {}
+                PatternArg::Named(_, pattern) => self
+                    .errors
+                    .push(errors::named_pattern_not_supported(&constructor.node, pattern.span)),
+            }
         }
     }
 
@@ -456,7 +511,8 @@ impl TypeChecker {
                         }
                     }
                     if let Some(pat) = positional {
-                        self.check_pattern(pat, &member_ty);
+                        let written_ty = resolve_type(&Type::Simple(ctor_name.to_string()), &self.symbols);
+                        self.check_pattern(pat, &Self::narrowed_union_member_type(&member_ty, &written_ty));
                     }
                     return;
                 }
@@ -472,22 +528,8 @@ impl TypeChecker {
                                 && !args.is_empty()
                             {
                                 self.record_pattern_lexical_identity(ctor_name, name.span);
-                                let mut positional = None;
-                                for arg in sub_patterns {
-                                    match arg {
-                                        PatternArg::Positional(pat) => {
-                                            positional = Some(pat);
-                                            break;
-                                        }
-                                        PatternArg::Named(_, pat) => {
-                                            self.errors
-                                                .push(errors::named_pattern_not_supported(&name.node, pat.span));
-                                        }
-                                    }
-                                }
-                                if let Some(pat) = positional {
-                                    self.check_pattern(pat, &borrowed_pattern_payload(args[0].clone(), borrow));
-                                }
+                                let payload_ty = borrowed_pattern_payload(args[0].clone(), borrow);
+                                self.check_single_payload_constructor_pattern(name, sub_patterns, &payload_ty);
                                 return;
                             }
                         }
@@ -497,22 +539,8 @@ impl TypeChecker {
                                 && args.len() >= 2
                             {
                                 self.record_pattern_lexical_identity(ctor_name, name.span);
-                                let mut positional = None;
-                                for arg in sub_patterns {
-                                    match arg {
-                                        PatternArg::Positional(pat) => {
-                                            positional = Some(pat);
-                                            break;
-                                        }
-                                        PatternArg::Named(_, pat) => {
-                                            self.errors
-                                                .push(errors::named_pattern_not_supported(&name.node, pat.span));
-                                        }
-                                    }
-                                }
-                                if let Some(pat) = positional {
-                                    self.check_pattern(pat, &borrowed_pattern_payload(args[1].clone(), borrow));
-                                }
+                                let payload_ty = borrowed_pattern_payload(args[1].clone(), borrow);
+                                self.check_single_payload_constructor_pattern(name, sub_patterns, &payload_ty);
                                 return;
                             }
                         }
@@ -522,22 +550,8 @@ impl TypeChecker {
                                 && !args.is_empty()
                             {
                                 self.record_pattern_lexical_identity(ctor_name, name.span);
-                                let mut positional = None;
-                                for arg in sub_patterns {
-                                    match arg {
-                                        PatternArg::Positional(pat) => {
-                                            positional = Some(pat);
-                                            break;
-                                        }
-                                        PatternArg::Named(_, pat) => {
-                                            self.errors
-                                                .push(errors::named_pattern_not_supported(&name.node, pat.span));
-                                        }
-                                    }
-                                }
-                                if let Some(pat) = positional {
-                                    self.check_pattern(pat, &borrowed_pattern_payload(args[0].clone(), borrow));
-                                }
+                                let payload_ty = borrowed_pattern_payload(args[0].clone(), borrow);
+                                self.check_single_payload_constructor_pattern(name, sub_patterns, &payload_ty);
                                 return;
                             }
                         }
@@ -698,7 +712,8 @@ impl TypeChecker {
     /// ergonomics add; only the families a literal can spell are judged (`LiteralPatternFamily`), and any other
     /// position type (a type parameter, a union, a nominal, an unresolved type) is left to the checks that own it. A
     /// numeric literal that has the position's family is then held to the position's width and range by the same rules
-    /// a value literal of that type follows.
+    /// a value literal of that type follows; a suffixed one is held to its suffix's range, and its suffix must name the
+    /// position's exact type.
     fn check_literal_pattern(&mut self, literal: &Literal, expected_ty: &ResolvedType, span: Span) {
         let unmatchable = match literal {
             Literal::Decimal(_) => Some("decimal"),
@@ -716,7 +731,7 @@ impl TypeChecker {
         if !family.admits(literal) {
             let found = match literal {
                 Literal::None => constructors::as_str(ConstructorId::None).to_string(),
-                _ => self.check_literal(literal).to_string(),
+                _ => self.check_literal(literal, span).to_string(),
             };
             self.errors.push(errors::pattern_literal_type_mismatch(
                 &position_ty.to_string(),
@@ -726,6 +741,25 @@ impl TypeChecker {
             return;
         }
         let position_ty = position_ty.clone();
+        if matches!(literal, Literal::Int(value) if value.suffix.is_some())
+            || matches!(literal, Literal::Float(value) if value.suffix.is_some())
+        {
+            // A suffix names the literal's type: its value is held to that type's range, and a pattern literal is
+            // compared without conversion, so the position must be that exact type.
+            let errors_before = self.errors.len();
+            let literal_ty = self.check_literal(literal, span);
+            if self.errors.len() == errors_before
+                && super::super::numeric_type_id_for_compat(&literal_ty)
+                    != super::super::numeric_type_id_for_compat(&position_ty)
+            {
+                self.errors.push(errors::pattern_literal_type_mismatch(
+                    &position_ty.to_string(),
+                    &literal_ty.to_string(),
+                    span,
+                ));
+            }
+            return;
+        }
         let literal_expr = Spanned::new(Expr::Literal(literal.clone()), span);
         match literal {
             Literal::Int(_) => {

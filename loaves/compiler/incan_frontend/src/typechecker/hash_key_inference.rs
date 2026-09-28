@@ -21,6 +21,7 @@ use crate::ast::{
 use crate::ast_walk::any_expr_in_body;
 use crate::symbols::{ResolvedType, SymbolKind, TypeBoundInfo, TypeInfo, resolve_type};
 use crate::typechecker::helpers::collection_type_id;
+use incan_lang::lang::builtins::{self, BuiltinFnId};
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_lang::lang::types::collections::CollectionTypeId;
@@ -437,7 +438,9 @@ impl TypeChecker {
                 match collection_type_id(name) {
                     Some(CollectionTypeId::List) => Some(ResolvedType::Generic("List".to_string(), vec![item])),
                     Some(CollectionTypeId::Set) => Some(ResolvedType::Generic("Set".to_string(), vec![item])),
-                    _ if name == "sorted" => Some(ResolvedType::Generic("List".to_string(), vec![item])),
+                    _ if builtins::from_str(name) == Some(BuiltinFnId::Sorted) => {
+                        Some(ResolvedType::Generic("List".to_string(), vec![item]))
+                    }
                     _ => None,
                 }
             }

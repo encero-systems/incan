@@ -163,6 +163,7 @@ Explains a diagnostic code. `--format text|json` (default `text`); `json` prints
 | `INCAN-T0115` | An argument that is not a task where `spawn`, `timeout`, `timeout_ms`, `race_timeout` or `arm` requires one, such as `spawn(work)`, or `spawn(fut)` after `fut = work()`. |
 | `INCAN-T0116` | A decorator chain of a `self` method, whose shapes name the receiver, that cannot pass the receiver: the decorator is imported or reached through a value or a method; a shape that names the receiver is written through a type alias; a `return` gives something other than the accepted callable or a function of the module named directly; the decorator calls, stores or passes on the callable it accepts; a function of the chain is `pub`; or a function of the chain is used outside it, other than a direct call of a returned function in its module. See [Decorators](../../language/reference/language.md#decorators). |
 | `INCAN-T0117` | An immutable binding or a field of one, a list or dict element, a static, or a `for` loop variable passed to a `mut` parameter that the call changes and whose changes reach the caller: a parameter of any type except `int`, `float`, `bool` or a Rust type, and not `*args` or `**kwargs`. |
+| `INCAN-T0118` | A `dict.get(key)` whose result is a copy of the stored value, on a dict whose value type cannot be copied, such as a `Generator` or a Rust type without `Clone`. See [Reading a dict entry with `get`](../../language/explanation/static_storage.md#reading-a-dict-entry-with-get). |
 | `INCAN-T0119` | A `for` loop took the task handles out of a list, and the list is then read inside or after the loop, a closure captured it before the loop, or an enclosing loop repeats the loop. See [`JoinHandle[T]`](../../language/reference/stdlib/async.md#joinhandlet). |
 | `INCAN-I0001` | Import or module resolution error. |
 | `INCAN-I0101` | A known SDK provider module belongs to a component the project disables. |
@@ -470,10 +471,10 @@ Prints one complete checked typed registry, such as `feature::functions`, or `pa
 ## `incan run`
 
 ```text
-incan run [OPTIONS] [FILE]
+incan run [OPTIONS] [FILE] [-- <PROGRAM_ARG>...]
 ```
 
-Compiles and runs `FILE`, the inline code of `-c`, or the project's `[project.scripts].main`. Outside a project, `FILE` or `-c` is required. Arguments after `--` are refused.
+Compiles and runs `FILE`, the inline code of `-c`, or the project's `[project.scripts].main`. Outside a project, `FILE` or `-c` is required. Arguments after `--` are passed to the executed program in order.
 
 - `-c <CODE>`, `--command <CODE>`: run inline source. It cannot be combined with `FILE` or select a workspace member.
 - `--release`: build the release profile; the default is the debug profile.
@@ -481,6 +482,7 @@ Compiles and runs `FILE`, the inline code of `-c`, or the project's `[project.sc
 
 ```bash
 incan run path/to/file.incn
+incan run path/to/file.incn -- --verbose input.txt
 incan run
 incan run -c "import this"
 ```

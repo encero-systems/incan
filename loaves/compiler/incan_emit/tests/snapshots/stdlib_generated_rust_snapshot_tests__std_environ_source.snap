@@ -303,6 +303,10 @@ impl EnvironError {
         let _ = "Return the redacted human-readable error detail.";
         return self.detail.clone();
     }
+    fn __str__(&self) -> String {
+        return self
+            .message();
+    }
     /// Build an environment error from a stable category.
     ///
     /// Args:
@@ -398,7 +402,12 @@ impl EnvironError {
         incan_std_core::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
 }
-impl Error for EnvironError {
+impl std::fmt::Display for EnvironError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.__str__())
+    }
+}
+impl crate::__incan_std::traits::error::Error for EnvironError {
     fn message(&self) -> String {
         let _ = "Return the redacted human-readable error detail.";
         return self.detail.clone();
@@ -413,7 +422,7 @@ impl EnvironError {
     pub fn source(
         &self,
     ) -> Option<String> {
-        <Self as Error>::source(self)
+        <Self as crate::__incan_std::traits::error::Error>::source(self)
     }
 }
 fn _get_raw(

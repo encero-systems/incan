@@ -1,7 +1,7 @@
 [package]
 name = "incan_derive"
 description = "Derive macros for the Incan programming language standard library"
-version = "0.6.0-dev.5"
+version = "0.6.0-dev.6"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

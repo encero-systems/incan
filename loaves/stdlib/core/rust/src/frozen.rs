@@ -59,7 +59,7 @@ impl FrozenStr {
 
 impl fmt::Debug for FrozenStr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("FrozenStr").field(&self.0).finish()
+        fmt::Debug::fmt(&self.0, f)
     }
 }
 
@@ -225,21 +225,16 @@ impl<T: 'static> core::ops::Deref for FrozenList<T> {
 }
 
 impl<T: fmt::Debug> fmt::Debug for FrozenList<T> {
+    /// Format the items as a list, like the `list` a frozen list was baked from.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("FrozenList").field(&self.data).finish()
+        f.debug_list().entries(self.data).finish()
     }
 }
 
-impl<T: fmt::Display> fmt::Display for FrozenList<T> {
+impl<T: fmt::Debug> fmt::Display for FrozenList<T> {
+    /// Print a frozen list as its `Debug` form, the printed form a `list` has.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("[")?;
-        for (i, item) in self.data.iter().enumerate() {
-            if i > 0 {
-                f.write_str(", ")?;
-            }
-            write!(f, "{}", item)?;
-        }
-        f.write_str("]")
+        fmt::Debug::fmt(self, f)
     }
 }
 
@@ -282,10 +277,13 @@ impl<T: 'static> IntoIterator for FrozenList<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FrozenDict, FrozenList, FrozenStr};
+    use super::{FrozenDict, FrozenList, FrozenSet, FrozenStr};
     use crate::collections::__private::{list_max_copy, list_min_copy};
 
     static NUMS: [i64; 3] = [3, 1, 4];
+    static NAMES: [FrozenStr; 2] = [FrozenStr::new("a"), FrozenStr::new("b")];
+    static FLOATS: [f64; 1] = [100.0];
+    static ENTRIES: [(FrozenStr, f64); 1] = [(FrozenStr::new("n"), 100.0)];
 
     #[test]
     fn frozen_list_coerces_to_slice_for_runtime_helpers() {
@@ -310,6 +308,16 @@ mod tests {
         assert!(NAMES.contains_key(&"alpha"));
         assert_eq!(CODES.get("a"), Some(&10));
         assert!(CODES.contains_key(&FrozenStr::new("a")));
+    }
+
+    #[test]
+    fn frozen_values_match_mutable_display_shapes_issue1838() {
+        assert_eq!(format!("{:?}", FrozenStr::new("x")), "\"x\"");
+        assert_eq!(format!("{:?}", Some(FrozenStr::new("x"))), "Some(\"x\")");
+        assert_eq!(format!("{}", FrozenList::new(&NAMES)), "[\"a\", \"b\"]");
+        assert_eq!(format!("{}", FrozenList::new(&FLOATS)), "[100.0]");
+        assert_eq!(format!("{}", FrozenSet::new(&NAMES)), "{\"a\", \"b\"}");
+        assert_eq!(format!("{}", FrozenDict::new(&ENTRIES)), "{\"n\": 100.0}");
     }
 }
 
@@ -368,21 +376,16 @@ impl<T: 'static> FrozenSet<T> {
 }
 
 impl<T: fmt::Debug> fmt::Debug for FrozenSet<T> {
+    /// Format the items as a set, like the `set` a frozen set was baked from.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("FrozenSet").field(&self.data).finish()
+        f.debug_set().entries(self.data).finish()
     }
 }
 
-impl<T: fmt::Display> fmt::Display for FrozenSet<T> {
+impl<T: fmt::Debug> fmt::Display for FrozenSet<T> {
+    /// Print a frozen set as its `Debug` form, the printed form a `set` has.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("{")?;
-        for (i, item) in self.data.iter().enumerate() {
-            if i > 0 {
-                f.write_str(", ")?;
-            }
-            write!(f, "{}", item)?;
-        }
-        f.write_str("}")
+        fmt::Debug::fmt(self, f)
     }
 }
 
@@ -456,20 +459,17 @@ impl<K: 'static, V: 'static> FrozenDict<K, V> {
 }
 
 impl<K: fmt::Debug, V: fmt::Debug> fmt::Debug for FrozenDict<K, V> {
+    /// Format the entries as a map, like the `dict` a frozen dict was baked from.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("FrozenDict").field(&self.data).finish()
+        f.debug_map()
+            .entries(self.data.iter().map(|(key, value)| (key, value)))
+            .finish()
     }
 }
 
-impl<K: fmt::Display, V: fmt::Display> fmt::Display for FrozenDict<K, V> {
+impl<K: fmt::Debug, V: fmt::Debug> fmt::Display for FrozenDict<K, V> {
+    /// Print a frozen dict as its `Debug` form, the printed form a `dict` has.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("{")?;
-        for (i, (k, v)) in self.data.iter().enumerate() {
-            if i > 0 {
-                f.write_str(", ")?;
-            }
-            write!(f, "{}: {}", k, v)?;
-        }
-        f.write_str("}")
+        fmt::Debug::fmt(self, f)
     }
 }

@@ -19,7 +19,6 @@
 use crate::ast::{Decorator, DecoratorArg, Expr, FunctionDecl, Literal, ParamKind, Spanned};
 use crate::diagnostics::errors;
 use crate::symbols::{ResolvedType, TypeInfo};
-use incan_lang::lang::derives;
 use incan_lang::lang::stdlib::{self, StdlibJsonTraitId};
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_lang::lang::types::collections::CollectionTypeId;
@@ -401,10 +400,12 @@ impl TypeChecker {
     fn type_without_json_form(&self, ty: &ResolvedType, direction: JsonPayloadDirection) -> Option<String> {
         match ty {
             ResolvedType::Named(name) => self
-                .nominal_certainly_lacks_json_form(name, direction)
+                .nominal_certainly_lacks_json_form(name, direction.protocol())
                 .then(|| name.clone()),
             ResolvedType::Generic(name, args) => {
-                if collection_type_id(name).is_none() && self.nominal_certainly_lacks_json_form(name, direction) {
+                if collection_type_id(name).is_none()
+                    && self.nominal_certainly_lacks_json_form(name, direction.protocol())
+                {
                     return Some(name.clone());
                 }
                 args.iter().find_map(|arg| self.type_without_json_form(arg, direction))
@@ -422,36 +423,32 @@ impl TypeChecker {
         }
     }
 
-    /// Return whether a nominal type is a local model or class that certainly cannot cross as JSON in `direction`.
+    /// Return whether a nominal type is a model or class that certainly does not provide the `std.serde.json`
+    /// `protocol` trait, and so has no JSON form in that direction.
     ///
-    /// A model or class has a JSON form through `@derive(json)` (which adopts both `std.serde.json` traits), through
-    /// adopting the needed `Serialize` or `Deserialize` trait, or through a Rust derive. The type is refused only
-    /// when every one of its derives is a builtin derive the compiler knows supplies no JSON, it has no Rust derive,
-    /// and none of its adopted traits comes from `std.serde.json` or is spelled as the needed protocol. Every other
-    /// nominal type -- a subclass, an enum, a newtype, a Rust-origin or unresolved type -- is left to the build.
-    fn nominal_certainly_lacks_json_form(&self, name: &str, direction: JsonPayloadDirection) -> bool {
+    /// A model or class provides the trait by deriving it (`@derive(json)` adopts both traits), by adopting it
+    /// directly or through a supertrait of a trait it adopts, or possibly through a Rust derive. The type is refused
+    /// only when every one of its derives is one the compiler classifies (a builtin derive, or a `std.serde.json`
+    /// trait or module, whose adoptions its trait adoptions record), it has no Rust derive, and no adoption provides
+    /// `protocol` ([`Self::adoptions_provide_json_protocol`]): a model that derives only `Deserialize` has no
+    /// `Serialize` form (#1886). Every other nominal type -- a subclass, an enum, a newtype, a Rust-origin or
+    /// unresolved type -- is left to its caller.
+    pub(in crate::typechecker) fn nominal_certainly_lacks_json_form(
+        &self,
+        name: &str,
+        protocol: StdlibJsonTraitId,
+    ) -> bool {
         let (declared_derives, trait_adoptions) = match self.lookup_type_info(name) {
             Some(TypeInfo::Model(model)) => (&model.derives, &model.trait_adoptions),
             Some(TypeInfo::Class(class)) if class.extends.is_none() => (&class.derives, &class.trait_adoptions),
             _ => return false,
         };
-        if declared_derives
-            .iter()
-            .any(|derive| derives::from_str(derive).is_none())
+        if declared_derives.iter().any(|derive| !self.derive_is_classified(derive))
             || self.local_rust_derive_paths.contains_key(name)
         {
             return false;
         }
-        let needed = direction.protocol();
-        !trait_adoptions.iter().any(|adoption| {
-            adoption
-                .module_path
-                .as_deref()
-                .is_some_and(stdlib::is_stdlib_json_trait_module_path)
-                || std::iter::once(adoption.name.as_str())
-                    .chain(adoption.source_name.as_deref())
-                    .any(|spelling| stdlib::stdlib_json_trait_id(spelling) == Some(needed))
-        })
+        !self.adoptions_provide_json_protocol(trait_adoptions, protocol)
     }
 }
 

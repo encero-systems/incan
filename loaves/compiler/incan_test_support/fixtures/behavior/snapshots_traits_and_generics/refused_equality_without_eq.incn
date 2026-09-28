@@ -1,0 +1,10 @@
+# behavior: == between two values of a model that neither derives Eq nor defines __eq__ is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+
+model Point:
+    x: int
+
+
+def main() -> None:
+    println(Point(x=1) == Point(x=1))

@@ -9,8 +9,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/decls/functions.rs",
-      "sha256": "0f8b77b3091103eeb1261c925d72db8e3bcec5a94d5c231a65d13d6e79840d19",
-      "lines": 2015
+      "sha256": "aebf57ef836c1500346a77c7717e36cfacfd00e935c3d732394eaf5a0465415b",
+      "lines": 2077
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/decls/impls.rs",
@@ -29,8 +29,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/decls/structures.rs",
-      "sha256": "db2f024f2c47b7355872e0f013ff4e11c45c1f7a003462db7df10b63732ec593",
-      "lines": 1211
+      "sha256": "afe837c36e1e346b8d864abea2a3e0b97bd3f1ac88cf9a26f06ee2efffe862d4",
+      "lines": 1222
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/errors.rs",
@@ -39,8 +39,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/builtins.rs",
-      "sha256": "2360d74b81ca7462d09c845a3de3f46e8637d37fa1a075fb05f068111d841861",
-      "lines": 1098
+      "sha256": "03d9527ae9a3b55acc3b9173fa2707b992fe28d6768a05da3568d93b4c58d633",
+      "lines": 1112
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/calls.rs",
@@ -54,8 +54,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/comprehensions.rs",
-      "sha256": "5a5b94a605a8892658b77eeabd3f7112be29d1ca59b45b44f2607fcd5333c2bb",
-      "lines": 875
+      "sha256": "3c2927c75fd8089689f0eecdf8b83db5a809b35d05c81f25cb3865a11601c72f",
+      "lines": 899
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/format.rs",
@@ -64,8 +64,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/indexing.rs",
-      "sha256": "758e24689612f2e943f00bc23abd389d5cea02edc957d395cde4b9ce9bb16d18",
-      "lines": 495
+      "sha256": "8f262f2dce1f92d8c52df107e9eb9d76796bf129c79102db63bf8e40dd88358d",
+      "lines": 523
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/interop_coercions.rs",
@@ -79,13 +79,13 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
-      "sha256": "901a6cc95b34b9e99ad9a88e6700f2075eea4bc4cda53c0a594d668533fac07a",
-      "lines": 1532
+      "sha256": "38e1fe4e7785f586ef39e9a05bc4f3ccbba1c344ddf6851f6be826e1425bd6b1",
+      "lines": 1600
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/collection_methods.rs",
-      "sha256": "fbebecdbc503fcd2bee8b1635e2e7263242e27cea4329756b7a55fc627c201c1",
-      "lines": 194
+      "sha256": "add6db8f400cb2f58d3148e63786a8859249a024c05b9aff4ab1b9fc6b0a2bb0",
+      "lines": 212
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/fast_paths.rs",
@@ -94,8 +94,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/iterator_methods.rs",
-      "sha256": "960aef9b98c9950601955dcfa9d0eca602698ed9777ed00af4393aca349d598c",
-      "lines": 366
+      "sha256": "509dfe2093a73c49c9039f9ad257641762fa2135e6c1e1bb7196a79b479b48b2",
+      "lines": 377
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/string_methods.rs",
@@ -104,8 +104,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/mod.rs",
-      "sha256": "fac1e99bacfc356b252ca3195e56bad87c23acc68b67bd87f0530b2b2726aa5c",
-      "lines": 4408
+      "sha256": "90b64cbeabd0b6c2586a69d085ff3faab5aa0eea839a96a76e7a1779507b0da4",
+      "lines": 4411
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/structs_enums.rs",
@@ -114,8 +114,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/mod.rs",
-      "sha256": "513391073130cd9250c415e4d21cf9dcca31d2cf58ac13a5ecd2060a4de5755c",
-      "lines": 4604
+      "sha256": "ceae5e37033de6fcf78746d9764a19e07635130d64ea3894be97d3f1c7c2f991",
+      "lines": 4711
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/native_unions.rs",
@@ -124,18 +124,18 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/program.rs",
-      "sha256": "764ae027ca4a45ab7a843615b5f507e02fd3021a0dd73247d76e8595c3930567",
-      "lines": 4664
+      "sha256": "5a7f1e2d0f90570e0afb0bcaab3a54aed4239954c82635405b7194cf391ba18b",
+      "lines": 4728
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
-      "sha256": "1b4cbab62a25daf116f6507389d9c15f0afa4ef3a8ff08114e8c3f9b517a5eef",
-      "lines": 1942
+      "sha256": "b97998a387d622a6fd98a7c603cfcb26f61092bdff68ac392541957fd927460f",
+      "lines": 2159
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/types.rs",
-      "sha256": "966cfa5ec528f766fa1ce9e810390e6619365fb869e8dd448743c03b5a5e17e1",
-      "lines": 706
+      "sha256": "5bf2e51819535393c243270b8d927b8b75321912a70fbe8636204bcd794ceaf5",
+      "lines": 707
     }
   ],
   "changes": [
@@ -283,6 +283,181 @@
       "behavior_evidence": "behavior fixtures cli/set_constructor_over_generator.incn (#1744), cli/const_frozen_collection_reads.incn (#1757), cli/user_model_named_field_info.incn (#1770) and cli/host_keyword_identifiers.incn (#1775); emitter tests in incan_emit src/tests/emitted_spellings.rs; lowering tests in incan_ir lower/tests/collection_sources_and_static_reads.rs and the IR test set_constructor_source_plans_a_generator_through_the_iterator_trait_issue1744",
       "semantic_owner": "#1561: the facts lowering hands emission -- the Set constructor plan IrType::set_constructor_source decides (#1744); the checked FrozenDict[K, V] index type on the Index node and the planner key probe plan_dict_lookup_key (#1757); the program own nominal declarations, which a stdlib surface name never shadows (#1770); and source identifiers, spelled through the one rust_ident escape (#1775)",
       "retirement_condition": "the Rust-source backend is deleted (#654); the replacement route evaluates these reads from the same checked facts and emits no Rust identifiers"
+    },
+    {
+      "kind": "change",
+      "pr": 1893,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/mod.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1843",
+      "behavior_evidence": "incan_emit default_argument_codegen_tests::default_constructing_another_modules_type_reaches_its_fields_within_the_crate_issue1771; behavior fixture cli_modules_and_declarations/private_default_items_across_modules; incan_emit emit::tests::manifest_constructor_emits_type_parameter_fields_at_the_supplied_type_issue1843",
+      "semantic_owner": "checked constructor identity: Body IR names the constructed declaration, not its spelling",
+      "retirement_condition": "the Rust-source emitter is removed under #654"
+    },
+    {
+      "kind": "change",
+      "pr": 1894,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/decls/functions.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1828",
+      "behavior_evidence": "bodyless_trait_slot_drops_owned_mutable_rust_parameter_binding_issue1828",
+      "semantic_owner": "checked IR parameter mutability and method body presence",
+      "retirement_condition": "the Rust-source emitter is removed under #654"
+    },
+    {
+      "kind": "change",
+      "pr": 1895,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/comprehensions.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/mod.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/mod.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/types.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/indexing.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1857, #1861, #1863, #1864, #1869",
+      "behavior_evidence": "incan_emit::tests::mut_ownership_regressions compiled-Rust tests; incan_emit tests::mut_ownership_regressions compile the generated Rust with rustc, including comprehension_filter_mutation_reaches_the_source_issue1864; loop_popping_each_element_builds_issue1869",
+      "semantic_owner": "Body IR mutation and receiver ownership facts",
+      "retirement_condition": "Body IR carries mutable place and iteration plans so the emitter only renders them"
+    },
+    {
+      "kind": "change",
+      "pr": 1896,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/program.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1796",
+      "behavior_evidence": "generated-Rust test a_union_over_a_generic_type_two_modules_declare_gets_one_wrapper_each_issue1796 in incan_emit/src/tests/union_member_identity.rs: two modules that each declare Holder[T] and write Holder[int] | str get one crate-root wrapper each, whose payload names crate::third::Holder<i64> and crate::fourth::Holder<i64>. Printed output changes only for a crate-root wrapper payload whose generic base lowering spells by a module path, which it does only for a generic type that more than one module of the crate declares; every other wrapper payload prints as before.",
+      "semantic_owner": "#1561: lowering's union member identity (incan_ir lower/union_identity.rs) decides the declaration each union member names and spells it; the emitter only prints the spelled path.",
+      "retirement_condition": "Removal of the Rust-source backend (#654), or a wrapper-payload emitter that takes a typed item path instead of a spelled name."
+    },
+    {
+      "kind": "change",
+      "pr": 1897,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/program.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1833",
+      "behavior_evidence": "incan_emit unit test generated_union_debug_delegates_to_member_issue1833",
+      "semantic_owner": "Body IR union member types and the language display contract",
+      "retirement_condition": "the Rust-source backend is removed under #654"
+    },
+    {
+      "kind": "change",
+      "pr": 1899,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/decls/functions.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/builtins.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/indexing.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/collection_methods.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/program.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1757, #1795, #1561",
+      "behavior_evidence": "behavior fixtures snapshots_collections_and_strings/const_frozen_collection_membership_and_iteration.incn and dict_get_with_default.incn, snapshots_stdlib/generator_iterator_surface.incn, snapshots_traits_and_generics/iterator_flat_map_over_iterables.incn and codegen_modules_and_imports/user_types_named_like_stdlib_types (combined-branch run); rustc-compiling emitter tests in incan_emit src/tests/reads_and_iterator_surface.rs; codegen snapshot std_derives_collection_compiled gains the Generator bridge impl",
+      "semantic_owner": "#1561: the checked facts lowering already carries (a FrozenList read typed as its element and the ownership planner list_read_element_type; the checked Dict.get(k, default) call typed V; the checker protocol typing of Generator[T] as an Iterator[T] value; the checked import identity imports_project_module_type); after the cutover Body IR states each read and binding from those facts",
+      "retirement_condition": "#654: the Rust-source backend is deleted; the replacement route reads frozen collections, dict defaults, generators and project-imported types from the recorded facts and needs no emitter spelling of its own"
+    },
+    {
+      "kind": "change",
+      "pr": 1899,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1561",
+      "behavior_evidence": "emission test dict_get_with_default_reads_the_value in incan_emit src/tests/reads_and_iterator_surface.rs (rustc-compiled) and the behavior fixture snapshots_collections_and_strings/dict_get_with_default.incn (combined-branch run)",
+      "semantic_owner": "#1561: the checked Dict.get(k, default) call typed V and the membership-probe ownership plan in the ownership planner; after the cutover Body IR states the static read from those facts",
+      "retirement_condition": "#654: the Rust-source backend is deleted; the replacement route reads a static dict entry from the recorded facts"
+    },
+    {
+      "kind": "change",
+      "pr": 1901,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/decls/structures.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1561",
+      "behavior_evidence": "followups_b_serde_derives_are_crate_rooted_when_stdlib_serde_is_imported",
+      "semantic_owner": "compiler-owned derive path identity in IR",
+      "retirement_condition": "the Rust-source emitter is removed or consumes pre-rendered absolute derive identities"
+    },
+    {
+      "kind": "change",
+      "pr": 1902,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/iterator_methods.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1561",
+      "behavior_evidence": "behavior fixture snapshots_traits_and_generics/iterator_flat_map_draws_expansions_lazily.incn (take(1) over a recording generator expansion draws one item) beside iterator_flat_map_over_iterables.incn; lowering test flat_map_callbacks_hand_the_adapter_a_nested_iterator in incan_ir; rustc-compiling emitter test flat_map_expands_any_iterable_compiles; codegen snapshot std_derives_collection_compiled shows FlatMapIterator holding the nested iterator and its marker",
+      "semantic_owner": "#1561: FlatMapIterator in std.derives.collection owns the adapter state and its fields; lowering (flat_map_iterator_callback) hands it a callback that returns the nested iterator; this literal only spells the fields",
+      "retirement_condition": "#654: the Rust-source backend is deleted; Body IR constructs the adapter from the source model"
     }
   ]
 }

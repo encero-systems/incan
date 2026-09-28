@@ -734,6 +734,21 @@ mod tests {
     }
 
     #[test]
+    fn numeric_suffix_literals_are_single_tokens_numeric_contract() {
+        let tokens = lex_ok("42u16 7i8 3.14f32");
+        assert_eq!(tokens.len(), 4, "three literals plus EOF: {tokens:?}");
+        assert!(
+            matches!(&tokens[0].kind, TokenKind::Int(lit) if lit.repr == "42u16" && lit.suffix == Some(incan_lang::lang::types::numerics::NumericTypeId::U16))
+        );
+        assert!(
+            matches!(&tokens[1].kind, TokenKind::Int(lit) if lit.repr == "7i8" && lit.suffix == Some(incan_lang::lang::types::numerics::NumericTypeId::I8))
+        );
+        assert!(
+            matches!(&tokens[2].kind, TokenKind::Float(lit) if lit.repr == "3.14f32" && lit.suffix == Some(incan_lang::lang::types::numerics::NumericTypeId::F32))
+        );
+    }
+
+    #[test]
     fn numeric_literals_reject_invalid_separator_placement() {
         for (source, expected_kind) in [
             ("1__000", "integer"),

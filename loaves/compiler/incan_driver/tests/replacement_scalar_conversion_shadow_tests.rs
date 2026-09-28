@@ -20,8 +20,6 @@ mod shadow_capability;
 const INT_CONVERSION_FAILURE_SRC: &str =
     "def parse(value: str) -> int:\n    println(\"before conversion\")\n    return int(value)\n";
 const FLOAT_CONVERSION_FAILURE_SRC: &str = "def parse(value: str) -> str:\n    println(\"before conversion\")\n    parsed = float(value)\n    return str(parsed)\n";
-const EXACT_FLOAT_FAILURE_SRC: &str =
-    "def exact(value: str) -> f64:\n    println(\"before exact conversion\")\n    return float(value)\n";
 const FLOAT_LITERAL_DISPLAY_SRC: &str = "def render() -> str:\n    return f\"{str(1_000.50)} {str(1.25e2)}\"\n";
 const FLOAT_CAST_EDGE_SRC: &str = "def render() -> str:\n    nan = float(\"NaN\")\n    positive_infinity = float(\"inf\")\n    negative_infinity = float(\"-inf\")\n    out_of_range = float(\"1e9999\")\n    negative_fraction = float(\"-3.9\")\n    return f\"{int(nan)} {int(positive_infinity)} {int(negative_infinity)} {int(out_of_range)} {int(3.9)} {int(negative_fraction)}\"\n";
 const TYPED_CAST_EDGE_SRC: &str = "def minimum() -> i128:\n    return -170141183460469231731687303715884105728\n\ndef render() -> str:\n    low = minimum()\n    wide: u128 = 340282366920938463463374607431768211455\n    return f\"{low} {int(low)} {int(wide)} {float(low)} {float(wide)}\"\n";
@@ -127,51 +125,6 @@ fn scalar_conversion_failures_keep_their_canonical_class_and_original_input() ->
         assert_eq!(replacement_receipt.shadow_comparison, comparison.state);
         assert_eq!(legacy_receipt.fallback_outcome, FallbackOutcome::NotNeeded);
         assert_eq!(replacement_receipt.fallback_outcome, FallbackOutcome::NotNeeded);
-    }
-    Ok(())
-}
-
-/// Generated/native and replacement execution both reject non-finite values at an exact-f64 return boundary.
-#[test]
-fn non_finite_exact_f64_returns_fail_with_the_same_class_on_required_routes() -> Result<(), Box<dyn std::error::Error>>
-{
-    if let Some(reason) = shadow_capability::unstaged_legacy_route_reason()? {
-        eprintln!("skipping: {reason}");
-        return Ok(());
-    }
-    for input in ["NaN", "inf", "-inf", "1e9999"] {
-        let workspace = tempfile::tempdir()?;
-        let profile = ShadowComparisonProfile::new(
-            EXACT_FLOAT_FAILURE_SRC,
-            "exact",
-            vec![ReplacementValue::Str(input.to_string())],
-        );
-        let comparison = compare(&profile, workspace.path())?;
-
-        assert!(
-            matches!(comparison.state, ShadowComparisonState::Diverged { .. }),
-            "matching exact-float failure classes retain the native/direct stderr difference: {:?}",
-            comparison.state
-        );
-        let (legacy, replacement) = route_evidence(&comparison)?;
-        let expected = SourceObservable::Failed {
-            failure: incan_driver::backend::shadow::RuntimeFailureClass::NonFiniteExactF64,
-        };
-        assert_eq!(legacy.observation.observable, expected, "native route accepted {input}");
-        assert_eq!(
-            replacement.observation.observable, expected,
-            "replacement route accepted {input}"
-        );
-        assert_eq!(legacy.observation.stdout, b"before exact conversion\n");
-        assert_eq!(replacement.observation.stdout, legacy.observation.stdout);
-        assert_eq!(
-            legacy.observation.stderr,
-            b"ValueError: non-finite float cannot initialize exact f64\n"
-        );
-        assert!(replacement.observation.stderr.is_empty());
-        assert!(comparison.replacement_execution.is_none());
-        legacy.receipt()?.verify_identity()?;
-        replacement.receipt()?.verify_identity()?;
     }
     Ok(())
 }

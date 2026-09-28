@@ -3486,7 +3486,21 @@ impl AstLowering {
             if constructor == CollectionTypeId::List && args.is_empty() {
                 return Ok((IrExprKind::List(Vec::new()), result_ty));
             }
-            let args_ir = self.lower_call_args(args)?.into_iter().map(|arg| arg.expr).collect();
+            let args_ir = self
+                .lower_call_args(args)?
+                .into_iter()
+                .map(|arg| {
+                    // `set(c)` over a frozen collection of `'static` text or bytes, or over a `FrozenDict`, collects
+                    // the owned items (the keys of a dict) the checker typed, as a comprehension over it does.
+                    if constructor == CollectionTypeId::Set
+                        && super::frozen_reads::set_source_needs_owned_frozen_items(&arg.expr.ty)
+                    {
+                        super::frozen_reads::owned_frozen_iteration_source(arg.expr)
+                    } else {
+                        arg.expr
+                    }
+                })
+                .collect();
             return Ok((
                 IrExprKind::BuiltinCall {
                     func: BuiltinFn::CollectionConstructor(constructor),
@@ -3499,6 +3513,9 @@ impl AstLowering {
         // Check if this is a struct/model/class constructor call
         if let ast::Expr::Ident(name) = &f.node {
             let constructor_name = self.symbol_aliases.get(name).cloned().unwrap_or_else(|| name.clone());
+            if let Some(canonical_name) = self.default_owner_constructor_name(name, f.span) {
+                return self.lower_constructor_call(&canonical_name, type_args, args, call_span);
+            }
             if let Some(type_path) = self.active_trait_default_value_type_path(name) {
                 let canonical_name = type_path.join("::");
                 return self.lower_constructor_call(&canonical_name, type_args, args, call_span);
@@ -3922,20 +3939,56 @@ impl AstLowering {
         let callee_name = Self::partial_projection_binding_name(&callee.node)?;
         let info = self.type_info.as_ref()?;
         let projection = info.partial_projection(&callee_name)?;
-        let merged = merge_named_partial_args(
-            projection.presets.iter().map(|preset| PartialPresetRef {
-                name: preset.name.as_str(),
-                value: &preset.value,
-            }),
-            args,
-        )?;
-
         let params = info
             .call_site_callable_params(call_span)
             .or_else(|| match info.expr_type(callee.span)? {
                 ResolvedType::Function(params, _) => Some(params.as_slice()),
                 _ => None,
+            })
+            .or_else(|| {
+                // A provider projection's checked binding carries the residual parameters its positional arguments
+                // bind. A source projection without call metadata keeps deferring to its canonical signature, whose
+                // emission spells the presets through their declaring module.
+                projection.external_library.as_ref()?;
+                info.declarations
+                    .function_bindings
+                    .get(&callee_name)
+                    .map(|binding| binding.params.as_slice())
             });
+        let normalized_args = if args.iter().any(|arg| matches!(arg, ast::CallArg::Positional(_))) {
+            let params = params?;
+            let mut residual = params
+                .iter()
+                .filter(|param| param.kind == ast::ParamKind::Normal && !param.is_partial_preset)
+                .filter_map(|param| param.name.as_deref());
+            let mut normalized = Vec::with_capacity(args.len());
+            for arg in args {
+                match arg {
+                    ast::CallArg::Positional(value) => {
+                        let name = residual.next()?;
+                        normalized.push(ast::CallArg::Named(
+                            ast::Spanned::new(name.to_string(), value.span),
+                            value.clone(),
+                        ));
+                    }
+                    ast::CallArg::Named(name, value) => {
+                        normalized.push(ast::CallArg::Named(name.clone(), value.clone()));
+                    }
+                    ast::CallArg::PositionalUnpack(_) | ast::CallArg::KeywordUnpack(_) => return None,
+                }
+            }
+            normalized
+        } else {
+            args.to_vec()
+        };
+        let merged = merge_named_partial_args(
+            projection.presets.iter().map(|preset| PartialPresetRef {
+                name: preset.name.as_str(),
+                value: &preset.value,
+            }),
+            &normalized_args,
+        )?;
+
         let Some(params) = params else {
             // Provider projections must materialize checked preset values because the consumer has no source-owned
             // function default to emit. Source projections deliberately defer when callable metadata is unavailable:
@@ -4091,6 +4144,21 @@ impl AstLowering {
         }
     }
 
+    /// Whether a constructor callee names the stdlib `ValidationError`, which is built through its runtime
+    /// constructors.
+    ///
+    /// A type the program declares under that name, or imports under it from one of its own modules, is constructed as
+    /// the declaration it is (#1795); the checked import path is the authority for an imported name.
+    fn names_stdlib_validation_error(&self, name: &str) -> bool {
+        name == surface_types::as_str(surface_types::SurfaceTypeId::ValidationError)
+            && !self.declared_nominal_type_names.contains(name)
+            && self
+                .type_info
+                .as_ref()
+                .and_then(|info| info.import_binding_path(name))
+                .is_none_or(|path| path.first().map(String::as_str) == Some(STDLIB_ROOT))
+    }
+
     /// Lower a struct/model/class/newtype constructor call.
     pub fn lower_constructor_call(
         &mut self,
@@ -4103,7 +4171,7 @@ impl AstLowering {
             return Ok(hook_call);
         }
 
-        if name == surface_types::as_str(surface_types::SurfaceTypeId::ValidationError) {
+        if self.names_stdlib_validation_error(name) {
             let mut message = None;
             let mut code = None;
             for arg in args {

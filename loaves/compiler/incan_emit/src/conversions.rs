@@ -171,7 +171,7 @@ use crate::reference_shape::expr_has_rust_reference_shape;
 use incan_ir::decl::FunctionParam;
 use incan_ir::expr::{BinOp, VarAccess};
 use incan_ir::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ir, pow_exponent_kind_from_ir};
-use incan_ir::types::{Mutability, same_exact_binary_float_type};
+use incan_ir::types::{Mutability, exact_integer_arithmetic_type, same_exact_binary_float_type};
 use incan_ir::{IrExpr, IrExprKind, IrType, TypedExpr};
 use incan_lang::interop::rust_display_is_owned_string;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
@@ -224,8 +224,11 @@ pub enum Conversion {
     Clone,
     /// Validate an Incan-owned exact `f32` destination before storing the value.
     RequireFiniteF32,
-    /// Validate an Incan-owned exact `f64` destination, preserving lossless `f32` widening.
-    RequireFiniteF64,
+    /// Widen a numeric value into an Incan-owned destination of a wider numeric type through the target's `From`
+    /// conversion (`i64::from(small)`, `f64::from(narrow)`): an assignment the numeric assignment table admits.
+    LosslessWiden(NumericTypeId),
+    /// Wrap a `'static` string in the `FrozenStr` a frozen destination stores.
+    ToFrozenStr,
 }
 
 impl Conversion {
@@ -239,28 +242,35 @@ impl Conversion {
             Conversion::MutBorrow => quote! { &mut #tokens },
             Conversion::Clone => quote! { #tokens.clone() },
             Conversion::RequireFiniteF32 => quote! { incan_std_core::num::require_finite_f32(#tokens) },
-            Conversion::RequireFiniteF64 => quote! { incan_std_core::num::require_finite_f64(#tokens) },
+            Conversion::LosslessWiden(target) => {
+                let target = proc_macro2::Ident::new(numerics::rust_name(*target), proc_macro2::Span::call_site());
+                quote! { #target::from(#tokens) }
+            }
+            Conversion::ToFrozenStr => quote! { incan_std_core::frozen::FrozenStr::new(#tokens) },
         }
     }
 }
 
-/// Return the finite-value guard for an exact floating carrier.
+/// Return the finite-value guard for an exact `f32` carrier.
 ///
-/// This is shared by value-production boundaries and direct observation sites. Ordinary source `float` deliberately
-/// remains outside the exact-width contract and therefore retains normal IEEE `NaN`/infinity behavior.
+/// This is shared by value-production boundaries and direct observation sites. `float` is `f64` (RFC 009) and keeps
+/// normal IEEE `NaN`/infinity behavior, so only `f32` has a guard.
 pub fn exact_float_value_validation(ty: &IrType) -> Conversion {
     match ty {
         IrType::Numeric(NumericTypeId::F32) => Conversion::RequireFiniteF32,
-        IrType::Numeric(NumericTypeId::F64) => Conversion::RequireFiniteF64,
         _ => Conversion::None,
     }
 }
 
-/// Select the finite-only guard for one compiler-owned exact-float destination.
+/// Select the conversion one compiler-owned numeric destination needs: the finite-only guard for an `f32` destination,
+/// and the lossless widening of a value into a destination of a wider numeric type.
 ///
-/// Ordinary `float` remains IEEE-compatible; the guard belongs only to boundaries that create an exact `f32` or
-/// `f64` value. Rust-facing call and match boundaries retain their existing Rust API shape.
-fn exact_float_boundary_conversion(
+/// The checker admits a value at a destination whose type it losslessly widens to (an `i8` into an `int` binding, a
+/// `u8` argument for an `i32` parameter, an `f32` into a `float` field), and Rust has no implicit numeric widening, so
+/// the destination's `From` conversion is spelled here, once, for every Incan-owned binding, argument, field,
+/// collection element and return. `float` remains IEEE-compatible, so it has no guard. Rust-facing call and match
+/// boundaries retain their existing Rust API shape.
+fn numeric_boundary_conversion(
     expr: &IrExpr,
     target_ty: Option<&IrType>,
     context: ConversionContext,
@@ -280,22 +290,49 @@ fn exact_float_boundary_conversion(
         (Some(IrType::Numeric(NumericTypeId::F32)), IrType::Numeric(NumericTypeId::F32)) => {
             Some(Conversion::RequireFiniteF32)
         }
-        (
-            Some(IrType::Numeric(NumericTypeId::F64)),
-            IrType::Float | IrType::Numeric(NumericTypeId::F32 | NumericTypeId::F64),
-        ) => Some(Conversion::RequireFiniteF64),
+        (Some(target_ty), source_ty) => {
+            let (source, target) = (source_ty.numeric_carrier_id()?, target_ty.numeric_carrier_id()?);
+            (source != target && incan_lang::numeric_values::numeric_type_losslessly_widens_to(source, target))
+                .then_some(Conversion::LosslessWiden(target))
+        }
         _ => None,
     }
 }
 
-/// Numeric coercions for binary operations (int/float promotion).
+/// Select the `FrozenStr` materialization for a `'static` string stored at a `FrozenStr` destination.
+///
+/// A `const` declared `str` is emitted as a `&'static str` but carries `FrozenStr` at the source level, so the checker
+/// admits it wherever `FrozenStr` is expected: a return, a binding, an argument, a field, a collection slot, or a union
+/// member or `Some` payload retargeted to `FrozenStr`. The value is wrapped without copying (#1794). Rust-facing call,
+/// method and match boundaries keep their Rust API shape.
+fn frozen_str_boundary_conversion(
+    expr: &IrExpr,
+    target_ty: Option<&IrType>,
+    context: ConversionContext,
+) -> Option<Conversion> {
+    let incan_destination = matches!(
+        context,
+        ConversionContext::IncanFunctionArg
+            | ConversionContext::IncanFunctionArgInReturn
+            | ConversionContext::StructField
+            | ConversionContext::CollectionElement
+            | ConversionContext::Assignment
+            | ConversionContext::ReturnValue
+    );
+    (incan_destination && matches!(target_ty, Some(IrType::FrozenStr)) && matches!(expr.ty, IrType::StaticStr))
+        .then_some(Conversion::ToFrozenStr)
+}
+
+/// Numeric coercions for binary operations (int/float promotion and integer comparison widening).
 ///
 /// Promotes integer operands to `f64` when the paired operand is `f64`, or when the operation requires float (e.g.,
-/// division).
+/// division), and widens an integer operand compared with a value of another integer type to the type both widen to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NumericConversion {
     None,
     ToFloat,
+    /// Widen an integer operand without loss to the named integer type.
+    Widen(NumericTypeId),
 }
 
 impl NumericConversion {
@@ -308,16 +345,20 @@ impl NumericConversion {
             // Use `(expr) as f64` to preserve precedence without wrapping the entire cast expression.
             // This avoids Rust's `unused_parens` warnings in call arguments like `f(x, (3 as f64))`.
             NumericConversion::ToFloat => quote! { (#tokens) as f64 },
+            NumericConversion::Widen(target) => {
+                let target = proc_macro2::Ident::new(numerics::rust_name(*target), proc_macro2::Span::call_site());
+                quote! { #target::from(#tokens) }
+            }
         }
     }
 }
 
 /// Return the concrete operand coercion required by the generated Rust operation.
 ///
-/// The shared numeric lattice intentionally treats both source `float` and exact `f32`/`f64` as floating-point
-/// values. Rust does not: it rejects mixed `f32`/`f64` operators and the float helpers selected for a widened result
-/// accept `f64`. Preserve same-width exact `f32` operations, but widen an `f32` operand whenever its paired operand
-/// makes the concrete operation use `f64`.
+/// The shared numeric lattice intentionally treats both `float` (`f64`) and exact `f32` as floating-point values. Rust
+/// does not: it rejects mixed `f32`/`f64` operators and the float helpers selected for a widened result accept `f64`.
+/// Preserve same-width `f32` operations, but widen an `f32` operand whenever its paired operand makes the concrete
+/// operation use `f64`.
 fn numeric_operand_conversion(
     operand_ty: &IrType,
     paired_ty: &IrType,
@@ -326,7 +367,7 @@ fn numeric_operand_conversion(
 ) -> NumericConversion {
     let concrete_f32_widening = matches!(operand_ty, IrType::Numeric(NumericTypeId::F32))
         && !matches!(paired_ty, IrType::Numeric(NumericTypeId::F32))
-        && matches!(result_ty, IrType::Float | IrType::Numeric(NumericTypeId::F64));
+        && matches!(result_ty, IrType::Float);
     if lattice_requires_float || concrete_f32_widening {
         NumericConversion::ToFloat
     } else {
@@ -361,7 +402,7 @@ pub struct BinOpPlan {
 }
 
 impl BinOpPlan {
-    /// Reject a non-finite value at the point an exact floating arithmetic result is produced.
+    /// Reject a non-finite value at the point an `f32` arithmetic result is produced.
     ///
     /// Validating the operation itself, rather than relying only on a later assignment or return conversion, keeps a
     /// non-finite exact value from escaping through effect and observation sites such as `print` and comparisons.
@@ -393,6 +434,11 @@ fn emit_binop_token(op: &BinOp) -> TokenStream {
         BinOp::Shl => quote! { << },
         BinOp::Shr => quote! { >> },
     }
+}
+
+/// Return whether an arithmetic result type is an integer: `int` or one of the exact-width integer types.
+fn is_integer_result_type(ty: &IrType) -> bool {
+    matches!(ty, IrType::Int) || matches!(ty, IrType::Numeric(id) if numerics::is_integer(*id))
 }
 
 /// Return whether an IR type is one of the exact-width unsigned integer types.
@@ -483,8 +529,35 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
     let lhs_num = ir_type_to_numeric_ty(&left.ty);
     let rhs_num = ir_type_to_numeric_ty(&right.ty);
 
-    // Python modulo/floor-division helpers are i64/f64-only. Unsigned exact-width operands can use Rust's native
-    // operators because their domain has no negative remainder/flooring case to normalize.
+    // Two integer types compare in the narrowest integer type both widen to without loss (RFC 009); Rust compares only
+    // two values of one type.
+    if matches!(
+        num_op,
+        NumericOp::Eq | NumericOp::NotEq | NumericOp::Lt | NumericOp::LtEq | NumericOp::Gt | NumericOp::GtEq
+    ) && let (Some(left_id), Some(right_id)) = (left.ty.numeric_carrier_id(), right.ty.numeric_carrier_id())
+        && left_id != right_id
+        && let Some(common) = incan_lang::numeric_values::common_lossless_integer_type(left_id, right_id)
+    {
+        let widen = |id: NumericTypeId| {
+            if id == common {
+                NumericConversion::None
+            } else {
+                NumericConversion::Widen(common)
+            }
+        };
+        return BinOpPlan {
+            lhs_conv: widen(left_id),
+            rhs_conv: widen(right_id),
+            result_ty: IrType::Bool,
+            emit: BinOpEmitKind::Infix {
+                token: emit_binop_token(op),
+            },
+        };
+    }
+
+    // Unsigned exact-width `//` and `%` keep their type through the unsigned helpers, which refuse a zero divisor with
+    // `ZeroDivisionError` as every other division does; Rust's native operators would panic with their own message.
+    // The unsigned domain has no negative remainder or flooring case, so the helpers need no Python normalization.
     if matches!(num_op, NumericOp::FloorDiv | NumericOp::Mod)
         && (exact_unsigned_integer_type(&left.ty)
             && (matches!(right.ty, IrType::Int) || exact_unsigned_integer_type(&right.ty))
@@ -492,6 +565,11 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
                 && matches!(left.ty, IrType::Int)
                 && non_negative_integer_literal(left))
     {
+        let path = if matches!(num_op, NumericOp::FloorDiv) {
+            quote! { incan_std_core::num::py_floor_div_unsigned }
+        } else {
+            quote! { incan_std_core::num::py_mod_unsigned }
+        };
         return BinOpPlan {
             lhs_conv: NumericConversion::None,
             rhs_conv: NumericConversion::None,
@@ -500,8 +578,9 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
             } else {
                 right.ty.clone()
             },
-            emit: BinOpEmitKind::Infix {
-                token: emit_binop_token(op),
+            emit: BinOpEmitKind::StdlibCall {
+                path,
+                borrow_args: false,
             },
         };
     }
@@ -528,8 +607,13 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
         (Some(lhs), Some(rhs)) => {
             let (l_promote, r_promote) = needs_float_promotion(num_op, lhs, rhs, pow_exp_kind);
             let res = result_numeric_type(num_op, lhs, rhs, pow_exp_kind);
+            // RFC 009: an integer result keeps its operands' one integer type, the base's for `**`.
+            let exact_integer_result = match num_op {
+                NumericOp::Pow => exact_integer_arithmetic_type(&left.ty, &IrType::Int),
+                _ => exact_integer_arithmetic_type(&left.ty, &right.ty),
+            };
             let ty = exact_float_result.unwrap_or(match res {
-                NumericTy::Int => IrType::Int,
+                NumericTy::Int => exact_integer_result.unwrap_or(IrType::Int),
                 NumericTy::Float => IrType::Float,
             });
             let l = numeric_operand_conversion(&left.ty, &right.ty, &ty, l_promote);
@@ -541,15 +625,15 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
 
     let emit = match num_op {
         NumericOp::Pow => {
-            let result_is_int = matches!(result_ty, IrType::Int);
+            let result_is_int = is_integer_result_type(&result_ty);
             BinOpEmitKind::Pow { result_is_int }
         }
         NumericOp::Mod => {
             let path = match &result_ty {
-                IrType::Int => quote! { incan_std_core::num::py_mod_i64 },
+                IrType::Int | IrType::Numeric(NumericTypeId::I64) => quote! { incan_std_core::num::py_mod_i64 },
                 IrType::Float => quote! { incan_std_core::num::py_mod_f64 },
                 IrType::Numeric(NumericTypeId::F32) => quote! { incan_std_core::num::py_mod_f32 },
-                IrType::Numeric(NumericTypeId::F64) => quote! { incan_std_core::num::py_mod_f64 },
+                ty if is_integer_result_type(ty) => quote! { incan_std_core::num::py_mod_signed },
                 _ => quote! { incan_std_core::num::py_mod },
             };
             BinOpEmitKind::StdlibCall {
@@ -559,10 +643,10 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
         }
         NumericOp::FloorDiv => {
             let path = match &result_ty {
-                IrType::Int => quote! { incan_std_core::num::py_floor_div_i64 },
+                IrType::Int | IrType::Numeric(NumericTypeId::I64) => quote! { incan_std_core::num::py_floor_div_i64 },
                 IrType::Float => quote! { incan_std_core::num::py_floor_div_f64 },
                 IrType::Numeric(NumericTypeId::F32) => quote! { incan_std_core::num::py_floor_div_f32 },
-                IrType::Numeric(NumericTypeId::F64) => quote! { incan_std_core::num::py_floor_div_f64 },
+                ty if is_integer_result_type(ty) => quote! { incan_std_core::num::py_floor_div_signed },
                 _ => quote! { incan_std_core::num::py_floor_div },
             };
             BinOpEmitKind::StdlibCall {
@@ -571,8 +655,12 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
             }
         }
         NumericOp::Div => {
+            // Both operands reach the helper widened to `f64`, so an all-integer division names its family through
+            // the helper it calls: its zero divisor raises `division by zero`, not `float division by zero`.
+            let integer_operands = matches!((lhs_num, rhs_num), (Some(NumericTy::Int), Some(NumericTy::Int)));
             let path = match &result_ty {
                 IrType::Numeric(NumericTypeId::F32) => quote! { incan_std_core::num::py_div_f32 },
+                _ if integer_operands => quote! { incan_std_core::num::py_div_int },
                 _ => quote! { incan_std_core::num::py_div },
             };
             BinOpEmitKind::StdlibCall {
@@ -853,7 +941,9 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
     {
         return determine_conversion(expr, target_ty, context);
     }
-    if let Some(conversion) = exact_float_boundary_conversion(expr, target_ty, context) {
+    if let Some(conversion) = numeric_boundary_conversion(expr, target_ty, context)
+        .or_else(|| frozen_str_boundary_conversion(expr, target_ty, context))
+    {
         return conversion;
     }
     if matches!(expr.kind, IrExprKind::InteropCoerce { .. }) {
@@ -2336,20 +2426,27 @@ mod tests {
         assert_eq!(conv, Conversion::None);
     }
 
+    /// An `f32` destination requires a finite value; `float` is `f64` (RFC 009), so a `float` value is not guarded
+    /// and an `f32` value is only widened into `float`.
     #[test]
     fn exact_float_destinations_require_finite_values_without_rejecting_f32_widening() {
         let exact_f32 = IrType::Numeric(NumericTypeId::F32);
-        let exact_f64 = IrType::Numeric(NumericTypeId::F64);
         let ordinary_float = IrExpr::new(IrExprKind::Float(1.25), IrType::Float);
         let f32_value = IrExpr::new(IrExprKind::Float(1.25), exact_f32.clone());
 
         assert_eq!(
-            determine_conversion(&ordinary_float, Some(&exact_f64), ConversionContext::ReturnValue),
-            Conversion::RequireFiniteF64
+            determine_conversion(&ordinary_float, Some(&IrType::Float), ConversionContext::ReturnValue),
+            Conversion::None
         );
         assert_eq!(
-            determine_conversion(&f32_value, Some(&exact_f64), ConversionContext::Assignment),
-            Conversion::RequireFiniteF64
+            determine_conversion(&f32_value, Some(&IrType::Float), ConversionContext::Assignment),
+            Conversion::LosslessWiden(NumericTypeId::F64)
+        );
+        assert_eq!(
+            determine_conversion(&f32_value, Some(&IrType::Float), ConversionContext::ReturnValue)
+                .apply(quote! { narrow })
+                .to_string(),
+            quote! { f64::from(narrow) }.to_string()
         );
         assert_eq!(
             determine_conversion(&f32_value, Some(&exact_f32), ConversionContext::IncanFunctionArg),
@@ -2357,13 +2454,13 @@ mod tests {
         );
     }
 
+    /// `f32` arithmetic keeps `f32` and validates each result; `float` (`f64`) arithmetic is not validated.
     #[test]
     fn exact_float_arithmetic_plans_keep_width_and_validate_each_result() {
-        for (kind, expected_validation) in [
-            (NumericTypeId::F32, Conversion::RequireFiniteF32),
-            (NumericTypeId::F64, Conversion::RequireFiniteF64),
+        for (exact, expected_validation) in [
+            (IrType::Numeric(NumericTypeId::F32), Conversion::RequireFiniteF32),
+            (IrType::Float, Conversion::None),
         ] {
-            let exact = IrType::Numeric(kind);
             let left = IrExpr::new(
                 IrExprKind::Var {
                     name: "left".to_string(),
@@ -2390,11 +2487,11 @@ mod tests {
                 BinOp::Pow,
             ] {
                 let plan = determine_binop_plan(&op, &left, &right);
-                assert_eq!(plan.result_ty, exact, "{kind:?} plan lost its exact width for {op:?}");
+                assert_eq!(plan.result_ty, exact, "{exact:?} plan lost its width for {op:?}");
                 assert_eq!(
                     plan.result_validation(),
                     expected_validation,
-                    "{kind:?} plan omitted finite validation for {op:?}"
+                    "{exact:?} plan has the wrong finite validation for {op:?}"
                 );
             }
         }
@@ -2422,7 +2519,7 @@ mod tests {
             BinOp::Pow,
         ];
 
-        for paired_ty in [IrType::Numeric(NumericTypeId::F64), IrType::Float, IrType::Int] {
+        for paired_ty in [IrType::Float, IrType::Int] {
             let f32_value = operand("narrow", IrType::Numeric(NumericTypeId::F32));
             let paired_value = operand("paired", paired_ty.clone());
             for op in &operations {
@@ -2465,6 +2562,60 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// RFC 009: same-type integer arithmetic keeps its type, beside an integer literal too, and `//`, `%` and `**`
+    /// call helpers that keep that type.
+    #[test]
+    fn exact_integer_arithmetic_plans_keep_the_operand_type() {
+        let operand = |name: &str, ty: IrType| {
+            IrExpr::new(
+                IrExprKind::Var {
+                    name: name.to_string(),
+                    access: VarAccess::Read,
+                    ref_kind: VarRefKind::Value,
+                },
+                ty,
+            )
+        };
+        let helper = |plan: &BinOpPlan| match &plan.emit {
+            BinOpEmitKind::StdlibCall { path, .. } => path.to_string().replace(' ', ""),
+            BinOpEmitKind::Pow { result_is_int } => format!("pow(int={result_is_int})"),
+            BinOpEmitKind::Infix { token } => token.to_string(),
+        };
+        let small = operand("small", IrType::Numeric(NumericTypeId::I8));
+        let other = operand("other", IrType::Numeric(NumericTypeId::I8));
+        let literal = IrExpr::new(IrExprKind::Int(2), IrType::Int);
+        let byte = operand("byte", IrType::Numeric(NumericTypeId::U8));
+        let wide = operand("wide", IrType::Numeric(NumericTypeId::I64));
+
+        for op in [BinOp::Add, BinOp::Sub, BinOp::Mul] {
+            let plan = determine_binop_plan(&op, &small, &other);
+            assert_eq!(plan.result_ty, IrType::Numeric(NumericTypeId::I8), "{op:?}");
+            assert_eq!(plan.lhs_conv, NumericConversion::None, "{op:?}");
+            assert_eq!(plan.rhs_conv, NumericConversion::None, "{op:?}");
+            assert_eq!(
+                determine_binop_plan(&op, &literal, &small).result_ty,
+                IrType::Numeric(NumericTypeId::I8),
+                "{op:?}"
+            );
+        }
+        for (left, op, expected) in [
+            (&small, BinOp::Mod, "incan_std_core::num::py_mod_signed"),
+            (&small, BinOp::FloorDiv, "incan_std_core::num::py_floor_div_signed"),
+            (&byte, BinOp::Mod, "incan_std_core::num::py_mod_unsigned"),
+            (&wide, BinOp::FloorDiv, "incan_std_core::num::py_floor_div_i64"),
+        ] {
+            let plan = determine_binop_plan(&op, left, left);
+            assert_eq!(plan.result_ty, left.ty, "{op:?}");
+            assert_eq!(helper(&plan), expected, "{:?} {op:?}", left.ty);
+        }
+        let power = determine_binop_plan(&BinOp::Pow, &small, &literal);
+        assert_eq!(power.result_ty, IrType::Numeric(NumericTypeId::I8));
+        assert_eq!(helper(&power), "pow(int=true)");
+        let quotient = determine_binop_plan(&BinOp::Div, &small, &other);
+        assert_eq!(quotient.result_ty, IrType::Float);
+        assert_eq!(quotient.lhs_conv, NumericConversion::ToFloat);
     }
 
     // === ReturnValue Tests ===

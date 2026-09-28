@@ -45,7 +45,7 @@ use incan_lang::lang::rust_keywords;
 use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::functions::{self as surface_functions, SurfaceFnId};
 use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
-use incan_lang::lang::types::numerics::{self as numeric_types, NumericTypeId};
+use incan_lang::lang::types::numerics as numeric_types;
 use incan_lang::lang::types::stringlike::{self as string_types, StringLikeId};
 use incan_semantics_core::{CanonicalSymbolId, HirSourceSpan, SemanticSourceTargetKind};
 
@@ -1853,15 +1853,7 @@ fn ast_type_to_resolved_with_rust_imports(
 
             // Resolve through incan_lang registries (numerics, strings, unit).
             if let Some(id) = numeric_types::from_str(name) {
-                return match name.as_str() {
-                    "int" => ResolvedType::Int,
-                    "float" => ResolvedType::Float,
-                    "bool" => ResolvedType::Bool,
-                    _ => match id {
-                        NumericTypeId::Bool => ResolvedType::Bool,
-                        _ => ResolvedType::Numeric(id),
-                    },
-                };
+                return ResolvedType::from_numeric_spelling(name, id);
             }
             if let Some(id) = string_types::from_str(name) {
                 return match id {

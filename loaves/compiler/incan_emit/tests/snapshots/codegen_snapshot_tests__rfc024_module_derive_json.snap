@@ -10,8 +10,8 @@ incan_std_core::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 use json::{Deserialize as _, Serialize as _};
 pub use crate::__incan_std::serde::json;
 #[derive(
-    serde::Serialize,
-    serde::Deserialize,
+    ::serde::Serialize,
+    ::serde::Deserialize,
     Debug,
     Clone,
     incan_derive::FieldInfo,

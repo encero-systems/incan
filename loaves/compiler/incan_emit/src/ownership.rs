@@ -31,16 +31,102 @@ pub fn list_index_assignment_element_type(object_ty: &IrType) -> Option<&IrType>
     }
 }
 
+/// Return the element type an index read of a list-shaped value yields: a `list` or a `const` `FrozenList`.
+///
+/// Both read an element through the same Python-index helper (negative indices, `IndexError`), which takes the
+/// frozen storage as the slice it dereferences to (#1757).
+pub fn list_read_element_type(object_ty: &IrType) -> Option<&IrType> {
+    match object_ty {
+        IrType::List(elem_ty) => Some(elem_ty.as_ref()),
+        IrType::NamedGeneric(name, args) if collections::from_str(name) == Some(CollectionTypeId::FrozenList) => {
+            args.first()
+        }
+        _ => None,
+    }
+}
+
 /// Return the owned element type behind a list or set receiver, including explicit reference wrappers.
 ///
 /// `list.append(item)` and `set.add(item)` store `item` as an element, so emission and clone-bound inference both
 /// plan that argument as a `CollectionElement` of this type; sharing the projection keeps the two phases on the same
 /// boundary decision (#1489).
+///
+/// A `const` `FrozenList` or `FrozenSet` is list- or set-shaped for the membership test it offers: lowering borrows
+/// its receiver, and the element type decides the probe shape exactly as it does for a borrowed list or set. Writes
+/// never reach it, because the checker refuses them.
 pub fn collection_element_type(receiver_ty: &IrType) -> Option<&IrType> {
     match receiver_ty {
         IrType::Ref(inner) | IrType::RefMut(inner) => collection_element_type(inner),
         IrType::List(elem_ty) | IrType::Set(elem_ty) => Some(elem_ty.as_ref()),
+        IrType::NamedGeneric(name, args)
+            if matches!(
+                collections::from_str(name),
+                Some(CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet)
+            ) =>
+        {
+            args.first()
+        }
         _ => None,
+    }
+}
+
+/// How one item read out of a frozen collection's `'static` storage becomes the owned item the checker typed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrozenItemConversion {
+    /// Clone the borrowed item: it is stored as the type the checker gave it.
+    Clone,
+    /// Materialize `'static` text as an owned `str`.
+    OwnedText,
+    /// Materialize `'static` bytes as owned `bytes`.
+    OwnedBytes,
+}
+
+impl FrozenItemConversion {
+    /// Select the conversion for one frozen item type.
+    fn for_item(item_ty: &IrType) -> Self {
+        match item_ty {
+            IrType::String | IrType::StaticStr | IrType::StrRef => Self::OwnedText,
+            IrType::Bytes | IrType::StaticBytes => Self::OwnedBytes,
+            _ => Self::Clone,
+        }
+    }
+
+    /// Apply the conversion to the tokens of one borrowed item.
+    fn apply(self, item: TokenStream) -> TokenStream {
+        match self {
+            Self::Clone => quote! { #item.clone() },
+            Self::OwnedText => quote! { #item.to_string() },
+            Self::OwnedBytes => quote! { #item.to_vec() },
+        }
+    }
+}
+
+/// Return the family and the item conversion of a frozen collection read as an iteration source: a `FrozenList` or
+/// `FrozenSet` yields its elements, a `FrozenDict` yields its keys (#1757).
+fn frozen_iteration_source(source_ty: &IrType) -> Option<(CollectionTypeId, FrozenItemConversion)> {
+    let IrType::NamedGeneric(name, args) = source_ty else {
+        return None;
+    };
+    match collections::from_str(name)? {
+        family @ (CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet | CollectionTypeId::FrozenDict) => {
+            args.first().map(|item| (family, FrozenItemConversion::for_item(item)))
+        }
+        _ => None,
+    }
+}
+
+/// Emit the owned-item iterator over a frozen collection's storage: its converted elements, or its converted keys.
+fn frozen_items_iterator(
+    tokens: TokenStream,
+    family: CollectionTypeId,
+    conversion: FrozenItemConversion,
+) -> TokenStream {
+    if family == CollectionTypeId::FrozenDict {
+        let key = conversion.apply(quote! { __incan_key });
+        quote! { (#tokens).iter().map(|(__incan_key, _)| #key) }
+    } else {
+        let item = conversion.apply(quote! { __incan_item });
+        quote! { (#tokens).iter().map(|__incan_item| #item) }
     }
 }
 
@@ -761,6 +847,8 @@ pub enum LoopIterationPlan {
     BytesAsInts,
     /// Iterate a frozen bytes wrapper as Incan `int` values.
     FrozenBytesAsInts,
+    /// Iterate a `const` `FrozenList` or `FrozenSet` as owned elements, or a `FrozenDict` as owned keys (#1757).
+    FrozenItems(CollectionTypeId, FrozenItemConversion),
 }
 
 impl LoopIterationPlan {
@@ -781,17 +869,28 @@ impl LoopIterationPlan {
             Self::FrozenBytesAsInts => {
                 quote! { (#tokens).as_slice().iter().map(|__incan_byte| (*__incan_byte) as i64) }
             }
+            Self::FrozenItems(family, conversion) => frozen_items_iterator(tokens, *family, *conversion),
         }
     }
 }
 
 /// Plan the Rust iterator adapter for a lowered `for` loop.
+///
+/// A frozen collection, borrowed or not, is read through its `'static` storage: the loop binds the owned element or
+/// key the checker typed (#1757).
 pub fn plan_for_loop_iteration(
     iterable_ty: &IrType,
     borrowable_lvalue: bool,
     needs_mut_items: bool,
     item_is_user_enum: bool,
 ) -> LoopIterationPlan {
+    let mut frozen_candidate = iterable_ty;
+    while let IrType::Ref(inner) | IrType::RefMut(inner) = frozen_candidate {
+        frozen_candidate = inner;
+    }
+    if let Some((family, conversion)) = frozen_iteration_source(frozen_candidate) {
+        return LoopIterationPlan::FrozenItems(family, conversion);
+    }
     match iterable_ty {
         IrType::RefMut(inner) => match inner.as_ref() {
             IrType::String | IrType::StaticStr | IrType::StrRef => LoopIterationPlan::StringChars,
@@ -873,9 +972,9 @@ pub enum ListConstructorSourcePlan {
     CollectOwnedIterator,
     /// Clone each item out of an immutable collection that only lends its elements.
     CloneBorrowedItems,
-    /// Materialize each item of an immutable collection of `str` as an owned string: the frozen wrappers store
-    /// Incan `str` as `&'static str`, while the typechecker reports the converted list as `list[str]`.
-    OwnedStringsFromFrozenText,
+    /// Materialize each element of a `const` `FrozenList` or `FrozenSet`, or each key of a `FrozenDict`, as the owned
+    /// item the typechecker reports: the frozen wrappers store Incan `str` and `bytes` as `'static` views.
+    FrozenItems(CollectionTypeId, FrozenItemConversion),
     /// Clone each key of a dict, the items `for key in dict` yields.
     CloneDictKeys,
     /// Yield converted items through the loop adapter the same source takes in a `for` header.
@@ -889,9 +988,7 @@ impl ListConstructorSourcePlan {
             Self::IntoOwnedItems => quote! { (#tokens).into_iter() },
             Self::CollectOwnedIterator => return quote! { ::std::iter::Iterator::collect::<Vec<_>>(#tokens) },
             Self::CloneBorrowedItems => quote! { (#tokens).iter().cloned() },
-            Self::OwnedStringsFromFrozenText => {
-                quote! { (#tokens).iter().map(|__incan_item| __incan_item.to_string()) }
-            }
+            Self::FrozenItems(family, conversion) => frozen_items_iterator(tokens, *family, *conversion),
             Self::CloneDictKeys => quote! { (#tokens).keys().cloned() },
             Self::Items(plan) => plan.apply(tokens),
         };
@@ -900,7 +997,10 @@ impl ListConstructorSourcePlan {
 
     /// Whether the plan clones items out of the source, which needs the item type to be `Clone`.
     pub fn clones_items(&self) -> bool {
-        matches!(self, Self::CloneBorrowedItems | Self::CloneDictKeys)
+        matches!(
+            self,
+            Self::CloneBorrowedItems | Self::CloneDictKeys | Self::FrozenItems(_, FrozenItemConversion::Clone)
+        )
     }
 }
 
@@ -910,6 +1010,9 @@ impl ListConstructorSourcePlan {
 /// collection (a `mut` parameter reaches emission as `RefMut`) only lends its items, so they are cloned out; the
 /// other reference wrappers plan like the value they borrow because their adapters read through the reference.
 pub fn plan_list_constructor_source(source_ty: &IrType) -> ListConstructorSourcePlan {
+    if let Some((family, conversion)) = frozen_iteration_source(source_ty) {
+        return ListConstructorSourcePlan::FrozenItems(family, conversion);
+    }
     match source_ty {
         IrType::Ref(inner) | IrType::RefMut(inner) => match inner.as_ref() {
             IrType::List(_) | IrType::Set(_) => ListConstructorSourcePlan::CloneBorrowedItems,
@@ -925,18 +1028,6 @@ pub fn plan_list_constructor_source(source_ty: &IrType) -> ListConstructorSource
         | IrType::FrozenBytes => {
             ListConstructorSourcePlan::Items(plan_for_loop_iteration(source_ty, false, false, false))
         }
-        IrType::NamedGeneric(name, items)
-            if matches!(
-                collections::from_str(name),
-                Some(CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet)
-            ) =>
-        {
-            if items.first().is_some_and(frozen_item_is_incan_str) {
-                ListConstructorSourcePlan::OwnedStringsFromFrozenText
-            } else {
-                ListConstructorSourcePlan::CloneBorrowedItems
-            }
-        }
         ty if is_runtime_generator_type(ty) => ListConstructorSourcePlan::CollectOwnedIterator,
         _ => ListConstructorSourcePlan::IntoOwnedItems,
     }
@@ -949,11 +1040,6 @@ pub fn plan_list_constructor_source(source_ty: &IrType) -> ListConstructorSource
 /// trait's, so a plan that chains trait adapters onto a generator must name the trait (#1464).
 fn is_runtime_generator_type(ty: &IrType) -> bool {
     matches!(ty, IrType::NamedGeneric(name, _) if collections::from_str(name) == Some(CollectionTypeId::Generator))
-}
-
-/// Whether a frozen collection's item type is Incan `str`, which the frozen wrappers store as `&'static str`.
-fn frozen_item_is_incan_str(item_ty: &IrType) -> bool {
-    is_owned_string_type(item_ty) || matches!(item_ty, IrType::StaticStr | IrType::StrRef)
 }
 
 /// Return the item type `list(source)` collects, when the source type names one.
@@ -972,6 +1058,7 @@ pub fn list_constructor_item_type(source_ty: &IrType) -> Option<&IrType> {
                         | CollectionTypeId::Set
                         | CollectionTypeId::FrozenList
                         | CollectionTypeId::FrozenSet
+                        | CollectionTypeId::FrozenDict
                         | CollectionTypeId::Generator
                 )
             ) =>
@@ -1838,14 +1925,14 @@ mod tests {
                 collections::as_str(CollectionTypeId::FrozenList).to_string(),
                 vec![IrType::String]
             )),
-            ListConstructorSourcePlan::OwnedStringsFromFrozenText
+            ListConstructorSourcePlan::FrozenItems(CollectionTypeId::FrozenList, FrozenItemConversion::OwnedText)
         );
         assert_eq!(
             plan_list_constructor_source(&IrType::NamedGeneric(
                 collections::as_str(CollectionTypeId::FrozenSet).to_string(),
                 vec![IrType::Int]
             )),
-            ListConstructorSourcePlan::CloneBorrowedItems
+            ListConstructorSourcePlan::FrozenItems(CollectionTypeId::FrozenSet, FrozenItemConversion::Clone)
         );
         assert_eq!(
             plan_list_constructor_source(&IrType::Dict(Box::new(IrType::String), Box::new(IrType::Int))),

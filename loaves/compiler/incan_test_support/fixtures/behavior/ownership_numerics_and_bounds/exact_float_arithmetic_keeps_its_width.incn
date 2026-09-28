@@ -1,4 +1,4 @@
-# behavior: arithmetic between two f32 values stays f32 (0.1 + 0.2 prints as 0.3, and subtraction, multiplication, division and modulo keep that precision), an f32 mixed with a float, an f64 or an int widens to float precision on either side, and finite float values are accepted at f64 destinations
+# behavior: arithmetic between two f32 values stays f32 (0.1 + 0.2 prints as 0.3, and subtraction, multiplication, division and modulo keep that precision), an f32 mixed with a float, an f64 or an int widens to float precision on either side, and float values are accepted at f64 destinations, since an f64 is a float
 # retires: loaves/compiler/incan_emit/src/conversions.rs::exact_float_arithmetic_plans_keep_width_and_validate_each_result
 # retires: loaves/compiler/incan_emit/src/conversions.rs::mixed_f32_arithmetic_plans_widen_the_concrete_f32_operand
 # expect-stdout:

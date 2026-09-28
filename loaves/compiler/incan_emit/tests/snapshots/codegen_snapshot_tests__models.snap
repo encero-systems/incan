@@ -596,7 +596,7 @@ fn create_coordinate(lat: f64, lon: f64) -> Coordinate {
 fn distance_from_origin(coord: Coordinate) -> f64 {
     let lat_sq: f64 = coord.latitude * coord.latitude;
     let lon_sq: f64 = coord.longitude * coord.longitude;
-    return (lat_sq + lon_sq).powf(0.5);
+    return ({ lat_sq + lon_sq } as f64).powf(0.5);
 }
 fn main() {
     std::panic::set_hook(

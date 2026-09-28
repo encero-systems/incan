@@ -21,16 +21,21 @@ For the mental model, see [Const bindings](../explanation/consts.md).
 | --- | --- | --- |
 | `len(c)`, `c.len()` | `FrozenList[T]`, `FrozenSet[T]`, `FrozenDict[K, V]` | `int` |
 | `c.is_empty()` | `FrozenList[T]`, `FrozenSet[T]`, `FrozenDict[K, V]` | `bool` |
+| `items[i]` | `FrozenList[T]` | `T`; `i` is an `int`, counted from the end when negative; an index out of range raises `IndexError` |
 | `d[key]` | `FrozenDict[K, V]` | `V`; a key no entry holds raises `KeyError` |
 | `d.contains_key(key)` | `FrozenDict[K, V]` | `bool` |
 | `s.contains(x)` | `FrozenSet[T]` | `bool` |
-| `list(c)` | `FrozenList[T]`, `FrozenSet[T]` | `list[T]` |
-| `[expr for item in c]` | `FrozenList[T]`, `FrozenSet[T]` | `list[U]`, where `item` is a `T` and `expr` is a `U` |
+| `x in c`, `x not in c` | `FrozenList[T]`, `FrozenSet[T]` | `bool`: whether an element equals `x` |
+| `key in d`, `key not in d` | `FrozenDict[K, V]` | `bool`: whether an entry holds `key` |
+| `for item in c:` | `FrozenList[T]`, `FrozenSet[T]` | `item` is each element, a `T` |
+| `for key in d:` | `FrozenDict[K, V]` | `key` is each key, a `K` |
+| `list(c)`, `set(c)` | `FrozenList[T]`, `FrozenSet[T]` | `list[T]`, `set[T]` |
+| `[expr for item in c]` | `FrozenList[T]`, `FrozenSet[T]`, `FrozenDict[K, V]` | `list[U]`, where `item` is a `T` (a key `K` of a `FrozenDict`) and `expr` is a `U` |
 
-- `key` is a `K`, and `x` is a `T`. When `K` is `str` or `FrozenStr`, `key` may be any `str` or `FrozenStr` value.
-- A `str` item or value that a read produces is a `str`.
+- `key` is a `K`, and `x` is a `T`. When `K` or `T` is `str` or `FrozenStr`, `key` or `x` may be any `str` or `FrozenStr` value.
+- A `str` or `bytes` item, key or value that a read produces is a `str` or `bytes`.
 
-Refused: `d[key]` and `d.contains_key(key)` with a `key` that is not a `K`.
+Refused: `items[i]` with an `i` that is not an `int`; `d[key]`, `d.contains_key(key)` and `key in d` with a `key` that is not a `K`; `s.contains(x)` and `x in c` with an `x` that is not a `T`.
 
 ## Examples
 
@@ -44,6 +49,10 @@ def main() -> None:
     names: FrozenList[str] = TABLE["names"]            # accepted
     found: bool = TABLE.contains_key("names")          # accepted
     joined: str = " ".join([name for name in NAMES])   # accepted
+    first: str = NAMES[0]                              # accepted
+    listed: bool = "alpha" in NAMES                    # accepted
+    for key in SQUARES:                                # accepted
+        println(key)
     nine: int = SQUARES[3]                             # accepted
     missing: int = SQUARES[5]                          # accepted
     two: int = SQUARES["two"]                          # refused: the key type is int

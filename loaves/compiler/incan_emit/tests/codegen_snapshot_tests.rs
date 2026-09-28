@@ -2898,16 +2898,16 @@ fn test_mixed_numeric_codegen() {
 }
 
 /// Issue #1372: every display position of a `float` -- f-string interpolation, `str(x)`, and `println(x)` -- routes
-/// through `incan_std_core::strings::float_to_string` so an integral value renders as `100.0`, while Debug
-/// interpolation and the exact `f64` carrier keep Rust's own formatting.
+/// through `incan_std_core::strings::float_to_string` so an integral value renders as `100.0`, an `f64` included,
+/// since it is a `float` (RFC 009), while Debug interpolation keeps Rust's own formatting.
 #[test]
 fn test_float_display_codegen() {
     let source = load_test_file("float_display");
     let rust_code = generate_rust(&source);
     assert_eq!(
         rust_code.matches("incan_std_core::strings::float_to_string(").count(),
-        8,
-        "three interpolations, three `str()` calls, and two printed floats route through the runtime spelling:\n{rust_code}"
+        9,
+        "four interpolations, three `str()` calls, and two printed floats route through the runtime spelling:\n{rust_code}"
     );
     assert!(
         compact_rust(&rust_code).contains("format!(\"{:?}\",total)"),
@@ -4028,11 +4028,11 @@ def main() -> None:
     let rust_code = generate_rust(source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("return(left+right).powf(0.5);"),
-        "compound power receiver must remain grouped; generated:\n{rust_code}"
+        compact.contains("return({left+right}asf64).powf(0.5);"),
+        "compound power receiver must remain grouped inside its result-type conversion (#1811); generated:\n{rust_code}"
     );
     assert!(
-        compact.contains("return((base)asf64).powf((exponent)asf64);"),
+        compact.contains("return(baseasf64).powf((exponent)asf64);"),
         "coerced power receiver must be parenthesized before the method call; generated:\n{rust_code}"
     );
 }
@@ -4053,10 +4053,13 @@ pub def ordinary(value: str) -> float:
     return float(value)
 "#;
     let rust_code = generate_rust(source);
-    assert_eq!(
-        rust_code.matches("incan_std_core::num::require_finite_f64").count(),
-        2,
-        "ordinary float must remain unguarded while exact f64 returns and f32 widening are guarded:\n{rust_code}"
+    assert!(
+        !rust_code.contains("require_finite_f64"),
+        "f64 is float (RFC 009), so neither an f64 return nor an ordinary float is guarded:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("(value) as f64"),
+        "an f32 returned as f64 must be widened:\n{rust_code}"
     );
     assert_eq!(
         rust_code.matches("incan_std_core::num::require_finite_f32").count(),
@@ -4092,14 +4095,8 @@ pub def printed_f64(left: f64, right: f64) -> None:
         "exact f32 arithmetic must be checked before return or comparison:\n{rust_code}"
     );
     assert!(
-        compact.contains("require_finite_f64(left*right)"),
-        "exact f64 arithmetic must be checked before storage or printing:\n{rust_code}"
-    );
-    assert!(
-        compact.contains(
-            "println!(\"{}\",incan_std_core::num::require_finite_f64(incan_std_core::num::require_finite_f64(left*right)))"
-        ),
-        "print must not observe a non-finite exact f64 arithmetic result:\n{rust_code}"
+        compact.contains("letvalue:f64=left*right;") && !compact.contains("require_finite_f64"),
+        "f64 arithmetic is float arithmetic (RFC 009) and is stored and printed unguarded:\n{rust_code}"
     );
     assert!(
         compact.contains(">incan_std_core::num::require_finite_f32(left)"),
@@ -4137,17 +4134,19 @@ pub def observe_ieee(value: float) -> bool:
         // prettyplease wraps the nested call across lines and leaves a trailing comma behind the inner one
         "incan_std_core::num::require_finite_f32(incan_std_core::num::require_finite_f32(value),)",
         "let_=incan_std_core::num::require_finite_f32(left);",
-        "let_=incan_std_core::num::require_finite_f64(right);",
         "println!(\"{}\",incan_std_core::num::require_finite_f32(left))",
-        "incan_std_core::num::require_finite_f64(right).to_string()",
         "format!(\"{}\",incan_std_core::num::require_finite_f32(left))",
-        "((incan_std_core::num::require_finite_f32(left))asf64)<incan_std_core::num::require_finite_f64(right)",
+        "((incan_std_core::num::require_finite_f32(left))asf64)<right",
     ] {
         assert!(
             compact.contains(expected),
             "exact public/Rust ingress and observation must be finite-checked ({expected}); generated:\n{rust_code}"
         );
     }
+    assert!(
+        !compact.contains("require_finite_f64"),
+        "an f64 is a float (RFC 009) and is not finite-checked:\n{rust_code}"
+    );
     // The ordinary `float` prints through the runtime's spelling (#1372) but stays unguarded: no finite check
     // wraps its read or its comparison.
     assert!(
@@ -4184,8 +4183,6 @@ pub def observe_aggregate(samples: ExactSamples, values: list[f64]) -> bool:
 
     for expected in [
         "require_finite_f32(samples.narrow).is_nan()",
-        "require_finite_f64(*incan_std_core::collections::list_get(&values,(0)asi64)",
-        "require_finite_f64(samples.wide).is_finite()",
         "consume_exact(incan_std_core::num::require_finite_f32",
     ] {
         assert!(
@@ -4198,10 +4195,9 @@ pub def observe_aggregate(samples: ExactSamples, values: list[f64]) -> bool:
         2,
         "field value reflection and field-item reflection must guard exact f32 values:\n{rust_code}"
     );
-    assert_eq!(
-        compact.matches("require_finite_f64(self.wide)").count(),
-        2,
-        "field value reflection and field-item reflection must guard exact f64 values:\n{rust_code}"
+    assert!(
+        !compact.contains("require_finite_f64"),
+        "an f64 field or element is a float (RFC 009) and is not finite-checked:\n{rust_code}"
     );
     assert_eq!(
         compact.matches("require_finite_f32(*value)").count(),
@@ -4237,7 +4233,7 @@ pub def with_int(left: f32, right: int) -> float:
         "incan_std_core::num::py_div((left)asf64,right)",
         "incan_std_core::num::py_floor_div_f64((left)asf64,right)",
         "incan_std_core::num::py_mod_f64((left)asf64,right)",
-        "((left)asf64).powf(right)",
+        "(leftasf64).powf(right)",
         "return(left)asf64+right;",
         "return(left)asf64+(right)asf64;",
     ] {
@@ -4670,7 +4666,7 @@ fn test_rfc043_rust_derive_passthrough_codegen() {
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("#[derive(serde::Serialize,Default,Eq,Hash,PartialEq,Debug,Clone"),
+        compact.contains("#[derive(::serde::Serialize,Default,Eq,Hash,PartialEq,Debug,Clone"),
         "expected @rust.derive to emit imported and built-in Rust derives; generated:\n{rust_code}"
     );
     assert_codegen_snapshot!("rfc043_rust_derive_passthrough", rust_code);
@@ -5425,7 +5421,7 @@ fn test_validated_newtype_json_deserialization_uses_canonical_hook() {
         "validated newtypes must not derive unchecked deserialization:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("#[derive(Debug, Clone, serde::Serialize)]\nstruct ShortId"),
+        rust_code.contains("#[derive(Debug, Clone, ::serde::Serialize)]\nstruct ShortId"),
         "checked deserialization must preserve newtype serialization:\n{rust_code}"
     );
     assert!(
@@ -6021,8 +6017,8 @@ def main() -> None:
     let rust_code = generate_rust(source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("#[derive(Debug,serde::Serialize)]structWrapped(pubString);")
-            || compact.contains("#[derive(Debug,Clone,serde::Serialize)]structWrapped(pubString);"),
+        compact.contains("#[derive(Debug,::serde::Serialize)]structWrapped(pubString);")
+            || compact.contains("#[derive(Debug,Clone,::serde::Serialize)]structWrapped(pubString);"),
         "expected newtype `with Serialize` to forward the Rust serde derive; generated:\n{rust_code}"
     );
     assert!(
@@ -6138,7 +6134,7 @@ fn test_rfc024_module_derive_json_codegen() {
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("serde::Serialize,serde::Deserialize"),
+        compact.contains("::serde::Serialize,::serde::Deserialize"),
         "expected @derive(json) to forward serde derives; generated:\n{rust_code}"
     );
     assert!(

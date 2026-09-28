@@ -458,7 +458,7 @@
      },
      "incan_derive": {
       "path": "loaves/stdlib/derive/incan_derive",
-      "version": "0.6.0-dev.5"
+      "version": "0.6.0-dev.6"
      },
      "incan_driver": {
       "path": "loaves/compiler/incan_driver",
@@ -497,23 +497,23 @@
      },
      "incan_std_async": {
       "path": "loaves/stdlib/async/rust",
-      "version": "0.6.0-dev.5"
+      "version": "0.6.0-dev.6"
      },
      "incan_std_core": {
       "path": "loaves/stdlib/core/rust",
-      "version": "0.6.0-dev.5"
+      "version": "0.6.0-dev.6"
      },
      "incan_std_data": {
       "path": "loaves/stdlib/data/rust",
-      "version": "0.6.0-dev.5"
+      "version": "0.6.0-dev.6"
      },
      "incan_std_testing": {
       "path": "loaves/stdlib/testing/rust",
-      "version": "0.6.0-dev.5"
+      "version": "0.6.0-dev.6"
      },
      "incan_std_web": {
       "path": "loaves/stdlib/web/rust",
-      "version": "0.6.0-dev.5"
+      "version": "0.6.0-dev.6"
      },
      "incan_syntax": {
       "path": "loaves/kernel/incan_syntax"
@@ -527,7 +527,7 @@
      },
      "incan_web_macros": {
       "path": "loaves/stdlib/derive/incan_web_macros",
-      "version": "0.6.0-dev.5"
+      "version": "0.6.0-dev.6"
      },
      "oven-cli": {
       "path": "loaves/toolchain/oven-cli"
@@ -1998,7 +1998,7 @@
       "kind": "workspace-internal",
       "origin": "path",
       "workspace_inherited": true,
-      "version_req": "0.6.0-dev.5",
+      "version_req": "0.6.0-dev.6",
       "features": [],
       "default_features": true,
       "optional": false,
@@ -2523,7 +2523,7 @@
       "kind": "workspace-internal",
       "origin": "path",
       "workspace_inherited": true,
-      "version_req": "0.6.0-dev.5",
+      "version_req": "0.6.0-dev.6",
       "features": [],
       "default_features": true,
       "optional": false,
@@ -5343,7 +5343,7 @@
    "declares_own_workspace": false,
    "package": {
     "name": "incan_std_async",
-    "version": "0.6.0-dev.5",
+    "version": "0.6.0-dev.6",
     "edition": "2024",
     "rust_version": "1.98",
     "license": "Apache-2.0",
@@ -5414,7 +5414,7 @@
    "declares_own_workspace": false,
    "package": {
     "name": "incan_std_core",
-    "version": "0.6.0-dev.5",
+    "version": "0.6.0-dev.6",
     "edition": "2024",
     "rust_version": "1.98",
     "license": "Apache-2.0",
@@ -5445,7 +5445,7 @@
       "kind": "workspace-internal",
       "origin": "path",
       "workspace_inherited": true,
-      "version_req": "0.6.0-dev.5",
+      "version_req": "0.6.0-dev.6",
       "features": [],
       "default_features": true,
       "optional": false,
@@ -5491,7 +5491,7 @@
    "declares_own_workspace": false,
    "package": {
     "name": "incan_std_data",
-    "version": "0.6.0-dev.5",
+    "version": "0.6.0-dev.6",
     "edition": "2024",
     "rust_version": "1.98",
     "license": "Apache-2.0",
@@ -5522,7 +5522,7 @@
       "kind": "workspace-internal",
       "origin": "path",
       "workspace_inherited": true,
-      "version_req": "0.6.0-dev.5",
+      "version_req": "0.6.0-dev.6",
       "features": [],
       "default_features": true,
       "optional": false,
@@ -5592,7 +5592,7 @@
    "declares_own_workspace": false,
    "package": {
     "name": "incan_derive",
-    "version": "0.6.0-dev.5",
+    "version": "0.6.0-dev.6",
     "edition": "2024",
     "rust_version": "1.98",
     "license": "Apache-2.0",
@@ -5674,7 +5674,7 @@
    "declares_own_workspace": false,
    "package": {
     "name": "incan_web_macros",
-    "version": "0.6.0-dev.5",
+    "version": "0.6.0-dev.6",
     "edition": "2024",
     "rust_version": "1.98",
     "license": "Apache-2.0",
@@ -5756,7 +5756,7 @@
       "kind": "workspace-internal",
       "origin": "path",
       "workspace_inherited": true,
-      "version_req": "0.6.0-dev.5",
+      "version_req": "0.6.0-dev.6",
       "features": [],
       "default_features": true,
       "optional": false,
@@ -5918,7 +5918,7 @@
    "declares_own_workspace": false,
    "package": {
     "name": "incan_std_testing",
-    "version": "0.6.0-dev.5",
+    "version": "0.6.0-dev.6",
     "edition": "2024",
     "rust_version": "1.98",
     "license": "Apache-2.0",
@@ -5960,7 +5960,7 @@
       "kind": "workspace-internal",
       "origin": "path",
       "workspace_inherited": true,
-      "version_req": "0.6.0-dev.5",
+      "version_req": "0.6.0-dev.6",
       "features": [],
       "default_features": true,
       "optional": false,
@@ -5995,7 +5995,7 @@
    "declares_own_workspace": false,
    "package": {
     "name": "incan_std_web",
-    "version": "0.6.0-dev.5",
+    "version": "0.6.0-dev.6",
     "edition": "2024",
     "rust_version": "1.98",
     "license": "Apache-2.0",

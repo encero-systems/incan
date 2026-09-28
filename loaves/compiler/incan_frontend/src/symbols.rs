@@ -182,6 +182,50 @@ fn canonical_builtin_identity(canonical_name: &str) -> CanonicalSymbolId {
 /// Canonical semantic name for anonymous union types (RFC 029).
 pub const UNION_TYPE_NAME: &str = incan_lang::lang::types::UNION_TYPE_NAME;
 
+/// Prefix of the checker's spelling of a union member nominal that names its declaring module (#1796).
+const MODULE_QUALIFIED_NOMINAL_PREFIX: &str = "mod::";
+
+/// Spell a nominal type by the module that declares it, as a union member names it when several modules of one check
+/// declare that name (#1796).
+///
+/// A union member that names a model, class, enum or newtype is the declaration the name resolves to where the union
+/// is written, but a bare spelling cannot tell two modules' `Product` apart. The spelling is
+/// `mod::<dotted module path>::<declaration name>`, with an empty module path for a module checked without one; it
+/// never comes from source, and it displays as the dotted path users write.
+pub fn module_qualified_nominal_name(module_path: &[String], declaration_name: &str) -> String {
+    format!(
+        "{MODULE_QUALIFIED_NOMINAL_PREFIX}{}::{declaration_name}",
+        module_path.join(".")
+    )
+}
+
+/// Split a [`module_qualified_nominal_name`] spelling into its declaring module path and declaration name.
+///
+/// Returns `None` for every other spelling.
+pub fn split_module_qualified_nominal_name(name: &str) -> Option<(Vec<String>, &str)> {
+    let (module, declaration_name) = name.strip_prefix(MODULE_QUALIFIED_NOMINAL_PREFIX)?.rsplit_once("::")?;
+    if declaration_name.is_empty() {
+        return None;
+    }
+    let module_path = if module.is_empty() {
+        Vec::new()
+    } else {
+        module.split('.').map(str::to_string).collect()
+    };
+    Some((module_path, declaration_name))
+}
+
+/// Write a nominal type name the way users spell it: a module-qualified union member as `module.Name`.
+fn write_nominal_name(f: &mut std::fmt::Formatter<'_>, name: &str) -> std::fmt::Result {
+    match split_module_qualified_nominal_name(name) {
+        Some((module_path, declaration_name)) if !module_path.is_empty() => {
+            write!(f, "{}.{declaration_name}", module_path.join("."))
+        }
+        Some((_, declaration_name)) => write!(f, "{declaration_name}"),
+        None => write!(f, "{name}"),
+    }
+}
+
 /// Separator used in generated Rust symbols for source overload implementations.
 const OVERLOAD_EMITTED_NAME_SEPARATOR: &str = "_overload_";
 
@@ -2064,6 +2108,30 @@ pub enum ResolvedType {
 }
 
 impl ResolvedType {
+    /// Return the semantic type of one numeric registry id.
+    ///
+    /// RFC 009 makes `float` an alias of `f64`, and an alias creates no separate type identity, so the `f64` id is
+    /// [`ResolvedType::Float`] wherever it comes from: a type spelling, a literal suffix, or library metadata. Every
+    /// other numeric id keeps its exact-width type; the registry's `bool` entry is [`ResolvedType::Bool`].
+    pub fn from_numeric_id(id: NumericTypeId) -> ResolvedType {
+        match id {
+            NumericTypeId::F64 => ResolvedType::Float,
+            NumericTypeId::Bool => ResolvedType::Bool,
+            _ => ResolvedType::Numeric(id),
+        }
+    }
+
+    /// Return the semantic type a numeric registry spelling names, given the id the registry resolved it to.
+    ///
+    /// The spelling `int` keeps [`ResolvedType::Int`], which is compatible with `i64` both ways. Every other spelling
+    /// resolves through [`Self::from_numeric_id`], so `f64`, `float`, `double` and `fp64` are all `float`.
+    pub fn from_numeric_spelling(spelling: &str, id: NumericTypeId) -> ResolvedType {
+        match spelling {
+            "int" => ResolvedType::Int,
+            _ => Self::from_numeric_id(id),
+        }
+    }
+
     /// Check if this is a Result type
     pub fn is_result(&self) -> bool {
         matches!(
@@ -2194,9 +2262,10 @@ impl std::fmt::Display for ResolvedType {
             ResolvedType::FrozenDict(k, v) => write!(f, "FrozenDict[{}, {}]", k, v),
             ResolvedType::FrozenSet(elem) => write!(f, "FrozenSet[{}]", elem),
             ResolvedType::Unit => write!(f, "Unit"),
-            ResolvedType::Named(name) => write!(f, "{}", name),
+            ResolvedType::Named(name) => write_nominal_name(f, name),
             ResolvedType::Generic(name, args) => {
-                write!(f, "{}[", name)?;
+                write_nominal_name(f, name)?;
+                write!(f, "[")?;
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
@@ -2258,7 +2327,13 @@ pub fn union_ty(members: Vec<ResolvedType>) -> ResolvedType {
         }
     }
 
-    flattened.sort_by_key(|member| member.to_string());
+    // Two members can display alike (a module-qualified member displays as the path users write), so equal displays
+    // fall back to the full representation to keep the order deterministic.
+    flattened.sort_by(|left, right| {
+        left.to_string()
+            .cmp(&right.to_string())
+            .then_with(|| format!("{left:?}").cmp(&format!("{right:?}")))
+    });
     flattened.dedup();
 
     let inner = match flattened.as_slice() {
@@ -2339,15 +2414,7 @@ where
         Type::Dotted(segments) => resolve_qualified_type(segments).unwrap_or(ResolvedType::Unknown),
         Type::Simple(name) => {
             if let Some(id) = numerics::from_str(name.as_str()) {
-                return match name.as_str() {
-                    "int" => ResolvedType::Int,
-                    "float" => ResolvedType::Float,
-                    "bool" => ResolvedType::Bool,
-                    _ => match id {
-                        NumericTypeId::Bool => ResolvedType::Bool,
-                        _ => ResolvedType::Numeric(id),
-                    },
-                };
+                return ResolvedType::from_numeric_spelling(name, id);
             }
             if let Some(id) = stringlike::from_str(name.as_str()) {
                 return match id {
@@ -2947,10 +3014,20 @@ mod tests {
             resolve_type(&Type::Simple("real".to_string()), &symbols),
             ResolvedType::Numeric(NumericTypeId::F32)
         );
-        assert_eq!(
-            resolve_type(&Type::Simple("double".to_string()), &symbols),
-            ResolvedType::Numeric(NumericTypeId::F64)
-        );
+    }
+
+    /// RFC 009: `float` is an alias of `f64`, so every `f64` spelling resolves to the one `float` type.
+    #[test]
+    fn resolve_type_maps_every_f64_spelling_to_float() {
+        let symbols = SymbolTable::new();
+
+        for spelling in ["f64", "float", "double", "fp64"] {
+            assert_eq!(
+                resolve_type(&Type::Simple(spelling.to_string()), &symbols),
+                ResolvedType::Float,
+                "{spelling}"
+            );
+        }
     }
 
     #[test]

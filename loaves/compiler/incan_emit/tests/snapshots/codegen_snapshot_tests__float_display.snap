@@ -73,7 +73,7 @@ fn describe(reading: Reading, exact: f64) -> String {
             incan_std_core::strings::float_to_string(total),
             incan_std_core::strings::float_to_string(quarter),
             incan_std_core::strings::float_to_string(reading.value), format!("{:?}",
-            total), format!("{}", incan_std_core::num::require_finite_f64(exact))
+            total), incan_std_core::strings::float_to_string(exact)
         ];
         incan_std_core::strings::fstring(&__parts, &__args)
     };
@@ -106,8 +106,5 @@ fn main() {
             }
         }),
     );
-    let _ = println!(
-        "{}", describe(Reading { value : 2.0 },
-        incan_std_core::num::require_finite_f64(3.0))
-    );
+    let _ = println!("{}", describe(Reading { value : 2.0 }, 3.0));
 }

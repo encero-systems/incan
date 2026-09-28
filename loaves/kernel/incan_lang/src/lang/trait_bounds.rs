@@ -8,7 +8,8 @@
 //! - Lookup via [`incan_to_rust`] is **case-sensitive**.
 //! - This registry only covers traits used as *bounds* on type parameters; the full trait vocabulary is in
 //!   [`crate::lang::traits`].
-//! - Unknown names are passed through as-is during lowering (allowing user-defined trait bounds).
+//! - Names without a registry mapping pass through during lowering; the frontend requires them to resolve as
+//!   user-defined traits.
 //! - Every `@derive(...)` name that is also a source-owned builtin trait (one with a
 //!   [`crate::lang::traits::source_module`]) must have an entry here. A derived implementation is the Rust trait's, so
 //!   a bound spelled with that name has to lower to the same Rust trait; without a mapping the bound lowers to the
@@ -58,8 +59,8 @@ pub const TRAIT_BOUNDS: &[TraitBoundMapping] = &[
     mapping(
         TraitBoundId::Ord,
         "Ord",
-        "PartialOrd",
-        "Ordering comparison — Incan `Ord` maps to Rust `PartialOrd`.",
+        rust::ORD,
+        "Total ordering — Incan `Ord` maps to Rust `Ord`.",
         RFC::_023,
         Since(0, 2),
     ),
@@ -141,6 +142,7 @@ pub mod rust {
     // Comparison
     pub const PARTIAL_EQ: &str = "PartialEq";
     pub const PARTIAL_ORD: &str = "PartialOrd";
+    pub const ORD: &str = "Ord";
     pub const EQ: &str = "Eq";
     pub const HASH: &str = "std::hash::Hash";
 

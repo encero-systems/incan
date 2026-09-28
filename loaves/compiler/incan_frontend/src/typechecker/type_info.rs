@@ -715,6 +715,20 @@ pub struct ExpressionArtifacts {
     /// The binding is typechecked like an ordinary immutable `Logger` value, but lowering must materialize it as a
     /// module-local `std.logging.get_logger(...)` call so source metadata can become the logger name.
     pub ambient_logger_bindings: HashSet<(usize, usize)>,
+    /// The type of the place a value is written to, keyed by the value span, when the value needs adapting to it: a
+    /// field or index assignment, a model or class constructor field, or a `return` (#1858, RFC 009).
+    ///
+    /// The checker accepts a value of an `Option`'s payload type there (`box.count = 5` for an `Option[int]` field),
+    /// and a numeric value of a type that losslessly widens to the place's numeric type or union member
+    /// (`box.count = small` for an `i8` value and an `int` field). Lowering wraps such a value in the `Some` layers
+    /// the destination adds and widens it to the numeric type the destination holds.
+    pub value_destination_types: HashMap<(usize, usize), ResolvedType>,
+    /// Spans of `dict.get(key)` calls whose result is only read, so no copy of the stored value is needed.
+    ///
+    /// `get` answers with `Option[V]` on every dict. A lookup whose result feeds a `match` or `if let` that only reads
+    /// its bindings (see `check_expr/dict_lookups.rs`) is lowered to read the entry in place; every other lookup of a
+    /// dict that is not static storage is completed with a copy of the entry.
+    pub read_only_dict_lookups: HashSet<(usize, usize)>,
     /// Values of chained assignments that each target gets its own evaluation of, keyed by the value span (#1806).
     pub chained_values_written_per_target: HashSet<(usize, usize)>,
     /// Values of chained assignments whose already-bound targets all have one type, keyed by the value span (#1806).
@@ -947,6 +961,19 @@ pub struct DeclarationArtifacts {
     /// its declaring module and must never rebuild that placement from the written segments. An absent entry means
     /// the checker did not prove a type and reported that at the annotation.
     pub qualified_type_references: HashMap<String, QualifiedTypeReferenceInfo>,
+    /// The module path of the one module of this check that declares each nominal type name no other module of the
+    /// check declares.
+    ///
+    /// A union that reaches this module through another module's signature spells such a member by its bare name even
+    /// where no binding of this module names it; lowering reads the declaring module here to place the member's
+    /// wrapper payload (#1796). A name several modules of the check declare is absent: the checker spells a union
+    /// member of that name by its declaring module instead.
+    pub unique_nominal_declaring_modules: HashMap<String, Vec<String>>,
+    /// The target of each non-generic type alias this module declares or imports, keyed by its local name.
+    ///
+    /// Lowering reads an imported alias's target here where the emitter cannot place the alias by its name, because
+    /// another module of the crate declares a type of that name too (#1796).
+    pub type_alias_targets: HashMap<String, ResolvedType>,
     /// RFC 120 identities of this module's own top-level declarations, keyed by declaration span.
     ///
     /// Exported from the symbol table's minting after checking as a compatibility view for span-keyed declaration
@@ -1441,6 +1468,12 @@ pub struct CallArtifacts {
     /// argument of `str(value)`, and each `print`/`println` argument. The value is the `message()` call the checker
     /// resolved for the operand, so lowering emits the same call a written `value.message()` would.
     pub error_message_displays: HashMap<(usize, usize), ErrorMessageDisplay>,
+    /// Types this module declares whose values display through `message()`, keyed by type name.
+    ///
+    /// A model, class, enum or newtype that adopts `Error` and has no `Display` of its own displays its `message()`,
+    /// so it satisfies a `Display` bound. The value is the `message()` call the checker resolved on the type, which
+    /// lowering makes the body of the Rust `Display` it gives the type.
+    pub error_message_display_types: HashMap<String, ErrorMessageDisplay>,
 }
 
 /// The `message()` call one displayed `Error` adopter renders through (#1778).
@@ -2140,6 +2173,12 @@ impl TypeCheckInfo {
         self.expressions.assignment_binding_types.get(&(span.start, span.end))
     }
 
+    /// Return the type of the place the value at `span` is written to, if the checker recorded one because the value
+    /// needs `Some` layers or a numeric widening there (#1858, RFC 009).
+    pub fn value_destination_type(&self, span: Span) -> Option<&ResolvedType> {
+        self.expressions.value_destination_types.get(&(span.start, span.end))
+    }
+
     /// Return the canonical fields a destructuring pattern leaves unnamed, keyed by its constructor name's span.
     ///
     /// `None` means the pattern names every field of its nominal or is not a model or class pattern at all; the
@@ -2223,6 +2262,19 @@ impl TypeCheckInfo {
         self.declarations.qualified_type_references.get(spelling)
     }
 
+    /// Return the target of a non-generic type alias this module declares or imports.
+    pub fn type_alias_target(&self, name: &str) -> Option<&ResolvedType> {
+        self.declarations.type_alias_targets.get(name)
+    }
+
+    /// Return the one module of this check that declares a nominal type of this name, when no other module does.
+    pub fn unique_nominal_declaring_module(&self, name: &str) -> Option<&[String]> {
+        self.declarations
+            .unique_nominal_declaring_modules
+            .get(name)
+            .map(Vec::as_slice)
+    }
+
     /// Return a compiler-proven source target for the expression at `span`, if one was recorded.
     pub fn source_target(&self, span: Span) -> Option<&SourceTargetInfo> {
         self.expressions.source_targets.get(&(span.start, span.end))
@@ -2284,6 +2336,19 @@ impl TypeCheckInfo {
     /// Record that an identifier resolved to the ambient `std.logging` logger binding.
     pub fn record_ambient_logger_binding(&mut self, span: Span) {
         self.expressions.ambient_logger_bindings.insert((span.start, span.end));
+    }
+
+    /// Return whether the `dict.get(key)` call at `span` only has its result read (see
+    /// [`ExpressionArtifacts::read_only_dict_lookups`]).
+    pub fn is_read_only_dict_lookup(&self, span: Span) -> bool {
+        self.expressions
+            .read_only_dict_lookups
+            .contains(&(span.start, span.end))
+    }
+
+    /// Record that the `dict.get(key)` call at `span` only has its result read.
+    pub fn record_read_only_dict_lookup(&mut self, span: Span) {
+        self.expressions.read_only_dict_lookups.insert((span.start, span.end));
     }
 
     /// Return static-binding metadata for `name`, if the checker recorded one.
@@ -2530,6 +2595,21 @@ impl TypeCheckInfo {
         self.calls
             .error_message_displays
             .insert((operand_span.start, operand_span.end), display);
+    }
+
+    /// Return the `message()` call a declared type displays through, or `None` when it has a `Display` of its own or
+    /// does not adopt `Error`.
+    ///
+    /// See [`CallArtifacts::error_message_display_types`].
+    pub fn error_message_display_type(&self, type_name: &str) -> Option<&ErrorMessageDisplay> {
+        self.calls.error_message_display_types.get(type_name)
+    }
+
+    /// Record the `message()` call a declared type displays through.
+    pub fn record_error_message_display_type(&mut self, type_name: &str, display: ErrorMessageDisplay) {
+        self.calls
+            .error_message_display_types
+            .insert(type_name.to_string(), display);
     }
 
     /// Record the compiler-owned builtin selected for one checked call.

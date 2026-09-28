@@ -318,10 +318,15 @@ impl TypeChecker {
     /// Whether a value of this type can be neither copied nor cloned: a compiler-known type the type table marks
     /// `not_cloneable` (`JoinHandle[T]`), alone or inside a tuple or a collection.
     ///
-    /// A declared class, model, newtype or enum, a Rust type, and a type parameter are never such a value here, even
-    /// when one shares a compiler-known type's name.
+    /// The type arrives either as the surface spelling or as the Rust path of its runtime type, which is how a stdlib
+    /// provider's checked API types the values its functions return (`spawn` returns
+    /// `incan_std_async::task::JoinHandle<T>`). A declared class, model, newtype or enum, any other Rust type, and a
+    /// type parameter are never such a value here, even when one shares a compiler-known type's name.
     fn value_is_not_cloneable(&self, ty: &ResolvedType) -> bool {
         match ty {
+            ResolvedType::RustPath(path) => {
+                surface_types::from_runtime_rust_path(path).is_some_and(surface_types::is_not_cloneable)
+            }
             ResolvedType::Tuple(items) => items.iter().any(|item| self.value_is_not_cloneable(item)),
             ResolvedType::Generic(name, args)
                 if collection_type_id(name).is_some()
@@ -491,9 +496,12 @@ fn list_item_type(ty: &ResolvedType) -> Option<&ResolvedType> {
     }
 }
 
-/// Spell an item type for the refusal, leaving out type arguments the checker could not resolve.
+/// Spell an item type for the refusal, leaving out type arguments the checker could not resolve, and naming the runtime
+/// type of a compiler-known type by the surface spelling source uses.
 fn item_type_display(ty: &ResolvedType) -> String {
     match ty {
+        ResolvedType::RustPath(path) => surface_types::from_runtime_rust_path(path)
+            .map_or_else(|| ty.to_string(), |id| surface_types::as_str(id).to_string()),
         ResolvedType::Generic(name, args) if args.iter().any(|arg| matches!(arg, ResolvedType::Unknown)) => {
             name.clone()
         }

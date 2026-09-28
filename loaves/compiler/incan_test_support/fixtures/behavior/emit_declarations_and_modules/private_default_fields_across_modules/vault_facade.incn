@@ -1,0 +1,1 @@
+pub from text_vaults import Vault as FacadeVault

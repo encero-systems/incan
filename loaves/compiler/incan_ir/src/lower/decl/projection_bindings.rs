@@ -26,8 +26,6 @@ struct ProjectionSite {
     public: bool,
     /// Whether the item is spelled by a name other than the declaration's own (see [`is_alias_spelled`]).
     alias_spelled: bool,
-    /// Whether the item binds a static storage cell.
-    is_static: bool,
 }
 
 /// How one projection's binding item is handed to the emitter.
@@ -68,9 +66,9 @@ impl AstLowering {
     /// The binder is the first public item spelled by the declaration's own name when there is one, so every public
     /// spelling keeps its Rust-facing name, and otherwise the first public item. A projection that a public source
     /// alias in the module republishes is left alone, because that alias takes the binding (see the `SymbolAlias`
-    /// emission). Overload members are left alone: each has its own projection and binding rule. A static binder is
-    /// respelled but never moved, because the private item it would displace carries the static's initialization
-    /// import.
+    /// emission). Overload members are left alone: each has its own projection and binding rule. A static binder may
+    /// move ahead of a private import like any other projected item; the private repeat stays in place and retains
+    /// the imported-static initialization shim needed by reads in this module (#1839).
     pub(in crate::lower) fn bind_reexported_projections(declarations: &mut Vec<IrDecl>) {
         let republished_by_alias: HashSet<String> = declarations
             .iter()
@@ -110,7 +108,6 @@ impl AstLowering {
                     item: item_index,
                     public: !matches!(visibility, Visibility::Private),
                     alias_spelled: is_alias_spelled(item),
-                    is_static: item.is_static,
                 };
                 sites
                     .entry(projection.clone())
@@ -210,17 +207,10 @@ impl AstLowering {
 
     /// Plan the binding of one projection from its import items, in declaration order.
     ///
-    /// Returns `None` when no public item re-exports the projection, when the binder already comes first and is
-    /// spelled by the declaration's own name, and for a static whose first item is private or is public and spelled by
-    /// the static's own name.
+    /// Returns `None` when no public item re-exports the projection, or when the binder already comes first and is
+    /// spelled by the declaration's own name.
     fn projection_binding_plan(sites: &[ProjectionSite]) -> Option<BindingPlan> {
         let first = *sites.first()?;
-        if first.is_static {
-            return (first.public && first.alias_spelled).then_some(BindingPlan {
-                binder: first,
-                move_before: None,
-            });
-        }
         let binder = sites
             .iter()
             .find(|site| site.public && !site.alias_spelled)

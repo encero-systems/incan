@@ -5,7 +5,7 @@
 #   boxed seven
 #   boxed 7.5
 
-model Boxed[T]:
+model Boxed[T with Display]:
     value: T
 
     def render(self) -> str:

@@ -31,10 +31,9 @@ impl AstLowering {
     /// trait, keyed on the spelling's checked identity.
     ///
     /// The identity is resolved by [`Self::canonical_trait_identity`], which follows the bare import, an alias and a
-    /// name qualified by one imported module (`json.Serialize`) to the stdlib declaration; a trait that merely shares
-    /// the name carries nothing, and so does a spelling that identity resolution does not follow, such as
-    /// `serde.json.Serialize` after `from std import serde`. The path is absolute (`::serde::Serialize`) so a module
-    /// that binds `serde` to the stdlib namespace cannot shadow the crate.
+    /// name qualified through an imported module (`json.Serialize`, or `serde.json.Serialize` after `from std import
+    /// serde`) to the stdlib declaration; a trait that merely shares the name carries nothing. The path is absolute
+    /// (`::serde::Serialize`) so a module that binds `serde` to the stdlib namespace cannot shadow the crate.
     pub(in crate::lower) fn json_protocol_capability_bound(&self, visible_name: &str) -> Option<IrTraitBound> {
         let capability = match self.stdlib_json_protocol_for_adopted_trait(visible_name)? {
             StdlibJsonTraitId::Serialize => TraitBoundId::Serialize,

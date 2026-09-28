@@ -183,3 +183,25 @@ fn crate_root_and_unmapped_module_defaults_issue1771() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// Issue #1843: a type constructor in a default is rooted in the callable's declaring module, so two defaults that
+/// construct same-named types cannot be redirected to whichever type the caller imported last.
+#[test]
+fn default_type_constructors_follow_their_declaring_modules_issue1843() -> Result<(), String> {
+    let source = r#"
+pub model Size:
+    pub n: int
+
+pub def make(size: Size = Size(n=1)) -> int:
+    return size.n
+"#;
+    for module in ["a", "b"] {
+        let ir = lower_module_at(source, &[module])?;
+        let default = param_default(&ir, "make", "size")?;
+        assert!(
+            matches!(&default.kind, IrExprKind::Struct { name, .. } if name == &format!("crate::{module}::Size")),
+            "the `{module}` default must construct `{module}.Size`: {default:?}"
+        );
+    }
+    Ok(())
+}

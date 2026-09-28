@@ -2,7 +2,7 @@
 
 This page specifies `Eq`, `PartialEq`, `Ord`, `PartialOrd` and `Hash`, and the types a `set` element or `dict` key may have. The derive catalog and the automatic derives are in [Derives and traits](../derives_and_traits.md).
 
-A comparison operator is available on a type through a derive below, an adopted trait, or the operator's own dunder. An operator the type does not provide is refused (`INCAN-T0001`).
+A comparison operator is available on a type through a derive below, an adopted trait, or the operator's own dunder. An operator the type does not provide is refused (`INCAN-T0001`), and so is a derive on a type that does not meet its **Requires** entry.
 
 ## Eq
 
@@ -22,7 +22,7 @@ A comparison operator is available on a type through a derive below, an adopted 
 
 ## Ord
 
-- **Provides**: `<`, `<=`, `>` and `>=`, and what `Eq` provides.
+- **Provides**: `<`, `<=`, `>` and `>=`, `sorted(values)` of a `list` of the type, and what `Eq` provides.
 - **Provided by**: `@derive(Ord)`; adopting `std.derives.comparison.Ord` and defining `__eq__` and `__lt__`.
 - **Behavior**: values compare field by field, in declaration order.
 - **Dunder**: `__lt__`, `__le__`, `__gt__` and `__ge__`, each `(self, other: Self) -> bool`, define `<`, `<=`, `>` and `>=`. Adopting `Ord` supplies `__le__`, `__gt__` and `__ge__` from `__lt__` and `__eq__`.
@@ -34,7 +34,7 @@ A comparison operator is available on a type through a derive below, an adopted 
 - **Provided by**: `@derive(PartialEq, PartialOrd)`; `Ord`, which implies it.
 - **Behavior**: values compare field by field, in declaration order.
 - **Dunder**: as for `Ord`.
-- **Requires**: `PartialEq`; every field type implements `PartialOrd`.
+- **Requires**: `PartialEq`, through a derive or `__eq__`; every field type implements `PartialOrd`.
 
 ## Hash
 

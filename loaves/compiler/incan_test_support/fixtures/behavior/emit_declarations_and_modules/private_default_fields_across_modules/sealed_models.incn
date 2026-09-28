@@ -1,0 +1,12 @@
+pub model Sealed:
+    secret: str = "sealed"
+    pub label: str
+    revision: int = 1
+
+    def describe(self) -> str:
+        return f"{self.label} {self.secret} r{self.revision}"
+
+
+pub model Open:
+    pub label: str
+    pub revision: int

@@ -21,6 +21,10 @@ This page specifies `Debug` and `Display`. The derive catalog and the automatic 
 
 ## Formats
 
+Frozen values use the same representation as their ordinary counterparts. `FrozenStr` is quoted in structured output; `FrozenList`, `FrozenSet` and `FrozenDict` format their elements structurally, including the decimal point of an integral `float`. `bytes` and `FrozenBytes` have no `Display` form and are refused with `INCAN-T0103`.
+
+A union value inside structured output formats as its active member value. Generated union variant names are not part of the representation.
+
 ```incan
 model Point:
     x: int

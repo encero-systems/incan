@@ -84,6 +84,31 @@ impl AstLowering {
         Some(canonical_path_naming_selected_overload(path, selected_overload_name))
     }
 
+    /// Return the crate-qualified constructor name for a type named by a source parameter default.
+    ///
+    /// Defaults are lowered in their declaring module but expanded at the caller. The path therefore follows the
+    /// checked declaration identity rather than the bare type name, which may name a different type in the caller
+    /// (#1843).
+    pub(in crate::lower) fn default_owner_constructor_name(&self, name: &str, span: ast::Span) -> Option<String> {
+        let (module_path, declaration_name) = self.default_name_owner(
+            name,
+            span,
+            &[
+                SemanticSourceTargetKind::Model,
+                SemanticSourceTargetKind::Class,
+                SemanticSourceTargetKind::Enum,
+                SemanticSourceTargetKind::Newtype,
+            ],
+        )?;
+        Some(
+            std::iter::once("crate")
+                .chain(module_path.iter().map(String::as_str))
+                .chain(std::iter::once(declaration_name.as_str()))
+                .collect::<Vec<_>>()
+                .join("::"),
+        )
+    }
+
     /// Resolve the module-level name at `span` in a source parameter default to its declaring module's Rust path and
     /// its declared name.
     ///

@@ -1,0 +1,1 @@
+pub static counter: int = 2

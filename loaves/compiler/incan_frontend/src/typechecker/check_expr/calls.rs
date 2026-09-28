@@ -4,6 +4,7 @@
 //! handling, generic inference, builtin dispatch, and Rust boundary validation to focused child modules.
 
 use crate::ast::{CallArg, Expr, ImportPath, ParamKind, Span, Spanned, Type};
+use crate::diagnostics::errors::TypeArgumentOrigin;
 use crate::diagnostics::{CompileError, errors};
 use crate::resolved_type_subst::substitute_resolved_type;
 use crate::symbols::{
@@ -22,7 +23,7 @@ use incan_lang::lang::c_abi;
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::keywords::{self, KeywordId};
 use incan_lang::lang::stdlib;
-use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
+use incan_lang::lang::surface::types::SurfaceTypeId;
 use incan_lang::lang::traits::{self, TraitId};
 use incan_semantics_core::SemanticSourceTargetKind;
 use std::collections::{HashMap, HashSet};
@@ -387,7 +388,7 @@ impl TypeChecker {
                             self.record_direct_callee_identity(name, callee.span);
                             return self.check_graph_constructor_call(name, &type_info, type_args, args, span);
                         }
-                        if let Some(tid) = surface_types::from_str(name) {
+                        if let Some(tid) = self.constructor_surface_type(name) {
                             if !type_args.is_empty() {
                                 self.errors
                                     .push(errors::explicit_call_site_type_args_not_supported(span));
@@ -404,7 +405,9 @@ impl TypeChecker {
                                 return self.check_json_query_constructor_call(tid, args, span);
                             }
                             if matches!(tid, SurfaceTypeId::Html) {
-                                return ResolvedType::Named(surface_types::as_str(tid).to_string());
+                                // The value is typed by the binding the call spells, so `Page(...)` under
+                                // `from std.web import Html as Page` is a `Page`, as its annotations are.
+                                return ResolvedType::Named(name.clone());
                             }
                             if matches!(tid, SurfaceTypeId::ValidationError) {
                                 return self.check_constructor(name, args, span);
@@ -412,6 +415,14 @@ impl TypeChecker {
                         }
                         let explicit_constructor_context =
                             self.explicit_constructor_type_context(name, &type_info, type_args, span);
+                        if let Some((_, type_bindings)) = &explicit_constructor_context {
+                            self.refuse_unsatisfied_nominal_type_arguments(
+                                name,
+                                type_bindings,
+                                TypeArgumentOrigin::Explicit,
+                                span,
+                            );
+                        }
                         let explicit_constructor_ty = explicit_constructor_context.as_ref().map(|(ty, _)| ty.clone());
                         if let TypeInfo::Model(model) = &type_info
                             && model
@@ -625,12 +636,12 @@ impl TypeChecker {
             }
 
             let in_scope = self.symbols.lookup(name).is_some();
-            if in_scope && let Some(tid) = surface_types::from_str(name) {
+            if in_scope && let Some(tid) = self.constructor_surface_type(name) {
                 if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
                     return self.check_json_query_constructor_call(tid, args, span);
                 }
                 if matches!(tid, SurfaceTypeId::Html) {
-                    return ResolvedType::Named(surface_types::as_str(tid).to_string());
+                    return ResolvedType::Named(name.clone());
                 }
             }
 
@@ -663,12 +674,12 @@ impl TypeChecker {
                     .expressions
                     .ident_kinds
                     .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
-                if in_scope && let Some(tid) = surface_types::from_str(name) {
+                if in_scope && let Some(tid) = self.constructor_surface_type(name) {
                     if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
                         return self.check_json_query_constructor_call(tid, args, span);
                     }
                     if matches!(tid, SurfaceTypeId::Html) {
-                        return ResolvedType::Named(surface_types::as_str(tid).to_string());
+                        return ResolvedType::Named(name.clone());
                     }
                 }
                 return constructor_ty;
@@ -1081,7 +1092,7 @@ impl TypeChecker {
     pub(in crate::typechecker::check_expr) fn c_raw_call_type(binding: &str, ty: &CBindingType) -> ResolvedType {
         match ty {
             CBindingType::Scalar(scalar) => c_abi::scalar_numeric_type(*scalar)
-                .map(ResolvedType::Numeric)
+                .map(ResolvedType::from_numeric_id)
                 .unwrap_or(ResolvedType::Int),
             CBindingType::Void => ResolvedType::Unit,
             CBindingType::Resource { resource, .. } => {

@@ -521,7 +521,7 @@ impl TypeChecker {
     ///
     /// Checked providers keep authority over their own metadata. Only the existing inventoryless or source-bootstrap
     /// adapters may seed source stub facts; this does not import those declarations into the consumer's namespace.
-    fn cache_stdlib_module_import_semantics(&mut self, module: &ImportPath) {
+    pub(in crate::typechecker) fn cache_stdlib_module_import_semantics(&mut self, module: &ImportPath) {
         let provider_owned = matches!(
             self.provider_plan.resolve_module(&module.segments),
             ProviderModuleResolution::Active(provider) if provider.manifest.is_some()
@@ -3841,6 +3841,7 @@ impl TypeChecker {
             PresetValueExport::Float(value) => Expr::Literal(Literal::Float(FloatLiteral {
                 value: value.parse().ok()?,
                 repr: value.clone(),
+                suffix: None,
             })),
             PresetValueExport::Bool(value) => Expr::Literal(Literal::Bool(*value)),
             PresetValueExport::String(value) => Expr::Literal(Literal::String(value.clone())),
@@ -4027,6 +4028,7 @@ impl TypeChecker {
             ParamDefaultExport::Float(value) => Expr::Literal(Literal::Float(FloatLiteral {
                 value: value.parse().ok()?,
                 repr: value.clone(),
+                suffix: None,
             })),
             ParamDefaultExport::Bool(value) => Expr::Literal(Literal::Bool(*value)),
             ParamDefaultExport::String(value) => Expr::Literal(Literal::String(value.clone())),

@@ -6,11 +6,12 @@ use crate::ast::*;
 use crate::diagnostics::errors::{self, SelfMutation};
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved};
 use crate::symbols::*;
+use incan_lang::NumericTy;
 use incan_lang::lang::errors as runtime_errors;
 use incan_lang::lang::keywords;
 use incan_lang::lang::surface::constructors::{self, ConstructorId};
+use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
-use incan_lang::{NumericTy, result_numeric_type};
 use incan_semantics_core::SurfaceStmtTypeCheck;
 use incan_semantics_core::rust_tuple_arity;
 
@@ -137,6 +138,76 @@ impl TypeChecker {
     // Statements
     // ========================================================================
 
+    /// Check the value of a compound assignment `x op= y` against the type `var_ty` of the local or static it writes.
+    ///
+    /// Numeric operands are checked as `x = x op y`: the operator's result type from the operator result table, then
+    /// the assignment rule. So `s *= s` on an `f32` binding keeps `f32` and `n += 1` on an `i32` binding adds two `i32`
+    /// values, and both are accepted, while `x /= 2` on an `int` binding stays refused because its `float` result is
+    /// not assignable to `int` (#1812). A user operator receiver resolves through its in-place or binary hook, and any
+    /// other value must be assignable to the binding.
+    fn check_compound_assignment_value(
+        &mut self,
+        compound: &CompoundAssignmentStmt,
+        var_ty: &ResolvedType,
+        value_ty: &ResolvedType,
+        stmt_span: Span,
+    ) {
+        let binop = compound.op.binary_op();
+        if let (Some(lhs), Some(rhs)) = (numeric_ty_from_resolved(var_ty), numeric_ty_from_resolved(value_ty)) {
+            let result_ty = if numeric_op_from_ast(&binop).is_some() {
+                let target = Spanned::new(Expr::Ident(compound.name.clone()), compound.name_span);
+                self.numeric_arithmetic_result_type(
+                    (&target, var_ty),
+                    binop,
+                    (&compound.value, value_ty),
+                    compound.value.span,
+                )
+            } else if matches!(
+                binop,
+                BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr
+            ) && matches!((lhs, rhs), (NumericTy::Int, NumericTy::Int))
+            {
+                ResolvedType::Int
+            } else {
+                self.errors.push(errors::type_mismatch(
+                    "supported compound operator operands",
+                    &format!("{var_ty} {binop} {value_ty}"),
+                    compound.value.span,
+                ));
+                return;
+            };
+            if !self.types_compatible(&result_ty, var_ty) {
+                self.errors.push(errors::type_mismatch(
+                    &var_ty.to_string(),
+                    &result_ty.to_string(),
+                    compound.value.span,
+                ));
+            }
+        } else if self.is_user_operator_receiver(var_ty) {
+            match self.resolve_compound_assignment_operator(var_ty, compound.op, &compound.value, value_ty, stmt_span) {
+                Some(result_ty) if !self.types_compatible(&result_ty, var_ty) => {
+                    self.errors.push(errors::type_mismatch(
+                        &var_ty.to_string(),
+                        &result_ty.to_string(),
+                        compound.value.span,
+                    ));
+                }
+                Some(_) => {}
+                None => self.errors.push(errors::missing_method(
+                    &var_ty.to_string(),
+                    compound_assignment_fallback_dunder(compound.op),
+                    stmt_span,
+                )),
+            }
+        } else if !self.types_compatible(value_ty, var_ty) {
+            self.errors.push(errors::type_mismatch(
+                &var_ty.to_string(),
+                &value_ty.to_string(),
+                compound.value.span,
+            ));
+        }
+    }
+
     /// Return whether a local annotation names a trait surface that does not yet have a local value representation.
     ///
     /// Callable parameters and returns have dedicated trait-bound lowering paths, but local bindings do not preserve a
@@ -148,6 +219,51 @@ impl TypeChecker {
                 self.lookup_semantic_trait_info(name).is_some()
             }
             _ => false,
+        }
+    }
+
+    /// Return the first trait type written inside another type, as a type argument or a tuple item (`Serialize` in
+    /// `Option[Serialize]`), never the annotation itself.
+    ///
+    /// A trait stands for the types that adopt it only where the whole annotation is the trait: a parameter lowers to
+    /// a hidden type parameter bounded by it and a return to one hidden adopting type. Inside another type it has no
+    /// value representation, and the generated Rust would name a bare trait there (E0782, #1866). A reference or a
+    /// type token wraps the annotation without nesting it. A function type is not searched: its parameters are how a
+    /// decorator names the trait receiver of the method it decorates (`(Service) -> int`).
+    pub(in crate::typechecker) fn trait_type_nested_in(&self, ty: &ResolvedType) -> Option<ResolvedType> {
+        self.find_trait_type(ty, false)
+    }
+
+    /// Search `ty` for a trait type, reporting the type itself only when it is `nested` inside the annotation.
+    fn find_trait_type(&self, ty: &ResolvedType, nested: bool) -> Option<ResolvedType> {
+        match ty {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _)
+                if nested && self.lookup_semantic_trait_info(name).is_some() =>
+            {
+                Some(ty.clone())
+            }
+            ResolvedType::Generic(_, items) | ResolvedType::Tuple(items) => {
+                items.iter().find_map(|item| self.find_trait_type(item, true))
+            }
+            ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => self.find_trait_type(inner, true),
+            ResolvedType::FrozenDict(key, value) => self
+                .find_trait_type(key, true)
+                .or_else(|| self.find_trait_type(value, true)),
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) | ResolvedType::TypeToken(inner) => {
+                self.find_trait_type(inner, nested)
+            }
+            _ => None,
+        }
+    }
+
+    /// Refuse a callable parameter, return or local annotation that writes a trait inside another type (#1866).
+    pub(in crate::typechecker) fn refuse_trait_type_nested_in_annotation(&mut self, ty: &ResolvedType, span: Span) {
+        if let Some(trait_type) = self.trait_type_nested_in(ty) {
+            self.errors.push(errors::trait_type_nested_in_annotation_unsupported(
+                &trait_type.to_string(),
+                &ty.to_string(),
+                span,
+            ));
         }
     }
 
@@ -220,75 +336,7 @@ impl TypeChecker {
                     // Type check the value expression
                     let value_ty = self.check_expr(&compound.value);
 
-                    // Treat `x <op>= y` as `x = x <op> y` using numeric policy.
-                    let binop = compound.op.binary_op();
-
-                    let lhs_num = numeric_ty_from_resolved(&var_ty);
-                    let rhs_num = numeric_ty_from_resolved(&value_ty);
-
-                    if let (Some(lhs), Some(rhs)) = (lhs_num, rhs_num) {
-                        if let Some(num_op) = numeric_op_from_ast(&binop) {
-                            let res_num = result_numeric_type(num_op, lhs, rhs, None);
-                            let res_ty = match res_num {
-                                NumericTy::Int => ResolvedType::Int,
-                                NumericTy::Float => ResolvedType::Float,
-                            };
-                            if !self.types_compatible(&res_ty, &var_ty) {
-                                self.errors.push(errors::type_mismatch(
-                                    &var_ty.to_string(),
-                                    &res_ty.to_string(),
-                                    compound.value.span,
-                                ));
-                            }
-                        } else if matches!(
-                            binop,
-                            BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr
-                        ) && matches!((lhs, rhs), (NumericTy::Int, NumericTy::Int))
-                        {
-                            if !self.types_compatible(&ResolvedType::Int, &var_ty) {
-                                self.errors.push(errors::type_mismatch(
-                                    &var_ty.to_string(),
-                                    &ResolvedType::Int.to_string(),
-                                    compound.value.span,
-                                ));
-                            }
-                        } else {
-                            self.errors.push(errors::type_mismatch(
-                                "supported compound operator operands",
-                                &format!("{} {} {}", var_ty, binop, value_ty),
-                                compound.value.span,
-                            ));
-                        }
-                    } else if self.is_user_operator_receiver(&var_ty) {
-                        if let Some(res_ty) = self.resolve_compound_assignment_operator(
-                            &var_ty,
-                            compound.op,
-                            &compound.value,
-                            &value_ty,
-                            stmt.span,
-                        ) {
-                            if !self.types_compatible(&res_ty, &var_ty) {
-                                self.errors.push(errors::type_mismatch(
-                                    &var_ty.to_string(),
-                                    &res_ty.to_string(),
-                                    compound.value.span,
-                                ));
-                            }
-                        } else {
-                            self.errors.push(errors::missing_method(
-                                &var_ty.to_string(),
-                                compound_assignment_fallback_dunder(compound.op),
-                                stmt.span,
-                            ));
-                        }
-                    } else if !self.types_compatible(&value_ty, &var_ty) {
-                        // Non-numeric: fall back to simple compatibility check.
-                        self.errors.push(errors::type_mismatch(
-                            &var_ty.to_string(),
-                            &value_ty.to_string(),
-                            compound.value.span,
-                        ));
-                    }
+                    self.check_compound_assignment_value(compound, &var_ty, &value_ty, stmt.span);
                 } else if let Some(static_info) = self.lookup_static_info(&compound.name).cloned() {
                     if static_info.is_imported {
                         self.errors.push(errors::imported_static_reassignment_not_allowed(
@@ -300,86 +348,7 @@ impl TypeChecker {
                     let value_ty = self.check_expr(&compound.value);
                     let var_ty = static_info.ty;
 
-                    let binop = match compound.op {
-                        CompoundOp::Add => BinaryOp::Add,
-                        CompoundOp::Sub => BinaryOp::Sub,
-                        CompoundOp::Mul => BinaryOp::Mul,
-                        CompoundOp::Div => BinaryOp::Div,
-                        CompoundOp::FloorDiv => BinaryOp::FloorDiv,
-                        CompoundOp::Mod => BinaryOp::Mod,
-                        CompoundOp::MatMul => BinaryOp::MatMul,
-                        CompoundOp::BitAnd => BinaryOp::BitAnd,
-                        CompoundOp::BitOr => BinaryOp::BitOr,
-                        CompoundOp::BitXor => BinaryOp::BitXor,
-                        CompoundOp::Shl => BinaryOp::Shl,
-                        CompoundOp::Shr => BinaryOp::Shr,
-                    };
-
-                    let lhs_num = numeric_ty_from_resolved(&var_ty);
-                    let rhs_num = numeric_ty_from_resolved(&value_ty);
-
-                    if let (Some(lhs), Some(rhs)) = (lhs_num, rhs_num) {
-                        if let Some(num_op) = numeric_op_from_ast(&binop) {
-                            let res_num = result_numeric_type(num_op, lhs, rhs, None);
-                            let res_ty = match res_num {
-                                NumericTy::Int => ResolvedType::Int,
-                                NumericTy::Float => ResolvedType::Float,
-                            };
-                            if !self.types_compatible(&res_ty, &var_ty) {
-                                self.errors.push(errors::type_mismatch(
-                                    &var_ty.to_string(),
-                                    &res_ty.to_string(),
-                                    compound.value.span,
-                                ));
-                            }
-                        } else if matches!(
-                            binop,
-                            BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr
-                        ) && matches!((lhs, rhs), (NumericTy::Int, NumericTy::Int))
-                        {
-                            if !self.types_compatible(&ResolvedType::Int, &var_ty) {
-                                self.errors.push(errors::type_mismatch(
-                                    &var_ty.to_string(),
-                                    &ResolvedType::Int.to_string(),
-                                    compound.value.span,
-                                ));
-                            }
-                        } else {
-                            self.errors.push(errors::type_mismatch(
-                                "supported compound operator operands",
-                                &format!("{} {} {}", var_ty, binop, value_ty),
-                                compound.value.span,
-                            ));
-                        }
-                    } else if self.is_user_operator_receiver(&var_ty) {
-                        if let Some(res_ty) = self.resolve_compound_assignment_operator(
-                            &var_ty,
-                            compound.op,
-                            &compound.value,
-                            &value_ty,
-                            stmt.span,
-                        ) {
-                            if !self.types_compatible(&res_ty, &var_ty) {
-                                self.errors.push(errors::type_mismatch(
-                                    &var_ty.to_string(),
-                                    &res_ty.to_string(),
-                                    compound.value.span,
-                                ));
-                            }
-                        } else {
-                            self.errors.push(errors::missing_method(
-                                &var_ty.to_string(),
-                                compound_assignment_fallback_dunder(compound.op),
-                                stmt.span,
-                            ));
-                        }
-                    } else if !self.types_compatible(&value_ty, &var_ty) {
-                        self.errors.push(errors::type_mismatch(
-                            &var_ty.to_string(),
-                            &value_ty.to_string(),
-                            compound.value.span,
-                        ));
-                    }
+                    self.check_compound_assignment_value(compound, &var_ty, &value_ty, stmt.span);
                 } else if self.const_decls.contains_key(&compound.name) {
                     self.errors
                         .push(errors::const_reassignment_suggests_static(&compound.name, stmt.span));
@@ -541,6 +510,7 @@ impl TypeChecker {
                             field_assign.value.span,
                         ));
                     }
+                    self.record_value_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
                 }
             }
             ResolvedType::Named(type_name) => {
@@ -555,6 +525,7 @@ impl TypeChecker {
                                 field_assign.value.span,
                             ));
                         }
+                        self.record_value_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
                     }
                     None => {
                         self.errors.push(errors::missing_field(type_name, field, span));
@@ -578,6 +549,7 @@ impl TypeChecker {
                                 field_assign.value.span,
                             ));
                         }
+                        self.record_value_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
                     }
                     None => {
                         self.errors.push(errors::missing_field(type_name, field, span));
@@ -599,6 +571,7 @@ impl TypeChecker {
                             field_assign.value.span,
                         ));
                     }
+                    self.record_value_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
                 }
                 None => {
                     self.errors
@@ -616,7 +589,24 @@ impl TypeChecker {
         }
     }
 
+    /// Return the key and value types a list or dict index assignment writes through: `int` and the element type of a
+    /// `list[T]`, the key and value types of a `dict[K, V]`.
+    fn index_assignment_slot_types(obj_ty: &ResolvedType) -> Option<(ResolvedType, ResolvedType)> {
+        let ResolvedType::Generic(name, args) = obj_ty else {
+            return None;
+        };
+        match (collection_type_id(name.as_str()), args.as_slice()) {
+            (Some(CollectionTypeId::List), [element]) => Some((ResolvedType::Int, element.clone())),
+            (Some(CollectionTypeId::Dict), [key, value]) => Some((key.clone(), value.clone())),
+            _ => None,
+        }
+    }
+
     /// Validate list/dict index assignment or RFC 028 `__setitem__` dispatch for user-defined receivers.
+    ///
+    /// The index and the value of a list or dict index assignment are checked against the slot they write, so an
+    /// integer literal written to an element of a `list[float]` takes the float type, as it does in a declaration
+    /// (#1854), and a value written to an `Option` slot is recorded for lowering to wrap (#1858).
     fn check_index_assignment(&mut self, index_assign: &IndexAssignmentStmt, span: Span) {
         // Check the object expression (should be a collection)
         let obj_ty = self.check_expr(&index_assign.object);
@@ -625,10 +615,14 @@ impl TypeChecker {
         if let Some(place) = Self::self_rooted_place(&index_assign.object) {
             self.reject_write_through_immutable_self(&format!("{place}[...]"), SelfMutation::Assignment, span);
         }
+        let slot_types = Self::index_assignment_slot_types(&obj_ty);
         // Check the index expression
-        let index_ty = self.check_expr(&index_assign.index);
+        let index_ty = self.check_expr_with_expected(&index_assign.index, slot_types.as_ref().map(|(key, _)| key));
         // Check the value expression
-        let value_ty = self.check_expr(&index_assign.value);
+        let value_ty = self.check_expr_with_expected(&index_assign.value, slot_types.as_ref().map(|(_, value)| value));
+        if let Some((_, value_slot_ty)) = &slot_types {
+            self.record_value_destination_if_compatible(index_assign.value.span, &value_ty, value_slot_ty);
+        }
 
         // Verify object is indexable and types match
         match &obj_ty {
@@ -720,11 +714,18 @@ impl TypeChecker {
         }
     }
 
+    /// Validate an assignment statement, then remember a local bound directly to a module static (see
+    /// [`Self::note_static_alias_binding`]).
+    fn check_assignment(&mut self, assign: &AssignmentStmt, span: Span) {
+        self.check_assignment_binding(assign, span);
+        self.note_static_alias_binding(assign);
+    }
+
     /// Validate assignment statements, including declarations, reassignments, and local annotation compatibility.
     ///
     /// This is the frontend boundary for rejecting unsupported local type annotations before lowering. In particular,
     /// trait-typed locals must not proceed to codegen because Rust has no valid bare trait type for `let` annotations.
-    fn check_assignment(&mut self, assign: &AssignmentStmt, span: Span) {
+    fn check_assignment_binding(&mut self, assign: &AssignmentStmt, span: Span) {
         let target_span = assign.name_span;
         let annotated_ty = assign.ty.as_ref().map(|ty_ann| self.resolve_type_checked(ty_ann));
         // `let` and `mut` are declaration forms: they introduce a binding that may deliberately shadow an active
@@ -828,6 +829,8 @@ impl TypeChecker {
                     &ann_ty.to_string(),
                     ty_ann.span,
                 ));
+            } else {
+                self.refuse_trait_type_nested_in_annotation(&ann_ty, ty_ann.span);
             }
             // Check value matches annotation
             if !self.types_compatible(&value_ty, &ann_ty)
@@ -1161,6 +1164,9 @@ impl TypeChecker {
                 span,
             ));
         }
+        if let (Some(e), Some(expected)) = (expr, self.symbols.current_return_type().cloned()) {
+            self.record_value_destination_if_compatible(e.span, &return_ty, &expected);
+        }
     }
 
     /// Return the canonical declaration identity for a nominal type name, when resolution proved one.
@@ -1226,19 +1232,20 @@ impl TypeChecker {
         current_ty: &ResolvedType,
         target_ty: &ResolvedType,
     ) -> Option<ResolvedType> {
+        let member_target = self.union_member_target_spelling(target_ty.clone());
         if let Some(members) = current_ty.union_members() {
             return members
                 .iter()
-                .find(|member| self.union_member_matches(member, target_ty))
-                .cloned();
+                .find(|member| self.union_member_matches(member, &member_target))
+                .map(|member| Self::narrowed_union_member_type(member, target_ty));
         }
 
         if let Some(inner) = current_ty.option_inner_type() {
             if let Some(members) = inner.union_members() {
                 return members
                     .iter()
-                    .find(|member| self.union_member_matches(member, target_ty))
-                    .cloned();
+                    .find(|member| self.union_member_matches(member, &member_target))
+                    .map(|member| Self::narrowed_union_member_type(member, target_ty));
             }
             if self.union_member_matches(inner, target_ty) {
                 return Some(inner.clone());
@@ -1250,15 +1257,16 @@ impl TypeChecker {
 
     /// Return the union-minus-target type after a failed `isinstance` check.
     fn union_minus_type(&self, members: &[ResolvedType], target_ty: &ResolvedType) -> Option<ResolvedType> {
+        let member_target = self.union_member_target_spelling(target_ty.clone());
         let remaining: Vec<_> = members
             .iter()
-            .filter(|member| !self.union_member_matches(member, target_ty))
+            .filter(|member| !self.union_member_matches(member, &member_target))
             .cloned()
             .collect();
         if remaining.len() == members.len() {
             None
         } else {
-            Some(union_ty(remaining))
+            Some(Self::localize_union_member(union_ty(remaining)))
         }
     }
 
@@ -1568,6 +1576,7 @@ impl TypeChecker {
                 self.check_statement_block(&while_stmt.body);
                 let _ = self.pop_loop_context();
                 self.symbols.exit_scope();
+                self.note_dict_lookup_let(value, pattern, &while_stmt.body);
             }
         }
     }
@@ -1837,6 +1846,7 @@ impl TypeChecker {
                 self.check_pattern(pattern, &value_ty);
                 self.check_statement_block(body);
                 self.symbols.exit_scope();
+                self.note_dict_lookup_let(value, pattern, body);
                 None
             }
         }
@@ -2016,9 +2026,29 @@ impl TypeChecker {
 
     /// Infer the item type for built-in iterable surfaces.
     ///
-    /// This captures language-level iteration semantics, such as strings yielding one-character `str` values and
-    /// bytes yielding `int` values, before the backend chooses the Rust iterator adapter that implements them.
+    /// This captures language-level iteration semantics, such as strings yielding one-character `str` values, bytes
+    /// yielding `int` values, and a type parameter bounded by `Iterable[T]` yielding `T`, before the backend chooses
+    /// the Rust iterator adapter that implements them.
     pub fn infer_iterator_element_type(&self, iter_ty: &ResolvedType) -> ResolvedType {
+        if let Some(type_param) = self.active_type_param_name(iter_ty) {
+            for frame in self.current_type_param_bound_details.iter().rev() {
+                let Some(bounds) = frame.get(type_param) else {
+                    continue;
+                };
+                if let Some(item) = bounds.iter().find_map(|bound| {
+                    let trait_id = builtin_traits::from_qualified_str(&bound.name)
+                        .or_else(|| builtin_traits::from_str(Self::type_bound_source_name(bound)))?;
+                    if matches!(trait_id, TraitId::Iterable | TraitId::Iterator | TraitId::IntoIterator) {
+                        bound.type_args.first().cloned()
+                    } else {
+                        None
+                    }
+                }) {
+                    return item;
+                }
+                break;
+            }
+        }
         match iter_ty {
             ResolvedType::FrozenList(elem) | ResolvedType::FrozenSet(elem) => elem.as_ref().clone(),
             ResolvedType::FrozenDict(key, _) => key.as_ref().clone(),

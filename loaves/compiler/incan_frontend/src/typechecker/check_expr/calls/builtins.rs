@@ -4,8 +4,10 @@ use super::TypeChecker;
 use crate::ast::{CallArg, Expr, ParamKind, Span, Spanned, Type};
 use crate::diagnostics::errors::{self, HashedCollectionRole};
 use crate::symbols::{CallableParam, FunctionInfo, ResolvedType};
-use crate::typechecker::helpers::{collection_type_id, dict_ty, list_ty, option_ty, result_ty, set_ty};
+use crate::typechecker::derive_requirements::DeriveSupport;
+use crate::typechecker::helpers::{collection_type_id, dict_ty, is_frozen_str, list_ty, option_ty, result_ty, set_ty};
 use incan_lang::lang::builtins::{self as core_builtins, BuiltinFnId};
+use incan_lang::lang::derives::DeriveId;
 use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::constructors::{self as surface_constructors, ConstructorId};
 use incan_lang::lang::surface::functions::SurfaceFnId;
@@ -143,6 +145,25 @@ impl TypeChecker {
             .then_some(expected_inner)
     }
 
+    /// Return the string type a `Some(payload)` checked against `Option[expected_inner]` converts a `FrozenStr` payload
+    /// to.
+    ///
+    /// `FrozenStr` (which is also what a `const` declared `str` carries) reads anywhere `str` is expected, but the two
+    /// are stored differently, so a `FrozenStr` payload placed in an `Option[str]` or an `Option[FrozenStr]` is
+    /// converted to the destination's own string type at the constructor's argument. The destination's inner type,
+    /// with source aliases expanded, must be `str` or `FrozenStr`; any other payload records nothing.
+    fn some_payload_string_destination(
+        &self,
+        payload_ty: &ResolvedType,
+        expected_inner: &ResolvedType,
+    ) -> Option<ResolvedType> {
+        if !is_frozen_str(payload_ty) {
+            return None;
+        }
+        let expected_inner = self.expand_type_aliases(expected_inner.clone());
+        (matches!(expected_inner, ResolvedType::Str) || is_frozen_str(&expected_inner)).then_some(expected_inner)
+    }
+
     // ---- Rust boundary matching and coercion recording ----
 
     /// Type-check an ordinary builtin call, optionally retaining an already-known result context.
@@ -217,7 +238,21 @@ impl TypeChecker {
             }
             return match cid {
                 ConstructorId::Ok | ConstructorId::Err => {
-                    let arg_types = self.check_call_arg_types(args);
+                    // The payload is checked against the payload type of the `Result` the destination expects, so an
+                    // integer literal in `Ok(1)` at a `Result[float, str]` destination takes the float type (#1859).
+                    let expected_payload =
+                        Self::matching_collection_constructor_args(expected_return_ty, CollectionTypeId::Result, 2)
+                            .and_then(|type_args| type_args.get(usize::from(cid == ConstructorId::Err)))
+                            .cloned();
+                    let arg_types = match (expected_payload, args) {
+                        (Some(expected_payload), [CallArg::Positional(expr)]) => {
+                            self.call_argument_depth += 1;
+                            let ty = self.check_expr_with_expected(expr, Some(&expected_payload));
+                            self.call_argument_depth -= 1;
+                            vec![ty]
+                        }
+                        _ => self.check_call_arg_types(args),
+                    };
                     let current_result = self.symbols.current_return_type().and_then(|ty| match ty {
                         ResolvedType::Generic(name, args)
                             if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result)
@@ -278,16 +313,20 @@ impl TypeChecker {
                             self.call_argument_depth += 1;
                             let ty = self.check_expr_with_expected(expr, Some(expected_inner));
                             self.call_argument_depth -= 1;
-                            if let Some(union) = self.some_payload_union_wrapper(&ty, expected_inner) {
-                                // The constructor is instantiated at the destination's union: record that
-                                // parameter as the call's callable fact so lowering carries it and the payload is
-                                // injected into the wrapper at the argument, as it is for any callable taking the
-                                // union (#1724). The call's type is the instantiation, not `Option[member]`.
+                            // The constructor is instantiated at the destination's union, or at the destination's
+                            // own string type for a `FrozenStr` payload: record that parameter as the call's
+                            // callable fact so lowering carries it and the payload is injected into the wrapper or
+                            // converted at the argument, as it is for any callable taking that type (#1724, #1794).
+                            // The call's type is the instantiation, not `Option[payload]`.
+                            if let Some(destination) = self
+                                .some_payload_union_wrapper(&ty, expected_inner)
+                                .or_else(|| self.some_payload_string_destination(&ty, expected_inner))
+                            {
                                 self.type_info.record_call_site_callable_params_exact(
                                     call_span,
-                                    &[CallableParam::positional(union.clone())],
+                                    &[CallableParam::positional(destination.clone())],
                                 );
-                                return Some(option_ty(union));
+                                return Some(option_ty(destination));
                             }
                             ty
                         }
@@ -561,21 +600,40 @@ impl TypeChecker {
                         return Some(ResolvedType::Unknown);
                     }
 
-                    match inner {
-                        ResolvedType::Int
-                        | ResolvedType::Float
-                        | ResolvedType::Bool
-                        | ResolvedType::Str
-                        | ResolvedType::FrozenStr => Some(list_ty(inner)),
-                        other => {
-                            self.errors.push(errors::builtin_list_element_type_not_supported(
-                                name,
-                                &other.to_string(),
-                                call_span,
-                            ));
-                            Some(ResolvedType::Unknown)
-                        }
+                    // A `float` list sorts by its partial order; any other element type sorts by its total order
+                    // (#1881): a derived or adopted `Ord`, or a tuple, list or `Option` of ordered values. An element
+                    // type the derive relation cannot decide is refused, as it cannot be sorted without one, and so
+                    // is a type parameter, whose `Ord` bound does not give the generated program a total order.
+                    if matches!(inner, ResolvedType::Float)
+                        || self.derive_support(&inner, DeriveId::Ord) == DeriveSupport::Supported
+                    {
+                        return Some(list_ty(inner));
                     }
+                    if let Some(placeholder) = self.generic_placeholder_name(&inner)
+                        && self.active_type_param_satisfies_builtin_bound(placeholder, TraitId::Ord)
+                    {
+                        return Some(list_ty(inner));
+                    }
+                    if self.generic_placeholder_name(&inner).is_some() {
+                        self.errors.push(errors::builtin_list_element_type_not_supported(
+                            name,
+                            &inner.to_string(),
+                            call_span,
+                        ));
+                        return Some(ResolvedType::Unknown);
+                    }
+                    let holder = match self.derive_support(&inner, DeriveId::Ord) {
+                        DeriveSupport::Missing(holder) => holder,
+                        DeriveSupport::Supported | DeriveSupport::Unknown => inner.clone(),
+                    };
+                    let holder_is_declared = self.is_user_operator_receiver(&holder);
+                    self.errors.push(errors::sorted_element_not_ordered(
+                        &inner.to_string(),
+                        &holder.to_string(),
+                        holder_is_declared,
+                        call_span,
+                    ));
+                    Some(ResolvedType::Unknown)
                 }
                 BuiltinFnId::ReadFile => {
                     self.check_call_args(args);

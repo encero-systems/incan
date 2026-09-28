@@ -1,0 +1,22 @@
+# behavior: list.index finds the first position of a value, list.count(value) counts the items equal to it, list.remove drops the element at an index and list.swap exchanges two positions
+# retires: loaves/compiler/incan_emit/src/emit/expressions/mod.rs::known_list_methods_emit_checked_runtime_helpers
+# expect-stdout:
+#   1
+#   2
+#   3
+#   4 2 9
+#   9 2 4
+
+def render(items: list[int]) -> str:
+    return f"{items[0]} {items[1]} {items[2]}"
+
+
+def main() -> None:
+    mut items: list[int] = [4, 9, 2, 9]
+    println(items.index(9))
+    println(items.count(9))
+    items.remove(1)
+    println(len(items))
+    println(render(items))
+    items.swap(0, 2)
+    println(render(items))

@@ -19,8 +19,8 @@ pub use crate::__incan_std::web::route;
 pub use crate::__incan_std::web::GET;
 pub use crate::__incan_std::serde::json;
 #[derive(
-    serde::Serialize,
-    serde::Deserialize,
+    ::serde::Serialize,
+    ::serde::Deserialize,
     Debug,
     Clone,
     incan_derive::FieldInfo,

@@ -1,0 +1,14 @@
+# behavior: a model that defines __eq__ and derives Eq is refused at check time, since both provide ==
+# expect-diagnostic: INCAN-T0001
+
+
+@derive(Eq)
+model User:
+    id: int
+
+    def __eq__(self, other: User) -> bool:
+        return self.id == other.id
+
+
+def main() -> None:
+    println(User(id=1) == User(id=1))

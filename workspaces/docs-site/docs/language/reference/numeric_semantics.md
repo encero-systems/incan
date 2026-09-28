@@ -18,9 +18,8 @@ This page specifies the numeric types and their aliases, numeric literals, decim
 | `u64` | Unsigned integer | `u64` | 0 to 18,446,744,073,709,551,615 |
 | `u128` | Unsigned integer | `u128` | 0 to 2^128 - 1 |
 | `usize` | Unsigned integer | `usize` | The platform's pointer-sized unsigned range |
-| `float` | Binary float | `f64` | IEEE 754 binary64 values, NaN and infinity included |
 | `f32` | Binary float | `f32` | Finite IEEE 754 binary32 values |
-| `f64` | Binary float | `f64` | Finite IEEE 754 binary64 values |
+| `f64` | Binary float | `f64` | IEEE 754 binary64 values, NaN and infinity included |
 | `decimal[p, s]` | Decimal | `incan_std_core::num::Decimal128` | Base-10 values with precision `p` and scale `s` (see [Decimal types](#decimal-types)) |
 
 ## Aliases
@@ -35,40 +34,47 @@ An alias is the same type as its canonical type.
 | `int`, `bigint`, `long` | `i64` |
 | `hugeint` | `i128` |
 | `real`, `fp32` | `f32` |
-| `double`, `fp64` | `f64` |
+| `float`, `double`, `fp64` | `f64` |
 | `numeric[p, s]`, `decimal128[p, s]` | `decimal[p, s]` |
-
-- `float` is not an alias: it is a type of its own, whose values include NaN and infinity. `float` and `f64` are assignable to each other (see [Assignment between numeric types](#assignment-between-numeric-types)).
 
 ```incan
 def main() -> None:
     x: integer = 10
     y: i32 = x                                   # accepted
     z: i16 = x                                   # refused: i32 is not assignable to i16
+    ratio: float = 0.5
+    exact: f64 = ratio                           # accepted
+    back: double = exact                         # accepted
 ```
 
 ## Literals
 
 | Literal | Type without a destination | Type at a destination |
 | --- | --- | --- |
-| `42`, `-42`, `1_000_000` | `int` | The numeric type the destination expects. At a `float`, `f32` or `f64` destination, the float of the same value. |
-| `0.5`, `1e3` | `float` | The binary float type the destination expects: `f32` or `f64`. |
+| `42`, `-42`, `1_000_000` | `int` | The numeric type the destination expects. At a `float` or `f32` destination, the float of the same value. |
+| `0.5`, `1e3` | `float` | The binary float type the destination expects: `f32` or `float`. |
 | `42u16`, `7i8`, `3.14f32` | The type its suffix names | The type its suffix names. |
 | `19.99d`, `12345d` | A decimal literal requires a decimal destination | The destination's `decimal[p, s]` type (see [Decimal types](#decimal-types)). |
 
 - An integer literal outside the range of its integer type is refused (`INCAN-T0001`), as a declared value, an argument and a returned value alike. A suffixed literal outside the range of its suffix's type is refused.
-- A literal whose value is not finite in `f32` or `f64` is refused at a destination of that type (`INCAN-T0001`). At a `float` destination, a float literal may be infinite (`1e309`).
+- A literal whose value is not finite in `f32` is refused at an `f32` destination (`INCAN-T0001`). At a `float` destination, a float literal may be infinite (`1e309`), and so may an `f64`-suffixed literal (`1e309f64`).
+- Numeric literals are written in decimal digits. A float literal has a `.` followed by a digit (`0.5`), an exponent (`1e3`), or both.
 - `_` separators do not change a literal's value.
 - A negated integer literal takes its destination's type as the literal does.
+- At an `Option` or union destination that holds one numeric type other than `int`, an integer literal takes that type: `1` is the float `1.0` at an `Option[float]` or `float | str` destination. At a destination that holds `int`, or two other numeric types, it is an `int`.
+- An integer literal argument of a generic function takes its parameter's type in the call: with `def pick[T](a: T, b: T) -> T`, `pick(2.5, 1)` and `pick(1, 2.5)` bind `T` to `float`, and `1` is `1.0`.
 - An `int` value is not assignable to a float type (see [Assignment between numeric types](#assignment-between-numeric-types)).
+- A float literal at an integer destination is refused (`INCAN-T0001`).
+- An unsuffixed integer literal operand of `+`, `-`, `*`, `//` or `%` takes the exact-width integer type of the other operand (see [Operators](#operators)).
 
 ```incan
 def main() -> None:
     scale: float = 2                             # accepted
     mut total: float = 0.5
-    total = -1                                   # accepted
-    pair: tuple[float, int] = (3, 4)             # accepted
-    weights: dict[str, float] = {"a": 1}         # accepted
+    total = -1                                   # accepted: -1.0
+    pair: tuple[float, int] = (3, 4)             # accepted: (3.0, 4)
+    weights: dict[str, float] = {"a": 1}         # accepted: {"a": 1.0}
+    maybe: Option[float] = 1                     # accepted
     ok: u8 = 255                                 # accepted
     bad: u8 = 256                                # refused: 256 is outside u8
     ratio: f32 = 1e39                            # refused: not finite in f32
@@ -84,7 +90,9 @@ def main() -> None:
 - A decimal literal at a `decimal[p, s]` destination has at most `s` fractional digits, and its integer part has at most `p - s` digits (an integer part of `0` has none). A literal outside these limits is refused (`INCAN-T0001`). A literal with fewer than `s` fractional digits is accepted.
 - An `int` value is not assignable to a decimal type (`INCAN-T0001`).
 - A decimal value is assignable to a decimal type with at least its scale and at least its number of integer digits (`p - s`). A conversion that loses precision or scale is not implicit.
-- The language defines no arithmetic on decimal values: an arithmetic operator with a decimal operand, unary `-` included, is refused (`INCAN-T0001`). Decimal values compare with `==`, `!=`, `<`, `<=`, `>` and `>=` against decimal values.
+- The language defines no arithmetic on decimal values: an arithmetic operator with a decimal operand, unary `-` included, is refused (`INCAN-T0001`).
+- Decimal values compare by value with `==`, `!=`, `<`, `<=`, `>` and `>=` against decimal values of any precision and scale: `1.5d` equals `1.50d`, and `1.49d` is less than `1.5d`. Equal decimal values are the same set element and the same dict key.
+- A decimal value displays the fractional digits it was written with, whatever the scale of its type: `1.5d` displays as `1.5` and `1.50d` as `1.50`.
 
 ```incan
 def main() -> None:
@@ -92,10 +100,12 @@ def main() -> None:
     amount: numeric[12, 4] = 1000.2500d          # accepted
     whole: decimal[5, 0] = 12345d                # accepted
     wider: decimal[12, 4] = price                # accepted
+    narrower: decimal[5, 2] = price              # refused: 3 integer digits, not 8
     too_precise: decimal[10, 2] = 1.234d         # refused: 3 fractional digits
     too_large: decimal[7, 2] = 123456.78d        # refused: 6 integer digits
     missing_shape: decimal = 1.00d               # refused: bare decimal
     total = price + price                        # refused: no decimal arithmetic
+    cheaper = amount < price                     # accepted
 ```
 
 ## Assignment between numeric types
@@ -112,13 +122,13 @@ A value of one numeric type is assignable to another numeric type only as the ta
 | `u16` | `u32`, `u64`, `u128`, `i32`, `i64`, `i128` |
 | `u32` | `u64`, `u128`, `i64`, `i128` |
 | `u64` | `u128`, `i128` |
-| `f32` | `f64`, `float` |
-| `f64` | `float` |
-| `float` | `f64` |
+| `f32` | `f64` |
 
+- A type spelled with an alias is its canonical type: `float` is `f64` and `int` is `i64`, so each is assignable to the other.
 - `i128`, `u128`, `isize` and `usize` are assignable to no other numeric type.
 - No integer type is assignable to a float type, and no float type to an integer type.
-- A `float` value that is NaN or infinite raises `ValueError` when it becomes an `f64` value.
+- The table applies to a value. A value also widens to the numeric type of an `Option` payload and to the first numeric member of a union it widens to, and a lookup probe (`in`, a `dict` key, `count`, `index`, `contains`, `get`) widens to the element or key type.
+- Inside a collection, tuple, `Option` or function type, a numeric type matches only its own type: `list[i8]` is not assignable to `list[int]` (`INCAN-T0001`).
 
 ```incan
 def main() -> None:
@@ -129,7 +139,11 @@ def main() -> None:
     more_bits: u16 = bits                        # accepted
     single: f32 = 1.25
     double: float = single                       # accepted
+    exact: f64 = double                          # accepted
+    maybe: Option[int] = small                   # accepted
     back: i8 = wide                              # refused: int is not assignable to i8
+    narrow_values: list[i8] = [1, 2]
+    wide_values: list[int] = narrow_values       # refused: list[i8] is not list[int]
 ```
 
 ## Resizing methods
@@ -175,23 +189,29 @@ A numeric argument to a Rust parameter of a primitive numeric type is accepted w
 
 | Operator | Operands | Result |
 | --- | --- | --- |
-| `+`, `-`, `*` | Two `f32` / two `f64` | `f32` / `f64` |
+| `+`, `-`, `*` | Two operands of one integer type | That integer type |
+| | Two `f32` | `f32` |
 | | Any other pair with a float operand | `float` |
-| | Two integer operands | `int` |
-| `/` | Two `f32` / two `f64` | `f32` / `f64` |
+| `/` | Two `f32` | `f32` |
 | | Any other numeric pair | `float` |
-| `//`, `%` | Two `f32` / two `f64` | `f32` / `f64` |
+| `//`, `%` | Two operands of one integer type | That integer type |
+| | Two `f32` | `f32` |
 | | Any other pair with a float operand | `float` |
-| | Two operands of one unsigned type, or an unsigned operand and a non-negative integer literal | That unsigned type |
-| | Any other pair of integer operands | `int` |
-| `**` | Two `f32` / two `f64` | `f32` / `f64` |
-| | An integer left operand and a non-negative integer literal exponent | `int` |
+| `**` | An integer left operand and a non-negative integer literal exponent | The left operand's type |
+| | Two `f32` | `f32` |
 | | Any other numeric pair | `float` |
+| `&`, <code>&#124;</code>, `^`, `<<`, `>>` | Two integer operands | `int` |
 | `==`, `!=`, `<`, `<=`, `>`, `>=` | Two numeric operands | `bool` |
 
-- `//` or `%` between two different unsigned types, or between an unsigned operand and an `int` value or a negative integer literal, is refused (`INCAN-T0001`).
+- `+`, `-`, `*`, `//` and `%` between two different integer types are refused (`INCAN-T0001`), with a hint naming `resize()` and `try_resize()`. `int` and `i64` are one type.
+- An unsuffixed integer literal operand of `+`, `-`, `*`, `//` or `%` takes the type of an exact-width integer operand on the other side. A literal outside that type's range is refused (`INCAN-T0001`).
+- Two different integer types compare in the narrowest integer type holding both: the wider of the two, or the narrowest signed type holding both (`i16` for `i8` and `u8`, `i128` for `i64` and `u64`). A pair no integer type holds, `u128` with a signed type or `isize` or `usize` with another integer type, is refused (`INCAN-T0001`). An unsuffixed integer literal operand of a comparison takes the other operand's integer type when it holds the literal's value.
+- A prefix `-` keeps the type of its signed integer or float operand. A prefix `-` on an unsigned integer operand is refused (`INCAN-T0001`).
+- `&`, `|`, `^`, `<<` and `>>` with a float operand are refused (`INCAN-T0001`).
 - `/` is true division. `//` rounds the quotient toward negative infinity. The result of `%` has the sign of the divisor, and `a == (a // b) * b + (a % b)`.
-- `/`, `//` and `%` with a zero divisor raise `ZeroDivisionError`, for integer and float operands alike.
+- `/`, `//` and `%` with a zero divisor raise `ZeroDivisionError`, for signed integer, unsigned integer and float operands alike.
+- A signed integer `//` whose quotient is outside its type's range, the type's minimum divided by `-1`, raises `ValueError`. The minimum of a signed integer type `% -1` is `0`.
+- `**` binds tighter than a prefix `-` or `~` on its left and looser than one on its right: `-x ** 2` is `-(x ** 2)`, `~x ** 2` is `~(x ** 2)`, and `2 ** -1` is `2 ** (-1)`. The [operator table](language.md#operators) gives the precedence of every operator.
 - `+`, `-` and `*` between two values of one type parameter are accepted. `/`, `//`, `%` and `**` between two values of one type parameter are refused (`INCAN-T0109`), unless the parameter is bounded by a trait that defines the operator's method (`__div__`, `__floordiv__`, `__mod__` or `__pow__`); the operator then resolves through that trait.
 
 ```incan
@@ -216,11 +236,23 @@ def main() -> None:
     part: u16 = size % 3                         # accepted
     other: u8 = 3
     mixed = size % other                         # refused: u16 and u8
+    small: i8 = 10
+    bumped: i8 = small + 1                       # accepted
+    square: i8 = small ** 2                      # accepted
+    over = small + 300                           # refused: 300 is outside i8
+    count: int = 2
+    scaled = small * count                       # refused: i8 and int
+    flipped = -size                              # refused: u16 is unsigned
+    wide: i64 = 5
+    total: int = count + wide                    # accepted
+    smaller = small < count                      # accepted
+    huge: u128 = 1
+    unsure = huge == count                       # refused: no integer type holds u128 and int
 ```
 
 ## Compound assignment
 
-- `x op= y`, with `op` one of `+`, `-`, `*`, `/`, `//` and `%`, reassigns `x`, which is `mut` (`INCAN-T0001` otherwise).
+- `x op= y`, with `op` one of `+`, `-`, `*`, `/`, `//`, `%`, `&`, `|`, `^`, `<<` and `>>`, reassigns `x`, which is a `mut` binding or a `static` of its module (`INCAN-T0001` otherwise). `**=` is not an operator (`INCAN-P0001`).
 - `x op= y` has the assignability requirement of `x = x op y`: the result of `x op y` (see [Operators](#operators)) is assignable to the type of `x`, or the statement is refused (`INCAN-T0001`).
 
 ```incan
@@ -232,14 +264,20 @@ def main() -> None:
     y /= 2                                       # accepted
     y %= 7                                       # accepted
     mut n: i8 = 10
-    n += 1                                       # refused: n + 1 is an int
-    following: Option[i8] = (n + 1).try_resize() # accepted
+    n += 1                                       # accepted: n + 1 is an i8
+    step: int = 1
+    n += step                                    # refused: i8 and int
+    mut s: f32 = 1.5
+    s *= s                                       # accepted
+    s *= 2.0                                     # refused: s * 2.0 is a float
+    mut b: u8 = 7
+    b //= 2                                      # accepted
 ```
 
 ## NaN and infinity
 
-- A `float` value may be NaN or infinite.
-- An `f32` or `f64` value is finite. A non-finite value that reaches an `f32` or `f64` at run time, from a `float`, from a Rust value or as the result of an operation, raises `ValueError`.
+- A `float` (`f64`) value may be NaN or infinite.
+- An `f32` value is finite. A non-finite value that reaches an `f32` at run time, from a Rust value or as the result of an operation, raises `ValueError`.
 
 ## See also
 

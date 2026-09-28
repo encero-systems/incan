@@ -176,6 +176,8 @@ pub struct AstLowering {
     pub imported_trait_decls: HashMap<String, bool>,
     /// Canonical helper paths needed when expanding default methods from imported traits.
     pub trait_default_function_paths: HashMap<String, HashMap<String, Vec<String>>>,
+    /// Canonical defining-module const paths used by imported trait defaults.
+    pub trait_default_const_paths: HashMap<String, HashMap<String, Vec<String>>>,
     /// Canonical defining-module type paths used by imported trait defaults.
     ///
     /// Unlike value calls, type annotations live in a distinct namespace. Keeping this map scoped to expansion of one
@@ -184,6 +186,8 @@ pub struct AstLowering {
     pub trait_default_type_paths: HashMap<String, HashMap<String, Vec<String>>>,
     /// Active default-method helper paths while lowering one expanded trait default body.
     pub active_trait_default_function_paths: Vec<HashMap<String, Vec<String>>>,
+    /// Active defining-module const paths while lowering one expanded trait default body.
+    pub active_trait_default_const_paths: Vec<HashMap<String, Vec<String>>>,
     /// Active defining-module type paths while lowering one expanded trait default body.
     pub active_trait_default_type_paths: Vec<HashMap<String, Vec<String>>>,
     /// Whether the current expanded default body came from an imported source module.
@@ -334,6 +338,11 @@ pub struct AstLowering {
     /// visible even when the dispatched trait differs from the receiver's -- `OrderedCollection[int]` dispatching
     /// `Collection::first` is still a trait-typed receiver.
     pub declared_trait_names: HashSet<String>,
+    /// Nominal type names this program declares: models, classes, newtypes and enums.
+    ///
+    /// A declaration is the program's own type whatever it is called, so a name-keyed stdlib surface rule (the
+    /// `ValidationError` constructor) never applies to it, whether it is lowered before or after the call (#1795).
+    pub declared_nominal_type_names: HashSet<String>,
     /// Declared return types of this program's functions, lowered from their annotations and keyed by declaration
     /// span.
     ///
@@ -362,6 +371,9 @@ pub struct AstLowering {
     /// Number of source parameter defaults being lowered; names read in them are spelled through their declaring
     /// modules.
     pub param_default_depth: usize,
+    /// Import aliases of crate nominals this module writes as union members, each mapped to the declaration's crate
+    /// path that types their values (#1796).
+    pub union_member_import_aliases: HashMap<String, String>,
 }
 
 impl AstLowering {
@@ -758,8 +770,10 @@ impl AstLowering {
             trait_decls: HashMap::new(),
             imported_trait_decls: HashMap::new(),
             trait_default_function_paths: HashMap::new(),
+            trait_default_const_paths: HashMap::new(),
             trait_default_type_paths: HashMap::new(),
             active_trait_default_function_paths: Vec::new(),
+            active_trait_default_const_paths: Vec::new(),
             active_trait_default_type_paths: Vec::new(),
             active_imported_trait_defaults: Vec::new(),
             active_trait_type_substitutions: Vec::new(),
@@ -802,12 +816,14 @@ impl AstLowering {
             current_source_module_name: None,
             adopted_traits_by_type: HashMap::new(),
             declared_trait_names: HashSet::new(),
+            declared_nominal_type_names: HashSet::new(),
             local_function_declared_returns: HashMap::new(),
             registry_package_identity: None,
             crate_nominal_context: None,
             module_declared_nominals: HashSet::new(),
             source_module_rust_paths: HashMap::new(),
             param_default_depth: 0,
+            union_member_import_aliases: HashMap::new(),
         }
     }
 
@@ -1116,6 +1132,17 @@ impl AstLowering {
         (path.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT)
             && path.first().map(String::as_str) != Some(stdlib::INCAN_STD_NAMESPACE))
         .then_some(path)
+    }
+
+    /// Return the crate path of a constant read by the currently-expanded imported source trait default.
+    pub fn active_source_trait_default_const_path(&self, name: &str) -> Option<Vec<String>> {
+        if self.scopes.iter().rev().any(|scope| scope.contains_key(name)) {
+            return None;
+        }
+        self.active_trait_default_const_paths
+            .iter()
+            .rev()
+            .find_map(|paths| paths.get(name).cloned())
     }
 
     /// Return the defining-module path for a type annotation in the currently-expanded trait default.
@@ -1767,6 +1794,7 @@ impl AstLowering {
                 default_type_paths.entry(binding).or_insert(path);
             }
             let default_function_paths = Self::source_module_function_paths(module_ast, &module_path, &module_graph);
+            let default_const_paths = Self::source_module_const_paths(module_ast, &module_path);
             for decl in &module_ast.declarations {
                 let ast::Declaration::Trait(tr) = &decl.node else {
                     continue;
@@ -1787,6 +1815,10 @@ impl AstLowering {
                     if !default_function_paths.is_empty() {
                         self.trait_default_function_paths
                             .insert(trait_key.clone(), default_function_paths.clone());
+                    }
+                    if !default_const_paths.is_empty() {
+                        self.trait_default_const_paths
+                            .insert(trait_key.clone(), default_const_paths.clone());
                     }
                     self.register_trait_decl(trait_key, trait_decl.clone(), true);
                 }
@@ -1895,6 +1927,23 @@ impl AstLowering {
             paths.insert(binding, path);
         }
         paths
+    }
+
+    /// Return the crate path of every constant one source module declares, keyed by its source name.
+    fn source_module_const_paths(module_ast: &ast::Program, module_path: &[String]) -> HashMap<String, Vec<String>> {
+        module_ast
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.node {
+                ast::Declaration::Const(konst) => Some(konst.name.clone()),
+                _ => None,
+            })
+            .map(|name| {
+                let mut path = module_path.to_vec();
+                path.push(name.clone());
+                (name, path)
+            })
+            .collect()
     }
 
     /// Return each `from <module> import <name> [as <binding>]` item of one source module whose module is a known
@@ -2519,6 +2568,7 @@ impl AstLowering {
         self.emitted_member_projections.clear();
         ir_program.source_module_name = self.current_source_module_name.clone();
         self.module_declared_nominals = declared_nominal_names(program);
+        self.union_member_import_aliases = self.collect_union_member_import_aliases(program);
         let mut errors: Vec<LoweringError> = Vec::new();
         self.import_aliases = decorator_resolution::collect_import_aliases(program);
         self.rust_import_aliases = decorator_resolution::collect_rust_import_aliases(program);
@@ -2548,6 +2598,17 @@ impl AstLowering {
             .iter()
             .filter_map(|decl| match &decl.node {
                 ast::Declaration::Trait(trait_decl) => Some(trait_decl.name.clone()),
+                _ => None,
+            })
+            .collect();
+        self.declared_nominal_type_names = program
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.node {
+                ast::Declaration::Model(model) => Some(model.name.clone()),
+                ast::Declaration::Class(class) => Some(class.name.clone()),
+                ast::Declaration::Newtype(newtype) => Some(newtype.name.clone()),
+                ast::Declaration::Enum(enum_decl) => Some(enum_decl.name.clone()),
                 _ => None,
             })
             .collect();
@@ -3042,30 +3103,20 @@ impl AstLowering {
                                 Err(e) => errors.push(e),
                             }
 
-                            // Generate trait impls for each trait this model implements
+                            // Generate trait impls for each trait this model adopts or derives, each once (#1845)
+                            let mut impl_targets = Vec::new();
                             for trait_ref in &m.traits {
-                                for (trait_name, trait_type_args) in self.trait_impl_targets_for_adopted_trait_bound(
+                                impl_targets.extend(self.trait_impl_targets_for_adopted_trait_bound(
                                     &trait_ref.node,
                                     &struct_ir.name,
                                     &m.type_params,
-                                ) {
-                                    match self.lower_trait_impl(TraitImplLoweringInput {
-                                        type_name: &struct_ir.name,
-                                        type_params: &m.type_params,
-                                        trait_name: &trait_name,
-                                        trait_type_args,
-                                        impl_methods: &model_methods,
-                                        impl_properties: &m.properties,
-                                        impl_associated_types: &[],
-                                    }) {
-                                        Ok(trait_impl) => {
-                                            ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
-                                        }
-                                        Err(e) => errors.push(e),
-                                    }
-                                }
+                                ));
                             }
-                            for (trait_name, trait_type_args) in self.derive_trait_impl_targets(&m.decorators) {
+                            impl_targets.extend(self.derive_trait_impl_targets(&m.decorators));
+                            let impl_targets = self.distinct_trait_impl_targets(impl_targets);
+                            for (trait_name, trait_type_args) in
+                                self.without_derived_builtin_trait_targets(impl_targets, &struct_ir.derives)
+                            {
                                 match self.lower_trait_impl(TraitImplLoweringInput {
                                     type_name: &struct_ir.name,
                                     type_params: &m.type_params,
@@ -3080,6 +3131,11 @@ impl AstLowering {
                                     }
                                     Err(e) => errors.push(e),
                                 }
+                            }
+                            if let Some(default_impl) = self.lower_field_default_impl(&struct_ir, &m.decorators) {
+                                ir_program
+                                    .declarations
+                                    .push(IrDecl::new(IrDeclKind::Impl(default_impl)));
                             }
                         }
                         Err(e) => errors.push(e),
@@ -3142,30 +3198,20 @@ impl AstLowering {
                                 Err(e) => errors.push(e),
                             }
 
-                            // Generate trait impls for each trait this class implements
+                            // Generate trait impls for each trait this class adopts or derives, each once (#1845)
+                            let mut impl_targets = Vec::new();
                             for trait_ref in &c.traits {
-                                for (trait_name, trait_type_args) in self.trait_impl_targets_for_adopted_trait_bound(
+                                impl_targets.extend(self.trait_impl_targets_for_adopted_trait_bound(
                                     &trait_ref.node,
                                     &struct_ir.name,
                                     &c.type_params,
-                                ) {
-                                    match self.lower_trait_impl(TraitImplLoweringInput {
-                                        type_name: &struct_ir.name,
-                                        type_params: &c.type_params,
-                                        trait_name: &trait_name,
-                                        trait_type_args,
-                                        impl_methods: &all_methods,
-                                        impl_properties: &all_properties,
-                                        impl_associated_types: &[],
-                                    }) {
-                                        Ok(trait_impl) => {
-                                            ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
-                                        }
-                                        Err(e) => errors.push(e),
-                                    }
-                                }
+                                ));
                             }
-                            for (trait_name, trait_type_args) in self.derive_trait_impl_targets(&c.decorators) {
+                            impl_targets.extend(self.derive_trait_impl_targets(&c.decorators));
+                            let impl_targets = self.distinct_trait_impl_targets(impl_targets);
+                            for (trait_name, trait_type_args) in
+                                self.without_derived_builtin_trait_targets(impl_targets, &struct_ir.derives)
+                            {
                                 match self.lower_trait_impl(TraitImplLoweringInput {
                                     type_name: &struct_ir.name,
                                     type_params: &c.type_params,
@@ -3180,6 +3226,11 @@ impl AstLowering {
                                     }
                                     Err(e) => errors.push(e),
                                 }
+                            }
+                            if let Some(default_impl) = self.lower_field_default_impl(&struct_ir, &c.decorators) {
+                                ir_program
+                                    .declarations
+                                    .push(IrDecl::new(IrDeclKind::Impl(default_impl)));
                             }
                         }
                         Err(e) => errors.push(e),
@@ -3241,8 +3292,10 @@ impl AstLowering {
                                 .declarations
                                 .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())).with_span(decl.span.into()));
 
-                            // Generate impl block for newtype methods (if any).
-                            if !newtype_methods.is_empty() {
+                            // Generate impl block for newtype methods (if any), or for the `__str__` an `Error`
+                            // adopter with no `Display` of its own displays its `message()` through.
+                            if !newtype_methods.is_empty() || self.type_displays_through_error_message(&struct_ir.name)
+                            {
                                 match self.lower_decorated_method_statics(&struct_ir.name, &newtype_methods) {
                                     Ok(statics) => ir_program.declarations.extend(statics),
                                     Err(e) => errors.push(e),
@@ -3264,31 +3317,25 @@ impl AstLowering {
                                     Err(e) => errors.push(e),
                                 }
                             }
+                            // Each trait the newtype adopts is implemented once, and a derived `std.serde.json`
+                            // trait like a model's (#1820) unless an adoption already implements it (#1845).
+                            let mut adopted_targets = Vec::new();
                             for trait_ref in &n.traits {
-                                for (trait_name, trait_type_args) in self.trait_impl_targets_for_adopted_trait_bound(
+                                adopted_targets.extend(self.trait_impl_targets_for_adopted_trait_bound(
                                     &trait_ref.node,
                                     &struct_ir.name,
                                     &n.type_params,
-                                ) {
-                                    match self.lower_trait_impl(TraitImplLoweringInput {
-                                        type_name: &struct_ir.name,
-                                        type_params: &n.type_params,
-                                        trait_name: &trait_name,
-                                        trait_type_args,
-                                        impl_methods: &n.methods,
-                                        impl_properties: &[],
-                                        impl_associated_types: &n.associated_types,
-                                    }) {
-                                        Ok(trait_impl) => {
-                                            ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
-                                        }
-                                        Err(e) => errors.push(e),
-                                    }
-                                }
+                                ));
                             }
-                            // A derived `std.serde.json` trait is implemented like a model's (#1820).
-                            for (trait_name, trait_type_args) in self.derived_json_protocol_impl_targets(&n.decorators)
-                            {
+                            let adopted_targets = self.without_derived_builtin_trait_targets(
+                                self.distinct_trait_impl_targets(adopted_targets),
+                                &struct_ir.derives,
+                            );
+                            let adopted_count = adopted_targets.len();
+                            let mut impl_targets = adopted_targets;
+                            impl_targets.extend(self.derived_json_protocol_impl_targets(&n.decorators));
+                            let impl_targets = self.distinct_trait_impl_targets(impl_targets);
+                            for (index, (trait_name, trait_type_args)) in impl_targets.into_iter().enumerate() {
                                 match self.lower_trait_impl(TraitImplLoweringInput {
                                     type_name: &struct_ir.name,
                                     type_params: &n.type_params,
@@ -3299,10 +3346,12 @@ impl AstLowering {
                                     impl_associated_types: &n.associated_types,
                                 }) {
                                     Ok(mut trait_impl) => {
-                                        self.require_json_protocol_capability_on_impl_params(
-                                            &mut trait_impl,
-                                            &trait_name,
-                                        );
+                                        if index >= adopted_count {
+                                            self.require_json_protocol_capability_on_impl_params(
+                                                &mut trait_impl,
+                                                &trait_name,
+                                            );
+                                        }
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
                                     }
                                     Err(e) => errors.push(e),
@@ -3320,7 +3369,7 @@ impl AstLowering {
                             .declarations
                             .push(IrDecl::new(IrDeclKind::Enum(enum_ir.clone())).with_span(decl.span.into()));
 
-                        if !e.methods.is_empty() {
+                        if !e.methods.is_empty() || self.type_displays_through_error_message(&enum_ir.name) {
                             match self.lower_decorated_method_statics(&enum_ir.name, &e.methods) {
                                 Ok(statics) => ir_program.declarations.extend(statics),
                                 Err(e) => errors.push(e),
@@ -3337,29 +3386,20 @@ impl AstLowering {
                             }
                         }
 
+                        // Each trait the enum adopts or derives is implemented once (#1845).
+                        let mut impl_targets = Vec::new();
                         for trait_ref in &e.traits {
-                            for (trait_name, trait_type_args) in self.trait_impl_targets_for_adopted_trait_bound(
+                            impl_targets.extend(self.trait_impl_targets_for_adopted_trait_bound(
                                 &trait_ref.node,
                                 &enum_ir.name,
                                 &e.type_params,
-                            ) {
-                                match self.lower_trait_impl(TraitImplLoweringInput {
-                                    type_name: &enum_ir.name,
-                                    type_params: &e.type_params,
-                                    trait_name: &trait_name,
-                                    trait_type_args,
-                                    impl_methods: &e.methods,
-                                    impl_properties: &[],
-                                    impl_associated_types: &[],
-                                }) {
-                                    Ok(trait_impl) => {
-                                        ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(trait_impl)));
-                                    }
-                                    Err(e) => errors.push(e),
-                                }
-                            }
+                            ));
                         }
-                        for (trait_name, trait_type_args) in self.derive_trait_impl_targets(&e.decorators) {
+                        impl_targets.extend(self.derive_trait_impl_targets(&e.decorators));
+                        let impl_targets = self.distinct_trait_impl_targets(impl_targets);
+                        for (trait_name, trait_type_args) in
+                            self.without_derived_builtin_trait_targets(impl_targets, &enum_ir.derives)
+                        {
                             match self.lower_trait_impl(TraitImplLoweringInput {
                                 type_name: &enum_ir.name,
                                 type_params: &e.type_params,
@@ -4368,6 +4408,11 @@ impl AstLowering {
                 .entry(alias.clone())
                 .or_insert(function_paths);
         }
+        if let Some(const_paths) = self.trait_default_const_paths.get(source_key).cloned() {
+            self.trait_default_const_paths
+                .entry(alias.clone())
+                .or_insert(const_paths);
+        }
         self.register_trait_decl(alias, decl, imported);
     }
 
@@ -4640,6 +4685,7 @@ mod tests {
     mod default_named_items;
     mod default_owner_paths;
     mod dependency_call_arguments;
+    mod derive_contract_lowering;
     mod derive_vocabulary_imports;
     mod display_operands;
     mod error_message_display;
@@ -4648,13 +4694,16 @@ mod tests {
     mod import_paths;
     mod imported_trait_adoption_scope;
     mod json_protocol_bounds;
+    mod lane_followups_b;
     mod list_count_forms;
     mod method_decorator_receivers;
     mod method_partial_forwarding;
     mod newtype_automatic_derives;
     mod pattern_alternatives_and_private_rests;
+    mod power_base_type;
     mod pub_method_results;
     mod reexported_projections;
+    mod static_method_args;
     mod stdlib_const_defaults;
     mod tuple_assignment;
     mod unary_operand_grouping;

@@ -89,7 +89,14 @@ def accept_status(value: HttpStatus) -> HttpStatus:
     assert_check_ok(source);
 }
 
+/// Require the explicit `OrdinalKey` bound to refuse `type_name`, with a diagnostic that names it as written.
 fn assert_ordinal_key_bound_rejects_builtin(type_name: &str) {
+    assert_ordinal_key_bound_rejects_builtin_shown_as(type_name, type_name);
+}
+
+/// Require the explicit `OrdinalKey` bound to refuse `type_name`, with a diagnostic that names it as `shown`: an alias
+/// such as `f64` is named as its one type, `float`.
+fn assert_ordinal_key_bound_rejects_builtin_shown_as(type_name: &str, shown: &str) {
     let source = format!(
         r#"
 from std.collections import OrdinalKey
@@ -104,7 +111,7 @@ def accept_value(value: {type_name}) -> {type_name}:
     let errs = check_str_err(&source, &format!("{type_name} should fail explicit OrdinalKey bound"));
     assert!(
         errs.iter()
-            .any(|e| e.message.contains("violates generic bound") && e.message.contains(type_name)),
+            .any(|e| e.message.contains("violates generic bound") && e.message.contains(shown)),
         "Expected explicit OrdinalKey bound error mentioning {type_name}; got: {:?}",
         errs.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
@@ -112,8 +119,8 @@ def accept_value(value: {type_name}) -> {type_name}:
 
 #[test]
 fn test_ordinal_key_bound_rejects_float_builtin() {
-    for type_name in ["float", "f32", "f64"] {
-        assert_ordinal_key_bound_rejects_builtin(type_name);
+    for (type_name, shown) in [("float", "float"), ("f32", "f32"), ("f64", "float")] {
+        assert_ordinal_key_bound_rejects_builtin_shown_as(type_name, shown);
     }
 }
 

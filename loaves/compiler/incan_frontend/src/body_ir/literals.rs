@@ -194,6 +194,7 @@ impl<'type_info, 'source> BodyBuilder<'type_info, 'source> {
                     let style = match format {
                         ast::FStringFormat::Display => bir::FormatStyle::Display,
                         ast::FStringFormat::Debug => bir::FormatStyle::Debug,
+                        ast::FStringFormat::Unsupported(_) => bir::FormatStyle::Display,
                     };
                     bir::FormatPart::Expr {
                         operand: Box::new(operand),

@@ -1,6 +1,7 @@
 //! Type name constants and generic constructors used across the typechecker.
 use crate::symbols::ResolvedType;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
+use incan_lang::lang::types::numerics;
 use incan_lang::lang::types::stringlike::{self, StringLikeId};
 
 pub use crate::symbols::render_resolved_type_as_rust_arg;
@@ -79,4 +80,52 @@ pub fn generator_ty(elem: ResolvedType) -> ResolvedType {
 /// Construct a `Tuple[T1, T2, ...]` generic type (when used in generic form).
 pub fn tuple_generic_ty(elems: Vec<ResolvedType>) -> ResolvedType {
     ResolvedType::Generic(collection_name(CollectionTypeId::Tuple).to_string(), elems)
+}
+
+/// The precision and scale of a checked decimal type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecimalShape {
+    /// The total digit count `p`.
+    pub precision: u8,
+    /// The fractional digit count `s`.
+    pub scale: u8,
+}
+
+/// Return the shape of a checked decimal type, whichever decimal constructor spells it.
+///
+/// A checked annotation resolves to a decimal constructor with its precision and scale carried as integer spellings in
+/// type-argument position. The shape is precision and scale alone: every decimal constructor spelling names the one
+/// decimal type, so the constructor takes no part in assignability or comparison. Anything else, including a decimal
+/// whose arguments are not integer spellings, has no shape.
+pub fn decimal_shape(ty: &ResolvedType) -> Option<DecimalShape> {
+    let ResolvedType::Generic(name, args) = ty else {
+        return None;
+    };
+    numerics::decimal_constructor_from_str(name.as_str())?;
+    let [precision, scale] = args.as_slice() else {
+        return None;
+    };
+    let digit_count = |arg: &ResolvedType| match arg {
+        ResolvedType::TypeVar(value) => value.parse::<u8>().ok(),
+        _ => None,
+    };
+    Some(DecimalShape {
+        precision: digit_count(precision)?,
+        scale: digit_count(scale)?,
+    })
+}
+
+/// Decide whether a value of one checked decimal type is assignable to another, or `None` when either is not one.
+///
+/// Precision and scale ride in type-argument position as type variables, which the generic compatibility rules would
+/// match against anything. A decimal value is assignable only to a decimal type that keeps at least its digits before
+/// the point (`p - s`) and its scale `s`, so the assignment is provably lossless (#1809).
+pub fn decimal_types_compatible(actual: &ResolvedType, expected: &ResolvedType) -> Option<bool> {
+    let (actual, expected) = (decimal_shape(actual)?, decimal_shape(expected)?);
+    Some(incan_lang::numeric_values::decimal_type_losslessly_widens_to(
+        actual.precision,
+        actual.scale,
+        expected.precision,
+        expected.scale,
+    ))
 }

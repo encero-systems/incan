@@ -15,6 +15,23 @@ use incan_ir::decl::{IrEnum, IrEnumValue, IrEnumValueType, IrStruct, IrTypeParam
 use incan_ir::types::IrType;
 
 impl<'a> IrEmitter<'a> {
+    /// Render a Rust derive path, rooting serde macros so a source module binding named `serde` cannot shadow them.
+    fn emit_derive_path(path: &str) -> TokenStream {
+        let is_absolute = path.starts_with("::") || path.starts_with("serde::");
+        let path = path.trim_start_matches("::");
+        let segments = path
+            .split("::")
+            .map(Self::rust_ident)
+            .map(|identifier| quote! { #identifier })
+            .collect::<Vec<_>>();
+        let joined = super::join_path_tokens(&segments);
+        if is_absolute {
+            quote! { ::#joined }
+        } else {
+            joined
+        }
+    }
+
     /// Emit a field-level expectation for private generated fields that must remain present for Incan semantics even
     /// when Rust cannot observe a read in the generated program.
     fn private_field_dead_code_expect(
@@ -65,10 +82,7 @@ impl<'a> IrEmitter<'a> {
             .map(|d| match derives::from_str(d.as_str()) {
                 _ if d == derives::FIELD_INFO_DERIVE_NAME => quote! { incan_derive::FieldInfo },
                 _ if d == derives::INCAN_CLASS_DERIVE_NAME => quote! { incan_derive::IncanClass },
-                _ if d.contains("::") => {
-                    let segs: Vec<TokenStream> = d.split("::").map(Self::rust_ident).map(|id| quote! { #id }).collect();
-                    super::join_path_tokens(&segs)
-                }
+                _ if d.contains("::") => Self::emit_derive_path(d),
                 _ => {
                     if let Some(module_path) = s.derive_rust_modules.get(d) {
                         let mut segs: Vec<TokenStream> = module_path
@@ -627,10 +641,7 @@ impl<'a> IrEmitter<'a> {
             .map(|d| match derives::from_str(d.as_str()) {
                 _ if d == derives::FIELD_INFO_DERIVE_NAME => quote! { incan_derive::FieldInfo },
                 _ if d == derives::INCAN_CLASS_DERIVE_NAME => quote! { incan_derive::IncanClass },
-                _ if d.contains("::") => {
-                    let segs: Vec<TokenStream> = d.split("::").map(Self::rust_ident).map(|id| quote! { #id }).collect();
-                    super::join_path_tokens(&segs)
-                }
+                _ if d.contains("::") => Self::emit_derive_path(d),
                 _ => {
                     if let Some(module_path) = e.derive_rust_modules.get(d) {
                         let mut segs: Vec<TokenStream> = module_path

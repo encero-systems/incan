@@ -17,6 +17,7 @@ use incan_frontend::ast::{self, Spanned};
 use incan_frontend::symbols::ResolvedType;
 use incan_lang::lang::callables;
 use incan_lang::lang::decorators::{self, DecoratorId};
+use incan_lang::lang::derives;
 use incan_lang::lang::keywords::{self, KeywordId};
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
 use incan_lang::lang::stdlib::StdlibJsonTraitId;
@@ -31,6 +32,72 @@ struct TraitImplSignature<'a> {
 }
 
 impl AstLowering {
+    /// Find the default that a directly adopted subtrait supplies for one inherited abstract slot.
+    fn adopted_subtrait_default_method(
+        &self,
+        type_name: &str,
+        supertrait_name: &str,
+        method_name: &str,
+    ) -> Option<Spanned<ast::MethodDecl>> {
+        /// Whether `descendant` reaches `ancestor` through its supertraits, visiting each trait once.
+        fn extends_trait(lowering: &AstLowering, descendant: &str, ancestor: &str, seen: &mut HashSet<String>) -> bool {
+            if !seen.insert(descendant.to_string()) {
+                return false;
+            }
+            lowering
+                .type_info
+                .as_ref()
+                .and_then(|info| info.traits.direct_supertraits.get(descendant))
+                .is_some_and(|parents| {
+                    parents
+                        .iter()
+                        .any(|(parent, _)| parent == ancestor || extends_trait(lowering, parent, ancestor, seen))
+                })
+        }
+
+        let mut adopted = self
+            .adopted_traits_by_type
+            .get(type_name)?
+            .iter()
+            .filter(|candidate| extends_trait(self, candidate, supertrait_name, &mut HashSet::new()))
+            .collect::<Vec<_>>();
+        adopted.sort();
+        adopted.into_iter().find_map(|trait_name| {
+            self.trait_decls.get(trait_name).and_then(|trait_decl| {
+                trait_decl
+                    .methods
+                    .iter()
+                    .find(|method| method.node.name == method_name && method.node.body.is_some())
+                    .cloned()
+            })
+        })
+    }
+
+    /// Return whether this trait method refines a slot declared by one of its supertraits.
+    fn trait_method_refines_supertrait_slot(&self, trait_name: &str, method_name: &str) -> bool {
+        /// Whether `trait_name` or a supertrait of it at any depth declares `method_name`, visiting each trait once.
+        fn visit(lowering: &AstLowering, trait_name: &str, method_name: &str, seen: &mut HashSet<String>) -> bool {
+            if !seen.insert(trait_name.to_string()) {
+                return false;
+            }
+            let Some(trait_decl) = lowering.trait_decls.get(trait_name) else {
+                return false;
+            };
+            trait_decl.methods.iter().any(|method| method.node.name == method_name)
+                || trait_decl
+                    .traits
+                    .iter()
+                    .any(|bound| visit(lowering, &bound.node.name, method_name, seen))
+        }
+
+        self.trait_decls.get(trait_name).is_some_and(|trait_decl| {
+            trait_decl
+                .traits
+                .iter()
+                .any(|bound| visit(self, &bound.node.name, method_name, &mut HashSet::new()))
+        })
+    }
+
     /// Retain the established source-spelled native Rust surface without duplicating authored method bodies.
     ///
     /// The canonical method remains the sole implementation. A unique source spelling receives a forwarding
@@ -355,6 +422,52 @@ impl AstLowering {
         }
     }
 
+    /// Keep the first of each trait impl target that names the same trait with the same type arguments.
+    ///
+    /// One adopter can reach a trait more than once: through two adoptions that share a supertrait, or through an
+    /// adoption whose supertrait it also derives (`trait Loggable with Serialize` beside `@derive(Serialize)`). Each
+    /// would lower to its own `impl`, which Rust refuses (E0119, #1845). Two spellings name the same trait when they
+    /// resolve to the same declaration ([`Self::canonical_trait_identity`]), so `Serialize` and `json.Serialize` count
+    /// once.
+    pub(in crate::lower) fn distinct_trait_impl_targets(
+        &self,
+        targets: Vec<(String, Vec<IrType>)>,
+    ) -> Vec<(String, Vec<IrType>)> {
+        let mut seen = HashSet::new();
+        targets
+            .into_iter()
+            .filter(|(trait_name, trait_args)| {
+                let (module_path, source_name) = self.canonical_trait_identity(trait_name);
+                seen.insert((module_path, source_name, format!("{trait_args:?}")))
+            })
+            .collect()
+    }
+
+    /// Drop the impl targets a Rust derive of the adopter already implements: a builtin trait (`Clone`, `Eq`, `Ord`,
+    /// ...) reached through a supertrait of an adopted trait, when `derives`, the adopter's derives with its automatic
+    /// ones, name it.
+    ///
+    /// `trait Keyed with Eq` beside `@derive(Eq)`, or `trait Copyable with Clone` on a model (which always derives
+    /// `Clone`), used to lower to an empty `impl Eq` or `impl Clone` beside the derived one (E0119, #1845). Only the
+    /// builtin trait's own identity counts: a trait that merely shares the name keeps its impl.
+    pub(in crate::lower) fn without_derived_builtin_trait_targets(
+        &self,
+        targets: Vec<(String, Vec<IrType>)>,
+        derived: &[String],
+    ) -> Vec<(String, Vec<IrType>)> {
+        targets
+            .into_iter()
+            .filter(|(trait_name, _)| {
+                let (_, source_name) = self.canonical_trait_identity(trait_name);
+                let Some(derive) = source_name.as_deref().and_then(derives::from_str) else {
+                    return true;
+                };
+                let builtin = self.rust_mapped_builtin_trait_path(trait_name).is_some();
+                !(builtin && derived.iter().any(|name| name == derives::as_str(derive)))
+            })
+            .collect()
+    }
+
     /// Expand a direct adopted trait into the full set of Rust impl targets required by its supertrait chain.
     pub(in crate::lower) fn trait_impl_targets_for_adopted_trait(
         &self,
@@ -405,7 +518,7 @@ impl AstLowering {
     ///
     /// Trait implementation headers are outside a Rust method or trait body, so a bare `Self` is not valid there.
     /// The IR must instead carry the adopter's nominal type, including its declared generic parameters.
-    fn trait_impl_owner_type(type_name: &str, type_params: &[ast::TypeParam]) -> IrType {
+    pub(in crate::lower) fn trait_impl_owner_type(type_name: &str, type_params: &[ast::TypeParam]) -> IrType {
         if type_params.is_empty() {
             IrType::Struct(type_name.to_string())
         } else {
@@ -479,6 +592,9 @@ impl AstLowering {
     }
 
     /// Lower model methods into an impl block.
+    ///
+    /// A model that adopts `Error` and has no `Display` of its own also gets the `__str__` that returns its `message()`
+    /// (see [`Self::error_message_str_method`]).
     pub(in crate::lower) fn lower_model_methods(
         &mut self,
         type_name: &str,
@@ -529,6 +645,7 @@ impl AstLowering {
                     PropertyLoweringMode::Inherent,
                 )?);
             }
+            lowered_methods.extend(self.error_message_str_method(type_name, type_params));
             Ok((lowered_methods, method_projections, source_method_projections))
         })();
         self.current_impl_type = prev;
@@ -554,7 +671,8 @@ impl AstLowering {
     /// spelling was imported through a facade re-export, where the written import path only names the facade. A
     /// trait a compiled SDK provider declares carries the provider's package identity there, which projects back to
     /// its public `std.*` declaration path. The syntactic import alias remains the fallback for spellings the frontend
-    /// recorded no identity for, such as a module-qualified `json.Serialize`, whose alias resolves the module exactly.
+    /// recorded no identity for, such as a module-qualified `json.Serialize` or `serde.json.Serialize`, whose first
+    /// segment's import resolves the module exactly.
     pub(in crate::lower) fn canonical_trait_identity(
         &self,
         visible_name: &str,
@@ -579,10 +697,10 @@ impl AstLowering {
         {
             return (Some(module_path.to_vec()), Some(source_name.clone()));
         }
-        if let Some((module_name, source_name)) = visible_name.rsplit_once('.')
-            && let Some(module_path) = self.import_aliases.get(module_name)
+        if let Some((module_spelling, source_name)) = visible_name.rsplit_once('.')
+            && let Some(module_path) = self.imported_module_path(module_spelling)
         {
-            return (Some(module_path.clone()), Some(source_name.to_string()));
+            return (Some(module_path), Some(source_name.to_string()));
         }
         if let Some(path) = self.active_trait_default_type_path(visible_name)
             && path.len() >= 4
@@ -604,6 +722,15 @@ impl AstLowering {
             module_path,
             Some(visible_name.rsplit('.').next().unwrap_or(visible_name).to_string()),
         )
+    }
+
+    /// Resolve the module a qualifier spells through its first segment's import: `json` after `from std.serde import
+    /// json`, and `serde.json` after `from std import serde`, both name `std.serde.json` (#1887).
+    pub(in crate::lower) fn imported_module_path(&self, module_spelling: &str) -> Option<Vec<String>> {
+        let mut segments = module_spelling.split('.');
+        let mut module_path = self.import_aliases.get(segments.next()?)?.clone();
+        module_path.extend(segments.map(str::to_string));
+        Some(module_path)
     }
 
     /// Lower a property return type into the comparable IR shape used for trait override matching.
@@ -1341,6 +1468,9 @@ impl AstLowering {
             impl_associated_types,
         } = input;
         let (trait_module_path, trait_source_name) = self.canonical_trait_identity(trait_name);
+        let trait_impl_path = self
+            .source_owned_builtin_trait_path(trait_name)
+            .unwrap_or_else(|| trait_name.to_string());
         let stdlib_json_protocol = self.stdlib_json_protocol_for_adopted_trait(trait_name);
         let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
         let prev = self.current_impl_type.replace(type_name.to_string());
@@ -1398,7 +1528,7 @@ impl AstLowering {
                 return Ok(IrImpl {
                     target_type: type_name.to_string(),
                     type_params: self.lower_type_params(type_params),
-                    trait_name: Some(trait_name.to_string()),
+                    trait_name: Some(trait_impl_path.clone()),
                     trait_module_path: trait_module_path.clone(),
                     trait_source_name: trait_source_name.clone(),
                     trait_type_args,
@@ -1415,6 +1545,8 @@ impl AstLowering {
             };
             let trait_properties = trait_decl.properties;
             let mut trait_methods = trait_decl.methods;
+            trait_methods.retain(|method| !self.trait_method_refines_supertrait_slot(trait_name, &method.node.name));
+            let mut refined_default_projections = Vec::new();
             if trait_name == core_traits::as_str(TraitId::Iterator) {
                 trait_methods.retain(|method| method.node.name == magic_methods::as_str(MagicMethodId::Next));
             }
@@ -1500,11 +1632,16 @@ impl AstLowering {
                 // Otherwise, expand a default method body into the impl (RFC 000: defaults may assume adopter fields).
                 if trait_method.node.body.is_some() {
                     let helper_paths = self.trait_default_function_paths.get(trait_name).cloned();
+                    let const_paths = self.trait_default_const_paths.get(trait_name).cloned();
                     let type_paths = self.trait_default_type_paths.get(trait_name).cloned();
                     let has_helper_paths = helper_paths.is_some();
+                    let has_const_paths = const_paths.is_some();
                     let has_type_paths = type_paths.is_some();
                     if let Some(helper_paths) = helper_paths {
                         self.active_trait_default_function_paths.push(helper_paths);
+                    }
+                    if let Some(const_paths) = const_paths {
+                        self.active_trait_default_const_paths.push(const_paths);
                     }
                     if let Some(type_paths) = type_paths {
                         self.active_trait_default_type_paths.push(type_paths);
@@ -1523,10 +1660,19 @@ impl AstLowering {
                     if has_type_paths {
                         self.active_trait_default_type_paths.pop();
                     }
+                    if has_const_paths {
+                        self.active_trait_default_const_paths.pop();
+                    }
                     if has_helper_paths {
                         self.active_trait_default_function_paths.pop();
                     }
                     methods.push(lowered?);
+                    continue;
+                }
+
+                if let Some(default) = self.adopted_subtrait_default_method(type_name, trait_name, method_name) {
+                    methods.push(self.lower_impl_method_for_trait(&default.node, Some(&type_param_names))?);
+                    refined_default_projections.push(default);
                     continue;
                 }
 
@@ -1545,7 +1691,7 @@ impl AstLowering {
                 });
             }
 
-            let method_projections = self.trait_method_projections(
+            let mut method_projections = self.trait_method_projections(
                 &methods,
                 impl_methods,
                 &trait_methods,
@@ -1554,10 +1700,22 @@ impl AstLowering {
                 &trait_type_args,
                 &type_param_names,
             )?;
+            for source in refined_default_projections {
+                let identity = self.required_member_identity(trait_name, &source.node.name, source.span)?;
+                if !method_projections
+                    .iter()
+                    .any(|projection| projection.identity == identity)
+                {
+                    method_projections.push(IrMethodProjection {
+                        abi_method_name: source.node.name,
+                        identity,
+                    });
+                }
+            }
             Ok(IrImpl {
                 target_type: type_name.to_string(),
                 type_params: self.lower_type_params(type_params),
-                trait_name: Some(trait_name.to_string()),
+                trait_name: Some(trait_impl_path),
                 trait_module_path,
                 trait_source_name,
                 trait_type_args,
@@ -1622,8 +1780,22 @@ impl AstLowering {
 
     /// Lower one concrete impl method while preserving owner and method type parameters.
     ///
-    /// A `mut` parameter is recorded as a mutable local, so the body may reassign it as a free function's body may.
+    /// A `mut` parameter is recorded as a mutable local, so the body may reassign it as a free function's body may. The
+    /// method's `mut` locals are its own: the caller's set is restored afterwards.
     fn lower_impl_method_for_trait(
+        &mut self,
+        m: &ast::MethodDecl,
+        type_param_names: Option<&std::collections::HashSet<&str>>,
+    ) -> Result<IrFunction, LoweringError> {
+        let outer_mutable_vars = std::mem::take(&mut self.mutable_vars);
+        let lowered = self.lower_impl_method_for_trait_body(m, type_param_names);
+        self.mutable_vars = outer_mutable_vars;
+        lowered
+    }
+
+    /// Lower one concrete impl method's signature and body; [`Self::lower_impl_method_for_trait`] scopes its `mut`
+    /// locals.
+    fn lower_impl_method_for_trait_body(
         &mut self,
         m: &ast::MethodDecl,
         type_param_names: Option<&std::collections::HashSet<&str>>,
@@ -1763,6 +1935,9 @@ impl AstLowering {
     }
 
     /// Lower class methods into an impl block.
+    ///
+    /// A class that adopts `Error` and has no `Display` of its own also gets the `__str__` that returns its `message()`
+    /// (see [`Self::error_message_str_method`]).
     pub(in crate::lower) fn lower_class_methods(
         &mut self,
         type_name: &str,
@@ -1813,6 +1988,7 @@ impl AstLowering {
                     PropertyLoweringMode::Inherent,
                 )?);
             }
+            lowered_methods.extend(self.error_message_str_method(type_name, type_params));
             Ok((lowered_methods, method_projections, source_method_projections))
         })();
         self.current_impl_type = prev;
@@ -1835,7 +2011,8 @@ impl AstLowering {
     /// Lower enum methods into an inherent impl block while preserving owner and method generic parameters.
     ///
     /// Enum method bodies share the same lowering rules as model/class methods, but this dedicated entry point keeps
-    /// RFC 050 declaration assembly explicit at the enum boundary.
+    /// RFC 050 declaration assembly explicit at the enum boundary. An enum that adopts `Error` and has no `Display` of
+    /// its own also gets the `__str__` that returns its `message()` (see [`Self::error_message_str_method`]).
     pub(in crate::lower) fn lower_enum_methods(
         &mut self,
         type_name: &str,
@@ -1872,7 +2049,8 @@ impl AstLowering {
             .map(|m| self.lower_decorated_or_plain_methods(type_name, m, Some(&type_param_names)))
             .collect::<Result<Vec<_>, LoweringError>>();
         self.current_impl_type = prev;
-        let lowered_methods = lowered?.into_iter().flatten().collect();
+        let mut lowered_methods: Vec<IrFunction> = lowered?.into_iter().flatten().collect();
+        lowered_methods.extend(self.error_message_str_method(type_name, type_params));
 
         Ok(IrImpl {
             target_type: type_name.to_string(),
@@ -1929,7 +2107,25 @@ impl AstLowering {
     }
 
     /// Lower an inherent method using an explicit emitted name and visibility.
+    ///
+    /// The method's `mut` locals and parameters are its own: the set starts empty and the caller's set is restored
+    /// afterwards.
     fn lower_method_named_with_type_params(
+        &mut self,
+        m: &ast::MethodDecl,
+        name: String,
+        visibility: Visibility,
+        type_param_names: Option<&std::collections::HashSet<&str>>,
+    ) -> Result<IrFunction, LoweringError> {
+        let outer_mutable_vars = std::mem::take(&mut self.mutable_vars);
+        let lowered = self.lower_method_named_with_type_params_body(m, name, visibility, type_param_names);
+        self.mutable_vars = outer_mutable_vars;
+        lowered
+    }
+
+    /// Lower an inherent method's signature and body; [`Self::lower_method_named_with_type_params`] scopes its `mut`
+    /// locals.
+    fn lower_method_named_with_type_params_body(
         &mut self,
         m: &ast::MethodDecl,
         name: String,
@@ -1967,8 +2163,13 @@ impl AstLowering {
                 kind: ast::ParamKind::Normal,
                 default: None,
             });
-            // Add self to scope
-            self.define_local_binding("self".to_string(), IrType::Unknown, false);
+            // An inherited method is lowered again for the concrete subclass. Its `self` calls must therefore drive
+            // reachability and override dispatch against that subclass rather than the declaration's original owner.
+            let concrete_self = self
+                .current_impl_type
+                .as_ref()
+                .map_or(IrType::SelfType, |owner| IrType::Struct(owner.clone()));
+            self.define_local_binding("self".to_string(), concrete_self, false);
         }
 
         // Add regular parameters

@@ -177,7 +177,8 @@ def read_f64(reader: _BytesIO) -> Result[f64, IoError]:
     for expected in [
         ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::U32),
         ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::U16),
-        ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F64),
+        // RFC 009: `f64` is `float`.
+        ResolvedType::Float,
     ] {
         assert!(
             read_dispatches

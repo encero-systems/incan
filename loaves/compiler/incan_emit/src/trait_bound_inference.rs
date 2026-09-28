@@ -45,7 +45,7 @@ use incan_ir::IrProgram;
 use incan_ir::decl::{FunctionParam, IrDeclKind, IrFunction, IrTraitBound, IrTypeParam};
 use incan_ir::expr::{
     BinOp, BuiltinFn, CollectionMethodKind, FormatPart, IrCallArg, IrDictEntry, IrExpr, IrExprKind, IrGeneratorClause,
-    IrListEntry, MethodCallArgPolicy, MethodKind, VarRefKind,
+    IrListEntry, MethodCallArgPolicy, MethodKind, VarAccess, VarRefKind,
 };
 use incan_ir::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use incan_ir::types::{IrType, SetConstructorIteration};
@@ -1291,7 +1291,17 @@ fn collect_backend_clone_bounds_in_call(
                     in_return: call_context.in_return,
                 },
             );
-            if requires_clone {
+            let mut_parameter_copy = sig_param
+                .is_some_and(|param| matches!(param.mutability, incan_ir::types::Mutability::Mutable))
+                && !matches!(arg.expr.ty, IrType::RefMut(_))
+                && !matches!(
+                    arg.expr.kind,
+                    IrExprKind::Var {
+                        access: VarAccess::BorrowMut,
+                        ..
+                    }
+                );
+            if requires_clone || mut_parameter_copy {
                 add_backend_clone_bounds_for_cloned_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
             }
             collect_backend_clone_bounds_in_expr(
@@ -2483,6 +2493,18 @@ fn scan_expr_for_bounds(
                     add_bound(bounds_map, tp_name, IrTraitBound::simple(tb::CLONE));
                 }
             }
+            // `.cloned()` over the entry an in-place lookup finds (`Option<&V>`) copies the `V`, so every type
+            // parameter in `V` must be `Clone`; lowering completes a `dict.get` whose result is kept this way.
+            if method == "cloned"
+                && let IrType::Option(found) = &receiver.ty
+                && let IrType::Ref(value) = found.as_ref()
+            {
+                let mut value_type_params = HashSet::new();
+                collect_generic_type_param_names(value, type_params, &mut value_type_params);
+                for tp_name in value_type_params {
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
+                }
+            }
             scan_expr_for_bounds(receiver, type_params, params, bounds_map);
             for arg in args {
                 scan_expr_for_bounds(&arg.expr, type_params, params, bounds_map);
@@ -2497,8 +2519,22 @@ fn scan_expr_for_bounds(
             }
         }
 
-        // ---- Known method calls: recurse ----
-        IrExprKind::KnownMethodCall { receiver, args, .. } => {
+        // ---- Known method calls: a keyed dict method hashes its key; recurse ----
+        IrExprKind::KnownMethodCall { receiver, kind, args } => {
+            if matches!(
+                kind,
+                MethodKind::Collection(
+                    CollectionMethodKind::Get | CollectionMethodKind::Contains | CollectionMethodKind::Insert
+                )
+            ) && let Some(key_ty) = dict_key_type(&receiver.ty)
+            {
+                let mut key_type_params = HashSet::new();
+                collect_generic_type_param_names(key_ty, type_params, &mut key_type_params);
+                for tp_name in key_type_params {
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::EQ));
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::HASH));
+                }
+            }
             scan_expr_for_bounds(receiver, type_params, params, bounds_map);
             for arg in args {
                 scan_expr_for_bounds(&arg.expr, type_params, params, bounds_map);
@@ -3047,6 +3083,15 @@ fn binop_to_trait_bound(op: &BinOp, tp_name: &str) -> Option<IrTraitBound> {
         | BinOp::BitXor
         | BinOp::Shl
         | BinOp::Shr => None,
+    }
+}
+
+/// Return the key type of a dict receiver, looking through the reference wrapper of a `mut` parameter.
+fn dict_key_type(ty: &IrType) -> Option<&IrType> {
+    match ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => dict_key_type(inner),
+        IrType::Dict(key, _) => Some(key.as_ref()),
+        _ => None,
     }
 }
 

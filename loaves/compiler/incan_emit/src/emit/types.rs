@@ -536,11 +536,12 @@ impl<'a> IrEmitter<'a> {
     ///
     /// Incan `str` lowers to Rust `String`. Rust cannot directly match `String` with a string-literal pattern, so
     /// string literal arms become guarded reference patterns while fallback bindings still receive the original
-    /// `String` value.
+    /// `String` value. Any other pattern is emitted with `mutable_bindings` marked mutable.
     pub fn emit_pattern_for_scrutinee(
         &self,
         pattern: &Pattern,
         scrutinee_ty: &IrType,
+        mutable_bindings: &HashSet<String>,
     ) -> (TokenStream, Option<TokenStream>) {
         if matches!(scrutinee_ty, IrType::String) {
             if let Pattern::Literal(lit) = pattern
@@ -563,7 +564,7 @@ impl<'a> IrEmitter<'a> {
             }
         }
 
-        (self.emit_pattern(pattern), None)
+        (self.emit_pattern_with_mutable_bindings(pattern, mutable_bindings), None)
     }
 
     /// Emit compiler-introduced match-arm bindings.

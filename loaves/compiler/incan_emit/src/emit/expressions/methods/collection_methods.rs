@@ -50,8 +50,26 @@ pub fn emit_collection_method(
         CollectionMethodKind::Get => {
             if let Some(arg) = args.first() {
                 let a = emitter.emit_expr(arg)?;
-                if dict_entry_types(&receiver.ty).is_some() {
+                if let Some((_, value_ty)) = dict_entry_types(&receiver.ty) {
                     let key = emit_dict_lookup_key(receiver, arg, a);
+                    // Migration note (rust_source_backend_deprecation.md):
+                    // - Compatibility issue: #1561 -- `counts.get(name, 0)` dropped its default and spelled the
+                    //   `Option` lookup, so the value-typed call the reference documents never reached Rust.
+                    // - Behavior evidence: the `dict_get_with_default` behavior fixture and the emission test
+                    //   `dict_get_with_default_reads_the_value`.
+                    // - Semantic owner: the checked call (`Dict.get(k, default)` is `V`), which lowering keeps as the
+                    //   two-argument `get`; this arm only spells the value read with its fallback.
+                    // - Retirement condition: the Rust-source backend is deleted (#654); Body IR evaluates the read
+                    //   from the same checked facts.
+                    if let Some(default) = args.get(1) {
+                        let default = emitter.emit_expr_for_use(
+                            default,
+                            ValueUseSite::CollectionElement {
+                                target_ty: Some(value_ty),
+                            },
+                        )?;
+                        return Ok(quote! { #r.get(#key).cloned().unwrap_or(#default) });
+                    }
                     return Ok(quote! { #r.get(#key) });
                 }
                 return Ok(quote! { #r.get(#a) });

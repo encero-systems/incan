@@ -189,23 +189,75 @@ pub enum IrType {
     Unknown,
 }
 
-/// Return the shared exact binary-float type when both operands have the same exact width.
+/// Return `f32` when both operands are `f32`, the one exact binary-float type distinct from `float`.
 ///
-/// The general numeric policy deliberately collapses exact integers and floats into broad promotion classes. Native
-/// lowering and emission must consult this narrower identity first so an `f32` or `f64` arithmetic result does not
-/// silently become ordinary `float` between the typechecker and a finite-only runtime boundary.
+/// The general numeric policy deliberately collapses floats into one broad promotion class. Native lowering and
+/// emission must consult this narrower identity first so an `f32` arithmetic result does not silently become `float`
+/// between the typechecker and the finite-only `f32` runtime boundary. `f64` is `float` itself (RFC 009), so it has no
+/// narrower identity to keep.
 pub fn same_exact_binary_float_type(left: &IrType, right: &IrType) -> Option<IrType> {
     match (left, right) {
-        (IrType::Numeric(left), IrType::Numeric(right))
-            if left == right && matches!(left, NumericTypeId::F32 | NumericTypeId::F64) =>
-        {
-            Some(IrType::Numeric(*left))
+        (IrType::Numeric(NumericTypeId::F32), IrType::Numeric(NumericTypeId::F32)) => {
+            Some(IrType::Numeric(NumericTypeId::F32))
         }
         _ => None,
     }
 }
 
+/// Return the exact-width integer type an integer arithmetic operation keeps, when one operand has one.
+///
+/// RFC 009: same-type integer arithmetic yields that type. The typechecker has already refused operands of two
+/// different integer types and given an integer literal beside an exact-width integer that integer's type, so an
+/// exact-width operand still paired with `int` here stands beside `int`'s own identity (`i64`) or a literal the
+/// checker did not reach. `None` means neither operand is an exact-width integer and the ordinary `int` result applies.
+pub fn exact_integer_arithmetic_type(left: &IrType, right: &IrType) -> Option<IrType> {
+    let exact = |ty: &IrType| matches!(ty, IrType::Numeric(id) if numerics::is_integer(*id));
+    let integer = |ty: &IrType| matches!(ty, IrType::Int) || exact(ty);
+    if exact(left) && integer(right) {
+        Some(left.clone())
+    } else if integer(left) && exact(right) {
+        Some(right.clone())
+    } else {
+        None
+    }
+}
+
 impl IrType {
+    /// Return the IR type of one numeric registry id.
+    ///
+    /// RFC 009 makes `float` an alias of `f64`, and an alias creates no separate type identity, so the `f64` id is
+    /// [`IrType::Float`] and generated code treats an `f64` value exactly as a `float` one. Every other numeric id
+    /// keeps its exact-width type; the registry's `bool` entry is [`IrType::Bool`].
+    pub fn from_numeric_id(id: NumericTypeId) -> IrType {
+        match id {
+            NumericTypeId::F64 => IrType::Float,
+            NumericTypeId::Bool => IrType::Bool,
+            _ => IrType::Numeric(id),
+        }
+    }
+
+    /// Return the numeric registry id of the Rust carrier this type is: `i64` for `int`, `f64` for `float`, and the
+    /// exact-width type's own id. Every other type, `bool` included, has none.
+    pub fn numeric_carrier_id(&self) -> Option<NumericTypeId> {
+        match self {
+            IrType::Int => Some(NumericTypeId::I64),
+            IrType::Float => Some(NumericTypeId::F64),
+            IrType::Numeric(NumericTypeId::Bool) => None,
+            IrType::Numeric(id) => Some(*id),
+            _ => None,
+        }
+    }
+
+    /// Return the IR type a numeric registry spelling names, given the id the registry resolved it to.
+    ///
+    /// The spelling `int` keeps [`IrType::Int`]; every other spelling resolves through [`Self::from_numeric_id`].
+    pub fn from_numeric_spelling(spelling: &str, id: NumericTypeId) -> IrType {
+        match spelling {
+            "int" => IrType::Int,
+            _ => Self::from_numeric_id(id),
+        }
+    }
+
     /// Return the canonical element and iteration plan for one accepted `Set` constructor source.
     ///
     /// A runtime generator is consumed through the `Iterator` trait rather than its inherent adapters (#1744).
@@ -640,11 +692,16 @@ pub fn isinstance_union_variant_indices(union_ty: &IrType, target_ty: &IrType) -
 
 /// Return whether a concrete value type can inhabit a normalized union member type.
 ///
+/// A `str` member admits every string storage form. A `FrozenStr` member also admits a `'static` string: that is the
+/// storage of a `const` declared `str`, which carries `FrozenStr` at the source level, and the value converts into the
+/// member without allocating (#1794). Admission stays directional otherwise: an owned `str` is not a `FrozenStr`.
+///
 /// A member spelled by its declaring crate module (see [`crate_qualified_member_local_name`]) is inhabited by a value
 /// spelled by that nominal's module-local name.
 pub fn union_member_type_matches(member: &IrType, value_ty: &IrType) -> bool {
     member == value_ty
         || (matches!(member, IrType::String) && is_string_storage_type(value_ty))
+        || (matches!(member, IrType::FrozenStr) && matches!(value_ty, IrType::StaticStr))
         || crate_qualified_type_matches(member, value_ty)
 }
 
@@ -664,16 +721,26 @@ pub fn crate_qualified_member_local_name(name: &str) -> Option<&str> {
     path.rsplit("::").next().filter(|local| !local.is_empty())
 }
 
-/// Return whether a union member names the same type as a value once crate-qualified member nominals are read by
-/// their module-local names.
+/// Return whether a union member names the same type as a value once crate-qualified nominals are read by their
+/// module-local names.
 ///
-/// Only the member side may carry the qualification; a value spelled `crate::...` must equal the member exactly.
+/// Two crate-qualified spellings must be equal. A member spelled by its declaring module matches a value of its
+/// module-local name, and a value spelled by its declaring module (the type of a value whose import alias names a union
+/// member) matches a member of its declaration name, which a member keeps only when no other module of the crate
+/// declares that name.
 fn crate_qualified_type_matches(member: &IrType, value: &IrType) -> bool {
     if member == value {
         return true;
     }
-    let names_match =
-        |member: &str, value: &str| member == value || crate_qualified_member_local_name(member) == Some(value);
+    let names_match = |member: &str, value: &str| match (
+        crate_qualified_member_local_name(member),
+        crate_qualified_member_local_name(value),
+    ) {
+        (Some(_), Some(_)) => member == value,
+        (Some(member_local), None) => member_local == value,
+        (None, Some(value_local)) => member == value_local,
+        (None, None) => member == value,
+    };
     let all_match = |members: &[IrType], values: &[IrType]| {
         members.len() == values.len()
             && members
@@ -995,6 +1062,7 @@ mod tests {
 
         assert!(union_member_type_matches(&IrType::String, &IrType::FrozenStr));
         assert!(!union_member_type_matches(&IrType::FrozenStr, &IrType::String));
+        assert!(!union_member_type_matches(&IrType::FrozenStr, &IrType::StrRef));
 
         let mixed_storage_union = IrType::NamedGeneric(
             IR_UNION_TYPE_NAME.to_string(),
@@ -1004,6 +1072,25 @@ mod tests {
             isinstance_union_variant_indices(&mixed_storage_union, &IrType::String),
             Some(vec![0, 1])
         );
+    }
+
+    /// #1794: a `const` declared `str` is stored as a `'static` string and carries `FrozenStr` at the source level, so
+    /// a `FrozenStr` member of a union admits it, whichever position the member takes.
+    #[test]
+    fn frozen_str_union_member_admits_a_static_str_const_issue1794() {
+        assert!(union_member_type_matches(&IrType::FrozenStr, &IrType::StaticStr));
+        let frozen_or_int = IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), vec![IrType::Int, IrType::FrozenStr]);
+        assert_eq!(
+            frozen_or_int.union_variant_index_for_member(&IrType::StaticStr),
+            Some(1)
+        );
+        let frozen_or_str =
+            IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), vec![IrType::FrozenStr, IrType::String]);
+        assert_eq!(
+            frozen_or_str.union_variant_index_for_member(&IrType::StaticStr),
+            Some(0)
+        );
+        assert_eq!(frozen_or_str.union_variant_index_for_member(&IrType::String), Some(1));
     }
 
     /// `set(generator)` collects through the `Iterator` trait, a frozen source clones its borrowed items, and a

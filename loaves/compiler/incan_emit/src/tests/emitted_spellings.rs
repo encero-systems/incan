@@ -156,7 +156,7 @@ def main() -> None:
 
 /// #1757: a `const` `FrozenDict` lookup goes through the raising frozen lookup with a `str` probe, membership is
 /// `contains_key` with the same probe, and a comprehension over a `const` `FrozenList[str]` iterates owned strings. A
-/// `str` value converted to an owned `str` is read out of the lookup before the conversion applies.
+/// `str` value is read out of the lookup and converted to the owned `str` the checker typed.
 #[test]
 fn const_frozen_dict_reads_use_the_frozen_lookup_issue1757() -> Result<(), String> {
     let rust = generate(
@@ -195,7 +195,7 @@ def main() -> None:
     );
     assert!(
         flat.contains(
-            "{*incan_std_core::collections::frozen_dict_get(&LABELS,<_asAsRef<str>>::as_ref(&\"x\"),)}.to_string()"
+            "({*incan_std_core::collections::frozen_dict_get(&LABELS,<_asAsRef<str>>::as_ref(&\"x\"),)}).to_string()"
         ),
         "the `str` value is read out of the lookup before it is converted:\n{rust}"
     );

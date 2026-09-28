@@ -23,7 +23,7 @@ def label(text: str) -> str:
     return f"[{text}]"
 
 
-def show[T](value: T) -> str:
+def show[T with Display](value: T) -> str:
     return f"<{value}>"
 
 

@@ -10,9 +10,8 @@
 //! bound through, under whatever local name the import chose. A type the program declares or imports from elsewhere
 //! under one of those names keeps its own shape, whatever order the declarations come in.
 //!
-//! Known limitation (#1824): a module-qualified `web.Html` never reaches this module. `std.web` provides `Html` as a
-//! compiler surface type backed by a Rust re-export, not as a declaration, so the checker's qualified resolution
-//! cannot name it and refuses the spelling with a message that says so.
+//! A module-qualified `web.Html` is recognized from the checker's canonical surface-type identity during type
+//! lowering and receives the same implicit `String` body as a directly imported `Html` (#1824).
 
 use incan_lang::lang::stdlib::{STDLIB_ROOT, STDLIB_WEB};
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};

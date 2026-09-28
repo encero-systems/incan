@@ -1,0 +1,35 @@
+# behavior: list.remove(index) removes in place and returns nothing, and dict.get(key) takes one key and returns an Option, so a static counter reads its old count by applying a fallback to that Option
+# expect-stdout:
+#   2
+#   20
+#   2
+#   1
+#   0
+#   3
+
+static items: list[int] = []
+static counts: dict[str, int] = {}
+
+
+def record(name: str) -> None:
+    items.append(len(items))
+    current = counts.get(name).unwrap_or(0)
+    counts[name] = current + 1
+
+
+def count_of(name: str) -> int:
+    return counts.get(name).unwrap_or(0)
+
+
+def main() -> None:
+    mut values = [10, 20, 30]
+    values.remove(0)
+    println(len(values))
+    println(values[0])
+    record("a")
+    record("a")
+    record("b")
+    println(count_of("a"))
+    println(count_of("b"))
+    println(count_of("c"))
+    println(len(items))

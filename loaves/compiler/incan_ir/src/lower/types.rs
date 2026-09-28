@@ -3,13 +3,14 @@
 //! This module contains helper functions for converting AST types, operators, and performing variable lookups during
 //! the lowering pass.
 //!
-//! Numeric semantics follow Python-like rules (via `incan_lang`):
+//! Numeric semantics follow RFC 009 and Python's division rules (via `incan_lang`):
+//! - Same-type integer arithmetic yields that type (`i8 + i8` is an `i8`)
 //! - `/` always yields `Float` (even `int / int`)
 //! - `%` supports floats with Python remainder semantics
-//! - `**` yields `Int` only for non-negative int literal exponents; otherwise `Float`
+//! - `**` keeps an integer base's type only for non-negative int literal exponents; otherwise `Float`
 
 use super::super::expr::BinOp;
-use super::super::types::{IR_UNION_TYPE_NAME, IrType, same_exact_binary_float_type};
+use super::super::types::{IR_UNION_TYPE_NAME, IrType, exact_integer_arithmetic_type, same_exact_binary_float_type};
 use super::errors::LoweringError;
 use super::{AstLowering, FunctionSignature};
 use crate::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ast};
@@ -23,10 +24,12 @@ use incan_frontend::typechecker::split_canonical_public_library_type_name;
 use incan_lang::lang::c_abi;
 use incan_lang::lang::conventions;
 use incan_lang::lang::stdlib;
+use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
-use incan_lang::lang::types::numerics::{self, NumericFamily, NumericTypeId};
+use incan_lang::lang::types::numerics;
 use incan_lang::lang::types::stringlike::{self, StringLikeId};
 use incan_lang::{NumericTy, PowExponentKind, result_numeric_type};
+use incan_semantics_core::SemanticSourceTargetKind;
 
 const API_CRATE_ROOT_SEGMENT: &str = "crate";
 
@@ -814,15 +817,7 @@ impl AstLowering {
                 }
 
                 if let Some(id) = numerics::from_str(n) {
-                    return match n {
-                        "int" => IrType::Int,
-                        "float" => IrType::Float,
-                        "bool" => IrType::Bool,
-                        _ => match id {
-                            NumericTypeId::Bool => IrType::Bool,
-                            _ => IrType::Numeric(id),
-                        },
-                    };
+                    return IrType::from_numeric_spelling(n, id);
                 }
 
                 if let Some(id) = stringlike::from_str(n) {
@@ -919,6 +914,27 @@ impl AstLowering {
         {
             return IrType::Struct(format!("{library}::{public_name}"));
         }
+        // A union member the checker spelled by its declaring module, and an import alias this module writes as a
+        // union member, name their declaration (#1796).
+        if let ResolvedType::Named(name) = ty
+            && let Some(spelled) = self
+                .lower_module_qualified_nominal(name)
+                .or_else(|| self.union_member_import_alias(name).map(str::to_string))
+        {
+            return IrType::Struct(spelled);
+        }
+        if let ResolvedType::Generic(name, args) = ty
+            && let Some(spelled) = self
+                .lower_module_qualified_nominal(name)
+                .or_else(|| self.union_member_import_alias(name).map(str::to_string))
+        {
+            return IrType::NamedGeneric(
+                spelled,
+                args.iter()
+                    .map(|arg| self.lower_resolved_type_with_rust_path_mode(arg, rust_path_mode))
+                    .collect(),
+            );
+        }
         if let ResolvedType::Generic(name, args) = ty
             && let Some((library, public_name)) = split_canonical_public_library_type_name(name)
         {
@@ -935,7 +951,7 @@ impl AstLowering {
             ResolvedType::Never => IrType::Unknown,
             ResolvedType::Int => IrType::Int,
             ResolvedType::Float => IrType::Float,
-            ResolvedType::Numeric(id) => IrType::Numeric(*id),
+            ResolvedType::Numeric(id) => IrType::from_numeric_id(*id),
             ResolvedType::Bool => IrType::Bool,
             ResolvedType::Str => IrType::String,
             ResolvedType::Bytes => IrType::Bytes,
@@ -1235,20 +1251,20 @@ impl AstLowering {
                     return imported_alias;
                 }
 
+                if let Some(target) = self.lower_shared_imported_type_alias(n) {
+                    return target;
+                }
+
+                if let Some(declaration) = self.union_member_import_alias(n) {
+                    return IrType::Struct(declaration.to_string());
+                }
+
                 if n == conventions::NONE_TYPE_NAME || n == conventions::UNIT_TYPE_NAME {
                     return IrType::Unit;
                 }
 
                 if let Some(id) = numerics::from_str(n) {
-                    return match n {
-                        "int" => IrType::Int,
-                        "float" => IrType::Float,
-                        "bool" => IrType::Bool,
-                        _ => match id {
-                            NumericTypeId::Bool => IrType::Bool,
-                            _ => IrType::Numeric(id),
-                        },
-                    };
+                    return IrType::from_numeric_spelling(n, id);
                 }
 
                 if let Some(id) = stringlike::from_str(n) {
@@ -1318,8 +1334,13 @@ impl AstLowering {
                     ),
                     GenericBaseKind::Other if base == IR_UNION_TYPE_NAME => self.lower_union_members(lowered_params),
                     GenericBaseKind::Other => IrType::NamedGeneric(
-                        self.active_trait_default_type_path(base)
-                            .map_or_else(|| base.clone(), |path| path.join("::")),
+                        self.active_trait_default_type_path(base).map_or_else(
+                            || {
+                                self.union_member_import_alias(base)
+                                    .map_or_else(|| base.clone(), str::to_string)
+                            },
+                            |path| path.join("::"),
+                        ),
                         lowered_params,
                     ),
                 }
@@ -1379,13 +1400,26 @@ impl AstLowering {
         }) else {
             return IrType::Unknown;
         };
-        let apply_args = |nominal: IrType| match (nominal, args.is_empty()) {
+        let has_args = !args.is_empty();
+        let apply_args = |nominal: IrType, args: Vec<IrType>| match (nominal, args.is_empty()) {
             (nominal, true) => nominal,
             (IrType::Struct(name), false) => IrType::NamedGeneric(name, args),
             (other, false) => other,
         };
         if reference.module_path.first().map(String::as_str) == Some("pub") {
-            return apply_args(self.lower_resolved_type(&reference.resolved));
+            return apply_args(self.lower_resolved_type(&reference.resolved), args);
+        }
+        // A module-qualified source type alias (`first.Answer`) whose target holds a union lowers to that target: the
+        // emitter resolves an alias only by its bare name, so a value returned or passed into the alias was never
+        // wrapped into the union (#1796). A generic alias keeps its name; the checker resolved no target for it.
+        if !has_args
+            && matches!(reference.identity.kind, SemanticSourceTargetKind::TypeAlias)
+            && !matches!(reference.resolved, ResolvedType::Named(_))
+        {
+            let target = self.lower_resolved_type(&reference.resolved);
+            if super::union_identity::ir_type_contains_union(&target) {
+                return target;
+            }
         }
         let mut path = vec!["crate".to_string()];
         path.extend(reference.module_path.iter().enumerate().map(|(index, segment)| {
@@ -1398,7 +1432,15 @@ impl AstLowering {
         // The member is spelled the way the module exports it, which is the name the generated module binds; a
         // facade may export a declaration under another name, so the declaration's own name is not the one to use.
         path.push(member.clone());
-        apply_args(IrType::Struct(path.join("::")))
+        let nominal = path.join("::");
+        if args.is_empty()
+            && surface_types::from_str(member) == Some(SurfaceTypeId::Html)
+            && surface_types::stdlib_module_path(SurfaceTypeId::Html)
+                .is_some_and(|owner| owner == reference.module_path.join("."))
+        {
+            return IrType::NamedGeneric(nominal, vec![IrType::String]);
+        }
+        apply_args(IrType::Struct(nominal), args)
     }
 
     /// Lower an AST type to an IR type.
@@ -1457,15 +1499,18 @@ impl AstLowering {
         Ok(binop)
     }
 
-    /// Determine the result type of a binary operation using Python-like numeric semantics.
+    /// Determine the result type of a binary operation using the language's numeric result table.
+    ///
+    /// Integer arithmetic keeps its operands' one integer type (RFC 009), `f32` arithmetic keeps `f32`, and every
+    /// other numeric operation yields `float`, `/` always among them.
     ///
     /// ## Parameters
     ///
     /// - `left`: The type of the left operand
     /// - `right`: The type of the right operand
     /// - `op`: The binary operator
-    /// - `pow_exp_kind`: For `Pow` operations, describes whether the exponent is a non-negative int literal (yields
-    ///   `Int`) or something else (yields `Float`)
+    /// - `pow_exp_kind`: For `Pow` operations, describes whether the exponent is a non-negative int literal (keeps the
+    ///   integer base's type) or something else (yields `Float`)
     ///
     /// ## Returns
     ///
@@ -1512,38 +1557,19 @@ impl AstLowering {
                 if let Some(exact_float) = same_exact_binary_float_type(left, right) {
                     return exact_float;
                 }
-                if matches!(op, ast::BinaryOp::FloorDiv | ast::BinaryOp::Mod) {
-                    if let IrType::Numeric(id) = left
-                        && numerics::info_for(*id).family == NumericFamily::UnsignedInteger
-                        && (matches!(right, IrType::Int) || left == right)
-                    {
-                        return left.clone();
+                let (Some(lhs), Some(rhs)) = (ir_type_to_numeric_ty(left), ir_type_to_numeric_ty(right)) else {
+                    return left.clone();
+                };
+                let Some(num_op) = numeric_op_from_ast(op) else {
+                    return IrType::Unknown;
+                };
+                match result_numeric_type(num_op, lhs, rhs, pow_exp_kind) {
+                    // RFC 009: same-type integer arithmetic yields that type, and `**` keeps its base's type.
+                    NumericTy::Int if matches!(op, ast::BinaryOp::Pow) => {
+                        exact_integer_arithmetic_type(left, &IrType::Int).unwrap_or(IrType::Int)
                     }
-                    if let IrType::Numeric(id) = right
-                        && numerics::info_for(*id).family == NumericFamily::UnsignedInteger
-                        && matches!(left, IrType::Int)
-                    {
-                        return right.clone();
-                    }
-                }
-
-                // Convert to NumericTy
-                let lhs_num = ir_type_to_numeric_ty(left);
-                let rhs_num = ir_type_to_numeric_ty(right);
-
-                match (lhs_num, rhs_num) {
-                    (Some(lhs), Some(rhs)) => {
-                        if let Some(num_op) = numeric_op_from_ast(op) {
-                            let result = result_numeric_type(num_op, lhs, rhs, pow_exp_kind);
-                            match result {
-                                NumericTy::Int => IrType::Int,
-                                NumericTy::Float => IrType::Float,
-                            }
-                        } else {
-                            IrType::Unknown
-                        }
-                    }
-                    _ => left.clone(),
+                    NumericTy::Int => exact_integer_arithmetic_type(left, right).unwrap_or(IrType::Int),
+                    NumericTy::Float => IrType::Float,
                 }
             }
         }
@@ -1577,6 +1603,7 @@ mod tests {
     use incan_frontend::ast;
     use incan_frontend::symbols::ResolvedType;
     use incan_frontend::typechecker::canonical_public_library_type_name;
+    use incan_lang::PowExponentKind;
     use incan_lang::lang::types::numerics::NumericTypeId;
 
     /// Ordinary manifest signatures, including nested callable leaves, consume checked native bridge routes.
@@ -1641,24 +1668,96 @@ mod tests {
     #[test]
     fn exact_binary_float_arithmetic_keeps_its_native_ir_width() {
         let lowering = AstLowering::new();
-        for kind in [NumericTypeId::F32, NumericTypeId::F64] {
+        let exact = IrType::Numeric(NumericTypeId::F32);
+        for op in [
+            ast::BinaryOp::Add,
+            ast::BinaryOp::Sub,
+            ast::BinaryOp::Mul,
+            ast::BinaryOp::Div,
+            ast::BinaryOp::FloorDiv,
+            ast::BinaryOp::Mod,
+            ast::BinaryOp::Pow,
+        ] {
+            assert_eq!(
+                lowering.binary_result_type(&exact, &exact, &op, None),
+                exact,
+                "f32 arithmetic lost its exact width for {op:?}"
+            );
+        }
+    }
+
+    /// RFC 009: same-type integer arithmetic keeps its type, beside an `int` literal operand too, and `**` with a
+    /// non-negative literal exponent keeps its base's type; `/` still divides into `float`.
+    #[test]
+    fn exact_integer_arithmetic_keeps_its_operand_type() {
+        let lowering = AstLowering::new();
+        for kind in [
+            NumericTypeId::I8,
+            NumericTypeId::U16,
+            NumericTypeId::I128,
+            NumericTypeId::USize,
+        ] {
             let exact = IrType::Numeric(kind);
             for op in [
                 ast::BinaryOp::Add,
                 ast::BinaryOp::Sub,
                 ast::BinaryOp::Mul,
-                ast::BinaryOp::Div,
                 ast::BinaryOp::FloorDiv,
                 ast::BinaryOp::Mod,
-                ast::BinaryOp::Pow,
             ] {
                 assert_eq!(
                     lowering.binary_result_type(&exact, &exact, &op, None),
                     exact,
-                    "{kind:?} arithmetic lost its exact width for {op:?}"
+                    "{kind:?} {op:?}"
+                );
+                assert_eq!(
+                    lowering.binary_result_type(&exact, &IrType::Int, &op, None),
+                    exact,
+                    "{kind:?} {op:?}"
+                );
+                assert_eq!(
+                    lowering.binary_result_type(&IrType::Int, &exact, &op, None),
+                    exact,
+                    "{kind:?} {op:?}"
                 );
             }
+            assert_eq!(
+                lowering.binary_result_type(
+                    &exact,
+                    &IrType::Int,
+                    &ast::BinaryOp::Pow,
+                    Some(PowExponentKind::NonNegativeIntLiteral)
+                ),
+                exact,
+                "{kind:?} **"
+            );
+            assert_eq!(
+                lowering.binary_result_type(&exact, &exact, &ast::BinaryOp::Div, None),
+                IrType::Float,
+                "{kind:?} /"
+            );
         }
+        assert_eq!(
+            lowering.binary_result_type(&IrType::Int, &IrType::Int, &ast::BinaryOp::Add, None),
+            IrType::Int
+        );
+    }
+
+    /// RFC 009: `float` is an alias of `f64`, so every `f64` spelling lowers to the one `float` type.
+    #[test]
+    fn every_f64_spelling_lowers_to_float() {
+        let lowering = AstLowering::new();
+        for spelling in ["f64", "float", "double", "fp64"] {
+            assert_eq!(
+                lowering.lower_const_annotation_type(&ast::Type::Simple(spelling.to_string())),
+                IrType::Float,
+                "{spelling}"
+            );
+        }
+        assert_eq!(
+            lowering.lower_resolved_type(&ResolvedType::Numeric(NumericTypeId::F64)),
+            IrType::Float
+        );
     }
 
     /// Imported trait defaults are expanded in the adopter's module, but their annotations still name types from the

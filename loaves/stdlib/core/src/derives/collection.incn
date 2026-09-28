@@ -207,14 +207,15 @@ pub trait Iterator[T]:
         """
         return FilterIterator[T, Self](source=self, f=f)
 
-    def flat_map[U](self, f: (T) -> list[U]) -> Iterator[U]:
+    def flat_map[U, Expanded with Iterable[U]](self, f: (T) -> Expanded) -> Iterator[U]:
         """
         Lazily expand each source item into another iterable and flatten it.
 
-        The current nested iterator is exhausted before the next source item is
-        requested.
+        Each expansion is drawn from one item at a time, never collected ahead
+        of the consumer. The current nested iterator is exhausted before the
+        next source item is requested.
         """
-        return FlatMapIterator[T, Self, U](source=self, f=f, current=[], index=0)
+        return FlatMapIterator[T, Self, U, Iterator[U]](source=self, f=(item) => f(item).iter(), current=[])
 
     def take(self, n: int) -> Iterator[T]:
         """
@@ -842,33 +843,47 @@ pub model FilterIterator[T, Source with Iterator[T]] with Iterator[T]:
                 None => return None
 
 
-pub model FlatMapIterator[T, Source with Iterator[T], U] with Iterator[U]:
+pub model FlatMapIterator[T, Source with Iterator[T], U, Nested with Iterator[U]] with Iterator[U]:
     """
     Lazy state for `Iterator.flat_map()`.
 
-    Maintains the currently active nested iterator so nested values are yielded
-    before another source item is expanded.
+    `current` holds the nested iterator of the latest expansion, as its only
+    item, while that iterator may still yield, and is empty otherwise. Each
+    request polls the nested iterator for one item, so an expansion is never
+    collected ahead of the consumer and is advanced no further than the items
+    requested. The next source item is expanded only once the nested iterator
+    is exhausted.
+
+    The marker field preserves the item type in generated metadata and is
+    never inspected while polling.
     """
     pub source: Source
-    pub f: (T) -> list[U]
-    pub current: list[U]
-    pub index: int
+    pub f: (T) -> Nested
+    pub current: list[Nested]
+    pub marker: Option[U] = None
 
     def __next__(mut self) -> Option[U]:
         """
-        Return the next item from the current nested list, or open a new one.
+        Return the next item of the open nested iterator, expanding source items until one yields.
         """
         while true:
-            if self.index < len(self.current):
-                item = self.current[self.index]
-                self.index += 1
-                return Some(item)
+            if len(self.current) > 0:
+                mut nested = self.current.pop()
+                match nested.__next__():
+                    Some(item) => return self._keep_open(nested, item)
+                    None => pass
             match self.source.__next__():
                 Some(item) =>
                     f = self.f
-                    self.current = f(item)
-                    self.index = 0
+                    self.current.append(f(item))
                 None => return None
+
+    def _keep_open(mut self, iterator: Nested, item: U) -> Option[U]:
+        """
+        Keep `iterator` as the open nested iterator and return `item`, the item it just yielded.
+        """
+        self.current = [iterator]
+        return Some(item)
 
 
 pub model TakeIterator[T, Source with Iterator[T]] with Iterator[T]:

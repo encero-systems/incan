@@ -5,7 +5,7 @@ This page specifies `Validate`. The derive catalog and the automatic derives are
 ## Validate
 
 - **Provides**: `TypeName.new(...) -> Result[TypeName, E]`, validated construction.
-- **Provided by**: `@derive(Validate)` on a model.
+- **Provided by**: `@derive(Validate)` on a model. On a class, enum or newtype it is refused (`INCAN-T0001`).
 - **Behavior**: `new` constructs the model from its arguments, calls `validate(self)`, and returns its result.
 - **Dunder**: none.
 - **Requires**: the model defines `validate(self) -> Result[Self, E]`.

@@ -1,9 +1,9 @@
 //! Reads that lowering hands the emitter already typed and shaped: a local bound straight from a module static
-//! (#1777), a `const` `FrozenDict` lookup and membership test (#1757), a comprehension over a frozen collection of
-//! text (#1757), and `set()` over a generator (#1744).
+//! (#1777), the reads of a `const` frozen collection (#1757): lookups, indexing, `len()`, membership and iteration
+//! sources, `set()` over a generator (#1744), and the nested iterator a `flat_map` callback hands its adapter.
 
 use super::*;
-use crate::expr::BuiltinFn;
+use crate::expr::{BuiltinFn, IrGeneratorClause, IteratorMethodKind};
 use crate::types::SetConstructorIteration;
 use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
 
@@ -159,7 +159,8 @@ def has_names() -> bool:
 }
 
 /// #1757: a lookup whose value type is `Copy` (`str` text, `int`) is handed to the emitter grouped, so a conversion
-/// applied to the lookup applies to the whole read; a lookup of a frozen collection is left bare.
+/// applied to the lookup applies to the whole read, and a `'static` text value is converted to the owned `str` the
+/// checker typed; a lookup of a frozen collection is left bare.
 #[test]
 fn frozen_dict_copy_value_lookup_is_grouped_issue1757() -> Result<(), String> {
     let ir = lower_checked_source(
@@ -181,8 +182,21 @@ def square() -> int:
     return SQUARES[2]
 "#,
     )?;
-    for name in ["label", "square"] {
-        let lookup = returned_value(&ir, name)?;
+    let label = returned_value(&ir, "label")?;
+    let IrExprKind::InteropCoerce { expr: grouped, .. } = &label.kind else {
+        return Err(format!("the `str` value is converted to an owned `str`, got {label:?}"));
+    };
+    assert_eq!(
+        label.ty,
+        IrType::String,
+        "the read is the owned `str` the checker typed"
+    );
+    assert_eq!(
+        grouped.ty,
+        IrType::StaticStr,
+        "the conversion reads the stored `'static` text"
+    );
+    for (name, lookup) in [("label", &**grouped), ("square", returned_value(&ir, "square")?)] {
         let IrExprKind::Block {
             stmts,
             value: Some(value),
@@ -207,8 +221,8 @@ def square() -> int:
     Ok(())
 }
 
-/// #1757: a comprehension over a `const` `FrozenList[str]` iterates the source's `list(...)` conversion, which yields
-/// the owned `str` items the comprehension binds; a frozen list of `int` is iterated as written.
+/// #1757: a comprehension over a `const` frozen collection iterates the source's `list(...)` conversion, which yields
+/// the owned items the comprehension binds: `str` items for a `FrozenList[str]`, `int` items for a `FrozenList[int]`.
 #[test]
 fn comprehension_over_frozen_text_iterates_owned_items_issue1757() -> Result<(), String> {
     let ir = lower_checked_source(
@@ -260,9 +274,16 @@ def doubled() -> list[int]:
         return Err(format!("`doubled` must lower to a comprehension, got {doubled:?}"));
     };
     assert!(
-        !matches!(iterable.kind, IrExprKind::BuiltinCall { .. }),
-        "a frozen list of `int` is iterated as written, got {iterable:?}"
+        matches!(
+            iterable.kind,
+            IrExprKind::BuiltinCall {
+                func: BuiltinFn::CollectionConstructor(CollectionTypeId::List),
+                ..
+            }
+        ),
+        "a frozen list of `int` is iterated through `list(...)` as well, got {iterable:?}"
     );
+    assert_eq!(iterable.ty, IrType::List(Box::new(IrType::Int)));
     Ok(())
 }
 
@@ -296,6 +317,390 @@ def unique() -> set[int]:
         source.ty.set_constructor_source(),
         Some((&IrType::Int, SetConstructorIteration::CollectOwnedIterator)),
         "the generator source is collected through the `Iterator` trait"
+    );
+    Ok(())
+}
+
+/// Return whether a type is the named frozen collection family.
+fn is_frozen_family(ty: &IrType, family: CollectionTypeId) -> bool {
+    matches!(ty, IrType::NamedGeneric(name, _) if collection_types::from_str(name) == Some(family))
+}
+
+/// #1757: `len()` on a `const` frozen collection or frozen bytes lowers to the `len(c)` builtin, whose result is the
+/// `int` the checker typed rather than the runtime wrapper's `usize` length.
+#[test]
+fn frozen_len_reads_the_int_length_issue1757() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+const NAMES: FrozenList[str] = ["alpha", "beta"]
+const TAGS: FrozenSet[int] = {1, 2}
+const TABLE: FrozenDict[str, int] = {"a": 1}
+const BLOB: bytes = b"ab"
+
+
+def names_len() -> int:
+    return NAMES.len()
+
+
+def tags_len() -> int:
+    return TAGS.len()
+
+
+def table_len() -> int:
+    return TABLE.len()
+
+
+def blob_len() -> int:
+    return BLOB.len()
+"#,
+    )?;
+    for name in ["names_len", "tags_len", "table_len", "blob_len"] {
+        let length = returned_value(&ir, name)?;
+        assert!(
+            matches!(
+                &length.kind,
+                IrExprKind::BuiltinCall {
+                    func: BuiltinFn::Len,
+                    args,
+                } if args.len() == 1
+            ),
+            "`{name}` must lower to `len(c)`, got {length:?}"
+        );
+        assert_eq!(length.ty, IrType::Int, "`{name}` is an `int`");
+    }
+    Ok(())
+}
+
+/// #1757: `items[i]` on a `const` `FrozenList[T]` is an index read typed as the element, and a `'static` text or bytes
+/// element is converted to the owned `str` or `bytes` the checker typed.
+#[test]
+fn frozen_list_index_reads_the_owned_element_issue1757() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+const NAMES: FrozenList[str] = ["alpha", "beta"]
+const NUMS: FrozenList[int] = [1, 2]
+const BLOBS: FrozenList[bytes] = [b"ab"]
+
+
+def first_name() -> str:
+    return NAMES[0]
+
+
+def last_num() -> int:
+    return NUMS[-1]
+
+
+def first_blob() -> bytes:
+    return BLOBS[0]
+"#,
+    )?;
+    for (name, owned_ty, stored_ty) in [
+        ("first_name", IrType::String, IrType::StaticStr),
+        ("first_blob", IrType::Bytes, IrType::StaticBytes),
+    ] {
+        let read = returned_value(&ir, name)?;
+        let IrExprKind::InteropCoerce { expr: element, .. } = &read.kind else {
+            return Err(format!("`{name}` converts the stored element, got {read:?}"));
+        };
+        assert_eq!(read.ty, owned_ty, "`{name}` reads the owned element");
+        assert!(
+            matches!(element.kind, IrExprKind::Index { .. }),
+            "`{name}` converts the index read itself, got {element:?}"
+        );
+        assert_eq!(element.ty, stored_ty, "`{name}` reads the stored `'static` element");
+    }
+    let num = returned_value(&ir, "last_num")?;
+    assert!(
+        matches!(num.kind, IrExprKind::Index { .. }),
+        "an `int` element is read as it is stored, got {num:?}"
+    );
+    assert_eq!(num.ty, IrType::Int);
+    Ok(())
+}
+
+/// #1757: `x in c` and `frozen_set.contains(x)` lower to the collection membership test. A `FrozenList` or `FrozenSet`
+/// receiver is borrowed, so the test reads the frozen storage as it reads a borrowed list or set; a `FrozenDict` keeps
+/// its receiver for the keyed lookup a dict takes.
+#[test]
+fn frozen_membership_reads_the_collection_test_issue1757() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+const NAMES: FrozenList[str] = ["alpha", "beta"]
+const TAGS: FrozenSet[str] = {"a"}
+const TABLE: FrozenDict[str, int] = {"a": 1}
+
+
+def in_names(name: str) -> bool:
+    return name in NAMES
+
+
+def in_tags(tag: str) -> bool:
+    return TAGS.contains(tag)
+
+
+def not_in_table(key: str) -> bool:
+    return key not in TABLE
+"#,
+    )?;
+    for (name, family) in [
+        ("in_names", CollectionTypeId::FrozenList),
+        ("in_tags", CollectionTypeId::FrozenSet),
+    ] {
+        let membership = returned_value(&ir, name)?;
+        let IrExprKind::KnownMethodCall {
+            receiver,
+            kind: MethodKind::Collection(CollectionMethodKind::Contains),
+            ..
+        } = &membership.kind
+        else {
+            return Err(format!("`{name}` must lower to membership, got {membership:?}"));
+        };
+        assert!(
+            matches!(receiver.kind, IrExprKind::UnaryOp { op: UnaryOp::Ref, .. }),
+            "`{name}` borrows the frozen receiver, got {receiver:?}"
+        );
+        let IrType::Ref(borrowed) = &receiver.ty else {
+            return Err(format!("`{name}`'s receiver is a borrow, got {:?}", receiver.ty));
+        };
+        assert!(is_frozen_family(borrowed, family), "`{name}` borrows the const itself");
+    }
+    let negated = returned_value(&ir, "not_in_table")?;
+    let IrExprKind::UnaryOp {
+        op: UnaryOp::Not,
+        operand,
+    } = &negated.kind
+    else {
+        return Err(format!("`not in` negates the membership test, got {negated:?}"));
+    };
+    let IrExprKind::KnownMethodCall {
+        receiver,
+        kind: MethodKind::Collection(CollectionMethodKind::Contains),
+        ..
+    } = &operand.kind
+    else {
+        return Err(format!("`key not in TABLE` must lower to membership, got {operand:?}"));
+    };
+    assert!(
+        is_frozen_family(&receiver.ty, CollectionTypeId::FrozenDict),
+        "a frozen dict keeps its receiver, got {:?}",
+        receiver.ty
+    );
+    Ok(())
+}
+
+/// #1757: a comprehension, a generator clause and `set(...)` over a `const` frozen collection read its `list(...)`
+/// conversion: the owned elements, or the owned keys of a `FrozenDict`. `set(...)` over a frozen collection whose items
+/// are stored as they are typed reads the collection itself.
+#[test]
+fn iteration_sources_over_frozen_collections_read_owned_items_issue1757() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+const NAMES: FrozenList[str] = ["alpha", "beta"]
+const TABLE: FrozenDict[str, int] = {"a": 1}
+const NUMS: FrozenList[int] = [1, 2]
+
+
+def keys() -> list[str]:
+    return [key for key in TABLE]
+
+
+def unique_names() -> set[str]:
+    return set(NAMES)
+
+
+def unique_nums() -> set[int]:
+    return set(NUMS)
+
+
+def doubled() -> list[int]:
+    items = (n * 2 for n in NUMS)
+    return list(items)
+"#,
+    )?;
+    let owned_items = |source: &TypedExpr, family: CollectionTypeId, item: IrType| -> Result<(), String> {
+        let IrExprKind::BuiltinCall {
+            func: BuiltinFn::CollectionConstructor(CollectionTypeId::List),
+            args,
+        } = &source.kind
+        else {
+            return Err(format!("the frozen source is read through `list(...)`, got {source:?}"));
+        };
+        assert_eq!(source.ty, IrType::List(Box::new(item)));
+        assert!(
+            args.first().is_some_and(|arg| is_frozen_family(&arg.ty, family)),
+            "the conversion reads the const: {args:?}"
+        );
+        Ok(())
+    };
+
+    let keys = returned_value(&ir, "keys")?;
+    let IrExprKind::ListComp { iterable, .. } = &keys.kind else {
+        return Err(format!("`keys` must lower to a comprehension, got {keys:?}"));
+    };
+    owned_items(&**iterable, CollectionTypeId::FrozenDict, IrType::String)?;
+
+    let unique_names = returned_value(&ir, "unique_names")?;
+    let IrExprKind::BuiltinCall {
+        func: BuiltinFn::CollectionConstructor(CollectionTypeId::Set),
+        args,
+    } = &unique_names.kind
+    else {
+        return Err(format!("`unique_names` must lower to `set(...)`, got {unique_names:?}"));
+    };
+    let source = args.first().ok_or_else(|| "`set` takes the frozen list".to_string())?;
+    owned_items(source, CollectionTypeId::FrozenList, IrType::String)?;
+
+    let unique_nums = returned_value(&ir, "unique_nums")?;
+    let IrExprKind::BuiltinCall { args, .. } = &unique_nums.kind else {
+        return Err(format!("`unique_nums` must lower to `set(...)`, got {unique_nums:?}"));
+    };
+    assert!(
+        args.first()
+            .is_some_and(|arg| is_frozen_family(&arg.ty, CollectionTypeId::FrozenList)),
+        "a frozen list of `int` is collected as written: {args:?}"
+    );
+
+    let (generator, _) = let_binding(function_body(&ir, "doubled")?, "items")?;
+    let IrExprKind::Generator { clauses, .. } = &generator.kind else {
+        return Err(format!("`list`'s argument is the generator, got {generator:?}"));
+    };
+    let Some(crate::expr::IrGeneratorClause::For { iterable, .. }) = clauses.first() else {
+        return Err(format!("the generator starts with a `for` clause, got {clauses:?}"));
+    };
+    owned_items(&**iterable, CollectionTypeId::FrozenList, IrType::Int)
+}
+
+/// Return the callback that the `flat_map` call in the named function's returned adapter chain passes its adapter.
+fn returned_flat_map_callback<'a>(ir: &'a IrProgram, name: &str) -> Result<&'a TypedExpr, String> {
+    let returned = returned_value(ir, name)?;
+    let mut call = returned;
+    loop {
+        match &call.kind {
+            IrExprKind::KnownMethodCall {
+                kind: MethodKind::Iterator(IteratorMethodKind::FlatMap),
+                args,
+                ..
+            } => {
+                return args
+                    .first()
+                    .map(|arg| &arg.expr)
+                    .ok_or_else(|| format!("`{name}` must pass `flat_map` its callback"));
+            }
+            IrExprKind::KnownMethodCall { receiver, .. } => call = receiver,
+            _ => return Err(format!("`{name}` must return a `flat_map` chain, got {returned:?}")),
+        }
+    }
+}
+
+/// A `flat_map` callback hands the adapter the nested iterator it polls one item at a time, never a collected list: a
+/// callback returning a generator is passed as written, a list expansion is iterated through `.iter()`, a frozen one
+/// through `.iter()` over its owned items, a set expansion through a generator expression over it, and a closure
+/// literal keeps its own parameters with its body wrapped.
+#[test]
+fn flat_map_callbacks_hand_the_adapter_a_nested_iterator() -> Result<(), String> {
+    let ir = lower_checked_source(
+        r#"
+const WORDS: FrozenList[str] = ["a", "b"]
+
+
+def pair_gen(n: int) -> Generator[int]:
+    yield n
+    yield n + 1
+
+
+def pair_set(n: int) -> set[int]:
+    return {n, n + 10}
+
+
+def pair_list(n: int) -> list[int]:
+    return [n, n]
+
+
+def words(_n: int) -> FrozenList[str]:
+    return WORDS
+
+
+def from_generators(items: list[int]) -> Iterator[int]:
+    return items.iter().flat_map(pair_gen)
+
+
+def from_sets(items: list[int]) -> Iterator[int]:
+    return items.iter().flat_map(pair_set)
+
+
+def from_lists(items: list[int]) -> Iterator[int]:
+    return items.iter().flat_map(pair_list)
+
+
+def from_frozen(items: list[int]) -> Iterator[str]:
+    return items.iter().flat_map(words)
+
+
+def from_closure(items: list[int]) -> list[int]:
+    return items.iter().flat_map((n) => [n, n]).collect()
+"#,
+    )?;
+
+    let from_generators = returned_flat_map_callback(&ir, "from_generators")?;
+    assert!(
+        !matches!(from_generators.kind, IrExprKind::Closure { .. }),
+        "a generator expansion is the nested iterator itself, got {from_generators:?}"
+    );
+
+    let from_sets = returned_flat_map_callback(&ir, "from_sets")?;
+    let IrExprKind::Closure { body, .. } = &from_sets.kind else {
+        return Err(format!(
+            "a set expansion must be wrapped in a closure, got {from_sets:?}"
+        ));
+    };
+    let IrExprKind::Generator { clauses, .. } = &body.kind else {
+        return Err(format!(
+            "a set expansion must be drawn through a generator, got {body:?}"
+        ));
+    };
+    assert!(
+        matches!(clauses.as_slice(), [IrGeneratorClause::For { iterable, .. }] if matches!(iterable.ty, IrType::Set(_))),
+        "the generator must iterate the set the callback returns, got {clauses:?}"
+    );
+
+    for (name, item_ty) in [("from_lists", IrType::Int), ("from_frozen", IrType::String)] {
+        let callback = returned_flat_map_callback(&ir, name)?;
+        let IrExprKind::Closure { body, .. } = &callback.kind else {
+            return Err(format!(
+                "`{name}` must wrap its expansion in a closure, got {callback:?}"
+            ));
+        };
+        let IrExprKind::KnownMethodCall {
+            receiver,
+            kind: MethodKind::Iterator(IteratorMethodKind::Iter),
+            ..
+        } = &body.kind
+        else {
+            return Err(format!("`{name}` must iterate its list expansion, got {body:?}"));
+        };
+        assert_eq!(
+            receiver.ty,
+            IrType::List(Box::new(item_ty)),
+            "`{name}` must iterate an owned list of the flattened items"
+        );
+    }
+
+    let from_closure = returned_flat_map_callback(&ir, "from_closure")?;
+    let IrExprKind::Closure { params, body, .. } = &from_closure.kind else {
+        return Err(format!("`from_closure` must stay a closure, got {from_closure:?}"));
+    };
+    assert!(
+        matches!(&body.kind, IrExprKind::KnownMethodCall {
+            receiver,
+            kind: MethodKind::Iterator(IteratorMethodKind::Iter),
+            ..
+        } if matches!(receiver.ty, IrType::List(_))),
+        "a closure literal's list body must be iterated in place, got {body:?}"
+    );
+    assert_eq!(
+        params.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
+        ["n"],
+        "a closure literal keeps its own parameter, so Rust infers its type from the adapter's callback slot"
     );
     Ok(())
 }

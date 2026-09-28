@@ -286,3 +286,31 @@ async def main() -> None:
     assert_eq!(var_read(awaited), Some(("handle", VarAccess::Move)), "{awaited:?}");
     Ok(())
 }
+
+/// A parameter's final read moves it even when an earlier function declares a `mut` parameter of the same name: the
+/// `mut` locals lowering tracks belong to the function that declares them.
+#[test]
+fn a_mut_parameter_does_not_keep_a_later_functions_same_named_parameter_from_moving() -> Result<(), String> {
+    let mut ir = lower_checked_source(
+        r#"
+def grow(mut items: list[int]) -> int:
+    items.append(1)
+    return len(items)
+
+
+def total(items: list[int]) -> int:
+    return len(items)
+
+
+def keep(items: list[int]) -> int:
+    size = total(items)
+    return size
+"#,
+    )?;
+    let shapes = loop_shapes(&mut ir, "keep")?;
+    let [argument] = shapes.call_arguments.as_slice() else {
+        return Err(format!("expected one call argument, got {:?}", shapes.call_arguments));
+    };
+    assert_eq!(var_read(argument), Some(("items", VarAccess::Move)), "{argument:?}");
+    Ok(())
+}

@@ -12,3 +12,4 @@ workspaces/docs-site/docs/contributing/reference/test_corpus_inventory.md	*	Rend
 
 # Third-party names and quoted text.
 workspaces/docs-site/docs/_snippets/project/v0_6_roadmap.md	colour	GitHub issue #1351's title as fetched; scripts/v0_6_roadmap/refresh_github.sh rewrites the snapshot from GitHub.
+*	manifest_constructor_metadata_recognises_phantom_type_parameters_issue1370	names a test inside the frozen emitter tree (loaves/compiler/incan_emit/src/emit/mod.rs); the reference must match the frozen spelling until #654 retires it

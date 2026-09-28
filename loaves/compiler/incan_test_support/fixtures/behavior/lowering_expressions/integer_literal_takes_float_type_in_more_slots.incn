@@ -1,0 +1,44 @@
+# behavior: an integer literal is the float of the same value at an Option or union destination, an Option parameter, an Ok payload, a list append, a dict insert, an unwrap_or fallback, a powf exponent and a generic call argument
+# retires: loaves/compiler/incan_emit/src/tests/expected_literal_emission.rs::integer_literal_in_more_float_slots_is_a_float_literal_issue1859
+# expect-stdout:
+#   2.25
+#   3.0
+#   4.0
+#   5.0
+#   6.0
+#   7.0
+#   8.0
+#   2.5
+#   10.0
+#   11.0
+
+def pick_first[T](a: T, b: T) -> T:
+    return a
+
+
+def takes(value: Option[float]) -> float:
+    return value.unwrap_or(0.0)
+
+
+def main() -> None:
+    x: float = 1.5
+    println(x.powf(2))
+    maybe: Option[float] = 3
+    println(maybe.unwrap_or(0.0))
+    either: float | str = 4
+    match either:
+        float(number) => println(number)
+        str(text) => println(text)
+    result: Result[float, str] = Ok(5)
+    println(result.unwrap_or(0.0))
+    mut xs: list[float] = []
+    xs.append(6)
+    println(xs[0])
+    mut d: dict[str, float] = {}
+    d.insert("k", 7)
+    println(d["k"])
+    missing: Option[float] = None
+    println(missing.unwrap_or(8))
+    println(pick_first(2.5, 9))
+    println(pick_first(10, 2.5))
+    println(takes(11))

@@ -10,8 +10,9 @@
 use crate::ast::*;
 use crate::diagnostics::{CompileError, errors};
 use crate::symbols::{FieldInfo, FunctionInfo, ResolvedType, SymbolKind, VariableInfo};
-use crate::typechecker::helpers::{is_frozen_bytes, is_frozen_str};
+use crate::typechecker::helpers::{decimal_shape, is_frozen_bytes, is_frozen_str};
 use incan_lang::lang::keywords;
+use incan_lang::lang::types::numerics::{self, NumericFamily, NumericTypeId};
 use incan_lang::numeric_values::{IntegerBounds, integer_bounds};
 use incan_semantics_core::SurfaceExprTypeCheck;
 use std::collections::HashMap;
@@ -21,10 +22,12 @@ use super::mut_arguments::MutArgumentCallee;
 
 mod access;
 mod basics;
+mod builtin_method_args;
 mod calls;
 mod collections;
 mod comps;
 mod control_flow;
+mod dict_lookups;
 mod error_display;
 mod list_methods;
 mod match_;
@@ -101,20 +104,27 @@ impl TypeChecker {
     }
 
     /// Type-check every interpolated expression of an f-string and refuse a `{value}` part with no printed form
-    /// (#1748).
+    /// (#1748) or an unsupported format specifier.
     ///
     /// A `{value}` part displays under the rule `print`/`println` arguments and `str(...)` share (see
     /// [`Self::check_display_operand`]); an `Error` adopter with no `__str__` is recorded to render its `message()`
-    /// (#1778). A `{value:?}` part asks for the value's structure through `Debug` and is left alone.
+    /// (#1778). A `{value:?}` part asks for the value's structure through `Debug` and is left alone. A part with any
+    /// other format spec (`{value:x}`) names a specifier the language does not support and is refused outright.
     fn check_fstring_parts(&mut self, parts: &[FStringPart]) {
         for part in parts {
             let FStringPart::Expr { expr, format } = part else {
                 continue;
             };
             let ty = self.check_expr(expr);
-            if matches!(format, FStringFormat::Display) {
-                self.record_error_message_display(expr.span, &ty);
-                self.check_display_operand(errors::DisplayPosition::Interpolation, expr, &ty);
+            match format {
+                FStringFormat::Display => {
+                    self.record_error_message_display(expr.span, &ty);
+                    self.check_display_operand(errors::DisplayPosition::Interpolation, expr, &ty);
+                }
+                FStringFormat::Debug => {}
+                FStringFormat::Unsupported(spec) => self
+                    .errors
+                    .push(errors::unsupported_fstring_format_specifier(spec, expr.span)),
             }
         }
     }
@@ -265,7 +275,7 @@ impl TypeChecker {
         self.refuse_mut_params_held_in(expr);
         let ty = match &expr.node {
             Expr::Ident(name) => self.check_ident(name, expr.span),
-            Expr::Literal(lit) => self.check_literal(lit),
+            Expr::Literal(lit) => self.check_literal(lit, expr.span),
             Expr::SelfExpr => self.check_self(expr.span),
             Expr::Binary(left, op, right) => self.check_binary(left, *op, right, expr.span),
             Expr::Unary(op, operand) => self.check_unary(*op, operand, expr.span),
@@ -389,6 +399,28 @@ impl TypeChecker {
     pub fn check_expr_with_expected(&mut self, expr: &Spanned<Expr>, expected: Option<&ResolvedType>) -> ResolvedType {
         let errors_before = self.errors.len();
         self.refuse_mut_params_held_in(expr);
+        // An integer literal at an `Option` or union destination takes the one numeric type that destination holds.
+        let numeric_destination = match (&expr.node, expected) {
+            (Expr::Literal(Literal::Int(_)), Some(expected_ty)) => {
+                self.integer_literal_numeric_destination(expected_ty)
+            }
+            (Expr::Unary(UnaryOp::Neg, inner), Some(expected_ty))
+                if matches!(inner.node, Expr::Literal(Literal::Int(_))) =>
+            {
+                self.integer_literal_numeric_destination(expected_ty)
+            }
+            _ => None,
+        };
+        let frozen_string_destination = match (&expr.node, expected) {
+            (Expr::Literal(Literal::String(_)), Some(expected_ty)) => {
+                self.string_literal_frozen_destination(expected_ty)
+            }
+            _ => None,
+        };
+        let expected = numeric_destination
+            .as_ref()
+            .or(frozen_string_destination.as_ref())
+            .or(expected);
         let ty = match (&expr.node, expected) {
             (_, Some(ResolvedType::TypeVar(_))) => return self.check_expr(expr),
             (Expr::Paren(inner), Some(expected_ty)) => self.check_expr_with_expected(inner, Some(expected_ty)),
@@ -397,6 +429,15 @@ impl TypeChecker {
                 let ty = self.check_expr(expr);
                 self.type_token_value_spans.pop();
                 ty
+            }
+            (Expr::Literal(literal @ Literal::Int(value)), _) if value.suffix.is_some() => {
+                self.check_literal(literal, expr.span)
+            }
+            (Expr::Literal(literal @ Literal::Float(value)), _) if value.suffix.is_some() => {
+                self.check_literal(literal, expr.span)
+            }
+            (Expr::Unary(UnaryOp::Neg, inner), _) if matches!(&inner.node, Expr::Literal(Literal::Int(value)) if value.suffix.is_some()) => {
+                self.check_unary_with_expected(UnaryOp::Neg, inner, expr.span, expected)
             }
             (Expr::Literal(Literal::Int(_)), Some(expected_ty))
                 if super::numeric_type_id_for_compat(expected_ty).is_some() =>
@@ -412,10 +453,7 @@ impl TypeChecker {
             (Expr::Literal(Literal::Float(_)), Some(expected_ty))
                 if matches!(
                     expected_ty,
-                    ResolvedType::Numeric(
-                        incan_lang::lang::types::numerics::NumericTypeId::F32
-                            | incan_lang::lang::types::numerics::NumericTypeId::F64
-                    )
+                    ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F32)
                 ) =>
             {
                 self.check_float_literal_with_expected(expr, expected_ty)
@@ -434,10 +472,7 @@ impl TypeChecker {
             (Expr::Unary(UnaryOp::Neg, operand), Some(expected_ty))
                 if matches!(
                     expected_ty,
-                    ResolvedType::Numeric(
-                        incan_lang::lang::types::numerics::NumericTypeId::F32
-                            | incan_lang::lang::types::numerics::NumericTypeId::F64
-                    )
+                    ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F32)
                 ) && matches!(operand.node, Expr::Literal(Literal::Float(_))) =>
             {
                 self.check_expr_with_expected(operand, Some(expected_ty));
@@ -476,6 +511,66 @@ impl TypeChecker {
         }
         self.record_expr_type(expr.span, ty.clone());
         ty
+    }
+
+    /// Typecheck an explicitly suffixed integer token, preserving its named type and validating its signed value.
+    pub(in crate::typechecker::check_expr) fn check_suffixed_int_literal(
+        &mut self,
+        value: &IntLiteral,
+        negative: bool,
+        span: Span,
+    ) -> ResolvedType {
+        let Some(target) = value.suffix else {
+            return ResolvedType::Int;
+        };
+        let target_ty = ResolvedType::from_numeric_id(target);
+        let fits = match integer_bounds(target) {
+            Some(IntegerBounds::Signed { minimum, .. }) if negative => value.magnitude <= minimum.unsigned_abs(),
+            Some(IntegerBounds::Signed { maximum, .. }) => value.magnitude <= maximum as u128,
+            Some(IntegerBounds::Unsigned { .. }) if negative => false,
+            Some(IntegerBounds::Unsigned { maximum }) => value.magnitude <= maximum,
+            None if numerics::info_for(target).family == NumericFamily::BinaryFloat => match target {
+                NumericTypeId::F32 => (value.magnitude as f32).is_finite(),
+                NumericTypeId::F64 => (value.magnitude as f64).is_finite(),
+                _ => false,
+            },
+            None => false,
+        };
+        if !fits {
+            let spelling = if negative {
+                format!("-{}", value.repr)
+            } else {
+                value.repr.clone()
+            };
+            self.errors.push(CompileError::type_error(
+                format!("Numeric literal {spelling} does not fit in {target_ty}"),
+                span,
+            ));
+        }
+        target_ty
+    }
+
+    /// Typecheck an explicitly suffixed float token in the suffix's binary-float type.
+    ///
+    /// An `f32` literal must be finite in `f32`. An `f64` literal is a `float`, which holds IEEE infinity, so it takes
+    /// every value an unsuffixed float literal takes.
+    fn check_suffixed_float_literal(&mut self, value: &FloatLiteral, span: Span) -> ResolvedType {
+        let Some(target) = value.suffix else {
+            return ResolvedType::Float;
+        };
+        let target_ty = ResolvedType::from_numeric_id(target);
+        let fits = match target {
+            NumericTypeId::F32 => value.value.is_finite() && value.value.abs() <= f64::from(f32::MAX),
+            NumericTypeId::F64 => true,
+            _ => false,
+        };
+        if !fits {
+            self.errors.push(CompileError::type_error(
+                format!("Float literal {} does not fit in {target_ty}", value.repr),
+                span,
+            ));
+        }
+        target_ty
     }
 
     /// Typecheck an integer literal in a known numeric target context.
@@ -544,7 +639,62 @@ impl TypeChecker {
         expected_ty.clone()
     }
 
-    /// Typecheck a binary-float literal in a known `f32` or `f64` target context.
+    /// Return the numeric type an integer literal takes at an `Option` or union destination: the one numeric type the
+    /// destination holds, as `float` for `Option[float]`, `Option[Option[float]]` or `float | str` (#1859).
+    ///
+    /// A destination that is itself numeric is checked against directly, so it gives nothing here. Neither does one
+    /// holding `int`, where the literal is an `int` already, nor one holding two other numeric types (`f32 | f64`),
+    /// which does not say which of them the literal is.
+    fn integer_literal_numeric_destination(&self, expected: &ResolvedType) -> Option<ResolvedType> {
+        if super::numeric_type_id_for_compat(expected).is_some() {
+            return None;
+        }
+        let mut held = Vec::new();
+        Self::collect_held_numeric_types(&self.expand_type_aliases(expected.clone()), &mut held);
+        match held.as_slice() {
+            [only] if !matches!(only, ResolvedType::Int) => Some(only.clone()),
+            _ => None,
+        }
+    }
+
+    /// Return `FrozenStr` when it is the only string storage a union or `Option` destination offers a string literal.
+    fn string_literal_frozen_destination(&self, expected: &ResolvedType) -> Option<ResolvedType> {
+        let mut held = Vec::new();
+        Self::collect_held_string_types(&self.expand_type_aliases(expected.clone()), &mut held);
+        matches!(held.as_slice(), [ResolvedType::FrozenStr]).then_some(ResolvedType::FrozenStr)
+    }
+
+    /// Collect the distinct owned and frozen string types held inside `Option` layers and union members.
+    fn collect_held_string_types(ty: &ResolvedType, held: &mut Vec<ResolvedType>) {
+        if matches!(ty, ResolvedType::Str | ResolvedType::FrozenStr) {
+            if !held.contains(ty) {
+                held.push(ty.clone());
+            }
+        } else if let Some(inner) = ty.option_inner_type() {
+            Self::collect_held_string_types(inner, held);
+        } else if let Some(members) = ty.union_members() {
+            for member in members {
+                Self::collect_held_string_types(member, held);
+            }
+        }
+    }
+
+    /// Collect, without duplicates, the numeric types `ty` is or holds inside `Option` layers and union members.
+    fn collect_held_numeric_types(ty: &ResolvedType, held: &mut Vec<ResolvedType>) {
+        if super::numeric_type_id_for_compat(ty).is_some() {
+            if !held.contains(ty) {
+                held.push(ty.clone());
+            }
+        } else if let Some(inner) = ty.option_inner_type() {
+            Self::collect_held_numeric_types(inner, held);
+        } else if let Some(members) = ty.union_members() {
+            for member in members {
+                Self::collect_held_numeric_types(member, held);
+            }
+        }
+    }
+
+    /// Typecheck a binary-float literal in a known `f32` target context, where the literal must be finite in `f32`.
     fn check_float_literal_with_expected(&mut self, expr: &Spanned<Expr>, expected_ty: &ResolvedType) -> ResolvedType {
         let Expr::Literal(Literal::Float(value)) = &expr.node else {
             return self.check_expr(expr);
@@ -553,7 +703,6 @@ impl TypeChecker {
             ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F32) => {
                 value.value.is_finite() && value.value.abs() <= f64::from(f32::MAX)
             }
-            ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F64) => value.value.is_finite(),
             _ => true,
         };
         if !fits {
@@ -565,11 +714,11 @@ impl TypeChecker {
         expected_ty.clone()
     }
 
-    /// Reject an out-of-domain float literal nested beneath an exact-float arithmetic destination.
+    /// Reject an out-of-domain float literal nested beneath an `f32` arithmetic destination.
     ///
     /// Binary operands are otherwise checked independently, so the enclosing destination does not reach a literal
     /// such as `1e9999` in `1e9999 + 0.0`. This validation deliberately records no inferred type and does not make
-    /// ordinary `float` finite-only; it only preserves the exact destination's literal-domain check and literal span.
+    /// `float` (`f64`) finite-only; it only preserves the `f32` destination's literal-domain check and literal span.
     pub(in crate::typechecker::check_expr) fn validate_exact_float_literals_in_arithmetic(
         &mut self,
         expr: &Spanned<Expr>,
@@ -580,9 +729,6 @@ impl TypeChecker {
                 let fits = match expected_ty {
                     ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F32) => {
                         value.value.is_finite() && value.value.abs() <= f64::from(f32::MAX)
-                    }
-                    ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F64) => {
-                        value.value.is_finite()
                     }
                     _ => return,
                 };
@@ -709,44 +855,25 @@ impl TypeChecker {
 
 /// Return whether a resolved type is one of the parameterized decimal families.
 fn is_decimal_type(ty: &ResolvedType) -> bool {
-    match ty {
-        ResolvedType::Generic(name, args) => {
-            incan_lang::lang::types::numerics::decimal_constructor_from_str(name.as_str()).is_some() && args.len() == 2
-        }
-        _ => false,
-    }
+    decimal_shape(ty).is_some()
 }
 
 /// Extract precision and scale from a checked resolved decimal type.
 fn decimal_precision_scale(ty: &ResolvedType) -> Option<(usize, usize)> {
-    match ty {
-        ResolvedType::Generic(name, args)
-            if incan_lang::lang::types::numerics::decimal_constructor_from_str(name.as_str()).is_some()
-                && args.len() == 2 =>
-        {
-            let precision = decimal_type_arg_usize(&args[0])?;
-            let scale = decimal_type_arg_usize(&args[1])?;
-            Some((precision, scale))
-        }
-        _ => None,
-    }
+    decimal_shape(ty).map(|shape| (usize::from(shape.precision), usize::from(shape.scale)))
 }
 
-/// Parse one resolved decimal type argument into a host integer for validation.
-fn decimal_type_arg_usize(ty: &ResolvedType) -> Option<usize> {
-    match ty {
-        ResolvedType::TypeVar(value) => value.parse().ok(),
-        _ => None,
-    }
-}
-
-/// Count integer, fractional, and total digits in a plain decimal literal body.
+/// Count significant integer digits, fractional digits, and their total in a plain decimal literal body.
 fn decimal_literal_digit_counts(body: &str) -> Option<(usize, usize, usize)> {
     if body.contains('e') || body.contains('E') {
         return None;
     }
     let (integer, fractional) = body.split_once('.').unwrap_or((body, ""));
-    let integer_digits = integer.chars().filter(|ch| ch.is_ascii_digit()).count();
+    let integer_digits = integer
+        .chars()
+        .skip_while(|ch| *ch == '0')
+        .filter(|ch| ch.is_ascii_digit())
+        .count();
     let fractional_digits = fractional.chars().filter(|ch| ch.is_ascii_digit()).count();
     Some((integer_digits, fractional_digits, integer_digits + fractional_digits))
 }

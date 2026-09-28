@@ -231,6 +231,43 @@ fn test_fstring_unknown_symbol_span_points_to_interpolation() {
     assert_eq!(error.span.end, expected_start + "{unknown_var}".len());
 }
 
+/// #1834: a format specifier the language does not support is diagnosed instead of being silently discarded.
+#[test]
+fn unsupported_fstring_format_spec_is_refused_issue1834() {
+    let source = "def render(n: int) -> str:\n  return f\"[{n:>5}]\"\n";
+    let errors = check_str_err(source, "unsupported f-string format spec should be refused");
+    assert!(
+        errors.iter().any(|error| {
+            error.message.contains("Unsupported f-string format specifier") && error.message.contains(">5")
+        }),
+        "expected the unsupported specifier to be named, got {errors:?}"
+    );
+}
+
+/// #1838: frozen bytes have no display form, matching ordinary `bytes`, in every display position.
+#[test]
+fn frozen_bytes_has_no_display_form_issue1838() {
+    let errors = check_str_err(
+        r#"
+const DATA: bytes = b"abc"
+
+def render() -> str:
+    println(DATA)
+    text = str(DATA)
+    return f"{DATA}"
+"#,
+        "FrozenBytes should be refused in every display position",
+    );
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|error| error.stable_code() == Some("INCAN-T0103"))
+            .count(),
+        3,
+        "expected one printed-form diagnostic per display position, got {errors:?}"
+    );
+}
+
 #[test]
 fn test_fstring_nested_unknown_symbol_span_rebased() {
     let source = "def foo(x: int) -> str:\n  return f\"sum: {x + unknown_var}\"\n";
@@ -389,6 +426,22 @@ def add_item[T with Clone](mut items: List[T], item: T) -> None:
   items.append(item)
 "#;
     assert_check_ok(source);
+}
+
+/// #1855: the source-owned `std.fs.Path` newtype keeps its declared `Clone`; its name must not select the unrelated
+/// `std.web.Path[T]` extractor capability entry.
+#[test]
+fn std_fs_path_is_cloneable_despite_web_surface_name_issue1855() {
+    assert_check_ok(
+        r#"
+from std.fs import Path
+
+def main() -> None:
+  mut paths: list[Path] = []
+  path = Path("a.txt")
+  paths.append(path)
+"#,
+    );
 }
 
 /// Return whether `errors` holds the `List.append` refusal for an element type that is not `Clone`.

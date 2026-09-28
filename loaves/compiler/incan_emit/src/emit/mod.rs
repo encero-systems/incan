@@ -406,7 +406,9 @@ impl StructConstructorMetadata {
     /// Build constructor-emission metadata from one compiled-library export.
     ///
     /// Manifest defaults may be intentionally non-materializable to consumers, so their `has_default` flag remains
-    /// authoritative for provider-bridge eligibility even when no serialized expression is available.
+    /// authoritative for provider-bridge eligibility even when no serialized expression is available. The export's
+    /// type parameters are kept as the owner's, so a supplied field whose declared type names one of them is emitted
+    /// at the type this construction site checked it at rather than at the export's unbound parameter name.
     fn from_manifest_fields(library: &str, kind: IrStructKind, type_params: &[String], fields: &[FieldExport]) -> Self {
         let field_types = fields
             .iter()
@@ -427,7 +429,7 @@ impl StructConstructorMetadata {
         let constructor_surface = Self::external_constructor_surface(kind, &type_private_fields, &default_fields);
         Self {
             provider_identity: Some(ConstructorProviderIdentity::PublicDependency(library.to_string())),
-            owner_type_params: HashSet::new(),
+            owner_type_params: type_params.iter().cloned().collect(),
             phantom_type_params,
             fields: fields.iter().map(|field| field.name.clone()).collect(),
             field_types,
@@ -634,6 +636,8 @@ pub struct IrEmitter<'a> {
     newtype_backing_type_names: HashMap<String, HashSet<String>>,
     /// Method signature lookup for Incan-owned nominal receivers, including imported modules.
     method_signatures: HashMap<(String, String), FunctionSignature>,
+    /// Source methods whose declared receiver is `mut self`, keyed by nominal owner and emitted method name.
+    mutable_method_receivers: HashSet<(String, String)>,
     /// Exact emitted projections for source members keyed by nominal owner and source declaration name.
     member_projections: HashMap<(String, String), CanonicalSymbolId>,
     /// Member keys that resolve to more than one distinct declaration identity.
@@ -807,6 +811,7 @@ impl<'a> IrEmitter<'a> {
             rusttype_alias_names: HashSet::new(),
             newtype_backing_type_names: HashMap::new(),
             method_signatures: HashMap::new(),
+            mutable_method_receivers: HashSet::new(),
             member_projections: HashMap::new(),
             ambiguous_member_projections: HashSet::new(),
             method_signature_type_params: HashMap::new(),
@@ -2888,6 +2893,13 @@ impl<'a> IrEmitter<'a> {
                     for method in &i.methods {
                         let params = method.params.iter().filter(|param| !param.is_self).cloned().collect();
                         let key = (i.target_type.clone(), method.name.clone());
+                        if method
+                            .params
+                            .first()
+                            .is_some_and(|param| param.is_self && matches!(param.mutability, Mutability::Mutable))
+                        {
+                            self.mutable_method_receivers.insert(key.clone());
+                        }
                         self.method_signatures.insert(
                             key.clone(),
                             FunctionSignature {
@@ -2901,6 +2913,17 @@ impl<'a> IrEmitter<'a> {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// Return whether a source method declares a mutable receiver for the nominal receiver type.
+    pub(in crate::emit) fn method_receiver_is_mutable(&self, receiver_ty: &IrType, method: &str) -> bool {
+        match receiver_ty {
+            IrType::Struct(owner) | IrType::NamedGeneric(owner, _) => self
+                .mutable_method_receivers
+                .contains(&(owner.clone(), method.to_string())),
+            IrType::Ref(inner) | IrType::RefMut(inner) => self.method_receiver_is_mutable(inner, method),
+            _ => false,
         }
     }
 
@@ -3231,7 +3254,9 @@ impl<'a> IrEmitter<'a> {
         name: &str,
         fields: &[(String, TypedExpr)],
     ) -> Option<&StructConstructorMetadata> {
-        let variants = self.struct_constructor_metadata.get(name)?;
+        let Some(variants) = self.struct_constructor_metadata.get(name) else {
+            return self.crate_path_constructor_metadata(name);
+        };
         if variants.len() == 1 {
             return variants.first();
         }
@@ -3263,6 +3288,31 @@ impl<'a> IrEmitter<'a> {
             return Some(metadata);
         }
         candidates.first().copied().or_else(|| variants.first())
+    }
+
+    /// Select the constructor metadata of a type spelled by its crate path (`crate::a::Card`).
+    ///
+    /// A parameter default that constructs another module's type is spelled through that module (#1843), because the
+    /// bare name can name a different type, or nothing, where the caller expands the default. A declaration name only
+    /// one module declares keeps the metadata of that declaration, so the construction fills the fields the default
+    /// leaves to their own defaults; a name several modules declare takes the metadata of the module the path names.
+    fn crate_path_constructor_metadata(&self, name: &str) -> Option<&StructConstructorMetadata> {
+        let mut segments = name
+            .strip_prefix("crate::")?
+            .split("::")
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let declaration_name = segments.pop()?;
+        if !self.ambiguous_type_names.contains(&declaration_name)
+            && let Some([metadata]) = self
+                .struct_constructor_metadata
+                .get(&declaration_name)
+                .map(Vec::as_slice)
+        {
+            return Some(metadata);
+        }
+        self.source_dependency_constructor_metadata
+            .get(&(segments, declaration_name))
     }
 
     /// Select constructor metadata by exact `pub::<dependency>` identity carried on a lowered canonical call path.
@@ -4456,6 +4506,63 @@ mod tests {
             StructConstructorMetadata::from_manifest_fields("columns", IrStructKind::Model, &type_params[1..], &fields);
         assert!(stored_only.phantom_type_params.is_empty());
         assert!(stored_only.phantom_marker_initializer().is_none());
+    }
+
+    /// Issue #1843: a compiled dependency's generic model constructed through its crate path emits a supplied field at
+    /// the type this site checked it at. The export declares `current: list[Output]`, and `Output` names nothing bound
+    /// where the construction is emitted.
+    #[test]
+    fn manifest_constructor_emits_type_parameter_fields_at_the_supplied_type_issue1843() -> Result<(), String> {
+        use incan_frontend::library_manifest::{FieldExport, FieldVisibilityExport, TypeRef};
+
+        let current = FieldExport {
+            name: "current".to_string(),
+            canonical: None,
+            ty: TypeRef::Applied {
+                name: "list".to_string(),
+                args: vec![TypeRef::TypeParam {
+                    name: "Output".to_string(),
+                }],
+                origin: None,
+            },
+            surface_type_name: None,
+            visibility: FieldVisibilityExport::Public,
+            has_default: false,
+            default: None,
+            alias: None,
+            description: None,
+        };
+        let metadata = StructConstructorMetadata::from_manifest_fields(
+            "core",
+            IrStructKind::Model,
+            &["Output".to_string()],
+            &[current],
+        );
+        let registry = FunctionRegistry::new();
+        let mut emitter = IrEmitter::new(&registry);
+        emitter
+            .struct_constructor_metadata
+            .insert("FlatMap".to_string(), vec![metadata]);
+        let supplied_ty = IrType::List(Box::new(IrType::Generic("U".to_string())));
+        let fields = vec![(
+            "current".to_string(),
+            TypedExpr::new(IrExprKind::List(Vec::new()), supplied_ty),
+        )];
+
+        let rendered = emitter
+            .emit_struct_expr(
+                "crate::core::FlatMap",
+                &[IrType::Generic("U".to_string())],
+                &fields,
+                false,
+            )
+            .map_err(|error| format!("expected the dependency construction to emit, got {error:?}"))?
+            .to_string();
+        assert!(
+            !rendered.contains("Output"),
+            "the export's own type parameter must not reach the construction site: {rendered}"
+        );
+        Ok(())
     }
 
     #[test]

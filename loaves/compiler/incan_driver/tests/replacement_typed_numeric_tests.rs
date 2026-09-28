@@ -70,9 +70,8 @@ def values() -> str:
     assert!(constants.contains(&&Constant::TypedNumeric(TypedNumericConstant::F32 {
         bits: 1.234_567_9_f32.to_bits(),
     })));
-    assert!(constants.contains(&&Constant::TypedNumeric(TypedNumericConstant::F64 {
-        bits: 1.23456789_f64.to_bits(),
-    })));
+    // RFC 009: `f64` is `float`, whose literal keeps the compact float constant.
+    assert!(constants.contains(&&Constant::Float("1.23456789".to_string())));
     assert!(
         constants.contains(&&Constant::TypedNumeric(TypedNumericConstant::Unsigned {
             kind: NumericTypeId::U128,
@@ -227,10 +226,11 @@ def widen_ordinary_float(value: f32) -> float:
         })
     );
 
+    // RFC 009: `f64` is `float`, so both widenings produce the same float carrier.
     let narrow_float = ReplacementValue::Numeric(ReplacementNumericValue::F32(1.234_567_9_f32));
     assert_eq!(
         execute_free_function(&module, "widen_explicit_float", std::slice::from_ref(&narrow_float))?.value,
-        ReplacementValue::Numeric(ReplacementNumericValue::F64(f64::from(1.234_567_9_f32)))
+        ReplacementValue::Float(f64::from(1.234_567_9_f32))
     );
     assert_eq!(
         execute_free_function(&module, "widen_ordinary_float", &[narrow_float])?.value,
@@ -275,7 +275,7 @@ def called_f64() -> f64:
     );
     assert_eq!(
         execute_free_function(&module, "called_f64", &[])?.value,
-        ReplacementValue::Numeric(ReplacementNumericValue::F64(-2.0))
+        ReplacementValue::Float(-2.0)
     );
     Ok(())
 }
@@ -407,34 +407,30 @@ def identity_usize(value: usize) -> usize:
     Ok(())
 }
 
-/// Public exact-float carriers must reject non-finite values before execution begins.
+/// A public exact `f32` carrier must reject non-finite values before execution begins; an `f64` parameter is a
+/// `float` (RFC 009) and takes IEEE NaN as a float does.
 #[test]
 fn non_finite_exact_float_carriers_refuse_before_execution() -> Result<(), Box<dyn std::error::Error>> {
     let module = lower_typed_body_ir(
         "def identity_f32(value: f32) -> f32:\n  return value\ndef identity_f64(value: f64) -> f64:\n  return value\n",
     )?;
-    for (function, value) in [
-        (
+    let error = require_execution_error(
+        execute_free_function(
+            &module,
             "identity_f32",
-            ReplacementValue::Numeric(ReplacementNumericValue::F32(f32::INFINITY)),
+            &[ReplacementValue::Numeric(ReplacementNumericValue::F32(f32::INFINITY))],
         ),
-        (
-            "identity_f64",
-            ReplacementValue::Numeric(ReplacementNumericValue::F64(f64::NAN)),
-        ),
-    ] {
-        let error = require_execution_error(
-            execute_free_function(&module, function, &[value]),
-            "non-finite exact-float carriers must be refused",
-        )?;
-        assert!(error.to_string().contains("malformed typed numeric carrier"), "{error}");
-    }
+        "a non-finite exact-f32 carrier must be refused",
+    )?;
+    assert!(error.to_string().contains("malformed typed numeric carrier"), "{error}");
+    let passed = execute_free_function(&module, "identity_f64", &[ReplacementValue::Float(f64::NAN)])?;
+    assert!(matches!(passed.value, ReplacementValue::Float(value) if value.is_nan()));
     Ok(())
 }
 
-/// Ordinary float parsing may produce IEEE non-finite values, but those values cannot cross an exact-f64 boundary.
+/// Float parsing may produce IEEE non-finite values, and an `f64` return carries them as the `float` it is (RFC 009).
 #[test]
-fn runtime_non_finite_float_values_cannot_become_exact_f64() -> Result<(), Box<dyn std::error::Error>> {
+fn runtime_non_finite_float_values_flow_through_f64() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def exact(value: str) -> f64:
   return float(value)
@@ -443,34 +439,22 @@ def ordinary(value: str) -> float:
   return float(value)
 "#;
     let module = lower_typed_body_ir(source)?;
-    for input in ["NaN", "inf", "-inf", "1e9999"] {
-        let error = require_execution_error(
-            execute_free_function(&module, "exact", &[ReplacementValue::Str(input.to_string())]),
-            "a runtime non-finite ordinary float must not become exact f64",
-        )?;
-        assert!(
-            error
-                .to_string()
-                .contains("ValueError: non-finite float cannot initialize exact f64"),
-            "{input}: {error}"
-        );
-        let span = error
-            .primary_span()
-            .ok_or("the exact-f64 coercion refusal must retain its source span")?;
-        let spanned = source
-            .get(span.start..span.end)
-            .ok_or("the exact-f64 coercion refusal span must index the source")?;
-        assert_eq!(spanned.trim(), "return float(value)", "{input}: {span:?}");
+    for (input, expected) in [
+        ("inf", f64::INFINITY),
+        ("-inf", f64::NEG_INFINITY),
+        ("1e9999", f64::INFINITY),
+        ("1.25", 1.25),
+    ] {
+        let execution = execute_free_function(&module, "exact", &[ReplacementValue::Str(input.to_string())])?;
+        assert_eq!(execution.value, ReplacementValue::Float(expected), "{input}");
     }
-
-    let finite = execute_free_function(&module, "exact", &[ReplacementValue::Str("1.25".to_string())])?;
-    assert_eq!(
-        finite.value,
-        ReplacementValue::Numeric(ReplacementNumericValue::F64(1.25))
-    );
-
-    let ordinary = execute_free_function(&module, "ordinary", &[ReplacementValue::Str("NaN".to_string())])?;
-    assert!(matches!(ordinary.value, ReplacementValue::Float(value) if value.is_nan()));
+    for function in ["exact", "ordinary"] {
+        let execution = execute_free_function(&module, function, &[ReplacementValue::Str("NaN".to_string())])?;
+        assert!(
+            matches!(execution.value, ReplacementValue::Float(value) if value.is_nan()),
+            "{function}"
+        );
+    }
     Ok(())
 }
 

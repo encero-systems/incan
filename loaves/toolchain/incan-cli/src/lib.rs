@@ -363,9 +363,9 @@ pub enum Command {
         /// Select one workspace member by name or root-relative path
         #[arg(long = "member", value_name = "NAME_OR_PATH", conflicts_with = "workspace")]
         members: Vec<String>,
-        /// Retired Cargo passthrough surface; normal Oven commands reject it
-        #[arg(last = true, hide = true)]
-        cargo_passthrough: Vec<String>,
+        /// Arguments passed to the executed program after `--`
+        #[arg(last = true, value_name = "PROGRAM_ARG")]
+        program_args: Vec<String>,
     },
 
     /// Format Incan source files
@@ -1066,7 +1066,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             release,
             workspace,
             members,
-            cargo_passthrough,
+            program_args,
         }) => execute_workspace_run(
             RunInput { file, code: command },
             RunOptions {
@@ -1080,7 +1080,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                         no_frozen,
                     },
                     cargo_args,
-                    cargo_passthrough,
+                    Vec::new(),
                 ),
                 package_features: package_features.into(),
                 sdk_profile: sdk_profile.sdk_profile,
@@ -1088,6 +1088,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 cargo_no_default_features,
                 cargo_all_features,
                 release,
+                program_args,
             },
             workspace,
             members,
@@ -2111,6 +2112,7 @@ struct RunOptions {
     cargo_no_default_features: bool,
     cargo_all_features: bool,
     release: bool,
+    program_args: Vec<String>,
 }
 
 /// Resolve an explicit file or the project `main` script for project-aware commands.
@@ -2216,6 +2218,7 @@ fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
             opts.cargo_no_default_features,
             opts.cargo_all_features,
             opts.release,
+            opts.program_args,
         )
     // ---- Context: file execution (`incan run path/to/file.incn`) ----
     } else {
@@ -2229,6 +2232,7 @@ fn execute_run(input: RunInput, opts: RunOptions) -> CliResult<ExitCode> {
             opts.cargo_no_default_features,
             opts.cargo_all_features,
             opts.release,
+            opts.program_args,
         )
     }
 }
@@ -3015,12 +3019,12 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_run_cargo_passthrough_args() -> Result<(), clap::Error> {
+    fn test_cli_parse_run_program_args_issue1883() -> Result<(), clap::Error> {
         let cli = parse_cli(["incan", "run", "test.incn", "--", "--timings", "--color=always"])?;
-        let Some(Command::Run { cargo_passthrough, .. }) = cli.command else {
+        let Some(Command::Run { program_args, .. }) = cli.command else {
             return Err(expected_command("run"));
         };
-        assert_eq!(cargo_passthrough, vec!["--timings", "--color=always"]);
+        assert_eq!(program_args, vec!["--timings", "--color=always"]);
         Ok(())
     }
 

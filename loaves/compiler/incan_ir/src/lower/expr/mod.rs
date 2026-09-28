@@ -12,10 +12,12 @@ mod default_owner_paths;
 mod destination_literals;
 mod display_operands;
 mod error_display;
+mod frozen_reads;
 mod helpers;
 mod pattern_alternatives;
 mod patterns;
 mod pub_default_constructions;
+mod static_method_args;
 mod stdlib_defaults;
 mod union_owner;
 
@@ -24,8 +26,8 @@ use std::collections::HashMap;
 use super::super::decl::{FunctionParamDefault, IrTraitBound, IrTraitBoundOrigin, IrTypeParam};
 use super::super::expr::{
     BuiltinFn, CollectionMethodKind, IrCallArg, IrCallArgKind, IrDictEntry, IrExpr, IrExprKind, IrListEntry,
-    IrMethodDispatch, IrTraitDispatch, Literal as IrLiteral, MethodCallArgPolicy, MethodKind, NumericResizePolicy,
-    RaceArm, UnaryOp, VarAccess, VarRefKind,
+    IrMethodDispatch, IrTraitDispatch, IteratorMethodKind, Literal as IrLiteral, MethodCallArgPolicy, MethodKind,
+    NumericResizePolicy, RaceArm, UnaryOp, VarAccess, VarRefKind,
 };
 use super::super::types::IrType;
 use super::super::{IrCheckedCFunction, IrCheckedCType, IrStmt, IrStmtKind, Mutability, TypedExpr};
@@ -43,10 +45,12 @@ use incan_lang::interop::RustCollectionFamily;
 use incan_lang::lang::builtins::BuiltinFnId;
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
 use incan_lang::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
+use incan_lang::lang::surface::option_methods::{self, OptionMethodId};
 use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId, TASK_JOIN_ERROR_TYPE_NAME};
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
+use incan_lang::lang::types::numerics::NumericTypeId;
 use incan_lang::lang::{stdlib, trait_bounds};
 use incan_semantics_core::SurfaceExprLoweringAction;
 
@@ -129,6 +133,33 @@ fn grouped_unary_operand(operand: TypedExpr) -> TypedExpr {
     )
 }
 
+/// Give the base of `**` the operation's concrete numeric result type (#1811).
+///
+/// `**` is spelled as a method call on its base (`.pow`, `.powf`), and a method call needs its receiver's numeric type
+/// to be settled. A literal base (`2 ** 3`, `(-2) ** 3`, `(1 + 2) ** 2`) or a binding initialized from one leaves Rust
+/// with an ambiguous `{integer}` or `{float}` receiver, which it refuses (E0689). Converting the base to the result
+/// type (`int`, `float`, or the `f32` both operands share) settles it; a base that already has that type converts to
+/// itself. An exact-width integer base with a non-negative literal exponent needs nothing: the result keeps the base's
+/// own type (RFC 009). An operator-shaped base is grouped first so the conversion covers the whole base, and a base or
+/// result outside the numeric carriers is left as it is.
+fn power_base_in_result_type(base: TypedExpr, result_ty: &IrType) -> TypedExpr {
+    let concrete_result = matches!(
+        result_ty,
+        IrType::Int | IrType::Float | IrType::Numeric(NumericTypeId::F32)
+    );
+    let numeric_base = matches!(base.ty, IrType::Int | IrType::Float | IrType::Numeric(_));
+    if !concrete_result || !numeric_base {
+        return base;
+    }
+    TypedExpr::new(
+        IrExprKind::Cast {
+            expr: Box::new(grouped_unary_operand(base)),
+            to_type: result_ty.clone(),
+        },
+        result_ty.clone(),
+    )
+}
+
 /// Return the value type `V` of a `FrozenDict[K, V]`, the frozen form a `const` dict carries.
 fn frozen_dict_value_type(ty: &IrType) -> Option<IrType> {
     match ty {
@@ -160,6 +191,23 @@ fn grouped_frozen_dict_lookup(lookup: TypedExpr) -> IrExprKind {
     }
 }
 
+/// Group an indexed method receiver so a prefix dereference emitted for a `Copy` list or dict item applies to the
+/// lookup before the following method call. An item that is not `Copy` is cloned out by a method call, or reached in
+/// place by a mutating one, which binds as written, so it is left as the place it is.
+fn grouped_index_method_receiver(receiver: TypedExpr) -> TypedExpr {
+    if !matches!(receiver.kind, IrExprKind::Index { .. }) || !receiver.ty.is_copy() {
+        return receiver;
+    }
+    let ty = receiver.ty.clone();
+    TypedExpr::new(
+        IrExprKind::Block {
+            stmts: Vec::new(),
+            value: Some(Box::new(receiver)),
+        },
+        ty,
+    )
+}
+
 impl AstLowering {
     /// Select the physical method target while retaining any checked trait evidence needed after lowering.
     pub fn project_resolved_method_target(
@@ -169,10 +217,27 @@ impl AstLowering {
         receiver: &TypedExpr,
         dispatch: Option<IrMethodDispatch>,
     ) -> (String, Option<IrMethodDispatch>) {
-        let identity = self
-            .type_info
-            .as_ref()
-            .and_then(|info| info.resolved_identity(call_span));
+        let overriding_identity = matches!(
+            &receiver.kind,
+            IrExprKind::Var { name, .. } if name == "self"
+        )
+        .then(|| self.current_impl_type.as_deref())
+        .flatten()
+        .and_then(|owner| self.class_decls.get(owner))
+        .and_then(|class| class.methods.iter().find(|method| method.node.name == source_method))
+        .and_then(|method| {
+            self.type_info.as_ref().and_then(|info| {
+                info.declarations
+                    .member_declaration_identities
+                    .get(&(method.span.start, method.span.end))
+                    .cloned()
+            })
+        });
+        let identity = overriding_identity.as_ref().or_else(|| {
+            self.type_info
+                .as_ref()
+                .and_then(|info| info.resolved_identity(call_span))
+        });
         self.project_method_target_for_identity(identity, source_method, receiver, dispatch)
     }
 
@@ -278,7 +343,7 @@ impl AstLowering {
     fn checked_c_value_ir_type(binding: &str, ty: &IrCheckedCType) -> IrType {
         match ty {
             IrCheckedCType::Scalar(scalar) => incan_lang::lang::c_abi::scalar_numeric_type(*scalar)
-                .map(IrType::Numeric)
+                .map(IrType::from_numeric_id)
                 .unwrap_or(IrType::Int),
             IrCheckedCType::Pointer { mutable, pointee } => Self::checked_c_pointer_ir_type(*mutable, pointee),
             IrCheckedCType::Resource { resource, .. } => {
@@ -1179,6 +1244,32 @@ impl AstLowering {
             .is_some_and(|ty| matches!(ty, IrType::Generic(_)))
     }
 
+    /// Return the `Option` receiver and Rust presence predicate for an identity comparison with `None`.
+    fn option_none_identity<'a>(
+        &self,
+        left: &'a Spanned<ast::Expr>,
+        op: &ast::BinaryOp,
+        right: &'a Spanned<ast::Expr>,
+    ) -> Option<(&'a Spanned<ast::Expr>, &'static str)> {
+        let receiver = if matches!(right.node, ast::Expr::Literal(ast::Literal::None)) {
+            left
+        } else if matches!(left.node, ast::Expr::Literal(ast::Literal::None)) {
+            right
+        } else {
+            return None;
+        };
+        let method = match op {
+            ast::BinaryOp::Is => "is_none",
+            ast::BinaryOp::IsNot => "is_some",
+            _ => return None,
+        };
+        self.type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(receiver.span))
+            .is_some_and(ResolvedType::is_option)
+            .then_some((receiver, method))
+    }
+
     /// Lower a control-flow condition, rewriting validated `__bool__` hooks into direct method calls.
     pub(in crate::lower) fn lower_condition_expr(
         &mut self,
@@ -1242,6 +1333,10 @@ impl AstLowering {
     }
 
     /// Return the ordinary argument policy for a method call.
+    ///
+    /// The fallback of `unwrap_or` on an `Option[str]` is the owned `str` the call returns, so it takes Incan value
+    /// semantics rather than the borrowed shape a Rust method argument otherwise takes (`d.unwrap_or(missing)` passes
+    /// `missing`, not `&missing`) (#1875).
     fn regular_method_call_arg_policy(
         &self,
         receiver_span: incan_frontend::ast::Span,
@@ -1255,6 +1350,12 @@ impl AstLowering {
             .is_some_and(|info| info.preserves_regular_method_arg_shape(receiver_span, method))
         {
             return MethodCallArgPolicy::PreserveShape;
+        }
+
+        if matches!(&receiver.ty, IrType::Option(payload) if matches!(payload.as_ref(), IrType::String))
+            && option_methods::from_str(method) == Some(OptionMethodId::UnwrapOr)
+        {
+            return MethodCallArgPolicy::SourceOwned;
         }
 
         if Self::rust_collection_family_for_ir_type(&receiver.ty)
@@ -1316,6 +1417,7 @@ impl AstLowering {
             };
         }
         Self::write_float_typed_int_literal_as_float(&mut lowered, &expr.node);
+        Self::write_suffixed_float_literal_as_cast(&mut lowered, &expr.node);
         if matches!(expr.node, ast::Expr::Ident(_))
             && let IrType::TypeToken(inner) = &lowered.ty
         {
@@ -1364,6 +1466,15 @@ impl AstLowering {
                 _ => {}
             }
         }
+        // An imported trait default is expanded in its adopter, but a constant it reads stays owned by the trait's
+        // declaring module (#1873).
+        if let ast::Expr::Ident(name) = &expr.node
+            && let Some(path) = self.active_source_trait_default_const_path(name)
+        {
+            let ty = lowered.ty.clone();
+            lowered = Self::crate_path_expr(path.iter().map(String::as_str));
+            lowered.ty = ty;
+        }
         // A const read in a parameter default reaches callers in other modules as a path to its declaring module.
         if let ast::Expr::Ident(name) = &expr.node
             && let Some(spelled) = self.default_owner_const_path(name, expr.span, &lowered)
@@ -1376,7 +1487,9 @@ impl AstLowering {
         lowered = self.wrap_with_validated_newtype_coercion(lowered, expr.span)?;
         lowered = self.copy_for_unchanged_mut_argument(lowered, expr.span);
         lowered.span = expr.span.into();
-        Ok(lowered)
+        // A value written to an `Option` field, element or return type takes the `Some` layers that place adds, and a
+        // numeric value written to a place of a wider numeric type is widened to it.
+        Ok(self.adapt_to_recorded_destination(lowered, expr.span))
     }
 
     /// Hand an argument to a caller-visible `mut` parameter as a copy when the checker proved the callee never changes
@@ -1631,6 +1744,7 @@ impl AstLowering {
 
             // ---- Literals ----
             ast::Expr::Literal(lit) => match lit {
+                ast::Literal::Int(il) if il.suffix.is_some() => (IrExprKind::IntLiteral(il.repr.clone()), IrType::Int),
                 ast::Literal::Int(il) if il.fits_i64() => (IrExprKind::Int(il.value), IrType::Int),
                 ast::Literal::Int(il) => (IrExprKind::IntLiteral(il.repr.clone()), IrType::Int),
                 ast::Literal::Float(fl) => (IrExprKind::Float(fl.value), IrType::Float),
@@ -1671,7 +1785,21 @@ impl AstLowering {
 
             // ---- Binary operations ----
             ast::Expr::Binary(l, op, r) => {
-                if let Some(resolved_operator) = self
+                if let Some((receiver, method)) = self.option_none_identity(l, op, r) {
+                    let receiver = self.lower_expr_spanned(receiver)?;
+                    (
+                        IrExprKind::MethodCall {
+                            receiver: Box::new(receiver),
+                            method: method.to_string(),
+                            dispatch: None,
+                            type_args: Vec::new(),
+                            args: Vec::new(),
+                            callable_signature: None,
+                            arg_policy: MethodCallArgPolicy::Default,
+                        },
+                        IrType::Bool,
+                    )
+                } else if let Some(resolved_operator) = self
                     .type_info
                     .as_ref()
                     .and_then(|info| info.resolved_operator_call(expr_span).cloned())
@@ -1780,20 +1908,26 @@ impl AstLowering {
                                 kind: IrCallArgKind::Positional,
                                 expr: item,
                             }];
+                            // A dict and every frozen collection answer membership with the collection family's own
+                            // test (#1757), whatever their method surface names it.
                             let contains_kind = MethodKind::for_receiver(&collection.ty, "contains").or_else(|| {
                                 let mut receiver_ty = &collection.ty;
                                 while let IrType::Ref(inner) | IrType::RefMut(inner) = receiver_ty {
                                     receiver_ty = inner.as_ref();
                                 }
-                                matches!(receiver_ty, IrType::Dict(_, _))
-                                    .then_some(MethodKind::Collection(CollectionMethodKind::Contains))
+                                (matches!(receiver_ty, IrType::Dict(_, _))
+                                    || frozen_reads::frozen_collection_item(receiver_ty).is_some())
+                                .then_some(MethodKind::Collection(CollectionMethodKind::Contains))
                             });
                             let contains_call = if let Some(kind) = contains_kind {
-                                IrExprKind::KnownMethodCall {
-                                    receiver: Box::new(collection),
+                                self.known_method_call(
+                                    r.span,
+                                    frozen_reads::frozen_membership_receiver(collection),
                                     kind,
-                                    args: contains_args,
-                                }
+                                    contains_args,
+                                    IrType::Bool,
+                                )
+                                .0
                             } else {
                                 let arg_policy = self.regular_method_call_arg_policy(
                                     r.span,
@@ -1835,6 +1969,11 @@ impl AstLowering {
                                 None
                             };
                             let result_ty = self.binary_result_type(&left.ty, &right.ty, op, pow_exp_kind);
+                            let left = if matches!(op, ast::BinaryOp::Pow) {
+                                power_base_in_result_type(left, &result_ty)
+                            } else {
+                                left
+                            };
                             (
                                 IrExprKind::BinOp {
                                     op: self.lower_binop(op, expr_span)?,
@@ -1995,6 +2134,7 @@ impl AstLowering {
                 } else {
                     self.lower_expr_spanned(o)?
                 };
+                let receiver = grouped_index_method_receiver(receiver);
                 let mut args_ir = self.lower_call_args(args)?;
                 let lowered_type_args = self.lower_call_site_type_args(expr_span, type_args);
                 let method_name = self.resolve_method_rebinding(&receiver.ty, m);
@@ -2051,7 +2191,19 @@ impl AstLowering {
                             })
                     });
 
-                if let Some(policy) = numeric_resize_policy(&method_name)
+                if dispatch.is_none()
+                    && args_ir.is_empty()
+                    && frozen_reads::is_frozen_len_call(&receiver.ty, &method_name)
+                {
+                    // A frozen collection's `len()` is the `int` that `len(c)` produces.
+                    (
+                        IrExprKind::BuiltinCall {
+                            func: BuiltinFn::Len,
+                            args: vec![receiver],
+                        },
+                        expr_ty,
+                    )
+                } else if let Some(policy) = numeric_resize_policy(&method_name)
                     && args_ir.is_empty()
                     && lowered_type_args.is_empty()
                 {
@@ -2088,14 +2240,28 @@ impl AstLowering {
                     if kind == MethodKind::Collection(CollectionMethodKind::Count) && args_ir.is_empty() {
                         (Self::lower_list_item_count(receiver), expr_ty)
                     } else {
-                        (
-                            IrExprKind::KnownMethodCall {
-                                receiver: Box::new(receiver),
-                                kind,
-                                args: args_ir,
-                            },
-                            expr_ty,
-                        )
+                        let receiver = if kind == MethodKind::Collection(CollectionMethodKind::Contains) {
+                            frozen_reads::frozen_membership_receiver(receiver)
+                        } else {
+                            receiver
+                        };
+                        // A `flat_map` callback hands the adapter a nested iterator it polls, whatever iterable
+                        // the callback returns.
+                        let args_ir = if kind == MethodKind::Iterator(IteratorMethodKind::FlatMap) {
+                            args_ir
+                                .into_iter()
+                                .enumerate()
+                                .map(|(position, mut arg)| {
+                                    if position == 0 {
+                                        arg.expr = self.flat_map_iterator_callback(arg.expr, &expr_ty);
+                                    }
+                                    arg
+                                })
+                                .collect()
+                        } else {
+                            args_ir
+                        };
+                        self.known_method_call(expr_span, receiver, kind, args_ir, expr_ty)
                     }
                 } else {
                     let imported_type_method_signature = match &o.node {
@@ -2174,6 +2340,7 @@ impl AstLowering {
                     let (emitted_method_name, dispatch) =
                         self.project_resolved_method_target(expr_span, &method_name, &receiver, dispatch);
                     Self::retain_argument_union_owners(&mut args_ir, callable_signature.as_ref());
+                    Self::keep_rust_collection_static_args_readable(&receiver, &mut args_ir);
                     (
                         IrExprKind::MethodCall {
                             receiver: Box::new(receiver),
@@ -2252,7 +2419,8 @@ impl AstLowering {
                         elem_ty,
                     )
                 } else if let Some(value_ty) = frozen_dict_value_type(&obj.ty) {
-                    // A `const` `FrozenDict[K, V]` lookup yields its value type (#1757).
+                    // A `const` `FrozenDict[K, V]` lookup yields its value type (#1757), a `'static` text or bytes
+                    // value converted to the owned `str` or `bytes` the checker typed.
                     let lookup = TypedExpr::new(
                         IrExprKind::Index {
                             object: Box::new(obj),
@@ -2260,7 +2428,23 @@ impl AstLowering {
                         },
                         value_ty.clone(),
                     );
-                    (grouped_frozen_dict_lookup(lookup), value_ty)
+                    let read =
+                        frozen_reads::owned_frozen_read(TypedExpr::new(grouped_frozen_dict_lookup(lookup), value_ty));
+                    (read.kind, read.ty)
+                } else if let Some((CollectionTypeId::FrozenList, elem_ty)) =
+                    frozen_reads::frozen_collection_item(&obj.ty)
+                {
+                    // A `const` `FrozenList[T]` read yields its element, converted to the owned `str` or `bytes`
+                    // the checker typed when the element is `'static` text or bytes.
+                    let elem_ty = elem_ty.clone();
+                    let read = frozen_reads::owned_frozen_read(TypedExpr::new(
+                        IrExprKind::Index {
+                            object: Box::new(obj),
+                            index: Box::new(idx),
+                        },
+                        elem_ty,
+                    ));
+                    (read.kind, read.ty)
                 } else {
                     let elem_ty = match &obj.ty {
                         IrType::List(e) => (**e).clone(),
@@ -2280,6 +2464,33 @@ impl AstLowering {
 
             // ---- Field access ----
             ast::Expr::Field(o, f) => {
+                // A dependency function reached through a module binding is a reference to the declaration, not a
+                // field read from a runtime module value. Calls already project this checked identity; taking the
+                // member as a first-class value must use the same compiler-owned projection (#1840). A function of a
+                // module of this crate is spelled through its module path below, which reaches the same declaration.
+                let names_dependency_function = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.resolved_identity(expr_span))
+                    .is_some_and(|identity| {
+                        matches!(identity.origin, incan_semantics_core::SymbolOrigin::Package { .. })
+                    });
+                if names_dependency_function && let Some(name) = self.emitted_function_reference_name(expr_span) {
+                    let ty = self
+                        .type_info
+                        .as_ref()
+                        .and_then(|info| info.expr_type(expr_span))
+                        .map(|ty| self.lower_resolved_type(ty))
+                        .unwrap_or(IrType::Unknown);
+                    return Ok(TypedExpr::new(
+                        IrExprKind::Var {
+                            name,
+                            access: VarAccess::Copy,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        ty,
+                    ));
+                }
                 if let Some(value) = self
                     .type_info
                     .as_ref()
@@ -2557,6 +2768,38 @@ impl AstLowering {
                     .collect();
                 let mut closure_read_counts = HashMap::new();
                 self.count_expr_ident_reads(&body.node, &mut closure_read_counts);
+                let parameter_names = param_pairs
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<std::collections::HashSet<_>>();
+                // A closure snapshots the outer locals it shares with code that runs after its construction (#1864):
+                // code later in the block, or the next pass of an enclosing loop. The root scope holds the module's
+                // functions, consts and statics, which the closure reaches by path, so it is not searched. Each
+                // block's read counters still include this closure's own reads, so a count above them is a later
+                // read.
+                let read_after_construction = |name: &str| {
+                    let own_reads = closure_read_counts.get(name).copied().unwrap_or(0);
+                    self.non_linear_context_depth > 0
+                        || self
+                            .remaining_ident_reads
+                            .iter()
+                            .any(|reads| reads.get(name).is_some_and(|remaining| *remaining > own_reads))
+                };
+                let mut capture_names = closure_read_counts
+                    .keys()
+                    .filter(|name| {
+                        !parameter_names.contains(name.as_str())
+                            && self
+                                .scopes
+                                .iter()
+                                .skip(1)
+                                .rev()
+                                .any(|scope| scope.contains_key(name.as_str()))
+                            && read_after_construction(name)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                capture_names.sort();
                 self.remaining_ident_reads.push(closure_read_counts);
                 self.non_linear_context_depth += 1;
                 self.push_scope();
@@ -2579,18 +2822,50 @@ impl AstLowering {
                     .type_info
                     .as_ref()
                     .is_some_and(|info| info.is_source_callable_closure(expr_span));
-                (
+                let closure = TypedExpr::new(
                     IrExprKind::Closure {
                         params: param_pairs,
                         body: Box::new(body_ir),
-                        captures: vec![],
+                        captures: capture_names.clone(),
                         annotate_param_types,
                     },
                     IrType::Function {
                         params: param_tys,
                         ret: Box::new(ret_ty),
                     },
-                )
+                );
+                if capture_names.is_empty() {
+                    (closure.kind, closure.ty)
+                } else {
+                    let capture_stmts = capture_names
+                        .iter()
+                        .map(|name| {
+                            let ty = self.lookup_var(name);
+                            IrStmt::new(IrStmtKind::Let {
+                                name: name.clone(),
+                                ty: ty.clone(),
+                                type_annotation: None,
+                                mutability: Mutability::Immutable,
+                                value: TypedExpr::new(
+                                    IrExprKind::Var {
+                                        name: name.clone(),
+                                        access: VarAccess::Read,
+                                        ref_kind: VarRefKind::Value,
+                                    },
+                                    ty,
+                                ),
+                            })
+                        })
+                        .collect();
+                    let ty = closure.ty.clone();
+                    (
+                        IrExprKind::Block {
+                            stmts: capture_stmts,
+                            value: Some(Box::new(closure)),
+                        },
+                        ty,
+                    )
+                }
             }
 
             // ---- Collection literals ----
@@ -2702,6 +2977,7 @@ impl AstLowering {
                             let style = match format {
                                 ast::FStringFormat::Display => super::super::expr::FormatStyle::Display,
                                 ast::FStringFormat::Debug => super::super::expr::FormatStyle::Debug,
+                                ast::FStringFormat::Unsupported(_) => super::super::expr::FormatStyle::Display,
                             };
                             Ok(super::super::expr::FormatPart::Expr { expr: lowered, style })
                         }

@@ -2614,11 +2614,6 @@ fn runtime_error_canonicalization_cases() -> Result<(), Box<dyn std::error::Erro
             "ValueError",
             &["non-finite float cannot initialize exact f32"],
         ),
-        (
-            "exact-f64-overflow",
-            "ValueError",
-            &["non-finite float cannot initialize exact f64"],
-        ),
     ];
     let tmp = tempfile::tempdir()?;
     let project_name = unique_test_project_name("runtime_error_matrix");
@@ -2669,9 +2664,6 @@ def main() -> None:
     _ = fail_as[int]("boom")
   elif scenario == "exact-f32-overflow":
     let value: f32 = 3.4e38
-    println(value * value)
-  elif scenario == "exact-f64-overflow":
-    let value: f64 = 1.7e308
     println(value * value)
 "#,
     )?;

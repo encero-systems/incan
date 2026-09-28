@@ -1155,7 +1155,9 @@ mod tests {
     fn foundation_family_is_selected_by_key_and_stands_in_for_a_cargo_build() -> TestResult {
         let fixture = Fixture::new()?;
         let store_root = tempfile::tempdir()?;
-        let store = OvenStore::new(store_root.path(), limits());
+        // The store hands back canonicalized entry paths, and macOS puts `/tmp` behind a symlink.
+        let store_path = fs::canonicalize(store_root.path())?;
+        let store = OvenStore::new(&store_path, limits());
         let first = receipt(fixture.root())?;
         let published = fixture.publish_family(&store, &first, &fixture.key)?;
 
@@ -1195,7 +1197,7 @@ mod tests {
         assert_eq!(prepared.catalog.materialized_files.len(), 2);
         for file in &prepared.catalog.materialized_files {
             assert!(
-                file.source_path.starts_with(store_root.path()),
+                file.source_path.starts_with(&store_path),
                 "{}",
                 file.source_path.display()
             );
@@ -1467,7 +1469,9 @@ mod tests {
         assert_ne!(producer.identity, consumer.identity);
 
         let local_root = tempfile::tempdir()?;
-        let local = OvenStore::new(local_root.path(), limits());
+        // The store hands back canonicalized entry paths, and macOS puts `/tmp` behind a symlink.
+        let local_path = fs::canonicalize(local_root.path())?;
+        let local = OvenStore::new(&local_path, limits());
         let family = select_or_import_compiler_suite_foundation_family(
             &local,
             &consumer,
@@ -1479,7 +1483,7 @@ mod tests {
         assert_eq!(family.partitions.len(), 2);
         for partition in &family.partitions {
             assert!(
-                partition.stored.artifact_root.starts_with(local_root.path()),
+                partition.stored.artifact_root.starts_with(&local_path),
                 "served locally after import"
             );
             assert_eq!(partition.stored.manifest.receipt_identity, consumer.identity);

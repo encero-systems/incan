@@ -4,6 +4,8 @@
 //! to concrete numeric values so compiler stages and runtime carriers do not grow independent bounds, widening, or
 //! fixed-scale decimal implementations.
 
+use core::cmp::Ordering;
+
 use crate::lang::types::numerics::{self, NumericFamily, NumericTypeId};
 
 /// The inclusive value domain of one sized integer identity.
@@ -89,6 +91,35 @@ pub fn numeric_type_losslessly_widens_to(actual: NumericTypeId, expected: Numeri
     }
 }
 
+/// Return the narrowest integer type that two integer types both widen to without loss.
+///
+/// Two values of different integer types compare as values of this type: the wider of the two when one widens to the
+/// other, otherwise the narrowest signed type holding both (`i16` for `i8` and `u8`, `i128` for `i64` and `u64`).
+/// Returns `None` for a pair no integer type holds (`u128` and a signed type, or `isize` or `usize` and another type)
+/// and for a non-integer type.
+#[must_use]
+pub fn common_lossless_integer_type(left: NumericTypeId, right: NumericTypeId) -> Option<NumericTypeId> {
+    if !numerics::is_integer(left) || !numerics::is_integer(right) {
+        return None;
+    }
+    if numeric_type_losslessly_widens_to(left, right) {
+        return Some(right);
+    }
+    if numeric_type_losslessly_widens_to(right, left) {
+        return Some(left);
+    }
+    [
+        NumericTypeId::I16,
+        NumericTypeId::I32,
+        NumericTypeId::I64,
+        NumericTypeId::I128,
+    ]
+    .into_iter()
+    .find(|common| {
+        numeric_type_losslessly_widens_to(left, *common) && numeric_type_losslessly_widens_to(right, *common)
+    })
+}
+
 /// Compare fixed bit widths for widening decisions; platform-width types only widen to themselves.
 const fn width_at_least(expected: Option<u16>, actual: Option<u16>) -> bool {
     match (expected, actual) {
@@ -138,6 +169,91 @@ pub fn decimal_value_fits(precision: u8, scale: u8, coefficient: i128, literal_s
     let integer_digits = digits.saturating_sub(usize::from(literal_scale)).max(1);
     let total_digits = integer_digits + usize::from(literal_scale);
     integer_digits <= usize::from(precision - scale) && total_digits <= usize::from(precision)
+}
+
+/// Return whether every value of `decimal[source_precision, source_scale]` is a value of
+/// `decimal[target_precision, target_scale]`.
+///
+/// The target must keep at least as many digits before the point (`p - s`) and at least as many after it (`s`) as the
+/// source. Precision alone decides nothing: `decimal[4, 3]` and `decimal[4, 0]` share a precision, and neither holds
+/// the other's values.
+#[must_use]
+pub fn decimal_type_losslessly_widens_to(
+    source_precision: u8,
+    source_scale: u8,
+    target_precision: u8,
+    target_scale: u8,
+) -> bool {
+    let source_integer_digits = source_precision.saturating_sub(source_scale);
+    let target_integer_digits = target_precision.saturating_sub(target_scale);
+    target_integer_digits >= source_integer_digits && target_scale >= source_scale
+}
+
+/// Return a decimal value's canonical form: its coefficient with trailing fractional zeros removed, and the scale left.
+///
+/// `1.50` (coefficient 150, scale 2) and `1.5` (15, 1) share the canonical form (15, 1), and every zero is (0, 0).
+/// Numeric equality and hashing compare canonical forms, so equal values agree whatever scale they were written with.
+#[must_use]
+pub fn canonical_decimal_value(coefficient: i128, scale: u8) -> (i128, u8) {
+    let (mut coefficient, mut scale) = (coefficient, scale);
+    while scale > 0 && coefficient % 10 == 0 {
+        coefficient /= 10;
+        scale -= 1;
+    }
+    (coefficient, scale)
+}
+
+/// Compare two decimal values numerically, whatever scales they were written with.
+///
+/// The order is the order of the values: `1.5` equals `1.50`, and `1.49` is less than `1.5` although its coefficient
+/// (149) is greater. It agrees with equality of [`canonical_decimal_value`] forms.
+#[must_use]
+pub fn compare_decimal_values(
+    left_coefficient: i128,
+    left_scale: u8,
+    right_coefficient: i128,
+    right_scale: u8,
+) -> Ordering {
+    let (left_coefficient, left_scale) = canonical_decimal_value(left_coefficient, left_scale);
+    let (right_coefficient, right_scale) = canonical_decimal_value(right_coefficient, right_scale);
+    let by_sign = left_coefficient.signum().cmp(&right_coefficient.signum());
+    if by_sign != Ordering::Equal || left_coefficient == 0 {
+        return by_sign;
+    }
+    let by_magnitude = compare_decimal_magnitudes(
+        left_coefficient.unsigned_abs(),
+        left_scale,
+        right_coefficient.unsigned_abs(),
+        right_scale,
+    );
+    if left_coefficient < 0 {
+        by_magnitude.reverse()
+    } else {
+        by_magnitude
+    }
+}
+
+/// Compare two non-zero decimal magnitudes by bringing the one with fewer fractional digits to the other's scale.
+///
+/// A rescaled magnitude that no longer fits `u128` exceeds every magnitude that does, so the overflow itself decides
+/// the order.
+fn compare_decimal_magnitudes(left: u128, left_scale: u8, right: u128, right_scale: u8) -> Ordering {
+    let rescaled = |magnitude: u128, extra_digits: u8| {
+        10u128
+            .checked_pow(u32::from(extra_digits))
+            .and_then(|factor| magnitude.checked_mul(factor))
+    };
+    match left_scale.cmp(&right_scale) {
+        Ordering::Equal => left.cmp(&right),
+        Ordering::Greater => match rescaled(right, left_scale - right_scale) {
+            Some(right) => left.cmp(&right),
+            None => Ordering::Less,
+        },
+        Ordering::Less => match rescaled(left, right_scale - left_scale) {
+            Some(left) => left.cmp(&right),
+            None => Ordering::Greater,
+        },
+    }
 }
 
 /// Render a decimal coefficient with exactly its retained written scale.
@@ -217,5 +333,48 @@ mod tests {
         assert_eq!(format_decimal_value(parsed.coefficient, parsed.literal_scale), "19.90");
         assert!(!decimal_value_fits(5, 2, 12345, 0));
         Ok(())
+    }
+
+    /// A decimal type widens only to a type that keeps as many digits on each side of the point (#1809).
+    #[test]
+    fn decimal_widening_keeps_integer_digits_and_scale_issue1809() {
+        assert!(decimal_type_losslessly_widens_to(10, 2, 10, 2));
+        assert!(decimal_type_losslessly_widens_to(3, 1, 4, 2));
+        assert!(decimal_type_losslessly_widens_to(5, 2, 12, 4));
+        assert!(!decimal_type_losslessly_widens_to(10, 2, 1, 1));
+        assert!(!decimal_type_losslessly_widens_to(4, 3, 4, 0));
+        assert!(!decimal_type_losslessly_widens_to(4, 0, 4, 3));
+        assert!(!decimal_type_losslessly_widens_to(4, 1, 4, 2));
+    }
+
+    /// Decimal values compare and canonicalize by value, whatever scale they were written with (#1810).
+    #[test]
+    fn decimal_values_compare_numerically_issue1810() {
+        assert_eq!(canonical_decimal_value(150, 2), (15, 1));
+        assert_eq!(canonical_decimal_value(15, 1), (15, 1));
+        assert_eq!(canonical_decimal_value(0, 3), (0, 0));
+        assert_eq!(canonical_decimal_value(-1200, 2), (-12, 0));
+        assert_eq!(canonical_decimal_value(1200, 0), (1200, 0));
+        assert_eq!(compare_decimal_values(150, 2, 15, 1), Ordering::Equal);
+        assert_eq!(compare_decimal_values(15, 1, 149, 2), Ordering::Greater);
+        assert_eq!(compare_decimal_values(-15, 1, -149, 2), Ordering::Less);
+        assert_eq!(compare_decimal_values(-1, 0, 0, 5), Ordering::Less);
+        assert_eq!(compare_decimal_values(0, 2, 0, 0), Ordering::Equal);
+        assert_eq!(compare_decimal_values(12345, 0, 1, 38), Ordering::Greater);
+        assert_eq!(compare_decimal_values(1, 38, 12345, 0), Ordering::Less);
+        assert_eq!(compare_decimal_values(i128::MAX, 0, i128::MAX, 38), Ordering::Greater);
+    }
+
+    /// Two integer types compare in the wider one, or in the narrowest signed type holding both.
+    #[test]
+    fn common_lossless_integer_type_is_the_narrowest_holding_both() {
+        use NumericTypeId::{F64, I8, I16, I64, I128, ISize, U8, U64, U128};
+        assert_eq!(common_lossless_integer_type(I8, I64), Some(I64));
+        assert_eq!(common_lossless_integer_type(U8, I16), Some(I16));
+        assert_eq!(common_lossless_integer_type(I8, U8), Some(I16));
+        assert_eq!(common_lossless_integer_type(I64, U64), Some(I128));
+        assert_eq!(common_lossless_integer_type(U128, I8), None);
+        assert_eq!(common_lossless_integer_type(ISize, I64), None);
+        assert_eq!(common_lossless_integer_type(I8, F64), None);
     }
 }

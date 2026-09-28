@@ -23,6 +23,21 @@ pub(crate) fn is_synthetic_span(span: ast::Span) -> bool {
     span == ast::Span::default() || span.start >= SYNTHETIC_SPAN_BASE
 }
 
+/// Return the synthetic span that stands in for `source` on a declaration a tool generates from source it rewrites.
+///
+/// A generated declaration needs a span of its own, because declarations are keyed by span, yet its generated name
+/// must not read as a source spelling to checks such as the reserved `__incan_` prefix (#1769). The result lies above
+/// the synthetic base, one span per source span. Spans from `SyntheticSpanAllocator` start at an even offset from that
+/// base and these start at an odd one, so the two never coincide.
+pub fn synthetic_span_anchored_at(source: ast::Span) -> ast::Span {
+    let synthetic_offset = |position: usize| {
+        SYNTHETIC_SPAN_BASE
+            .saturating_add(position.saturating_mul(2))
+            .saturating_add(1)
+    };
+    ast::Span::new(synthetic_offset(source.start), synthetic_offset(source.end))
+}
+
 /// Allocates unique spans for AST nodes synthesized from desugarer output.
 ///
 /// The public vocab AST intentionally does not assign source offsets to every helper-produced expression, but later
@@ -1620,6 +1635,43 @@ mod tests {
         assert_ne!(inner.span, ast::Span::default());
         assert_ne!(value.span, ast::Span::default());
         Ok(())
+    }
+
+    #[test]
+    fn anchored_synthetic_spans_are_synthetic_distinct_and_apart_from_allocated_spans() {
+        let first = synthetic_span_anchored_at(ast::Span::new(10, 20));
+        let second = synthetic_span_anchored_at(ast::Span::new(30, 40));
+
+        assert!(
+            is_synthetic_span(first),
+            "an anchored span must read as compiler-authored"
+        );
+        assert!(
+            is_synthetic_span(second),
+            "an anchored span must read as compiler-authored"
+        );
+        assert_ne!(first, second, "two source spans must keep two generated spans");
+        assert_eq!(first, synthetic_span_anchored_at(ast::Span::new(10, 20)));
+
+        let mut allocator = SyntheticSpanAllocator::new(ast::Span::new(1, 2));
+        for _ in 0..64 {
+            let allocated = allocator.next();
+            assert_eq!(
+                (allocated.start - SYNTHETIC_SPAN_BASE) % 2,
+                0,
+                "allocated spans start at an even offset"
+            );
+        }
+        assert_eq!(
+            (first.start - SYNTHETIC_SPAN_BASE) % 2,
+            1,
+            "anchored spans start at an odd offset"
+        );
+        assert_eq!(
+            (second.start - SYNTHETIC_SPAN_BASE) % 2,
+            1,
+            "anchored spans start at an odd offset"
+        );
     }
 
     #[test]

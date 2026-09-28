@@ -537,8 +537,15 @@ fn render_operators_section(out: &mut String) {
     start_section(out, "## Operators");
 
     out.push_str("### Notes\n\n");
-    out.push_str("- **Precedence**: Higher binds tighter (e.g. `*` > `+`). Values are relative: only their order is significant.\n");
-    out.push_str("- **Associativity**: How operators of the same precedence group (left-to-right vs right-to-left).\n");
+    out.push_str(
+        "- **Precedence**: Higher binds tighter (e.g. `*` > `+`). Values are relative: only their order is significant. From loosest to tightest, one level per `<`: `or` < `and` < `not` < comparisons (`==`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `not in`, `is`, `is not`, `|>`, `<|`) < ranges (`..`, `..=`) < `|` < `^` < `&` < shifts (`<<`, `>>`) < `+`, `-` < `*`, `/`, `//`, `%`, `@` < prefix `-`, `~` < `**`.\n",
+    );
+    out.push_str(
+        "- **Prefix operators**: `not` binds looser than the comparisons: `not a == b` is `not (a == b)`. `**` binds tighter than a prefix `-` or `~` on its left and looser than one on its right: `-x ** 2` is `-(x ** 2)`, `~x ** 2` is `~(x ** 2)`, and `2 ** -1` is `2 ** (-1)`. Prefix `-` binds like `~`.\n",
+    );
+    out.push_str(
+        "- **Associativity**: How operators of the same precedence group (left-to-right vs right-to-left). A prefix operator is `Right`: `not not a` is `not (not a)`. `None` means the operator does not chain: `a..b..c` is refused with `INCAN-P0001`.\n",
+    );
     out.push_str(
         "- **Fixity**: Whether the operator is used as a prefix unary operator or an infix binary operator.\n",
     );

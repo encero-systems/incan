@@ -50,7 +50,7 @@ fn counted() -> Vec<i64> {
     return (0_i64..(3 as i64)).into_iter().collect::<Vec<_>>();
 }
 fn thawed(frozen: incan_std_core::frozen::FrozenList<i64>) -> Vec<i64> {
-    return (frozen).iter().cloned().collect::<Vec<_>>();
+    return (frozen).iter().map(|__incan_item| __incan_item.clone()).collect::<Vec<_>>();
 }
 fn thawed_text(frozen: incan_std_core::frozen::FrozenList<&'static str>) -> Vec<String> {
     return (frozen)

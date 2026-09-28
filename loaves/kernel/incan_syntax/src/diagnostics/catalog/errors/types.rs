@@ -629,6 +629,35 @@ pub fn type_mismatch(expected: &str, found: &str, span: Span) -> CompileError {
     error
 }
 
+/// Build the diagnostic for arithmetic over two different integer types (RFC 009).
+///
+/// Same-type integer arithmetic keeps its type, so an operation whose operands have two integer types (`i8 + i16`, or
+/// `i8 + n` for an `int` value `n`) has no result type until one operand is converted to the other's type.
+pub fn mixed_width_integer_arithmetic(left: &str, op: &str, right: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Mixed-width integer arithmetic: '{left} {op} {right}' has operands of two integer types"),
+        span,
+    )
+    .with_note("Integer arithmetic takes two operands of one integer type and yields that type")
+    .with_hint(
+        "Convert one operand to the other operand's type first, with 'resize()' where the conversion is lossless or \
+         'try_resize()' where the value may not fit",
+    )
+}
+
+/// Build the diagnostic for comparing two integer types that no one integer type holds both values of (RFC 009).
+///
+/// Values of two integer types compare in the narrowest integer type both widen to without loss; `u128` beside a
+/// signed type, and `isize` or `usize` beside another integer type, have none.
+pub fn incomparable_integer_types(left: &str, op: &str, right: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Cannot compare '{left} {op} {right}': no integer type holds every value of both"),
+        span,
+    )
+    .with_note("Two integer types compare in the narrowest integer type both widen to without loss")
+    .with_hint("Convert one operand to the other operand's type first, with 'try_resize()'")
+}
+
 /// Build a type mismatch diagnostic for a return expression.
 pub fn return_type_mismatch(expected: &str, found: &str, span: Span) -> CompileError {
     add_type_mismatch_hints(
@@ -740,6 +769,20 @@ fn add_type_mismatch_hints(mut error: CompileError, expected: &str, found: &str)
         error = error.with_hint("Use f-string or str() to convert to string");
     }
 
+    // Decimal shape hints: a decimal is assignable only where no digit is lost (#1809)
+    if let (Some((_, expected_precision, expected_scale)), Some((found_constructor, found_precision, found_scale))) =
+        (rendered_decimal_shape(expected), rendered_decimal_shape(found))
+    {
+        let found_integer_digits = found_precision.saturating_sub(found_scale);
+        let expected_integer_digits = expected_precision.saturating_sub(expected_scale);
+        error = error.with_note(format!(
+            "'{found}' holds up to {found_integer_digits} digit(s) before the point and {found_scale} after it; '{expected}' keeps {expected_integer_digits} before the point and {expected_scale} after it"
+        ));
+        error = error.with_hint(format!(
+            "A decimal is assignable only to a decimal type that keeps at least its digits before and after the point, and the language defines no decimal rounding or resize: declare the target as '{found}', or as any {found_constructor}[p, s] with p - s >= {found_integer_digits} and s >= {found_scale}"
+        ));
+    }
+
     // Bool condition hints
     if expected == "bool" {
         if found.starts_with("Option[") {
@@ -764,6 +807,14 @@ fn add_type_mismatch_hints(mut error: CompileError, expected: &str, found: &str)
     }
 
     error
+}
+
+/// Parse a rendered decimal type (`decimal[10, 2]`, `decimal128[10, 2]`) into its constructor, precision and scale.
+fn rendered_decimal_shape(rendered: &str) -> Option<(&str, u8, u8)> {
+    let (constructor, arguments) = rendered.split_once('[')?;
+    let (precision, scale) = arguments.strip_suffix(']')?.split_once(',')?;
+    incan_lang::lang::types::numerics::decimal_constructor_from_str(constructor)?;
+    Some((constructor, precision.trim().parse().ok()?, scale.trim().parse().ok()?))
 }
 
 pub fn field_type_mismatch(field: &str, expected: &str, found: &str, span: Span) -> CompileError {
@@ -1379,6 +1430,44 @@ pub fn trait_typed_local_annotation_unsupported(annotation: &str, span: Span) ->
     .with_note("Trait annotations are currently supported on callable boundaries and `with` adoption clauses")
 }
 
+/// Emitted when a trait is written inside another type in a callable signature or a local annotation, such as
+/// `Option[Serialize]` or `list[Serialize]` (#1866).
+///
+/// A trait stands for the types that adopt it only as a whole parameter or return type, where the value is one hidden
+/// adopting type. Inside another type it has no value representation, so the annotation is refused rather than
+/// generated as a bare trait.
+pub fn trait_type_nested_in_annotation_unsupported(trait_type: &str, annotation: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Trait '{trait_type}' cannot be used inside the type '{annotation}'"),
+        span,
+    )
+    .with_hint(format!(
+        "Use a type that adopts '{trait_type}', or a type parameter bounded by it (`T with {trait_type}`) in its place"
+    ))
+    .with_note("A trait names the types that adopt it only as a whole parameter or return type")
+}
+
+/// Emitted when a model or class field stores a trait directly or inside a container.
+pub fn trait_typed_field_annotation_unsupported(
+    owner_kind: &str,
+    owner_name: &str,
+    field_name: &str,
+    annotation: &str,
+    trait_name: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Trait-typed field '{owner_name}.{field_name}' has unsupported {owner_kind} storage type '{annotation}'"
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Use a concrete type that adopts '{trait_name}' for the stored field"
+    ))
+    .with_note("Trait annotations are supported on callable boundaries and `with` adoption clauses, not stored fields")
+}
+
 /// Emitted when two supertraits require the same field with incompatible types (RFC 042).
 pub fn supertrait_requires_conflict(
     trait_name: &str,
@@ -1991,6 +2080,27 @@ pub fn operator_has_no_type_parameter_bound(
         "'/', '//', '%' and '**' follow the language's numeric rules, which only the concrete numeric types carry; \
          unlike '+', '-' and '*', no bound on a type parameter stands for them",
     )
+}
+
+/// Report a `dict.get(key)` whose result is kept although the stored value type cannot be copied.
+///
+/// `get` answers with the stored value. A result that is only read (a `match`, `if let` or `while let` whose bindings
+/// are only the argument of `len`, `print` or `println`, an f-string interpolation, or the receiver of a Rust method
+/// with a shared receiver whose result is not kept, or are unused) needs no copy; any other result is the lookup's own
+/// copy of the value, which `value_type` does not provide. `INCAN-T0118` is its stable code.
+pub fn kept_dict_lookup_value_cannot_be_copied(value_type: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("`get` here has to return its own `{value_type}`, and `{value_type}` cannot be copied"),
+        span,
+    )
+    .with_stable_code("INCAN-T0118")
+    .with_hint(
+        "Read the value where it is stored instead: `match table.get(key):` or `if let Some(item) = table.get(key):`, \
+         where `item` is only passed to `len`, `print` or `println`, interpolated in an f-string, used to call a Rust \
+         method with a shared receiver whose result is not kept (an Incan method taking `self` does not count), or not \
+         used",
+    )
+    .with_note("`get` returns the stored value; a result that is returned, bound, passed on or changed is a copy of it")
 }
 
 // -- Validate derive ---------------------------------------------------------
@@ -2632,6 +2742,22 @@ pub fn collection_literal_has_no_one_member(destination: &str, members: &[String
     ))
 }
 
+/// Report a collection literal argument (`[]`, `{}`, `[None]`) whose parameter type names a type parameter of the
+/// callee that no argument fixes, so the call has no type to instantiate it with (#1862).
+pub fn generic_literal_argument_leaves_type_param_open(callee: &str, type_param: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Cannot infer type parameter '{type_param}' of '{callee}': this literal's elements do not say what it is, \
+             and no other argument does"
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Pass the type arguments explicitly, as in `{callee}[...](...)`, or give the literal a type first by binding \
+         it to an annotated name"
+    ))
+}
+
 pub fn tuple_index_out_of_bounds(idx: i64, len: usize, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Tuple index {} is out of bounds for tuple of length {}", idx, len),
@@ -2892,6 +3018,11 @@ pub enum DisplayPosition<'a> {
 /// has no printed form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnprintableValue<'a> {
+    /// A generic type parameter whose declaration does not require a display route.
+    TypeParameter {
+        /// The parameter's source name.
+        name: &'a str,
+    },
     /// A value of an anonymous union type (`int | str`), which prints once it is narrowed to one member.
     Union,
     /// A `Generator` value, whose items exist only as it is consumed.
@@ -2913,6 +3044,7 @@ impl UnprintableValue<'_> {
     /// never depends on how a type name is pronounced.
     fn describe(self, name: Option<&str>) -> String {
         let kind = match self {
+            Self::TypeParameter { name } => return format!("type parameter '{name}'"),
             Self::Union => "union value".to_string(),
             Self::Generator => "generator".to_string(),
             Self::Function => "function".to_string(),
@@ -2953,6 +3085,9 @@ pub fn value_has_no_printed_form(
         }
     };
     let hint = match value {
+        UnprintableValue::TypeParameter { name } => {
+            format!("Add a Display bound: `{name} with Display`")
+        }
         UnprintableValue::Union => {
             "Narrow it to one member first, with match or isinstance, and display that member".to_string()
         }
@@ -2978,6 +3113,9 @@ pub fn value_has_no_printed_form(
         }
     };
     let note = match value {
+        UnprintableValue::TypeParameter { .. } => {
+            "A generic body may display a type parameter only when its declaration requires Display, Error or a trait that supplies __str__"
+        }
         UnprintableValue::Nominal { .. } => {
             "A type provides Display through a __str__ method, the values of an enum that declares them, or the message() of an Error adopter; @derive(Display) provides nothing"
         }

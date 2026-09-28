@@ -1,0 +1,35 @@
+# behavior: Incan values passed to Rust standard-library functions borrow as the signature declares: two models swap through mutable borrows, a model and an int are measured by size_of_val through shared borrows, and a list is taken by mutable borrow leaving an empty list behind
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_call_expr_borrows_struct_arg_for_rust_ref_param
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_call_expr_borrows_mutably_for_rust_refmut_param
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_call_expr_borrows_copy_arg_for_rust_ref_param
+# retires: loaves/compiler/incan_emit/src/emit/expressions/calls.rs::emit_call_expr_borrows_args_from_typed_rust_callee_without_registry
+# expect-stdout:
+#   2 1
+#   8
+#   16
+#   2
+#   0
+
+from rust::std::mem import size_of_val, swap, take
+
+
+model Thing:
+    value: int
+
+
+model Wide:
+    left: int
+    right: int
+
+
+def main() -> None:
+    mut first = Thing(value=1)
+    mut second = Thing(value=2)
+    swap(first, second)
+    println(f"{first.value} {second.value}")
+    println(size_of_val(first))
+    println(size_of_val(Wide(left=1, right=2)))
+    mut items: list[int] = [1, 2]
+    taken = take(items)
+    println(len(taken))
+    println(len(items))

@@ -14,7 +14,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use super::super::{EmitError, IrEmitter};
-use crate::ownership::{frozen_dict_entry_types, plan_dict_lookup_key};
+use crate::ownership::{frozen_dict_entry_types, list_read_element_type, plan_dict_lookup_key};
 use incan_ir::expr::{IrExprKind, TypedExpr, UnaryOp, VarRefKind};
 use incan_ir::types::IrType;
 
@@ -178,6 +178,26 @@ impl<'a> IrEmitter<'a> {
             });
         }
 
+        // Migration note (rust_source_backend_deprecation.md):
+        // - Compatibility issue: #1757 -- `NAMES[i]` on a `const` `FrozenList` fell through to raw Rust indexing, which
+        //   casts a negative index to a huge `usize`, reports an out-of-range index as a Rust panic instead of
+        //   `IndexError`, and moves a non-`Copy` element out of the storage.
+        // - Behavior evidence: the `const_frozen_collection_reads` behavior fixtures and the lowering test
+        //   `frozen_list_index_reads_the_owned_element_issue1757`.
+        // - Semantic owner: the checked index type (`FrozenList[T][int]` is `T`) and `list_read_element_type` in the
+        //   ownership planner; this arm only spells the list read both families share.
+        // - Retirement condition: the Rust-source backend is deleted (#654); Body IR evaluates the read from the same
+        //   checked facts.
+        if let Some(elem) = list_read_element_type(obj_ty) {
+            let idx_tokens = self.emit_expr(index)?;
+            let idx_i64 = quote! { (#idx_tokens) as i64 };
+            return if elem.is_copy() {
+                Ok(quote! { *incan_std_core::collections::list_get(&#o, #idx_i64) })
+            } else {
+                Ok(quote! { incan_std_core::collections::list_get(&#o, #idx_i64).clone() })
+            };
+        }
+
         match obj_ty {
             IrType::Dict(_, v) => {
                 let i = self.emit_expr(index)?;
@@ -186,15 +206,6 @@ impl<'a> IrEmitter<'a> {
                     Ok(quote! { *incan_std_core::collections::dict_get(&#o, #key) })
                 } else {
                     Ok(quote! { incan_std_core::collections::dict_get(&#o, #key).clone() })
-                }
-            }
-            IrType::List(elem) => {
-                let idx_tokens = self.emit_expr(index)?;
-                let idx_i64 = quote! { (#idx_tokens) as i64 };
-                if elem.is_copy() {
-                    Ok(quote! { *incan_std_core::collections::list_get(&#o, #idx_i64) })
-                } else {
-                    Ok(quote! { incan_std_core::collections::list_get(&#o, #idx_i64).clone() })
                 }
             }
             // Fallback for unknown/unsupported index targets.
@@ -346,6 +357,13 @@ impl<'a> IrEmitter<'a> {
         }
 
         let o = self.emit_expr(object)?;
+        // A `Copy` item read out of a collection is emitted as a dereference, and a field access binds tighter than a
+        // dereference: `*list_get(&pts, 0).0` dereferences the field, so the dereference is grouped first (#1861).
+        let o = if starts_with_dereference(&o) {
+            quote! { (#o) }
+        } else {
+            o
+        };
         // Check if field is a numeric index (tuple access)
         if field.chars().all(|c| c.is_ascii_digit()) {
             let idx: syn::Index = field
@@ -423,6 +441,16 @@ impl<'a> IrEmitter<'a> {
             }
         }
     }
+}
+
+/// Whether emitted tokens begin with a prefix `*`, so a following field access would bind to the operand rather than to
+/// the dereferenced value.
+fn starts_with_dereference(tokens: &TokenStream) -> bool {
+    tokens
+        .clone()
+        .into_iter()
+        .next()
+        .is_some_and(|token| matches!(token, proc_macro2::TokenTree::Punct(punct) if punct.as_char() == '*'))
 }
 
 #[cfg(test)]

@@ -17,14 +17,14 @@ use incan_test_support::cli_project::{assert_success, run_explicit_oven_bake, ru
 /// gives such a field a dead-code expectation, and the hand-written `Debug` impl must count as a derive for that
 /// expectation to stay fulfilled.
 const MAIN_SOURCE: &str = r#"@derive(Debug)
-model Column[T]:
+model Column[T with Display]:
   sql: str
   note: str = "n"
 
   def __mul__(self, other: T) -> Column[T]:
     return Column[T](sql=f"({self.sql} * {other})")
 
-def col[T](name: str) -> Column[T]:
+def col[T with Display](name: str) -> Column[T]:
   return Column[T](sql=name)
 
 def main() -> None:
