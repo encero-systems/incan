@@ -560,7 +560,7 @@ pub struct RustFactRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RustFactOut {
-    /// The name the source includes it by (its `OUT_DIR` file name).
+    /// Plain path relative to the `OUT_DIR` namespace; comparable to a tool output `path`.
     pub name: String,
     /// Committed file, relative to the manifest directory.
     pub path: String,
@@ -569,7 +569,7 @@ pub struct RustFactOut {
 }
 
 /// Whether one declared artifact is a single file or a complete directory tree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RustFactArtifactKind {
     /// One regular file with no member catalog.
@@ -579,7 +579,7 @@ pub enum RustFactArtifactKind {
 }
 
 /// One regular file in a declared tree artifact.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RustFactArtifactMember {
     /// Portable path relative to the tree root.
@@ -589,7 +589,7 @@ pub struct RustFactArtifactMember {
 }
 
 /// One named producer input or output beneath its immutable owner.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RustFactArtifact {
     /// Stable invocation-local name referenced by typed arguments and environment entries.
@@ -606,7 +606,7 @@ pub struct RustFactArtifact {
 }
 
 /// One named producer output contract whose bytes and digest live in the admitted asset.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RustFactOutput {
     /// Stable invocation-local name referenced by typed arguments.
@@ -618,7 +618,7 @@ pub struct RustFactOutput {
 }
 
 /// Relocation-independent identity of the exact executable selected by a publisher.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RustFactExecutable {
     /// Stable argv-zero and selection name.
@@ -632,7 +632,7 @@ pub struct RustFactExecutable {
 }
 
 /// One ordered producer argument without a physical path.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum RustFactArgument {
     /// Literal argument bytes.
@@ -644,7 +644,7 @@ pub enum RustFactArgument {
 }
 
 /// One named producer environment entry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RustFactEnvironment {
     /// Environment variable name, unique and sorted within one producer record.
@@ -658,7 +658,7 @@ pub struct RustFactEnvironment {
 }
 
 /// Source language accepted by a native-link producer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RustFactLinkLanguage {
     /// C source.
@@ -670,7 +670,7 @@ pub enum RustFactLinkLanguage {
 }
 
 /// Linker-visible archive kind.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RustFactLibraryKind {
     /// Static archive.
@@ -680,7 +680,7 @@ pub enum RustFactLibraryKind {
 }
 
 /// Linker-visible library produced by one native-link declaration.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RustFactLibrary {
     /// Linker-visible library name without platform prefix or suffix.
@@ -739,7 +739,8 @@ pub struct RustFactTool {
 }
 
 /// Publisher work class supplied by an observation before admission.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum RustFactProducerRole {
     /// Native compilation and archive production.
     Link,
@@ -751,7 +752,8 @@ pub enum RustFactProducerRole {
 ///
 /// Compatibility harvesters map raw observations into this type. Optional fields represent role-specific evidence
 /// that capture may not have obtained; conversion refuses them instead of guessing executable or library identity.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RustFactWorkObservation {
     /// Publisher work class observed by the compatibility boundary.
     pub role: RustFactProducerRole,
@@ -1987,6 +1989,9 @@ fn validate_rust_fact_tool(tool: &RustFactTool) -> Result<(), String> {
 }
 
 /// Refuse a declared-fact record set that is not closed, sorted, bound once, and free of reserved or foreign keys.
+///
+/// `out.name` and each tool output `path` are paths in the same `OUT_DIR`-relative namespace, so equality or
+/// containment between them would assign one generated path to two producers and is refused.
 fn validate_rust_fact_records(
     records: &[RustFactRecord],
     path: &Path,
@@ -2015,12 +2020,13 @@ fn validate_rust_fact_records(
             ));
         }
         let mut names = HashSet::new();
+        let mut out_names = Vec::with_capacity(record.out.len());
         if record.out.windows(2).any(|pair| pair[0].name >= pair[1].name) {
             return Err(invalid(index, "out must be sorted by unique name".to_string()));
         }
         for out in &record.out {
             let relative = Path::new(&out.path);
-            if out.name.trim().is_empty()
+            if validate_rust_fact_path(&out.name, "out name").is_err()
                 || out.path.trim().is_empty()
                 || relative.is_absolute()
                 || relative
@@ -2041,6 +2047,7 @@ fn validate_rust_fact_records(
             if !names.insert(out.name.as_str()) {
                 return Err(invalid(index, format!("out `{}` is declared twice", out.name)));
             }
+            out_names.push(out.name.as_str());
         }
         let mut work_names = HashSet::new();
         if record.link.windows(2).any(|pair| pair[0].name >= pair[1].name) {
@@ -2062,6 +2069,19 @@ fn validate_rust_fact_records(
         for tool in &record.tool {
             validate_rust_fact_tool(tool)
                 .map_err(|message| invalid(index, format!("tool `{}` {message}", tool.name)))?;
+            if let Some(output) = tool.outputs.iter().find(|output| {
+                out_names
+                    .iter()
+                    .any(|out_name| rust_fact_paths_overlap(out_name, &output.path))
+            }) {
+                return Err(invalid(
+                    index,
+                    format!(
+                        "tool output `{}` overlaps an out member in the shared OUT_DIR namespace",
+                        output.path
+                    ),
+                ));
+            }
             if !work_names.insert(tool.name.as_str()) {
                 return Err(invalid(
                     index,
@@ -4384,6 +4404,34 @@ outputs = [{{ name = "bindings", kind = "file", path = "generated/bindings.rs" }
         assert_eq!(record.tool.len(), 1);
         assert_eq!(record.link[0].library.name, "sys_helper");
         assert_eq!(record.tool[0].environment.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn rust_fact_record_refuses_one_file_as_out_and_tool_output() -> TestResult {
+        let digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let manifest = format!(
+            r#"
+[[rust.facts]]
+toolchain = "rustc 1.98.0"
+target = "aarch64-apple-darwin"
+profile = "release"
+features = []
+cfg = []
+out = [{{ name = "generated/bindings.rs", path = "out/generated/bindings.rs", digest = "{digest}" }}]
+
+[[rust.facts.tool]]
+name = "bindgen"
+target = "aarch64-apple-darwin"
+executable = {{ name = "bindgen", owner = "{digest}", path = "bin/bindgen", digest = "{digest}" }}
+arguments = [{{ output = "bindings" }}]
+outputs = [{{ name = "bindings", kind = "file", path = "generated/bindings.rs" }}]
+"#
+        );
+        let error = ProjectManifest::from_str(&manifest, Path::new("loaf.toml"))
+            .err()
+            .ok_or("duplicate out/tool producer was accepted")?;
+        assert!(error.to_string().contains("shared OUT_DIR namespace"));
         Ok(())
     }
 

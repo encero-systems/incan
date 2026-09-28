@@ -466,6 +466,8 @@ outputs = [{ name = "bindings", kind = "file", path = "generated/bindings.rs" }]
 
 `tool` fields are `name`, `target`, `executable`, `arguments`, `environment`, `inputs`, and `outputs`. Inputs are digested bytes. Outputs are a logical product contract with `name`, `kind`, and owner-relative `path`; their bytes and digests belong to the admitted asset.
 
+`out.name` and `tool.outputs[].path` use the same path namespace relative to `OUT_DIR`. A generated file or tree is declared exactly once: either as a committed `out` input or as a `tool` output. Equal or overlapping paths across those fields are refused.
+
 `executable` has the exact fields `name`, `owner`, `path`, and `digest`. `owner` and `digest` are lowercase `sha256:` identities, and `path` is relative to that immutable owner. Oven never serializes an absolute executable location or resolves ambient `PATH` during consumption.
 
 Each `arguments` entry has exactly one of `literal`, `input`, or `output`. Each `environment` entry has `name` and exactly one of `literal` or `input`. `sources`, `inputs`, and `outputs` have `name`, `kind`, and `path`; `kind` is `file` or `tree`. A source or input also has `digest`; a tree additionally has a sorted `members` list of `{ path, digest }` entries whose canonical catalog digest must equal the tree digest.

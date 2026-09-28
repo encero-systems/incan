@@ -500,6 +500,7 @@ fn build_script_facts(
         linked_paths: record.linked_paths.clone(),
         out_dir: record.out_dir.clone(),
         output: None,
+        publisher_work: Vec::new(),
     })
 }
 
@@ -1206,6 +1207,9 @@ pub struct OvenLegacyCargoBuildScriptFacts {
     pub out_dir: PathBuf,
     /// Retained output tree; `None` means the publisher has not yet copied and inventoried the declared directory.
     pub output: Option<OvenLegacyCargoSelectedGeneratedOutput>,
+    /// Complete publisher work observations supplied by the native/tool capture lanes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub publisher_work: Vec<oven_model::manifest::RustFactWorkObservation>,
 }
 
 /// Exact retained generated-output tree for one executed compatibility build script.
@@ -1382,6 +1386,7 @@ fn capture_legacy_cargo_selected_units_inner(
                     linked_paths: record.linked_paths.clone(),
                     out_dir: record.out_dir.clone(),
                     output: None,
+                    publisher_work: Vec::new(),
                 })
             })
             .transpose()?;
@@ -1806,6 +1811,7 @@ mod tests {
                     linked_paths: Vec::new(),
                     out_dir: output,
                     output: None,
+                    publisher_work: Vec::new(),
                 }),
                 registry_source: None,
             }],
@@ -1841,6 +1847,7 @@ mod tests {
             linked_paths: Vec::new(),
             out_dir: empty,
             output: None,
+            publisher_work: Vec::new(),
         };
         let mut empty_artifacts = BTreeMap::new();
         retain_generated_output(&mut empty_facts, "empty-fixture", &staging, &mut empty_artifacts)?;

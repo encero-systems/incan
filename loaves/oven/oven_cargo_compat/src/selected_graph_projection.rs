@@ -2738,6 +2738,7 @@ mod tests {
                     linked_paths: Vec::new(),
                     out_dir: PathBuf::from("/transient/serde/out"),
                     output: None,
+                    publisher_work: Vec::new(),
                 }),
             });
         capture.units.insert(0, root);
@@ -2859,6 +2860,7 @@ mod tests {
             linked_paths: Vec::new(),
             out_dir: PathBuf::from("/transient/probe-only/out"),
             output: None,
+            publisher_work: Vec::new(),
         };
         capture.units[2]
             .dependencies
@@ -3330,6 +3332,7 @@ mod tests {
                     },
                 ],
             }),
+            publisher_work: Vec::new(),
         };
         capture.units[0]
             .dependencies
@@ -3823,6 +3826,7 @@ mod tests {
                             })
                             .collect(),
                     }),
+                    publisher_work: Vec::new(),
                 }),
             });
         capture.units.push(OvenLegacyCargoSelectedUnit {
@@ -3952,6 +3956,7 @@ mod tests {
                 linked_paths: vec!["native=/transient/out".to_string()],
                 out_dir: PathBuf::from("/transient/out"),
                 output: None,
+                publisher_work: Vec::new(),
             }),
             registry_source: None,
         });

@@ -17,7 +17,11 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use oven_model::loaf_registry::canonical_checksum;
-use oven_model::manifest::{RustFactOut, RustFactRecord, is_sha256_identity};
+use oven_model::manifest::{
+    RustFactArgument, RustFactArtifact, RustFactArtifactKind, RustFactEnvironment, RustFactExecutable, RustFactLibrary,
+    RustFactLibraryKind, RustFactLinkLanguage, RustFactOut, RustFactOutput, RustFactRecord, RustFactWorkObservation,
+    RustFactWorkRecord, is_sha256_identity,
+};
 use serde::{Deserialize, Serialize};
 
 use super::loaf_bake::OvenLoafPublisherProvenance;
@@ -85,8 +89,8 @@ pub struct HarvestSource {
 
 /// One candidate `[[rust.facts]]` record plus observations checked before the proposal reaches disk.
 ///
-/// `harvested-from` is derived by admission from `evidence.receipt`. A candidate with raw environment/link/tool
-/// observations is retained as a refusal instead of being serialized as a proposal until typed records exist.
+/// `harvested-from` is derived by admission from `evidence.receipt`. Complete link/tool observations become typed
+/// records; unresolved environment values and incomplete publisher work remain refusals.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HarvestFact {
@@ -100,17 +104,23 @@ pub struct HarvestFact {
     pub features: Vec<String>,
     /// `--cfg` answers the script emitted, sorted and unique; empty is a stated fact.
     pub cfg: Vec<String>,
-    /// Retained `OUT_DIR` members: `name` is the member path, `path` is `out/<name>` relative to the proposal.
+    /// Retained generated inputs: `name` is the member path, `path` is `out/<name>` relative to the proposal.
     pub out: Vec<RustFactOut>,
     /// Script environment values that losslessly name retained owner-relative inputs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub environment_inputs: Vec<HarvestEnvironmentInput>,
-    /// Publisher-only native-link observations, preserved without assigning Lane 2 manifest semantics.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Publisher-only native-link observations awaiting fail-closed typed conversion.
+    #[serde(skip)]
     pub link_observations: Vec<HarvestLinkObservation>,
-    /// Publisher-only compiler/tool observations, preserved without assigning Lane 2 manifest semantics.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Publisher-only compiler/tool observations awaiting fail-closed typed conversion.
+    #[serde(skip)]
     pub tool_observations: Vec<HarvestToolObservation>,
+    /// Fully admitted native-link records derived from the raw observations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub link: Vec<oven_model::manifest::RustFactLink>,
+    /// Fully admitted generator records derived from the raw observations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool: Vec<oven_model::manifest::RustFactTool>,
 }
 
 /// A script environment value rebound to one retained product rather than preserving an ambient scalar or path.
@@ -135,7 +145,7 @@ pub struct HarvestObservedProduct {
     pub digest: String,
 }
 
-/// Native-link evidence retained on a typed refusal while Lane 2's manifest record is unavailable.
+/// Native-link evidence that either converts completely or is retained on a typed refusal.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HarvestLinkObservation {
@@ -147,6 +157,27 @@ pub struct HarvestLinkObservation {
     pub output_tree_digest: String,
     /// Identities of every retained product member.
     pub products: Vec<HarvestObservedProduct>,
+    /// Stable producer name, when capture proved one complete native invocation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Source language, when capture proved one complete native invocation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<RustFactLinkLanguage>,
+    /// Exact native compiler identity, when capture proved it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executable: Option<RustFactExecutable>,
+    /// Ordered portable invocation arguments.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub arguments: Vec<RustFactArgument>,
+    /// Explicit invocation environment.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub environment: Vec<RustFactEnvironment>,
+    /// Complete source closure inside the checksummed crate source.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<RustFactArtifact>,
+    /// Logical library contract, when capture proved it unambiguously.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library: Option<RustFactLibrary>,
 }
 
 /// One native-link search path whose ownership was proven below the retained output root.
@@ -159,7 +190,7 @@ pub struct HarvestLinkSearchPath {
     pub owner_relative_path: String,
 }
 
-/// Proposal-only compiler/tool evidence awaiting Lane 2's typed manifest record.
+/// Compiler/tool evidence that either converts completely or is retained on a typed refusal.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HarvestToolObservation {
@@ -175,6 +206,24 @@ pub struct HarvestToolObservation {
     pub output_tree_digest: String,
     /// Identities of every retained generated product member.
     pub products: Vec<HarvestObservedProduct>,
+    /// Stable producer name, when capture proved one complete tool invocation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Exact generator identity, when capture proved it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executable: Option<RustFactExecutable>,
+    /// Ordered portable invocation arguments.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub arguments: Vec<RustFactArgument>,
+    /// Explicit invocation environment.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub environment: Vec<RustFactEnvironment>,
+    /// Complete declared input closure inside its immutable owner.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<RustFactArtifact>,
+    /// Complete logical output contract; product digests remain asset-side.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<RustFactOutput>,
 }
 
 /// Effect classes used by the generated closure inventory.
@@ -205,13 +254,13 @@ impl HarvestFact {
         if !self.environment_inputs.is_empty() {
             effects.push(HarvestEffectClass::EnvironmentInput);
         }
-        if !self.link_observations.is_empty() {
+        if !self.link_observations.is_empty() || !self.link.is_empty() {
             effects.push(HarvestEffectClass::Link);
         }
         if !self.out.is_empty() {
             effects.push(HarvestEffectClass::Out);
         }
-        if !self.tool_observations.is_empty() {
+        if !self.tool_observations.is_empty() || !self.tool.is_empty() {
             effects.push(HarvestEffectClass::Tool);
         }
         if effects.is_empty() {
@@ -283,34 +332,62 @@ pub enum HarvestAdmissionRefusal {
     /// A proposal must contain exactly one binding.
     #[error("harvest proposal must contain exactly one fact")]
     FactCount,
-    /// Lane 2 has not supplied a typed retained-environment input conversion yet.
+    /// At least one retained environment input has no admitted typed constant representation.
     #[error("harvest proposal contains unresolved environment-input observations")]
     UnresolvedEnvironmentInputs,
-    /// Lane 2 has not supplied the typed native-link record conversion yet.
+    /// At least one native-link observation is incomplete, invalid, or names an unbound byte.
     #[error("harvest proposal contains unresolved native-link observations")]
     UnresolvedLinkObservations,
-    /// Lane 2 has not supplied the typed tool record conversion yet.
+    /// At least one tool observation is incomplete, invalid, or names an unbound byte.
     #[error("harvest proposal contains unresolved tool observations")]
     UnresolvedToolObservations,
+    /// One generated path was observed with different bytes in retained `out` and typed publisher work.
+    #[error("harvest proposal contains conflicting generated-output observations")]
+    ConflictingObservations,
 }
 
 impl HarvestProposal {
-    /// Convert a cfg/out proposal into the registry record shape, refusing raw publisher-only observations.
+    /// Convert a complete proposal into the registry record shape through the model-owned fail-closed boundary.
     ///
-    /// This is the single Lane 2 hand-off: typed environment/link/tool records replace only the three refusal
-    /// branches without changing capture or proposal generation.
+    /// Native-link and tool observations are admitted only when every executable, declared input, argument, output
+    /// contract, and observed byte identity is complete. Generated inputs remain `out` members copied beside the
+    /// proposal; declared crate sources and executable bytes remain owner-relative under their immutable owners.
     pub fn admitted_record(&self) -> Result<RustFactRecord, HarvestAdmissionRefusal> {
         let [fact] = self.rust.facts.as_slice() else {
             return Err(HarvestAdmissionRefusal::FactCount);
         };
-        if !fact.link_observations.is_empty() {
-            return Err(HarvestAdmissionRefusal::UnresolvedLinkObservations);
-        }
-        if !fact.tool_observations.is_empty() {
-            return Err(HarvestAdmissionRefusal::UnresolvedToolObservations);
-        }
         if !fact.environment_inputs.is_empty() {
             return Err(HarvestAdmissionRefusal::UnresolvedEnvironmentInputs);
+        }
+        let mut out = fact.out.clone();
+        let mut link = fact.link.clone();
+        for observation in &fact.link_observations {
+            remove_observed_products(
+                &mut out,
+                &observation.products,
+                HarvestAdmissionRefusal::UnresolvedLinkObservations,
+            )?;
+            let record = link_record_from_observation(observation, &fact.target)?;
+            link.push(record);
+        }
+        let mut tool = fact.tool.clone();
+        for observation in &fact.tool_observations {
+            remove_observed_products(
+                &mut out,
+                &observation.products,
+                HarvestAdmissionRefusal::UnresolvedToolObservations,
+            )?;
+            let record = tool_record_from_observation(observation, &fact.target)?;
+            tool.push(record);
+        }
+        link.sort_by(|left, right| left.name.cmp(&right.name));
+        tool.sort_by(|left, right| left.name.cmp(&right.name));
+        let mut producer_names = BTreeSet::new();
+        if link.iter().any(|record| !producer_names.insert(record.name.as_str())) {
+            return Err(HarvestAdmissionRefusal::UnresolvedLinkObservations);
+        }
+        if tool.iter().any(|record| !producer_names.insert(record.name.as_str())) {
+            return Err(HarvestAdmissionRefusal::UnresolvedToolObservations);
         }
         Ok(RustFactRecord {
             toolchain: fact.toolchain.clone(),
@@ -318,12 +395,134 @@ impl HarvestProposal {
             profile: fact.profile.clone(),
             features: fact.features.clone(),
             cfg: fact.cfg.clone(),
-            out: fact.out.clone(),
-            link: None,
-            tool: None,
+            out,
+            link,
+            tool,
             harvested_from: self.evidence.receipt.clone(),
         })
     }
+}
+
+/// Remove asset-side producer products from the generated inputs copied beside a proposal.
+fn remove_observed_products(
+    out: &mut Vec<RustFactOut>,
+    products: &[HarvestObservedProduct],
+    refusal: HarvestAdmissionRefusal,
+) -> Result<(), HarvestAdmissionRefusal> {
+    let product_names = products
+        .iter()
+        .map(|product| product.owner_relative_path.as_str())
+        .collect::<BTreeSet<_>>();
+    if product_names.len() != products.len() {
+        return Err(refusal);
+    }
+    for product in products {
+        let Some(member) = out.iter().find(|member| member.name == product.owner_relative_path) else {
+            return Err(refusal);
+        };
+        if member.digest != product.digest {
+            return Err(HarvestAdmissionRefusal::ConflictingObservations);
+        }
+    }
+    out.retain(|member| !product_names.contains(member.name.as_str()));
+    Ok(())
+}
+
+/// Convert one raw link observation after proving that all product evidence is digest-bound.
+fn link_record_from_observation(
+    observation: &HarvestLinkObservation,
+    target: &str,
+) -> Result<oven_model::manifest::RustFactLink, HarvestAdmissionRefusal> {
+    if !observed_products_are_bound(&observation.output_tree_digest, &observation.products) {
+        return Err(HarvestAdmissionRefusal::UnresolvedLinkObservations);
+    }
+    let work = RustFactWorkObservation {
+        role: oven_model::manifest::RustFactProducerRole::Link,
+        name: observation.name.clone().unwrap_or_default(),
+        target: target.to_string(),
+        language: observation.language,
+        executable: observation.executable.clone(),
+        arguments: observation.arguments.clone(),
+        environment: observation.environment.clone(),
+        inputs: observation.sources.clone(),
+        outputs: Vec::new(),
+        library: observation.library.clone(),
+    };
+    match RustFactWorkRecord::try_from_observation(work) {
+        Ok(RustFactWorkRecord::Link(link))
+            if observation.libraries
+                == [format!(
+                    "{}={}",
+                    match link.library.kind {
+                        RustFactLibraryKind::Static => "static",
+                        RustFactLibraryKind::Dynamic => "dylib",
+                    },
+                    link.library.name
+                )] =>
+        {
+            Ok(link)
+        }
+        Ok(RustFactWorkRecord::Link(_)) | Ok(RustFactWorkRecord::Tool(_)) | Err(_) => {
+            Err(HarvestAdmissionRefusal::UnresolvedLinkObservations)
+        }
+    }
+}
+
+/// Convert one raw tool observation after proving executable, invocation, and product byte identities.
+fn tool_record_from_observation(
+    observation: &HarvestToolObservation,
+    target: &str,
+) -> Result<oven_model::manifest::RustFactTool, HarvestAdmissionRefusal> {
+    if !is_sha256_identity(&observation.probe_digest)
+        || !is_sha256_identity(&observation.executable_identity)
+        || !observed_products_are_bound(&observation.output_tree_digest, &observation.products)
+        || !tool_products_match_outputs(&observation.products, &observation.outputs)
+        || observation
+            .executable
+            .as_ref()
+            .is_none_or(|executable| executable.digest != observation.executable_identity)
+    {
+        return Err(HarvestAdmissionRefusal::UnresolvedToolObservations);
+    }
+    let work = RustFactWorkObservation {
+        role: oven_model::manifest::RustFactProducerRole::Tool,
+        name: observation.name.clone().unwrap_or_default(),
+        target: target.to_string(),
+        language: None,
+        executable: observation.executable.clone(),
+        arguments: observation.arguments.clone(),
+        environment: observation.environment.clone(),
+        inputs: observation.inputs.clone(),
+        outputs: observation.outputs.clone(),
+        library: None,
+    };
+    match RustFactWorkRecord::try_from_observation(work) {
+        Ok(RustFactWorkRecord::Tool(tool)) => Ok(tool),
+        Ok(RustFactWorkRecord::Link(_)) | Err(_) => Err(HarvestAdmissionRefusal::UnresolvedToolObservations),
+    }
+}
+
+/// Whether the asset-side product inventory exactly satisfies the logical tool output contract.
+fn tool_products_match_outputs(products: &[HarvestObservedProduct], outputs: &[RustFactOutput]) -> bool {
+    outputs.iter().all(|output| {
+        products.iter().any(|product| match output.kind {
+            RustFactArtifactKind::File => product.owner_relative_path == output.path,
+            RustFactArtifactKind::Tree => Path::new(&product.owner_relative_path).starts_with(&output.path),
+        })
+    }) && products.iter().all(|product| {
+        outputs.iter().any(|output| match output.kind {
+            RustFactArtifactKind::File => product.owner_relative_path == output.path,
+            RustFactArtifactKind::Tree => Path::new(&product.owner_relative_path).starts_with(&output.path),
+        })
+    })
+}
+
+/// Whether every observed product and its complete tree carry canonical byte identities.
+fn observed_products_are_bound(tree_digest: &str, products: &[HarvestObservedProduct]) -> bool {
+    is_sha256_identity(tree_digest)
+        && products
+            .iter()
+            .all(|product| safe_relative(&product.owner_relative_path).is_some() && is_sha256_identity(&product.digest))
 }
 
 // ============================================================================
@@ -338,11 +537,11 @@ pub enum HarvestRefusalReason {
     NotRegistryBacked,
     /// The unit is the run-custom-build execution node; its facts are proposed on its consumer.
     BuildScriptUnit,
-    /// The script linked libraries, which the reserved `link` grammar must carry.
+    /// The script linked libraries but its typed `link` declaration was incomplete or invalid.
     LinkedLibraries,
-    /// The script emitted link search paths, which the reserved `link` grammar must carry.
+    /// The script emitted link search paths but its typed `link` declaration was incomplete or invalid.
     LinkedPaths,
-    /// The script ran compiler probes, which the reserved `tool` grammar must carry.
+    /// The script ran compiler/tool work but its typed `tool` declaration was incomplete or invalid.
     ToolProbes,
     /// The script emitted `rustc-env` values, which Cargo set on the consumer's compilation and no record key
     /// carries.
@@ -365,7 +564,7 @@ pub enum HarvestRefusalReason {
     MalformedOutput,
 }
 
-/// Portable raw evidence retained on a refusal for work the admitted record vocabulary cannot express.
+/// Portable raw evidence retained on a refusal for incomplete or invalid publisher work.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HarvestRefusalObservations {
@@ -399,7 +598,7 @@ pub struct HarvestRefusal {
     pub reason: HarvestRefusalReason,
     /// Short, path-free detail: the names involved, never their values.
     pub detail: String,
-    /// Portable observations that prove what the unavailable admitted-record field would need to express.
+    /// Portable observations that prove which declared facts or byte bindings were incomplete.
     #[serde(default, skip_serializing_if = "HarvestRefusalObservations::is_empty")]
     pub observations: HarvestRefusalObservations,
 }
@@ -610,7 +809,7 @@ pub fn harvest_registry_units(
             });
             continue;
         }
-        let proposal = HarvestProposal {
+        let mut proposal = HarvestProposal {
             project: HarvestProject { name: package, version },
             source: first.source,
             rust: HarvestRustFacts {
@@ -630,7 +829,19 @@ pub fn harvest_registry_units(
             out_relative_root: first.out_relative_root,
         };
         match proposal.admitted_record() {
-            Ok(_) => proposals.push(proposal),
+            Ok(record) => {
+                let [fact] = proposal.rust.facts.as_mut_slice() else {
+                    return Err(OvenLegacyCargoError::Plan(
+                        "admitted harvest proposal lost its sole fact".to_string(),
+                    ));
+                };
+                fact.out = record.out;
+                fact.link = record.link;
+                fact.tool = record.tool;
+                fact.link_observations.clear();
+                fact.tool_observations.clear();
+                proposals.push(proposal);
+            }
             Err(reason) => {
                 refusals.insert(admission_refusal(&proposal, reason));
             }
@@ -708,6 +919,10 @@ fn admission_refusal(proposal: &HarvestProposal, refusal: HarvestAdmissionRefusa
         HarvestAdmissionRefusal::UnresolvedToolObservations => (
             HarvestRefusalReason::ToolProbes,
             format!("{} compiler probe(s)", observations.tool.len()),
+        ),
+        HarvestAdmissionRefusal::ConflictingObservations => (
+            HarvestRefusalReason::ConflictingObservations,
+            "typed publisher output disagrees with retained out bytes".to_string(),
         ),
     };
     HarvestRefusal {
@@ -940,7 +1155,28 @@ fn observe_unit(
             search_paths,
             output_tree_digest,
             products: products.clone(),
+            name: None,
+            language: None,
+            executable: None,
+            arguments: Vec::new(),
+            environment: Vec::new(),
+            sources: Vec::new(),
+            library: None,
         });
+    }
+    let publisher_links = facts
+        .into_iter()
+        .flat_map(|facts| facts.publisher_work.iter())
+        .filter(|work| matches!(work.role, oven_model::manifest::RustFactProducerRole::Link))
+        .collect::<Vec<_>>();
+    if let ([observation], [work]) = (link_observations.as_mut_slice(), publisher_links.as_slice()) {
+        observation.name = Some(work.name.clone());
+        observation.language = work.language;
+        observation.executable = work.executable.clone();
+        observation.arguments = work.arguments.clone();
+        observation.environment = work.environment.clone();
+        observation.sources = work.inputs.clone();
+        observation.library = work.library.clone();
     }
 
     // ---- Tool probes retain their target domains, invocation identity and generated product identities ----
@@ -965,6 +1201,44 @@ fn observe_unit(
                 executable_identity: rustc_executable_identity.to_string(),
                 output_tree_digest,
                 products: products.clone(),
+                name: None,
+                executable: None,
+                arguments: Vec::new(),
+                environment: Vec::new(),
+                inputs: Vec::new(),
+                outputs: Vec::new(),
+            });
+        }
+    }
+    if let (Some(facts), Some(output_tree_digest)) = (facts, output.map(|output| output.digest.clone())) {
+        for work in facts
+            .publisher_work
+            .iter()
+            .filter(|work| matches!(work.role, oven_model::manifest::RustFactProducerRole::Tool))
+        {
+            let encoded = serde_json::to_vec(work).map_err(|error| {
+                refuse(
+                    HarvestRefusalReason::ToolProbes,
+                    format!("tool observation could not be encoded: {error}"),
+                )
+            })?;
+            tool_observations.push(HarvestToolObservation {
+                target_context: compiler.host.clone(),
+                rustc_target: work.target.clone(),
+                probe_digest: digest_bytes(&encoded),
+                executable_identity: work
+                    .executable
+                    .as_ref()
+                    .map(|executable| executable.digest.clone())
+                    .unwrap_or_default(),
+                output_tree_digest: output_tree_digest.clone(),
+                products: products.clone(),
+                name: Some(work.name.clone()),
+                executable: work.executable.clone(),
+                arguments: work.arguments.clone(),
+                environment: work.environment.clone(),
+                inputs: work.inputs.clone(),
+                outputs: work.outputs.clone(),
             });
         }
     }
@@ -981,6 +1255,8 @@ fn observe_unit(
             environment_inputs,
             link_observations,
             tool_observations,
+            link: Vec::new(),
+            tool: Vec::new(),
         },
         source: HarvestSource {
             registry: registry_index_of(&registry_source.registry),
@@ -1401,6 +1677,7 @@ mod tests {
             linked_paths: Vec::new(),
             out_dir: PathBuf::from("/transient/out"),
             output,
+            publisher_work: Vec::new(),
         }
     }
 
@@ -1412,6 +1689,18 @@ mod tests {
             members: vec![OvenLegacyCargoInspectionSourceMember {
                 path: "libfixture.a".to_string(),
                 digest: selected_graph_sha256(b"archive"),
+            }],
+        }
+    }
+
+    /// A retained generated tree shaped like one Cranelift ISLE product.
+    fn retained_isle_products() -> OvenLegacyCargoSelectedGeneratedOutput {
+        OvenLegacyCargoSelectedGeneratedOutput {
+            relative_root: "generated-outputs/isle".to_string(),
+            digest: selected_graph_sha256(b"isle products"),
+            members: vec![OvenLegacyCargoInspectionSourceMember {
+                path: "generated/isle_opt.rs".to_string(),
+                digest: selected_graph_sha256(b"generated isle source"),
             }],
         }
     }
@@ -1635,6 +1924,234 @@ mod tests {
             raw_proposal.admitted_record().err(),
             Some(HarvestAdmissionRefusal::UnresolvedEnvironmentInputs)
         );
+        Ok(())
+    }
+
+    /// Complete native work shaped like the bundled C archives emitted by blake3 and zstd-sys.
+    fn complete_link_observation(name: &str, source_path: &str) -> HarvestLinkObservation {
+        let digest = selected_graph_sha256(name.as_bytes());
+        HarvestLinkObservation {
+            libraries: vec![format!("static={name}")],
+            search_paths: vec![HarvestLinkSearchPath {
+                kind: "native".to_string(),
+                owner_relative_path: ".".to_string(),
+            }],
+            output_tree_digest: selected_graph_sha256(format!("{name}-products").as_bytes()),
+            products: vec![HarvestObservedProduct {
+                owner_relative_path: format!("lib{name}.a"),
+                digest: selected_graph_sha256(format!("lib{name}.a").as_bytes()),
+            }],
+            name: Some(name.to_string()),
+            language: Some(RustFactLinkLanguage::C),
+            executable: Some(RustFactExecutable {
+                name: "clang".to_string(),
+                owner: selected_graph_sha256(b"publisher-toolchain"),
+                path: "bin/clang".to_string(),
+                digest: selected_graph_sha256(b"clang"),
+            }),
+            arguments: vec![RustFactArgument::Input {
+                input: "sources".to_string(),
+            }],
+            environment: Vec::new(),
+            sources: vec![RustFactArtifact {
+                name: "sources".to_string(),
+                kind: RustFactArtifactKind::Tree,
+                path: source_path.to_string(),
+                digest,
+                members: vec![oven_model::manifest::RustFactArtifactMember {
+                    path: "fixture.c".to_string(),
+                    digest: selected_graph_sha256(b"fixture source"),
+                }],
+            }],
+            library: Some(RustFactLibrary {
+                name: name.to_string(),
+                kind: RustFactLibraryKind::Static,
+            }),
+        }
+    }
+
+    /// Complete generator work shaped like Cranelift's ISLE source-to-Rust generation.
+    fn complete_isle_observation() -> HarvestToolObservation {
+        HarvestToolObservation {
+            target_context: "x86_64-unknown-linux-gnu".to_string(),
+            rustc_target: "x86_64-unknown-linux-gnu".to_string(),
+            probe_digest: selected_graph_sha256(b"isle invocation"),
+            executable_identity: selected_graph_sha256(b"isle executable"),
+            output_tree_digest: selected_graph_sha256(b"isle products"),
+            products: vec![HarvestObservedProduct {
+                owner_relative_path: "generated/isle_opt.rs".to_string(),
+                digest: selected_graph_sha256(b"generated isle source"),
+            }],
+            name: Some("isle".to_string()),
+            executable: Some(RustFactExecutable {
+                name: "isle".to_string(),
+                owner: selected_graph_sha256(b"cranelift-isle provider"),
+                path: "bin/isle".to_string(),
+                digest: selected_graph_sha256(b"isle executable"),
+            }),
+            arguments: vec![
+                RustFactArgument::Input {
+                    input: "isle-source".to_string(),
+                },
+                RustFactArgument::Output {
+                    output: "generated-rust".to_string(),
+                },
+            ],
+            environment: Vec::new(),
+            inputs: vec![RustFactArtifact {
+                name: "isle-source".to_string(),
+                kind: RustFactArtifactKind::File,
+                path: "src/opts.isle".to_string(),
+                digest: selected_graph_sha256(b"isle source"),
+                members: Vec::new(),
+            }],
+            outputs: vec![RustFactOutput {
+                name: "generated-rust".to_string(),
+                kind: RustFactArtifactKind::File,
+                path: "generated/isle_opt.rs".to_string(),
+            }],
+        }
+    }
+
+    #[test]
+    fn admitted_proposal_converts_blake3_and_zstd_shaped_link_observations() -> TestResult {
+        for (name, source_path) in [("blake3", "c"), ("zstd", "zstd/lib")] {
+            let complete = complete_link_observation(name, source_path);
+            let link = link_record_from_observation(&complete, "x86_64-unknown-linux-gnu")?;
+            let mut observed = facts(&[], Some(retained_products()));
+            observed.linked_libraries = vec![format!("static={name}")];
+            observed.linked_paths = vec!["native=/transient/out".to_string()];
+            observed.publisher_work = vec![RustFactWorkObservation::from(link)];
+            let report = harvest_registry_units(
+                &capture(vec![(library(name, "1.0.0", &[]), Some(observed))]),
+                &evidence(),
+                "release",
+            )?;
+            let proposal = report
+                .proposals
+                .first()
+                .ok_or("complete link observation was not proposed")?;
+            let admitted = proposal.admitted_record()?;
+            assert_eq!(admitted.link.len(), 1);
+            assert_eq!(admitted.link[0].library.name, name);
+            assert_eq!(admitted.link[0].sources[0].path, source_path);
+            assert!(proposal.rust.facts[0].link_observations.is_empty());
+            assert_eq!(proposal.rust.facts[0].link.len(), 1);
+            assert!(proposal.rust.facts[0].out.is_empty());
+            let encoded = serde_json::to_value(proposal)?;
+            assert!(encoded["rust"]["facts"][0]["link"][0]["sources"][0]["digest"].is_string());
+            assert!(encoded["rust"]["facts"][0].get("link_observations").is_none());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn admitted_proposal_converts_cranelift_isle_shaped_tool_observation() -> TestResult {
+        let complete = complete_isle_observation();
+        let tool = tool_record_from_observation(&complete, "x86_64-unknown-linux-gnu")?;
+        let mut observed = facts(&[], Some(retained_isle_products()));
+        observed.publisher_work = vec![RustFactWorkObservation::from(tool)];
+        let report = harvest_registry_units(
+            &capture(vec![(library("cranelift-codegen", "1.0.0", &[]), Some(observed))]),
+            &evidence(),
+            "release",
+        )?;
+        let proposal = report
+            .proposals
+            .first()
+            .ok_or("complete ISLE observation was not proposed")?;
+        let admitted = proposal.admitted_record()?;
+        assert_eq!(admitted.tool.len(), 1);
+        assert_eq!(admitted.tool[0].name, "isle");
+        assert_eq!(admitted.tool[0].outputs[0].path, "generated/isle_opt.rs");
+        assert!(proposal.rust.facts[0].tool_observations.is_empty());
+        assert_eq!(proposal.rust.facts[0].tool.len(), 1);
+        assert!(proposal.rust.facts[0].out.is_empty());
+        let encoded = serde_json::to_value(proposal)?;
+        assert!(encoded["rust"]["facts"][0]["tool"][0]["executable"]["digest"].is_string());
+        assert!(
+            encoded["rust"]["facts"][0]["tool"][0]["outputs"][0]
+                .get("digest")
+                .is_none()
+        );
+        assert!(encoded["rust"]["facts"][0].get("tool_observations").is_none());
+        let output = tempdir()?;
+        let retained = tempdir()?;
+        let written = write_harvest_report(&report, output.path(), retained.path())?;
+        assert!(written.iter().all(|path| !path.to_string_lossy().contains("/out/")));
+        Ok(())
+    }
+
+    #[test]
+    fn complete_tool_output_is_not_also_retained_as_out() -> TestResult {
+        let complete = complete_isle_observation();
+        let tool = tool_record_from_observation(&complete, "x86_64-unknown-linux-gnu")?;
+        let mut observed = facts(&[], Some(retained_isle_products()));
+        observed.publisher_work = vec![RustFactWorkObservation::from(tool)];
+        let report = harvest_registry_units(
+            &capture(vec![(library("cranelift-codegen", "1.0.0", &[]), Some(observed))]),
+            &evidence(),
+            "release",
+        )?;
+        let fact = &report
+            .proposals
+            .first()
+            .ok_or("complete ISLE observation was not proposed")?
+            .rust
+            .facts[0];
+        assert!(fact.out.is_empty());
+        assert_eq!(fact.tool[0].outputs[0].path, "generated/isle_opt.rs");
+        Ok(())
+    }
+
+    #[test]
+    fn disagreeing_tool_output_and_out_bytes_are_conflicting_observations() -> TestResult {
+        let clean = harvest_registry_units(
+            &capture(vec![(library("cranelift-codegen", "1.0.0", &[]), None)]),
+            &evidence(),
+            "release",
+        )?;
+        let mut proposal = clean.proposals[0].clone();
+        proposal.rust.facts[0].out = vec![RustFactOut {
+            name: "generated/isle_opt.rs".to_string(),
+            path: "out/generated/isle_opt.rs".to_string(),
+            digest: selected_graph_sha256(b"generated isle source"),
+        }];
+        let mut observation = complete_isle_observation();
+        observation.products[0].digest = selected_graph_sha256(b"different");
+        proposal.rust.facts[0].tool_observations = vec![observation];
+        let reason = proposal
+            .admitted_record()
+            .err()
+            .ok_or("disagreeing tool/out bytes were admitted")?;
+        assert_eq!(reason, HarvestAdmissionRefusal::ConflictingObservations);
+        assert_eq!(
+            admission_refusal(&proposal, reason).reason,
+            HarvestRefusalReason::ConflictingObservations
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn incomplete_work_refuses_independently_of_profile() -> TestResult {
+        let complete = complete_link_observation("zstd", "zstd/lib");
+        let link = link_record_from_observation(&complete, "x86_64-unknown-linux-gnu")?;
+        let mut incomplete = RustFactWorkObservation::from(link);
+        incomplete.executable = None;
+        let mut observed = facts(&[], Some(retained_products()));
+        observed.linked_libraries = vec!["static=zstd".to_string()];
+        observed.linked_paths = vec!["native=/transient/out".to_string()];
+        observed.publisher_work = vec![incomplete];
+        let selected = capture(vec![(library("zstd-sys", "1.0.0", &[]), Some(observed))]);
+        let release = harvest_registry_units(&selected, &evidence(), "release")?;
+        let debug = harvest_registry_units(&selected, &evidence(), "debug")?;
+        assert!(release.proposals.is_empty() && debug.proposals.is_empty());
+        assert_eq!(release.refusals, debug.refusals);
+        assert!(release.refusals.iter().any(|refusal| {
+            refusal.package == "zstd-sys"
+                && refusal.reason == HarvestRefusalReason::LinkedLibraries
+                && !refusal.observations.link.is_empty()
+        }));
         Ok(())
     }
 
