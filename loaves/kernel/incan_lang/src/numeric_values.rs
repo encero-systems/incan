@@ -91,6 +91,35 @@ pub fn numeric_type_losslessly_widens_to(actual: NumericTypeId, expected: Numeri
     }
 }
 
+/// Return the narrowest integer type that two integer types both widen to without loss.
+///
+/// Two values of different integer types compare as values of this type: the wider of the two when one widens to the
+/// other, otherwise the narrowest signed type holding both (`i16` for `i8` and `u8`, `i128` for `i64` and `u64`).
+/// Returns `None` for a pair no integer type holds (`u128` and a signed type, or `isize` or `usize` and another type)
+/// and for a non-integer type.
+#[must_use]
+pub fn common_lossless_integer_type(left: NumericTypeId, right: NumericTypeId) -> Option<NumericTypeId> {
+    if !numerics::is_integer(left) || !numerics::is_integer(right) {
+        return None;
+    }
+    if numeric_type_losslessly_widens_to(left, right) {
+        return Some(right);
+    }
+    if numeric_type_losslessly_widens_to(right, left) {
+        return Some(left);
+    }
+    [
+        NumericTypeId::I16,
+        NumericTypeId::I32,
+        NumericTypeId::I64,
+        NumericTypeId::I128,
+    ]
+    .into_iter()
+    .find(|common| {
+        numeric_type_losslessly_widens_to(left, *common) && numeric_type_losslessly_widens_to(right, *common)
+    })
+}
+
 /// Compare fixed bit widths for widening decisions; platform-width types only widen to themselves.
 const fn width_at_least(expected: Option<u16>, actual: Option<u16>) -> bool {
     match (expected, actual) {
@@ -334,5 +363,18 @@ mod tests {
         assert_eq!(compare_decimal_values(12345, 0, 1, 38), Ordering::Greater);
         assert_eq!(compare_decimal_values(1, 38, 12345, 0), Ordering::Less);
         assert_eq!(compare_decimal_values(i128::MAX, 0, i128::MAX, 38), Ordering::Greater);
+    }
+
+    /// Two integer types compare in the wider one, or in the narrowest signed type holding both.
+    #[test]
+    fn common_lossless_integer_type_is_the_narrowest_holding_both() {
+        use NumericTypeId::{F64, I8, I16, I64, I128, ISize, U8, U64, U128};
+        assert_eq!(common_lossless_integer_type(I8, I64), Some(I64));
+        assert_eq!(common_lossless_integer_type(U8, I16), Some(I16));
+        assert_eq!(common_lossless_integer_type(I8, U8), Some(I16));
+        assert_eq!(common_lossless_integer_type(I64, U64), Some(I128));
+        assert_eq!(common_lossless_integer_type(U128, I8), None);
+        assert_eq!(common_lossless_integer_type(ISize, I64), None);
+        assert_eq!(common_lossless_integer_type(I8, F64), None);
     }
 }

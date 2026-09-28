@@ -976,11 +976,17 @@ impl TypeChecker {
         let [CallArg::Positional(expr)] = args else {
             return;
         };
-        if let Some(actual) = arg_types.first()
-            && !matches!(member_ty, ResolvedType::Unknown)
-            && !(text_probes && is_str_like(actual) && is_str_like(member_ty))
-            && !self.types_compatible(actual, member_ty)
+        let Some(actual) = arg_types.first() else {
+            return;
+        };
+        if matches!(member_ty, ResolvedType::Unknown) || (text_probes && is_str_like(actual) && is_str_like(member_ty))
         {
+            return;
+        }
+        if self.types_compatible(actual, member_ty) {
+            // A numeric probe of a narrower type is widened to the member type where it is lowered (RFC 009).
+            self.record_value_destination_if_compatible(expr.span, actual, member_ty);
+        } else {
             self.errors.push(errors::call_argument_type_mismatch(
                 callee,
                 None,
@@ -1020,7 +1026,12 @@ impl TypeChecker {
                     continue;
                 }
             };
-            if !matches!(expected, ResolvedType::Unknown) && !self.types_compatible(actual, expected) {
+            if matches!(expected, ResolvedType::Unknown) {
+                continue;
+            }
+            if self.types_compatible(actual, expected) {
+                self.record_value_destination_if_compatible(expr.span, actual, expected);
+            } else {
                 self.errors.push(errors::call_argument_type_mismatch(
                     CALLEE,
                     None,
@@ -4408,7 +4419,10 @@ impl TypeChecker {
                 }
                 Some(CollectionTypeId::Dict) if args.len() >= 2 => {
                     let key_ty = &args[0];
-                    if !self.types_compatible(&index_ty, key_ty) {
+                    if self.types_compatible(&index_ty, key_ty) {
+                        // A numeric key of a narrower type is widened to the key type where it is lowered (RFC 009).
+                        self.record_value_destination_if_compatible(index.span, &index_ty, key_ty);
+                    } else {
                         self.errors.push(errors::index_type_mismatch(
                             &key_ty.to_string(),
                             &index_ty.to_string(),
@@ -4460,7 +4474,9 @@ impl TypeChecker {
             // time. A text key (`str` or `FrozenStr`) accepts any text probe (#1757).
             ResolvedType::FrozenDict(key_ty, value_ty) => {
                 let text_probe_for_text_key = is_str_like(&index_ty) && is_str_like(&key_ty);
-                if !text_probe_for_text_key && !self.types_compatible(&index_ty, &key_ty) {
+                if !text_probe_for_text_key && self.types_compatible(&index_ty, &key_ty) {
+                    self.record_value_destination_if_compatible(index.span, &index_ty, &key_ty);
+                } else if !text_probe_for_text_key {
                     self.errors.push(errors::index_type_mismatch(
                         &key_ty.to_string(),
                         &index_ty.to_string(),
@@ -5285,14 +5301,17 @@ impl TypeChecker {
     }
 
     /// Return the type a builtin receiver's method takes its argument at `index` as, where the method stores the
-    /// argument in the receiver or returns it as the receiver's payload (#1859).
+    /// argument in the receiver, looks it up among the receiver's elements or keys, or returns it as the receiver's
+    /// payload (#1859).
     ///
     /// `list[T].append(x)` stores `x` as a `T` and `extend` takes a `list[T]`, `dict[K, V].insert(k, v)` and
-    /// `set[T].add(x)` store their arguments as the key, value and element types, `Option[T].unwrap_or(x)` and
-    /// `Result[T, E].unwrap_or(x)` return `x` as the `T`, and `powf` on a `float`, `f32` or `f64` takes an exponent of
-    /// the receiver's own type. The argument is checked against that type, so an integer literal there takes the float
-    /// type a float slot expects, as it does in a declaration. An `Option` of a reference (the `Option[&V]` of
-    /// `dict.get`) and every other method give no expectation.
+    /// `set[T].add(x)` store their arguments as the key, value and element types, `list[T].contains(x)`, `count(x)`
+    /// and `index(x)`, `set[T].contains(x)`, and `dict[K, V].get(k)` and `contains_key(k)` look `x` or `k` up as an
+    /// element or a key (`get`'s default is a `V`), `Option[T].unwrap_or(x)` and `Result[T, E].unwrap_or(x)` return
+    /// `x` as the `T`, and `powf` on a `float` or `f32` takes an exponent of the receiver's own type. The argument is
+    /// checked against that type, so an integer literal there takes the float type a float slot expects, as it does in
+    /// a declaration, and a numeric argument of a narrower type is widened to it (RFC 009). An `Option` of a reference
+    /// (the `Option[&V]` of `dict.get`) and every other method give no expectation.
     fn builtin_method_argument_expectation(base_ty: &ResolvedType, method: &str, index: usize) -> Option<ResolvedType> {
         use incan_lang::lang::types::numerics::NumericTypeId;
         let base_ty = match base_ty {
@@ -5300,22 +5319,36 @@ impl TypeChecker {
             other => other,
         };
         match base_ty {
-            ResolvedType::Float | ResolvedType::Numeric(NumericTypeId::F32 | NumericTypeId::F64) => (index == 0
+            ResolvedType::Float | ResolvedType::Numeric(NumericTypeId::F32) => (index == 0
                 && float_methods::from_str(method) == Some(float_methods::FloatMethodId::Powf))
             .then(|| base_ty.clone()),
             ResolvedType::Generic(name, args) => match (collection_type_id(name.as_str()), args.as_slice()) {
                 (Some(CollectionTypeId::List), [element]) => match (list_methods::from_str(method)?, index) {
                     (list_methods::ListMethodId::Append, 0) => Some(element.clone()),
                     (list_methods::ListMethodId::Extend, 0) => Some(list_ty(element.clone())),
+                    (
+                        list_methods::ListMethodId::Contains
+                        | list_methods::ListMethodId::Count
+                        | list_methods::ListMethodId::Index,
+                        0,
+                    ) => Some(element.clone()),
                     _ => None,
                 },
                 (Some(CollectionTypeId::Dict), [key, value]) => match (dict_methods::from_str(method)?, index) {
-                    (dict_methods::DictMethodId::Insert, 0) => Some(key.clone()),
-                    (dict_methods::DictMethodId::Insert, 1) => Some(value.clone()),
+                    (
+                        dict_methods::DictMethodId::Insert
+                        | dict_methods::DictMethodId::Get
+                        | dict_methods::DictMethodId::ContainsKey,
+                        0,
+                    ) => Some(key.clone()),
+                    (dict_methods::DictMethodId::Insert | dict_methods::DictMethodId::Get, 1) => Some(value.clone()),
                     _ => None,
                 },
                 (Some(CollectionTypeId::Set), [element]) => (index == 0
-                    && set_methods::from_str(method) == Some(set_methods::SetMethodId::Add))
+                    && matches!(
+                        set_methods::from_str(method),
+                        Some(set_methods::SetMethodId::Add | set_methods::SetMethodId::Contains)
+                    ))
                 .then(|| element.clone()),
                 (Some(CollectionTypeId::Option), [payload]) => (index == 0
                     && option_methods::from_str(method) == Some(option_methods::OptionMethodId::UnwrapOr)
@@ -5727,7 +5760,10 @@ impl TypeChecker {
                     && !is_closure
                     && let Some(expected) = Self::builtin_method_argument_expectation(&base_ty, method, index)
                 {
-                    self.check_expr_with_expected(arg_expr, Some(&expected))
+                    let arg_ty = self.check_expr_with_expected(arg_expr, Some(&expected));
+                    // A numeric argument of a narrower type is widened to the slot's type where it is lowered.
+                    self.record_value_destination_if_compatible(arg_expr.span, &arg_ty, &expected);
+                    arg_ty
                 } else {
                     self.check_method_arg_with_rust_callable_alias(arg, contextual_rust_callable.as_ref())
                 }
@@ -5905,15 +5941,10 @@ impl TypeChecker {
         }
 
         // Builtin methods for builtin types (so we don't report missing methods).
-        if (matches!(base_ty, ResolvedType::Float)
-            || matches!(
-                base_ty,
-                ResolvedType::Numeric(
-                    incan_lang::lang::types::numerics::NumericTypeId::F32
-                        | incan_lang::lang::types::numerics::NumericTypeId::F64
-                )
-            ))
-            && let Some(id) = float_methods::from_str(method)
+        if matches!(
+            base_ty,
+            ResolvedType::Float | ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F32)
+        ) && let Some(id) = float_methods::from_str(method)
         {
             use float_methods::FloatMethodId as M;
             match id {

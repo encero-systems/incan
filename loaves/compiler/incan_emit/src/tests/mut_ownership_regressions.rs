@@ -24,8 +24,8 @@ fn compact(rust: &str) -> String {
     rust.chars().filter(|character| !character.is_whitespace()).collect()
 }
 
-/// Compile generated Rust as a library so ownership assertions are backed by rustc.
-fn compile_generated_rust(source: &str) -> TestResult {
+/// Compile generated Rust as a library so ownership and numeric-conversion assertions are backed by rustc.
+pub(super) fn compile_generated_rust(source: &str) -> TestResult {
     let directory = tempfile::tempdir()?;
     let input = directory.path().join("fixture.rs");
     let output = directory.path().join("libfixture.rlib");

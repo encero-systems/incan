@@ -1706,7 +1706,7 @@
         },
         "exact_float_destinations_require_finite_values_without_rejecting_f32_widening": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_numerics_and_bounds/non_finite_exact_float_is_refused_at_runtime.incn",
-          "notes": "twinned by a program that widens a finite f32 into an f64, then assigns an overflowed float to an f64 and ends with the runtime refusal (exit 101) after printing what came before. The finite f32 widening is accepted before the overflowed float is refused."
+          "notes": "twinned by a program that widens a finite f32 into an f64, keeps an overflowed float in an f64 (an f64 is a float, RFC 009), and ends with an overflowing f32 product refused at runtime (exit 101) after printing what came before."
         },
         "mixed_f32_arithmetic_plans_widen_the_concrete_f32_operand": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_numerics_and_bounds/exact_float_arithmetic_keeps_its_width.incn",
@@ -3225,11 +3225,23 @@
     },
     "loaves/compiler/incan_emit/src/tests/numeric_operator_emission.rs": {
       "disposition": "retire",
-      "notes": "generated-Rust text of numeric operators: the typed `**` receiver and the checked zero-divisor helpers.",
+      "notes": "generated-Rust text of numeric operators: the typed `**` receiver, the checked zero-divisor helpers, exact-width integer arithmetic, `f64` as `float`, and lossless numeric widening at every destination (RFC 009).",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
       "tests": {
+        "accepted_numeric_widenings_build": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/numeric_widening_reaches_every_destination.incn",
+          "notes": "Compiles every accepted lossless widening with rustc; the named fixture runs one program through each destination, probe and mixed comparison (RFC 009)."
+        },
+        "exact_width_integer_arithmetic_keeps_its_type": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/exact_width_integer_arithmetic_keeps_its_type.incn",
+          "notes": "Asserts the emitted signed `py_floor_div_signed`/`py_mod_signed` helpers and the exact-width `pow`; the named fixture prints the width-keeping results (RFC 009)."
+        },
+        "f64_values_are_ordinary_floats": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_values_and_control_flow/exact_float_finite_guards.incn",
+          "notes": "Asserts that an `f64` product is emitted without a finite guard; the named fixture prints an `f64` NaN and product as floats (RFC 009)."
+        },
         "power_base_is_emitted_in_the_result_type_issue1811": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/power_with_literal_base.incn",
           "notes": "Asserts the emitted `(2 as i64).pow(3 as u32)` receiver spelling; the program printing its powers is carried by the named fixture (#1811)."
@@ -3690,19 +3702,19 @@
         },
         "exact_float_arithmetic_is_validated_before_every_observable_use": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_values_and_control_flow/exact_float_finite_guards.incn",
-          "notes": "twinned by one program observing exact f32/f64 results and ordinary NaN, ending with a NaN reaching an exact f64 return (exit 101); the `require_finite_*` count assertions die with #654."
+          "notes": "twinned by one program observing f32 results and float NaN, an f64 included since it is a float (RFC 009), ending with an overflowing f32 product refused at runtime (exit 101); the `require_finite_*` count assertions die with #654."
         },
         "exact_float_boundaries_emit_finite_guards_without_changing_ordinary_float": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_values_and_control_flow/exact_float_finite_guards.incn",
-          "notes": "twinned by one program observing exact f32/f64 results and ordinary NaN, ending with a NaN reaching an exact f64 return (exit 101); the `require_finite_*` count assertions die with #654."
+          "notes": "twinned by one program observing f32 results and float NaN, an f64 included since it is a float (RFC 009), ending with an overflowing f32 product refused at runtime (exit 101); the `require_finite_*` count assertions die with #654."
         },
         "exact_float_public_and_rust_ingress_is_guarded_before_observation": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_values_and_control_flow/exact_float_ingress_and_aggregates.incn",
-          "notes": "twinned by one program calling the real `incan_std_core::num::require_finite_f32` extern, observing exact f32/f64 values through println, str() and f-strings (`2.5`, `3`, `2.5`; an integral f32 prints `4` where the ordinary float path prints `nan`, so Display and `float_to_string` are told apart), reading scalars from a model field, an `Option[f32]` field and a list, and aborting (exit 101) when `parsed_exact` converts a parsed NaN `float` into its exact `f64` return, before the callee is entered. The pub-parameter ingress guards the test asserted (`require_finite_f32(left)` on entry) are reachable only from a Rust caller: an Incan caller cannot hand a NaN to an exact parameter without tripping an earlier conversion, so the fixture cannot observe them and the guard-placement assertions die with #654."
+          "notes": "twinned by one program calling the real `incan_std_core::num::require_finite_f32` extern, observing f32 values and f64 (float) values through println, str() and f-strings (`2.5`, `3.0`, `2.5`; an integral f32 prints `4` where an f64 prints `1.0`, so Display and `float_to_string` are told apart), reading scalars from a model field, an `Option[f32]` field and a list, and carrying a NaN that `parsed_exact` parses into its `f64` return on as the float it is (RFC 009). The pub-parameter ingress guards the test asserted (`require_finite_f32(left)` on entry) are reachable only from a Rust caller: an Incan caller cannot hand a NaN to an exact parameter without tripping an earlier conversion, so the fixture cannot observe them and the guard-placement assertions die with #654."
         },
         "exact_float_scalars_extracted_from_aggregates_are_guarded_before_use": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_values_and_control_flow/exact_float_ingress_and_aggregates.incn",
-          "notes": "twinned by one program calling the real `incan_std_core::num::require_finite_f32` extern, observing exact f32/f64 values through println, str() and f-strings (`2.5`, `3`, `2.5`; an integral f32 prints `4` where the ordinary float path prints `nan`, so Display and `float_to_string` are told apart), reading scalars from a model field, an `Option[f32]` field and a list, and aborting (exit 101) when `parsed_exact` converts a parsed NaN `float` into its exact `f64` return, before the callee is entered. The pub-parameter ingress guards the test asserted (`require_finite_f32(left)` on entry) are reachable only from a Rust caller: an Incan caller cannot hand a NaN to an exact parameter without tripping an earlier conversion, so the fixture cannot observe them and the guard-placement assertions die with #654. `consume_exact` is replaced by that real extern because no such symbol exists."
+          "notes": "twinned by one program calling the real `incan_std_core::num::require_finite_f32` extern, observing f32 values and f64 (float) values through println, str() and f-strings (`2.5`, `3.0`, `2.5`; an integral f32 prints `4` where an f64 prints `1.0`, so Display and `float_to_string` are told apart), reading scalars from a model field, an `Option[f32]` field and a list, and carrying a NaN that `parsed_exact` parses into its `f64` return on as the float it is (RFC 009). The pub-parameter ingress guards the test asserted (`require_finite_f32(left)` on entry) are reachable only from a Rust caller: an Incan caller cannot hand a NaN to an exact parameter without tripping an earlier conversion, so the fixture cannot observe them and the guard-placement assertions die with #654. `consume_exact` is replaced by that real extern because no such symbol exists."
         },
         "field_factory_and_accumulator_with_one_spelling_codegen_as_a_fluent_chain": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_functions_and_projections/same_spelling_type_owned_and_instance_methods.incn",
@@ -7258,7 +7270,7 @@
       "tests": {
         "power_base_is_converted_to_the_result_type_issue1811": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/power_with_literal_base.incn",
-          "notes": "Asserts the recorded shape on the legacy IR (the base of `**` is handed to the emitter converted to the operation's result type, an operator-shaped base grouped inside the conversion); retires with `incan_ir`. The behavior, `2 ** 3` printing `8` and a `u8` base squaring to `400`, is carried by the named fixture (#1811)."
+          "notes": "Asserts the recorded shape on the legacy IR (the base of `**` is handed to the emitter converted to the operation's result type, an operator-shaped base grouped inside the conversion); retires with `incan_ir`. The behavior, `2 ** 3` printing `8` and a `u8` base squaring to `225` in its own type (RFC 009), is carried by the named fixture (#1811)."
         }
       },
       "twin": ""

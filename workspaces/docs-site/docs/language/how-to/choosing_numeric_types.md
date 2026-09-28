@@ -64,10 +64,8 @@ Aliases canonicalize to exact Incan types.
 | `int`, `bigint`, `long`   | `i64`           |
 | `hugeint`                 | `i128`          |
 | `real`, `fp32`            | `f32`           |
-| `double`, `fp64`          | `f64`           |
+| `float`, `double`, `fp64` | `f64`           |
 | `numeric[p, s]`           | `decimal[p, s]` |
-
-`float` is not an alias of `f64`: it is its own type, and it can also hold NaN and infinity.
 
 Use canonical names when the exact width is the important thing. Use aliases when matching source vocabulary matters more.
 
@@ -153,11 +151,22 @@ sample: i16 = 500
 clipped: i8 = sample.saturating_resize()
 ```
 
-Arithmetic on exact-width integers gives an ordinary `int`, so storing a result back in an exact-width binding that could overflow it needs one of these policies:
+## Convert before mixing integer widths
+
+Arithmetic on two values of one integer type keeps that type, and an integer literal takes the type of the value beside it:
 
 ```incan
 n: i8 = 10
-maybe_next: Option[i8] = (n + 1).try_resize()
+next: i8 = n + 1
+```
+
+Arithmetic on two different integer types is refused. Convert one operand to the other's type first, with `resize()` when the conversion is lossless and `try_resize()` when the value may not fit:
+
+```incan
+small: i8 = 10
+total: i16 = 300
+widened: i16 = small.resize()
+sum: i16 = widened + total
 ```
 
 ## Write numeric helpers over concrete types

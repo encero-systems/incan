@@ -58,7 +58,7 @@ impl AstLowering {
             if let Some(param) = param {
                 let placeholder = TypedExpr::new(IrExprKind::None, IrType::Unknown);
                 let value = std::mem::replace(&mut arg.expr, placeholder);
-                arg.expr = Self::wrap_value_in_option_destination(value, &param.ty);
+                arg.expr = Self::adapt_value_to_destination(value, &param.ty);
                 Self::retain_union_owners_at(&mut arg.expr, &param.ty);
             }
         }

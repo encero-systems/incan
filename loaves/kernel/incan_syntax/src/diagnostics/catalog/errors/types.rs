@@ -629,6 +629,35 @@ pub fn type_mismatch(expected: &str, found: &str, span: Span) -> CompileError {
     error
 }
 
+/// Build the diagnostic for arithmetic over two different integer types (RFC 009).
+///
+/// Same-type integer arithmetic keeps its type, so an operation whose operands have two integer types (`i8 + i16`, or
+/// `i8 + n` for an `int` value `n`) has no result type until one operand is converted to the other's type.
+pub fn mixed_width_integer_arithmetic(left: &str, op: &str, right: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Mixed-width integer arithmetic: '{left} {op} {right}' has operands of two integer types"),
+        span,
+    )
+    .with_note("Integer arithmetic takes two operands of one integer type and yields that type")
+    .with_hint(
+        "Convert one operand to the other operand's type first, with 'resize()' where the conversion is lossless or \
+         'try_resize()' where the value may not fit",
+    )
+}
+
+/// Build the diagnostic for comparing two integer types that no one integer type holds both values of (RFC 009).
+///
+/// Values of two integer types compare in the narrowest integer type both widen to without loss; `u128` beside a
+/// signed type, and `isize` or `usize` beside another integer type, have none.
+pub fn incomparable_integer_types(left: &str, op: &str, right: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Cannot compare '{left} {op} {right}': no integer type holds every value of both"),
+        span,
+    )
+    .with_note("Two integer types compare in the narrowest integer type both widen to without loss")
+    .with_hint("Convert one operand to the other operand's type first, with 'try_resize()'")
+}
+
 /// Build a type mismatch diagnostic for a return expression.
 pub fn return_type_mismatch(expected: &str, found: &str, span: Span) -> CompileError {
     add_type_mismatch_hints(

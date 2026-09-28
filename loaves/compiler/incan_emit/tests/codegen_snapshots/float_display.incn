@@ -1,7 +1,7 @@
 """Issue #1372: a `float` in a display position renders through the runtime's Python-shaped spelling."""
 
-# An integral value keeps its decimal point (`100.0`, not `100`). Debug interpolation and the exact `f64` carrier
-# keep Rust's own formatting.
+# An integral value keeps its decimal point (`100.0`, not `100`), an `f64` included: it is a `float` (RFC 009). Debug
+# interpolation keeps Rust's own formatting.
 model Reading:
     value: float
 

@@ -2108,6 +2108,30 @@ pub enum ResolvedType {
 }
 
 impl ResolvedType {
+    /// Return the semantic type of one numeric registry id.
+    ///
+    /// RFC 009 makes `float` an alias of `f64`, and an alias creates no separate type identity, so the `f64` id is
+    /// [`ResolvedType::Float`] wherever it comes from: a type spelling, a literal suffix, or library metadata. Every
+    /// other numeric id keeps its exact-width type; the registry's `bool` entry is [`ResolvedType::Bool`].
+    pub fn from_numeric_id(id: NumericTypeId) -> ResolvedType {
+        match id {
+            NumericTypeId::F64 => ResolvedType::Float,
+            NumericTypeId::Bool => ResolvedType::Bool,
+            _ => ResolvedType::Numeric(id),
+        }
+    }
+
+    /// Return the semantic type a numeric registry spelling names, given the id the registry resolved it to.
+    ///
+    /// The spelling `int` keeps [`ResolvedType::Int`], which is compatible with `i64` both ways. Every other spelling
+    /// resolves through [`Self::from_numeric_id`], so `f64`, `float`, `double` and `fp64` are all `float`.
+    pub fn from_numeric_spelling(spelling: &str, id: NumericTypeId) -> ResolvedType {
+        match spelling {
+            "int" => ResolvedType::Int,
+            _ => Self::from_numeric_id(id),
+        }
+    }
+
     /// Check if this is a Result type
     pub fn is_result(&self) -> bool {
         matches!(
@@ -2390,15 +2414,7 @@ where
         Type::Dotted(segments) => resolve_qualified_type(segments).unwrap_or(ResolvedType::Unknown),
         Type::Simple(name) => {
             if let Some(id) = numerics::from_str(name.as_str()) {
-                return match name.as_str() {
-                    "int" => ResolvedType::Int,
-                    "float" => ResolvedType::Float,
-                    "bool" => ResolvedType::Bool,
-                    _ => match id {
-                        NumericTypeId::Bool => ResolvedType::Bool,
-                        _ => ResolvedType::Numeric(id),
-                    },
-                };
+                return ResolvedType::from_numeric_spelling(name, id);
             }
             if let Some(id) = stringlike::from_str(name.as_str()) {
                 return match id {
@@ -2998,10 +3014,20 @@ mod tests {
             resolve_type(&Type::Simple("real".to_string()), &symbols),
             ResolvedType::Numeric(NumericTypeId::F32)
         );
-        assert_eq!(
-            resolve_type(&Type::Simple("double".to_string()), &symbols),
-            ResolvedType::Numeric(NumericTypeId::F64)
-        );
+    }
+
+    /// RFC 009: `float` is an alias of `f64`, so every `f64` spelling resolves to the one `float` type.
+    #[test]
+    fn resolve_type_maps_every_f64_spelling_to_float() {
+        let symbols = SymbolTable::new();
+
+        for spelling in ["f64", "float", "double", "fp64"] {
+            assert_eq!(
+                resolve_type(&Type::Simple(spelling.to_string()), &symbols),
+                ResolvedType::Float,
+                "{spelling}"
+            );
+        }
     }
 
     #[test]

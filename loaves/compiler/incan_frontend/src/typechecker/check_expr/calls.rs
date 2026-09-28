@@ -1092,7 +1092,7 @@ impl TypeChecker {
     pub(in crate::typechecker::check_expr) fn c_raw_call_type(binding: &str, ty: &CBindingType) -> ResolvedType {
         match ty {
             CBindingType::Scalar(scalar) => c_abi::scalar_numeric_type(*scalar)
-                .map(ResolvedType::Numeric)
+                .map(ResolvedType::from_numeric_id)
                 .unwrap_or(ResolvedType::Int),
             CBindingType::Void => ResolvedType::Unit,
             CBindingType::Resource { resource, .. } => {

@@ -137,15 +137,15 @@ fn grouped_unary_operand(operand: TypedExpr) -> TypedExpr {
 ///
 /// `**` is spelled as a method call on its base (`.pow`, `.powf`), and a method call needs its receiver's numeric type
 /// to be settled. A literal base (`2 ** 3`, `(-2) ** 3`, `(1 + 2) ** 2`) or a binding initialized from one leaves Rust
-/// with an ambiguous `{integer}` or `{float}` receiver, which it refuses (E0689); an exact-width integer base would
-/// raise in its own width although the checked result is `int`. Converting the base to the result type (`int`,
-/// `float`, or the exact float both operands share) settles both; a base that already has that type converts to
-/// itself. An operator-shaped base is grouped first so the conversion covers the whole base, and a base or result
-/// outside the numeric carriers is left as it is.
+/// with an ambiguous `{integer}` or `{float}` receiver, which it refuses (E0689). Converting the base to the result
+/// type (`int`, `float`, or the `f32` both operands share) settles it; a base that already has that type converts to
+/// itself. An exact-width integer base with a non-negative literal exponent needs nothing: the result keeps the base's
+/// own type (RFC 009). An operator-shaped base is grouped first so the conversion covers the whole base, and a base or
+/// result outside the numeric carriers is left as it is.
 fn power_base_in_result_type(base: TypedExpr, result_ty: &IrType) -> TypedExpr {
     let concrete_result = matches!(
         result_ty,
-        IrType::Int | IrType::Float | IrType::Numeric(NumericTypeId::F32 | NumericTypeId::F64)
+        IrType::Int | IrType::Float | IrType::Numeric(NumericTypeId::F32)
     );
     let numeric_base = matches!(base.ty, IrType::Int | IrType::Float | IrType::Numeric(_));
     if !concrete_result || !numeric_base {
@@ -343,7 +343,7 @@ impl AstLowering {
     fn checked_c_value_ir_type(binding: &str, ty: &IrCheckedCType) -> IrType {
         match ty {
             IrCheckedCType::Scalar(scalar) => incan_lang::lang::c_abi::scalar_numeric_type(*scalar)
-                .map(IrType::Numeric)
+                .map(IrType::from_numeric_id)
                 .unwrap_or(IrType::Int),
             IrCheckedCType::Pointer { mutable, pointee } => Self::checked_c_pointer_ir_type(*mutable, pointee),
             IrCheckedCType::Resource { resource, .. } => {
@@ -1487,8 +1487,9 @@ impl AstLowering {
         lowered = self.wrap_with_validated_newtype_coercion(lowered, expr.span)?;
         lowered = self.copy_for_unchanged_mut_argument(lowered, expr.span);
         lowered.span = expr.span.into();
-        // A value written to an `Option` field, element or return type takes the `Some` layers that place adds.
-        Ok(self.wrap_in_recorded_option_destination(lowered, expr.span))
+        // A value written to an `Option` field, element or return type takes the `Some` layers that place adds, and a
+        // numeric value written to a place of a wider numeric type is widened to it.
+        Ok(self.adapt_to_recorded_destination(lowered, expr.span))
     }
 
     /// Hand an argument to a caller-visible `mut` parameter as a copy when the checker proved the callee never changes

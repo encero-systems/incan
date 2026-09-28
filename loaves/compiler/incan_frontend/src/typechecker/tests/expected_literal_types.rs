@@ -52,7 +52,7 @@ fn recorded_option_destination<'checker>(
         .ok_or_else(|| format!("missing `{text}` after `{after}`"))?;
     Ok(checker
         .type_info()
-        .option_destination_type(Span::new(start, start + text.len())))
+        .value_destination_type(Span::new(start, start + text.len())))
 }
 
 /// Build `name[args...]` for a builtin collection type.

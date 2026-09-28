@@ -112,8 +112,8 @@ See [String representation](./derives/string_representation.md) for how a type p
 | `str`, `FrozenStr` | The text itself, unquoted |
 | `int` and the exact-width integers | Decimal digits |
 | `bool` | `true` or `false` |
-| `float` | Decimal digits with a decimal point or an exponent, below |
-| `f32`, `f64` | The shortest digits that round-trip, below |
+| `float` (`f64`) | Decimal digits with a decimal point or an exponent, below |
+| `f32` | The shortest digits that round-trip, below |
 | A `model`, `class`, `enum` or `newtype` that defines `__str__` | What `__str__` returns |
 | An enum that declares values | The variant's value |
 | A type that adopts `Error` and has no `__str__` | What `message()` returns (see [Displaying an error](./stdlib_traits/error.md#displaying-an-error)) |
@@ -127,7 +127,7 @@ See [String representation](./derives/string_representation.md) for how a type p
 
 - Inside a tuple, list, dict, set, frozen collection, `Option` or `Result`, every element or payload displays as its `{value:?}` structure: a `str` is quoted (`["a", "b"]`), a `float` keeps its decimal point and uses an unsigned exponent from `1e16` up and below `1e-4` (`[100.0, 1e16]`), a model or class shows its fields even when its type defines `__str__` (`[Point { x: 1, y: 2 }]`), and an enum value shows its variant (`[Red]`). The entry order of a set or a dict is unspecified.
 - A `float` always shows a decimal point or an exponent. An integral value keeps its decimal point (`100.0`); the shortest digits that round-trip are used (`1.5`, `0.30000000000000004`); positional notation holds while the magnitude is at least `1e-4` and below `1e16` (`10000000000.0`), and outside that range the value uses an exponent with an explicit sign and at least two digits (`1e+16`, `1.5e-07`); the non-finite values are `inf`, `-inf` and `nan`.
-- An `f32` or `f64` displays the shortest digits that round-trip in positional notation, with no forced decimal point (`100`, `1.5`); its non-finite values are `inf`, `-inf` and `NaN`.
+- An `f32` displays the shortest digits that round-trip in positional notation, with no forced decimal point (`100`, `1.5`). An `f64` is a `float` and displays as one.
 
 Refused in every display position (`INCAN-T0103`):
 

@@ -1,0 +1,26 @@
+# behavior: arithmetic over two values of one integer type yields that type, an integer literal beside an exact-width value takes its type, signed // and % keep Python's flooring in that type, ** with a literal exponent keeps the base's type, and / still divides into a float
+# retires: loaves/compiler/incan_emit/src/tests/numeric_operator_emission.rs::exact_width_integer_arithmetic_keeps_its_type
+# expect-stdout:
+#   -3 2 -21 49
+#   124 4
+#   -4 2
+#   1000
+#   2.5
+
+def signed(a: i8, b: i8) -> str:
+    return f"{a // b} {a % b} {a * b} {a ** 2}"
+
+
+def main() -> None:
+    println(signed(-7, 3))
+    mut byte: u8 = 250
+    byte -= 126
+    step: u8 = 30
+    println(f"{byte} {byte // step}")
+    wide: i128 = -7
+    println(f"{wide // 2} {wide % 3}")
+    count: i32 = 10
+    println(count * count * count)
+    half: i16 = 5
+    two: i16 = 2
+    println(half / two)

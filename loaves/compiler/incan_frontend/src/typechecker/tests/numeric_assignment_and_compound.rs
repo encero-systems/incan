@@ -56,7 +56,8 @@ def main() -> None:
     single = 3.14f32
     nested: tuple[u16, list[i8], f32] = (inferred, [narrow], single)
     wider: u32 = 42u16
-    println(preserve(nested[0]) + wider)
+    widened: u32 = preserve(nested[0])
+    println(widened + wider)
 "#;
     check_str(source).map_err(|errors| format!("{errors:?}"))
 }
@@ -261,6 +262,11 @@ def main() -> None:
     b //= step
     mut wide: i128 = 1
     wide += 1
+    mut n: i32 = 1
+    n += 1
+    n *= n
+    n //= 2
+    n %= 3
     SCALE *= SCALE
 "#;
     check_str(source).map_err(|errors| format!("{errors:?}"))
@@ -285,22 +291,28 @@ def reduce_expanded(value: u16) -> u16:
     .map_err(|errors| format!("{errors:?}"))
 }
 
-/// #1812: the assignment rule still refuses a result the binding cannot hold: `int` into a narrower integer, `float`
-/// into `f32`, `float` from `/=` into `int`, and an unsigned operand beside an `int` that is not a literal.
+/// #1812: the assignment rule still refuses a result the binding cannot hold: `float` into `f32`, and `float` from
+/// `/=` into `int`. RFC 009 refuses an operand of another integer type, and a literal outside the binding's type.
 #[test]
 fn compound_assignment_refuses_a_result_the_binding_cannot_hold_issue1812() -> Result<(), String> {
     for (body, needle) in [
-        ("    mut n: i32 = 1\n    n += 1\n", "expected 'i32', found 'int'"),
-        ("    mut b: u8 = 1\n    b += 1\n", "expected 'u8', found 'int'"),
+        (
+            "    mut n: i32 = 1\n    step: int = 1\n    n += step\n",
+            "Mixed-width integer arithmetic: 'i32 + int'",
+        ),
+        (
+            "    mut b: u8 = 1\n    b += 256\n",
+            "Integer literal 256 does not fit in u8",
+        ),
         ("    mut s: f32 = 1.5\n    s *= 2.0\n", "expected 'f32', found 'float'"),
         ("    mut x: int = 10\n    x /= 2\n", "expected 'int', found 'float'"),
         (
             "    mut b: u8 = 7\n    divisor: int = 2\n    b //= divisor\n",
-            "u8 or a non-negative integer literal",
+            "Mixed-width integer arithmetic: 'u8 // int'",
         ),
         (
             "    mut x: int = 7\n    divisor: u8 = 2\n    x //= divisor\n",
-            "u8 or a non-negative integer literal",
+            "Mixed-width integer arithmetic: 'int // u8'",
         ),
     ] {
         let source = format!("def main() -> None:\n{body}");
@@ -310,5 +322,178 @@ fn compound_assignment_refuses_a_result_the_binding_cannot_hold_issue1812() -> R
             "expected `{needle}` for:\n{source}\ngot {messages:?}"
         );
     }
+    Ok(())
+}
+
+/// RFC 009: same-type integer arithmetic yields that type, an unsuffixed integer literal operand takes the other
+/// operand's type, `**` with a non-negative literal exponent keeps the base's type, and `/` still divides into `float`.
+#[test]
+fn same_type_integer_arithmetic_keeps_its_type_rfc009() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+    x: i8 = 7
+    y: i8 = 3
+    p: u16 = 300
+    q: u16 = 2
+    big: i128 = 1
+    wide: i64 = 5
+    count: int = 4
+    sum: i8 = x + y
+    product: u16 = p * q
+    literal_right: i8 = x + 1
+    literal_left: i8 = 1 - x
+    negative_literal: i8 = x * -2
+    floor: i8 = x // 2
+    rest: i8 = x % (3)
+    square: i8 = x ** 2
+    negated: i8 = -x
+    huge: i128 = big + big
+    same_identity: int = count + wide
+    ordinary: int = 1 + 2
+    quotient: float = x / y
+    power: float = x ** y
+"#;
+    check_str(source).map_err(|errors| format!("{errors:?}"))
+}
+
+/// RFC 009: arithmetic over two different integer types is refused, with a hint naming the resize methods.
+#[test]
+fn mixed_width_integer_arithmetic_is_refused_rfc009() -> Result<(), String> {
+    for (declarations, expression, needle) in [
+        ("    a: i8 = 1\n    b: i16 = 2\n", "a + b", "'i8 + i16'"),
+        ("    a: i8 = 1\n    b: int = 2\n", "a - b", "'i8 - int'"),
+        ("    a: u8 = 1\n    b: u16 = 2\n", "a * b", "'u8 * u16'"),
+        ("    a: int = 1\n    b: i32 = 2\n", "a // b", "'int // i32'"),
+        ("    a: u16 = 1\n    b: u8 = 2\n", "a % b", "'u16 % u8'"),
+    ] {
+        let source = format!("def main() -> None:\n{declarations}    println({expression})\n");
+        let messages = refusal_messages(&source)?;
+        let message = messages
+            .iter()
+            .find(|message| message.contains("Mixed-width integer arithmetic") && message.contains(needle))
+            .ok_or_else(|| {
+                format!("expected a mixed-width refusal naming {needle} for:\n{source}\ngot {messages:?}")
+            })?;
+        assert!(
+            message.contains("'resize()'") && message.contains("'try_resize()'"),
+            "the refusal must name the resize methods: {message}"
+        );
+    }
+    Ok(())
+}
+
+/// RFC 009: an integer literal operand takes its partner's type, so a value outside that type is refused, and a
+/// negated unsigned value has no unsigned result.
+#[test]
+fn integer_literal_operand_is_checked_against_its_partner_type_rfc009() -> Result<(), String> {
+    for (body, needle) in [
+        (
+            "    x: i8 = 1\n    println(x + 300)\n",
+            "Integer literal 300 does not fit in i8",
+        ),
+        (
+            "    b: u8 = 1\n    println(b - -1)\n",
+            "Integer literal -1 does not fit in u8",
+        ),
+        (
+            "    b: u8 = 1\n    println(-b)\n",
+            "expected 'signed numeric', found 'u8'",
+        ),
+    ] {
+        let source = format!("def main() -> None:\n{body}");
+        let messages = refusal_messages(&source)?;
+        assert!(
+            messages.iter().any(|message| message.contains(needle)),
+            "expected `{needle}` for:\n{source}\ngot {messages:?}"
+        );
+    }
+    Ok(())
+}
+
+/// RFC 009: `float` is an alias of `f64`, so the two are one type: each is assignable to the other in both
+/// directions, an `f64` holds IEEE infinity and NaN as `float` does, and `f64` arithmetic is `float` arithmetic.
+#[test]
+fn float_and_f64_are_one_type_rfc009() -> Result<(), String> {
+    let source = r#"
+const LIMIT: f64 = 1e309
+
+def exact(value: str) -> f64:
+    return float(value)
+
+def ordinary(value: f64) -> float:
+    return value
+
+def main() -> None:
+    infinite: f64 = 1e309
+    suffixed: f64 = 1e309f64
+    double_value: double = infinite
+    ordinary_value: float = double_value
+    back: fp64 = ordinary_value * 2.0
+    parsed: f64 = exact("nan")
+    total: float = ordinary(parsed) + back + LIMIT
+    println(total)
+"#;
+    check_str(source).map_err(|errors| format!("{errors:?}"))
+}
+
+/// RFC 009: lossless widening converts one value, so a numeric type inside a collection, tuple, `Option` value or
+/// callable matches only its own type, while a value still widens into an `Option` payload or a union member.
+#[test]
+fn numeric_widening_applies_to_values_not_to_types_inside_types_rfc009() -> Result<(), String> {
+    for (source, needle) in [
+        (
+            "def f(small: list[i8]) -> list[int]:\n    return small\n",
+            "expected 'List[int]', found 'List[i8]'",
+        ),
+        (
+            "def f(pair: tuple[i8, str]) -> tuple[int, str]:\n    return pair\n",
+            "expected 'Tuple[int, str]', found 'Tuple[i8, str]'",
+        ),
+        (
+            "def f(maybe: Option[i8]) -> Option[int]:\n    return maybe\n",
+            "expected 'Option[int]', found 'Option[i8]'",
+        ),
+        (
+            "def g(value: int) -> i8:\n    return 1\n\ndef f() -> None:\n    h: (int) -> int = g\n",
+            "expected '(int) -> int', found '(int) -> i8'",
+        ),
+    ] {
+        let messages = refusal_messages(source)?;
+        assert!(
+            messages.iter().any(|message| message.contains(needle)),
+            "expected `{needle}` for:\n{source}\ngot {messages:?}"
+        );
+    }
+    check_str(
+        r#"
+def f(small: i8, values: list[int]) -> Option[int]:
+    wide: list[i64] = values
+    held: int | str = small
+    maybe: Option[int] = small
+    println(small in values)
+    return small
+"#,
+    )
+    .map_err(|errors| format!("{errors:?}"))
+}
+
+/// RFC 009: two integer types compare in the narrowest type holding both, an integer literal that fits the other
+/// operand's type takes it, and a pair no integer type holds is refused.
+#[test]
+fn integer_comparisons_need_a_type_holding_both_rfc009() -> Result<(), String> {
+    check_str(
+        r#"
+def f(small: i8, byte: u8, count: int, wide: u64, big: u128) -> bool:
+    return small < byte and small == count and count < wide and byte != -1 and big == 0 and big > 340282366920938463463374607431768211454
+"#,
+    )
+    .map_err(|errors| format!("{errors:?}"))?;
+    let messages = refusal_messages("def f(big: u128, count: int) -> bool:\n    return big == count\n")?;
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Cannot compare 'u128 == int'")),
+        "got {messages:?}"
+    );
     Ok(())
 }

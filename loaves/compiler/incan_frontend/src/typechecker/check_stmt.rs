@@ -141,9 +141,10 @@ impl TypeChecker {
     /// Check the value of a compound assignment `x op= y` against the type `var_ty` of the local or static it writes.
     ///
     /// Numeric operands are checked as `x = x op y`: the operator's result type from the operator result table, then
-    /// the assignment rule. So `s *= s` on an `f32` binding keeps `f32` and is accepted, while `n += 1` on an `i32`
-    /// binding stays refused because its `int` result is not assignable to `i32` (#1812). A user operator receiver
-    /// resolves through its in-place or binary hook, and any other value must be assignable to the binding.
+    /// the assignment rule. So `s *= s` on an `f32` binding keeps `f32` and `n += 1` on an `i32` binding adds two `i32`
+    /// values, and both are accepted, while `x /= 2` on an `int` binding stays refused because its `float` result is
+    /// not assignable to `int` (#1812). A user operator receiver resolves through its in-place or binary hook, and any
+    /// other value must be assignable to the binding.
     fn check_compound_assignment_value(
         &mut self,
         compound: &CompoundAssignmentStmt,
@@ -509,7 +510,7 @@ impl TypeChecker {
                             field_assign.value.span,
                         ));
                     }
-                    self.record_option_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
+                    self.record_value_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
                 }
             }
             ResolvedType::Named(type_name) => {
@@ -524,7 +525,7 @@ impl TypeChecker {
                                 field_assign.value.span,
                             ));
                         }
-                        self.record_option_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
+                        self.record_value_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
                     }
                     None => {
                         self.errors.push(errors::missing_field(type_name, field, span));
@@ -548,7 +549,7 @@ impl TypeChecker {
                                 field_assign.value.span,
                             ));
                         }
-                        self.record_option_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
+                        self.record_value_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
                     }
                     None => {
                         self.errors.push(errors::missing_field(type_name, field, span));
@@ -570,7 +571,7 @@ impl TypeChecker {
                             field_assign.value.span,
                         ));
                     }
-                    self.record_option_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
+                    self.record_value_destination_if_compatible(field_assign.value.span, &value_ty, &expected_ty);
                 }
                 None => {
                     self.errors
@@ -620,7 +621,7 @@ impl TypeChecker {
         // Check the value expression
         let value_ty = self.check_expr_with_expected(&index_assign.value, slot_types.as_ref().map(|(_, value)| value));
         if let Some((_, value_slot_ty)) = &slot_types {
-            self.record_option_destination_if_compatible(index_assign.value.span, &value_ty, value_slot_ty);
+            self.record_value_destination_if_compatible(index_assign.value.span, &value_ty, value_slot_ty);
         }
 
         // Verify object is indexable and types match
@@ -1164,7 +1165,7 @@ impl TypeChecker {
             ));
         }
         if let (Some(e), Some(expected)) = (expr, self.symbols.current_return_type().cloned()) {
-            self.record_option_destination_if_compatible(e.span, &return_ty, &expected);
+            self.record_value_destination_if_compatible(e.span, &return_ty, &expected);
         }
     }
 

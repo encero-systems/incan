@@ -715,12 +715,14 @@ pub struct ExpressionArtifacts {
     /// The binding is typechecked like an ordinary immutable `Logger` value, but lowering must materialize it as a
     /// module-local `std.logging.get_logger(...)` call so source metadata can become the logger name.
     pub ambient_logger_bindings: HashSet<(usize, usize)>,
-    /// The `Option` type of the place a value is written to, keyed by the value span: a field or index assignment, a
-    /// model or class constructor field, or a `return` (#1858).
+    /// The type of the place a value is written to, keyed by the value span, when the value needs adapting to it: a
+    /// field or index assignment, a model or class constructor field, or a `return` (#1858, RFC 009).
     ///
     /// The checker accepts a value of an `Option`'s payload type there (`box.count = 5` for an `Option[int]` field),
-    /// and lowering wraps such a value in the `Some` layers the destination adds.
-    pub option_destination_types: HashMap<(usize, usize), ResolvedType>,
+    /// and a numeric value of a type that losslessly widens to the place's numeric type or union member
+    /// (`box.count = small` for an `i8` value and an `int` field). Lowering wraps such a value in the `Some` layers
+    /// the destination adds and widens it to the numeric type the destination holds.
+    pub value_destination_types: HashMap<(usize, usize), ResolvedType>,
     /// Spans of `dict.get(key)` calls whose result is only read, so no copy of the stored value is needed.
     ///
     /// `get` answers with `Option[V]` on every dict. A lookup whose result feeds a `match` or `if let` that only reads
@@ -2171,9 +2173,10 @@ impl TypeCheckInfo {
         self.expressions.assignment_binding_types.get(&(span.start, span.end))
     }
 
-    /// Return the `Option` type of the place the value at `span` is written to, if the checker recorded one (#1858).
-    pub fn option_destination_type(&self, span: Span) -> Option<&ResolvedType> {
-        self.expressions.option_destination_types.get(&(span.start, span.end))
+    /// Return the type of the place the value at `span` is written to, if the checker recorded one because the value
+    /// needs `Some` layers or a numeric widening there (#1858, RFC 009).
+    pub fn value_destination_type(&self, span: Span) -> Option<&ResolvedType> {
+        self.expressions.value_destination_types.get(&(span.start, span.end))
     }
 
     /// Return the canonical fields a destructuring pattern leaves unnamed, keyed by its constructor name's span.

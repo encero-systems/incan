@@ -32,7 +32,7 @@ pub type Answer = Product | int                  # accepted
 ## Assignability
 
 - A value of a member type, or of a type assignable to a member type, is assignable to the union, as a return value, an assigned value or an argument.
-- A union is assignable to another union when each of its members is assignable to a member of the other. A union with a member assignable to no member of the target is refused (`INCAN-T0001`).
+- A union is assignable to another union when each of its members is assignable to a member of the other; a numeric member is assignable only to its own type (see [Assignment between numeric types](numeric_semantics.md#assignment-between-numeric-types)). A union with a member assignable to no member of the target is refused (`INCAN-T0001`).
 - A union in the signature of another package's function or method is the same type as a union with the same members in the calling package.
 
 ```incan

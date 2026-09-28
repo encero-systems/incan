@@ -52,29 +52,14 @@ use incan_lang::{
 /// Admit a value into Incan's exact `f32` carrier only when it is finite.
 ///
 /// Generated Rust calls this whenever exact `f32` is created or observed, including arithmetic results and
-/// Incan-owned assignment, argument, field, collection, return, comparison, and output boundaries. Ordinary IEEE
-/// `float` operations may still produce NaN or infinity; exact carriers reject non-finite values.
+/// Incan-owned assignment, argument, field, collection, return, comparison, and output boundaries. IEEE `float`
+/// (`f64`) operations may still produce NaN or infinity; the `f32` carrier rejects non-finite values.
 #[inline]
 pub fn require_finite_f32(value: f32) -> f32 {
     if value.is_finite() {
         value
     } else {
         raise(IncanError::non_finite_exact_float("f32"))
-    }
-}
-
-/// Admit a value into Incan's exact `f64` carrier only when it is finite.
-///
-/// Generated Rust validates exact `f64` arithmetic results at production and validates every later Incan-owned
-/// boundary. `f32` implements `Into<f64>`, so this also preserves the typechecker's existing lossless exact-float
-/// widening while accepting an ordinary finite `float` at an exact-`f64` destination.
-#[inline]
-pub fn require_finite_f64(value: impl Into<f64>) -> f64 {
-    let value = value.into();
-    if value.is_finite() {
-        value
-    } else {
-        raise(IncanError::non_finite_exact_float("f64"))
     }
 }
 
@@ -142,7 +127,12 @@ mod sealed {
     // --- Sealed traits ---
     /// Sealing trait to restrict external implementations.
     pub trait Sealed {}
+    impl Sealed for i8 {}
+    impl Sealed for i16 {}
+    impl Sealed for i32 {}
     impl Sealed for i64 {}
+    impl Sealed for i128 {}
+    impl Sealed for isize {}
     impl Sealed for f64 {}
     impl Sealed for u8 {}
     impl Sealed for u16 {}
@@ -621,6 +611,127 @@ pub fn py_mod_unsigned<T: IncanUnsignedInteger>(lhs: T, rhs: T) -> T {
     lhs % rhs
 }
 
+/// Exact-width signed integer carriers whose `//` and `%` keep their own type (RFC 009).
+///
+/// Sealed: generated Rust names only the six signed widths. `i64` is here too so the helpers read the same for every
+/// signed width, although generated `int` and `i64` arithmetic calls [`py_floor_div_i64`] and [`py_mod_i64`].
+pub trait IncanSignedInteger:
+    sealed::Sealed
+    + Copy
+    + PartialOrd
+    + core::ops::Div<Output = Self>
+    + core::ops::Rem<Output = Self>
+    + core::ops::Add<Output = Self>
+    + core::ops::Sub<Output = Self>
+{
+    /// The carrier's zero, the one divisor `//` and `%` refuse.
+    const ZERO: Self;
+    /// The carrier's one, the step a floor division takes below a truncated negative quotient.
+    const ONE: Self;
+    /// The carrier's `-1`, the divisor whose quotient of [`Self::MIN`] does not fit the carrier.
+    const MINUS_ONE: Self;
+    /// The carrier's minimum value.
+    const MIN: Self;
+    /// The carrier's Incan type name, which an overflowing floor division names.
+    const NAME: &'static str;
+}
+
+impl IncanSignedInteger for i8 {
+    const ZERO: Self = 0;
+    const ONE: Self = 1;
+    const MINUS_ONE: Self = -1;
+    const MIN: Self = i8::MIN;
+    const NAME: &'static str = "i8";
+}
+
+impl IncanSignedInteger for i16 {
+    const ZERO: Self = 0;
+    const ONE: Self = 1;
+    const MINUS_ONE: Self = -1;
+    const MIN: Self = i16::MIN;
+    const NAME: &'static str = "i16";
+}
+
+impl IncanSignedInteger for i32 {
+    const ZERO: Self = 0;
+    const ONE: Self = 1;
+    const MINUS_ONE: Self = -1;
+    const MIN: Self = i32::MIN;
+    const NAME: &'static str = "i32";
+}
+
+impl IncanSignedInteger for i64 {
+    const ZERO: Self = 0;
+    const ONE: Self = 1;
+    const MINUS_ONE: Self = -1;
+    const MIN: Self = i64::MIN;
+    const NAME: &'static str = "i64";
+}
+
+impl IncanSignedInteger for i128 {
+    const ZERO: Self = 0;
+    const ONE: Self = 1;
+    const MINUS_ONE: Self = -1;
+    const MIN: Self = i128::MIN;
+    const NAME: &'static str = "i128";
+}
+
+impl IncanSignedInteger for isize {
+    const ZERO: Self = 0;
+    const ONE: Self = 1;
+    const MINUS_ONE: Self = -1;
+    const MIN: Self = isize::MIN;
+    const NAME: &'static str = "isize";
+}
+
+/// Python-style floor division over one exact-width signed type, keeping that type.
+///
+/// Rounds toward negative infinity, as [`py_floor_div_i64`] does for `int`.
+///
+/// ## Panics
+///
+/// Raises `ZeroDivisionError: integer division or modulo by zero` when `rhs` is zero, and `ValueError` when the
+/// quotient does not fit the type: its minimum divided by `-1`.
+#[inline]
+pub fn py_floor_div_signed<T: IncanSignedInteger>(lhs: T, rhs: T) -> T {
+    if rhs == T::ZERO {
+        raise_zero_division(ZeroDivisionOperation::IntegerFloorDivisionOrModulo);
+    }
+    if lhs == T::MIN && rhs == T::MINUS_ONE {
+        raise_value_error(&format!("integer floor division result overflows {}", T::NAME));
+    }
+    let quotient = lhs / rhs;
+    let remainder = lhs % rhs;
+    if remainder != T::ZERO && ((remainder < T::ZERO) != (rhs < T::ZERO)) {
+        quotient - T::ONE
+    } else {
+        quotient
+    }
+}
+
+/// Python-style modulo over one exact-width signed type, keeping that type.
+///
+/// The result has the sign of the divisor, as [`py_mod_i64`] has for `int`, and the type's minimum `% -1` is `0`.
+///
+/// ## Panics
+///
+/// Raises `ZeroDivisionError: integer division or modulo by zero` when `rhs` is zero.
+#[inline]
+pub fn py_mod_signed<T: IncanSignedInteger>(lhs: T, rhs: T) -> T {
+    if rhs == T::ZERO {
+        raise_zero_division(ZeroDivisionOperation::IntegerFloorDivisionOrModulo);
+    }
+    if rhs == T::MINUS_ONE {
+        return T::ZERO;
+    }
+    let remainder = lhs % rhs;
+    if remainder != T::ZERO && ((remainder < T::ZERO) != (rhs < T::ZERO)) {
+        remainder + rhs
+    } else {
+        remainder
+    }
+}
+
 /// Greatest common divisor for signed 64-bit integers.
 ///
 /// The result is always non-negative and matches Python's `math.gcd` behavior for `int` when it fits in Incan's signed
@@ -1008,8 +1119,6 @@ mod tests {
     #[test]
     fn exact_float_guards_preserve_finite_values_and_lossless_widening() {
         assert_eq!(require_finite_f32(1.25_f32), 1.25_f32);
-        assert_eq!(require_finite_f64(1.25_f32), 1.25_f64);
-        assert_eq!(require_finite_f64(2.5_f64), 2.5_f64);
     }
 
     #[test]
@@ -1024,21 +1133,6 @@ mod tests {
             .or_else(|| panic.downcast_ref::<&'static str>().copied())
             .ok_or_else(|| "exact-f32 refusal used a non-string panic payload".to_string())?;
         assert_eq!(message, "ValueError: non-finite float cannot initialize exact f32");
-        Ok(())
-    }
-
-    #[test]
-    fn exact_f64_guard_refuses_arithmetic_overflow() -> Result<(), String> {
-        let maximum = f64::MAX;
-        let panic = std::panic::catch_unwind(|| require_finite_f64(maximum * maximum))
-            .err()
-            .ok_or_else(|| "overflowed f64 unexpectedly crossed the exact boundary".to_string())?;
-        let message = panic
-            .downcast_ref::<String>()
-            .map(String::as_str)
-            .or_else(|| panic.downcast_ref::<&'static str>().copied())
-            .ok_or_else(|| "exact-f64 refusal used a non-string panic payload".to_string())?;
-        assert_eq!(message, "ValueError: non-finite float cannot initialize exact f64");
         Ok(())
     }
 
@@ -1212,6 +1306,46 @@ mod tests {
     #[should_panic(expected = "ZeroDivisionError: integer division or modulo by zero")]
     fn unsigned_modulo_by_zero_raises_zero_division_error_issue1813() {
         let _ = py_mod_unsigned(7_u64, 0);
+    }
+
+    /// RFC 009: signed floor division and modulo keep their exact width and compute Python's results.
+    #[test]
+    fn signed_floor_division_and_modulo_keep_their_type() {
+        assert_eq!(py_floor_div_signed(-7_i8, 2), -4_i8);
+        assert_eq!(py_floor_div_signed(7_i16, -2), -4_i16);
+        assert_eq!(py_floor_div_signed(-7_i32, -2), 3_i32);
+        assert_eq!(py_floor_div_signed(6_i128, 3), 2_i128);
+        assert_eq!(py_mod_signed(-7_i8, 3), 2_i8);
+        assert_eq!(py_mod_signed(7_i16, -3), -2_i16);
+        assert_eq!(py_mod_signed(-7_isize, -3), -1_isize);
+        assert_eq!(py_mod_signed(i8::MIN, -1), 0_i8);
+        for dividend in -20_i32..=20 {
+            for divisor in [-7_i32, -3, -1, 1, 2, 5] {
+                let (dividend_i64, divisor_i64) = (i64::from(dividend), i64::from(divisor));
+                assert_eq!(
+                    i64::from(py_floor_div_signed(dividend, divisor)),
+                    py_floor_div_i64(dividend_i64, divisor_i64)
+                );
+                assert_eq!(
+                    i64::from(py_mod_signed(dividend, divisor)),
+                    py_mod_i64(dividend_i64, divisor_i64)
+                );
+            }
+        }
+    }
+
+    /// A signed zero divisor raises `ZeroDivisionError`, not Rust's native panic.
+    #[test]
+    #[should_panic(expected = "ZeroDivisionError: integer division or modulo by zero")]
+    fn signed_modulo_by_zero_raises_zero_division_error() {
+        let _ = py_mod_signed(7_i16, 0);
+    }
+
+    /// The minimum of a signed type floor-divided by `-1` does not fit the type and raises `ValueError`.
+    #[test]
+    #[should_panic(expected = "ValueError: integer floor division result overflows i8")]
+    fn signed_floor_division_overflow_raises_value_error() {
+        let _ = py_floor_div_signed(i8::MIN, -1);
     }
 
     /// Decimal equality, ordering and hashing are numeric, whatever scale a value was written with (#1810).

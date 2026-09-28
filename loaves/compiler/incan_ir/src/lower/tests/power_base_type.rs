@@ -28,8 +28,9 @@ fn power_base<'a>(ir: &'a IrProgram, name: &str) -> Result<&'a TypedExpr, String
     }
 }
 
-/// #1811: a literal base, a negated or parenthesized literal base, a literal-bound name and an exact-width integer
-/// base are each converted to the result type; an operator-shaped base is grouped inside the conversion.
+/// #1811: a literal base, a negated or parenthesized literal base and a literal-bound name are each converted to the
+/// result type; an operator-shaped base is grouped inside the conversion. An exact-width integer base with a literal
+/// exponent is already in the result type, which keeps the base's type (RFC 009), so it is left as it is.
 #[test]
 fn power_base_is_converted_to_the_result_type_issue1811() -> Result<(), String> {
     let ir = lower_checked_source(
@@ -50,7 +51,7 @@ def literal_bound_name() -> int:
     base = 2
     return base ** 3
 
-def narrow_integer_base(b: u8) -> int:
+def narrow_integer_base(b: u8) -> u8:
     return b ** 2
 
 def integer_base_float_result(n: int) -> float:
@@ -67,7 +68,6 @@ def exact_float_base(s: f32) -> f32:
         ("negated_literal_base", IrType::Int, false),
         ("operator_base", IrType::Int, true),
         ("literal_bound_name", IrType::Int, false),
-        ("narrow_integer_base", IrType::Int, false),
         ("integer_base_float_result", IrType::Float, false),
         ("exact_float_base", IrType::Numeric(NumericTypeId::F32), false),
     ] {
@@ -83,5 +83,11 @@ def exact_float_base(s: f32) -> f32:
             "`{name}` groups only an operator-shaped base, got {expr:?}"
         );
     }
+    let narrow = power_base(&ir, "narrow_integer_base")?;
+    assert!(
+        matches!(narrow.kind, IrExprKind::Var { .. }),
+        "an exact-width integer base keeps its own type without a conversion, got {narrow:?}"
+    );
+    assert_eq!(narrow.ty, IrType::Numeric(NumericTypeId::U8));
     Ok(())
 }

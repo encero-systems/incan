@@ -182,22 +182,8 @@ fn rfc009_non_finite_exact_float_literals_are_rejected_with_source_spans() -> Re
             "f32",
             "1e9999",
         ),
-        (
-            "positive f64 local",
-            "def main() -> None:\n  value: f64 = 1e9999\n",
-            "f64",
-            "1e9999",
-        ),
-        (
-            "negative f64 local",
-            "def main() -> None:\n  value: f64 = -1e9999\n",
-            "f64",
-            "1e9999",
-        ),
         ("positive f32 const", "const VALUE: f32 = 1e9999\n", "f32", "1e9999"),
         ("negative f32 const", "const VALUE: f32 = -1e9999\n", "f32", "-1e9999"),
-        ("positive f64 const", "const VALUE: f64 = 1e9999\n", "f64", "1e9999"),
-        ("negative f64 const", "const VALUE: f64 = -1e9999\n", "f64", "-1e9999"),
     ];
 
     for (case, source, target, expected_span) in cases {
@@ -220,8 +206,8 @@ fn rfc009_non_finite_exact_float_literals_are_rejected_with_source_spans() -> Re
 fn non_finite_exact_float_literals_nested_in_arithmetic_keep_literal_spans() -> Result<(), String> {
     let cases = [
         ("f32", "1e9999 + 0.0", "1e9999"),
-        ("f64", "0.0 + -1e9999", "1e9999"),
-        ("f64", "(0.0 + (1e9999 * 1.0))", "1e9999"),
+        ("f32", "0.0 + -1e9999", "1e9999"),
+        ("f32", "(0.0 + (1e9999 * 1.0))", "1e9999"),
     ];
     for (target, expression, expected_span) in cases {
         let source = format!("def main() -> None:\n  value: {target} = {expression}\n");
@@ -244,13 +230,13 @@ fn non_finite_exact_float_literals_nested_in_arithmetic_keep_literal_spans() -> 
 
 #[test]
 fn folded_non_finite_exact_float_const_reports_a_constant_value() -> Result<(), String> {
-    let source = "const VALUE: f64 = -1e9999\n";
+    let source = "const VALUE: f32 = -1e9999\n";
     let errors = check_str(source)
         .err()
-        .ok_or_else(|| "expected folded non-finite f64 const to fail".to_string())?;
+        .ok_or_else(|| "expected folded non-finite f32 const to fail".to_string())?;
     let error = errors
         .iter()
-        .find(|error| error.message.contains("Constant value") && error.message.contains("does not fit in f64"))
+        .find(|error| error.message.contains("Constant value") && error.message.contains("does not fit in f32"))
         .ok_or_else(|| format!("expected a folded-constant diagnostic, got {errors:?}"))?;
     let actual_span = source
         .get(error.span.start..error.span.end)
@@ -259,9 +245,10 @@ fn folded_non_finite_exact_float_const_reports_a_constant_value() -> Result<(), 
     Ok(())
 }
 
+/// `float` keeps IEEE infinity, and so does `f64`, which is the same type (RFC 009).
 #[test]
 fn ordinary_float_literals_remain_ieee_non_finite() -> Result<(), String> {
-    let source = "const VALUE: float = 1e9999\n\ndef main() -> None:\n  value: float = -1e9999\n";
+    let source = "const VALUE: float = 1e9999\nconst WIDE: f64 = -1e9999\n\ndef main() -> None:\n  value: float = -1e9999\n  exact: f64 = 1e9999\n";
     check_str(source).map_err(|errors| format!("ordinary float must retain IEEE non-finite values: {errors:?}"))
 }
 

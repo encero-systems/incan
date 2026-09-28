@@ -157,18 +157,10 @@ pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
     }
 }
 
-/// Resolve a manifest simple type name, preserving ordinary int/float/bool spellings.
+/// Resolve a manifest simple type name, preserving the ordinary `int` spelling; every `f64` spelling is `float`.
 fn resolved_named_type_from_manifest(name: &str) -> ResolvedType {
     if let Some(id) = numerics::from_str(name) {
-        return match name {
-            "int" => ResolvedType::Int,
-            "float" => ResolvedType::Float,
-            "bool" => ResolvedType::Bool,
-            _ => match id {
-                NumericTypeId::Bool => ResolvedType::Bool,
-                _ => ResolvedType::Numeric(id),
-            },
-        };
+        return ResolvedType::from_numeric_spelling(name, id);
     }
     if let Some(id) = stringlike::from_str(name) {
         return match id {

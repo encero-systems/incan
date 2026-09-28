@@ -1936,10 +1936,9 @@ impl _BytesIO {
 }
 impl BinaryWrite<f64> for _BytesIO {
     fn write(&self, value: f64, endian: Endian) -> Result<(), IoError> {
-        let _ = incan_std_core::num::require_finite_f64(value);
         return _write_f64_value(
             self.clone(),
-            incan_std_core::num::require_finite_f64(value),
+            value,
             endian,
             "write".to_string(),
         );

@@ -696,9 +696,10 @@ def ordinary_literal() -> str:
         selected_builtin_argument_type(&module, "f32_local", BuiltinFnId::Str)?,
         "f32"
     );
+    // RFC 009: `f64` and its `double` alias are `float`.
     assert_eq!(
         selected_builtin_argument_type(&module, "f64_parameter", BuiltinFnId::Str)?,
-        "f64"
+        "float"
     );
     assert_eq!(
         selected_builtin_argument_type(&module, "real_alias", BuiltinFnId::Str)?,
@@ -706,7 +707,7 @@ def ordinary_literal() -> str:
     );
     assert_eq!(
         selected_builtin_argument_type(&module, "double_alias", BuiltinFnId::Str)?,
-        "f64"
+        "float"
     );
     assert!(
         selected_builtin_argument_type(&module, "decimal_value", BuiltinFnId::Str)?.starts_with("decimal["),

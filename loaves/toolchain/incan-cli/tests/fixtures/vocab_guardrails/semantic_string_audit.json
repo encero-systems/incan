@@ -495,8 +495,8 @@
     {
       "path": "loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs",
       "category": "stdlib loader primitive compatibility",
-      "expected_count": 7,
-      "expected_fingerprint": "0x892edd99ae071c7f"
+      "expected_count": 4,
+      "expected_fingerprint": "0x3fd8babf442da354"
     },
     {
       "path": "loaves/compiler/incan_frontend/src/typechecker/validate_rust_module.rs",
@@ -555,8 +555,14 @@
     {
       "path": "loaves/compiler/incan_ir/src/lower/types.rs",
       "category": "lowered primitive and type-token spelling compatibility",
-      "expected_count": 10,
-      "expected_fingerprint": "0x4c54bad63f087d60"
+      "expected_count": 4,
+      "expected_fingerprint": "0x648605a560b52674"
+    },
+    {
+      "path": "loaves/compiler/incan_ir/src/types.rs",
+      "category": "lowered primitive and type-token spelling compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0x563d31b1292d4af1"
     },
     {
       "path": "loaves/compiler/incan_provider/src/dependency_resolver.rs",

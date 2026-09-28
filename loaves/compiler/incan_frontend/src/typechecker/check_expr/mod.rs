@@ -453,10 +453,7 @@ impl TypeChecker {
             (Expr::Literal(Literal::Float(_)), Some(expected_ty))
                 if matches!(
                     expected_ty,
-                    ResolvedType::Numeric(
-                        incan_lang::lang::types::numerics::NumericTypeId::F32
-                            | incan_lang::lang::types::numerics::NumericTypeId::F64
-                    )
+                    ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F32)
                 ) =>
             {
                 self.check_float_literal_with_expected(expr, expected_ty)
@@ -475,10 +472,7 @@ impl TypeChecker {
             (Expr::Unary(UnaryOp::Neg, operand), Some(expected_ty))
                 if matches!(
                     expected_ty,
-                    ResolvedType::Numeric(
-                        incan_lang::lang::types::numerics::NumericTypeId::F32
-                            | incan_lang::lang::types::numerics::NumericTypeId::F64
-                    )
+                    ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F32)
                 ) && matches!(operand.node, Expr::Literal(Literal::Float(_))) =>
             {
                 self.check_expr_with_expected(operand, Some(expected_ty));
@@ -529,7 +523,7 @@ impl TypeChecker {
         let Some(target) = value.suffix else {
             return ResolvedType::Int;
         };
-        let target_ty = ResolvedType::Numeric(target);
+        let target_ty = ResolvedType::from_numeric_id(target);
         let fits = match integer_bounds(target) {
             Some(IntegerBounds::Signed { minimum, .. }) if negative => value.magnitude <= minimum.unsigned_abs(),
             Some(IntegerBounds::Signed { maximum, .. }) => value.magnitude <= maximum as u128,
@@ -556,15 +550,18 @@ impl TypeChecker {
         target_ty
     }
 
-    /// Typecheck an explicitly suffixed float token, accepting only finite values in the suffix's binary-float width.
+    /// Typecheck an explicitly suffixed float token in the suffix's binary-float type.
+    ///
+    /// An `f32` literal must be finite in `f32`. An `f64` literal is a `float`, which holds IEEE infinity, so it takes
+    /// every value an unsuffixed float literal takes.
     fn check_suffixed_float_literal(&mut self, value: &FloatLiteral, span: Span) -> ResolvedType {
         let Some(target) = value.suffix else {
             return ResolvedType::Float;
         };
-        let target_ty = ResolvedType::Numeric(target);
+        let target_ty = ResolvedType::from_numeric_id(target);
         let fits = match target {
             NumericTypeId::F32 => value.value.is_finite() && value.value.abs() <= f64::from(f32::MAX),
-            NumericTypeId::F64 => value.value.is_finite(),
+            NumericTypeId::F64 => true,
             _ => false,
         };
         if !fits {
@@ -697,7 +694,7 @@ impl TypeChecker {
         }
     }
 
-    /// Typecheck a binary-float literal in a known `f32` or `f64` target context.
+    /// Typecheck a binary-float literal in a known `f32` target context, where the literal must be finite in `f32`.
     fn check_float_literal_with_expected(&mut self, expr: &Spanned<Expr>, expected_ty: &ResolvedType) -> ResolvedType {
         let Expr::Literal(Literal::Float(value)) = &expr.node else {
             return self.check_expr(expr);
@@ -706,7 +703,6 @@ impl TypeChecker {
             ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F32) => {
                 value.value.is_finite() && value.value.abs() <= f64::from(f32::MAX)
             }
-            ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F64) => value.value.is_finite(),
             _ => true,
         };
         if !fits {
@@ -718,11 +714,11 @@ impl TypeChecker {
         expected_ty.clone()
     }
 
-    /// Reject an out-of-domain float literal nested beneath an exact-float arithmetic destination.
+    /// Reject an out-of-domain float literal nested beneath an `f32` arithmetic destination.
     ///
     /// Binary operands are otherwise checked independently, so the enclosing destination does not reach a literal
     /// such as `1e9999` in `1e9999 + 0.0`. This validation deliberately records no inferred type and does not make
-    /// ordinary `float` finite-only; it only preserves the exact destination's literal-domain check and literal span.
+    /// `float` (`f64`) finite-only; it only preserves the `f32` destination's literal-domain check and literal span.
     pub(in crate::typechecker::check_expr) fn validate_exact_float_literals_in_arithmetic(
         &mut self,
         expr: &Spanned<Expr>,
@@ -733,9 +729,6 @@ impl TypeChecker {
                 let fits = match expected_ty {
                     ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F32) => {
                         value.value.is_finite() && value.value.abs() <= f64::from(f32::MAX)
-                    }
-                    ResolvedType::Numeric(incan_lang::lang::types::numerics::NumericTypeId::F64) => {
-                        value.value.is_finite()
                     }
                     _ => return,
                 };

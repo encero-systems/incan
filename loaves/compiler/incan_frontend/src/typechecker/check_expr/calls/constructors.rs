@@ -61,7 +61,7 @@ impl TypeChecker {
             }
 
             let value_ty = self.check_expr_with_expected(expr, Some(&field_info.ty));
-            self.record_option_destination_if_compatible(expr.span, &value_ty, &field_info.ty);
+            self.record_value_destination_if_compatible(expr.span, &value_ty, &field_info.ty);
 
             if provided.contains_key(&canonical_name) {
                 self.errors.push(errors::duplicate_field_in_call(

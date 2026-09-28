@@ -18,7 +18,7 @@ Exact-width types become useful when the width is part of the contract. A packet
 
 Aliases such as `smallint`, `integer`, `bigint`, `hugeint`, `real`, `double`, `fp32`, and `fp64` exist because Incan is intended to work well in data and analytics settings. Those ecosystems already have vocabulary for fixed-width and floating-point schema fields.
 
-The aliases are intentionally not nominal types. `integer` and `i32` are the same type after resolution. This keeps schema-shaped source readable without multiplying the semantic type universe.
+The aliases are intentionally not nominal types. `integer` and `i32` are the same type after resolution. This keeps schema-shaped source readable without multiplying the semantic type universe. `int` and `float` are aliases in the same sense: they are the ordinary spellings of `i64` and `f64`, the two default widths.
 
 ## External data systems influenced the shape
 
@@ -46,6 +46,10 @@ small: i8 = wide
 
 The second example might work for the value `240` if the target were unsigned, or might fail for other runtime values. The language should not hide that policy decision.
 
+## Widening converts values, not types
+
+A lossless widening is a conversion of one value, made where the value reaches its destination: a binding, an argument, a field, an `Option` payload, a union member. A `list[i8]` holds many values, and making it a `list[int]` would mean building a new list, so a numeric type inside a collection, tuple, `Option` or function type has to match exactly. Writing that conversion out (a comprehension, or a `resize()` per element) keeps the copy visible.
+
 ## Resize methods put data loss in source
 
 Narrowing can be correct. It just needs to say what should happen when the value does not fit.
@@ -54,11 +58,21 @@ Narrowing can be correct. It just needs to say what should happen when the value
 
 That makes code review sharper. A reviewer can accept or challenge the policy by reading the method name, rather than discovering it in generated Rust or runtime behavior.
 
-## `float` and the exact floats
+## `float` is `f64`
 
-`float` and `f64` share one Rust carrier, `f64`, but not one value contract. `float` is the ordinary IEEE type: operations may produce NaN or infinity and carry them on. `f32` and `f64` are exact-width types for boundaries, and they promise finite values, so `float` is a type of its own rather than an alias of `f64`.
+`float` is the ordinary spelling of `f64`, and an alias is never a separate type, so `float` and `f64` have one value set: IEEE binary64 as Rust has it. Operations may produce NaN or infinity and carry them on, whichever spelling the code uses. Code that needs finite values checks for them (`is_finite()`), as it would for any IEEE float; a type spelling does not make that check for it.
 
-Generated code keeps that promise by checking an exact value where it enters or is observed: when a direct exact scalar enters through a public function or Rust interop, when an exact scalar is extracted from a field or collection index, when an exact call or arithmetic operation produces a result, and before an exact value is compared, formatted, or printed. Crossing from ordinary `float` into an exact carrier performs the same check, and ordinary `float` itself stays unchecked. Public and Rust-facing aggregates are not recursively scanned at ingress; each exact scalar is checked when Incan extracts or observes it. A failed check raises `ValueError`.
+`f32` is the one binary-float type distinct from `float`. It is a narrower storage format for boundaries, and it promises finite values. Generated code keeps that promise by checking an `f32` value where it enters or is observed: when it enters through a public function or Rust interop, when it is extracted from a field or collection index, when an `f32` call or arithmetic operation produces it, and before it is compared, formatted, or printed. Public and Rust-facing aggregates are not recursively scanned at ingress; each `f32` scalar is checked when Incan extracts or observes it. A failed check raises `ValueError`. An `f32` widens into `float` without loss, so that direction needs no check.
+
+## Integer arithmetic keeps its type
+
+Arithmetic over two values of one integer type yields that type, as it does in Rust: `i8 + i8` is an `i8` and `u16 * u16` is a `u16`. A result that silently became `int` would drop the width the code declared, and `n += 1` on an `i32` binding could not typecheck at all. An integer literal beside an exact-width value takes that value's type, as a literal at a destination does, so `n + 1` needs no suffix and `n + 300` for an `i8` is caught when the program is checked.
+
+Operands of two different integer types have no result type until one of them is converted. Picking the wider type is not always possible (`i64` and `u64` hold different ranges), and a silent pick is exactly the kind of numeric policy the resize methods exist to put in source, so the program converts one operand with `resize()` or `try_resize()` first.
+
+Comparison is different: it produces a `bool`, not a value of either type, so two integer types compare in the narrowest type that holds every value of both, and `small < count` needs no conversion. Only a pair that no integer type holds, such as `u128` beside a signed type, has to be converted first.
+
+`/` stays true division, so it yields `float` whatever integer types it divides. `**` keeps an integer base's type only for a non-negative literal exponent; a computed exponent may be negative, which has no integer result, so that power is a `float`.
 
 ## Division keeps Python's meaning
 

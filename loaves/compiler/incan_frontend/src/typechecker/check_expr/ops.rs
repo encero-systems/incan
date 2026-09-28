@@ -3,11 +3,13 @@
 //! These helpers validate operator semantics (e.g., numeric ops, boolean ops) and compute the resulting type, emitting
 //! diagnostics on mismatches.
 //!
-//! Numeric semantics follow Python-like rules:
+//! Numeric semantics follow RFC 009 and Python's division rules:
 //!
-//! - `/` always yields `Float` (even `int / int`)
+//! - Same-type integer arithmetic yields that type (`i8 + i8` is an `i8`); an unsuffixed integer literal beside an
+//!   exact-width integer takes its type, and operands of two different integer types are refused
+//! - `/` always yields `float` (even `int / int`)
 //! - `%` supports floats with Python remainder semantics
-//! - `**` yields `Int` only for non-negative int literal exponents; otherwise `Float`
+//! - `**` keeps an integer base's type only for a non-negative integer literal exponent; otherwise it yields `float`
 //! - `+` supports string and list concatenation before numeric fallback
 //! - Mixed numeric comparisons are allowed (promote to float for comparison)
 
@@ -16,7 +18,10 @@ use crate::diagnostics::errors;
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved, pow_exponent_kind_from_ast};
 use crate::symbols::{ResolvedType, TypeBoundInfo, TypeInfo};
 use crate::typechecker::derive_requirements::DeriveSupport;
-use crate::typechecker::{MemberBindingSurface, ProtocolIterationInfo, ResolvedMethodDispatch, ResolvedOperatorKind};
+use crate::typechecker::{
+    MemberBindingSurface, ProtocolIterationInfo, ResolvedMethodDispatch, ResolvedOperatorKind,
+    numeric_type_id_for_compat,
+};
 use incan_lang::lang::derives::{self, DeriveId};
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
 use incan_lang::{NumericTy, result_numeric_type};
@@ -56,20 +61,54 @@ fn is_empty_list_literal(expr: &Expr) -> bool {
     }
 }
 
-/// Return the exact-width unsigned integer id for a resolved type.
-fn exact_unsigned_integer_type_id(ty: &ResolvedType) -> Option<NumericTypeId> {
-    match ty {
-        ResolvedType::Numeric(id) if numerics::info_for(*id).family == NumericFamily::UnsignedInteger => Some(*id),
-        _ => None,
+/// Return whether a resolved type is one of the exact-width integer types (`i8`, `u16`, `i64`, ...).
+///
+/// `int` is not one of them: it is the ordinary spelling an unsuffixed integer literal already has.
+fn is_exact_integer_type(ty: &ResolvedType) -> bool {
+    matches!(ty, ResolvedType::Numeric(id) if numerics::is_integer(*id))
+}
+
+/// Return whether an AST expression is an unsuffixed integer literal, negated or parenthesized or not.
+///
+/// These are the operands whose type comes from their context: a suffixed literal (`7i8`) names its own type.
+fn is_unsuffixed_integer_literal(expr: &Spanned<Expr>) -> bool {
+    match &expr.node {
+        Expr::Literal(Literal::Int(value)) => value.suffix.is_none(),
+        Expr::Unary(UnaryOp::Neg, inner) => {
+            matches!(&inner.node, Expr::Literal(Literal::Int(value)) if value.suffix.is_none())
+        }
+        Expr::Paren(inner) => is_unsuffixed_integer_literal(inner),
+        _ => false,
     }
 }
 
-/// Return whether an AST expression is a non-negative integer literal.
-fn non_negative_integer_literal(expr: &Spanned<Expr>) -> bool {
-    match &expr.node {
-        Expr::Literal(Literal::Int(_)) => true,
-        Expr::Paren(inner) => non_negative_integer_literal(inner),
-        _ => false,
+/// Return whether an unsuffixed integer literal operand, negated or parenthesized or not, holds a value of the integer
+/// type `ty`.
+fn integer_literal_fits(expr: &Spanned<Expr>, ty: &ResolvedType) -> bool {
+    let Some(id) = numeric_type_id_for_compat(ty) else {
+        return false;
+    };
+    let (negative, literal) = match &expr.node {
+        Expr::Paren(inner) => return integer_literal_fits(inner, ty),
+        Expr::Literal(Literal::Int(value)) => (false, value),
+        Expr::Unary(UnaryOp::Neg, inner) => match &inner.node {
+            Expr::Literal(Literal::Int(value)) => (true, value),
+            _ => return false,
+        },
+        _ => return false,
+    };
+    match incan_lang::numeric_values::integer_bounds(id) {
+        Some(incan_lang::numeric_values::IntegerBounds::Signed { minimum, maximum }) => {
+            if negative {
+                literal.magnitude <= minimum.unsigned_abs()
+            } else {
+                literal.magnitude <= maximum.unsigned_abs()
+            }
+        }
+        Some(incan_lang::numeric_values::IntegerBounds::Unsigned { maximum }) => {
+            literal.magnitude <= maximum && (!negative || literal.magnitude == 0)
+        }
+        None => false,
     }
 }
 
@@ -200,69 +239,96 @@ fn comparison_operator_derive(op: BinaryOp) -> Option<DeriveId> {
 }
 
 impl TypeChecker {
-    /// Type-check exact-width unsigned modulo and floor division without erasing the unsigned type.
-    fn check_exact_unsigned_integer_binary(
+    /// Give an unsuffixed integer literal operand the exact-width integer type of the other operand.
+    ///
+    /// RFC 009 types an unsuffixed integer literal from its context, and for `+`, `-`, `*`, `//`, `%` and the
+    /// comparisons the other operand is that context: `n + 1` adds two `i8` values when `n` is an `i8`, and `n == 0`
+    /// compares two. The literal is checked again against that type as it is at a destination of that type, which
+    /// records the type for lowering; in arithmetic that refuses a value outside the type's range (`n + 300`, or
+    /// `b - -1` for a `u8` `b`), while a comparison keeps such a literal an `int` and compares in a type holding both
+    /// (`b == -1` is `false`). `/` is left alone because it divides as floats whatever its operands are, and so is the
+    /// exponent of `**`, which counts rather than being a value of the base's type. Returns the operand types after
+    /// the literal has taken its partner's type.
+    fn integer_literal_operand_takes_partner_type(
         &mut self,
-        left: &Spanned<Expr>,
+        (left, left_ty): (&Spanned<Expr>, &ResolvedType),
         op: BinaryOp,
-        right: &Spanned<Expr>,
+        (right, right_ty): (&Spanned<Expr>, &ResolvedType),
+    ) -> (ResolvedType, ResolvedType) {
+        if !matches!(
+            op,
+            BinaryOp::Add
+                | BinaryOp::Sub
+                | BinaryOp::Mul
+                | BinaryOp::FloorDiv
+                | BinaryOp::Mod
+                | BinaryOp::Eq
+                | BinaryOp::NotEq
+                | BinaryOp::Lt
+                | BinaryOp::LtEq
+                | BinaryOp::Gt
+                | BinaryOp::GtEq
+        ) {
+            return (left_ty.clone(), right_ty.clone());
+        }
+        let comparison = matches!(
+            op,
+            BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq
+        );
+        let takes = |literal: &Spanned<Expr>, partner_ty: &ResolvedType| {
+            is_exact_integer_type(partner_ty) && (!comparison || integer_literal_fits(literal, partner_ty))
+        };
+        match (
+            is_unsuffixed_integer_literal(left),
+            is_unsuffixed_integer_literal(right),
+        ) {
+            (false, true) if takes(right, left_ty) => {
+                let right_ty = self.check_expr_with_expected(right, Some(left_ty));
+                (left_ty.clone(), right_ty)
+            }
+            (true, false) if takes(left, right_ty) => {
+                let left_ty = self.check_expr_with_expected(left, Some(right_ty));
+                (left_ty, right_ty.clone())
+            }
+            _ => (left_ty.clone(), right_ty.clone()),
+        }
+    }
+
+    /// Return the type of an arithmetic operation whose result the `int`/`float` table makes an integer.
+    ///
+    /// RFC 009: same-type integer arithmetic yields that type. `+`, `-`, `*`, `//` and `%` keep their operands' one
+    /// integer type (`int` and `i64` are one type), and `**` with a non-negative integer literal exponent keeps its
+    /// base's type. Operands of two different integer types are refused, because mixed-width integer arithmetic needs
+    /// an explicit conversion of one operand; the refusal is recorded and yields `Unknown`.
+    fn integer_arithmetic_result_type(
+        &mut self,
         left_ty: &ResolvedType,
+        op: BinaryOp,
         right_ty: &ResolvedType,
         span: Span,
-    ) -> Option<ResolvedType> {
-        if !matches!(op, BinaryOp::FloorDiv | BinaryOp::Mod) {
-            return None;
+    ) -> ResolvedType {
+        if matches!(op, BinaryOp::Pow) {
+            return left_ty.clone();
         }
-
-        let left_unsigned = exact_unsigned_integer_type_id(left_ty);
-        let right_unsigned = exact_unsigned_integer_type_id(right_ty);
-        match (left_unsigned, right_unsigned) {
-            (None, None) => None,
-            (Some(left_id), Some(right_id)) if left_id == right_id => Some(left_ty.clone()),
-            (Some(_), Some(_)) => {
-                let expected = left_ty.to_string();
-                self.errors
-                    .push(errors::type_mismatch(&expected, &right_ty.to_string(), span));
-                Some(ResolvedType::Unknown)
-            }
-            (Some(_), None) if matches!(right_ty, ResolvedType::Int) => {
-                if non_negative_integer_literal(right) {
-                    Some(left_ty.clone())
-                } else {
-                    self.errors.push(errors::type_mismatch(
-                        &format!("{} or a non-negative integer literal", left_ty),
-                        &right_ty.to_string(),
-                        span,
-                    ));
-                    Some(ResolvedType::Unknown)
-                }
-            }
-            (None, Some(_)) if matches!(left_ty, ResolvedType::Int) => {
-                if non_negative_integer_literal(left) {
-                    Some(right_ty.clone())
-                } else {
-                    self.errors.push(errors::type_mismatch(
-                        &format!("{} or a non-negative integer literal", right_ty),
-                        &left_ty.to_string(),
-                        span,
-                    ));
-                    Some(ResolvedType::Unknown)
-                }
-            }
-            (Some(_), None) if matches!(right_ty, ResolvedType::Unknown | ResolvedType::RustPath(_)) => {
-                Some(left_ty.clone())
-            }
-            (None, Some(_)) if matches!(left_ty, ResolvedType::Unknown | ResolvedType::RustPath(_)) => {
-                Some(right_ty.clone())
-            }
-            (Some(_), None) | (None, Some(_)) => None,
+        let left_id = numeric_type_id_for_compat(left_ty);
+        if left_id.is_some() && left_id == numeric_type_id_for_compat(right_ty) {
+            return left_ty.clone();
         }
+        self.errors.push(errors::mixed_width_integer_arithmetic(
+            &left_ty.to_string(),
+            &op.to_string(),
+            &right_ty.to_string(),
+            span,
+        ));
+        ResolvedType::Unknown
     }
 
     /// Return the result type of an arithmetic operator over two numeric operands, by the operator result table.
     ///
-    /// The table's one home for `a op b` and for `x op= y` (checked as `x = x op y`): the unsigned `//` and `%` rows,
-    /// the same-exact-float rows, then the `int`/`float` table. A refusal is recorded and yields `Unknown`.
+    /// The table's one home for `a op b` and for `x op= y` (checked as `x = x op y`). An unsuffixed integer literal
+    /// beside an exact-width integer first takes that integer's type. Two `f32` operands keep `f32`. An operation the
+    /// `int`/`float` table gives an integer result keeps its operands' one integer type, and two different integer
+    /// types are refused; every other operation yields `float`. A refusal is recorded and yields `Unknown`.
     pub(in crate::typechecker) fn numeric_arithmetic_result_type(
         &mut self,
         (left, left_ty): (&Spanned<Expr>, &ResolvedType),
@@ -275,27 +341,25 @@ impl TypeChecker {
             self.errors.push(errors::type_mismatch("numeric", &found, span));
             return ResolvedType::Unknown;
         };
-        if let Some(result_ty) = self.check_exact_unsigned_integer_binary(left, op, right, left_ty, right_ty, span) {
-            return result_ty;
-        }
         let Some(num_op) = numeric_op_from_ast(&op) else {
             self.errors
                 .push(errors::type_mismatch("numeric operator", &op.to_string(), span));
             return ResolvedType::Unknown;
         };
+        let (left_ty, right_ty) =
+            self.integer_literal_operand_takes_partner_type((left, left_ty), op, (right, right_ty));
         let pow_exp = if matches!(op, BinaryOp::Pow) {
-            Some(pow_exponent_kind_from_ast(right, right_ty))
+            Some(pow_exponent_kind_from_ast(right, &right_ty))
         } else {
             None
         };
-        // Exact-width floating operands must not flow through the legacy two-class numeric promotion table: it only
-        // distinguishes `int` and `float`, so `f32 + f32` would incorrectly become the default `float` (`f64`).
-        // Mixed-width expressions still use that established policy.
-        if left_ty == right_ty && matches!(left_ty, ResolvedType::Numeric(NumericTypeId::F32 | NumericTypeId::F64)) {
-            return left_ty.clone();
+        // `f32` operands must not flow through the two-class numeric promotion table: it only distinguishes `int` and
+        // `float`, so `f32 + f32` would incorrectly become `float`. Other float pairings still use that table.
+        if left_ty == right_ty && matches!(left_ty, ResolvedType::Numeric(NumericTypeId::F32)) {
+            return left_ty;
         }
         match result_numeric_type(num_op, lhs, rhs, pow_exp) {
-            NumericTy::Int => ResolvedType::Int,
+            NumericTy::Int => self.integer_arithmetic_result_type(&left_ty, op, &right_ty, span),
             NumericTy::Float => ResolvedType::Float,
         }
     }
@@ -474,15 +538,16 @@ impl TypeChecker {
                     (Some(_), Some(_)) => {
                         self.numeric_arithmetic_result_type((left, &left_ty), op, (right, &right_ty), span)
                     }
-                    // Allow Unknown with numeric partner (treat as that numeric type).
+                    // Allow Unknown with numeric partner (treat as that numeric type): an integer partner keeps its
+                    // own integer type, as same-type integer arithmetic does.
                     (Some(n), None) if matches!(right_ty, ResolvedType::Unknown | ResolvedType::RustPath(_)) => match n
                     {
-                        NumericTy::Int => ResolvedType::Int,
+                        NumericTy::Int => left_ty.clone(),
                         NumericTy::Float => ResolvedType::Float,
                     },
                     (None, Some(n)) if matches!(left_ty, ResolvedType::Unknown | ResolvedType::RustPath(_)) => {
                         match n {
-                            NumericTy::Int => ResolvedType::Int,
+                            NumericTy::Int => right_ty.clone(),
                             NumericTy::Float => ResolvedType::Float,
                         }
                     }
@@ -578,7 +643,24 @@ impl TypeChecker {
                 let lhs_num = numeric_ty_from_resolved(&left_ty);
                 let rhs_num = numeric_ty_from_resolved(&right_ty);
                 if lhs_num.is_some() && rhs_num.is_some() {
-                    // Mixed numeric comparison is valid (promotion handled at codegen)
+                    let (left_ty, right_ty) =
+                        self.integer_literal_operand_takes_partner_type((left, &left_ty), op, (right, &right_ty));
+                    // Mixed numeric comparison is valid (promotion handled at codegen): two integer types compare in
+                    // the narrowest integer type both widen to, and a pair no integer type holds is refused.
+                    if let (Some(left_id), Some(right_id)) = (
+                        numeric_type_id_for_compat(&left_ty),
+                        numeric_type_id_for_compat(&right_ty),
+                    ) && numerics::is_integer(left_id)
+                        && numerics::is_integer(right_id)
+                        && incan_lang::numeric_values::common_lossless_integer_type(left_id, right_id).is_none()
+                    {
+                        self.errors.push(errors::incomparable_integer_types(
+                            &left_ty.to_string(),
+                            &op.to_string(),
+                            &right_ty.to_string(),
+                            span,
+                        ));
+                    }
                     ResolvedType::Bool
                 } else if (is_str_like)(&left_ty) && (is_str_like)(&right_ty) {
                     ResolvedType::Bool
@@ -665,10 +747,10 @@ impl TypeChecker {
                 };
                 if let Some(member_ty) = frozen_member_ty {
                     let text_probe_for_text_member = lhs_is_str && is_str_like(member_ty);
-                    if !text_probe_for_text_member
-                        && !matches!(left_ty, ResolvedType::Unknown)
-                        && !self.types_compatible(&left_ty, member_ty)
-                    {
+                    if !text_probe_for_text_member && self.types_compatible(&left_ty, member_ty) {
+                        // A numeric probe of a narrower type is widened to the member type where it is lowered.
+                        self.record_value_destination_if_compatible(left.span, &left_ty, member_ty);
+                    } else if !text_probe_for_text_member && !matches!(left_ty, ResolvedType::Unknown) {
                         self.errors.push(errors::type_mismatch(
                             &member_ty.to_string(),
                             &left_ty.to_string(),
@@ -684,6 +766,9 @@ impl TypeChecker {
                         Some(CollectionTypeId::List | CollectionTypeId::Set) if !args.is_empty() => {
                             let elem_ty = &args[0];
                             if self.types_compatible(&left_ty, elem_ty) || matches!(left_ty, ResolvedType::Unknown) {
+                                // A numeric probe of a narrower type is widened to the element type where it is
+                                // lowered (RFC 009).
+                                self.record_value_destination_if_compatible(left.span, &left_ty, elem_ty);
                                 // A list finds its item by equality, which the element type must implement (#1870); a
                                 // set's element type is held to `Eq` and `Hash` where the set type is written.
                                 if collection_type_id(name.as_str()) == Some(CollectionTypeId::List) {
@@ -698,6 +783,7 @@ impl TypeChecker {
                         Some(CollectionTypeId::Dict) if args.len() >= 2 => {
                             let key_ty = &args[0];
                             if self.types_compatible(&left_ty, key_ty) || matches!(left_ty, ResolvedType::Unknown) {
+                                self.record_value_destination_if_compatible(left.span, &left_ty, key_ty);
                                 return ResolvedType::Bool;
                             }
                             self.errors
@@ -759,11 +845,20 @@ impl TypeChecker {
         let operand_ty = self.check_expr(operand);
         match op {
             UnaryOp::Neg => {
+                let exact_family = match &operand_ty {
+                    ResolvedType::Numeric(id) => Some(numerics::info_for(*id).family),
+                    _ => None,
+                };
                 if matches!(
-                    operand_ty,
-                    ResolvedType::Numeric(NumericTypeId::F32 | NumericTypeId::F64)
+                    exact_family,
+                    Some(NumericFamily::SignedInteger | NumericFamily::BinaryFloat)
                 ) {
+                    // A negated exact-width value keeps its type, as same-type arithmetic does.
                     operand_ty
+                } else if exact_family == Some(NumericFamily::UnsignedInteger) {
+                    self.errors
+                        .push(errors::type_mismatch("signed numeric", &operand_ty.to_string(), span));
+                    ResolvedType::Unknown
                 } else if self.types_compatible(&operand_ty, &ResolvedType::Int) {
                     ResolvedType::Int
                 } else if self.types_compatible(&operand_ty, &ResolvedType::Float) {

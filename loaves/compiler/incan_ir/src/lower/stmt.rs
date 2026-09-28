@@ -1168,7 +1168,7 @@ impl AstLowering {
                                 self.make_static_binding_expr(static_name, ty.clone())
                             }
                             (AssignTarget::Var { ty: binding_ty, .. }, _) => {
-                                Self::wrap_value_in_nested_option_binding(lowered_value.clone(), binding_ty)
+                                Self::adapt_value_to_binding(lowered_value.clone(), binding_ty)
                             }
                             _ => lowered_value.clone(),
                         };
@@ -1196,7 +1196,7 @@ impl AstLowering {
                                         self.make_static_binding_expr(static_name, ty.clone())
                                     }
                                     (AssignTarget::Var { ty: binding_ty, .. }, _) => {
-                                        Self::wrap_value_in_nested_option_binding(lowered_value.clone(), binding_ty)
+                                        Self::adapt_value_to_binding(lowered_value.clone(), binding_ty)
                                     }
                                     _ => lowered_value.clone(),
                                 };
@@ -1214,7 +1214,7 @@ impl AstLowering {
                         let value = if let Some(static_name) = new_binding_static_alias {
                             self.make_static_binding_expr(static_name, ty.clone())
                         } else {
-                            Self::wrap_value_in_nested_option_binding(lowered_value.clone(), &ty)
+                            Self::adapt_value_to_binding(lowered_value.clone(), &ty)
                         };
                         // Otherwise, create a new immutable binding in the current scope.
                         IrStmtKind::Let {
@@ -1233,7 +1233,7 @@ impl AstLowering {
                         let value = if let Some(static_name) = new_binding_static_alias {
                             self.make_static_binding_expr(static_name, ty.clone())
                         } else {
-                            Self::wrap_value_in_nested_option_binding(lowered_value.clone(), &ty)
+                            Self::adapt_value_to_binding(lowered_value.clone(), &ty)
                         };
                         IrStmtKind::Let {
                             name: a.name.clone(),
@@ -1250,7 +1250,7 @@ impl AstLowering {
                         let value = if let Some(static_name) = new_binding_static_alias {
                             self.make_static_binding_expr(static_name, ty.clone())
                         } else {
-                            Self::wrap_value_in_nested_option_binding(lowered_value, &ty)
+                            Self::adapt_value_to_binding(lowered_value, &ty)
                         };
                         IrStmtKind::Let {
                             name: a.name.clone(),

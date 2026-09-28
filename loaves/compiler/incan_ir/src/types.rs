@@ -189,23 +189,75 @@ pub enum IrType {
     Unknown,
 }
 
-/// Return the shared exact binary-float type when both operands have the same exact width.
+/// Return `f32` when both operands are `f32`, the one exact binary-float type distinct from `float`.
 ///
-/// The general numeric policy deliberately collapses exact integers and floats into broad promotion classes. Native
-/// lowering and emission must consult this narrower identity first so an `f32` or `f64` arithmetic result does not
-/// silently become ordinary `float` between the typechecker and a finite-only runtime boundary.
+/// The general numeric policy deliberately collapses floats into one broad promotion class. Native lowering and
+/// emission must consult this narrower identity first so an `f32` arithmetic result does not silently become `float`
+/// between the typechecker and the finite-only `f32` runtime boundary. `f64` is `float` itself (RFC 009), so it has no
+/// narrower identity to keep.
 pub fn same_exact_binary_float_type(left: &IrType, right: &IrType) -> Option<IrType> {
     match (left, right) {
-        (IrType::Numeric(left), IrType::Numeric(right))
-            if left == right && matches!(left, NumericTypeId::F32 | NumericTypeId::F64) =>
-        {
-            Some(IrType::Numeric(*left))
+        (IrType::Numeric(NumericTypeId::F32), IrType::Numeric(NumericTypeId::F32)) => {
+            Some(IrType::Numeric(NumericTypeId::F32))
         }
         _ => None,
     }
 }
 
+/// Return the exact-width integer type an integer arithmetic operation keeps, when one operand has one.
+///
+/// RFC 009: same-type integer arithmetic yields that type. The typechecker has already refused operands of two
+/// different integer types and given an integer literal beside an exact-width integer that integer's type, so an
+/// exact-width operand still paired with `int` here stands beside `int`'s own identity (`i64`) or a literal the
+/// checker did not reach. `None` means neither operand is an exact-width integer and the ordinary `int` result applies.
+pub fn exact_integer_arithmetic_type(left: &IrType, right: &IrType) -> Option<IrType> {
+    let exact = |ty: &IrType| matches!(ty, IrType::Numeric(id) if numerics::is_integer(*id));
+    let integer = |ty: &IrType| matches!(ty, IrType::Int) || exact(ty);
+    if exact(left) && integer(right) {
+        Some(left.clone())
+    } else if integer(left) && exact(right) {
+        Some(right.clone())
+    } else {
+        None
+    }
+}
+
 impl IrType {
+    /// Return the IR type of one numeric registry id.
+    ///
+    /// RFC 009 makes `float` an alias of `f64`, and an alias creates no separate type identity, so the `f64` id is
+    /// [`IrType::Float`] and generated code treats an `f64` value exactly as a `float` one. Every other numeric id
+    /// keeps its exact-width type; the registry's `bool` entry is [`IrType::Bool`].
+    pub fn from_numeric_id(id: NumericTypeId) -> IrType {
+        match id {
+            NumericTypeId::F64 => IrType::Float,
+            NumericTypeId::Bool => IrType::Bool,
+            _ => IrType::Numeric(id),
+        }
+    }
+
+    /// Return the numeric registry id of the Rust carrier this type is: `i64` for `int`, `f64` for `float`, and the
+    /// exact-width type's own id. Every other type, `bool` included, has none.
+    pub fn numeric_carrier_id(&self) -> Option<NumericTypeId> {
+        match self {
+            IrType::Int => Some(NumericTypeId::I64),
+            IrType::Float => Some(NumericTypeId::F64),
+            IrType::Numeric(NumericTypeId::Bool) => None,
+            IrType::Numeric(id) => Some(*id),
+            _ => None,
+        }
+    }
+
+    /// Return the IR type a numeric registry spelling names, given the id the registry resolved it to.
+    ///
+    /// The spelling `int` keeps [`IrType::Int`]; every other spelling resolves through [`Self::from_numeric_id`].
+    pub fn from_numeric_spelling(spelling: &str, id: NumericTypeId) -> IrType {
+        match spelling {
+            "int" => IrType::Int,
+            _ => Self::from_numeric_id(id),
+        }
+    }
+
     /// Return the canonical element and iteration plan for one accepted `Set` constructor source.
     ///
     /// A runtime generator is consumed through the `Iterator` trait rather than its inherent adapters (#1744).

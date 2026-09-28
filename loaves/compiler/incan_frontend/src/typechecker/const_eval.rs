@@ -200,7 +200,6 @@ impl TypeChecker {
         let value = result.value.as_ref().and_then(const_float)?;
         let fits = match expected {
             ResolvedType::Numeric(NumericTypeId::F32) => value.is_finite() && value.abs() <= f64::from(f32::MAX),
-            ResolvedType::Numeric(NumericTypeId::F64) => value.is_finite(),
             _ => return None,
         };
         if !fits {
