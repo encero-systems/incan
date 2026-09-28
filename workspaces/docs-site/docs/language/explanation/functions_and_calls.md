@@ -104,7 +104,7 @@ The generated Rust builds those containers with ordinary `Vec` and `HashMap` con
 
 ### Unpacking into fixed parameters
 
-Unpacking fills ordinary fixed parameters only when the unpacked expression shows its own shape. A value of type `List[T]` is a homogeneous list whose length is not part of its type, so it can feed a `*args` rest parameter but cannot fill a fixed pair such as `fixed(x: int, y: int)`; a tuple expression or an inline list literal such as `fixed(*[1, 2])` can. Likewise a `Dict[str, T]` value can feed `**kwargs` but cannot prove that every fixed keyword parameter is present, while an inline dictionary literal with string literal keys can.
+Unpacking fills ordinary fixed parameters only when the unpacked expression shows its own shape. A value of type `List[T]` is a homogeneous list whose length is not part of its type, so it can feed a `*args` rest parameter but cannot fill a fixed pair such as `fixed(x: int, y: int)`; a tuple, whose length is part of its type, or an inline list literal such as `fixed(*[1, 2])` can. Likewise a `Dict[str, T]` value can feed `**kwargs` but cannot prove that every fixed keyword parameter is present, while an inline dictionary literal with string literal keys can.
 
 ## Aliases and presets for functions
 
@@ -114,7 +114,7 @@ For module-level alternate names such as `mean = avg`, use a [symbol alias](../r
 
 A default is evaluated as if it were written in the module that declares the callable, so it may name that module's private consts, functions and types. A caller in another module of the same package receives such a default when it leaves the parameter unbound.
 
-A caller in another package has only what the package publishes about its defaults. A default reaches that caller when the package can describe it as a value the caller's own program can build: a literal, a list or dictionary of such values, the name of a const, static or function, an enum variant without a payload, a call of a function the package declares, or a construction of a newtype the package declares or of a model or class it exports. Any other default leaves the parameter required for that caller, which must then pass the argument:
+A caller in another package has only what the package publishes about its defaults. A default reaches that caller only when the package can describe it as a value the caller's own program can build; rule 8 of [Ordinary Call Binding](../reference/functions.md#ordinary-call-binding) lists those forms. Any other default leaves the parameter required for that caller, which must then pass the argument. Defaults such as these stay required:
 
 - an operator expression such as `"fl" + "at"`, a negated const or an f-string;
 - a call of a builtin such as `abs(-3)` or `len("abc")`, `Some(3)`, or a call of a stdlib or other-package function;

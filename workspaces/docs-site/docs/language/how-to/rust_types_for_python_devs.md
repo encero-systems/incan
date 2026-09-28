@@ -36,7 +36,7 @@ counts: HashMap[str, int] = HashMap.new()
 | --- | --- | --- |
 | `dict.get(key)` | `d.get(key)` | Returns `Option` holding the stored value |
 | `dict[key]` | `d[key]` | Panics if missing |
-| `dict.get(key, default)` | `d.get(key).unwrap_or(default)` | The stored value or the default |
+| `dict.get(key, default)` | `d.get(key, default)` | The stored value, or the default when the key is missing |
 | `str(x)` | `str(x)` | Convert to string |
 | `len(x)` | `len(x)` | Length |
 
@@ -56,7 +56,7 @@ match my_dict.get("key"):
 
 ## `str` and `bytes`
 
-Method names on `str` are the familiar ones — `upper`, `lower`, `strip`, `split`, `replace`, `join` — but Incan is statically typed and substring membership is a method, `s.contains("x")`, not Python's `in` operator. Incan hides the `String` / `&str` split: write `str` and the compiler decides ownership in the generated Rust.
+Method names on `str` are the familiar ones — `upper`, `lower`, `strip`, `split`, `replace`, `join` — and substring membership is Python's `in` operator, `"x" in s` and `"x" not in s`, with `s.contains("x")` as its method form. Incan hides the `String` / `&str` split: write `str` and the compiler decides ownership in the generated Rust.
 
 Python's `bytes` is immutable; Incan's `bytes` lowers to `Vec<u8>`, which is not. Choose the type by what the data is, not by where it came from:
 

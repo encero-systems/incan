@@ -42,12 +42,12 @@ println(email)  # user@example.com
 
 ## Test for a substring
 
-`contains` is a method; the `in` operator does not apply to strings.
+`needle in text` tests whether `text` contains `needle`, and `needle not in text` tests the opposite; the `contains` method gives the same answer as `in`.
 
 ```incan
 sentence = "the quick brown fox"
 
-if sentence.contains("quick"):
+if "quick" in sentence:
     println("Found it!")
 ```
 
@@ -67,12 +67,14 @@ def greet(payload: bytes) -> Result[str, ValidationError]:
     text = payload.decode()?
     return Ok(f"hello, {text}")
 
-payload: bytes = "héllo".encode()
-println(len(payload))                       # 6
-match greet(payload):
-    Ok(line) => println(line)               # hello, héllo
-    Err(error) => println(f"{error}")       # invalid-utf8: 'utf-8' codec can't decode bytes: …
-println(b"\xff".decode(errors="replace")?)  # U+FFFD replacement character
+def main() -> Result[None, ValidationError]:
+    payload: bytes = "héllo".encode()
+    println(len(payload))                       # 6
+    match greet(payload):
+        Ok(line) => println(line)               # hello, héllo
+        Err(error) => println(f"{error}")       # invalid-utf8: 'utf-8' codec can't decode bytes: …
+    println(b"\xff".decode(errors="replace")?)  # U+FFFD replacement character
+    return Ok(None)
 ```
 
 The error's `code` is `invalid-utf8` for malformed input, `unknown-encoding` for a run-time label naming another codec, and `unknown-errors-policy` for a run-time policy other than `"strict"` or `"replace"`. Other codecs are not built into `str` and `bytes`: files use `std.fs` (`read_text` / `write_text`), and hexadecimal, base64 and similar text formats live in [`std.encoding`](binary_text_encoding.md).

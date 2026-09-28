@@ -28,7 +28,7 @@ Incan is not copying either system wholesale. Arrow is a memory format and Subst
 
 ## Lossless conversion is the implicit line
 
-The conversion rule is deliberately simple: implicit numeric movement is allowed when it is exact or provably lossless within one family (signed integers, unsigned integers, binary floats) or from an unsigned integer to a wider signed one, and rejected when it may lose data. Integer-to-float movement is never implicit, even where every value would fit.
+The conversion rule is deliberately simple: implicit numeric movement is allowed when it is exact or provably lossless within one family (signed integers, unsigned integers, binary floats) or from an unsigned integer to a wider signed one, and rejected when it may lose data. An integer value never moves to a float type implicitly, even where every value would fit. Arithmetic is a separate rule: an arithmetic operator over a float operand and an integer operand gives a `float`.
 
 This admits common safe cases without user friction:
 

@@ -198,6 +198,11 @@ for name in items:
 A `for` loop over a list normally reads each item where it stays, and the list keeps its items. A task handle can be neither copied nor cloned, and awaiting it uses it up, so a loop that awaits the handles of a list has to take them out of it:
 
 ```incan
+from std.async import spawn
+
+async def work() -> int:
+    return 1
+
 async def main() -> None:
     handles = [spawn(work()), spawn(work())]
     for handle in handles:

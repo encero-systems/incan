@@ -103,16 +103,16 @@ That is intentional. `static` exists to model module-owned state, not one-time s
 
 ## Reading a dict entry with `get`
 
-`get` returns the value stored for a key. Where the program keeps that result, the result is its own copy of the stored value.
+`get(key)` returns an `Option[V]` holding the value stored for a key, and `get(key, default)` returns the stored value, or `default` when no entry holds the key, as a `V`. Where the program keeps that result, the result is its own copy of the stored value.
 
-A lookup on a dict that is not a static reads the entry in place, without a copy, when all of these hold:
+A one-argument `get(key)` on a dict that is not a static reads the entry in place, without a copy, when all of these hold:
 
 - the lookup is the subject of a `match`, `if let` or `while let`;
 - each binding its patterns introduce is not used, or is only passed to `len`, `print` or `println`, interpolated in an f-string, or used to call a Rust method with a shared receiver whose result is not kept (discarded, tested as a condition, compared, negated, or itself passed to `len`, `print` or `println` or interpolated);
 - no closure captures a binding;
 - the name the dict is reached through is not used from the arm's guard up to the last statement that reads a binding.
 
-Every other result is kept: returned, bound to a name, passed on, compared, or read while the dict is used. A lookup on a static dict, on a dict field of a static, or on a local bound to a static is always kept, because the value is read out of the static's storage.
+Every other result is kept: returned, bound to a name, passed on, compared, or read while the dict is used. A `get(key, default)` result is always kept. A lookup on a static dict, on a dict field of a static, or on a local bound to a static is always kept too, because the value is read out of the static's storage.
 
 A value type that cannot be copied, such as a `Generator` or a Rust type without `Clone`, has no copy, so a kept lookup of one is refused with `INCAN-T0118`, while a lookup read in place is accepted:
 

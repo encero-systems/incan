@@ -12,6 +12,9 @@ For the exact rules, see [Decorators (reference)](../reference/language.md#decor
 Registry, catalog, routing, telemetry and validation decorators usually record something about the function and return it unchanged. Make the decorator, or the factory that produces it, generic over the whole callable, `(F) -> F`, so the decorated name keeps its own signature:
 
 ```incan
+pub model ColumnExpr:
+    pub name: str
+
 def registered[F](function_ref: str) -> ((F) -> F):
     return (func) => func
 
@@ -33,6 +36,8 @@ pub def col(name: str) -> ColumnExpr:
 Read `func.__name__` in the decorator instead of repeating the declaration's name in a string argument:
 
 ```incan
+static registry_names: list[str] = []
+
 def capture[F](func: F) -> F:
     registry_names.append(func.__name__)
     return func
