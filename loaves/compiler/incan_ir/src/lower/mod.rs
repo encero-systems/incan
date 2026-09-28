@@ -3642,22 +3642,28 @@ impl AstLowering {
         }
     }
 
-    /// Return the top-level functions of a module that a default body of one of its public traits calls.
+    /// Return the top-level functions a default body of one of the module's public traits calls, and the constants it
+    /// reads.
     ///
-    /// Such a default is expanded into adopters in other modules, where it calls these helpers through the trait
-    /// module's path (#1759), so they must be emitted, and reachable from those modules, whether or not anything in
-    /// the trait's own module calls them.
-    pub fn source_trait_default_helper_functions(program: &ast::Program) -> HashSet<String> {
-        let functions = program
-            .declarations
-            .iter()
-            .filter_map(|decl| match &decl.node {
-                ast::Declaration::Function(function) => Some(function.name.as_str()),
-                _ => None,
-            })
-            .collect::<HashSet<_>>();
+    /// Such a default is expanded into adopters in other modules, where it reaches these helpers through the trait
+    /// module's path (#1759, #1873), so they must be emitted, and reachable from those modules, whether or not anything
+    /// in the trait's own module uses them.
+    pub fn source_trait_default_helpers(program: &ast::Program) -> HashSet<String> {
+        let mut functions = HashSet::new();
+        let mut consts = HashSet::new();
+        for decl in &program.declarations {
+            match &decl.node {
+                ast::Declaration::Function(function) => {
+                    functions.insert(function.name.as_str());
+                }
+                ast::Declaration::Const(konst) => {
+                    consts.insert(konst.name.as_str());
+                }
+                _ => {}
+            }
+        }
         let mut helpers = HashSet::new();
-        if functions.is_empty() {
+        if functions.is_empty() && consts.is_empty() {
             return helpers;
         }
         for decl in &program.declarations {
@@ -3669,11 +3675,18 @@ impl AstLowering {
             }
             for body in trait_decl.methods.iter().filter_map(|method| method.node.body.as_ref()) {
                 incan_frontend::ast_walk::any_expr_in_body(body, |expr| {
-                    if let ast::Expr::Call(callee, _, _) = expr
-                        && let ast::Expr::Ident(name) = &callee.node
-                        && functions.contains(name.as_str())
-                    {
-                        helpers.insert(name.clone());
+                    match expr {
+                        ast::Expr::Call(callee, _, _) => {
+                            if let ast::Expr::Ident(name) = &callee.node
+                                && functions.contains(name.as_str())
+                            {
+                                helpers.insert(name.clone());
+                            }
+                        }
+                        ast::Expr::Ident(name) if consts.contains(name.as_str()) => {
+                            helpers.insert(name.clone());
+                        }
+                        _ => {}
                     }
                     false
                 });
@@ -3682,22 +3695,25 @@ impl AstLowering {
         helpers
     }
 
-    /// Give each private function that a public trait's default body calls crate visibility.
+    /// Give each private function a public trait's default body calls, and each private constant it reads, crate
+    /// visibility.
     ///
     /// The default is expanded into every adopter, including adopters in other modules of the crate, and there it
-    /// calls the helper through the trait module's path (#1759); a private helper would be out of their reach. The
-    /// helper becomes visible to the crate, never beyond it.
+    /// reaches the helper through the trait module's path (#1759, #1873); a private helper would be out of their
+    /// reach. The helper becomes visible to the crate, never beyond it.
     fn open_trait_default_helpers_to_the_crate(program: &ast::Program, ir_program: &mut IrProgram) {
-        let helpers = Self::source_trait_default_helper_functions(program);
+        let helpers = Self::source_trait_default_helpers(program);
         if helpers.is_empty() {
             return;
         }
         for decl in &mut ir_program.declarations {
-            if let IrDeclKind::Function(function) = &mut decl.kind
-                && matches!(function.visibility, Visibility::Private)
-                && helpers.contains(&function.name)
-            {
-                function.visibility = Visibility::Crate;
+            let (visibility, name) = match &mut decl.kind {
+                IrDeclKind::Function(function) => (&mut function.visibility, &function.name),
+                IrDeclKind::Const { visibility, name, .. } => (visibility, &*name),
+                _ => continue,
+            };
+            if matches!(visibility, Visibility::Private) && helpers.contains(name) {
+                *visibility = Visibility::Crate;
             }
         }
     }

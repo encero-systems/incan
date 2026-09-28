@@ -763,6 +763,18 @@ impl AstLowering {
         }
     }
 
+    /// Return the Rust path of the `pub::` dependency module a module binding names, or `None` for any other
+    /// expression.
+    ///
+    /// `cl` bound by `import pub::calc as cl` is the dependency crate `calc`, and a binding of a dependency's submodule
+    /// is that module's path inside the crate. The path is the consumer's own dependency binding, which may differ from
+    /// the package that declares what it reaches.
+    pub(in crate::lower) fn pub_dependency_binding_rust_path(&self, expr: &ast::Expr) -> Option<Vec<String>> {
+        let path = self.imported_field_base_path(expr)?;
+        let (root, dependency_path) = path.split_first()?;
+        (root == "pub" && !dependency_path.is_empty()).then(|| dependency_path.to_vec())
+    }
+
     /// Resolve `module.function(...)` syntax when the receiver is an imported module and the checker proved that the
     /// call selects a function declaration rather than an object method.
     pub(in crate::lower) fn imported_module_function_callee_path(
@@ -3503,7 +3515,15 @@ impl AstLowering {
                         arg.expr
                     }
                 })
-                .collect();
+                .collect::<Vec<_>>();
+            // ---- `dict(source)`: a copy of the source dict, the `{**source}` literal ----
+            if constructor == CollectionTypeId::Dict {
+                let entries = args_ir
+                    .into_iter()
+                    .map(|source| IrDictEntry::Spread(Self::owned_spread_operand(source)))
+                    .collect();
+                return Ok((IrExprKind::Dict(entries), result_ty));
+            }
             return Ok((
                 IrExprKind::BuiltinCall {
                     func: BuiltinFn::CollectionConstructor(constructor),

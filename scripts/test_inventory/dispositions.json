@@ -1742,6 +1742,10 @@
           "twin": "dies",
           "dies": "asserts the reachable-item table keeps a trait named by a selected trait's signature; a dependency-metadata table of the dying generated project."
         },
+        "selected_trait_keeps_the_consts_its_defaults_read_issue1873": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/trait_default_nested_module_identity",
+          "notes": "Asserts that a selected trait keeps the private const its default reads reachable; the named fixture reads that const through the default from an adopter in another module (#1873)."
+        },
         "source_import_prefers_exact_sibling_over_source_root": {
           "twin": "dies",
           "dies": "asserts `generated_dependency_module_path_for_source_import` prefers a sibling module path; a generated-module path table of the dying generated project."
@@ -3241,6 +3245,20 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/dependency_references.rs": {
+      "disposition": "retire",
+      "notes": "consumers of a `pub::` dependency's functions and adopted-trait methods, built against the dependency's generated crate and run by rustc; retires with the Rust-source backend (#654).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "dependency_function_through_a_module_binding_is_a_callable_value_issue1840": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_dependencies/dependency_partial_and_function_value",
+          "notes": "The fixture binds a dependency function reached through an aliased and an unaliased module binding to locals and passes it as an argument (#1840)."
+        }
+      },
+      "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/compiled_generic_bounds"
+    },
     "loaves/compiler/incan_emit/src/tests/dependency_trait_aliases.rs": {
       "disposition": "retire",
       "notes": "builds and runs a consumer of a `pub::` dependency whose trait it reaches under an alias or through a module binding, and checks the refusal of an adopter relying on the dependency trait's default (#1561); retires with the Rust-source backend.",
@@ -3309,7 +3327,7 @@
     },
     "loaves/compiler/incan_emit/src/tests/emitted_spellings.rs": {
       "disposition": "retire",
-      "notes": "asserts the Rust text emission gives keyword identifiers, a program type named like a runtime surface type, `set()` over a generator, `const` `FrozenDict` reads an explicit channel element type and the future of an async function called through a module binding; generated Rust dies with #654.",
+      "notes": "asserts the Rust text emission gives keyword identifiers, a program type named like a runtime surface type, `set()` over a generator, `const` `FrozenDict` reads and an explicit channel element type; generated Rust dies with #654.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -3422,6 +3440,10 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "copying_a_list_of_the_type_parameter_bounds_it_by_clone_issue1852": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/collection_copies_leave_their_source.incn",
+          "notes": "Runs, with rustc, generic functions that copy a list of their type parameter through `sorted` and a spread; the named fixture runs them for int and str lists (#1852)."
+        },
         "dict_and_set_types_bound_their_hashed_type_parameter_issue1758": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_numerics_and_bounds/generic_functions_hash_through_dict_and_set_types.incn",
           "notes": "Compiles, with rustc, generic callers that hash their type parameter through a dict or set annotation, an index write, `add`, `insert`, a forwarding caller and a generic class's dict field; the named fixture runs each with a hashable type argument (#1758)."
@@ -3444,6 +3466,15 @@
         }
       },
       "twin": ""
+    },
+    "loaves/compiler/incan_emit/src/tests/inherited_method_dispatch.rs": {
+      "disposition": "retire",
+      "notes": "programs whose methods reach overrides and defaults through class inheritance and subtrait defaults, built and run by rustc; retires with the Rust-source backend (#654), and the named fixture runs the same programs.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {},
+      "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/subtrait_default_and_class_override.incn"
     },
     "loaves/compiler/incan_emit/src/tests/lowering_through_emission.rs": {
       "disposition": "retire",
@@ -3485,6 +3516,10 @@
         "mut_self_call_inside_a_larger_expression_iterates_in_place": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/mut_self_call_on_a_loop_item_inside_an_expression.incn",
           "notes": "twinned by a program calling a `mut self` method on each loop item inside a call, a list, an f-string, an `enumerate` loop and a field, printing the changed values."
+        },
+        "spread_literals_copy_a_collection_read_again_issue1852": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/collection_copies_leave_their_source.incn",
+          "notes": "Runs, with rustc, literal spreads of a dict, a list, a field and a `mut` parameter that the program reads again; the named fixture runs the same program (#1852)."
         },
         "task_handle_field_is_refused_before_loop_lowering_issue1853": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_refusals/refused_model_field_holding_a_join_handle.incn",
@@ -3563,7 +3598,7 @@
     },
     "loaves/compiler/incan_emit/src/tests/partial_preset_emission.rs": {
       "disposition": "retire",
-      "notes": "compiles the Rust text emission gives a local partial of a model, class or newtype constructor, of a generic function or constructor, and of another module's function, and top-level presets of negative numbers, tuple and set literals and a newtype constructor; generated Rust dies with #654.",
+      "notes": "compiles the Rust text emission gives a local partial of a model, class or newtype constructor and top-level presets of negative numbers, tuple and set literals and a newtype constructor; generated Rust dies with #654.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -3742,6 +3777,15 @@
         }
       },
       "twin": ""
+    },
+    "loaves/compiler/incan_emit/src/tests/trait_default_module_items.rs": {
+      "disposition": "retire",
+      "notes": "defaults of a trait declared in another module of the program, expanded into an adopter and built and run by rustc; retires with the Rust-source backend (#654).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {},
+      "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/trait_default_nested_module_identity"
     },
     "loaves/compiler/incan_emit/src/tests/trait_parameters_and_element_bounds.rs": {
       "disposition": "retire",
@@ -7611,6 +7655,10 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/trait_default_nested_module_identity",
           "notes": "The fixture executes imported defaults whose annotations and constructors name the trait module's model, class, enum and newtype."
         },
+        "trait_default_consts_are_visible_to_the_crate_issue1873": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/trait_default_nested_module_identity",
+          "notes": "Asserts that a private const a public trait's default reads becomes crate-visible; the named fixture reads it through the default from an adopter in another module (#1873)."
+        },
         "trait_default_helpers_are_visible_to_the_crate_issue1759": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/trait_default_reaches_its_module_names_across_modules",
           "notes": "Asserts on the legacy IR that a private function a public trait's default calls is lowered with crate visibility and an uncalled one stays private; retires with `incan_ir`. The behavior, an adopter in another module printing the result of a default that calls the trait module's private helper, is carried by the named fixture (#1759)."
@@ -7676,16 +7724,16 @@
       "split_target": "",
       "tests": {
         "followups_b_comparison_trait_adoptions_keep_source_trait_paths": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/source_trait_paths_option_identity_and_ord.incn",
-          "notes": "The fixture calls Eq, Ord and Hash methods through generic source-trait bounds."
+          "twin": "dies",
+          "dies": "asserts the source trait path of the legacy IR impl a `std.derives.comparison` adoption lowers to; an IR shape of the retiring crate. Eq and Ord adopters that define their own dunders now build (comparison_adopters.rs), but no behavior fixture still pairs that with a Hash adopter defining its own __hash__ alongside them: option_identity_and_comparison_bounds.incn, which replaces the fixture that once twinned this test, drops the Hash adopter and keeps only the Eq/Ord/Option coverage its own retires: lines name."
         },
         "followups_b_option_none_identity_lowers_to_presence_methods": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/source_trait_paths_option_identity_and_ord.incn",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/option_identity_and_comparison_bounds.incn",
           "notes": "The fixture evaluates generic `is None` and `is not None` predicates over absent and present values."
         },
         "followups_b_ord_type_parameter_bound_lowers_to_rust_ord": {
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/source_trait_paths_option_identity_and_ord.incn",
-          "notes": "The fixture sorts an int list through an Ord-bounded generic function."
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/option_identity_and_comparison_bounds.incn",
+          "notes": "The fixture compares and sorts int and str values through Eq- and Ord-bounded generic functions."
         }
       },
       "twin": ""

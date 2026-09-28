@@ -1,12 +1,16 @@
-# behavior: inferred and declared bounds of generic functions, inherent methods and trait defaults survive a package boundary, so the dependency and its concrete consumer build and run
+# behavior: inferred and declared bounds of generic functions, inherent methods and trait defaults survive a package boundary, and the methods a dependency's models get from the traits they adopt are callable by a consumer that imports the models but not the traits, so the dependency and its concrete consumer build and run
 # retires: loaves/compiler/incan_emit/src/codegen.rs::compiled_library_inherent_method_bounds_reach_manifest_issue1819
 # retires: loaves/compiler/incan_emit/src/codegen.rs::compiled_callable_bounds_reach_consumer_issue1826
 # retires: loaves/compiler/incan_emit/src/codegen.rs::declared_trait_method_bounds_are_not_republished_as_inferred_issue1826
+# retires: loaves/compiler/incan_emit/src/tests/dependency_references.rs::adopted_trait_methods_of_a_dependency_type_are_callable_without_the_trait
+# retires: loaves/compiler/incan_emit/src/tests/dependency_references.rs::generic_trait_default_of_a_dependency_type_is_callable_without_the_trait
 # expect-stdout:
 #   1
 #   first
 #   2
 #   picked
+#   1
+#   5
 #   4
 #   3
 
@@ -19,5 +23,7 @@ def main() -> None:
     println(holder.first(["first", "second"]))
     println(first([2, 3]))
     println(Selector(id=1).pick(["picked"]))
+    println(Selector(id=5).plain())
+    println(Selector(id=5).required())
     println(apply((value) => value + 1, 3))
     println(len(Lookup(key="bad").describe((value) => value)))

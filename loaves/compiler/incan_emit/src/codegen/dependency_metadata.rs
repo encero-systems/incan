@@ -910,7 +910,7 @@ fn retain_same_module_trait_signature_dependencies(
                     _ => None,
                 })
                 .collect::<HashMap<_, _>>();
-            let default_helpers = incan_ir::AstLowering::source_trait_default_helper_functions(program);
+            let default_helpers = incan_ir::AstLowering::source_trait_default_helpers(program);
             for selected_name in selected {
                 let Some(trait_decl) = declared_traits.get(selected_name.as_str()) else {
                     continue;
@@ -1207,6 +1207,23 @@ pub trait {sum}[T]:
         assert_eq!(
             reachable.get(&path),
             Some(&HashSet::from(["Measured".to_string(), "doubled".to_string()]))
+        );
+    }
+
+    /// #1873: a selected trait keeps the constants its default bodies read, which adopters in other modules read
+    /// through the trait module's path; a constant no default reads is not kept for the trait's sake.
+    #[test]
+    fn selected_trait_keeps_the_consts_its_defaults_read_issue1873() {
+        let main = parse("from shapes import Measured\n");
+        let shapes = parse(
+            "const LIMIT: int = 7\n\nconst UNUSED: int = 1\n\npub trait Measured:\n    def limit(self) -> int:\n        return LIMIT\n",
+        );
+        let path = vec!["shapes".to_string()];
+        let reachable = collect_externally_reachable_items_by_module(&main, &[("shapes", &shapes, Some(path.clone()))]);
+
+        assert_eq!(
+            reachable.get(&path),
+            Some(&HashSet::from(["Measured".to_string(), "LIMIT".to_string()]))
         );
     }
 

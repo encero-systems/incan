@@ -1,0 +1,45 @@
+# behavior: a `*` or `**` spread copies a list or dict that a binding, a field or a `mut` parameter still holds, and `sorted` or a spread copies a list of a generic function's type parameter, so each source keeps its items
+# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::spread_literals_copy_a_collection_read_again_issue1852
+# retires: loaves/compiler/incan_emit/src/tests/generic_caller_bounds.rs::copying_a_list_of_the_type_parameter_bounds_it_by_clone_issue1852
+# expect-stdout:
+#   12
+#   6
+#   1
+#   1
+#   a
+#   4
+
+class Bag:
+    items: list[int]
+
+    def doubled(self) -> int:
+        more = [*self.items, *self.items]
+        return len(more) + len(self.items)
+
+
+def literal_spreads(table: dict[str, int], items: list[int], mut extra: list[int]) -> int:
+    mut both = {**table, "z": 9}
+    both["y"] = 8
+    mut joined = [*items, *extra, 4]
+    joined.append(5)
+    last = [*items]
+    return len(both) + len(joined) + len(table) + len(extra) + len(last)
+
+
+def ordered[T with Ord](items: list[T]) -> list[T]:
+    return sorted(items)
+
+
+def counted_twice[T](items: list[T]) -> int:
+    more = [*items]
+    return len(more) + len(items)
+
+
+def main() -> None:
+    mut extra = [7]
+    println(literal_spreads({"a": 1}, [1, 2], extra))
+    println(Bag(items=[1, 2]).doubled())
+    println(len(extra))
+    println(ordered([3, 1, 2])[0])
+    println(ordered(["b", "a"])[0])
+    println(counted_twice([1, 2]))

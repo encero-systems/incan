@@ -237,3 +237,31 @@ fn dict_and_set_types_bound_their_hashed_type_parameter_issue1758() -> Result<()
     }
     Ok(())
 }
+
+/// #1852: a generic function that copies a list of its type parameter, by `sorted(items)` or by a spread of a list it
+/// reads again, receives `Clone` for that parameter, so it builds for any type argument and runs.
+#[test]
+fn copying_a_list_of_the_type_parameter_bounds_it_by_clone_issue1852() -> Result<(), Box<dyn std::error::Error>> {
+    let code = crate::IrCodegen::new().try_generate(&parse(
+        r#"
+def ordered[T with Ord](items: list[T]) -> list[T]:
+    return sorted(items)
+
+
+def doubled[T](items: list[T]) -> int:
+    more = [*items]
+    return len(more) + len(items)
+
+
+def main() -> None:
+    println(ordered([3, 1, 2])[0])
+    println(ordered(["b", "a"])[0])
+    println(doubled([1, 2]))
+"#,
+    )?)?;
+    assert_eq!(
+        super::mut_ownership_regressions::run_generated_program(&code)?,
+        "1\na\n4\n"
+    );
+    Ok(())
+}

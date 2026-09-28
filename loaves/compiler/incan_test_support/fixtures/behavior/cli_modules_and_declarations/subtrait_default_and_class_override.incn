@@ -1,10 +1,14 @@
-# behavior: a subtrait default satisfies its supertrait slot through direct and supertrait-bounded calls, and an inherited method dispatches its self-call to the subclass override
+# behavior: a subtrait default satisfies its supertrait slot through direct and supertrait-bounded calls, and a method a class inherits dispatches its self-calls to the override nearest the subclass, at any depth, while the declaring class keeps its own
 # retires: loaves/compiler/incan_emit/src/codegen.rs::subtrait_default_satisfies_supertrait_slot_issue1825
 # retires: loaves/compiler/incan_emit/src/codegen.rs::class_override_replaces_inherited_dispatch_issue1841
+# retires: loaves/compiler/incan_emit/src/tests/inherited_method_dispatch.rs::inherited_method_self_call_reaches_the_kept_override_issue1841
+# retires: loaves/compiler/incan_emit/src/tests/inherited_method_dispatch.rs::subtrait_default_fills_the_supertrait_slot_issue1825
 # expect-stdout:
 #   child
 #   child
 #   2
+#   4
+#   1
 
 trait Root:
     def label(self) -> str: ...
@@ -32,13 +36,23 @@ class Animal:
     def feed(self) -> int:
         return self.grow()
 
+    def twice(self) -> int:
+        return self.feed() + self.feed()
+
 
 class Dog extends Animal:
     def grow(self) -> int:
         return 2
 
 
+class Puppy extends Dog:
+    def total(self) -> int:
+        return self.twice()
+
+
 def main() -> None:
     println(Item(value=1).label())
     println(describe(Item(value=1)))
     println(Dog(id=1).feed())
+    println(Puppy(id=1).total())
+    println(Animal(id=1).feed())

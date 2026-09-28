@@ -77,6 +77,49 @@ fn empty_trait_stub_recovers_its_method_contract_from_provider_metadata() {
     );
 }
 
+/// A type the module declares is what its name spells, although the standard library has a trait of that name that
+/// the module never imported (`std.traits.indexing.Index`): the name annotates a local, a type argument in a local and
+/// a parameter without the checker taking it for the trait.
+#[test]
+fn a_declared_type_shadows_an_unimported_stdlib_trait_of_its_name() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+class Index[K, V]:
+    entries: dict[K, V]
+
+    def size(self) -> int:
+        return len(self.entries)
+
+
+def fill[K, V](index: Index[K, V]) -> int:
+    return index.size()
+
+
+def main() -> None:
+    index: Index[str, int] = Index(entries={})
+    nested: list[Index[str, int]] = [Index(entries={})]
+    println(fill(index) + len(nested))
+"#;
+    let tokens = lexer::lex(source)?;
+    let program = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.transitive_stdlib_stub_traits.insert(
+        "Index".to_string(),
+        TraitInfo {
+            type_params: vec!["K".to_string(), "V".to_string()],
+            supertraits: Vec::new(),
+            methods: HashMap::new(),
+            method_aliases: HashMap::new(),
+            properties: HashMap::new(),
+            requires: Vec::new(),
+        },
+    );
+    assert!(
+        checker.lookup_semantic_trait_info("Index").is_some(),
+        "the stdlib trait must be known to the checker, or this test proves nothing"
+    );
+    checker.check_program(&program)
+}
+
 #[test]
 fn test_ellipsis_abstract_method_outside_trait_is_type_error() {
     let source = r#"

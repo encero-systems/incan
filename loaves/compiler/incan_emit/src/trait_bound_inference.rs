@@ -2619,6 +2619,14 @@ fn scan_expr_for_bounds(
                 for tp_name in type_params {
                     add_bound(bounds_map, tp_name, IrTraitBound::simple(tb::CLONE));
                 }
+            } else if method == "clone" && !receiver_is_type_name && args.is_empty() {
+                // A copy of a collection of the type parameter (`items.clone()` for a spread that must leave `items`
+                // as it was, #1852) copies each item, so every type parameter the collection holds is `Clone`.
+                let mut held_type_params = HashSet::new();
+                collect_generic_type_param_names(&receiver.ty, type_params, &mut held_type_params);
+                for tp_name in held_type_params {
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
+                }
             }
             // `.cloned()` over the entry an in-place lookup finds (`Option<&V>`) copies the `V`, so every type
             // parameter in `V` must be `Clone`; lowering completes a `dict.get` whose result is kept this way.
@@ -2714,6 +2722,21 @@ fn scan_expr_for_bounds(
                     for tp_name in item_type_params {
                         add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
                     }
+                }
+                scan_expr_for_bounds(arg, type_params, params, bounds_map);
+            }
+        }
+
+        // ---- `sorted(values)`: the sorted list is a copy of `values`, so its item type parameters are `Clone` ----
+        IrExprKind::BuiltinCall {
+            func: BuiltinFn::Sorted,
+            args,
+        } => {
+            for arg in args {
+                let mut item_type_params = HashSet::new();
+                collect_generic_type_param_names(&arg.ty, type_params, &mut item_type_params);
+                for tp_name in item_type_params {
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
                 }
                 scan_expr_for_bounds(arg, type_params, params, bounds_map);
             }

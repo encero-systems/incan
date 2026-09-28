@@ -269,8 +269,7 @@ impl AstLowering {
         )
         .then(|| self.current_impl_type.as_deref())
         .flatten()
-        .and_then(|owner| self.class_decls.get(owner))
-        .and_then(|class| class.methods.iter().find(|method| method.node.name == source_method))
+        .and_then(|owner| self.nearest_class_method(owner, source_method))
         .and_then(|method| {
             self.type_info.as_ref().and_then(|info| {
                 info.declarations
@@ -926,6 +925,9 @@ impl AstLowering {
                     rust_path.to_string()
                 } else if let Some(segments) = stdlib_module {
                     self.lower_stdlib_trait_dispatch_path(segments, &declaration_name, receiver)
+                } else if let Some(dependency_path) = self.unimported_dependency_trait_path(&declaration_name, receiver)
+                {
+                    dependency_path
                 } else {
                     trait_name
                 };
@@ -942,6 +944,35 @@ impl AstLowering {
                 }))
             }
         }
+    }
+
+    /// Return the Rust path of a trait that a `pub::` dependency declares and exports, for a call on one of that
+    /// dependency's types when the consumer has not imported the trait (`bounds::Picker`).
+    ///
+    /// A method a dependency's type gets through an adopted trait is a Rust trait method, callable only with the trait
+    /// in scope. A consumer may call it without importing the trait, so the dispatch names the trait by its path, and
+    /// the call is emitted fully qualified. A trait the consumer imported, under any name, is in scope and keeps its
+    /// spelling.
+    fn unimported_dependency_trait_path(&self, declaration_name: &str, receiver: &TypedExpr) -> Option<String> {
+        let library = self.public_library_for_method_receiver(receiver)?;
+        let imported = self.import_aliases.values().any(|path| {
+            path.first().is_some_and(|root| root == "pub")
+                && path.get(1) == Some(&library)
+                && path.last().is_some_and(|name| name == declaration_name)
+        });
+        if imported {
+            return None;
+        }
+        let manifest_index = self.provider_plan.as_deref()?.library_manifest_index();
+        let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = manifest_index.get(&library) else {
+            return None;
+        };
+        manifest
+            .exports
+            .traits
+            .iter()
+            .any(|exported| exported.name == declaration_name)
+            .then(|| format!("{library}::{declaration_name}"))
     }
 
     /// Lower checked implementation-header parameters into dispatch-owned IR metadata.
@@ -1390,6 +1421,42 @@ impl AstLowering {
         }
     }
 
+    /// Take a spread operand the new collection may not consume as an owned copy: a list, set or dict reached through
+    /// a reference, such as a `mut` parameter, or a binding or field the program reads again.
+    ///
+    /// A spread collects the operand's items into the new collection. Through a reference those items are references,
+    /// which the new collection cannot own; and a collection the program still reads must keep its items. A copy of
+    /// the collection hands over owned items and leaves the source as it was (#1852). A temporary, or a binding at its
+    /// last use, is consumed as it is.
+    pub(in crate::lower) fn owned_spread_operand(value: TypedExpr) -> TypedExpr {
+        /// Whether `ty` is a list, set or dict, the collections a spread copies.
+        fn is_collection(ty: &IrType) -> bool {
+            matches!(ty, IrType::List(_) | IrType::Set(_) | IrType::Dict(_, _))
+        }
+        let kept_place = match &value.kind {
+            IrExprKind::Var { access, .. } => !matches!(access, VarAccess::Move),
+            IrExprKind::Field { .. } | IrExprKind::Index { .. } => true,
+            _ => false,
+        };
+        let owned_ty = match &value.ty {
+            IrType::Ref(inner) | IrType::RefMut(inner) if is_collection(inner) => inner.as_ref().clone(),
+            ty if kept_place && is_collection(ty) => ty.clone(),
+            _ => return value,
+        };
+        TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(value),
+                method: "clone".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            owned_ty,
+        )
+    }
+
     /// Return the key/value types carried by a lowered dict spread operand.
     fn lowered_dict_spread_entry_types(ty: &IrType) -> Option<(IrType, IrType)> {
         match ty {
@@ -1490,6 +1557,7 @@ impl AstLowering {
             lowered.ty = match &lowered.ty {
                 IrType::StaticStr => IrType::StaticStr,
                 IrType::StaticBytes => IrType::StaticBytes,
+                existing if self.is_inherited_self_receiver(&expr.node, existing, &inferred) => existing.clone(),
                 existing => Self::merge_inferred_ir_type(existing, inferred),
             };
         }
@@ -1678,6 +1746,22 @@ impl AstLowering {
             return Some(IdentKind::TypeName);
         }
         None
+    }
+
+    /// Whether `expr` is `self` in a method a class inherits, lowered again for the subclass whose impl is being built.
+    ///
+    /// The checker typed that `self` once, as the class that declares the method. In the subclass's copy it is the
+    /// subclass: its `self` calls reach the subclass's overrides (#1841), and the backend keeps those overrides only
+    /// when it sees them called on the subclass.
+    fn is_inherited_self_receiver(&self, expr: &ast::Expr, lowered: &IrType, inferred: &IrType) -> bool {
+        let (ast::Expr::SelfExpr, IrType::Struct(owner), Some(declaring)) =
+            (expr, lowered, inferred.nominal_type_name())
+        else {
+            return false;
+        };
+        self.current_impl_type.as_deref() == Some(owner.as_str())
+            && declaring != owner
+            && self.class_extends(owner, declaring)
     }
 
     /// Build a read of `member` on the Rust path `path` (`crate::shapes::Corner` and `Top`).
@@ -2571,8 +2655,10 @@ impl AstLowering {
             ast::Expr::Field(o, f) => {
                 // A dependency function reached through a module binding is a reference to the declaration, not a
                 // field read from a runtime module value. Calls already project this checked identity; taking the
-                // member as a first-class value must use the same compiler-owned projection (#1840). A function of a
-                // module of this crate is spelled through its module path below, which reaches the same declaration.
+                // member as a first-class value must use the same compiler-owned projection (#1840), read through the
+                // dependency's path the binding names, since no import brings the projection into scope. A function
+                // of a module of this crate is spelled through its module path below, which reaches the same
+                // declaration.
                 let names_dependency_function = self
                     .type_info
                     .as_ref()
@@ -2580,21 +2666,18 @@ impl AstLowering {
                     .is_some_and(|identity| {
                         matches!(identity.origin, incan_semantics_core::SymbolOrigin::Package { .. })
                     });
-                if names_dependency_function && let Some(name) = self.emitted_function_reference_name(expr_span) {
-                    let ty = self
+                if names_dependency_function
+                    && let Some(name) = self.emitted_function_reference_name(expr_span)
+                    && let Some(dependency_path) = self.pub_dependency_binding_rust_path(&o.node)
+                {
+                    let mut reference = Self::external_path_member_expr(&dependency_path, &name);
+                    reference.ty = self
                         .type_info
                         .as_ref()
                         .and_then(|info| info.expr_type(expr_span))
                         .map(|ty| self.lower_resolved_type(ty))
                         .unwrap_or(IrType::Unknown);
-                    return Ok(TypedExpr::new(
-                        IrExprKind::Var {
-                            name,
-                            access: VarAccess::Copy,
-                            ref_kind: VarRefKind::Value,
-                        },
-                        ty,
-                    ));
+                    return Ok(reference);
                 }
                 if let Some(value) = self
                     .type_info
@@ -3001,7 +3084,9 @@ impl AstLowering {
                     .iter()
                     .map(|i| match i {
                         ast::ListEntry::Element(value) => self.lower_expr_spanned(value).map(IrListEntry::Element),
-                        ast::ListEntry::Spread(value) => self.lower_expr_spanned(value).map(IrListEntry::Spread),
+                        ast::ListEntry::Spread(value) => self
+                            .lower_expr_spanned(value)
+                            .map(|value| IrListEntry::Spread(Self::owned_spread_operand(value))),
                     })
                     .collect::<Result<_, _>>()?;
                 let elem = items_ir
@@ -3022,7 +3107,9 @@ impl AstLowering {
                             self.lower_expr_spanned(k)?,
                             Box::new(self.lower_expr_spanned(v)?),
                         )),
-                        ast::DictEntry::Spread(value) => self.lower_expr_spanned(value).map(IrDictEntry::Spread),
+                        ast::DictEntry::Spread(value) => self
+                            .lower_expr_spanned(value)
+                            .map(|value| IrDictEntry::Spread(Self::owned_spread_operand(value))),
                     })
                     .collect::<Result<_, LoweringError>>()?;
                 let (k, v) = pairs_ir

@@ -458,7 +458,7 @@ fn trait_default_helpers_are_visible_to_the_crate_issue1759() -> Result<(), Stri
     let units = parse_module(UNITS, "units")?;
     let shapes = parse_module(CORNERS, "shapes")?;
     assert_eq!(
-        AstLowering::source_trait_default_helper_functions(&shapes),
+        AstLowering::source_trait_default_helpers(&shapes),
         std::collections::HashSet::from(["doubled".to_string()])
     );
     let mut checker = TypeChecker::new();
@@ -477,5 +477,40 @@ fn trait_default_helpers_are_visible_to_the_crate_issue1759() -> Result<(), Stri
     };
     assert_eq!(visibility("doubled"), Some(Visibility::Crate));
     assert_eq!(visibility("unused"), Some(Visibility::Private));
+    Ok(())
+}
+
+/// #1873: a private constant a public trait's default reads is visible to the crate, as a helper function is, so an
+/// adopter in another module reads it through the trait module's path; a constant no default reads stays private.
+#[test]
+fn trait_default_consts_are_visible_to_the_crate_issue1873() -> Result<(), String> {
+    let shapes = parse_module(
+        "const LIMIT: int = 7\n\nconst UNUSED: int = 1\n\npub trait Measured:\n    def limit(self) -> int:\n        return LIMIT\n",
+        "shapes",
+    )?;
+    assert_eq!(
+        AstLowering::source_trait_default_helpers(&shapes),
+        std::collections::HashSet::from(["LIMIT".to_string()])
+    );
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["shapes".to_string()]));
+    checker
+        .check_program(&shapes)
+        .map_err(|errors| format!("shapes should typecheck: {errors:?}"))?;
+    let ir = AstLowering::new_with_type_info(checker.type_info().clone())
+        .lower_program(&shapes)
+        .map_err(|errors| format!("shapes lowering failed: {errors:?}"))?;
+    let visibility = |name: &str| {
+        ir.declarations.iter().find_map(|decl| match &decl.kind {
+            IrDeclKind::Const {
+                name: declared,
+                visibility,
+                ..
+            } if declared == name => Some(*visibility),
+            _ => None,
+        })
+    };
+    assert_eq!(visibility("LIMIT"), Some(Visibility::Crate));
+    assert_eq!(visibility("UNUSED"), Some(Visibility::Private));
     Ok(())
 }

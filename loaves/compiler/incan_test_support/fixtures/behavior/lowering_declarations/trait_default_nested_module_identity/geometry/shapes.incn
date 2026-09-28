@@ -21,6 +21,9 @@ pub trait Measured:
     def extent(self) -> Extent:
         return Extent(n=2)
 
+    def extent_size(self) -> int:
+        return self.extent().n
+
     def frame(self) -> Frame:
         return Frame(n=3)
 

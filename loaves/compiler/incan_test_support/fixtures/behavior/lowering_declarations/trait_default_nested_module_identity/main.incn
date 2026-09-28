@@ -1,8 +1,12 @@
-# behavior: defaults of a trait from a nested module construct that module's model, class, enum and newtype and read its const even when the adopter declares a same-named local model
+# behavior: defaults of a trait from a nested module construct that module's model, class, enum and newtype, read that model's field and the module's private const, while the adopter's module declares and uses a same-named model of its own
 # retires: loaves/compiler/incan_ir/src/lower/tests/imported_trait_adoption_scope.rs::imported_trait_default_type_path_follows_the_declaring_module_issue1759
 # retires: loaves/compiler/incan_ir/src/lower/tests/imported_trait_adoption_scope.rs::imported_trait_default_const_follows_the_declaring_module_issue1873
 # retires: loaves/compiler/incan_ir/src/lower/tests/imported_trait_adoption_scope.rs::source_module_type_paths_list_the_module_nominal_types_issue1759
+# retires: loaves/compiler/incan_ir/src/lower/tests/imported_trait_adoption_scope.rs::trait_default_consts_are_visible_to_the_crate_issue1873
+# retires: loaves/compiler/incan_emit/src/codegen/dependency_metadata.rs::selected_trait_keeps_the_consts_its_defaults_read_issue1873
+# retires: loaves/compiler/incan_emit/src/tests/trait_default_module_items.rs::trait_default_reads_its_module_model_and_private_const_issue1873
 # expect-stdout:
+#   local
 #   2
 #   3
 #   true
@@ -22,7 +26,8 @@ model Card with Measured:
 
 def main() -> None:
     card = Card(size=1)
-    println(card.extent().n)
+    println(Extent(label="local").label)
+    println(card.extent_size())
     println(card.frame().n)
     println(card.corner() == Corner.Top)
     println(card.distance().0)

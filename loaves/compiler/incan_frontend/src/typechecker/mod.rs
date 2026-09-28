@@ -3360,10 +3360,17 @@ impl TypeChecker {
     /// signatures.
     ///
     /// This keeps imported trait contracts available for internal compatibility checks without widening source-visible
-    /// name resolution.
+    /// name resolution. A name the module binds to a declared type or a type parameter names that type: a stdlib or
+    /// dependency trait that shares the name, and that the module did not import, is not what the name spells
+    /// (`class Index` beside the stdlib's `Index` trait).
     pub fn lookup_semantic_trait_info(&self, name: &str) -> Option<&TraitInfo> {
-        if let Some(info) = self.lookup_trait_info(name) {
-            return Some(info);
+        if let Some(symbol) = self.lookup_symbol(name) {
+            match &symbol.kind {
+                SymbolKind::Trait(info) => return Some(info),
+                SymbolKind::Type(TypeInfo::Builtin) if symbol.scope == 0 => {}
+                SymbolKind::Type(_) => return None,
+                _ => {}
+            }
         }
         if let Some(info) = self.transitive_stdlib_stub_traits.get(name) {
             return Some(info);

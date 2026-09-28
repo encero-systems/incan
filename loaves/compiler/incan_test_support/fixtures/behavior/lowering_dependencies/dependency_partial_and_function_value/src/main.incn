@@ -1,15 +1,26 @@
-# behavior: a positional argument fills an imported partial's first residual parameter while its later preset stays in place, and a dependency function reached through a module binding remains callable after binding it to a local
+# behavior: a positional argument fills an imported partial's first residual parameter while its later preset stays in place, and a dependency function reached through a module binding, aliased or not, is a value that can be bound to a local and passed as an argument
 # retires: loaves/compiler/incan_ir/src/lower/tests/dependency_call_arguments.rs::imported_partial_positional_call_keeps_later_preset_issue1848
 # retires: loaves/compiler/incan_ir/src/lower/tests/dependency_call_arguments.rs::pub_dependency_module_member_function_value_keeps_canonical_identity_issue1840
+# retires: loaves/compiler/incan_emit/src/tests/dependency_references.rs::dependency_function_through_a_module_binding_is_a_callable_value_issue1840
 # expect-stdout:
 #   p:ace
 #   4
+#   6
+#   8
 
 from pub::modulelib import show_ace
 import pub::modulelib as cl
+import pub::modulelib
+
+
+def apply(f: (int) -> int, value: int) -> int:
+    return f(value)
 
 
 def main() -> None:
     println(show_ace("p:"))
     calculate = cl.calculate
     println(calculate(2))
+    println(apply(cl.calculate, 3))
+    whole = modulelib.calculate
+    println(whole(4))

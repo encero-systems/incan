@@ -252,7 +252,9 @@ impl IrType {
 
     /// Return the canonical element and iteration plan for one accepted `Set` constructor source.
     ///
-    /// A runtime generator is consumed through the `Iterator` trait rather than its inherent adapters (#1744).
+    /// A runtime generator is consumed through the `Iterator` trait rather than its inherent adapters (#1744). A list
+    /// or set reached through a reference, such as a `mut` parameter, is not the constructor's to take apart, so its
+    /// items are cloned into the new set and the source keeps them (#1852).
     pub fn set_constructor_source(&self) -> Option<(&IrType, SetConstructorIteration)> {
         match self {
             Self::List(item) | Self::Set(item) => Some((item, SetConstructorIteration::IntoOwnedItems)),
@@ -268,7 +270,12 @@ impl IrType {
                     .map(|item| (item, SetConstructorIteration::CollectOwnedIterator)),
                 _ => None,
             },
-            Self::Ref(inner) | Self::RefMut(inner) => inner.set_constructor_source(),
+            Self::Ref(inner) | Self::RefMut(inner) => {
+                inner.set_constructor_source().map(|(item, iteration)| match iteration {
+                    SetConstructorIteration::IntoOwnedItems => (item, SetConstructorIteration::CloneBorrowedItems),
+                    other => (item, other),
+                })
+            }
             _ => None,
         }
     }
@@ -1115,6 +1122,24 @@ mod tests {
             list.set_constructor_source(),
             Some((&IrType::Int, SetConstructorIteration::IntoOwnedItems))
         );
+    }
+
+    /// #1852: a list or set reached through a reference, such as a `mut` parameter, has its items cloned into the new
+    /// set, and a generator reached that way is still consumed through the `Iterator` trait.
+    #[test]
+    fn set_constructor_source_clones_the_items_of_a_borrowed_collection_issue1852() {
+        for source in [IrType::List(Box::new(IrType::Int)), IrType::Set(Box::new(IrType::Int))] {
+            for borrowed in [
+                IrType::Ref(Box::new(source.clone())),
+                IrType::RefMut(Box::new(source.clone())),
+            ] {
+                assert_eq!(
+                    borrowed.set_constructor_source(),
+                    Some((&IrType::Int, SetConstructorIteration::CloneBorrowedItems)),
+                    "{borrowed:?}"
+                );
+            }
+        }
     }
 
     // ============================================================================
