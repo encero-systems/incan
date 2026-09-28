@@ -79,7 +79,7 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
-      "sha256": "3ad739a3b423f8e42a1c380d456a5f6a241346f99590e7da5436a16e64d5d552",
+      "sha256": "df914c76b258525585058d2bc4df773368c5d78da6a141f3efd568e7469580e4",
       "lines": 1607
     },
     {
@@ -577,6 +577,21 @@
       "behavior_evidence": "incan_emit --lib tests::comprehension_item_places::comprehensions_change_their_items_in_place_issue1561, tests::comprehension_item_places::comprehensions_change_the_items_of_a_temporary_issue1561 and tests::capturing_closures::capturing_closures_build_where_their_own_type_is_kept_issue1561 (each builds and runs the generated Rust); behavior fixtures ownership_values_and_fields/comprehensions_changing_their_items.incn and cli_values_and_calls/capturing_closures_in_function_types.incn",
       "semantic_owner": "The checker facts closure_holding_params and closure_returning_callables (typechecker/capturing_callables.rs), lowered to IrTraitBound::function_type; the in-place plan ownership::plan_mutating_derived_loop, shared with for loops",
       "retirement_condition": "The dev.7 backend (#1675) spells function types and comprehension item places from Body IR; the Fn-bound spelling in emit_trait_bound and the comprehension use of plan_mutating_derived_loop and of the changed-binding mut markers go with the legacy emitter"
+    },
+    {
+      "kind": "change",
+      "pr": null,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "1561",
+      "behavior_evidence": "incan_emit tests::closure_parameter_inference::closures_typed_by_their_context_build_and_run_issue1561; behavior fixture emit_calls_and_builtins/closure_parameters_from_their_context.incn",
+      "semantic_owner": "lowering of the RFC 006 generator filter call (the predicate is a callable value applied to each item)",
+      "retirement_condition": "the Rust-source backend is deleted (#654); generator filters run through the shared iteration protocol"
     }
   ]
 }

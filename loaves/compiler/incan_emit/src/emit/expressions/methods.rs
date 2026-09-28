@@ -1158,7 +1158,7 @@ impl<'a> IrEmitter<'a> {
         if Self::is_generator_receiver(receiver) && method == "filter" && args.len() == 1 {
             let predicate = self.emit_expr(&args[0].expr)?;
             return Ok(quote! {
-                #r.filter(move |__incan_gen_item| #predicate((*__incan_gen_item).clone()))
+                #r.filter(move |__incan_gen_item| (#predicate)((*__incan_gen_item).clone()))
             });
         }
         let method_turbofish = if type_args.is_empty() {

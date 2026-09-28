@@ -2591,6 +2591,8 @@ impl AstLowering {
             let (name, traits, decorators) = match &decl.node {
                 ast::Declaration::Model(m) => (&m.name, &m.traits, &m.decorators),
                 ast::Declaration::Class(c) => (&c.name, &c.traits, &c.decorators),
+                ast::Declaration::Enum(e) => (&e.name, &e.traits, &e.decorators),
+                ast::Declaration::Newtype(n) => (&n.name, &n.traits, &n.decorators),
                 _ => continue,
             };
             let mut adopted = traits
@@ -3124,6 +3126,12 @@ impl AstLowering {
                             }
                             impl_targets.extend(self.derive_trait_impl_targets(&m.decorators));
                             let impl_targets = self.distinct_trait_impl_targets(impl_targets);
+                            let comparison_impls = self.lower_comparison_capability_impls(
+                                &struct_ir.name,
+                                &m.type_params,
+                                &impl_targets,
+                                &struct_ir.derives,
+                            );
                             for (trait_name, trait_type_args) in
                                 self.without_derived_builtin_trait_targets(impl_targets, &struct_ir.derives)
                             {
@@ -3142,6 +3150,11 @@ impl AstLowering {
                                     Err(e) => errors.push(e),
                                 }
                             }
+                            ir_program.declarations.extend(
+                                comparison_impls
+                                    .into_iter()
+                                    .map(|comparison_impl| IrDecl::new(IrDeclKind::Impl(comparison_impl))),
+                            );
                             if let Some(default_impl) = self.lower_field_default_impl(&struct_ir, &m.decorators) {
                                 ir_program
                                     .declarations
@@ -3219,6 +3232,12 @@ impl AstLowering {
                             }
                             impl_targets.extend(self.derive_trait_impl_targets(&c.decorators));
                             let impl_targets = self.distinct_trait_impl_targets(impl_targets);
+                            let comparison_impls = self.lower_comparison_capability_impls(
+                                &struct_ir.name,
+                                &c.type_params,
+                                &impl_targets,
+                                &struct_ir.derives,
+                            );
                             for (trait_name, trait_type_args) in
                                 self.without_derived_builtin_trait_targets(impl_targets, &struct_ir.derives)
                             {
@@ -3237,6 +3256,11 @@ impl AstLowering {
                                     Err(e) => errors.push(e),
                                 }
                             }
+                            ir_program.declarations.extend(
+                                comparison_impls
+                                    .into_iter()
+                                    .map(|comparison_impl| IrDecl::new(IrDeclKind::Impl(comparison_impl))),
+                            );
                             if let Some(default_impl) = self.lower_field_default_impl(&struct_ir, &c.decorators) {
                                 ir_program
                                     .declarations
@@ -3348,6 +3372,16 @@ impl AstLowering {
                             let mut impl_targets = adopted_targets;
                             impl_targets.extend(self.derived_json_protocol_impl_targets(&n.decorators));
                             let impl_targets = self.distinct_trait_impl_targets(impl_targets);
+                            ir_program.declarations.extend(
+                                self.lower_comparison_capability_impls(
+                                    &struct_ir.name,
+                                    &n.type_params,
+                                    &impl_targets,
+                                    &struct_ir.derives,
+                                )
+                                .into_iter()
+                                .map(|comparison_impl| IrDecl::new(IrDeclKind::Impl(comparison_impl))),
+                            );
                             for (index, (trait_name, trait_type_args)) in impl_targets.into_iter().enumerate() {
                                 match self.lower_trait_impl(TraitImplLoweringInput {
                                     type_name: &struct_ir.name,
@@ -3413,6 +3447,16 @@ impl AstLowering {
                         }
                         impl_targets.extend(self.derive_trait_impl_targets(&e.decorators));
                         let impl_targets = self.distinct_trait_impl_targets(impl_targets);
+                        ir_program.declarations.extend(
+                            self.lower_comparison_capability_impls(
+                                &enum_ir.name,
+                                &e.type_params,
+                                &impl_targets,
+                                &enum_ir.derives,
+                            )
+                            .into_iter()
+                            .map(|comparison_impl| IrDecl::new(IrDeclKind::Impl(comparison_impl))),
+                        );
                         for (trait_name, trait_type_args) in
                             self.without_derived_builtin_trait_targets(impl_targets, &enum_ir.derives)
                         {

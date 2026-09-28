@@ -1,12 +1,16 @@
 //! Tests that cross from lowering into emission.
 
 mod capturing_closures;
+mod closure_parameter_inference;
+mod comparison_adopters;
 mod comprehension_item_places;
 mod dependency_method_unions;
+mod dependency_trait_aliases;
 mod derived_display_emission;
 mod dict_value_places;
 mod emitted_spellings;
 mod expected_literal_emission;
+mod generated_programs;
 mod generic_caller_bounds;
 mod lowering_through_emission;
 mod mut_marker_publication;

@@ -53,6 +53,9 @@ use super::calls::PublicModuleConstructorContext;
 
 use super::{GenericPartialTarget, TypeChecker};
 
+/// The method the stdlib `Hash` trait declares, which no type meeting a `Hash` bound provides (#1822).
+const HASH_DUNDER: &str = "__hash__";
+
 /// The hook `obj[start:end:step]` calls on a user type, which `Sliceable[T]` declares.
 const SLICE_HOOK: &str = "__getslice__";
 
@@ -1135,6 +1138,77 @@ impl TypeChecker {
                     .push(errors::unsupported_decode_errors_policy(label, expr.span));
             }
         }
+    }
+
+    /// Return the declared type whose method body is being checked, with its own type parameters, or `None` outside a
+    /// model, class, enum or newtype method (a trait default among them).
+    fn current_method_owner_type(&self) -> Option<ResolvedType> {
+        let owner = self.current_method_owner.as_ref()?;
+        let type_params = match self.lookup_type_info(owner)? {
+            TypeInfo::Model(model) => model.type_params.clone(),
+            TypeInfo::Class(class) => class.type_params.clone(),
+            TypeInfo::Newtype(newtype) => newtype.type_params.clone(),
+            TypeInfo::Enum(enum_info) => enum_info.type_params.clone(),
+            TypeInfo::Builtin | TypeInfo::TypeAlias => return None,
+        };
+        Some(if type_params.is_empty() {
+            ResolvedType::Named(owner.clone())
+        } else {
+            ResolvedType::Generic(
+                owner.clone(),
+                type_params.into_iter().map(ResolvedType::TypeVar).collect(),
+            )
+        })
+    }
+
+    /// Return the function type an RFC 088 adapter or terminal method of an iterator gives the callback it takes at
+    /// argument `index`, so a closure written there takes the iterator's element, and a fold's accumulator, as its
+    /// parameter types.
+    ///
+    /// `accumulator` is the type of a fold's first argument. The callback of `map` and `flat_map` leaves its result
+    /// to the closure's body. `None` when the receiver is not an iterator with a known element type or the method
+    /// takes no callback at `index`.
+    fn iterator_callback_expectation(
+        &self,
+        base_ty: &ResolvedType,
+        method: &str,
+        index: usize,
+        accumulator: Option<&ResolvedType>,
+    ) -> Option<ResolvedType> {
+        use iterator_methods::IteratorMethodId as M;
+        let method_id = iterator_methods::from_str(method)?;
+        let element = self
+            .iterator_protocol_element_type(base_ty)
+            .filter(|element| !matches!(element, ResolvedType::Unknown))?;
+        let (params, ret) = match (method_id, index) {
+            (M::Map | M::FlatMap, 0) => (vec![element], ResolvedType::Unknown),
+            (M::Filter | M::TakeWhile | M::SkipWhile | M::Any | M::All | M::Find, 0) => {
+                (vec![element], ResolvedType::Bool)
+            }
+            (M::ForEach, 0) => (vec![element], ResolvedType::Unit),
+            (M::Fold | M::Reduce, 1) => {
+                let accumulator = accumulator
+                    .filter(|accumulator| !matches!(accumulator, ResolvedType::Unknown))?
+                    .clone();
+                (vec![accumulator.clone(), element], accumulator)
+            }
+            _ => return None,
+        };
+        Some(Self::iterator_callback_ty(params, ret))
+    }
+
+    /// Return whether an RFC 088 method keeps its callback in the lazy iterator it returns: `map`, `filter`,
+    /// `flat_map`, `take_while` and `skip_while` of an iterator, which hold it as a function pointer, except a
+    /// generator's own `map` and `filter` (RFC 006).
+    fn iterator_adapter_stores_its_callback(&self, base_ty: &ResolvedType, method: &str) -> bool {
+        use iterator_methods::IteratorMethodId as M;
+        let generator = matches!(base_ty, ResolvedType::Generic(name, _) if Self::is_generator_name(name));
+        let stored = match iterator_methods::from_str(method) {
+            Some(M::Map | M::Filter) => !generator,
+            Some(M::FlatMap | M::TakeWhile | M::SkipWhile) => true,
+            _ => false,
+        };
+        stored && self.iterator_protocol_element_type(base_ty).is_some()
     }
 
     /// Build a resolved callable type from parameter and return types for adapter diagnostics.
@@ -4189,6 +4263,17 @@ impl TypeChecker {
                 break;
             }
         }
+        // A `Hash` bound is met only by `@derive(Hash)`, which gives a type no `__hash__` (#1822), so the method the
+        // stdlib trait declares has nothing to call through the bound.
+        if method == HASH_DUNDER
+            && active_bounds
+                .iter()
+                .any(|bound| self.bound_is_builtin_trait(bound, TraitId::Hash))
+        {
+            self.errors
+                .push(errors::hash_method_through_hash_bound(placeholder_name, call_site_span));
+            return Some(ResolvedType::Unknown);
+        }
         let mut candidates = Vec::new();
         for bound in &active_bounds {
             if let Some(entry) = self.trait_method_entry_resolved_for_adoption(bound, method, call_site_span) {
@@ -5552,6 +5637,13 @@ impl TypeChecker {
         }
 
         let mut base_ty = self.check_type_receiver_expr(base);
+        // In a declared type's own method, a `Self` value (`other: Self`) is that type, so a method called on it
+        // resolves as it does on `self`; a trait default keeps `Self` open (#1561).
+        if matches!(base_ty, ResolvedType::SelfType)
+            && let Some(owner_ty) = self.current_method_owner_type()
+        {
+            base_ty = owner_ty;
+        }
         let receiver_surface = self.checked_member_receiver_surface(base, &base_ty);
         if let Some(expected) = expected_return_ty
             && matches!(
@@ -5822,11 +5914,11 @@ impl TypeChecker {
         let enum_variant_construction =
             self.enum_variant_construction_instantiation(&base_ty, method, expected_return_ty);
 
-        // Collect arg types for method-specific validation.
-        let arg_types: Vec<ResolvedType> = args
-            .iter()
-            .enumerate()
-            .map(|(index, arg)| {
+        // Collect arg types for method-specific validation. A fold's callback reads the accumulator type the
+        // argument before it gives, so each argument is checked after the ones before it.
+        let mut arg_types: Vec<ResolvedType> = Vec::with_capacity(args.len());
+        for (index, arg) in args.iter().enumerate() {
+            let arg_ty = {
                 let arg_expr = match arg {
                     CallArg::Positional(expr)
                     | CallArg::Named(_, expr)
@@ -5862,6 +5954,11 @@ impl TypeChecker {
                         Box::new(ResolvedType::Unknown),
                     );
                     self.check_expr_with_expected(arg_expr, Some(&expected))
+                } else if is_closure
+                    && let Some(expected) =
+                        self.iterator_callback_expectation(&base_ty, method, index, arg_types.first())
+                {
+                    self.check_expr_with_expected(arg_expr, Some(&expected))
                 } else if let Some(payload_ty) = variant_payload_ty {
                     self.check_expr_with_expected(arg_expr, Some(payload_ty))
                 } else if matches!(arg, CallArg::Positional(_))
@@ -5875,8 +5972,19 @@ impl TypeChecker {
                 } else {
                     self.check_method_arg_with_rust_callable_alias(arg, contextual_rust_callable.as_ref())
                 }
-            })
-            .collect();
+            };
+            arg_types.push(arg_ty);
+        }
+        if self.iterator_adapter_stores_its_callback(&base_ty, method) {
+            let slot = format!("stored by the iterator adapter '{method}'");
+            for arg in args {
+                let (CallArg::Positional(arg_expr)
+                | CallArg::Named(_, arg_expr)
+                | CallArg::PositionalUnpack(arg_expr)
+                | CallArg::KeywordUnpack(arg_expr)) = arg;
+                self.refuse_capturing_callable(arg_expr, &slot);
+            }
+        }
 
         if self.receiver_has_computed_property(&base_ty, method, span) {
             self.errors.push(errors::property_called_as_method(method, span));

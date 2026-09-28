@@ -1,0 +1,57 @@
+# behavior: through a type parameter's Eq, Ord or Display bound, calling __eq__, __ne__, an ordering dunder or __str__ does what the operator or the display does, reaching an Ord adopter's own __lt__
+# retires: loaves/compiler/incan_emit/src/tests/comparison_adopters.rs::dunders_through_builtin_bounds_are_their_operations_issue1561
+# expect-stdout:
+#   true
+#   true
+#   true
+#   true
+#   true
+#   3
+#   Point { x: 1 }
+
+from std.derives.comparison import Eq, Ord
+
+
+model Reversed with Ord:
+    value: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.value == other.value
+
+    def __lt__(self, other: Self) -> bool:
+        return self.value > other.value
+
+
+@derive(Display)
+model Point:
+    x: int
+
+
+def differ[T with Eq](a: T, b: T) -> bool:
+    return a.__ne__(b)
+
+
+def equal[T with Eq](a: T, b: T) -> bool:
+    return a.__eq__(b)
+
+
+def less[T with Ord](a: T, b: T) -> bool:
+    return a.__lt__(b)
+
+
+def at_most[T with Ord](a: T, b: T) -> bool:
+    return a.__le__(b)
+
+
+def text[T with Display](value: T) -> str:
+    return value.__str__()
+
+
+def main() -> None:
+    println(differ(1, 2))
+    println(equal("a", "a"))
+    println(less(1, 2))
+    println(at_most(2, 2))
+    println(less(Reversed(value=2), Reversed(value=1)))
+    println(text(3))
+    println(text(Point(x=1)))

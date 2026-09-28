@@ -63,6 +63,7 @@ mod canonical_identity;
 mod capabilities;
 mod capability_requirements;
 mod checked_facts_and_registries;
+mod closure_parameter_context;
 mod closures_in_function_types;
 mod collections_strings_and_bytes;
 mod derive_contract;

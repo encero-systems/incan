@@ -4,7 +4,8 @@
 use super::*;
 
 /// Implementations of source-owned comparison traits must name their generated stdlib declarations, not Rust's
-/// prelude traits whose ABI slots do not use Incan dunder names.
+/// prelude traits whose ABI slots do not use Incan dunder names. An adopter's `__eq__` is its `PartialEq`, never a slot
+/// of those impls, and the adoption gives the type Rust's `Eq`, and for `Ord` its `PartialOrd` and `Ord` (#1561).
 #[test]
 fn followups_b_comparison_trait_adoptions_keep_source_trait_paths() -> Result<(), String> {
     let ir = lower_checked_source(
@@ -50,8 +51,9 @@ model Hashed with Hash:
         })
         .collect::<Vec<_>>();
     for (owner, source_trait, method) in [
-        ("Equal", "Eq", "__eq__"),
+        ("Equal", "Eq", "__ne__"),
         ("Ordered", "Ord", "__lt__"),
+        ("Ordered", "Eq", "__ne__"),
         ("Hashed", "Hash", "__hash__"),
     ] {
         let expected = format!("crate::__incan_std::derives::comparison::{source_trait}");
@@ -60,6 +62,25 @@ model Hashed with Hash:
                 *target == owner && *trait_name == Some(expected.as_str()) && methods.contains(&method)
             }),
             "{owner} must implement the source trait under `{expected}` with `{method}`: {impls:?}"
+        );
+    }
+    assert!(
+        !impls
+            .iter()
+            .any(|(_, trait_name, methods)| trait_name.is_some() && methods.contains(&"__eq__")),
+        "no trait impl carries an adopter's `__eq__`: {impls:?}"
+    );
+    for (owner, rust_trait) in [
+        ("Equal", "std::cmp::Eq"),
+        ("Ordered", "std::cmp::Eq"),
+        ("Ordered", "std::cmp::PartialOrd"),
+        ("Ordered", "std::cmp::Ord"),
+    ] {
+        assert!(
+            impls
+                .iter()
+                .any(|(target, trait_name, _)| *target == owner && *trait_name == Some(rust_trait)),
+            "{owner} must implement `{rust_trait}`: {impls:?}"
         );
     }
     Ok(())

@@ -3135,12 +3135,16 @@ impl TypeChecker {
         // compared by that identity, so a type declared in another module satisfies `serde.json.Serialize` whatever the
         // declaring module called the trait (`json.Serialize` through its own import, #1887).
         let bound_identity = self.resolve_bound_trait_path(trait_name);
+        let package_trait = self.package_trait_identity_of_type(type_name, trait_name);
         for t in adopted {
             if self.trait_name_matches(&t.name, trait_name)
                 || t.source_name
                     .as_deref()
                     .is_some_and(|source_name| self.trait_name_matches(source_name, trait_name))
                 || adoption_names_bound_identity(t, bound_identity.as_ref())
+                || package_trait
+                    .as_ref()
+                    .is_some_and(|(module_path, name)| adoption_names_declaration(t, module_path, name))
             {
                 return true;
             }
@@ -3160,6 +3164,28 @@ impl TypeChecker {
             return true;
         }
         false
+    }
+
+    /// Return the declaring module and name of the trait `trait_name` binds when it and the type `type_name` come from
+    /// the same compiled package, in the package's own module paths, which its types' adoptions record.
+    ///
+    /// A consumer binds the trait under its own spelling (`Picker as Chooser`, or a package alias `pub Chooser =
+    /// Picker`) and under the package's public namespace, while the package's types recorded their adoptions in
+    /// the package's modules (#1561).
+    fn package_trait_identity_of_type(&self, type_name: &str, trait_name: &str) -> Option<(Vec<String>, String)> {
+        let package_of = |name: &str| {
+            let identity = self.symbols.identity_of(self.symbols.lookup(name)?)?;
+            match &identity.origin {
+                SymbolOrigin::Package { library, module_path } => {
+                    Some((identity, library.clone(), module_path.clone()))
+                }
+                _ => None,
+            }
+        };
+        let (trait_identity, trait_library, trait_module) = package_of(trait_name)?;
+        let (_, type_library, _) = package_of(type_name)?;
+        (trait_identity.kind == SemanticSourceTargetKind::Trait && trait_library == type_library)
+            .then(|| (trait_module, trait_identity.declaration_name.clone()))
     }
 
     /// Explicit `with Trait[...]` entries plus trait-like `@derive` entries and the automatic `Clone` of a `model`,
@@ -9105,6 +9131,15 @@ fn numeric_lossless_compatible(actual: &ResolvedType, expected: &ResolvedType) -
 /// name when it has one (`Serialize` for an adoption the declaring module spelled `json.Serialize`), so the comparison
 /// does not depend on which names the checking module has imported. An adoption without a recorded module, or a bound
 /// that does not resolve, answers `false` and is left to the name comparisons.
+/// Whether an adoption a compiled package's type recorded names the package trait declared in `module_path` as `name`.
+fn adoption_names_declaration(adoption: &TypeBoundInfo, module_path: &[String], name: &str) -> bool {
+    let trait_name = adoption
+        .source_name
+        .as_deref()
+        .unwrap_or_else(|| adoption.name.rsplit('.').next().unwrap_or(adoption.name.as_str()));
+    adoption.module_path.as_deref() == Some(module_path) && trait_name == name
+}
+
 fn adoption_names_bound_identity(adoption: &TypeBoundInfo, bound: Option<&(Vec<String>, String)>) -> bool {
     let (Some(module_path), Some((bound_module, bound_trait))) = (adoption.module_path.as_ref(), bound) else {
         return false;

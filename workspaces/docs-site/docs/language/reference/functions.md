@@ -30,6 +30,20 @@ g: (int) -> int = (x) => x + 1    # accepted
 h: (str) -> int = double          # refused: INCAN-T0001
 ```
 
+A closure's parameters take their types from the function type the closure is checked against: the annotated type of the binding, field, element or return it is assigned to; the function type of the parameter it is passed to, with the callee's type parameters that the other arguments fix substituted; and the callback of an `Iterator[T]` method, whose parameter is `T`, a `fold` or `reduce` callback also taking the type of the first argument as its accumulator. An operation on a parameter that its type does not provide is refused (`INCAN-T0001`).
+
+```incan
+def apply_twice[T](f: (T) -> T, value: T) -> T:
+    return f(f(value))
+
+def main() -> None:
+    names = ["ada", "lin"]
+    shouted = names.iter().map((name) => name.upper()).collect()   # accepted: name is str
+    total = names.iter().fold(0, (acc, name) => acc + len(name))   # accepted: acc is int, name is str
+    four = apply_twice((x) => x + 1, 2)                              # accepted: x is int
+    bad = names.iter().map((name) => name + 1).collect()           # refused: str + int (INCAN-T0001)
+```
+
 ### `Callable[Params, R]`
 
 `Callable[Params, R]` is another spelling of a function type; the two spellings are the same type.

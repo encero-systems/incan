@@ -44,6 +44,7 @@ A comparison operator is available on a type through a derive below, an adopted 
 - **Behavior**: hashes every field. Two values equal under a derived `Eq` have equal hashes.
 - **Dunder**: none. A method named `__hash__` is an ordinary method, and a set or dict does not call it.
 - **Requires**: every field type implements `Hash`.
+- **Refused**: `value.__hash__()` on a value of a type parameter through its `Hash` bound (`INCAN-T0001`).
 
 ## Set elements and dict keys
 

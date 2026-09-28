@@ -1,0 +1,155 @@
+//! A closure's parameter types come from the function type its context gives it (#1561): the element type of an
+//! RFC 088 iterator adapter or terminal, a fold's accumulator, and a generic parameter's function type once the other
+//! arguments fix its type parameters. A capturing closure is refused where a lazy adapter stores it.
+
+use super::*;
+
+/// Check a program and return the messages of its errors.
+fn error_messages(source: &str) -> Vec<String> {
+    check_str(source)
+        .err()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|error| error.message)
+        .collect()
+}
+
+/// Fail unless checking `source` reports an error containing each of `needles`.
+fn assert_refused(source: &str, needles: &[&str]) {
+    let messages = error_messages(source);
+    for needle in needles {
+        assert!(
+            messages.iter().any(|message| message.contains(needle)),
+            "expected an error containing `{needle}`, got {messages:?}\n{source}"
+        );
+    }
+}
+
+/// A closure without parameter annotations passed to an adapter, a terminal, a fold or a generic function takes the
+/// parameter types its context gives: arithmetic, string methods and comparisons on its parameters are checked
+/// against them.
+#[test]
+fn closure_parameters_take_the_types_their_context_gives_issue1561() {
+    assert_check_ok(
+        r#"
+def apply_twice[T](f: (T) -> T, value: T) -> T:
+    return f(f(value))
+
+def numbers() -> Generator[int]:
+    yield 1
+    yield 2
+
+def main() -> None:
+    items = [1, 2, 3]
+    names = ["ada", "lin"]
+    doubled = items.iter().map((x) => x * 2).collect()
+    shouted: list[str] = names.iter().map((name) => name.upper()).collect()
+    letters: list[str] = names.iter().flat_map((name) => [name, name.upper()]).collect()
+    big = items.iter().filter((x) => x % 2 == 1).collect()
+    small = items.iter().take_while((x) => x * 2 < 5).collect()
+    has_long = names.iter().any((name) => len(name.strip()) > 2)
+    first = names.iter().find((name) => name.startswith("l"))
+    total = items.iter().fold(0, (acc, x) => acc + x * 10)
+    items.iter().for_each((x) => println(x + 1))
+    println(apply_twice((x) => x + 1, 3))
+    println(apply_twice((text) => text.upper(), "a"))
+    evens = numbers().filter((x) => x % 2 == 0).collect()
+    println(doubled)
+    println(shouted)
+    println(letters)
+    println(big)
+    println(small)
+    println(has_long)
+    println(first is not None)
+    println(total)
+    println(evens)
+"#,
+    );
+}
+
+/// The parameter types a context gives are checked like declared ones: an `int` element has no `upper`, and a
+/// generic parameter fixed to `int` by the other argument does not take a `str` method either.
+#[test]
+fn closure_parameters_typed_by_their_context_refuse_what_the_type_lacks_issue1561() {
+    assert_refused(
+        r#"
+def main() -> None:
+    items = [1, 2, 3]
+    shouted = items.iter().map((x) => x.upper()).collect()
+"#,
+        &["Type 'int' has no method 'upper"],
+    );
+    assert_refused(
+        r#"
+def apply_twice[T](f: (T) -> T, value: T) -> T:
+    return f(f(value))
+
+def main() -> None:
+    println(apply_twice((x) => x.upper(), 3))
+"#,
+        &["Type 'int' has no method 'upper"],
+    );
+    let refused = check_str(
+        r#"
+def main() -> None:
+    names = ["ada", "lin"]
+    bad = names.iter().map((name) => name + 1).collect()
+"#,
+    )
+    .err()
+    .unwrap_or_default();
+    assert!(
+        refused.iter().any(|error| error.message.contains("str")
+            && crate::diagnostics::code_for_error(error, crate::diagnostics::DiagnosticPhase::Typecheck)
+                == "INCAN-T0001"),
+        "a str parameter plus an int is refused with INCAN-T0001: {refused:?}"
+    );
+}
+
+/// `map`, `filter`, `flat_map`, `take_while` and `skip_while` keep their callback in the lazy iterator they return, as
+/// a function pointer, so a closure that captures local values, or a local holding one, is refused there. A terminal
+/// that only calls its callback, and a generator's own `map` and `filter`, take one.
+#[test]
+fn capturing_closures_stored_by_iterator_adapters_are_refused_issue1561() {
+    for adapter in [
+        "items.iter().map((x) => x * n).collect()",
+        "items.iter().filter((x) => x > n).collect()",
+        "items.iter().flat_map((x) => [x, n]).collect()",
+        "items.iter().take_while((x) => x < n).collect()",
+        "items.iter().skip_while((x) => x < n).collect()",
+    ] {
+        let source = format!("def main() -> None:\n    n = 2\n    items = [1, 2, 3]\n    kept = {adapter}\n");
+        assert_refused(
+            &source,
+            &["A closure that captures local values cannot be stored by the iterator adapter"],
+        );
+    }
+    assert_refused(
+        r#"
+def main() -> None:
+    n = 2
+    items = [1, 2, 3]
+    scale = (x) => x * n
+    scaled = items.iter().map(scale).collect()
+"#,
+        &["'scale', which holds a closure that captures local values, cannot be stored by the iterator adapter 'map'"],
+    );
+    assert_check_ok(
+        r#"
+def numbers() -> Generator[int]:
+    yield 1
+    yield 2
+
+def main() -> None:
+    n = 2
+    items = [1, 2, 3]
+    println(items.iter().any((x) => x == n))
+    println(items.iter().fold(0, (acc, x) => acc + x * n))
+    println(items.iter().find((x) => x > n))
+    doubled = numbers().map((x) => x * n).collect()
+    kept = numbers().filter((x) => x < n).collect()
+    println(doubled)
+    println(kept)
+"#,
+    );
+}

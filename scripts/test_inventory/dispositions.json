@@ -3158,6 +3158,46 @@
         }
       }
     },
+    "loaves/compiler/incan_emit/src/tests/closure_parameter_inference.rs": {
+      "disposition": "retire",
+      "notes": "builds and runs the generated Rust of closures typed by their context: iterator adapters and terminals, a fold, a generic function's parameter, and a generator's own map and filter (#1561); retires with the Rust-source backend.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "closures_typed_by_their_context_build_and_run_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/emit_calls_and_builtins/closure_parameters_from_their_context.incn",
+          "notes": "Runs each closure form and prints its result; the fixture prints the same lines."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_emit/src/tests/comparison_adopters.rs": {
+      "disposition": "retire",
+      "notes": "builds and runs the generated Rust of Eq and Ord adopters that define their dunders, dunder calls through builtin bounds, and a trait default passing self by value (#1561); retires with the Rust-source backend.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "comparison_adopters_of_every_kind_and_spelling_build_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/comparison_trait_adopters_of_every_kind.incn",
+          "notes": "Compares and sorts enum, newtype, class and generic adopters under an imported, aliased and module-qualified Ord, and a user trait declaring __eq__; the fixture prints each result."
+        },
+        "dunders_through_builtin_bounds_are_their_operations_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/dunders_through_builtin_bounds.incn",
+          "notes": "Calls __eq__, __ne__, __lt__, __le__ and __str__ through Eq, Ord and Display bounds; the fixture prints each result."
+        },
+        "eq_and_ord_adopters_build_and_compare_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/comparison_trait_adopters_compare_and_sort.incn",
+          "notes": "Compares, sorts and hashes Eq and Ord adopters and passes them to Eq- and Ord-bounded functions; the fixture prints each result."
+        },
+        "trait_default_passes_self_to_a_method_taking_self_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/lowering_declarations/trait_default_passes_self_by_value.incn",
+          "notes": "Calls a trait default that passes self to a method taking Self; the fixture prints both orders."
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/tests/comprehension_item_places.rs": {
       "disposition": "retire",
       "notes": "builds and runs the generated Rust of list and dict comprehensions that change their items in place through `enumerate`, `zip`, `values()`, an element and directly, and of comprehensions and generator expressions over temporaries (#1561); retires with the Rust-source backend.",
@@ -3189,6 +3229,24 @@
         "dependency_optional_union_results_convert_into_consumer_options_issue1835": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/some_member_into_dependency_option_union",
           "notes": "The dependency fixture passes and returns members through the provider's Option and Result union surfaces at each consumer destination."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_emit/src/tests/dependency_trait_aliases.rs": {
+      "disposition": "retire",
+      "notes": "builds and runs a consumer of a `pub::` dependency whose trait it reaches under an alias, and checks the refusal of an adopter relying on the dependency trait's default (#1561); retires with the Rust-source backend.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "adopter_relying_on_a_dependency_trait_default_is_refused_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/refused_adopter_relying_on_a_dependency_trait_default",
+          "notes": "The fixture's consumer adopts the dependency trait without its default method and is refused with INCAN-T0001."
+        },
+        "dependency_trait_under_another_spelling_bounds_and_adopts_issue1561": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_trait_under_another_spelling",
+          "notes": "The fixture's consumer bounds and adopts the dependency trait under an import alias and the dependency's own alias, and prints each call."
         }
       },
       "twin": ""
@@ -6169,6 +6227,14 @@
     "loaves/compiler/incan_frontend/src/typechecker/tests/checked_facts_and_registries.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/closure_parameter_context.rs": {
+      "disposition": "keep",
+      "notes": "typechecker only: a closure's parameter types come from the function type its context gives it (an iterator adapter's or terminal's element, a fold's accumulator, a generic parameter once the other arguments fix it), operations its parameters' types lack are refused, and a capturing closure stored by a lazy iterator adapter is refused with `INCAN-T0001` (#1561); no emit/driver dependency.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",

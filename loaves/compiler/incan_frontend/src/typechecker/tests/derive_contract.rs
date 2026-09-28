@@ -658,6 +658,74 @@ def main() -> None:
     )
 }
 
+/// A `Hash` bound is met only by the derive, which gives no `__hash__`, so calling it through the bound is refused
+/// under either spelling of the trait; the method stays callable on a type that defines it (#1561).
+#[test]
+fn hash_method_through_a_hash_bound_is_refused_issue1561() -> TestResult {
+    for import in [
+        "from std.derives.comparison import Hash",
+        "from std.derives.comparison import Hash as Hashable",
+    ] {
+        let bound = import.rsplit(' ').next().unwrap_or("Hash");
+        let source =
+            format!("{import}\n\ndef hash_of[T with {bound}](value: T) -> int:\n    return value.__hash__()\n");
+        let errors = refused(&source)?;
+        assert_refusal(
+            &errors,
+            &["'__hash__' cannot be called on 'T' through its 'Hash' bound"],
+        )?;
+    }
+    accepted(
+        r#"
+from std.derives.comparison import Hash
+
+model Hashed with Hash:
+    value: int
+
+    def __hash__(self) -> int:
+        return self.value
+
+def main() -> None:
+    println(Hashed(value=5).__hash__())
+"#,
+    )
+}
+
+/// In a type's own dunder, a method called on its `Self` parameter resolves on the type, so a missing one is refused;
+/// and an `Ord` adoption named through its module (`comparison.Ord`) provides `sorted()` (#1561).
+#[test]
+fn comparison_adopters_resolve_self_parameters_and_module_qualified_adoptions_issue1561() -> TestResult {
+    let errors = refused(
+        r#"
+from std.derives.comparison import Eq
+
+model Key with Eq:
+    id: int
+
+    def __eq__(self, other: Self) -> bool:
+        return other.missing() == self.id
+"#,
+    )?;
+    assert_refusal(&errors, &["missing"])?;
+    accepted(
+        r#"
+from std.derives import comparison
+
+model Score with comparison.Ord:
+    points: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.points == other.points
+
+    def __lt__(self, other: Self) -> bool:
+        return self.points < other.points
+
+def main() -> None:
+    println(sorted([Score(points=2), Score(points=1)])[0].points)
+"#,
+    )
+}
+
 /// A newtype is `Copy` without a derive when its underlying type is a builtin `Copy` value (a number, `bool`, or a
 /// tuple, `Option` or `Result` of those); over another newtype or a model that derives `Copy` it is `Copy` only by
 /// deriving it.

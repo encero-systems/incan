@@ -11,6 +11,7 @@ mod comprehensions;
 mod default_owner_paths;
 mod destination_literals;
 mod display_operands;
+mod dunder_operators;
 mod error_display;
 mod frozen_reads;
 mod helpers;
@@ -298,7 +299,8 @@ impl AstLowering {
         receiver: &TypedExpr,
         dispatch: Option<IrMethodDispatch>,
     ) -> (String, Option<IrMethodDispatch>) {
-        if !can_use_source_method_projection(receiver, dispatch.as_ref())
+        if !(can_use_source_method_projection(receiver, dispatch.as_ref())
+            || self.receiver_adopts_the_builtin_source_trait(receiver, dispatch.as_ref()))
             || self.method_belongs_to_an_imported_type(identity)
             || !self.receiver_adopts_the_dispatched_trait(receiver, dispatch.as_ref())
         {
@@ -318,6 +320,36 @@ impl AstLowering {
             other => other,
         };
         (projection, dispatch)
+    }
+
+    /// Whether a call dispatched through the builtin `Eq` or `Ord`, which map to Rust traits, reaches a local type that
+    /// adopts the builtin's stdlib source trait (`model Score with Ord`) rather than deriving it.
+    ///
+    /// Such a call names a dunder of the source trait's impl (`__ge__`), which the Rust trait has no slot for, so it
+    /// reaches the adopter's recoverable projection as a call of any other adopted trait's method does (#1561).
+    fn receiver_adopts_the_builtin_source_trait(
+        &self,
+        receiver: &TypedExpr,
+        dispatch: Option<&IrMethodDispatch>,
+    ) -> bool {
+        let Some(IrMethodDispatch::Trait(trait_dispatch)) = dispatch else {
+            return false;
+        };
+        let trait_name = trait_declaration_name(trait_dispatch);
+        if !matches!(builtin_traits::from_str(trait_name), Some(TraitId::Eq | TraitId::Ord)) {
+            return false;
+        }
+        let mut receiver_ty = &receiver.ty;
+        while let IrType::Ref(inner) | IrType::RefMut(inner) = receiver_ty {
+            receiver_ty = inner.as_ref();
+        }
+        let (IrType::Struct(type_name) | IrType::Enum(type_name) | IrType::NamedGeneric(type_name, _)) = receiver_ty
+        else {
+            return false;
+        };
+        self.adopted_traits_by_type
+            .get(type_name)
+            .is_some_and(|adopted| adopted.contains(trait_name))
     }
 
     /// Whether a trait-dispatched call reaches a trait the receiver's own type adopts.
@@ -2246,6 +2278,11 @@ impl AstLowering {
                             })
                     });
 
+                let (receiver, mut args_ir) =
+                    match self.lower_dunder_as_operation(&method_name, receiver, dispatch.as_ref(), args_ir) {
+                        Ok((kind, ty)) => return Ok(TypedExpr::new(kind, ty)),
+                        Err(unchanged) => unchanged,
+                    };
                 if dispatch.is_none()
                     && args_ir.is_empty()
                     && frozen_reads::is_frozen_len_call(&receiver.ty, &method_name)

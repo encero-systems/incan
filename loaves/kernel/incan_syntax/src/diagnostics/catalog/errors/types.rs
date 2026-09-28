@@ -3556,3 +3556,39 @@ pub fn capability_description_must_be_text(name: &str, span: Span) -> CompileErr
     )
     .with_hint("Write the description as a quoted string, such as `description = \"Issue a refund\"`")
 }
+
+/// Refuse a `__hash__` call through a type parameter's `Hash` bound (#1561).
+///
+/// A `Hash` bound is met only by `@derive(Hash)` or `Hash` in `@rust.derive(...)`, and neither gives a type a
+/// `__hash__` method (#1822), so the method the stdlib `Hash` trait declares has nothing to call through the bound.
+pub fn hash_method_through_hash_bound(type_param: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("'__hash__' cannot be called on '{type_param}' through its 'Hash' bound"),
+        span,
+    )
+    .with_hint("Bound the type parameter by a trait that declares '__hash__', or use the value as a set element or dict key")
+    .with_note(
+        "A 'Hash' bound is met only by '@derive(Hash)' or 'Hash' in '@rust.derive(...)', which provide no '__hash__' method; a method named '__hash__' is an ordinary method of the type that defines it",
+    )
+}
+
+/// Refuse an adopter that relies on a default method of a trait another compiled package declares (#1561).
+///
+/// A package's manifest publishes its traits' method signatures, and its generated crate declares each trait method
+/// without a body (defaults are expanded into each adopter's impl), so no default body reaches an adopter built in
+/// another package.
+pub fn package_trait_default_not_available(
+    trait_name: &str,
+    type_name: &str,
+    method: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!("'{type_name}' adopts '{trait_name}' from another package and does not define its default method '{method}'"),
+        span,
+    )
+    .with_hint(format!("Define '{method}' in '{type_name}'"))
+    .with_note(
+        "A compiled package publishes the signatures of its traits' methods, not their default bodies, so a type in another package defines each method the trait gives a default",
+    )
+}

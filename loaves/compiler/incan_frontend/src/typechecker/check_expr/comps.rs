@@ -255,11 +255,13 @@ impl TypeChecker {
         self.in_async_body = prev_in_async_body;
         self.symbols.exit_scope();
 
-        let resolved_return = if Self::closure_output_needs_inference(expected_ret) {
-            return_ty
-        } else {
-            expected_ret.clone()
-        };
+        // An open expected result (a `map` callback's) is the body's type, as a result type left to inference is.
+        let resolved_return =
+            if Self::closure_output_needs_inference(expected_ret) || matches!(expected_ret, ResolvedType::Unknown) {
+                return_ty
+            } else {
+                expected_ret.clone()
+            };
         ResolvedType::Function(param_types, Box::new(resolved_return))
     }
 }

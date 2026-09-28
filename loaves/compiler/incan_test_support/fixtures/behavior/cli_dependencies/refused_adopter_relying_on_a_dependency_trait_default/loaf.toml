@@ -1,0 +1,9 @@
+[project]
+name = "refused_adopter_relying_on_a_dependency_trait_default"
+version = "0.1.0"
+
+[project.scripts]
+main = "src/main.incn"
+
+[dependencies]
+tags = { path = "deps/tags" }

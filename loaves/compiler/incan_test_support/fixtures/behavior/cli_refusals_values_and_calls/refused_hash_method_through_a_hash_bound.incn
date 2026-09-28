@@ -1,0 +1,17 @@
+# behavior: calling __hash__ on a type parameter through its Hash bound is refused at check time, since the bound is met only by the Hash derive, which provides no __hash__
+# expect-diagnostic: INCAN-T0001
+
+from std.derives.comparison import Hash
+
+
+def hash_of[T with Hash](value: T) -> int:
+    return value.__hash__()
+
+
+@derive(Eq, Hash)
+model Key:
+    id: int
+
+
+def main() -> None:
+    println(hash_of(Key(id=5)))

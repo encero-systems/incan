@@ -1889,6 +1889,18 @@ impl TypeChecker {
                 continue;
             }
             let Some(found_group) = concrete_method_overloads.get(&entry.method_name) else {
+                // A compiled package publishes its traits' method signatures, not their default bodies, so a default
+                // of another package's trait has no body to give this adopter (#1561).
+                if self.method_declared_by_another_package(&entry.info)
+                    && self.trait_bound_through_a_package(trait_name)
+                {
+                    self.errors.push(errors::package_trait_default_not_available(
+                        &entry.origin_trait,
+                        type_name,
+                        &entry.method_name,
+                        adoption_span,
+                    ));
+                }
                 continue;
             };
             let expected = self.concretize_trait_method_requirement(&entry.info, &self_ty);
@@ -1911,6 +1923,23 @@ impl TypeChecker {
                 ));
             }
         }
+    }
+
+    /// Whether the checked module binds `trait_name` through a `pub::` package import, as opposed to the standard
+    /// library, whose trait sources lowering expands defaults from.
+    fn trait_bound_through_a_package(&self, trait_name: &str) -> bool {
+        self.import_binding_path(trait_name)
+            .and_then(|path| path.first())
+            .is_some_and(|root| root == super::PUBLIC_LIBRARY_NAMESPACE)
+    }
+
+    /// Whether a method was declared by a compiled package other than the one being checked.
+    fn method_declared_by_another_package(&self, method: &MethodInfo) -> bool {
+        matches!(
+            method.identity.as_ref().map(|identity| &identity.origin),
+            Some(incan_semantics_core::SymbolOrigin::Package { library, .. })
+                if self.symbols.package_identity() != Some(library.as_str())
+        )
     }
 
     /// If a trait method partial explicitly overrides an inherited trait method, its projected signature must remain

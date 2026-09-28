@@ -1,0 +1,112 @@
+# behavior: enum, newtype, class and generic types that adopt Eq or Ord compare and sort through their own dunders, whether the trait is imported, imported under an alias or named through its module, and a user trait that declares __eq__ calls it
+# retires: loaves/compiler/incan_emit/src/tests/comparison_adopters.rs::comparison_adopters_of_every_kind_and_spelling_build_issue1561
+# expect-stdout:
+#   true
+#   0
+#   true
+#   3
+#   true
+#   true
+#   true
+#   2
+#   true
+
+from std.derives import comparison
+from std.derives.comparison import Eq, Ord
+from std.derives.comparison import Ord as Ordered
+
+
+enum Level with Ord:
+    Low
+    High
+
+    def rank(self) -> int:
+        match self:
+            Level.Low => return 0
+            Level.High => return 1
+
+    def __eq__(self, other: Self) -> bool:
+        return self.rank() == other.rank()
+
+    def __lt__(self, other: Self) -> bool:
+        return self.rank() < other.rank()
+
+
+type Rank = newtype int with Ord:
+    def __eq__(self, other: Self) -> bool:
+        return self.0 == other.0
+
+    def __lt__(self, other: Self) -> bool:
+        return self.0 < other.0
+
+
+class Account with Eq:
+    pub id: int
+    pub note: str
+
+    def __eq__(self, other: Self) -> bool:
+        return self.id == other.id
+
+
+model Boxed[T with (Ord, Clone)] with Ord:
+    value: T
+
+    def __eq__(self, other: Self) -> bool:
+        return self.value == other.value
+
+    def __lt__(self, other: Self) -> bool:
+        return self.value < other.value
+
+
+model Aliased with Ordered:
+    points: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.points == other.points
+
+    def __lt__(self, other: Self) -> bool:
+        return self.points < other.points
+
+
+model Qualified with comparison.Ord:
+    points: int
+
+    def __eq__(self, other: Self) -> bool:
+        return self.points == other.points
+
+    def __lt__(self, other: Self) -> bool:
+        return self.points < other.points
+
+
+trait Same:
+    def __eq__(self, other: Self) -> bool: ...
+
+    def differs(self, other: Self) -> bool:
+        return not self.__eq__(other)
+
+
+model Tag with Same:
+    name: str
+
+    def __eq__(self, other: Self) -> bool:
+        return self.name == other.name
+
+
+def same[T with Eq](a: T, b: T) -> bool:
+    return a == b
+
+
+def top[T with Ordered](a: T, b: T) -> bool:
+    return a > b
+
+
+def main() -> None:
+    println(Level.Low < Level.High)
+    println(sorted([Level.High, Level.Low])[0].rank())
+    println(Rank(1) < Rank(2))
+    println(sorted([Rank(5), Rank(3)])[0].0)
+    println(same(Account(id=1, note="a"), Account(id=1, note="b")))
+    println(Boxed(value=1) < Boxed(value=2))
+    println(top(Aliased(points=3), Aliased(points=2)))
+    println(sorted([Qualified(points=4), Qualified(points=2)])[0].points)
+    println(Tag(name="a").differs(Tag(name="b")))

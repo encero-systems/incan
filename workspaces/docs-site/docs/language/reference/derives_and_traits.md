@@ -248,6 +248,7 @@ def main() -> None:
 - A default method's body resolves the names it uses in the trait's module: a type, an enum variant or a function that the trait's module declares or imports, private functions included, whether or not the adopting module imports it.
 - A trait imported through a module that re-exports it (`pub from shapes import Measured` in `geometry`, then `from geometry import Measured`) is the trait its declaring module declares: `with Measured` adopts `shapes.Measured`, its default methods included.
 - A subtrait may give a compatible default body to a method its supertrait requires. An adopter of the subtrait satisfies the supertrait requirement with that default, and has one method of that name.
+- An adopter of a trait that a `pub::` package declares, in another package, declares each method the trait gives a default body: a package publishes its traits' method signatures, not their default bodies. An adopter without one is refused (`INCAN-T0001`).
 
 ```incan
 trait Describable:

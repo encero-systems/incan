@@ -6,6 +6,7 @@
 //! The logic is split across submodules by declaration kind; all methods live on `impl AstLowering`.
 
 mod classes;
+mod comparison_capabilities;
 mod default_names;
 mod derived_display;
 mod enums;

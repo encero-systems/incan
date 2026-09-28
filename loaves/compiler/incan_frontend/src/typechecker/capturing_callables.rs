@@ -327,7 +327,7 @@ impl TypeChecker {
 
     /// Refuse `expr` when it is a capturing callable held where a function type is a function pointer, described by
     /// `slot` ("stored in a collection").
-    fn refuse_capturing_callable(&mut self, expr: &Spanned<Expr>, slot: &str) {
+    pub(super) fn refuse_capturing_callable(&mut self, expr: &Spanned<Expr>, slot: &str) {
         let Some(what) = self.capturing_callable_description(expr) else {
             return;
         };

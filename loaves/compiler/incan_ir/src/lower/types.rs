@@ -712,9 +712,14 @@ impl AstLowering {
 
     /// Merge a typechecker-derived IR type with an already-lowered IR type without erasing in-scope generic
     /// placeholders that the typechecker may have normalized to nominal names.
+    ///
+    /// A value lowering bound to the owner of the impl it lowers (`self`, a `Self` parameter) keeps that owner where
+    /// the typechecker says `Self`: inside the impl the two name the same type, and only the owner lets a method call
+    /// on the value and an argument passed from it resolve as they do for the owner's other values (#1561).
     pub fn merge_inferred_ir_type(existing: &IrType, inferred: IrType) -> IrType {
         match (existing, inferred) {
             (existing, IrType::Unknown) => existing.clone(),
+            (IrType::Struct(_) | IrType::NamedGeneric(_, _), IrType::SelfType) => existing.clone(),
             (IrType::Generic(existing_name), IrType::Struct(inferred_name)) if existing_name == &inferred_name => {
                 existing.clone()
             }
