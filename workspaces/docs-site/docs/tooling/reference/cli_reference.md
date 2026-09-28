@@ -370,6 +370,23 @@ Only complete observations become proposals; all other observations become evide
 
 `incan oven inventory --incan-lock PATH --incan-harvest PATH (--output PATH | --check PATH)` joins typed proposals to the exact supplied Cargo lock and records package, version, checksum, features, host, target, profile, and sorted effect classes. Optional `--incql-lock PATH --incql-harvest PATH` inputs add the IncQL closure. The command rejects stale lock digests, unknown packages, duplicate bindings, unresolved selected-unit refusals, effect-class drift, and fixture drift. The IncQL options must be supplied together; checking a combined fixture requires both.
 
+`incan oven equivalence --cargo-manifest PATH --oven-manifest PATH --output PATH` compares one harvested Cargo capture with one Cargo-free Oven publisher capture. Both schema-1 capture manifests record the Cargo and rustc executable versions and byte digests, host, target, profile, and a binding-sorted `units` list. Each unit records its `unit_identity`, sorted features, source and manifest digests, exact `cfg`, `out`, native, tool, and dependency identity inputs, and every metadata-reachable artifact as a unique `role` plus artifact-root-relative `path` and declared raw-byte digest. Roles are `rlib`, `rmeta`, `proc-macro`, `dylib`, `static-archive`, `executable`, and `generated-input`. The Oven capture additionally sets `cargo_free` to `true` and records each unit's asset-archive path and digest; the Cargo capture sets it to `false`.
+
+The capture manifest has exactly these fields:
+
+| Field | Contract |
+| --- | --- |
+| `schema` | Integer `1`. |
+| `producer` | `cargo-harvest` for the Cargo capture or `oven-publisher` for the Oven capture. |
+| `cargo_free` | `false` for the Cargo capture or `true` for the Oven capture. |
+| `artifact_root` | Nonempty normalized relative path resolved from the capture manifest's directory. |
+| `setup` | Object with exactly `cargo`, `rustc`, `host`, `target`, and `profile`. `cargo` and `rustc` each contain a nonempty `version` and lowercase `sha256:` executable `digest`; the remaining values are nonempty strings. |
+| `units` | Nonempty list sorted by unique `binding`. |
+
+Each unit has exactly `binding`, `unit_identity`, `features`, `source_digest`, `manifest_digest`, `identity_inputs`, and `artifacts`; an Oven unit additionally has `asset_archive`. SHA-256 values are lowercase `sha256:` identities. `features` and every set-like identity-input list are sorted and duplicate-free. `identity_inputs` has exactly `cfg`, `out`, `native`, `tools`, and `dependencies`: `cfg` is a string list; `out` entries have `path` and `digest`; native and tool entries have `name` and `digest`; dependency entries have `name` and `unit_identity`. An artifact has exactly `role`, `path`, and `digest`. `asset_archive` has exactly `path` and `digest`. Artifact and archive paths are normalized relative paths and must resolve to regular files without traversing a symlink.
+
+The comparator accepts only equal recorded setup, binding sets, identity inputs, unit identities, and artifact role/path sets. It hashes regular non-symlink files without normalization and refuses declared-digest tampering. Equal unit identity with unequal Cargo and Oven bytes is a determinism conflict. A successful schema-1 output has event `attest`, status `attested`, the recorded setup, both byte digests per artifact, and, per binding, the Oven asset archive digest and unit identity required by the registry `attest` event. No output is replaced unless the complete comparison succeeds.
+
 ## `incan inspect`
 
 ### `incan inspect backend-selection`

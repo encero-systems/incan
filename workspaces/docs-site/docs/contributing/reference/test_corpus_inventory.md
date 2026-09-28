@@ -15,9 +15,9 @@ This is the control plane for the slice-7 cutover (issue [#1561](https://github.
 | keep | 3544 | 245 | 8 |
 | re-point | 521 | 86 | 1044 |
 | retire | 1490 | 153 | 0 |
-| unaffected | 1515 | 138 | 5 |
+| unaffected | 1523 | 139 | 5 |
 | unreviewed | 0 | 0 | 0 |
-| **Total** | **7070** | **622** | **1057** |
+| **Total** | **7078** | **623** | **1057** |
 
 - Retire-class tests: 1490, of which twinned 1017, dies 294, open 179 (neither yet).
 - Retire-class files with open rows: 32 (a file whose retire tests are all twinned or recorded `dies` is done).
@@ -3032,7 +3032,7 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
 |---|---|---|---|---|---|
 | `every_submode_survives_desugar_typecheck_and_lowering_then_refuses_emission` | retire | `dies` | the exact late refusal belongs only to the retiring Rust-source emitter; parse, desugar, typecheck, hole ownership and LSP behavior remain in this file's keep-class tests, while the replacement route owns its separate unsupported-source profile. | codegen, checker | - |
 
-??? note "Unaffected crates (1223 tests in 94 files)"
+??? note "Unaffected crates (1231 tests in 95 files)"
 
     Every test in these crates is `unaffected`: the cutover does not touch them. They are listed so the summary reconciles to the whole tree.
 
@@ -3209,12 +3209,13 @@ Per-test overrides in `loaves/toolchain/incan-lsp/tests/rfc081_embedded_conforma
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
     | `loaves/third_party/ra_ap_proc_macro_api/src/legacy_protocol/msg.rs` | 2 | 430 | 244 | unaffected | - | - | - | #1561 | - | vendored crate. Reviewed at crate level. |
 
-    #### `loaves/toolchain/oven-cli` (82 tests in 6 files: unaffected 82)
+    #### `loaves/toolchain/oven-cli` (90 tests in 7 files: unaffected 90)
 
     | File | Tests | Lines | Test lines | Disposition | Twins | Dies | Split | Owner | Signals | Notes |
     |---|---:|---:|---:|---|---:|---:|---|---|---|---|
-    | `loaves/toolchain/oven-cli/src/commands/oven.rs` | 58 | 6867 | 3344 | unaffected | - | - | required | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
+    | `loaves/toolchain/oven-cli/src/commands/oven.rs` | 58 | 6869 | 3344 | unaffected | - | - | required | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/case_partition.rs` | 6 | 379 | 171 | unaffected | - | - | - | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
+    | `loaves/toolchain/oven-cli/src/commands/oven/equivalence.rs` | 8 | 972 | 304 | unaffected | - | - | - | #1561 | - | Oven CLI; validates literal artifact-equivalence evidence, no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/harvest.rs` | 4 | 453 | 79 | unaffected | - | - | - | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/inventory.rs` | 4 | 513 | 181 | unaffected | - | - | - | #1561 | - | Oven CLI; validates typed harvest closure evidence, no compiler semantics. Reviewed at crate level. |
     | `loaves/toolchain/oven-cli/src/commands/oven/suite_environment.rs` | 2 | 899 | 32 | unaffected | - | - | - | #1561 | - | Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level. |

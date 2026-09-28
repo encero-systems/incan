@@ -15,7 +15,8 @@ pub use oven::{
     OvenInventoryCommandOptions, OvenLegacyCargoPrepareCommandOptions, OvenLoafBakeCommandOptions,
     OvenPlanPublishCommandOptions, OvenReceiptInspectCommandOptions, OvenRunCommandOptions, OvenStoreCommandOptions,
     OvenTestCommandOptions, OvenToolchainBinaryReport, OvenToolchainBuildCommandOptions, inspect_oven_receipt,
-    inspect_oven_store, oven_bake_project, oven_build_toolchain_binaries, oven_harvest, oven_import, oven_interop_bake,
+    inspect_oven_store, oven_bake_project, oven_build_toolchain_binaries, oven_equivalence, oven_harvest, oven_import,
+    oven_interop_bake,
     oven_interop_stage, oven_inventory, oven_legacy_cargo_bake_loafs, oven_legacy_cargo_prepare,
     oven_publish_direct_rustc_plan, oven_run, oven_run_compiler_libtests, oven_test, prune_oven_store,
 };

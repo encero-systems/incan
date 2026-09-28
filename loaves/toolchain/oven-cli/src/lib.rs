@@ -85,6 +85,11 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
             output,
             check,
         }),
+        OvenCommand::Equivalence {
+            cargo_manifest,
+            oven_manifest,
+            output,
+        } => commands::oven_equivalence(&cargo_manifest, &oven_manifest, &output),
         OvenCommand::Interop { command } => match command {
             OvenInteropCommand::Bake {
                 project,

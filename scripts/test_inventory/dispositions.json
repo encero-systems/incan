@@ -11274,6 +11274,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/toolchain/oven-cli/src/commands/oven/equivalence.rs": {
+      "disposition": "unaffected",
+      "notes": "Oven CLI; validates literal artifact-equivalence evidence, no compiler semantics. Reviewed at crate level.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/toolchain/oven-cli/src/commands/oven/harvest.rs": {
       "disposition": "unaffected",
       "notes": "Oven CLI; bakes and harvests, no compiler semantics. Reviewed at crate level.",

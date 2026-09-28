@@ -254,6 +254,18 @@ pub enum OvenCommand {
         )]
         check: Option<PathBuf>,
     },
+    /// Prove literal artifact equivalence between Cargo harvest and Oven publisher captures
+    Equivalence {
+        /// Schema-1 Cargo harvest capture manifest
+        #[arg(long = "cargo-manifest", value_name = "PATH")]
+        cargo_manifest: PathBuf,
+        /// Schema-1 Cargo-free Oven publisher capture manifest
+        #[arg(long = "oven-manifest", value_name = "PATH")]
+        oven_manifest: PathBuf,
+        /// Destination for schema-1 attestation evidence
+        #[arg(long, value_name = "PATH")]
+        output: PathBuf,
+    },
     /// Bake locked C/C++ interop shims and static inputs into one receipt-bound direct-rustc plan
     Interop {
         #[command(subcommand)]

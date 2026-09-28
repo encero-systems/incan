@@ -396,7 +396,8 @@ This checklist tracks the full RFC. The dev.6 ecosystem slice (#1561) delivers t
 - [x] Harvest manifests and provenance from an explicit existing Cargo build (`oven harvest`, `bake-loafs --harvest-dir`; the release closure's 120 registry package versions are governed by incan.pub records harvested from its own capture).
 - [ ] Execute declared C/C++ and tool units only during publisher baking; the macOS tool-unit executor and generated-input projection refuse consumer execution, missing or substituted tools, undeclared reads, and missing, escaped, or extra outputs, while native-link execution and end-to-end corpus admission remain open.
 - [ ] Preserve normal host procedural-macro compilation and expansion semantics.
-- [ ] Prove literal artifact equivalence under a recorded deterministic setup, including negative identity and integrity cases.
+- [x] Define the Rust `incan oven equivalence` gate over stable binding/role/path keys, raw bytes, the recorded deterministic setup, RFC 124 unit identity, and negative identity and integrity cases; the gate emits RFC 125 `attest` evidence only after every comparison succeeds.
+- [ ] Run that gate over the complete pinned Incan and IncQL closures and admit the resulting per-binding attestations.
 
 ### Roles, tooling, and release
 
