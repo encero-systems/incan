@@ -249,10 +249,9 @@ def main() -> None:
 }
 
 #[test]
-fn plain_enums_newtypes_and_derived_display_are_refused_in_every_position_issue1748()
--> Result<(), Box<dyn std::error::Error>> {
-    // An enum that declares no values, a newtype, and a model whose only claim is `@derive(Display)` provide no
-    // `Display`, so each is refused in all three value positions.
+fn plain_enums_and_newtypes_are_refused_in_every_position_issue1748() -> Result<(), Box<dyn std::error::Error>> {
+    // An enum that declares no values and a newtype provide no `Display`, so each is refused in all three value
+    // positions.
     let refused = printed_form_refusals(
         r#"
 enum Color:
@@ -260,10 +259,6 @@ enum Color:
     Green
 
 type UserId = newtype int
-
-@derive(Display)
-model Derived:
-    x: int
 
 def main() -> None:
     color = Color.Red
@@ -274,10 +269,6 @@ def main() -> None:
     print(user)
     user_text = str(user)
     println(f"{user}")
-    derived = Derived(x=1)
-    println(derived)
-    derived_text = str(derived)
-    println(f"{derived}")
 "#,
     )?;
     assert_eq!(
@@ -289,12 +280,49 @@ def main() -> None:
             "'print' cannot print the UserId value 'user'",
             "'str' cannot convert the UserId value 'user' to text",
             "f-string cannot interpolate the UserId value 'user'",
-            "'println' cannot print the Derived value 'derived'",
-            "'str' cannot convert the Derived value 'derived' to text",
-            "f-string cannot interpolate the Derived value 'derived'",
         ],
         "one refusal per displayed value whose type provides no Display, in source order"
     );
+    Ok(())
+}
+
+/// RFC 000 `@derive(Display)` gives a model, class, enum or newtype a display form: its values display in every
+/// position and satisfy a `Display` bound.
+#[test]
+fn a_derived_display_displays_in_every_position_and_meets_a_display_bound() -> Result<(), Box<dyn std::error::Error>> {
+    check_str(
+        r#"
+@derive(Display)
+model Point:
+    x: int
+
+@derive(Display)
+class Account:
+    pub owner: str
+
+@derive(Display)
+enum Color:
+    Red
+
+@derive(Display)
+type UserId = newtype int
+
+@derive(Display)
+model Box[T]:
+    value: T
+
+def show[T with Display](value: T) -> str:
+    return f"{value}"
+
+def main() -> None:
+    point = Point(x=1)
+    println(point)
+    text = str(Account(owner="Ada"))
+    println(f"{Color.Red} {UserId(1)} {Box(value=2)} {text}")
+    shown = show(point) + show(Color.Red) + show(UserId(2)) + show(Box(value="b"))
+"#,
+    )
+    .map_err(|errors| format!("a derived Display must display, got: {errors:?}"))?;
     Ok(())
 }
 
@@ -383,10 +411,6 @@ enum Color:
 
 type UserId = newtype int
 
-@derive(Display)
-model Derived:
-    x: int
-
 def show[T with Display](value: T) -> str:
     return f"{value}"
 
@@ -396,7 +420,6 @@ def main() -> None:
     plain = show(Plain(x=1))
     color = show(Color.Red)
     user = show(UserId(1))
-    derived = show(Derived(x=1))
     raw = show(data)
 "#,
     )
@@ -420,10 +443,6 @@ def main() -> None:
             (
                 Some("INCAN-T0103"),
                 "Call to 'show' cannot bind a value of type 'UserId' to 'T', which requires 'Display'"
-            ),
-            (
-                Some("INCAN-T0103"),
-                "Call to 'show' cannot bind a value of type 'Derived' to 'T', which requires 'Display'"
             ),
             (
                 Some("INCAN-T0103"),

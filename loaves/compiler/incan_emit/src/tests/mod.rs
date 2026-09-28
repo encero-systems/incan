@@ -1,6 +1,7 @@
 //! Tests that cross from lowering into emission.
 
 mod dependency_method_unions;
+mod derived_display_emission;
 mod emitted_spellings;
 mod expected_literal_emission;
 mod generic_caller_bounds;
@@ -21,3 +22,4 @@ mod trait_slot_mut_parameters;
 mod tuple_assignment_emission;
 mod tuple_element_places;
 mod union_member_identity;
+mod variant_pattern_emission;

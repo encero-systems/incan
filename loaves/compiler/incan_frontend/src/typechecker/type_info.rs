@@ -760,6 +760,13 @@ pub struct ExpressionArtifacts {
     /// lowering records the rest as a rest marker instead of one wildcard per field, because a model declared in
     /// another module keeps that field out of reach of the matching code (#1740).
     pub pattern_rests_with_private_fields: HashSet<(usize, usize)>,
+    /// The enum-qualified canonical variant a variant pattern names, keyed by the pattern's constructor name span.
+    ///
+    /// A pattern names its variant through the subject's enum: bare (`Filled(n)`), through a variant alias (`Full(n)`,
+    /// `Shape.Full(n)`), or qualified by the enum itself. Only the checker knows which enum the subject is and what a
+    /// variant alias names, so it records the path lowering spells the pattern with (`Shape::Filled`): the same path a
+    /// qualified pattern over the canonical variant has, which is what the generated program can name.
+    pub pattern_variant_paths: HashMap<(usize, usize), String>,
 }
 
 /// Source-reference resolution facts keyed by source spans.
@@ -1482,6 +1489,12 @@ pub struct CallArtifacts {
     /// so it satisfies a `Display` bound. The value is the `message()` call the checker resolved on the type, which
     /// lowering makes the body of the Rust `Display` it gives the type.
     pub error_message_display_types: HashMap<String, ErrorMessageDisplay>,
+    /// Types this module declares whose values display through a derived `Display` (RFC 000), by type name.
+    ///
+    /// A model, class, enum or newtype whose `@derive(...)` names the builtin `Display` displays as its `{value:?}`
+    /// structure. Lowering gives each such type the `__str__` that returns that text, which the Rust `Display` of the
+    /// type writes.
+    pub derived_display_types: HashSet<String>,
 }
 
 /// The `message()` call one displayed `Error` adopter renders through (#1778).
@@ -2222,6 +2235,17 @@ impl TypeCheckInfo {
             .contains(&(span.start, span.end))
     }
 
+    /// Return the enum-qualified canonical variant (`Shape::Filled`) the variant pattern whose constructor name sits
+    /// at `span` names, when the checker resolved it to a variant of an enum declared in Incan.
+    ///
+    /// See [`ExpressionArtifacts::pattern_variant_paths`].
+    pub fn pattern_variant_path(&self, span: Span) -> Option<&str> {
+        self.expressions
+            .pattern_variant_paths
+            .get(&(span.start, span.end))
+            .map(String::as_str)
+    }
+
     /// Return exact Rust parameter displays recorded for a closure expression, if any.
     pub fn closure_param_type_displays(&self, span: Span) -> Option<&[String]> {
         self.rust
@@ -2631,6 +2655,18 @@ impl TypeCheckInfo {
         self.calls
             .error_message_display_types
             .insert(type_name.to_string(), display);
+    }
+
+    /// Return whether a declared type displays through a derived `Display`.
+    ///
+    /// See [`CallArtifacts::derived_display_types`].
+    pub fn type_derives_display(&self, type_name: &str) -> bool {
+        self.calls.derived_display_types.contains(type_name)
+    }
+
+    /// Record that a declared type displays through a derived `Display`.
+    pub fn record_derived_display_type(&mut self, type_name: &str) {
+        self.calls.derived_display_types.insert(type_name.to_string());
     }
 
     /// Record the compiler-owned builtin selected for one checked call.

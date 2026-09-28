@@ -37,6 +37,8 @@ mod generic_bounds;
 mod rust_boundary;
 mod task_arguments;
 
+pub(in crate::typechecker::check_expr) use generic_bounds::first_open_type_param;
+
 /// Source-facing and canonical identity for one constructor reached through a public package namespace.
 pub(super) struct PublicModuleConstructorContext<'a> {
     pub display_name: &'a str,

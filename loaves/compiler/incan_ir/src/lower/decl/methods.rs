@@ -594,7 +594,8 @@ impl AstLowering {
     /// Lower model methods into an impl block.
     ///
     /// A model that adopts `Error` and has no `Display` of its own also gets the `__str__` that returns its `message()`
-    /// (see [`Self::error_message_str_method`]).
+    /// (see [`Self::error_message_str_method`]), and one with a derived `Display` the `__str__` that renders its
+    /// `Debug` structure (see [`Self::derived_display_str_method`]).
     pub(in crate::lower) fn lower_model_methods(
         &mut self,
         type_name: &str,
@@ -646,14 +647,17 @@ impl AstLowering {
                 )?);
             }
             lowered_methods.extend(self.error_message_str_method(type_name, type_params));
+            lowered_methods.extend(self.derived_display_str_method(type_name, type_params));
             Ok((lowered_methods, method_projections, source_method_projections))
         })();
         self.current_impl_type = prev;
         let (lowered_methods, method_projections, source_method_projections) = lowered?;
+        let mut impl_type_params = self.lower_type_params(type_params);
+        self.bound_type_params_for_derived_display(type_name, &mut impl_type_params);
 
         Ok(IrImpl {
             target_type: type_name.to_string(),
-            type_params: self.lower_type_params(type_params),
+            type_params: impl_type_params,
             trait_name: None,
             trait_module_path: None,
             trait_source_name: None,
@@ -1938,7 +1942,8 @@ impl AstLowering {
     /// Lower class methods into an impl block.
     ///
     /// A class that adopts `Error` and has no `Display` of its own also gets the `__str__` that returns its `message()`
-    /// (see [`Self::error_message_str_method`]).
+    /// (see [`Self::error_message_str_method`]), and one with a derived `Display` the `__str__` that renders its
+    /// `Debug` structure (see [`Self::derived_display_str_method`]).
     pub(in crate::lower) fn lower_class_methods(
         &mut self,
         type_name: &str,
@@ -1990,14 +1995,17 @@ impl AstLowering {
                 )?);
             }
             lowered_methods.extend(self.error_message_str_method(type_name, type_params));
+            lowered_methods.extend(self.derived_display_str_method(type_name, type_params));
             Ok((lowered_methods, method_projections, source_method_projections))
         })();
         self.current_impl_type = prev;
         let (lowered_methods, method_projections, source_method_projections) = lowered?;
+        let mut impl_type_params = self.lower_type_params(type_params);
+        self.bound_type_params_for_derived_display(type_name, &mut impl_type_params);
 
         Ok(IrImpl {
             target_type: type_name.to_string(),
-            type_params: self.lower_type_params(type_params),
+            type_params: impl_type_params,
             trait_name: None,
             trait_module_path: None,
             trait_source_name: None,
@@ -2013,7 +2021,9 @@ impl AstLowering {
     ///
     /// Enum method bodies share the same lowering rules as model/class methods, but this dedicated entry point keeps
     /// RFC 050 declaration assembly explicit at the enum boundary. An enum that adopts `Error` and has no `Display` of
-    /// its own also gets the `__str__` that returns its `message()` (see [`Self::error_message_str_method`]).
+    /// its own also gets the `__str__` that returns its `message()` (see [`Self::error_message_str_method`]), and one
+    /// with a derived `Display` the `__str__` that renders its `Debug` structure (see
+    /// [`Self::derived_display_str_method`]).
     pub(in crate::lower) fn lower_enum_methods(
         &mut self,
         type_name: &str,
@@ -2052,10 +2062,13 @@ impl AstLowering {
         self.current_impl_type = prev;
         let mut lowered_methods: Vec<IrFunction> = lowered?.into_iter().flatten().collect();
         lowered_methods.extend(self.error_message_str_method(type_name, type_params));
+        lowered_methods.extend(self.derived_display_str_method(type_name, type_params));
+        let mut impl_type_params = self.lower_type_params(type_params);
+        self.bound_type_params_for_derived_display(type_name, &mut impl_type_params);
 
         Ok(IrImpl {
             target_type: type_name.to_string(),
-            type_params: self.lower_type_params(type_params),
+            type_params: impl_type_params,
             trait_name: None,
             trait_module_path: None,
             trait_source_name: None,

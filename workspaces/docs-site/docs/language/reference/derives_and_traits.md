@@ -36,7 +36,7 @@ model Wrapped:
 | Derive | Provides | Dunder | Reference |
 | --- | --- | --- | --- |
 | `Debug` | `{value:?}` | — | [String representation](derives/string_representation.md#debug) |
-| `Display` | Nothing: `{value}`, `str(value)` and `print(value)` come from `__str__` | `__str__` | [String representation](derives/string_representation.md#display) |
+| `Display` | `{value}`, `str(value)`, `print(value)`, each showing the value's `{value:?}` structure; implies `Debug` | `__str__` | [String representation](derives/string_representation.md#display) |
 | `Eq` | `==`, `!=`; with `Hash`, use as a `set` element or `dict` key | `__eq__`, `__ne__` | [Comparison](derives/comparison.md#eq) |
 | `PartialEq` | `==`, `!=` | `__eq__`, `__ne__` | [Comparison](derives/comparison.md#partialeq) |
 | `Ord` | `<`, `<=`, `>`, `>=`, `sorted(values)` | `__lt__`, `__le__`, `__gt__`, `__ge__` | [Comparison](derives/comparison.md#ord) |
@@ -58,7 +58,7 @@ model Wrapped:
 - An `enum` or `newtype` adopts such a trait in the same way.
 - `@derive(...)` also names a derive imported from a Rust crate (`from rust::serde import Serialize`, then `@derive(Serialize)`); it applies to the type as the same name in `@rust.derive(...)` does.
 - A derive on a generic declaration holds for each instantiation whose type arguments implement it. A field, payload or underlying type that is one of the declaration's type parameters meets the derive's **Requires** entry.
-- `Eq` implies `PartialEq`, and `Ord` implies `PartialOrd`, `Eq` and `PartialEq`.
+- `Eq` implies `PartialEq`, `Ord` implies `PartialOrd`, `Eq` and `PartialEq`, and `Display` implies `Debug`.
 - `@rust.derive(...)` names Rust derives (see [Decorators](language.md#decorators)).
 - The dunders that define what a derive provides, and the pairs that conflict, are in [Custom behavior](derives/custom_behavior.md).
 

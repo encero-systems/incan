@@ -741,12 +741,17 @@ impl AstLowering {
                         rest,
                     }
                 } else {
-                    // An expanded source-module trait default names its module's enum by that module's path (#1759).
+                    // A variant of an Incan enum is spelled as the enum's canonical variant the checker resolved, so a
+                    // bare or aliased variant names the same variant a qualified pattern does. An expanded
+                    // source-module trait default names its module's enum by that module's path (#1759).
+                    let variant = self
+                        .pattern_variant_path_for(name.span)
+                        .unwrap_or_else(|| name.node.clone());
                     Pattern::Enum {
                         name: String::new(),
                         variant: self
-                            .active_trait_default_qualified_pattern_name(&name.node)
-                            .unwrap_or_else(|| name.node.clone()),
+                            .active_trait_default_qualified_pattern_name(&variant)
+                            .unwrap_or(variant),
                         fields: positional_fields,
                     }
                 }
@@ -770,6 +775,21 @@ impl AstLowering {
             .as_ref()
             .and_then(|info| info.pattern_rest_fields(span))
             .map(<[String]>::to_vec)
+    }
+
+    /// Return the enum-qualified canonical variant (`Shape::Filled`) the checker resolved for the variant pattern whose
+    /// constructor name sits at `span`.
+    ///
+    /// Like [`Self::pattern_rest_fields_for`], the span-keyed fact is not read while an imported trait default is being
+    /// expanded into an adopter.
+    fn pattern_variant_path_for(&self, span: ast::Span) -> Option<String> {
+        if self.active_imported_trait_defaults.last().copied().unwrap_or(false) {
+            return None;
+        }
+        self.type_info
+            .as_ref()
+            .and_then(|info| info.pattern_variant_path(span))
+            .map(str::to_string)
     }
 
     /// Return whether the checker recorded that the constructor pattern whose name sits at `span` leaves unnamed a

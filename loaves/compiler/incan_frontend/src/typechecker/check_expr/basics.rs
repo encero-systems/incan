@@ -10,7 +10,7 @@ use crate::typechecker::IdentKind;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_semantics_core::SemanticSourceTargetKind;
 
-use super::TypeChecker;
+use super::{GenericPartialTarget, TypeChecker};
 
 /// Return whether a metadata-free Rust import path follows Rust's constant naming convention.
 fn rust_path_last_segment_looks_like_const(path: &str) -> bool {
@@ -118,8 +118,13 @@ impl TypeChecker {
             SymbolKind::Static(info) => (IdentKind::Static, info.ty.clone()),
             SymbolKind::Function(info) => {
                 if !info.type_params.is_empty() {
-                    self.errors.push(errors::generic_function_reference(name, span));
-                    return ResolvedType::Unknown;
+                    // A local partial instantiates the generic function it names (RFC 084); anywhere else a generic
+                    // function is not a value.
+                    if !self.is_generic_partial_target_span(span) {
+                        self.errors.push(errors::generic_function_reference(name, span));
+                        return ResolvedType::Unknown;
+                    }
+                    self.generic_partial_target = Some(GenericPartialTarget::of_function(name, info));
                 }
                 (
                     IdentKind::Value,

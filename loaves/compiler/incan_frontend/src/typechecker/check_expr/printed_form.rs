@@ -4,13 +4,14 @@
 //! The display positions show a value alike. Scalars and `str` display their own text; a tuple, list, dict, set,
 //! `Option` or `Result` displays its structure (lowering hands `print` and `str` the same rendering an f-string part
 //! lowers to); a model, class, enum or newtype displays through `Display`, which it provides by a `__str__` method, by
-//! its variants' values when it is an enum that declares them, or by `message()` when it adopts `Error`.
-//! `@derive(Display)` provides nothing. A value with none of those has no printed form, so the checker refuses it in
-//! every position with `INCAN-T0103` instead of leaving the build to fail on it. Inside a structural value every
-//! element displays as its `{value:?}` structure, and a generator, a function and `bytes` have none there either, so a
-//! structure holding one is refused alike. A `Display` bound asks the same of a type argument, except that a
-//! structural value has no `Display` of its own.
+//! its variants' values when it is an enum that declares them, by `@derive(Display)` (RFC 000), which displays the
+//! value as its `{value:?}` structure, or by `message()` when it adopts `Error`. A value with none of those has no
+//! printed form, so the checker refuses it in every position with `INCAN-T0103` instead of leaving the build to fail on
+//! it. Inside a structural value every element displays as its `{value:?}` structure, and a generator, a function and
+//! `bytes` have none there either, so a structure holding one is refused alike. A `Display` bound asks the same of a
+//! type argument, except that a structural value has no `Display` of its own.
 
+use incan_lang::lang::derives::DeriveId;
 use incan_lang::lang::magic_methods::{self, MagicMethodId};
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
@@ -172,8 +173,8 @@ impl TypeChecker {
     /// of those (a newtype over a Rust type included).
     ///
     /// A type provides `Display` by a `__str__(self) -> str` method, by each variant's value when it is an enum that
-    /// declares values, or by `message()` when it adopts `Error` and has no `__str__`. `@derive(Display)` provides
-    /// nothing.
+    /// declares values, by `@derive(Display)`, or by `message()` when it adopts `Error` and has no `Display` of its
+    /// own.
     fn nominal_provides_display(&self, type_name: &str) -> Option<bool> {
         let own_display = self.nominal_own_display(type_name)?;
         Some(own_display || self.type_implements_trait(type_name, core_traits::as_str(TraitId::Error)))
@@ -183,8 +184,8 @@ impl TypeChecker {
     /// its `message()`, or `None` when `type_name` names none of those (a newtype over a Rust type included).
     ///
     /// Its own `Display` is a `__str__` (see [`Self::nominal_defines_str`]), the values of an enum that declares them,
-    /// or a `Display` the type adopts or takes from a Rust derive macro (see [`Self::nominal_adopts_display`]).
-    /// `@derive(Display)` provides nothing.
+    /// a derived `Display` (see [`Self::nominal_derives_display`]), or a `Display` the type adopts or takes from a Rust
+    /// derive macro (see [`Self::nominal_adopts_display`]).
     pub(in crate::typechecker::check_expr) fn nominal_own_display(&self, type_name: &str) -> Option<bool> {
         let (declares_values, adoptions, derives) = match self.lookup_semantic_type_info(type_name)? {
             TypeInfo::Model(info) => (false, &info.trait_adoptions, &info.derives),
@@ -196,8 +197,28 @@ impl TypeChecker {
         Some(
             declares_values
                 || self.nominal_defines_str(type_name, 0)
+                || self.nominal_derives_display(type_name)
                 || self.nominal_adopts_display(type_name, adoptions, derives),
         )
+    }
+
+    /// Whether a model, class, enum or newtype takes its `Display` from the builtin `@derive(Display)` (RFC 000), which
+    /// displays the value as its `{value:?}` structure: the form the display rule gives a model, class or enum value
+    /// inside a collection.
+    ///
+    /// An enum that declares values displays those values, and a `rusttype` newtype takes its traits from Rust, so
+    /// neither derives a display form of its own.
+    pub(in crate::typechecker) fn nominal_derives_display(&self, type_name: &str) -> bool {
+        let derives = match self.lookup_semantic_type_info(type_name) {
+            Some(TypeInfo::Model(info)) => &info.derives,
+            Some(TypeInfo::Class(info)) => &info.derives,
+            Some(TypeInfo::Enum(info)) if info.value_enum.is_none() => &info.derives,
+            Some(TypeInfo::Newtype(info)) if !info.is_rusttype => &info.derives,
+            _ => return false,
+        };
+        derives
+            .iter()
+            .any(|derive| self.builtin_derive_named(derive) == Some(DeriveId::Display))
     }
 
     /// Whether a model, class, enum or newtype takes `Display` by a `with` adoption or from a Rust derive macro.
@@ -205,7 +226,8 @@ impl TypeChecker {
     /// A `with Display` adoption, direct or through a supertrait, provides it: the language's `Display` by the
     /// `__str__` it requires, Rust's `std::fmt::Display` by the `fmt` the type implements or forwards. So does a Rust
     /// derive macro named `Display`, forwarded with `@rust.derive(...)` or imported from a Rust crate and named in
-    /// `@derive(...)`. The compiler's own `@derive(Display)` is neither, and provides nothing.
+    /// `@derive(...)`. The compiler's own `@derive(Display)` is neither; [`Self::nominal_derives_display`] answers for
+    /// it.
     fn nominal_adopts_display(&self, type_name: &str, adoptions: &[TypeBoundInfo], derives: &[String]) -> bool {
         let display = core_traits::as_str(TraitId::Display);
         let adopted = adoptions.iter().any(|adoption| {
@@ -234,7 +256,7 @@ impl TypeChecker {
 
     /// Whether a model, class, enum or newtype defines `__str__`: declared on the type, supplied by an adopted trait or
     /// one of its supertraits, or inherited from a class it extends.
-    fn nominal_defines_str(&self, type_name: &str, depth: usize) -> bool {
+    pub(in crate::typechecker) fn nominal_defines_str(&self, type_name: &str, depth: usize) -> bool {
         let str_method = magic_methods::as_str(MagicMethodId::Str);
         let (methods, adoptions, extends) = match self.lookup_semantic_type_info(type_name) {
             Some(TypeInfo::Model(model)) => (&model.methods, &model.trait_adoptions, None),

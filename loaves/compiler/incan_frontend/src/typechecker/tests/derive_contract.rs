@@ -499,6 +499,38 @@ fn issue1872_dunder_beside_its_matching_derive_is_refused() -> TestResult {
     Ok(())
 }
 
+/// A `__str__` inherited from an extended class or supplied by an adopted trait gives the type its display as a
+/// declared one does, so `@derive(Display)` beside it is refused too.
+#[test]
+fn issue1872_derived_display_beside_an_inherited_or_adopted_str_is_refused() -> TestResult {
+    let inherited = refused(
+        r#"
+class Base:
+    pub id: int
+
+    def __str__(self) -> str:
+        return "base"
+
+@derive(Display)
+class Child extends Base:
+    pub extra: int
+"#,
+    )?;
+    assert_refusal(&inherited, &["'Child' defines __str__ and derives Display"])?;
+    let adopted = refused(
+        r#"
+trait Named:
+    def __str__(self) -> str:
+        return "named"
+
+@derive(Display)
+model Thing with Named:
+    id: int
+"#,
+    )?;
+    assert_refusal(&adopted, &["'Thing' defines __str__ and derives Display"])
+}
+
 #[test]
 fn issue1872_dunders_without_their_matching_derive_stay_accepted() -> TestResult {
     accepted(
@@ -663,6 +695,23 @@ model Leg:
         assert_refusal(&errors, &["@derive(Copy) on model 'Leg'", holder])?;
     }
     Ok(())
+}
+
+/// RFC 000 `@derive(Display)` displays a value as its `Debug` structure, so on a newtype it needs `Debug` of the
+/// underlying type, and a newtype over a type without it is refused.
+#[test]
+fn derived_display_on_a_newtype_needs_debug_of_its_underlying_type() -> TestResult {
+    let errors = refused(
+        "import std.async\nfrom std.async.task import JoinHandle\n\n@derive(Display)\ntype Handle = newtype JoinHandle[int]\n",
+    )?;
+    assert_refusal(
+        &errors,
+        &[
+            "@derive(Display) on newtype 'Handle'",
+            "underlying type 'JoinHandle[int]'",
+        ],
+    )?;
+    accepted("@derive(Display)\ntype UserId = newtype int\n\ndef main() -> None:\n    println(UserId(1))\n")
 }
 
 /// A newtype lacks the derives its underlying type lacks, and deriving one of them on the newtype is refused.

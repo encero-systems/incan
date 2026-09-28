@@ -2182,12 +2182,12 @@ impl TypeChecker {
             Declaration::Model(model) => {
                 self.validate_protected_type_param_bindings(&model.type_params, decl.span);
                 self.check_model(model);
-                self.record_declared_error_message_display(&model.name, decl.span);
+                self.record_declared_display_route(&model.name, decl.span);
             }
             Declaration::Class(class) => {
                 self.validate_protected_type_param_bindings(&class.type_params, decl.span);
                 self.check_class(class);
-                self.record_declared_error_message_display(&class.name, decl.span);
+                self.record_declared_display_route(&class.name, decl.span);
             }
             Declaration::Trait(tr) => {
                 self.validate_protected_type_param_bindings(&tr.type_params, decl.span);
@@ -2202,12 +2202,12 @@ impl TypeChecker {
             Declaration::Newtype(nt) => {
                 self.validate_protected_type_param_bindings(&nt.type_params, decl.span);
                 self.check_newtype(nt);
-                self.record_declared_error_message_display(&nt.name, decl.span);
+                self.record_declared_display_route(&nt.name, decl.span);
             }
             Declaration::Enum(en) => {
                 self.validate_protected_type_param_bindings(&en.type_params, decl.span);
                 self.check_enum(en);
-                self.record_declared_error_message_display(&en.name, decl.span);
+                self.record_declared_display_route(&en.name, decl.span);
             }
             Declaration::Function(func) => {
                 self.validate_protected_type_param_bindings(&func.type_params, decl.span);
@@ -2223,11 +2223,15 @@ impl TypeChecker {
         }
     }
 
-    /// Record the `message()` call a declared model, class, enum or newtype displays through, when it adopts `Error`
-    /// and has no `Display` of its own, so lowering can give it the Rust `Display` a `Display` bound needs.
-    fn record_declared_error_message_display(&mut self, type_name: &str, decl_span: Span) {
+    /// Record how a declared model, class, enum or newtype displays when lowering has to give it a Rust `Display`: the
+    /// `message()` call it displays through when it adopts `Error` and has no `Display` of its own, or its derived
+    /// `Display` (RFC 000).
+    fn record_declared_display_route(&mut self, type_name: &str, decl_span: Span) {
         let self_ty = self.trait_conformance_self_type(type_name);
         self.record_error_message_display_type(type_name, &self_ty, decl_span);
+        if self.nominal_derives_display(type_name) {
+            self.type_info.record_derived_display_type(type_name);
+        }
     }
 
     /// Reject protected builtin spellings in a declaration-owned generic parameter list.

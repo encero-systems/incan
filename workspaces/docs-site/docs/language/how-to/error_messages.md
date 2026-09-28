@@ -234,7 +234,7 @@ while let Some(user) = current:
 'println' cannot print the Point value 'point'
 ```
 
-**Problem:** `print`, `println`, `str` and an f-string `{value}` share one display rule (see [Display](../reference/strings.md#display)). A union value, a generator, a function, `bytes`, and a model, class, enum or newtype whose type provides no `Display` have no printed form in any of them (`INCAN-T0103`). A type provides `Display` through `__str__`, through the values an enum declares, or through the `message()` of an `Error` adopter; `@derive(Display)` provides nothing. The same refusal applies to a type argument for a `Display` bound. Lists, tuples, dicts, sets, `Option` and `Result` do print: `println(items)` prints `[1, 2, 3]`.
+**Problem:** `print`, `println`, `str` and an f-string `{value}` share one display rule (see [Display](../reference/strings.md#display)). A union value, a generator, a function, `bytes`, and a model, class, enum or newtype whose type provides no `Display` have no printed form in any of them (`INCAN-T0103`). A type provides `Display` through `__str__`, through the values an enum declares, through `@derive(Display)` (which shows the value's `{value:?}` structure), or through the `message()` of an `Error` adopter. The same refusal applies to a type argument for a `Display` bound. Lists, tuples, dicts, sets, `Option` and `Result` do print: `println(items)` prints `[1, 2, 3]`.
 
 **Solution:** Give the value a printed form, or display something that has one.
 

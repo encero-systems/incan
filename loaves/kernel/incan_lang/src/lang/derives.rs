@@ -144,8 +144,8 @@ pub fn as_str(id: DeriveId) -> &'static str {
     info_for(id).canonical
 }
 
-/// Derives that bring other derives with them: `Eq` needs `PartialEq`, and `Ord` needs `PartialOrd`, `Eq` and
-/// `PartialEq`.
+/// Derives that bring other derives with them: `Eq` needs `PartialEq`, `Ord` needs `PartialOrd`, `Eq` and
+/// `PartialEq`, and `Display` needs `Debug`, since a derived display form is the value's `Debug` structure (RFC 000).
 ///
 /// Lowering adds the implied derives to a declaration's derive list, applying the rows in this order, and the
 /// typechecker reads the same table when it asks whether a declared type implements a derive, so the two never
@@ -156,6 +156,7 @@ pub const DERIVE_IMPLICATIONS: &[(DeriveId, &[DeriveId])] = &[
         DeriveId::Ord,
         &[DeriveId::PartialOrd, DeriveId::Eq, DeriveId::PartialEq],
     ),
+    (DeriveId::Display, &[DeriveId::Debug]),
 ];
 
 /// Return the derives that `id` brings with it, per [`DERIVE_IMPLICATIONS`]; empty for a derive that implies nothing.
@@ -212,12 +213,13 @@ mod implication_tests {
     use super::*;
 
     #[test]
-    fn ord_implies_the_equality_and_partial_ordering_derives() {
+    fn ord_implies_the_equality_and_partial_ordering_derives_and_display_implies_debug() {
         assert_eq!(
             implied_derives(DeriveId::Ord),
             &[DeriveId::PartialOrd, DeriveId::Eq, DeriveId::PartialEq]
         );
         assert_eq!(implied_derives(DeriveId::Eq), &[DeriveId::PartialEq]);
+        assert_eq!(implied_derives(DeriveId::Display), &[DeriveId::Debug]);
         assert!(implied_derives(DeriveId::Hash).is_empty());
     }
 }

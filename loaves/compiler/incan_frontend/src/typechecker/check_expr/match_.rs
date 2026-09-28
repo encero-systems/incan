@@ -10,10 +10,13 @@ use crate::diagnostics::errors;
 use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::*;
 use incan_lang::interop::RustItemKind;
+use incan_lang::lang::keywords::{self, KeywordId};
+use incan_lang::lang::stdlib;
 use incan_lang::lang::surface::constructors;
 use incan_lang::lang::surface::constructors::ConstructorId;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::types::numerics;
+use incan_semantics_core::SymbolOrigin;
 
 use super::TypeChecker;
 use super::match_coverage::{coverage_row_head_is_wild, expand_coverage_heads};
@@ -504,6 +507,43 @@ impl TypeChecker {
         }
     }
 
+    /// Record the enum-qualified canonical variant a checked variant pattern over an Incan enum names.
+    ///
+    /// The subject's enum qualifies the variant, and a variant alias resolves to the variant it names, so a bare
+    /// `Filled(n)` and an aliased `Full(n)` or `Shape.Full(n)` are spelled `Shape::Filled` by lowering, as a qualified
+    /// pattern over the canonical variant is. A module that matches a value of an enum another project module declares
+    /// without binding the enum's name spells it from the crate root (`crate::shapes::Shape::Filled`).
+    fn record_incan_enum_pattern_path(&mut self, expected_ty: &ResolvedType, variant: &str, span: Span) {
+        let enum_name = match expected_ty {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
+            _ => return,
+        };
+        let Some(TypeInfo::Enum(info)) = self.lookup_semantic_type_info(enum_name) else {
+            return;
+        };
+        let canonical = info.variant_aliases.get(variant).map_or(variant, String::as_str);
+        let enum_binds_here = self
+            .lookup_symbol(enum_name)
+            .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Type(TypeInfo::Enum(_))));
+        let owner = match info.variant_identities.get(canonical).map(|identity| &identity.origin) {
+            Some(SymbolOrigin::Module(module_path))
+                if !enum_binds_here && module_path.first().is_some_and(|root| root != stdlib::STDLIB_ROOT) =>
+            {
+                format!(
+                    "{}::{}::{enum_name}",
+                    keywords::as_str(KeywordId::Crate),
+                    module_path.join("::")
+                )
+            }
+            _ => enum_name.clone(),
+        };
+        let path = format!("{owner}::{canonical}");
+        self.type_info
+            .expressions
+            .pattern_variant_paths
+            .insert((span.start, span.end), path);
+    }
+
     /// Type-check a pattern against an expected type, defining bindings in the current scope.
     ///
     /// Every pattern node's checked type is recorded at its own span before it is dispatched on, the way a `for`
@@ -718,6 +758,7 @@ impl TypeChecker {
                     Some(fields) => {
                         if incan_resolution.is_some() {
                             self.record_incan_enum_pattern_identity(expected_ty, variant_name, name.span);
+                            self.record_incan_enum_pattern_path(expected_ty, variant_name, name.span);
                         }
                         self.check_constructor_subpatterns_enum_like(
                             name.node.as_str(),

@@ -3658,6 +3658,32 @@ fn collect_calls_in_stmt(
 }
 
 /// Recursively collect generic function calls from an expression.
+/// Collect what displaying one value requires of the caller's type parameters.
+///
+/// A value of a source nominal type displays through the `Display` the emitter implements from the type's `__str__`, a
+/// declared one or the one lowering gives a type with a derived `Display` or an `Error` adopter. That implementation
+/// holds under the header of the impl block holding `__str__`, so a caller that forwards its own type parameter into
+/// the value's type arguments needs the header's bounds, as a call of `__str__` does. Any other value adds nothing.
+fn collect_display_requirements(
+    value: &IrExpr,
+    context: &BoundCollectionContext<'_, '_>,
+    result: &mut Vec<PropagatedBoundRequirement>,
+) {
+    collect_method_implementation_bound_requirements(
+        MethodCallParts {
+            receiver: value,
+            method: magic_methods::as_str(magic_methods::MagicMethodId::Str),
+            dispatch: None,
+            type_args: &[],
+            args: &[],
+        },
+        context,
+        result,
+    );
+}
+
+/// Collect the requirements the calls, method calls and displayed values of one expression put on the caller's type
+/// parameters.
 fn collect_calls_in_expr(
     expr: &IrExpr,
     context: &BoundCollectionContext<'_, '_>,
@@ -3778,6 +3804,15 @@ fn collect_calls_in_expr(
                 recurse_expr(&arg.expr, result);
             }
         }
+        IrExprKind::BuiltinCall {
+            func: BuiltinFn::Print | BuiltinFn::Str,
+            args,
+        } => {
+            for arg in args {
+                collect_display_requirements(arg, context, result);
+                recurse_expr(arg, result);
+            }
+        }
         IrExprKind::BuiltinCall { args, .. } | IrExprKind::Tuple(args) | IrExprKind::Set(args) => {
             for arg in args {
                 recurse_expr(arg, result);
@@ -3832,7 +3867,10 @@ fn collect_calls_in_expr(
         }
         IrExprKind::Format { parts } => {
             for part in parts {
-                if let FormatPart::Expr { expr, .. } = part {
+                if let FormatPart::Expr { expr, style } = part {
+                    if !style.emits_rust_debug(&expr.ty) {
+                        collect_display_requirements(expr, context, result);
+                    }
                     recurse_expr(expr, result);
                 }
             }

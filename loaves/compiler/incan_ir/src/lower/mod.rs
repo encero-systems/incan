@@ -3303,8 +3303,11 @@ impl AstLowering {
                                 .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())).with_span(decl.span.into()));
 
                             // Generate impl block for newtype methods (if any), or for the `__str__` an `Error`
-                            // adopter with no `Display` of its own displays its `message()` through.
-                            if !newtype_methods.is_empty() || self.type_displays_through_error_message(&struct_ir.name)
+                            // adopter with no `Display` of its own displays its `message()` through, or a derived
+                            // `Display` its `Debug` structure through.
+                            if !newtype_methods.is_empty()
+                                || self.type_displays_through_error_message(&struct_ir.name)
+                                || self.type_derives_display(&struct_ir.name)
                             {
                                 match self.lower_decorated_method_statics(&struct_ir.name, &newtype_methods) {
                                     Ok(statics) => ir_program.declarations.extend(statics),
@@ -3379,7 +3382,10 @@ impl AstLowering {
                             .declarations
                             .push(IrDecl::new(IrDeclKind::Enum(enum_ir.clone())).with_span(decl.span.into()));
 
-                        if !e.methods.is_empty() || self.type_displays_through_error_message(&enum_ir.name) {
+                        if !e.methods.is_empty()
+                            || self.type_displays_through_error_message(&enum_ir.name)
+                            || self.type_derives_display(&enum_ir.name)
+                        {
                             match self.lower_decorated_method_statics(&enum_ir.name, &e.methods) {
                                 Ok(statics) => ir_program.declarations.extend(statics),
                                 Err(e) => errors.push(e),

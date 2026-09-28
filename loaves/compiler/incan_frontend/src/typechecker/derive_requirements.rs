@@ -62,7 +62,8 @@ pub(in crate::typechecker) struct LocalDeriveFacts {
 }
 
 /// Whether `derive` is one the relation answers for: every builtin derive that is a Rust trait of the generated
-/// program. `Display` is not (`@derive(Display)` provides nothing), nor are `Validate` and `Descriptor`.
+/// program. `Display` is not (the display rule answers for it, see `check_expr::printed_form`), nor are `Validate` and
+/// `Descriptor`.
 fn is_relation_derive(derive: DeriveId) -> bool {
     matches!(
         derive,

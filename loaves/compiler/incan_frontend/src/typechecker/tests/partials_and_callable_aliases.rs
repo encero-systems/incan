@@ -1301,3 +1301,85 @@ def main() -> None:
         )
     })
 }
+
+/// RFC 084 admits generic callables as partial targets: a local partial of a generic function or of a generic model or
+/// class constructor instantiates its target with the type arguments its presets fix or that it writes, and is a
+/// callable of the instantiated parameters.
+#[test]
+fn local_partial_of_a_generic_function_or_constructor_is_instantiated() -> Result<(), String> {
+    let source = r#"
+def pair[T](a: T, b: T) -> list[T]:
+    return [a, b]
+
+def tagged[T with Display](value: T, prefix: str) -> str:
+    return f"{prefix}{value}"
+
+model Box[T]:
+    value: T
+    label: str
+
+class Slot[T]:
+    pub item: T
+    pub count: int
+
+def main() -> None:
+    first = partial pair(a=1)
+    items: list[int] = first(b=2)
+    more: list[int] = first(3)
+    hash_tag = partial tagged[int](prefix="no.")
+    text: str = hash_tag(value=4)
+    boxed = partial Box(value=5)
+    b: Box[int] = boxed(label="five")
+    labeled = partial Box[str](label="named")
+    c: Box[str] = labeled(value="six")
+    slot = partial Slot(item="s")
+    s: Slot[str] = slot(count=7)
+    println(f"{items} {more} {text} {b.value} {c.value} {s.item}")
+"#;
+    check_str(source).map_err(|errors| {
+        format!(
+            "a local partial of a generic callable must check, got: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        )
+    })
+}
+
+/// A local partial is a value, so it is not generic: a type parameter that neither its presets nor its written type
+/// arguments fix is refused, as are a preset of the wrong type, a written type argument list of the wrong length and a
+/// type argument that misses its bound.
+#[test]
+fn local_partial_of_a_generic_callable_refuses_a_free_type_parameter_and_bad_type_arguments() -> Result<(), String> {
+    let cases: [(&str, &str); 4] = [
+        (
+            "model Box[T]:\n    value: T\n    label: str\n\ndef main() -> None:\n    make = partial Box(label=\"x\")\n",
+            "leaves type parameter 'T'",
+        ),
+        (
+            "def pair[T](a: T, b: T) -> list[T]:\n    return [a, b]\n\ndef main() -> None:\n    p = partial pair[int](a=\"s\")\n",
+            "expected 'int', found 'str'",
+        ),
+        (
+            "def pair[T](a: T, b: T) -> list[T]:\n    return [a, b]\n\ndef main() -> None:\n    p = partial pair[int, str](a=1)\n",
+            "expects 1 explicit type argument(s), got 2",
+        ),
+        (
+            "model Plain:\n    x: int\n\ndef tagged[T with Display](value: T, prefix: str) -> str:\n    return prefix\n\ndef main() -> None:\n    p = partial tagged(value=Plain(x=1))\n",
+            "requires 'Display'",
+        ),
+    ];
+    for (source, needle) in cases {
+        let errors = check_str(source)
+            .err()
+            .ok_or_else(|| format!("expected a refusal for:\n{source}"))?;
+        if !errors
+            .iter()
+            .any(|error| error.message.to_lowercase().contains(&needle.to_lowercase()))
+        {
+            return Err(format!(
+                "expected an error containing {needle:?} for:\n{source}\ngot: {:?}",
+                errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+            ));
+        }
+    }
+    Ok(())
+}

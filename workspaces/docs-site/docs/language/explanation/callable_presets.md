@@ -74,15 +74,17 @@ If a preset value needs runtime state, use a local partial expression or a wrapp
 Local presets are expressions. They evaluate where they appear and may capture local values:
 
 ```incan
-def read(layer: str, format: str, path: str) -> str:
-    return f"{layer}/{path}.{format}"
+model Reader:
+    layer: str
+    format: str
+    path: str
 
-def read_tables(layer: str) -> list[str]:
-    read_layer = partial read(layer=layer, format="delta")
-    return [read_layer(path="orders"), read_layer("customers")]
+def read_orders(layer: str) -> Reader:
+    reader = partial Reader(layer=layer, format="delta")
+    return reader("orders")
 ```
 
-The value keeps the target's whole signature. Each preset becomes a default that a call may still override, as in `read_layer(format="parquet", path="orders")`, and positional arguments bind only the parameters left unset, so `read_layer("customers")` passes `path`. That makes local presets the right form when the preset value depends on a function argument, a local binding, or another runtime expression.
+The value keeps the target's parameters: a call passes the unset ones positionally, and may still override a preset by name, as `reader("orders", format="csv")` does. That makes local presets the right form when the preset value depends on a function argument, a local binding, or another runtime expression.
 
 ## Method presets
 

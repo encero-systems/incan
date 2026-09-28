@@ -30,9 +30,10 @@ A type has a `Display` of its own when it:
 - defines `__str__`, declared on the type, inherited from a class it extends, or supplied by an adopted trait or one of its supertraits;
 - is an enum that declares values, such as `enum Code(str)`: a variant displays its value;
 - adopts `Display`, directly or through a supertrait;
+- carries `@derive(Display)`, which displays it as its `{value:?}` structure;
 - takes a Rust derive macro named `Display`, forwarded with `@rust.derive(...)` or imported from a Rust crate and named in `@derive(...)`.
 
-A type parameter has a `Display` of its own when one of its bounds is `Display` or supplies `__str__`. `@derive(Display)` provides no `Display`. `{value:?}` renders `Debug`.
+A type parameter has a `Display` of its own when one of its bounds is `Display` or supplies `__str__`. `{value:?}` renders `Debug`.
 
 ```incan
 from std.traits.error import Error

@@ -716,7 +716,7 @@ impl TypeChecker {
     ///
     /// This walks matching container structure recursively so constructor field checks and function calls can recover
     /// bindings such as `T -> String` from shapes like `Boxed[T]` versus `Boxed[String]`.
-    pub(in crate::typechecker::check_expr::calls) fn infer_type_param_bindings(
+    pub(in crate::typechecker::check_expr) fn infer_type_param_bindings(
         &self,
         expected: &ResolvedType,
         actual: &ResolvedType,
@@ -835,7 +835,7 @@ impl TypeChecker {
     /// is refused with `INCAN-T0114`: a concrete type argument only when it is known to lack the derive, as for a
     /// callee of this checker's own modules, and the caller's own type parameter unless its declaration carries the
     /// bound.
-    fn emit_explicit_bound_errors(
+    pub(in crate::typechecker::check_expr) fn emit_explicit_bound_errors(
         &mut self,
         func_name: &str,
         bounds_by_param: &std::collections::HashMap<String, Vec<String>>,
@@ -953,7 +953,10 @@ fn is_open_binding(ty: &ResolvedType, type_params: &[String]) -> bool {
 ///
 /// A callee's parameter types name its type parameters as type variables; a type parameter of the caller's own body is
 /// a named type there, and is not open.
-fn first_open_type_param(ty: &ResolvedType, type_params: &[String]) -> Option<String> {
+pub(in crate::typechecker::check_expr) fn first_open_type_param(
+    ty: &ResolvedType,
+    type_params: &[String],
+) -> Option<String> {
     match ty {
         ResolvedType::TypeVar(name) => type_params.contains(name).then(|| name.clone()),
         ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {

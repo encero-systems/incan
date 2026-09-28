@@ -546,6 +546,12 @@ pub struct TypeChecker {
     pub type_receiver_spans: Vec<(usize, usize)>,
     /// Expression spans where type-like identifiers are valid value-level `Type[T]` tokens.
     pub type_token_value_spans: Vec<(usize, usize)>,
+    /// The target span of the local partial expression being checked, where a generic function may be named as a value
+    /// so the partial can instantiate it (RFC 084).
+    pub(in crate::typechecker) generic_partial_target_span: Option<(usize, usize)>,
+    /// The generic function a local partial's target named at [`Self::generic_partial_target_span`], taken by the
+    /// partial expression check to instantiate it.
+    pub(in crate::typechecker) generic_partial_target: Option<check_expr::GenericPartialTarget>,
     /// Stack of active loop contexts, innermost last.
     pub loop_stack: Vec<LoopContext>,
     /// Active trait @requires context for default method bodies.
@@ -893,6 +899,8 @@ impl TypeChecker {
             unsafe_depth: 0,
             type_receiver_spans: Vec::new(),
             type_token_value_spans: Vec::new(),
+            generic_partial_target_span: None,
+            generic_partial_target: None,
             loop_stack: Vec::new(),
             current_trait_requires: None,
             current_trait_properties: None,

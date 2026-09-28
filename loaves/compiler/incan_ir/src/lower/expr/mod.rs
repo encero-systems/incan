@@ -3238,13 +3238,15 @@ impl AstLowering {
                     (Some(constructor), _) => {
                         self.local_partial_constructor_body(&constructor, forward_args, &signature.return_type)?
                     }
+                    // An imported target is called through its canonical path, as a direct call of it is, so the
+                    // call binds its named arguments against the imported declaration's signature.
                     (None, Some(target)) => TypedExpr::new(
                         IrExprKind::Call {
                             func: Box::new(target),
                             type_args: self.lower_call_site_type_args(expr_span, &partial.type_args),
                             args: forward_args,
                             callable_signature: None,
-                            canonical_path: None,
+                            canonical_path: self.imported_callee_path_for_expr(&partial.target),
                         },
                         signature.return_type.clone(),
                     ),

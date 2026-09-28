@@ -3159,6 +3159,24 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/derived_display_emission.rs": {
+      "disposition": "retire",
+      "notes": "compiles and runs the Rust text emission gives types that derive Display; generated Rust dies with #654.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "derived_display_of_a_generic_type_displays_inside_a_generic_function": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/derived_display_prints_the_value_structure.incn",
+          "notes": "Asserts the output of the generated program; the behavior, a generic model displayed inside a generic function over its type argument, is carried by the named fixture."
+        },
+        "derived_display_prints_the_value_structure": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_traits_and_generics/derived_display_prints_the_value_structure.incn",
+          "notes": "Asserts the output of the generated program; the behavior, each derived display printing the value's structure, is carried by the named fixture."
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/tests/emitted_spellings.rs": {
       "disposition": "retire",
       "notes": "asserts the Rust text emission gives keyword identifiers, a program type named like a runtime surface type, `set()` over a generator, `const` `FrozenDict` reads and an explicit channel element type; generated Rust dies with #654.",
@@ -3411,14 +3429,22 @@
     },
     "loaves/compiler/incan_emit/src/tests/partial_preset_emission.rs": {
       "disposition": "retire",
-      "notes": "compiles the Rust text emission gives a local partial of a model, class or newtype constructor and top-level presets of negative numbers, tuple and set literals and a newtype constructor; generated Rust dies with #654.",
+      "notes": "compiles the Rust text emission gives a local partial of a model, class or newtype constructor, of a generic function or constructor, and of another module's function, and top-level presets of negative numbers, tuple and set literals and a newtype constructor; generated Rust dies with #654.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
       "tests": {
+        "local_partials_of_another_modules_functions_pass_every_argument": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/local_partials_of_generic_and_imported_callables",
+          "notes": "Asserts generated Rust text; the behavior, local partials of imported and module-qualified functions called with every argument, is carried by the named fixture."
+        },
         "local_partials_of_constructors_compile": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/callable_presets_of_constructors_and_declaration_safe_values.incn",
           "notes": "Asserts that generated Rust compiles; the behavior, local constructor partials building values with overridable presets, is carried by the named fixture."
+        },
+        "local_partials_of_generic_callables_compile": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/local_partials_of_generic_and_imported_callables",
+          "notes": "Asserts that generated Rust compiles; the behavior, local partials of generic callables instantiated by their presets or written type arguments, is carried by the named fixture."
         },
         "top_level_presets_of_negative_numbers_tuples_and_sets_compile": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/callable_presets_of_constructors_and_declaration_safe_values.incn",
@@ -3707,6 +3733,24 @@
         },
         "none_test_over_a_local_optional_alias_narrows_to_the_payload_issue1796": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_enums_and_matching/union_types.incn"
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_emit/src/tests/variant_pattern_emission.rs": {
+      "disposition": "retire",
+      "notes": "compiles, or asserts, the Rust text emission gives variant patterns written without their enum or through a variant alias, locally and over another module's enum; generated Rust dies with #654.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "unqualified_and_aliased_variant_patterns_compile": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_enums_and_matching/unqualified_and_aliased_variant_patterns",
+          "notes": "Asserts that generated Rust compiles; the behavior, each arm matching the subject enum's own variant, is carried by the named fixture."
+        },
+        "variant_patterns_over_another_modules_enum_name_a_path_the_module_can_reach": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_enums_and_matching/unqualified_and_aliased_variant_patterns",
+          "notes": "Asserts generated Rust text; the behavior, patterns over another module's enum matching whether or not the module imports it, is carried by the named fixture."
         }
       },
       "twin": ""

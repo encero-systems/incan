@@ -15,8 +15,9 @@ fn declaration_derives(ir: &IrProgram, name: &str) -> Result<Vec<String>, String
         .ok_or_else(|| format!("missing declaration `{name}`"))
 }
 
-/// #1872: `@derive(Display)` provides nothing, so it is not passed on as a derive; an enum that defines `__eq__` gets
-/// no automatic `PartialEq` beside it, while one that does not keeps it.
+/// #1872: Rust has no `Display` derive, so `@derive(Display)` is not passed on as one (the type displays through a
+/// generated `__str__`); an enum that defines `__eq__` gets no automatic `PartialEq` beside it, while one that does not
+/// keeps it.
 #[test]
 fn display_derive_and_enum_partial_eq_beside_eq_dunder_are_not_derived_issue1872() -> Result<(), String> {
     let ir = lower_checked_source(

@@ -13,11 +13,11 @@ This page specifies `Debug` and `Display`. The derive catalog and the automatic 
 ## Display
 
 - **Provides**: `{value}` formatting, `str(value)`, and `print(value)` and `println(value)`; satisfies a `Display` bound.
-- **Provided by**: a `__str__(self) -> str` method, declared on the type, inherited from a class it extends, or supplied by an adopted trait; for an enum that declares values, such as `enum Level(str)`, each variant's value; for a type that adopts `Error` and has no `__str__`, its `message()` (see [Displaying an error](../stdlib_traits/error.md#displaying-an-error)). `@derive(Display)` provides nothing.
-- **Behavior**: the value displays as the string `__str__` returns, a value enum's variant as its value, and an `Error` adopter without `__str__` as the string `message()` returns.
+- **Provided by**: a `__str__(self) -> str` method, declared on the type, inherited from a class it extends, or supplied by an adopted trait; for an enum that declares values, such as `enum Level(str)`, each variant's value; `@derive(Display)` on a `model`, `class`, `enum` or `newtype`; for a type that adopts `Error` and has no `Display` by one of these, its `message()` (see [Displaying an error](../stdlib_traits/error.md#displaying-an-error)).
+- **Behavior**: the value displays as the string `__str__` returns, a value enum's variant as its value, a type that derives `Display` as its `{value:?}` structure (see [Debug](#debug)), and an `Error` adopter without another `Display` as the string `message()` returns. On an enum that declares values, `@derive(Display)` displays the variant's value.
 - **Dunder**: `__str__(self) -> str`.
-- **Requires**: none.
-- **Refused**: a `model`, `class`, `enum` or `newtype` value whose type provides no `Display`, in each position above (`INCAN-T0103`); see [Display](../strings.md#display).
+- **Requires**: `@derive(Display)` implies `Debug`, so on a newtype its underlying type implements `Debug`.
+- **Refused**: a `model`, `class`, `enum` or `newtype` value whose type provides no `Display`, in each position above (`INCAN-T0103`); see [Display](../strings.md#display). `@derive(Display)` on a type that has a `__str__`, declared, inherited or supplied by an adopted trait (`INCAN-T0001`).
 
 ## Formats
 
@@ -46,13 +46,18 @@ enum Node:
 
 type UserId = newtype int
 
+@derive(Display)
+model Tag:
+    name: str
+
 def main() -> None:
     p = Point(x=10, y=20)
     u = User(name="Alice", email="alice@example.com")
-    println(f"{p:?} {u:?} {u} {Level.WARN}")
     leaf = Node.Leaf(1)
     error = Node.Error(404, "missing")
     user_id = UserId(42)
+    t = Tag(name="new")
+    println(f"{p:?} {u:?} {u} {Level.WARN} {t}")
     println(f"{leaf:?} {error:?} {user_id:?}")
 ```
 
@@ -65,3 +70,4 @@ def main() -> None:
 | `f"{leaf:?}"` | `Leaf(1)` |
 | `f"{error:?}"` | `Error(404, "missing")` |
 | `f"{user_id:?}"` | `UserId(42)` |
+| `f"{t}"` | `Tag { name: "new" }` |

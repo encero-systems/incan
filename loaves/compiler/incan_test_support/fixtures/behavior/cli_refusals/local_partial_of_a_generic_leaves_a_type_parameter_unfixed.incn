@@ -1,0 +1,11 @@
+# behavior: a local partial of a generic model constructor whose presets and written type arguments leave a type parameter unfixed is refused at check time
+# expect-diagnostic: INCAN-T0001
+
+model Box[T]:
+    value: T
+    label: str
+
+
+def main() -> None:
+    make = partial Box(label="x")
+    println(make(value=1).label)

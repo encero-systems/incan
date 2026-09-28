@@ -568,7 +568,10 @@ impl AstLowering {
     }
 
     /// Resolve the canonical imported callee path for identifier and module-qualified calls.
-    fn imported_callee_path_for_expr(&self, expr: &ast::Spanned<ast::Expr>) -> Option<Vec<String>> {
+    pub(in crate::lower) fn imported_callee_path_for_expr(
+        &self,
+        expr: &ast::Spanned<ast::Expr>,
+    ) -> Option<Vec<String>> {
         // Inside an expanded source-module trait default, a helper of the trait's module is that module's function,
         // whatever the adopter binds under the same name (#1759).
         if let ast::Expr::Ident(name) = &expr.node

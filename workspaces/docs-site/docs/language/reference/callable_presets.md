@@ -55,9 +55,11 @@ A partial has the target's signature with these changes:
 - the return type is the target's return type;
 - the partial is async exactly when the target is;
 - a method partial has the target method's receiver;
-- a partial of a generic callable stays generic over the type parameters its presets leave free.
+- a top-level partial of a generic callable stays generic over the type parameters its presets leave free.
 
-A local partial expression's value has a function type whose parameters are the target's parameters that are not preset, and whose return type is the target's return type.
+A local partial expression's value is a callable with the target's parameters and return type, each preset parameter defaulted to its preset value.
+
+A local partial expression of a generic callable instantiates it: each type parameter takes the type argument the partial writes (`partial pair[int](a=1)`) or, when it writes none, the one its preset values fix. A type parameter neither fixes is error `INCAN-T0001`, and a type argument that does not meet its parameter's bounds is refused as it is in a call.
 
 ```incan
 model TableReader:
@@ -65,8 +67,21 @@ model TableReader:
     format: str
     path: str
 
-def reader_for(layer: str) -> (str) -> TableReader:
-    return partial TableReader(layer=layer, format="delta")   # accepted
+model Box[T]:
+    value: T
+    label: str
+
+def pair[T](a: T, b: T) -> list[T]:
+    return [a, b]
+
+def read_orders(layer: str) -> TableReader:
+    reader = partial TableReader(layer=layer, format="delta")   # accepted
+    return reader("orders")
+
+def instantiate() -> None:
+    first = partial pair(a=1)                  # accepted: T is int
+    labeled = partial Box[str](label="x")     # accepted: T is str
+    unfixed = partial Box(label="x")           # refused: INCAN-T0001, T is not fixed
 ```
 
 Positional arguments bind as follows:
@@ -156,6 +171,7 @@ A positional preset is syntax error `INCAN-P0001`. Each of the following is erro
 - a target that is unknown or not one the form allows (see [Targets](#targets));
 - a partial whose name is already declared in its module or on its type;
 - a target with a rest parameter;
+- a local partial expression of a generic callable that leaves one of its type parameters unfixed;
 - a partial whose target resolves back to itself, directly or through symbol aliases;
 - a `pub` partial whose target is private, or whose preset value names a private item;
 - a top-level preset value that is not one of the values listed under [Preset values](#preset-values).

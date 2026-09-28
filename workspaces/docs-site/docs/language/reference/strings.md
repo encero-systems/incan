@@ -150,7 +150,8 @@ See [String representation](./derives/string_representation.md) for how a type p
 | A `model`, `class`, `enum` or `newtype` that defines `__str__`, inherits it from a class it extends, or takes it from an adopted trait such as `Display` (`with Display`) | What `__str__` returns |
 | A `model`, `class`, `enum` or `newtype` that takes `Display` from a Rust derive macro named `Display`, written in `@rust.derive(...)` or imported from a Rust crate and named in `@derive(...)` | The text that derive writes |
 | An enum that declares values | The variant's value |
-| A type that adopts `Error` and has no `__str__` | What `message()` returns (see [Displaying an error](./stdlib_traits/error.md#displaying-an-error)) |
+| A `model`, `class`, `enum` or `newtype` that derives `Display` | Its `{value:?}` structure: `Point { x: 1, y: 2 }` |
+| A type that adopts `Error` and has no `Display` by the rows above | What `message()` returns (see [Displaying an error](./stdlib_traits/error.md#displaying-an-error)) |
 | A value of a type parameter bounded by `Display`, by `Error`, or by a trait that declares `__str__` | The display text of the type argument's value |
 | Tuple | `(10, 20)` |
 | `list` | `[1, 2, 3]` |
@@ -170,7 +171,7 @@ Refused in every display position (`INCAN-T0103`):
 - a `Generator`;
 - a function;
 - `bytes`, `FrozenBytes`;
-- a `model`, `class`, `enum` or `newtype` value whose type provides no `Display` by a row above: it has no `__str__`, takes no `Display` from a Rust derive macro, is not an enum that declares values, and does not adopt `Error`. `@derive(Display)` provides nothing;
+- a `model`, `class`, `enum` or `newtype` value whose type provides no `Display` by a row above: it has no `__str__`, takes no `Display` from a Rust derive macro, is not an enum that declares values, does not derive `Display`, and does not adopt `Error`;
 - a tuple, list, dict, set, frozen collection, `Option` or `Result` that holds a `Generator`, a function, `bytes` or `FrozenBytes` at any depth;
 - a value of a type parameter that has no bound on `Display`, on `Error`, or on a trait that declares `__str__`.
 

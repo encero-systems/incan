@@ -50,7 +50,7 @@ use syn::{GenericArgument, PathArguments, ReturnType, Type as SynType, TypeParam
 
 use super::calls::PublicModuleConstructorContext;
 
-use super::TypeChecker;
+use super::{GenericPartialTarget, TypeChecker};
 
 /// Rust's prelude-provided associated constructor name.
 ///
@@ -4746,9 +4746,13 @@ impl TypeChecker {
                     (SymbolKind::Function(info), _) => {
                         self.record_source_target(span, source_module_path, source_name, "function");
                         if !info.type_params.is_empty() {
-                            self.errors
-                                .push(errors::generic_function_reference(callable.as_str(), span));
-                            return ResolvedType::Unknown;
+                            // A local partial instantiates the generic function it names (RFC 084).
+                            if !self.is_generic_partial_target_span(span) {
+                                self.errors
+                                    .push(errors::generic_function_reference(callable.as_str(), span));
+                                return ResolvedType::Unknown;
+                            }
+                            self.generic_partial_target = Some(GenericPartialTarget::of_function(&callable, &info));
                         }
                         return Self::function_info_to_resolved_function_type(&info);
                     }

@@ -1,8 +1,9 @@
-# behavior: an enum that defines __eq__ compares through it alone, and @derive(Display) on a model provides nothing and builds
+# behavior: an enum that defines __eq__ compares through it alone, and a model that derives Display builds and displays its structure
 # retires: loaves/compiler/incan_ir/src/lower/tests/derive_contract_lowering.rs::display_derive_and_enum_partial_eq_beside_eq_dunder_are_not_derived_issue1872
 # expect-stdout:
 #   true
 #   7
+#   Card { rank: 7 }
 
 
 enum Suit:
@@ -21,3 +22,4 @@ model Card:
 def main() -> None:
     println(Suit.Hearts == Suit.Spades)
     println(Card(rank=7).rank)
+    println(Card(rank=7))

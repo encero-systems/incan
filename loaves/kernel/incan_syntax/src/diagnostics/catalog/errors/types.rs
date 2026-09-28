@@ -879,6 +879,22 @@ pub fn generic_function_reference(name: &str, span: Span) -> CompileError {
     .with_note("Only monomorphic (non-generic) functions can be passed by name (RFC 035)")
 }
 
+/// Type error for a local partial of a generic callable that leaves one of the callable's type parameters unfixed.
+///
+/// A local partial expression is a value, and a value is not generic: the partial instantiates its target with the type
+/// arguments its presets fix or that it writes (RFC 084, RFC 054). `target` is the target as the partial spells it.
+pub fn local_partial_type_param_unfixed(target: &str, type_param: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Local partial of '{target}' leaves type parameter '{type_param}' unfixed; a local partial is not generic"
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Preset a parameter whose type fixes '{type_param}', or write the type arguments: partial {target}[...](...)"
+    ))
+}
+
 /// Type error for using a type-like name in value position.
 pub fn type_name_used_as_value(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Cannot use type '{name}' as a value"), span)

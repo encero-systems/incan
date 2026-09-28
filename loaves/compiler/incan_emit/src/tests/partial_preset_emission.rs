@@ -5,6 +5,7 @@ use incan_frontend::{lexer, parser};
 
 use super::mut_ownership_regressions::compile_generated_rust;
 use crate::IrCodegen;
+use crate::test_support::parse_program_result;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -81,4 +82,71 @@ def main() -> None:
 "#,
     )?;
     compile_generated_rust(&rust)
+}
+
+/// A local partial of a generic function or of a generic model or class constructor, instantiated by its presets or
+/// its written type arguments, builds and calls its target.
+#[test]
+fn local_partials_of_generic_callables_compile() -> TestResult {
+    let rust = generate(
+        r#"
+def pair[T](a: T, b: T) -> list[T]:
+    return [a, b]
+
+def tagged[T with Display](value: T, prefix: str) -> str:
+    return f"{prefix}{value}"
+
+model Box[T]:
+    value: T
+    label: str
+
+class Slot[T]:
+    pub item: T
+    pub count: int
+
+def main() -> None:
+    first = partial pair(a=1)
+    items = first(b=2)
+    more = first(3)
+    hash_tag = partial tagged[int](prefix="no.")
+    text = hash_tag(value=4)
+    boxed = partial Box(value=5)
+    b = boxed(label="five")
+    labeled = partial Box[str](label="named")
+    c = labeled(value="six")
+    slot = partial Slot(item="s")
+    s = slot(count=7)
+    println(f"{items} {more} {text} {b.value} {b.label} {c.value} {c.label} {s.item} {s.count}")
+"#,
+    )?;
+    compile_generated_rust(&rust)
+}
+
+/// A local partial of a function another module declares, named through its module or imported by name, and generic or
+/// not, calls the function through its path with every argument.
+#[test]
+fn local_partials_of_another_modules_functions_pass_every_argument() -> TestResult {
+    let helpers = parse_program_result(
+        "pub def pair[T](a: T, b: T) -> list[T]:\n    return [a, b]\n\npub def add(a: int, b: int) -> int:\n    return a + b\n",
+    )?;
+    let root = parse_program_result(
+        "import helpers\nfrom helpers import add\n\ndef main() -> None:\n    first = partial helpers.pair(a=1)\n    second = partial helpers.add(a=2)\n    third = partial add(b=3)\n    println(f\"{first(b=4)} {second(b=5)} {third(a=6)}\")\n",
+    )?;
+    let paths = vec![vec!["helpers".to_string()]];
+    let mut codegen = IrCodegen::new();
+    codegen.add_module_with_path_segments("helpers", &helpers, paths[0].clone());
+    let (main, _) = codegen.try_generate_multi_file_nested(&root, &paths)?;
+    let compact = main
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    for call in [
+        ">(a.unwrap_or_else(||__incan_partial_preset_0_a.clone()),b",
+        "(a.unwrap_or_else(||__incan_partial_preset_0_a.clone()),b",
+        "(a,b.unwrap_or_else(||__incan_partial_preset_0_b.clone())",
+    ] {
+        assert!(compact.contains(call), "missing `{call}`:\n{main}");
+    }
+    assert!(compact.contains("crate::helpers::"), "{main}");
+    Ok(())
 }
