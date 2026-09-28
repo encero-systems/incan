@@ -5936,7 +5936,7 @@ impl TypeChecker {
 
     /// Return whether a simple type name is reserved for a parameterized numeric family.
     fn reserved_numeric_type_name(name: &str) -> bool {
-        matches!(name, "decimal" | "numeric")
+        numerics::decimal_constructor_from_str(name).is_some()
     }
 
     /// Resolve and validate a parameterized decimal type annotation.
@@ -5944,7 +5944,7 @@ impl TypeChecker {
         let Type::Generic(name, args) = &ty.node else {
             return None;
         };
-        let constructor = numerics::decimal_constructor_from_str(name.as_str())?;
+        numerics::decimal_constructor_from_str(name.as_str())?;
         if args.len() != 2 {
             self.errors.push(CompileError::type_error(
                 format!("{name}[...] expects exactly 2 integer parameters: precision and scale"),
@@ -5980,7 +5980,12 @@ impl TypeChecker {
             ));
             return Some(ResolvedType::Unknown);
         }
-        let canonical = numerics::decimal_constructor_info_for(constructor).canonical;
+        // Every registered decimal constructor is one type identity. In particular, RFC 009 defines
+        // `decimal128[p, s]` as an alias rather than a distinct nominal type.
+        let canonical = numerics::decimal_constructor_info_for(
+            incan_lang::lang::types::numerics::DecimalTypeConstructorId::Decimal,
+        )
+        .canonical;
         Some(ResolvedType::Generic(
             canonical.to_string(),
             vec![

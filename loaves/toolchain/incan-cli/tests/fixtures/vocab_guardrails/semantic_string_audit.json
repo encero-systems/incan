@@ -483,8 +483,8 @@
     {
       "path": "loaves/compiler/incan_frontend/src/typechecker/mod.rs",
       "category": "Rust display type parsing, provider ABI lookup, shared nominal String canonicalization, source type-name validation, stdlib derive compatibility, and dependency registry owner paths",
-      "expected_count": 43,
-      "expected_fingerprint": "0x3d6c1ed08c968480"
+      "expected_count": 42,
+      "expected_fingerprint": "0x0b30f21e9ba378f6"
     },
     {
       "path": "loaves/compiler/incan_frontend/src/typechecker/stdlib_loader.rs",

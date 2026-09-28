@@ -1417,6 +1417,7 @@ impl AstLowering {
             };
         }
         Self::write_float_typed_int_literal_as_float(&mut lowered, &expr.node);
+        Self::write_suffixed_float_literal_as_cast(&mut lowered, &expr.node);
         if matches!(expr.node, ast::Expr::Ident(_))
             && let IrType::TypeToken(inner) = &lowered.ty
         {
@@ -1742,6 +1743,7 @@ impl AstLowering {
 
             // ---- Literals ----
             ast::Expr::Literal(lit) => match lit {
+                ast::Literal::Int(il) if il.suffix.is_some() => (IrExprKind::IntLiteral(il.repr.clone()), IrType::Int),
                 ast::Literal::Int(il) if il.fits_i64() => (IrExprKind::Int(il.value), IrType::Int),
                 ast::Literal::Int(il) => (IrExprKind::IntLiteral(il.repr.clone()), IrType::Int),
                 ast::Literal::Float(fl) => (IrExprKind::Float(fl.value), IrType::Float),

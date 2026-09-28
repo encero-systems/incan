@@ -255,11 +255,26 @@ impl TypeChecker {
     }
 
     /// Resolve a literal value to its type.
-    pub(in crate::typechecker::check_expr) fn check_literal(&self, lit: &Literal) -> ResolvedType {
+    pub(in crate::typechecker::check_expr) fn check_literal(&mut self, lit: &Literal, span: Span) -> ResolvedType {
         match lit {
-            Literal::Int(_) => ResolvedType::Int,
-            Literal::Float(_) => ResolvedType::Float,
-            Literal::Decimal(_) => ResolvedType::Unknown,
+            Literal::Int(value) => match value.suffix {
+                Some(_) => self.check_suffixed_int_literal(value, false, span),
+                None => ResolvedType::Int,
+            },
+            Literal::Float(value) => match value.suffix {
+                Some(_) => self.check_suffixed_float_literal(value, span),
+                None => ResolvedType::Float,
+            },
+            Literal::Decimal(value) => {
+                self.errors.push(
+                    CompileError::type_error(
+                        format!("Decimal literal {} requires a decimal destination", value.repr),
+                        span,
+                    )
+                    .with_hint("Declare a destination such as `value: decimal[10, 2] = 19.99d`"),
+                );
+                ResolvedType::Unknown
+            }
             Literal::String(_) => ResolvedType::Str,
             Literal::Bytes(_) => ResolvedType::Bytes,
             Literal::Bool(_) => ResolvedType::Bool,

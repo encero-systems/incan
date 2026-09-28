@@ -113,6 +113,29 @@ def main() -> None:
     Ok(())
 }
 
+/// RFC 009 suffix types survive legacy typed lowering even without a destination annotation.
+#[test]
+fn suffixed_numeric_literals_keep_their_lowered_types_numeric_contract() -> Result<(), String> {
+    let ir = lower_checked_source(
+        "def main() -> None:\n    unsigned = 42u16\n    single = 3.14f32\n    println(unsigned)\n    println(single)\n",
+    )?;
+    let stmts = body(&ir, "main")?;
+
+    let unsigned = written_value(stmts, "unsigned", 0)?;
+    assert_eq!(unsigned.ty, IrType::Numeric(NumericTypeId::U16));
+    assert!(
+        matches!(&unsigned.kind, IrExprKind::IntLiteral(repr) if repr == "42u16"),
+        "the exact integer suffix must reach Rust emission: {unsigned:?}"
+    );
+    let single = written_value(stmts, "single", 0)?;
+    assert_eq!(single.ty, IrType::Numeric(NumericTypeId::F32));
+    assert!(
+        matches!(&single.kind, IrExprKind::Cast { to_type, .. } if to_type == &IrType::Numeric(NumericTypeId::F32)),
+        "the exact float width must be materialized before Rust emission: {single:?}"
+    );
+    Ok(())
+}
+
 /// #1847: a tuple literal is lowered with the element types of its annotation, so the emitter can type its `None`
 /// and `Ok(...)` elements, down through a nested tuple.
 #[test]

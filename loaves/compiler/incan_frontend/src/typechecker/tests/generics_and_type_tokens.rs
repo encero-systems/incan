@@ -1044,3 +1044,55 @@ def main() -> None:
 "#,
     );
 }
+
+/// RFC 009: the canonical stdlib `Mod` bound exposes `__mod__` to operator resolution just like a local trait.
+#[test]
+fn stdlib_mod_bound_resolves_modulo_on_a_type_parameter_numeric_contract() -> Result<(), String> {
+    let mut checker = TypeChecker::new();
+    let prelude = ["std".to_string(), "traits".to_string(), "prelude".to_string()];
+    assert!(
+        checker.lookup_imported_module_trait(&prelude, "Mod").is_some(),
+        "the standard prelude must expose the source-defined Mod contract"
+    );
+    let source = r#"
+def modulo[T with Mod[T, T]](a: T, b: T) -> T:
+    return a % b
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| format!("{errors:?}"))?;
+    let program = parser::parse(&tokens).map_err(|errors| format!("{errors:?}"))?;
+    checker
+        .check_program(&program)
+        .map_err(|errors| format!("{errors:?}"))?;
+
+    let function = checker.lookup_symbol("modulo").ok_or("missing modulo function")?;
+    let SymbolKind::Function(info) = &function.kind else {
+        return Err("modulo is not a function".to_string());
+    };
+    let bound = info
+        .type_param_bound_details
+        .get("T")
+        .and_then(|bounds| bounds.first())
+        .ok_or("missing Mod bound metadata")?;
+    assert_eq!(bound.module_path.as_deref(), Some(prelude.as_slice()));
+    assert_eq!(bound.source_name.as_deref(), Some("Mod"));
+    Ok(())
+}
+
+/// A local trait named `Mod` keeps its own contract instead of inheriting the standard prelude trait's operator hook.
+#[test]
+fn local_mod_bound_does_not_acquire_stdlib_modulo_hook_numeric_contract() {
+    let errors = check_str_err(
+        r#"
+trait Mod[Rhs, Output]:
+  def combine(self, other: Rhs) -> Output: ...
+
+def modulo[T with Mod[T, T]](a: T, b: T) -> T:
+  return a % b
+"#,
+        "a local Mod trait without __mod__ must not inherit the standard prelude hook",
+    );
+    assert!(
+        errors.iter().any(|error| error.stable_code() == Some("INCAN-T0109")),
+        "the local trait contract must still refuse `%`: {errors:?}"
+    );
+}

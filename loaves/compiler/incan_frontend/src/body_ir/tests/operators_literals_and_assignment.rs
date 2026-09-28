@@ -129,6 +129,18 @@ fn exact_binary_float_arithmetic_keeps_the_checked_body_ir_width() -> Result<(),
     Ok(())
 }
 
+/// RFC 009 suffixed literals lower as typed numeric constants without a destination annotation.
+#[test]
+fn suffixed_numeric_literals_keep_their_body_ir_types_numeric_contract() -> Result<(), Box<dyn std::error::Error>> {
+    let source = "def values() -> tuple[u16, i8, f32]:\n    return (42u16, 7i8, 3.14f32)\n";
+    let snapshot = build(source, &["m", "suffixed_literals"])?.render_snapshot();
+
+    for kind in ["u16", "i8", "f32"] {
+        assert!(snapshot.contains(kind), "missing {kind} typed literal: {snapshot}");
+    }
+    Ok(())
+}
+
 #[test]
 fn lowers_the_bitwise_and_shift_operators_as_primitives_keeping_the_checked_int_result()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -614,6 +626,26 @@ fn lowers_compound_assignment_as_a_read_modify_write() -> Result<(), Box<dyn std
     assert!(
         snapshot.contains(" + "),
         "compound assignment should desugar through a binary op: {snapshot}"
+    );
+    Ok(())
+}
+
+/// RFC 009: `u16 %= int-literal` remains a `u16` read-modify-write, matching the expanded assignment.
+#[test]
+fn exact_width_modulo_compound_assignment_keeps_body_ir_width_numeric_contract()
+-> Result<(), Box<dyn std::error::Error>> {
+    let rendered = rendered_f(
+        "def f(value: u16) -> u16:\n  mut n: u16 = value\n  n %= 3\n  return n\n",
+        "exact_width_modulo_assignment",
+    )?;
+
+    assert!(
+        rendered.contains("local 1 n : u16 [binding]") && rendered.contains(" % "),
+        "`u16 %= 3` must lower as modulo over the u16 binding: {rendered}"
+    );
+    assert!(
+        !rendered.contains("unsupported("),
+        "exact-width modulo assignment must not fall back: {rendered}"
     );
     Ok(())
 }

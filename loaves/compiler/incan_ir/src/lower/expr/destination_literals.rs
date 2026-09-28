@@ -29,7 +29,7 @@ impl AstLowering {
         }
         let float_ty = lowered.ty.clone();
         match source {
-            ast::Expr::Literal(ast::Literal::Int(literal)) => {
+            ast::Expr::Literal(ast::Literal::Int(literal)) if literal.suffix.is_none() => {
                 Self::write_int_literal_as_float(lowered, literal, float_ty);
             }
             ast::Expr::Unary(ast::UnaryOp::Neg, operand_source) => {
@@ -46,6 +46,27 @@ impl AstLowering {
             }
             _ => {}
         }
+    }
+
+    /// Cast a suffixed source float to its checked exact width when no destination annotation would seed Rust
+    /// inference.
+    ///
+    /// Legacy IR stores an ordinary float literal as an unsuffixed `f64` token. The checker still records `3.14f32`
+    /// as `f32`; spelling the conversion in IR keeps an inferred binding physically `f32` without changing the frozen
+    /// emitter.
+    pub(super) fn write_suffixed_float_literal_as_cast(lowered: &mut TypedExpr, source: &ast::Expr) {
+        let ast::Expr::Literal(ast::Literal::Float(literal)) = source else {
+            return;
+        };
+        if literal.suffix.is_none() || !matches!(lowered.kind, IrExprKind::Float(_)) {
+            return;
+        }
+        let target = lowered.ty.clone();
+        let original = std::mem::replace(&mut lowered.kind, IrExprKind::Unit);
+        lowered.kind = IrExprKind::Cast {
+            expr: Box::new(TypedExpr::new(original, IrType::Float)),
+            to_type: target,
+        };
     }
 
     /// Give one target's copy of a chained value built from literals the target's own type at each integer literal,

@@ -743,6 +743,19 @@ impl TypeChecker {
         span: Span,
         expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
+        if matches!(op, UnaryOp::Neg)
+            && let Expr::Literal(Literal::Int(value)) = &operand.node
+            && let Some(suffix) = value.suffix
+        {
+            let operand_ty = self.check_suffixed_int_literal(value, true, operand.span);
+            self.record_expr_type(operand.span, operand_ty.clone());
+            if numerics::info_for(suffix).family == NumericFamily::UnsignedInteger {
+                self.errors
+                    .push(errors::type_mismatch("signed numeric", &operand_ty.to_string(), span));
+                return ResolvedType::Unknown;
+            }
+            return operand_ty;
+        }
         let operand_ty = self.check_expr(operand);
         match op {
             UnaryOp::Neg => {

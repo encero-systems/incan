@@ -3841,6 +3841,7 @@ impl TypeChecker {
             PresetValueExport::Float(value) => Expr::Literal(Literal::Float(FloatLiteral {
                 value: value.parse().ok()?,
                 repr: value.clone(),
+                suffix: None,
             })),
             PresetValueExport::Bool(value) => Expr::Literal(Literal::Bool(*value)),
             PresetValueExport::String(value) => Expr::Literal(Literal::String(value.clone())),
@@ -4027,6 +4028,7 @@ impl TypeChecker {
             ParamDefaultExport::Float(value) => Expr::Literal(Literal::Float(FloatLiteral {
                 value: value.parse().ok()?,
                 repr: value.clone(),
+                suffix: None,
             })),
             ParamDefaultExport::Bool(value) => Expr::Literal(Literal::Bool(*value)),
             ParamDefaultExport::String(value) => Expr::Literal(Literal::String(value.clone())),

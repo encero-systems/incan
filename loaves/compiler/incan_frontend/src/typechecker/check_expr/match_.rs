@@ -712,7 +712,8 @@ impl TypeChecker {
     /// ergonomics add; only the families a literal can spell are judged (`LiteralPatternFamily`), and any other
     /// position type (a type parameter, a union, a nominal, an unresolved type) is left to the checks that own it. A
     /// numeric literal that has the position's family is then held to the position's width and range by the same rules
-    /// a value literal of that type follows.
+    /// a value literal of that type follows; a suffixed one is held to its suffix's range, and its suffix must name the
+    /// position's exact type.
     fn check_literal_pattern(&mut self, literal: &Literal, expected_ty: &ResolvedType, span: Span) {
         let unmatchable = match literal {
             Literal::Decimal(_) => Some("decimal"),
@@ -730,7 +731,7 @@ impl TypeChecker {
         if !family.admits(literal) {
             let found = match literal {
                 Literal::None => constructors::as_str(ConstructorId::None).to_string(),
-                _ => self.check_literal(literal).to_string(),
+                _ => self.check_literal(literal, span).to_string(),
             };
             self.errors.push(errors::pattern_literal_type_mismatch(
                 &position_ty.to_string(),
@@ -740,6 +741,25 @@ impl TypeChecker {
             return;
         }
         let position_ty = position_ty.clone();
+        if matches!(literal, Literal::Int(value) if value.suffix.is_some())
+            || matches!(literal, Literal::Float(value) if value.suffix.is_some())
+        {
+            // A suffix names the literal's type: its value is held to that type's range, and a pattern literal is
+            // compared without conversion, so the position must be that exact type.
+            let errors_before = self.errors.len();
+            let literal_ty = self.check_literal(literal, span);
+            if self.errors.len() == errors_before
+                && super::super::numeric_type_id_for_compat(&literal_ty)
+                    != super::super::numeric_type_id_for_compat(&position_ty)
+            {
+                self.errors.push(errors::pattern_literal_type_mismatch(
+                    &position_ty.to_string(),
+                    &literal_ty.to_string(),
+                    span,
+                ));
+            }
+            return;
+        }
         let literal_expr = Spanned::new(Expr::Literal(literal.clone()), span);
         match literal {
             Literal::Int(_) => {

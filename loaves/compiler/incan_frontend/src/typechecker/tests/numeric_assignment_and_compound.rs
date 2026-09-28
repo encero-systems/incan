@@ -26,6 +26,143 @@ fn refusal_messages(source: &str) -> Result<Vec<String>, String> {
     }
 }
 
+/// RFC 009: `decimal128[p, s]` is an alias of `decimal[p, s]`, including in nested positions.
+#[test]
+fn decimal128_is_the_decimal_type_numeric_contract() -> Result<(), String> {
+    let source = r#"
+def preserve(value: decimal128[5, 2]) -> decimal[5, 2]:
+    return value
+
+def main() -> None:
+    canonical: decimal[5, 2] = 19.99d
+    aliased: decimal128[5, 2] = canonical
+    values: list[decimal128[5, 2]] = [aliased]
+    restored: decimal[5, 2] = values[0]
+    println(preserve(restored))
+"#;
+    check_str(source).map_err(|errors| format!("{errors:?}"))
+}
+
+/// RFC 009: a suffixed literal has the suffix's type in inferred, destination-typed and nested positions.
+#[test]
+fn suffixed_numeric_literals_keep_their_named_type_numeric_contract() -> Result<(), String> {
+    let source = r#"
+def preserve(value: u16) -> u16:
+    return value
+
+def main() -> None:
+    inferred = 42u16
+    narrow: i8 = 7i8
+    single = 3.14f32
+    nested: tuple[u16, list[i8], f32] = (inferred, [narrow], single)
+    wider: u32 = 42u16
+    println(preserve(nested[0]) + wider)
+"#;
+    check_str(source).map_err(|errors| format!("{errors:?}"))
+}
+
+/// RFC 009: suffixed literals outside the suffix type's range are refused with the ordinary type diagnostic.
+#[test]
+fn suffixed_numeric_literals_refuse_out_of_range_values_numeric_contract() -> Result<(), String> {
+    for source in [
+        "def main() -> None:\n    too_large = 256u8\n",
+        "def main() -> None:\n    too_small = -129i8\n",
+        "def main() -> None:\n    too_large = 1e100f32\n",
+    ] {
+        let errors = check_str_err(source, "out-of-range suffixed literal must be refused");
+        assert!(
+            errors.iter().any(|error| error.message.contains("does not fit")),
+            "expected a range diagnostic for:\n{source}\ngot {errors:?}"
+        );
+    }
+    Ok(())
+}
+
+/// RFC 009: a suffixed pattern literal is held to its suffix's range and must name the matched position's exact type,
+/// integer and float suffixes alike; one that names the position's type is accepted.
+#[test]
+fn suffixed_pattern_literals_keep_their_range_and_type_numeric_contract() -> Result<(), String> {
+    for (source, expected) in [
+        (
+            "def main() -> None:\n    value: u8 = 1u8\n    match value:\n        256u8 => println(\"big\")\n        _ => println(\"small\")\n",
+            "does not fit",
+        ),
+        (
+            "def main() -> None:\n    value: int = 1\n    match value:\n        255u8 => println(\"u8\")\n        _ => println(\"int\")\n",
+            "u8",
+        ),
+        (
+            "def main() -> None:\n    value: float = 1.5\n    match value:\n        1.5f32 => println(\"f32\")\n        _ => println(\"float\")\n",
+            "f32",
+        ),
+    ] {
+        let errors = check_str_err(source, "a suffixed pattern literal must be refused");
+        assert!(
+            errors.iter().any(|error| error.message.contains(expected)),
+            "expected a diagnostic naming `{expected}` for:\n{source}\ngot {errors:?}"
+        );
+    }
+    check_str("def main() -> None:\n    value: u8 = 1u8\n    match value:\n        255u8 => println(\"max\")\n        _ => println(\"other\")\n")
+        .map_err(|errors| format!("{errors:?}"))
+}
+
+/// RFC 009: the negative minimum of a signed suffix remains in range.
+#[test]
+fn suffixed_numeric_literal_accepts_signed_minimum_numeric_contract() -> Result<(), String> {
+    check_str("def main() -> None:\n    minimum = -128i8\n").map_err(|errors| format!("{errors:?}"))
+}
+
+/// RFC 009: a decimal literal has no standalone default type and requires a decimal destination.
+#[test]
+fn decimal_literal_requires_a_decimal_destination_numeric_contract() -> Result<(), String> {
+    for source in [
+        "def main() -> None:\n    value = 19.99d\n",
+        "def main() -> None:\n    value: int = 19.99d\n",
+    ] {
+        let errors = check_str_err(source, "context-free decimal literal must be refused");
+        let Some(error) = errors
+            .iter()
+            .find(|error| error.message.contains("requires a decimal destination"))
+        else {
+            return Err(format!(
+                "missing decimal-destination diagnostic for:\n{source}\ngot {errors:?}"
+            ));
+        };
+        assert_eq!(
+            crate::diagnostics::code_for_error(error, crate::diagnostics::DiagnosticPhase::Typecheck,),
+            "INCAN-T0001"
+        );
+    }
+    Ok(())
+}
+
+/// RFC 009: a zero integer part consumes no precision, including when it contains leading zeroes.
+#[test]
+fn decimal_literal_zero_integer_part_uses_no_digits_numeric_contract() -> Result<(), String> {
+    check_str(
+        r#"
+def main() -> None:
+    exact: decimal[5, 5] = 0.12345d
+    padded: decimal[5, 5] = 00.12345d
+    zero: decimal[1, 1] = 0.0d
+    println(exact)
+    println(padded)
+    println(zero)
+"#,
+    )
+    .map_err(|errors| format!("{errors:?}"))?;
+
+    let errors = check_str_err(
+        "def main() -> None:\n    too_large: decimal[5, 5] = 1.12345d\n",
+        "a nonzero integer part must still consume precision",
+    );
+    assert!(
+        errors.iter().any(|error| error.message.contains("allows at most 0")),
+        "expected the nonzero integer digit to be refused: {errors:?}"
+    );
+    Ok(())
+}
+
 /// #1809: a decimal value widens to a decimal type that keeps at least its digits before the point and its scale.
 #[test]
 fn decimal_assignment_accepts_a_lossless_shape_issue1809() -> Result<(), String> {
@@ -127,6 +264,25 @@ def main() -> None:
     SCALE *= SCALE
 "#;
     check_str(source).map_err(|errors| format!("{errors:?}"))
+}
+
+/// RFC 009: exact-width modulo assignment has the same typing as assigning the corresponding binary expression.
+#[test]
+fn exact_width_modulo_compound_assignment_numeric_contract() -> Result<(), String> {
+    check_str(
+        r#"
+def reduce(value: u16) -> u16:
+    mut n: u16 = value
+    n %= 3
+    return n
+
+def reduce_expanded(value: u16) -> u16:
+    mut n: u16 = value
+    n = n % 3
+    return n
+"#,
+    )
+    .map_err(|errors| format!("{errors:?}"))
 }
 
 /// #1812: the assignment rule still refuses a result the binding cannot hold: `int` into a narrower integer, `float`

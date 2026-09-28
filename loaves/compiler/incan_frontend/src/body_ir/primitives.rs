@@ -237,7 +237,7 @@ pub(super) fn lower_checked_literal(lit: &ast::Literal, ty: &IncanType) -> bir::
             }
         }
         (ast::Literal::Float(value), IncanType::Primitive(IncanPrimitiveType::Numeric(NumericTypeId::F32))) => {
-            let normalized = value.repr.replace('_', "");
+            let normalized = value.numeric_repr().replace('_', "");
             normalized
                 .parse::<f32>()
                 .ok()

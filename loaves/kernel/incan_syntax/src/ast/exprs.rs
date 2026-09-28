@@ -526,12 +526,14 @@ pub struct IntLiteral {
     pub value: i64,
     pub magnitude: u128,
     pub repr: String,
+    /// Explicit exact-width suffix, when the source names one (for example `u16` in `42u16`).
+    pub suffix: Option<incan_lang::lang::types::numerics::NumericTypeId>,
 }
 
 impl PartialEq for IntLiteral {
     /// Compare numeric meaning while ignoring spelling differences such as separators.
     fn eq(&self, other: &Self) -> bool {
-        self.magnitude == other.magnitude
+        self.magnitude == other.magnitude && self.suffix == other.suffix
     }
 }
 
@@ -542,6 +544,7 @@ impl IntLiteral {
             value,
             magnitude: value.unsigned_abs().into(),
             repr: value.to_string(),
+            suffix: None,
         }
     }
 
@@ -562,11 +565,25 @@ impl IntLiteral {
 pub struct FloatLiteral {
     pub value: f64,
     pub repr: String,
+    /// Explicit binary-float suffix, when the source names one (for example `f32` in `3.14f32`).
+    pub suffix: Option<incan_lang::lang::types::numerics::NumericTypeId>,
 }
 
 impl PartialEq for FloatLiteral {
     fn eq(&self, other: &Self) -> bool {
-        self.value.to_bits() == other.value.to_bits()
+        self.value.to_bits() == other.value.to_bits() && self.suffix == other.suffix
+    }
+}
+
+impl FloatLiteral {
+    /// Return the parseable numeric spelling without an explicit type suffix.
+    pub fn numeric_repr(&self) -> &str {
+        self.suffix
+            .and_then(|suffix| {
+                self.repr
+                    .strip_suffix(incan_lang::lang::types::numerics::as_str(suffix))
+            })
+            .unwrap_or(&self.repr)
     }
 }
 

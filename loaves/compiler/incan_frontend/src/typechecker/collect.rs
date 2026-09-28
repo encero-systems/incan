@@ -951,6 +951,9 @@ impl TypeChecker {
         if let Some(path) = self.import_binding_path(name) {
             return path.last().cloned();
         }
+        if let Some(target) = self.source_import_targets.get(name) {
+            return Some(target.name.clone());
+        }
         let (_module_name, trait_name) = name.rsplit_once('.')?;
         Some(trait_name.to_string())
     }
@@ -970,11 +973,38 @@ impl TypeChecker {
     ///
     /// Source imports and checked SDK signatures carry the absolute Rust path rather than a local alias. Known
     /// non-trait items keep their binding so ordinary bound validation can reject them instead of deferring them.
+    /// Source-defined traits exported by the standard prelude are materialized only when no local or imported binding
+    /// already owns the name, preserving ordinary lexical shadowing.
     pub fn resolve_generic_bound_name(&mut self, name: &str, span: Span) -> String {
         if let Some(path) = self.imported_generic_rust_bound_path(name) {
             return path;
         }
+        self.materialize_implicit_prelude_trait_bound(name, span);
         self.resolve_trait_bound_name(name, span)
+    }
+
+    /// Materialize a bare source-defined standard-prelude trait used as a generic bound.
+    ///
+    /// Compiler-owned builtin traits are installed with the root symbol table, but traits such as `Mod` are authored
+    /// in `std.traits` and re-exported by `std.prelude`. Generic bounds need the full source contract so operator and
+    /// method lookup can observe its hooks. An existing binding wins, so a local trait with the same spelling never
+    /// acquires standard-library semantics.
+    fn materialize_implicit_prelude_trait_bound(&mut self, name: &str, span: Span) {
+        if name.contains('.') || self.lookup_symbol(name).is_some() {
+            return;
+        }
+        let prelude_path = vec!["std".to_string(), "traits".to_string(), "prelude".to_string()];
+        if let Some(info) = self.lookup_imported_module_trait(&prelude_path, name) {
+            self.define_hidden_trait_symbol(name, info, span);
+            self.source_import_targets.insert(
+                name.to_string(),
+                crate::typechecker::SourceTargetInfo {
+                    module_path: prelude_path,
+                    name: name.to_string(),
+                    kind: SemanticSourceTargetKind::Trait.to_string(),
+                },
+            );
+        }
     }
 
     /// Resolve a foreign generic bound for both declaration collection and checked public export metadata.
