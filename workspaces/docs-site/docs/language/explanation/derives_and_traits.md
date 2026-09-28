@@ -51,6 +51,8 @@ Traits are not “the derive system.” Derives are a convenience for a small se
 
 That gives Incan a simple mental model: a trait is both a capability declaration and an abstract accepted type. If a function says it accepts `Collection[Order]`, that means “any concrete adopter of `Collection[Order]`”, not “rewrite this API as a hidden generic bound first”.
 
+A required method is written as a bare signature, `def render(self) -> str`. The older spelling with a `: ...` body stays valid, and both declare the same required method.
+
 Read more about [traits: domain capabilities](../tutorials/book/11_traits_and_derives.md).
 
 Enums use the same adoption model when a closed set of variants should satisfy a protocol. The required behavior lives in the enum body, next to the variants it interprets:
@@ -103,6 +105,8 @@ enum Maybe[U]:
         return value
 ```
 
+A newtype's own type parameters work differently. A newtype stores nothing but its underlying value, so each type parameter it declares has to appear in the underlying type, where that value carries it: `type Box[T] = newtype T` and `type Many[T] = newtype list[T]` are fine, while `type Tag[T] = newtype str` is refused at `T` because the wrapped `str` has nowhere to carry it. A type parameter that only a type's methods use belongs on a model or class, or on the methods themselves as method-scoped parameters.
+
 ## Bounds you write and bounds the compiler infers
 
 A bound you write on a type's parameter, such as `model Stream[R with Clone]`, is part of that type's contract, so every generic declaration that uses the type with its own type parameter repeats it. A bound that only a body needs is different. Formatting a value in an f-string needs `Display`, comparing with `==` needs `PartialEq`, and returning a field of a generic model needs `Clone`. The compiler infers these from the body, so neither the declaration nor a generic caller in the same project spells them.
@@ -143,6 +147,10 @@ A type may adopt one generic trait several times, `with Convert[int], Convert[fl
 
 When an operation should be available only for values with a capability, state that capability as a generic bound (`T with OrderedCollection[int]`) rather than hiding inherited trait methods. The bound is checked at every call, including through supertraits.
 
+Adopting one generic trait more than once fits a type that supports the same capability for more than one static shape: indexing by `str` and by `int`, converting into several result types, or serializing through a generic format trait. When the argument types do not pick the instantiation, a typed binding (`as_float: float = reading.convert()`) is the most direct way to give the call its expected result type.
+
+When two methods with the same name are both trait implementations, give each a method-level target (`def convert(self) for ToInt -> int`). When they are ordinary methods of the type, give them distinct names instead.
+
 ## Why `@requires` is for models and classes
 
 `@requires(...)` lets a trait's default methods read fields of the adopter. Models and classes have fields shared by every value, so the requirement is meaningful for them. An enum's data lives in its variants' payloads, which differ from variant to variant, so an enum adopter provides behavior through methods instead.
@@ -175,6 +183,17 @@ This lets the stdlib (and third-party libraries) wrap Rust crates with Incan-sha
 See also:
 
 - [How derives work](how_derives_work.md)
+
+## Copy and Clone
+
+`Clone` and `Copy` both duplicate a value; they differ in when the copy happens. A `Clone` copy happens where the code calls `.clone()`, and it is a deep copy of whatever the value holds; every model, class and enum has `Clone`. A `Copy` copy happens implicitly, on every assignment and argument pass, and the original stays usable. That is cheap only for small values that own no heap data, which is why `Copy` needs every field to be `Copy`: numbers, `bool`, and tuples, `Option` and `Result` of those, but not a `str` or a `list`.
+
+| Trait | A copy happens | Suits |
+| --- | --- | --- |
+| `Clone` | where the code calls `.clone()` | any type |
+| `Copy` | on assignment and argument passing | small, simple value types that own no heap data |
+
+As a rule of thumb, derive `Copy` only for small value types such as coordinates or identifiers, and call `.clone()` where a larger value needs a second owner. The exact rules are in [Copying and Default](../reference/derives/copying_default.md).
 
 ## Field defaults and construction (pydantic-like ergonomics)
 

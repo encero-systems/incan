@@ -1,8 +1,21 @@
 # `std.async`
 
-`std.async` provides task spawning, timeouts, races, channels, and synchronization primitives. Each module is importable on its own, and `std.async.prelude` re-exports the common surface.
+`std.async` provides task spawning, timeouts, races, channels, and synchronization primitives in the modules `std.async.time`, `std.async.task`, `std.async.race`, `std.async.channel` and `std.async.sync`. The root module `std.async` re-exports the common surface.
 
-All APIs that accept a future require the future to produce the declared result type. Public spawned tasks and race arms also require transferable, runtime-owned values through the `Send` and `Static` bounds shown in the signatures.
+A function of this module that takes a task requires the task's result to have the type its signature declares and to satisfy the `Send` and `Static` bounds shown there.
+
+## Importing std.async
+
+- `async` and `await` are keywords after an import whose path begins with `std.async`, such as `import std.async` or `from std.async.time import sleep`; see [Soft keywords](../imports_and_modules.md#soft-keywords).
+- `from std.async import NAME` imports a name that the root module re-exports; the names are listed under [`std.async` re-exports](#stdasync-re-exports).
+- Refused (`INCAN-I0001`): a name that the named module neither declares nor re-exports, and a `std.async.prelude` path, which names no module.
+
+```incan
+from std.async import spawn, sleep, JoinHandle         # accepted
+from std.async.channel import SenderPermit             # accepted
+from std.async import SenderPermit                     # refused: std.async does not re-export SenderPermit (INCAN-I0001)
+from std.async.prelude import spawn                    # refused: std.async.prelude is not a module (INCAN-I0001)
+```
 
 ## Task arguments
 
@@ -19,7 +32,7 @@ def compute() -> int:
     return 41
 
 async def main() -> None:
-    first = spawn(work())   # accepted: a direct call of an async def
+    first = spawn(work())   # accepted
     second = spawn(work)    # refused: a function value is not a task (INCAN-T0115)
     third = spawn(compute)  # refused: a function value is not a task (INCAN-T0115)
     fourth = spawn(41)      # refused: an int is not awaitable (INCAN-T0115)
@@ -53,6 +66,8 @@ from std.async.time import sleep, sleep_ms, timeout, timeout_ms, timeout_join, t
 | `async timeout_join[T with (Send, Static)](seconds: float, handle: JoinHandle[T]) -> TimeoutJoinOutcome[T]` | Waits for spawned work without aborting it at the deadline. Negative values, NaN, and either infinity are treated as zero. A timeout returns the live handle. Cancelling this wait drops its owned handle and detaches the task. |
 | `async timeout_join_ms[T with (Send, Static)](milliseconds: int, handle: JoinHandle[T]) -> TimeoutJoinOutcome[T]` | Millisecond form of `timeout_join`. Negative durations are treated as zero. |
 
+A finite `seconds` of `18446744073709551616.0` (2<sup>64</sup>) or more, passed to `sleep`, `timeout`, `timeout_join` or `race_timeout`, panics.
+
 ### `Duration`
 
 ```incan
@@ -68,11 +83,11 @@ The timing functions take seconds or milliseconds, not a `Duration`.
 | `Duration(secs: int, nanos: int)` | Direct field construction. It does not clamp or normalize either field. |
 | `Duration.from_secs(secs: int) -> Duration` | Returns zero for `secs <= 0`; otherwise returns `(secs, 0)` exactly. |
 | `Duration.from_millis(millis: int) -> Duration` | Returns zero for `millis <= 0`; otherwise returns `secs = millis // 1000` and `nanos = (millis % 1000) * 1_000_000`. |
-| `Duration.from_secs_f64(secs: float) -> Duration` | Returns zero for nonpositive inputs and NaN. Positive inputs are split into whole seconds and fractional nanoseconds using floating-point arithmetic and saturating integer conversions. Positive infinity produces `secs = 9223372036854775807` and `nanos = 9223372036854775807`. |
+| `Duration.from_secs_f64(secs: float) -> Duration` | Returns zero for nonpositive inputs and NaN. A positive input gives the fields below. Positive infinity gives `secs = 9223372036854775807` and `nanos = 9223372036854775807`. |
 
-The integer constructors preserve the full positive `int` value without converting through `float`. Their results satisfy `secs >= 0` and `0 <= nanos < 1_000_000_000`.
+The integer constructors are exact for every positive `int`. Their results satisfy `secs >= 0` and `0 <= nanos < 1_000_000_000`.
 
-`from_secs_f64` sets `secs` to the input's whole seconds and `nanos` to `(input - float(secs)) * 1_000_000_000`, each converted to `int` with saturation. For a large positive input either conversion saturates, and `nanos` can fall outside `0 <= nanos < 1_000_000_000`. Positive infinity is not treated as zero.
+For a positive input, `from_secs_f64` sets `secs` to the input's whole seconds and `nanos` to `(input - float(secs)) * 1_000_000_000`, each converted to `int` and saturated at the `int` range. For a large positive input either value saturates, and `nanos` can fall outside `0 <= nanos < 1_000_000_000`. Positive infinity is not treated as zero.
 
 ### `TimeoutError`
 
@@ -109,12 +124,29 @@ from std.async.task import JoinHandle, TaskJoinError, spawn, spawn_blocking, yie
 
 | Operation | Result |
 | --- | --- |
-| `await handle` | `Result[T, TaskJoinError]`. The handle is used up. |
+| `await handle` | `Result[T, TaskJoinError]`: `Ok(value)` when the task returned, `Err(error)` when it panicked or was cancelled. The handle is used up. |
 | `handle.abort() -> None` | Requests cancellation of async work. For `spawn_blocking`, it prevents only work that is still queued. |
+| `await handle` after `handle.abort()` | `Err(error)` with `error.is_cancelled()` true, unless the task had already completed; a completed task gives its ordinary result. |
 | Dropping the handle | Detaches the task. |
 
-- `JoinHandle[T]` implements neither `Clone` nor `Debug`. A `model` or `class` field or an `enum` variant payload of this type, directly or inside a `list`, `dict`, `Option`, `Result` or tuple, is refused (`INCAN-T0113`; see [Automatic derives](../derives_and_traits.md#automatic-derives)).
-- A `for` loop whose body awaits or hands on each handle of a list empties that list. Using the list after the loop, before it is assigned a new list, is refused (`INCAN-T0119`), and so are such a loop over a list that a closure captured earlier and a loop that an enclosing loop repeats without a new list in each pass. The exact conditions are explained in [Loops that take their items](../../explanation/control_flow.md#loops-that-take-their-items).
+`JoinHandle[T]` implements neither `Clone` nor `Debug`. A `model` or `class` field or an `enum` variant payload of this type, directly or inside a `list`, `dict`, `Option`, `Result` or tuple, is refused (`INCAN-T0113`; see [Automatic derives](../derives_and_traits.md#automatic-derives)).
+
+#### Loops over task handles
+
+A `for` loop over a list binding takes the items out of the list, leaving it empty, when all of these hold:
+
+- the list is a local binding, the binding of an enclosing `for` loop that itself takes its list's items, or a parameter not marked `mut`;
+- each item is a `JoinHandle[T]`, or a tuple or collection that contains one;
+- the loop body uses by value a loop binding that holds a handle: it awaits it, passes it as an argument to a function, method or constructor other than a builtin function, assigns it to another name, returns or yields it, breaks with it, puts it in a new tuple, list or set or as a value in a new dict, or iterates it (a list of handles) in a nested `for` loop that takes its items.
+
+Refused (`INCAN-T0119`):
+
+- a read of the list inside the loop body;
+- a read of the list after the loop, until an assignment gives the name a new list on every path after the loop, with no branch, `break` or `continue` able to skip it;
+- a closure that captured the list before the loop;
+- an enclosing loop that repeats the loop over a list defined outside it, unless each pass assigns the list a new one before the loop, and, when it does, a read of the list in the enclosing loops, their conditions included, that comes before that assignment.
+
+Why a loop takes the items is explained in [Loops that take their items](../../explanation/control_flow.md#loops-that-take-their-items); a worked program is [Await every task in a list](../../how-to/async_programming.md#await-every-task-in-a-list).
 
 ```incan
 import std.async
@@ -130,6 +162,24 @@ async def main() -> None:
             Ok(value) => println(value)
             Err(_) => println("join failed")
     println(len(handles))            # refused: the loop emptied handles (INCAN-T0119)
+```
+
+```incan
+import std.async
+from std.async.task import spawn
+
+async def work() -> int:
+    return 1
+
+async def main() -> None:
+    mut handles = [spawn(work()), spawn(work())]
+    for handle in handles:
+        println(len(handles))        # refused: the loop takes the items of handles (INCAN-T0119)
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
+    handles = [spawn(work())]
+    println(len(handles))            # accepted
 ```
 
 ### `TaskJoinError`
@@ -150,7 +200,7 @@ from std.async.race import RaceArm, arm, race, race_timeout
 | Signature | Contract |
 | --- | --- |
 | `arm[T with Send, R with (Send, Static), TaskFuture with RuntimeFuture[T], OnWin with RuntimeRaceCallback[T, R]](awaitable: TaskFuture, on_win: OnWin) -> RaceArm[R]` | Packages one future and a callback. The callback receives the future's value only if this arm wins. |
-| `async race[R with (Send, Static)](*arms: RaceArm[R]) -> R` | Polls arms concurrently and returns the winning callback result. Losing arms are dropped. Ready ties use source order. At least one arm is required. |
+| `async race[R with (Send, Static)](*arms: RaceArm[R]) -> R` | Polls arms concurrently and returns the winning callback result. Losing arms are dropped. Ready ties use source order. Called with no arms, it panics. |
 | `async race_timeout[T with (Send, Static), TaskFuture with RuntimeFuture[T]](seconds: float, task: TaskFuture) -> Option[T]` | Returns `Some(value)` before the deadline or `None` at the deadline. Negative values, NaN, and either infinity are treated as zero. Expiry or cancellation drops `task`. |
 
 `RaceArm[R]` is the packaged branch type consumed by `race`. It implements neither `Clone` nor `Debug`; as a `model` or `class` field or an `enum` variant payload it is refused with `INCAN-T0113`.
@@ -181,7 +231,7 @@ Each constructor takes `T` as an explicit type argument, as in `channel[str](4)`
 | --- | --- | --- |
 | `async send(self, value: T) -> Result[None, SendError[T]]` | Returns `SendError` with the unsent value when the receiver is closed. | Cancel-safe but lossy: cancellation while waiting for capacity drops `value`. |
 | `async reserve(self) -> Result[SenderPermit[T], SendError[None]]` | Reserves one bounded slot, or returns an error when the receiver is closed. Unbounded senders return an immediately usable permit. | Cancellation gives up queue position but owns no message value. |
-| `try_send(self, value: T) -> Result[None, SendError[T]]` | Returns immediately. Fails when a bounded channel is full or any receiver is closed. | Synchronous. |
+| `try_send(self, value: T) -> Result[None, SendError[T]]` | Returns immediately. Fails when a bounded channel is full or the receiver is closed. | Synchronous. |
 | `is_closed(self) -> bool` | Whether the receiver side is closed. | Synchronous. |
 | `clone(self) -> Self` | Another sender for the same channel. | Synchronous. |
 
@@ -199,7 +249,7 @@ Each constructor takes `T` as an explicit type argument, as in `channel[str](4)`
 | --- | --- | --- |
 | `async recv(self) -> Option[T]` | Returns the next value, or `None` after the channel is closed and drained. | Cancel-safe; cancellation does not remove a message. |
 | `try_recv(self) -> Option[T]` | Returns an available value immediately, otherwise `None`. `None` does not distinguish empty from closed. | Synchronous. |
-| `close(self) -> bool` | Prevents further sends and returns `true`. Returns `false`, closing nothing, while a `recv` on another handle to the same receiver holds the receiver state. | Synchronous. |
+| `close(self) -> bool` | Prevents further sends and returns `true`. Returns `false`, closing nothing, while a pending `recv` on this receiver holds the receiver state. | Synchronous. |
 
 ### One-shot types
 
@@ -264,15 +314,15 @@ from std.async.sync import SemaphoreAcquireError
 | Method | Result | Cancellation |
 | --- | --- | --- |
 | `Barrier.new(count: int) -> Barrier` | Creates a cloneable reusable barrier. Counts less than or equal to zero are normalized to one participant. | Synchronous. |
-| `async Barrier.wait(self) -> int` | Waits for the generation to fill and returns a slot in `0..count`, unique within the generation. Slots do not follow arrival order. | Cancellation before release withdraws the participant and frees its slot; the remaining participants still need a full active generation. |
+| `async Barrier.wait(self) -> int` | Waits for the generation to fill and returns a slot in `0..count`, unique within the generation. An arrival takes a slot freed by a cancelled wait of the generation, the most recently freed first; otherwise it takes the next slot in arrival order, starting at `0`. | Cancellation before release withdraws the participant and frees its slot; the remaining participants still need a full active generation. |
 
-## `std.async.prelude`
+## `std.async` re-exports
 
 ```incan
-from std.async.prelude import sleep, spawn, channel
+from std.async import sleep, spawn, channel
 ```
 
-The prelude re-exports:
+The root module `std.async` re-exports:
 
 | Module | Names |
 | --- | --- |
@@ -282,4 +332,4 @@ The prelude re-exports:
 | `std.async.sync` | `Mutex`, `MutexGuard`, `RwLock`, `RwLockReadGuard`, `RwLockWriteGuard`, `Semaphore`, `SemaphorePermit`, `SemaphoreAcquireError`, `Barrier` |
 | `std.async.race` | `RaceArm`, `arm`, `race`, `race_timeout` |
 
-`SenderPermit` is public in `std.async.channel` but is not re-exported by `std.async.prelude`.
+`SenderPermit` is public in `std.async.channel` but is not re-exported by `std.async`.

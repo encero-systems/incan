@@ -220,6 +220,24 @@ model DatabaseError with Error:
         return self.cause
 ```
 
+## Pattern: Read an environment variable and branch on the failure
+
+`get_optional` and `get_or` from `std.environ` fold a missing key, an invalid key and a non-Unicode value into `None` or the default. Use `get` when the failure category matters, and branch on the error's `kind()`:
+
+```incan
+from std.environ import EnvironErrorKind, get
+
+def main() -> None:
+    match get("APP_MODE"):
+        Ok(mode) => println(f"mode {mode}")
+        Err(error) =>
+            match error.kind():
+                EnvironErrorKind.Missing => println("APP_MODE is not set")
+                _ => println(error.message())
+```
+
+The error kinds are listed in [`std.environ`](../reference/stdlib/environ.md#environerrorkind).
+
 ## “Don’t do this”: `unwrap()` on user input
 
 `unwrap()` and `panic()` are for “should never happen” paths (tests, invariants, internal compiler bugs), not expected failures.

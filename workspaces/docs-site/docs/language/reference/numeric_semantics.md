@@ -56,7 +56,7 @@ def main() -> None:
 | `42u16`, `7i8`, `3.14f32` | The type its suffix names | The type its suffix names. |
 | `19.99d`, `12345d` | A decimal literal requires a decimal destination | The destination's `decimal[p, s]` type (see [Decimal types](#decimal-types)). |
 
-- An integer literal outside the range of its integer type is refused (`INCAN-T0001`), as a declared value, an argument and a returned value alike. A suffixed literal outside the range of its suffix's type is refused.
+- An integer literal outside the range of its integer type is refused (`INCAN-T0001`), as a declared value, an argument and a returned value alike. A suffixed literal outside the range of its suffix's type is refused (`INCAN-T0001`).
 - A literal whose value is not finite in `f32` is refused at an `f32` destination (`INCAN-T0001`). At a `float` destination, a float literal may be infinite (`1e309`), and so may an `f64`-suffixed literal (`1e309f64`).
 - Numeric literals are written in decimal digits. A float literal has a `.` followed by a digit (`0.5`), an exponent (`1e3`), or both.
 - `_` separators do not change a literal's value.
@@ -195,7 +195,7 @@ def main() -> None:
 
 ## Rust interop numeric arguments
 
-A numeric argument to a Rust parameter of a primitive numeric type is accepted when the types match or when the Incan type widens without loss: a signed type to a signed type at least as wide, an unsigned type to an unsigned type at least as wide or to a wider signed type, and `f32` to `f64`. `int` matches `i64` and `float` matches `f64`. `isize` and `usize` match only themselves. Every other pairing is refused.
+A numeric argument to a Rust parameter of a primitive numeric type is accepted when the types match or when the Incan type widens without loss: a signed type to a signed type at least as wide, an unsigned type to an unsigned type at least as wide or to a wider signed type, and `f32` to `f64`. `int` matches `i64` and `float` matches `f64`. `isize` and `usize` match only themselves. Every other pairing is refused (`INCAN-T0001`).
 
 | Incan argument | Rust parameter | Accepted |
 | --- | --- | --- |
@@ -281,10 +281,26 @@ def main() -> None:
 
 ## Compound assignment
 
+This section states compound assignment with numeric operands.
+
 - `x op= y`, with `op` one of `+`, `-`, `*`, `/`, `//`, `%`, `&`, `|`, `^`, `<<` and `>>`, reassigns `x`, which is a `mut` binding or a `static` of its module (`INCAN-T0001` otherwise). `**=` is not an operator (`INCAN-P0001`).
+- A `mut` parameter that is marked (see [`mut` parameters](functions.md#mut-parameters)), such as `mut n: i8`, is not reassigned: `n += 1` is refused (`INCAN-T0001`). A `mut` parameter of type `int`, `float` or `bool` is reassigned.
+- `target.field op= y` writes `target.field op y` to the field, and `target[index] op= y` writes `target[index] op y` to the element. Inside a method, a target reached through `self` requires a `mut self` receiver (`INCAN-T0102`).
 - `x op= y` has the assignability requirement of `x = x op y`: the result of `x op y` (see [Operators](#operators)) is assignable to the type of `x`, or the statement is refused (`INCAN-T0001`).
+- The same requirement holds for a field or element target: the result of `target op y` is assignable to the field's or element's type (`INCAN-T0001`).
+- `x @= y` with a numeric `x` is refused (`INCAN-T0001`).
 
 ```incan
+model Counter:
+    n: i8
+
+    def bump(mut self) -> None:
+        self.n += 1                              # accepted
+
+def shrink(mut n: i8) -> i8:
+    n -= 1                                       # refused: n is a marked mut parameter
+    return n
+
 def main() -> None:
     mut x: int = 10
     x += 2                                       # accepted
@@ -302,6 +318,12 @@ def main() -> None:
     mut b: u8 = 7
     b //= 2                                      # accepted
     b |= 1                                       # accepted: b | 1 is a u8
+    mut counter = Counter(n=1)
+    counter.n += 1                               # accepted
+    mut values: list[int] = [4, 8]
+    values[0] += 1                               # accepted
+    values[1] /= 2                               # refused: values[1] / 2 is a float
+    x @= 2                                       # refused: x is numeric
 ```
 
 ## NaN and infinity

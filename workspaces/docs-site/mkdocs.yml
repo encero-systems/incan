@@ -336,6 +336,7 @@ nav:
           - Architecture: contributing/explanation/architecture.md
           - Duckborrowing: contributing/explanation/duckborrowing.md
           - Generated Rust quality: contributing/explanation/generated_rust_quality.md
+          - Rust-source backend deprecation: contributing/explanation/rust_source_backend_deprecation.md
           - Layering rules: contributing/explanation/layering.md
           - Oven and toolchain ownership map: contributing/explanation/oven_toolchain_ownership_map.md
           - "Post-mortem: v0.5.1": contributing/explanation/postmortem_v051.md
@@ -348,7 +349,7 @@ nav:
           - Test corpus inventory: contributing/reference/test_corpus_inventory.md
           - Generated Rust stdlib coverage: contributing/reference/generated_rust_stdlib_coverage.md
           - Hees.ai v0.5 dependency inventory: contributing/reference/hees_ai_v05_dependency_inventory.md
-          - Rust-source backend deprecation policy: contributing/reference/rust_source_backend_deprecation.md
+          - Rust-source backend migration notes and freeze: contributing/reference/rust_source_backend_deprecation.md
   - Release notes:
       - Overview: release_notes/index.md
       - Release 0.6 (development): release_notes/0_6.md

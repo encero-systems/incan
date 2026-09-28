@@ -113,11 +113,13 @@ Or, if your `loaf.toml` has `[project.scripts].main` set:
 incan lock
 ```
 
-In a workspace, `incan lock` covers every member, and feature options on the command line apply to all of them. To give one member different persistent feature selections, set them in that member's manifest.
+In a workspace, `incan lock` covers every member and locks each with the package features its manifest activates: `--features`, `--no-default-features` and `--all-features` do not reach the lock, while `--sdk-profile` and the `--cargo-*` feature options apply to every member. To give one member different persistent feature selections, set them in that member's manifest.
 
 `oven.lock` records normalized semantic dependency, feature, provider, and implementation-facet inputs. **Commit it to version control** so normal commands can validate that the project still matches the receipt-compatible Loaf selection. The lock is not permission for a normal command to resolve missing crates with Cargo.
 
 For compiled SDK providers, the fingerprint identifies checked provider contracts, dependency and feature choices, and authored Incan inputs. Native Rust output and host-derived ABI metadata remain covered by each installed provider artifact's exact integrity digest, but do not make an otherwise equivalent macOS and Linux SDK selection semantically different. User-authored path dependencies remain part of the semantic fingerprint.
+
+A project locked by a toolchain older than `oven.lock` may still have an `incan.lock`. Run `incan lock` to write `oven.lock`, then delete `incan.lock`: nothing reads it once the project has `oven.lock`.
 
 ### Legacy generated-Cargo behavior (pre-Oven Alpha)
 

@@ -169,6 +169,8 @@ widened: i16 = small.resize()
 sum: i16 = widened + total
 ```
 
+The refusal of mixed-width arithmetic (`INCAN-T0001`) carries a hint that names both conversions, `resize()` and `try_resize()`.
+
 ## Write numeric helpers over concrete types
 
 `/`, `//`, `%` and `**` are refused between two values of a type parameter (`INCAN-T0109`). Write such a helper over `int` or `float`:

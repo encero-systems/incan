@@ -44,7 +44,7 @@ h: (str) -> int = double          # refused: INCAN-T0001
 
 ### Closure captures
 
-A closure reads an outer local from the value captured when the closure is constructed. When code after the closure also needs that local, the closure receives its own snapshot; a later mutation of the outer binding does not change the captured value.
+A closure reads each outer local it names as the value that local holds when the closure is constructed. A later change to the outer binding does not change the value the closure reads. How a closure captures a local: [Closures](../explanation/closures.md#how-a-closure-captures-outer-locals).
 
 ### `mut` parameters
 
@@ -68,7 +68,6 @@ A closure reads an outer local from the value captured when the closure is const
 | Arguments           | For a marked parameter that the call changes, the argument is a `mut` binding or parameter, `self` in a `mut self` method, a field of one of those, or a temporary such as a literal or a call result. An immutable binding or a field of one, an element of a list or a value of a dict, a static, and the variable of a `for` loop are refused with `INCAN-T0117`. For a marked parameter that the call does not change, any argument is accepted. |
 | Libraries           | A published function keeps its marked parameters: a consumer sees the function type the producer checked. |
 | Closures            | A closure checked against a function type has each parameter that type marks marked in its own type. |
-| Display             | Diagnostics and hovers spell the marker, as in `(mut Counter, int) -> int`. |
 
 A marked parameter is held, and refused with `INCAN-T0001`, by each of these:
 
@@ -288,9 +287,8 @@ Within one parameter list:
 
 - At most one `*name: T` parameter is allowed.
 - At most one `**name: T` parameter is allowed.
-- Normal parameters must appear before any rest parameter.
-- `*name: T`, when present, appears after normal parameters.
-- `**name: T`, when present, must be the last parameter.
+- Every normal parameter comes before the rest parameters.
+- `**name: T`, when present, is the last parameter.
 - Rest parameters cannot have default values.
 
 Breaking one of these rules is error `INCAN-T0001`.
@@ -322,7 +320,7 @@ def main() -> int:
     return sum_all(1, *extra, 4)
 ```
 
-The unpacked expression must typecheck as `List[T]` for the callee's `*name: T` parameter.
+For the callee's `*name: T` parameter, the unpacked expression has type `List[T]`.
 
 `**expr` extends the callee's keyword rest parameter with the entries of a dictionary:
 
@@ -335,7 +333,7 @@ def main() -> int:
     return request("/status", **defaults, trace="enabled")
 ```
 
-The unpacked expression must typecheck as `Dict[str, T]` for the callee's `**name: T` parameter.
+For the callee's `**name: T` parameter, the unpacked expression has type `Dict[str, T]`.
 
 Unpacking also binds ordinary fixed parameters when the unpacked expression's length or key set is known from the expression itself:
 

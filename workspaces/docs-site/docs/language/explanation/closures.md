@@ -102,3 +102,7 @@ For explicit typing, use a named function instead.
     1. **Parentheses always required** — Even single parameters: `(x) => x + 1`, not `x => x + 1`
     2. **Arrow syntax** — Uses `=>` instead of `:`
     3. **No `lambda` keyword** — The parentheses and arrow are sufficient
+
+## How a closure captures outer locals
+
+A closure reads an outer local as the value that local holds when the closure is constructed. When code after the closure also needs that local, such as a later statement of the same block or the next pass of an enclosing loop, the closure receives its own snapshot of the value, so a later change to the outer binding does not reach the closure. The exact rule is in [Closure captures](../reference/functions.md#closure-captures).

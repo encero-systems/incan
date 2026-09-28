@@ -52,6 +52,8 @@ model User with Eq:
         return self.id == other.id
 ```
 
+If such a type also derives `Hash` to be a set element or dict key, keep `__eq__` consistent with the hash: two values that `__eq__` calls equal must hash alike. A derived hash covers every field, so pair it only with an `__eq__` that compares every field. For equality by a subset of fields, key the collection by that subset instead (see [Key a set or dict by a custom identity](#key-a-set-or-dict-by-a-custom-identity)).
+
 ---
 
 ## Custom ordering (`<`, `<=`, `>`, `>=`)

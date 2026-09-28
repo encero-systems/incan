@@ -41,7 +41,7 @@ A type supports a protocol's syntax by defining the protocol's hook methods; ado
 | `.zip(other)` | `Iterator[tuple[T, U]]` | Pairs items until either side is exhausted. |
 | `.take_while(f)` | `Iterator[T]` | Stops before the first item where `f(item)` returns `false`. |
 | `.skip_while(f)` | `Iterator[T]` | Drops items while `f(item)` returns `true`, then yields the rest. |
-| `.batch(size)` | `Iterator[list[T]]` | Yields adjacent batches and keeps a final non-empty partial batch. A literal `size` that is not greater than zero is refused (`INCAN-T0001`). |
+| `.batch(size)` | `Iterator[list[T]]` | Yields adjacent batches and keeps a final non-empty partial batch. The literal `0` as `size` is refused (`INCAN-T0001`); any other `size` that is not greater than zero raises `ValueError` when the batch iterator is first polled. |
 
 The builtin `zip(left, right)`, also spelled `std.builtins.zip(left, right)`, pairs two lists, frozen lists or `Iterator[T]` values. It returns the same lazy `Iterator[tuple[T, U]]` as `left.iter().zip(right.iter())` and stops as soon as either input is exhausted. Neither form builds a list.
 
@@ -61,7 +61,7 @@ def main() -> None:
         .collect()
 ```
 
-Terminal methods consume the iterator. Reading an iterator binding again after a terminal call is refused (`INCAN-T0001`).
+A terminal method called on an `Iterator[T]` binding consumes the iterator, and so does a `for` loop or a comprehension `for` clause over the binding. Reading the binding again, before it is assigned a new value, is refused (`INCAN-T0001`).
 
 | Method | Result | Notes |
 | ------ | ------ | ----- |
@@ -256,8 +256,37 @@ def count_records[Pages with FallibleIterator[Page, str]](pages: Pages) -> Resul
 
 ## Bool (truthiness)
 
-- **Syntax**: `if x:` / `while x:`
+- **Syntax**: `if x:` / `elif x:` / `while x:` / a `match` guard `pattern if x`
 - **Hook**: `__bool__(self) -> bool`
 - **Trait**: `Bool`
 
-A condition over an `Option` or a `Result` is refused (`INCAN-T0001`).
+A condition is a `bool`, or a value of a `model`, `class`, `enum` or `newtype` whose `__bool__(self)` returns `bool`, or of a type parameter whose bounds supply that hook. Refused (`INCAN-T0001`):
+
+- a condition of any other type, including `int`, `str`, a collection, an `Option` and a `Result`;
+- a value of a `model`, `class`, `enum` or `newtype` that defines no `__bool__`;
+- a `__bool__` whose return type is not `bool`.
+
+```incan
+model Flag:
+    on: bool
+
+    def __bool__(self) -> bool:
+        return self.on
+
+
+model Plain:
+    x: int
+
+
+def main() -> None:
+    count = 1
+    maybe: Option[int] = Some(1)
+    if Flag(on=true):  # accepted
+        pass
+    if count:          # refused: an int is not a condition (INCAN-T0001)
+        pass
+    if maybe:          # refused: an Option is not a condition (INCAN-T0001)
+        pass
+    if Plain(x=1):     # refused: Plain defines no __bool__ (INCAN-T0001)
+        pass
+```

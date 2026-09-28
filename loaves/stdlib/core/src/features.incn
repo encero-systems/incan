@@ -88,7 +88,7 @@ static namespaced_stdlib: RegistryEntry[FeatureId, FeatureDescriptor] = features
         references=namespaced_stdlib_references,
     ),
 )
-const rust_interop_boundary_forms: FrozenList[str] = ["from rust import uuid", "from rust::std::time import Instant", "type UserId = rusttype i64"]
+const rust_interop_boundary_forms: FrozenList[str] = ["from rust::uuid import Uuid", "from rust::std::time import Instant", "type UserId = rusttype i64"]
 const rust_interop_boundary_references: FrozenList[CapabilityReference] = [CapabilityReference(
     label="Rust interop",
     path="../how-to/rust_interop.md",

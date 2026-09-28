@@ -292,4 +292,6 @@ This Oven receipt selects how already-generated Rust is compiled. A separate, ea
 
 **Store evidence.** A closure proof lets later commands skip re-checking every file of a closure, often ten thousand of them, once one command has materialized it in full; it can be deleted and is recreated. `incan inspect oven` rehashes what it audits instead of trusting a proof. `incan oven store inspect` reports the full receipt of the compilation that produced a direct-`rustc` plan because reuse hands a consumer bytes that another invocation produced, and the store manifest records only that receipt's identity, not its content.
 
+**Store generations.** The aggregate store limit counts the previous committed Loaf generation while its replacement is staged, so an interrupted update never has to delete the last valid generation to make room.
+
 <p class="inc-oven-page-end">For the complete command surface, see the <a href="../reference/cli_reference.md">CLI reference</a>.</p>

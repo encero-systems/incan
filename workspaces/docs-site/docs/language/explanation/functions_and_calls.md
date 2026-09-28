@@ -124,3 +124,11 @@ A caller in another package has only what the package publishes about its defaul
 - the presets of a method partial.
 
 Writing such a default is still valid; only callers in other packages must pass the argument.
+
+## Function types and callable traits
+
+`Callable[Params, R]` is sugar for the arrow form: the parser rewrites `Callable[(A, B), R]` to `(A, B) -> R` before anything else reads the type, which is why the two spellings are one type.
+
+A `mut` marker is part of a function type, so diagnostics and hovers spell it, as in `(mut Counter, int) -> int`. Two function types that differ only in a marker are different types, and the spelled marker shows where they differ.
+
+An `Fn`, `FnMut` or `FnOnce` marker from `std.rust` names only a callable's parameter list. A marker with N parameters is checked as the `CallableN` bound with those parameter types and the return type of the value passed. A call supplies that value, so a marker can bound a function's or method's type parameter; on the type parameter of a model, class or other type declaration no call supplies a return type, and the marker is refused there. The traits themselves are in [Callable objects](../reference/stdlib_traits/callable.md).

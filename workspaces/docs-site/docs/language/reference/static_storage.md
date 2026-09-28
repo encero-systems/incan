@@ -2,8 +2,6 @@
 
 This page specifies module `static` declarations: their syntax, storage, initialization, the operations on a static, aliases of a static, imports of a `pub static`, and the refusals. Refusals are reported with `INCAN-T0001`, and syntax errors with `INCAN-P0001`, unless a rule below names another code.
 
-For the mental model, see [Module static storage](../explanation/static_storage.md). For a task walkthrough, see [Module state (how-to)](../how-to/module_state.md).
-
 ## Syntax
 
 ```incan
@@ -19,6 +17,7 @@ pub static name: Type = expr
 - Each `static` declaration is one storage cell of its module.
 - A read of the static observes the cell's current value.
 - An assignment, a compound assignment, a mutating method call, and a field or index assignment through the static change the cell.
+- Inside its module, a static is assigned and compound-assigned by its name, without `mut`. `mut` is not written on a `static` declaration.
 - An imported `pub static` names the exporting module's cell.
 
 ## Initialization
@@ -82,7 +81,8 @@ import counters::hits
 ```
 
 - Both forms bind the exported static `hits` of `counters`, and name its cell.
-- A static declared without `pub` is not exported; importing it is refused (see [Imports and modules](imports_and_modules.md)).
+- A static declared without `pub` is not exported: `from counters import hits` of it is refused (`INCAN-I0001`; see [Exports](imports_and_modules.md#exports)).
+- An imported static's name is not reassigned: an assignment or compound assignment to it is refused (`INCAN-T0001`).
 - A mutating method call and a field or index assignment through an imported static change the exporting module's cell.
 
 ## Refusals
@@ -92,12 +92,14 @@ import counters::hits
 | `static counter = 0`: no type annotation | `INCAN-P0001` |
 | `static counter: int`: no initializer | `INCAN-P0001` |
 | `static` inside a function or other block | `INCAN-P0001` |
+| `static mut counter: int = 0`: `mut` on a static | `INCAN-P0001` |
 | An initializer that reads a later static | `INCAN-T0001` |
 | Statics that depend on each other in a cycle | `INCAN-T0001` |
 | An initializer that assigns to a static through a function it calls | `INCAN-T0001` |
-| An assignment to an imported static's name, `hits = 0` | `INCAN-T0001` |
+| An assignment or compound assignment to an imported static's name, `hits = 0` or `hits += 1`, including as a target of a tuple or chained assignment | `INCAN-T0001` |
+| `from counters import hits` of a static declared without `pub` | `INCAN-I0001` |
 | An assignment or compound assignment to a `const` | `INCAN-T0001` |
-| `get` on a static dict, or on a dict field of a static, whose value type cannot be copied, such as a `Generator` | `INCAN-T0118` |
+| `get` on a static dict, or on a dict field of a static, whose value type cannot be copied, such as a `Generator` (see [Kept and in-place dict lookups](language.md#kept-and-in-place-dict-lookups)) | `INCAN-T0118` |
 
 ```incan
 static counter = 0               # refused: a static needs a type annotation
@@ -111,6 +113,7 @@ from counters import hits
 
 def bad() -> None:
     hits = 0                     # refused: an imported static cannot be reassigned
+    hits += 1                    # refused: an imported static cannot be reassigned
 ```
 
 ## Related pages

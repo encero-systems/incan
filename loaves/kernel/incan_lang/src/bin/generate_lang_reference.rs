@@ -29,6 +29,22 @@ use incan_lang::lang::{
     builtins, decorators, derives, errors, keywords, operators, punctuation, stdlib, surface, traits,
 };
 
+/// The contract of a kept or in-place `dict.get` lookup, rendered after the dict methods table.
+const DICT_LOOKUP_CONTRACT: &str = "\
+#### Kept and in-place dict lookups
+
+A `get` result is kept, and holds its own copy of the stored value, unless the lookup is read in place. A `get(key)` on a `dict` is read in place when all of these hold:
+
+- the dict is not reached through a `static`, or through a local bound directly to a `static`;
+- the lookup is the subject of a `match`, `if let` or `while let`;
+- each binding its patterns introduce is unused, or is only passed to `len`, `print` or `println`, interpolated in an f-string, or used to call a Rust method with a shared receiver whose result is discarded, tested as a condition, compared, negated, or itself passed to `len`, `print` or `println` or interpolated;
+- no closure captures a binding;
+- the name the dict is reached through is not used from the arm's guard up to the last statement that reads a binding.
+
+`get(key, default)` is always kept. A kept lookup whose value type cannot be copied, such as a `Generator`, a task handle or a Rust type without `Clone`, is refused with `INCAN-T0118`; a lookup read in place is accepted.
+
+";
+
 /// Reduce trailing blank lines in generated Markdown to at most one empty line.
 fn trim_trailing_newlines_to_at_most_two(out: &mut String) {
     let mut count = 0usize;
@@ -418,7 +434,7 @@ A method decorator receives the method as a callable with the receiver first, sp
 | `def label(self, value: int) -> str`    | `(Box, int) -> str`     | `def parse(box: Box, value: int) -> int`    |
 | `def bump(mut self, value: int) -> int` | `(mut Box, int) -> int` | `def grow(mut box: Box, value: int) -> int` |
 
-- `mut` in a function type marks a parameter whose changes reach the caller: a collection, model or class object passed to a `mut` parameter. An `int`, `float` or `bool` parameter is the function's own copy and is not marked. See [`mut` parameters](functions.md#mut-parameters).
+- `mut` in a function type marks a parameter whose changes reach the caller: a `mut` parameter of any type except `int`, `float` or `bool` (also through a type alias), a Rust type, and `*args` or `**kwargs`. An `int`, `float` or `bool` parameter is the function's own copy and is not marked. See [`mut` parameters](functions.md#mut-parameters).
 - The receiver's marker matches the method in every shape of the decorator chain and on the function returned in the method's place; a mismatch is refused with `INCAN-T0001`.
 - A receiver written `&Box` or `&mut Box` in those positions is refused with `INCAN-T0110`.
 - The compiler decides how the receiver is passed to the decorator's shapes and to the function returned in the method's place.
@@ -932,6 +948,7 @@ fn render_surface_methods_section(out: &mut String) {
         ));
     }
     out.push('\n');
+    out.push_str(DICT_LOOKUP_CONTRACT);
 
     // Set
     out.push_str("\n### Set methods\n\n");

@@ -551,7 +551,7 @@ pub mod dict_methods {
             DictMethodId::Get,
             "get",
             &[],
-            "`get(key)` returns `Some(value)` when the key is present and `None` otherwise; `get(key, default)` returns the value, or `default` when the key is absent. The result is a copy of the stored value, and a value type that cannot be copied is refused with `INCAN-T0118`.",
+            "`get(key)` returns `Some(value)` when the key is present and `None` otherwise; `get(key, default)` returns the value, or `default` when the key is absent. A kept lookup holds its own copy of the stored value, and one whose value type cannot be copied is refused with `INCAN-T0118`; see [Kept and in-place dict lookups](#kept-and-in-place-dict-lookups).",
             RFC::_009,
             Since(0, 1),
         ),

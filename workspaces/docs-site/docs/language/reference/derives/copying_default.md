@@ -36,7 +36,10 @@ This page specifies `Clone`, `Copy` and `Default`, and field defaults at constru
 | `dict[K, V]` | `{}` |
 | `set[T]` | an empty set |
 | `Option[T]` | `None` |
+| A tuple | the tuple of its elements' defaults |
 | A type that derives `Default` | its `default()` |
+
+`Result[T, E]` has no default.
 
 ```incan
 @derive(Default)
@@ -66,5 +69,10 @@ model Settings:
 
 def main() -> None:
     a = Settings(font_size=14)  # accepted: theme is "dark"
-    b = Settings()              # refused: font_size declares no default
+    b = Settings()              # refused: font_size declares no default (INCAN-T0001)
 ```
+
+## See also
+
+- [Copy and Clone (explanation)](../../explanation/derives_and_traits.md#copy-and-clone)
+- [Field defaults and construction (explanation)](../../explanation/derives_and_traits.md#field-defaults-and-construction-pydantic-like-ergonomics)

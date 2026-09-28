@@ -132,6 +132,14 @@ The standard library provides default Incan implementations of the iterator adap
 
 `Bool` is available for types whose domain has a clear truth value. It should not replace explicit checks for optionality, errors, emptiness, or named state. Prefer patterns such as `value is Some(x)`, `result is Ok(x)`, `len(items) > 0`, `name != ""`, or `connection.is_open` when those are what the code actually means.
 
+## The `std.traits` families
+
+The conversion traits split by whether a conversion can fail. `From[T]` is for a conversion that always succeeds, so `from` returns `Self`; `TryFrom[T]` is for a conversion that can fail, so `try_from` returns `Result[Self, str]`. `Into[T]` and `TryInto[T]` declare the same two kinds of conversion as methods of the source value, `into` and `try_into`.
+
+`Index` and `IndexMut` in `std.traits.indexing` are the canonical names for indexed reads and writes. `GetItem` and `SetItem` in `std.traits.ops` remain from the older operator vocabulary; they name the same `__getitem__` and `__setitem__` hooks, and new code and documentation name `Index` and `IndexMut` instead.
+
+The root module `std.traits` gathers the most common traits, so a single import brings in the conversion, arithmetic, error, indexing and callable traits without naming each submodule. The exact list is in the [`std.traits` reference](../reference/stdlib/traits.md).
+
 ## See also
 
 - [Stdlib traits overview](../reference/stdlib_traits/index.md)

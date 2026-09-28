@@ -37,13 +37,13 @@ A keyword is a reserved word with special meaning in the language syntax (for ex
 
 ## Identifier
 
-An identifier is a name that is not a keyword. Any identifier, `impl`, `dyn`, `ref`, `move` and `use` included, can name a model or class field, a method, a function, a parameter or keyword argument, an enum variant, a type parameter or a module. Reflection (`__fields__()`) and JSON serialization report a field by its identifier as written.
+An identifier is a name that is not a keyword. Any identifier can name a model or class field, a method, a function, a parameter or keyword argument, an enum variant, a type parameter or a module.
 
 ## Soft keyword
 
 A soft keyword is a keyword only after a particular import; before it, the word is an identifier.
 
-`async` and `await` are soft keywords: they are keywords after an import of `std.async` or one of its modules.
+`async` and `await` are soft keywords: they are keywords after an import whose path begins with `std.async`.
 
 See: [Imports and modules (reference)](imports_and_modules.md#soft-keywords).
 
@@ -63,7 +63,7 @@ See: [Error Handling](../explanation/error_handling.md).
 
 Async code lets a program do other work while waiting on I/O (network, disk, timers).
 
-`async def` and `await` require an import of `std.async` (see [Soft keyword](#soft-keyword)).
+`async def` and `await` require an import whose path begins with `std.async` (see [Soft keyword](#soft-keyword)).
 
 See:
 

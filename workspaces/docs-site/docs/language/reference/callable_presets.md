@@ -57,7 +57,7 @@ A partial has the target's signature with these changes:
 - a method partial has the target method's receiver;
 - a partial of a generic callable stays generic over the type parameters its presets leave free.
 
-A local partial expression's value has the projected function type: the target's parameters that are not preset, and the target's return type.
+A local partial expression's value has a function type whose parameters are the target's parameters that are not preset, and whose return type is the target's return type.
 
 ```incan
 model TableReader:
@@ -146,7 +146,7 @@ A method partial declared in a trait is a default method of the trait: every typ
 
 A `pub` top-level partial is exported from its module and imported like a function. A call of an imported partial binds its arguments against the partial's signature, preset parameters included. In a package other than the partial's, a leftover defaulted parameter follows the target's cross-package default rule, and every preset of a method partial is a required argument (see [Ordinary call binding](functions.md#ordinary-call-binding), rule 8).
 
-## Diagnostics
+## Refusals
 
 A positional preset is syntax error `INCAN-P0001`. Each of the following is error `INCAN-T0001`:
 

@@ -1,6 +1,6 @@
 # Callable objects (Reference)
 
-`std.traits.callable` declares one trait per arity for values that are called like functions. Function types, the `Callable[Params, R]` sugar and `mut` parameters are in [Functions and calls](../functions.md#function-types).
+`std.traits.callable` declares three traits, for values that are called like functions with zero, one or two arguments. A bound names a trait imported from `std.traits.callable`. Function types, the `Callable[Params, R]` sugar and `mut` parameters are in [Functions and calls](../functions.md#function-types).
 
 | Trait                | Hook                                  | Call form     |
 | -------------------- | ------------------------------------- | ------------- |
@@ -18,6 +18,8 @@ A type parameter bounded by `CallableN[...]` accepts:
 Inside the function, the call form calls the value: a function or closure runs, and an adopting type runs its `__call__`. A worked program: [Accept a function, a closure or a callable object](../../how-to/decorators.md#task-accept-a-function-a-closure-or-a-callable-object).
 
 ```incan
+from std.traits.callable import Callable1
+
 def apply[M with Callable1[int, str]](mapper: M, value: int) -> str:
     return mapper(value)
 ```
@@ -28,14 +30,20 @@ def apply[M with Callable1[int, str]](mapper: M, value: int) -> str:
 | `apply(Prefixer(prefix="model"), 4)`, `Prefixer` adopting `Callable1[int, str]` | its `__call__(4)`      |
 | `apply(shout, 5)`, `shout` of type `(str) -> str`                               | refused: `INCAN-T0001` |
 
+## `Fn`, `FnMut` and `FnOnce` markers
+
+A type parameter of a function or method bounded by `Fn[...]`, `FnMut[...]` or `FnOnce[...]`, imported from `std.rust`, with at most two type arguments, accepts a named function whose parameters match the marker's type arguments in number and type. The marker names no return type: the function's return type is the one it declares.
+
 ## Refusals
 
 | Refused                                                                                                                                                                    | Code          |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
 | A function or closure whose parameter count, parameter types or return type differ from the bound                                                                         | `INCAN-T0001` |
 | A value of a type that does not adopt the bound's `CallableN[...]`                                                                                                         | `INCAN-T0001` |
+| A function whose parameter count or parameter types differ from an `Fn`, `FnMut` or `FnOnce` marker                                                                       | `INCAN-T0001` |
 | An `Fn`, `FnMut` or `FnOnce` marker from `std.rust` naming more than two parameters, or bounding a type parameter of a type alias, model, class, trait, enum or newtype | `INCAN-T0106` |
 
-The refusal message names the bound and the type passed, as in `type parameter 'M' requires 'Callable1[int, str]' but got '(str) -> str'`. An `Fn`, `FnMut` or `FnOnce` marker with N parameters is checked as the `CallableN` bound with those parameter types and the return type of the value passed. No `CallableN` trait exists for more than two parameters.
+## See also
 
---8<-- "_snippets/rfcs_refs.md"
+- [Function types and callable traits](../../explanation/functions_and_calls.md#function-types-and-callable-traits)
+- [Accept a function, a closure or a callable object](../../how-to/decorators.md#task-accept-a-function-a-closure-or-a-callable-object)

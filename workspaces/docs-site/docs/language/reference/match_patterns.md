@@ -27,6 +27,21 @@ This page specifies the patterns of `match`, `if let`, and `while let`: each pat
 | Type | `T(p)` | A union value of member type `T` that matches `p` | The names `p` binds |
 | Alternation | <code>p1 &#124; p2 &#124; …</code> | The values any alternative matches | The names every alternative binds |
 
+## Binding and tuple patterns
+
+- A binding pattern binds its name to the matched value as an immutable binding.
+- A tuple pattern has one sub-pattern per element of the subject's tuple type, in order.
+
+Refused (`INCAN-T0001`): a binding pattern named `print` or `println`.
+
+```incan
+def first(pair: tuple[int, str]) -> str:
+    match pair:
+        (0, text) => return text        # accepted
+        print => return "other"         # refused: print is a protected builtin name
+        _ => return "none"
+```
+
 ## Literal patterns
 
 | Literal | Positions it matches | Additional rule |
@@ -62,9 +77,9 @@ def ratio(value: float) -> str:
 
 - The subject is an enum declared in Incan, an `Option` (`Some(p)`; `None` is a literal), or a `Result` (`Ok(p)`, `Err(p)`).
 - `Variant` is a variant of the subject's type or a variant alias. `Enum.Variant` qualifies it with the subject's enum, and a variant without a payload is written `Enum.Variant`.
-- Sub-patterns are positional, one per payload value.
+- Sub-patterns are positional, one per payload value. `Some(p)`, `Ok(p)` and `Err(p)` have one sub-pattern.
 
-Refused (`INCAN-T0001`): a variant the subject's enum does not declare, a qualifier other than the subject's enum, and a named sub-pattern.
+Refused (`INCAN-T0001`): a variant the subject's enum does not declare, a qualifier other than the subject's enum, a named sub-pattern, more sub-patterns than the variant has payload values, and a `Some`, `Ok` or `Err` pattern without exactly one sub-pattern.
 
 ```incan
 enum Shape:
@@ -77,6 +92,7 @@ def area(shape: Shape) -> float:
         Shape.Empty => return 0.0            # accepted
         Square(side) => return 0.0           # refused: Shape declares no Square
         Circle(radius=r) => return 0.0       # refused: named sub-pattern
+        Circle(r, s) => return 0.0           # refused: Circle has one payload value
 ```
 
 ## Record patterns
@@ -176,7 +192,7 @@ The unguarded arms of a `match` cover its subject. A guarded arm never counts to
 | A union | For each member type, the arms that name it cover every value of it. |
 | A tuple | They cover every combination of element values, element by element. |
 | A model or class | They cover every combination of field values, field by field. |
-| A number, `str`, `FrozenStr`, `bytes`, or `FrozenBytes` | One of them matches any value. |
+| A number, `str`, `FrozenStr`, `bytes`, or `FrozenBytes` | Never: literal arms do not cover it, and only an arm that is `_` or a binding does. |
 
 The same rules apply to a payload, element, or field at any depth.
 

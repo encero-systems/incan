@@ -92,6 +92,12 @@ pub from crate.text import functions, normalize
 
 The checked entry retains its original registry and subject identity. Inspection and codegraph output add the facade paths under `reexport_paths`; they do not duplicate the entry or transfer ownership to the facade.
 
+## Choose the loaded or checked view
+
+Use `loaded_entries()` when application code needs entries from modules loaded in the current process. Use `incan inspect registry` when tooling needs the complete checked package projection without executing user code.
+
+A tool reads registry meaning from `incan inspect registry` or from the checked codegraph `registry` records. It must not infer registry meaning by scanning `@describe` syntax or by loading runtime state.
+
 ## Inspect a local or dependency registry
 
 Inspect a local module-level identity:

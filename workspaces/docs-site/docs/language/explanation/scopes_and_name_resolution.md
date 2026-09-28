@@ -94,6 +94,8 @@ For the exact alias syntax, supported target kinds, public export rules, and dia
 
 An alias adds a name, not behavior. A call through a function or method alias compiles to a call of its target, a public alias is re-exported rather than duplicated, and checked metadata keeps it as an alias, so tools see one declaration under two names.
 
+Diagnostics follow the name the source wrote: a diagnostic about a use of an alias names the alias at that use, and may also name its target. A library manifest and its checked API metadata record a public alias as an alias of its target, not as a separate declaration.
+
 That makes the choice between an alias and a wrapper a choice about the API. Use an alias when the new name is the same API as the target; the `alias` marker (`average = alias avg`) can make that intent easier to read among other declarations. Use a wrapper function or method when the new name changes behavior, adapts parameters, adds validation, carries its own docs, or should appear as an independent callable:
 
 ```incan

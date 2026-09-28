@@ -6,7 +6,7 @@ This page specifies `Debug` and `Display`. The derive catalog and the automatic 
 
 - **Provides**: `{value:?}` formatting.
 - **Provided by**: every `model`, `class` and `enum`; a `newtype` whose underlying type implements `Debug`.
-- **Behavior**: a model or class formats as its type name followed by its fields in declaration order, each as `name: value`, in braces. A `str` value is quoted.
+- **Behavior**: a model or class formats as its type name followed by its fields in declaration order, each as `name: value`, in braces. An enum value formats as its variant name, followed by its payloads in parentheses when it has any: `Red`, `Leaf(1)`, `Error(404, "missing")`. A newtype formats as its type name followed by its underlying value in parentheses: `UserId(42)`. A `str` value is quoted.
 - **Dunder**: none.
 - **Requires**: every field type implements `Debug` (see [Automatic derives](../derives_and_traits.md#automatic-derives), `INCAN-T0113`).
 
@@ -23,7 +23,7 @@ This page specifies `Debug` and `Display`. The derive catalog and the automatic 
 
 Frozen values use the same representation as their ordinary counterparts. `FrozenStr` is quoted in structured output; `FrozenList`, `FrozenSet` and `FrozenDict` format their elements structurally, including the decimal point of an integral `float`. `bytes` and `FrozenBytes` have no `Display` form and are refused with `INCAN-T0103`.
 
-A union value inside structured output formats as its active member value. Generated union variant names are not part of the representation.
+A union value inside structured output formats as its active member value alone.
 
 ```incan
 model Point:
@@ -40,10 +40,20 @@ model User:
 enum Level(str):
     WARN = "warn"
 
+enum Node:
+    Leaf(int)
+    Error(int, str)
+
+type UserId = newtype int
+
 def main() -> None:
     p = Point(x=10, y=20)
     u = User(name="Alice", email="alice@example.com")
     println(f"{p:?} {u:?} {u} {Level.WARN}")
+    leaf = Node.Leaf(1)
+    error = Node.Error(404, "missing")
+    user_id = UserId(42)
+    println(f"{leaf:?} {error:?} {user_id:?}")
 ```
 
 | Expression | Output |
@@ -52,3 +62,6 @@ def main() -> None:
 | `f"{u:?}"` | `User { name: "Alice", email: "alice@example.com" }` |
 | `f"{u}"` | `Alice <alice@example.com>` |
 | `f"{Level.WARN}"` | `warn` |
+| `f"{leaf:?}"` | `Leaf(1)` |
+| `f"{error:?}"` | `Error(404, "missing")` |
+| `f"{user_id:?}"` | `UserId(42)` |

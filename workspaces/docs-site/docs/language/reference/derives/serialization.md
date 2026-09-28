@@ -17,14 +17,14 @@ After `from std.serde import json`, the traits are also named `json.Serialize` a
 - **Provides**: `value.to_json() -> str`, `json_stringify(value) -> str`, and `T with Serialize` bounds.
 - **Provided by**: `@derive(json)`, `@derive(Serialize)`, or adopting `Serialize`.
 - **Behavior**: the value is written as JSON by the [type mapping](#type-mapping).
-- **Requires**: every field type serializes.
+- **Requires**: every field type serializes. A field, payload or underlying type that holds a `model` or `class` that does not provide `Serialize` is refused (`INCAN-T0001`).
 
 ## Deserialize
 
 - **Provides**: `T.from_json(json_str: str) -> Result[T, str]`, and `T with Deserialize` bounds.
 - **Provided by**: `@derive(json)` or `@derive(Deserialize)`; adopting `Deserialize` and defining `from_json`.
 - **Behavior**: the input is read by the [type mapping](#type-mapping). Input that does not match returns `Err`.
-- **Requires**: every field type deserializes. A type that adopts `Deserialize` without deriving it defines `from_json`, or it is refused (`INCAN-T0001`).
+- **Requires**: every field type deserializes. A field, payload or underlying type that holds a `model` or `class` that does not provide `Deserialize` is refused (`INCAN-T0001`). A type that adopts `Deserialize` without deriving it defines `from_json`, or it is refused (`INCAN-T0001`).
 
 ```incan
 from std.serde import json
@@ -108,14 +108,24 @@ def main() -> None:
 | `str` | string |
 | `int`, the exact-width integers, `float`, `f32`, `f64` | number |
 | `bool` | `true` or `false` |
+| `bytes` | array of its byte values, each a number from 0 to 255: `b"hi"` writes `[104,105]` |
 | `list[T]`, `set[T]`, a tuple | array |
 | `dict[str, T]` | object |
+| `dict[K, T]` for any other `K` | object whose keys are the keys' JSON forms written as strings: an `int` key `1` writes `"1"`, a `bool` key writes `"true"` or `"false"`, and a key whose JSON form is a string writes that string |
 | `Option[T]` | the value, or `null` for `None` |
+| `Result[T, E]` | `{"Ok": value}` or `{"Err": error}` |
 | `std.json.JsonValue` | the JSON value it holds |
 | `model`, `class` | object with one key per field |
 | `enum` that declares values | the variant's value: `enum Environment(str)` with `Production = "production"` writes `"production"`, and `enum HttpStatus(int)` with `NotFound = 404` writes `404` |
 | Any other `enum` | a variant without a payload as its name (`"Pending"`); a variant with one payload as an object from its name to the payload (`{"Success": "ok"}`); a variant with several payloads as an object from its name to an array of them (`{"Error": [404, "missing"]}`) |
 | `newtype` | its underlying value |
 
+- `decimal`, `FrozenStr`, `FrozenBytes`, `FrozenList`, `FrozenSet` and `FrozenDict` have no JSON form.
+- A `dict` key whose JSON form is not a string, a number or a `bool`, such as a model, a tuple or an enum variant with a payload, raises `TypeError` when the value is serialized.
 - A newtype with a `from_underlying` hook or constraints deserializes through them: a value they refuse returns `Err`.
 - An `enum` or `newtype` that a serializing `model` or `class` names as a field type serializes the same way, without its own derive.
+
+## See also
+
+- [Models: Serialization (explanation)](../../explanation/models_and_classes/models.md#serialization)
+- [Work with dynamic JSON (how-to)](../../how-to/dynamic_json.md)

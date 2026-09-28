@@ -30,6 +30,8 @@ You may see `@rust.extern` in stdlib sources:
 
 The compiler is responsible for providing the implementation; the stdlib is the stable vocabulary and signature registry.
 
+A module derive follows the same pattern. `@derive(json)` adopts each trait the `std.serde.json` module lists in its `__derives__`, `json.Serialize` and `json.Deserialize`, and those traits carry the Rust derives (`serde::Serialize`, `serde::Deserialize`) the compiled type needs. The adopted traits then work like any `with` adoption: `to_json()` is found on the type, and the type satisfies a `T with json.Serialize` bound.
+
 ---
 
 ## Derives vs dunders
