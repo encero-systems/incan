@@ -2,10 +2,10 @@
  "schema_version": 1,
  "generated_by": "scripts/self_build/cargo_manifest_inventory.py",
  "summary": {
-  "manifest_count": 43,
+  "manifest_count": 54,
   "by_category": {
    "example-companion": 6,
-   "fixture": 3,
+   "fixture": 14,
    "standalone": 1,
    "third-party-patch": 1,
    "workspace-member": 31,
@@ -3483,6 +3483,556 @@
    },
    "crate_level_attributes": {
     "lib": []
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_async/rust/demo_async/Cargo.toml",
+   "category": "fixture",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "demo_async",
+    "version": "0.1.0",
+    "edition": "2021",
+    "rust_version": null,
+    "license": null,
+    "publish": true,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {},
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_async/rust/demo_async/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/rust/client_probe/Cargo.toml",
+   "category": "fixture",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "client_probe",
+    "version": "0.1.0",
+    "edition": "2021",
+    "rust_version": null,
+    "license": null,
+    "publish": true,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {},
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/rust/client_probe/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/rust/demo/Cargo.toml",
+   "category": "fixture",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "demo",
+    "version": "0.1.0",
+    "edition": "2021",
+    "rust_version": null,
+    "license": null,
+    "publish": true,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {},
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/rust/demo/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/rust/demo_derive/Cargo.toml",
+   "category": "fixture",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": false,
+   "package": {
+    "name": "demo_derive",
+    "version": "0.1.0",
+    "edition": "2021",
+    "rust_version": null,
+    "license": null,
+    "publish": true,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": {
+    "name": null,
+    "path": null,
+    "proc_macro": true,
+    "crate_type": null,
+    "doctest": true
+   },
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {},
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/rust/demo_derive/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/rust/borrow_fixture/Cargo.toml",
+   "category": "fixture",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": true,
+   "package": {
+    "name": "borrow_fixture",
+    "version": "0.1.0",
+    "edition": "2024",
+    "rust_version": null,
+    "license": null,
+    "publish": false,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {},
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/implicit_borrowing_clone_counter/rust/borrow_fixture/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   },
+   "workspace": {
+    "members": [],
+    "exclude": [],
+    "resolver": null,
+    "package": null,
+    "dependencies": {}
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_buf_parameter_from_bytes/rust/tiny_buf/Cargo.toml",
+   "category": "fixture",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": true,
+   "package": {
+    "name": "tiny_buf",
+    "version": "0.1.0",
+    "edition": "2021",
+    "rust_version": null,
+    "license": null,
+    "publish": false,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {},
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_buf_parameter_from_bytes/rust/tiny_buf/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   },
+   "workspace": {
+    "members": [],
+    "exclude": [],
+    "resolver": null,
+    "package": null,
+    "dependencies": {}
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_callback_parameter_forwarded_to_a_mut_parameter/rust/tiny_ui/Cargo.toml",
+   "category": "fixture",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": true,
+   "package": {
+    "name": "tiny_ui",
+    "version": "0.1.0",
+    "edition": "2024",
+    "rust_version": null,
+    "license": null,
+    "publish": false,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {},
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_callback_parameter_forwarded_to_a_mut_parameter/rust/tiny_ui/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   },
+   "workspace": {
+    "members": [],
+    "exclude": [],
+    "resolver": null,
+    "package": null,
+    "dependencies": {}
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_into_bound_string_variables/rust/into_method_helper/Cargo.toml",
+   "category": "fixture",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": true,
+   "package": {
+    "name": "into_method_helper",
+    "version": "0.1.0",
+    "edition": "2021",
+    "rust_version": null,
+    "license": null,
+    "publish": false,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {},
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_into_bound_string_variables/rust/into_method_helper/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   },
+   "workspace": {
+    "members": [],
+    "exclude": [],
+    "resolver": null,
+    "package": null,
+    "dependencies": {}
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_list_elements_converted_into_a_vec/rust/name_list/Cargo.toml",
+   "category": "fixture",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": true,
+   "package": {
+    "name": "name_list",
+    "version": "0.1.0",
+    "edition": "2021",
+    "rust_version": null,
+    "license": null,
+    "publish": false,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {},
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_list_elements_converted_into_a_vec/rust/name_list/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   },
+   "workspace": {
+    "members": [],
+    "exclude": [],
+    "resolver": null,
+    "package": null,
+    "dependencies": {}
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_string_parameters_by_value_and_in_a_field/rust/tiny_option/Cargo.toml",
+   "category": "fixture",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": true,
+   "package": {
+    "name": "tiny_option",
+    "version": "0.1.0",
+    "edition": "2021",
+    "rust_version": null,
+    "license": null,
+    "publish": false,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {},
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_string_parameters_by_value_and_in_a_field/rust/tiny_option/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   },
+   "workspace": {
+    "members": [],
+    "exclude": [],
+    "resolver": null,
+    "package": null,
+    "dependencies": {}
+   }
+  },
+  {
+   "path": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_trait_object_view_to_a_reference_parameter/rust/tiny_arrow/Cargo.toml",
+   "category": "fixture",
+   "cargo_lock_beside": false,
+   "is_virtual_workspace": false,
+   "declares_own_workspace": true,
+   "package": {
+    "name": "tiny_arrow",
+    "version": "0.1.0",
+    "edition": "2024",
+    "rust_version": null,
+    "license": null,
+    "publish": false,
+    "description": null,
+    "resolver": null,
+    "auto_discovery_off": []
+   },
+   "inherited_package_keys": [],
+   "lib": null,
+   "bins": [],
+   "explicit_tests": [],
+   "explicit_examples": [],
+   "explicit_benches": [],
+   "features": {},
+   "default_features": [],
+   "dependencies": {
+    "normal": {},
+    "dev": {},
+    "build": {},
+    "target": {}
+   },
+   "build_script": {
+    "present": false,
+    "declared": null,
+    "path": null
+   },
+   "lints": null,
+   "package_metadata": null,
+   "target_roots": {
+    "lib": "loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_trait_object_view_to_a_reference_parameter/rust/tiny_arrow/src/lib.rs"
+   },
+   "crate_level_attributes": {
+    "lib": []
+   },
+   "workspace": {
+    "members": [],
+    "exclude": [],
+    "resolver": null,
+    "package": null,
+    "dependencies": {}
    }
   },
   {

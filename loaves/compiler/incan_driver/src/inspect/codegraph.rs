@@ -264,14 +264,11 @@ fn directory_modules_diagnostics_and_info(
                 project_root.display()
             )));
         };
-        let Some(root_module_path) = logical_module_segments_from_file(&session.source_root, file) else {
-            return Err(CodegraphError::failure(format!(
-                "failed to resolve {} below source root {}",
-                file.display(),
-                session.source_root.display()
-            )));
-        };
-        match collect_modules_detailed_with_session_at_path(file.clone(), session, root_module_path) {
+        let collected = logical_module_segments_from_file(&session.source_root, file).map_or_else(
+            || collect_modules_detailed_with_session(file.clone(), session),
+            |root_module_path| collect_modules_detailed_with_session_at_path(file.clone(), session, root_module_path),
+        );
+        match collected {
             Ok(modules) => {
                 for module in &modules {
                     if file_set.contains(&module.file_path) {
@@ -293,13 +290,13 @@ fn directory_modules_diagnostics_and_info(
                             .and_then(|package| package.name)
                             .unwrap_or_else(|| "<unpackaged>".to_string());
                         for (path, metadata) in checked_registry_metadata_by_path(&analysis, &modules, &package_name) {
-                            registry_metadata_by_path.entry(path).or_insert(metadata);
+                            retain_root_analysis(&mut registry_metadata_by_path, file, &path, metadata);
                         }
                         for (path, declarations) in checked_capabilities_by_path(&analysis, &modules) {
-                            capabilities_by_path.entry(path).or_insert(declarations);
+                            retain_root_analysis(&mut capabilities_by_path, file, &path, declarations);
                         }
                         for (path, c_abi) in checked_c_abi_by_path(&analysis, &modules) {
-                            c_abi_by_path.entry(path).or_insert(c_abi);
+                            retain_root_analysis(&mut c_abi_by_path, file, &path, c_abi);
                         }
                         // Lowering happens here rather than in `SemanticModuleSnapshot`, so only the graph pays
                         // for it. A module whose type info is unavailable contributes no signatures, and its
@@ -3715,6 +3712,18 @@ mod tests {
         retain_root_analysis(&mut analyses, consumer, provider, "later-dependency-context");
 
         assert_eq!(analyses.get(provider), Some(&"provider-root-context"));
+    }
+
+    #[test]
+    fn own_root_analysis_replaces_dependency_copies_for_every_checked_projection() {
+        let provider = Path::new("src/provider.incn");
+        let consumer = Path::new("src/consumer.incn");
+        for mut analyses in [BTreeMap::new(), BTreeMap::new(), BTreeMap::new(), BTreeMap::new()] {
+            retain_root_analysis(&mut analyses, consumer, provider, "dependency-context");
+            retain_root_analysis(&mut analyses, provider, provider, "provider-root-context");
+            retain_root_analysis(&mut analyses, consumer, provider, "later-dependency-context");
+            assert_eq!(analyses.get(provider), Some(&"provider-root-context"));
+        }
     }
 
     #[test]

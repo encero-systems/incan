@@ -4,6 +4,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import check_reference_contract as gate
 
@@ -54,6 +55,24 @@ class ReferenceContractTests(unittest.TestCase):
     def test_internal_vocabulary_applies_to_language_pages_only(self) -> None:
         """Tooling references document the toolchain and may name its parts."""
         self.assertEqual(self.findings("Shows the generated Rust.\n", rel="tooling/reference/cli.md"), [])
+
+    def test_changed_pages_include_untracked_reference_pages(self) -> None:
+        """Default working-tree discovery includes untracked reference pages."""
+        results = [
+            type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
+            type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
+            type(
+                "Result",
+                (),
+                {
+                    "returncode": 0,
+                    "stdout": "workspaces/docs-site/docs/tooling/reference/new_contract.md\n",
+                    "stderr": "",
+                },
+            )(),
+        ]
+        with patch.object(gate.subprocess, "run", side_effect=results), patch.object(Path, "exists", return_value=True):
+            self.assertEqual(gate.changed_pages(None), ["tooling/reference/new_contract.md"])
 
 
 if __name__ == "__main__":

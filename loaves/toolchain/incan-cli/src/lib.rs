@@ -918,7 +918,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
             cargo_no_default_features,
             cargo_all_features,
             generated_cargo_target_dir,
-            release: _,
+            release,
             backend,
             shadow,
             backend_fallback,
@@ -966,6 +966,9 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                     format: report,
                     output_path: report_output,
                 },
+                release,
+                backend_controls_explicit: backend.is_some() || shadow || backend_fallback.is_some(),
+                lock_controls_explicit: offline || no_offline || locked || no_locked || frozen || no_frozen,
             },
             workspace,
             members,
@@ -1343,6 +1346,9 @@ struct BuildCommandRequest {
     output_dir: Option<String>,
     options: incan_driver::build::BuildCommandOptions,
     report_options: BuildReportOptions,
+    release: bool,
+    backend_controls_explicit: bool,
+    lock_controls_explicit: bool,
 }
 
 impl BuildCommandRequest {
@@ -1406,6 +1412,7 @@ fn build_toolchain_binaries_if_declared(
     if !builds_toolchain_binaries(manifest) {
         return Ok(None);
     }
+    reject_unsupported_toolchain_build_options(request)?;
     let roles = manifest.rust_binary_roles();
     if request.report_options.enabled() {
         return Err(CliError::failure(
@@ -1442,6 +1449,50 @@ fn build_toolchain_binaries_if_declared(
         );
     }
     Ok(Some(ExitCode::SUCCESS))
+}
+
+/// Refuse build controls that the stored direct-rustc toolchain-binary path cannot honor.
+fn reject_unsupported_toolchain_build_options(request: &BuildCommandRequest) -> CliResult<()> {
+    incan_driver::build::replacement::reject_normal_cargo_controls(
+        &request.options.cargo_policy,
+        request.options.generated_cargo_target_dir.as_ref(),
+    )?;
+    if !request.options.cargo_features.is_empty()
+        || request.options.cargo_no_default_features
+        || request.options.cargo_all_features
+    {
+        return Err(CliError::failure(
+            "toolchain-Loaf builds do not accept retired Cargo feature controls",
+        ));
+    }
+    if request.release {
+        return Err(CliError::failure(
+            "toolchain-Loaf builds do not accept --release; stored [[rust.bin]] plans select their recorded profile",
+        ));
+    }
+    if request.backend_controls_explicit {
+        return Err(CliError::failure(
+            "toolchain-Loaf builds do not accept --backend, --backend-fallback, or --shadow",
+        ));
+    }
+    if request.options.package_features != FeatureSelection::default() {
+        return Err(CliError::failure(
+            "toolchain-Loaf builds do not accept package-feature controls",
+        ));
+    }
+    if request.options.sdk_profile.is_some() {
+        return Err(CliError::failure("toolchain-Loaf builds do not accept --sdk-profile"));
+    }
+    if request.lock_controls_explicit
+        || request.options.cargo_policy.offline
+        || request.options.cargo_policy.locked
+        || request.options.cargo_policy.frozen
+    {
+        return Err(CliError::failure(
+            "toolchain-Loaf builds do not accept lock-policy controls (--offline, --locked, or --frozen)",
+        ));
+    }
+    Ok(())
 }
 
 /// Return whether this build should resolve and fan out an RFC 077 workspace scope.

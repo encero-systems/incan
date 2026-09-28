@@ -156,7 +156,11 @@ def changed_pages(base: str | None) -> list[str]:
     commands = (
         [["git", "diff", "--name-only", f"{base}...HEAD"], ["git", "diff", "--name-only", "HEAD"]]
         if base
-        else [["git", "diff", "--name-only"], ["git", "diff", "--cached", "--name-only"]]
+        else [
+            ["git", "diff", "--name-only"],
+            ["git", "diff", "--cached", "--name-only"],
+            ["git", "ls-files", "--others", "--exclude-standard"],
+        ]
     )
     names: set[str] = set()
     for command in commands:

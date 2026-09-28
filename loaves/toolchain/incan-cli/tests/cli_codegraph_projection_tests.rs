@@ -235,6 +235,45 @@ pub def entrypoint() -> int:
 }
 
 #[test]
+fn inspect_codegraph_project_directory_exports_sources_outside_src() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::create_dir_all(tmp.path().join("src"))?;
+    fs::create_dir_all(tmp.path().join("tests"))?;
+    fs::write(
+        tmp.path().join("loaf.toml"),
+        "[project]\nname = \"whole_project_graph\"\n\n[sdk]\nprofile = \"minimal\"\n",
+    )?;
+    fs::write(
+        tmp.path().join("src/main.incn"),
+        "pub def answer() -> int:\n    return 42\n",
+    )?;
+    fs::write(
+        tmp.path().join("tests/test_main.incn"),
+        "def outside_source_root() -> int:\n    return 42\n",
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &[
+            "inspect",
+            "codegraph",
+            tmp.path().to_str().ok_or("project path was not valid UTF-8")?,
+            "--format",
+            "jsonl",
+        ],
+    )?;
+    assert_success(&output, "project-directory codegraph export with tests outside src");
+    let records = parse_jsonl_stdout(&output)?;
+    assert!(records.iter().any(|record| {
+        record["record"] == serde_json::json!("file")
+            && record["path"]
+                .as_str()
+                .is_some_and(|path| path.ends_with("tests/test_main.incn"))
+    }));
+    Ok(())
+}
+
+#[test]
 fn inspect_codegraph_distinguishes_sibling_binding_stable_identities_issue1629()
 -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;

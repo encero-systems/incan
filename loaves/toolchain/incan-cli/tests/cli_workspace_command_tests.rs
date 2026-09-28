@@ -275,6 +275,29 @@ fn a_plain_build_of_a_toolchain_loaf_selects_its_rust_binaries_and_names_the_int
         "the report surface was not refused by name"
     );
 
+    for (arguments, option) in [
+        (&["build", "--release"][..], "--release"),
+        (&["build", "--backend", "legacy"][..], "--backend"),
+        (&["build", "--backend-fallback", "refuse"][..], "--backend-fallback"),
+        (&["build", "--features", "json"][..], "package-feature"),
+        (&["build", "--sdk-profile", "minimal"][..], "--sdk-profile"),
+        (&["build", "--locked"][..], "lock-policy"),
+        (&["build", "--no-locked"][..], "lock-policy"),
+        (&["build", "--cargo-args", "--timings"][..], "Cargo passthrough"),
+        (
+            &["build", "--generated-cargo-target-dir", "target/cargo"][..],
+            "target-directory",
+        ),
+    ] {
+        let refused = run_incan(&member_root, arguments)?;
+        assert_failure(&refused, "unsupported toolchain-Loaf build option");
+        let stderr = String::from_utf8(refused.stderr)?;
+        assert!(
+            stderr.contains(option),
+            "toolchain build did not refuse {option} by name: {stderr}"
+        );
+    }
+
     // Declaring an Incan entrypoint beside the Rust role keeps the Incan meaning of a plain build.
     fs::write(
         member_root.join("loaf.toml"),
