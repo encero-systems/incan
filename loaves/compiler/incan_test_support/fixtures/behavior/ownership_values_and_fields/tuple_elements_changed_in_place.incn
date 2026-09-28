@@ -1,4 +1,4 @@
-# behavior: a method call or an assignment through a constant tuple index changes that element of the tuple in place, through a local tuple, a nested tuple, a list of tuples, a loop variable, an index counted from the end, a field of self and a field of a mut binding
+# behavior: a method call or an assignment through a constant tuple index changes that element of the tuple in place, through a mut local tuple, a nested tuple, a list of tuples, a loop variable, an index counted from the end, a field of self and a field of a mut binding
 # retires: loaves/compiler/incan_emit/src/tests/tuple_element_places.rs::tuple_element_method_changes_the_tuple_in_place_issue1561
 # retires: loaves/compiler/incan_emit/src/tests/tuple_element_places.rs::tuple_element_of_a_field_changes_in_place_issue1561
 # retires: loaves/compiler/incan_emit/src/tests/tuple_element_places.rs::writes_through_a_tuple_element_change_the_tuple_issue1561
@@ -22,26 +22,26 @@ class Counter:
 
 
 def main() -> None:
-    pair: tuple[list[int], int] = ([], 0)
+    mut pair: tuple[list[int], int] = ([], 0)
     pair[0].append(1)
     pair[0].append(2)
-    outer: tuple[int, tuple[list[int], int]] = (0, ([], 0))
+    mut outer: tuple[int, tuple[list[int], int]] = (0, ([], 0))
     outer[1][0].append(3)
     mut rows: list[tuple[list[int], int]] = [([], 0)]
     rows[0][0].append(4)
     for row in rows:
         row[0].append(5)
-    tail: tuple[int, list[int]] = (0, [])
+    mut tail: tuple[int, list[int]] = (0, [])
     tail[-1].append(6)
     println(f"{len(pair[0])} {outer[1][0][0]} {rows[0][0][0]} {rows[0][0][1]} {tail[1][0]}")
     mut holder = Holder(pair=([], 0))
     holder.add(7)
     holder.pair[0].append(8)
     println(f"{len(holder.pair[0])} {holder.pair[0][1]}")
-    items: tuple[list[int], int] = ([0], 0)
+    mut items: tuple[list[int], int] = ([0], 0)
     items[0][0] = 5
     items[0][0] += 1
-    counted: tuple[Counter, int] = (Counter(count=1), 0)
+    mut counted: tuple[Counter, int] = (Counter(count=1), 0)
     counted[0].count = 10
     counted[0].bump()
     mut spare = 0

@@ -1102,14 +1102,15 @@ pub fn mutation_without_mut(name: &str, span: Span) -> CompileError {
         .with_note("This prevents accidental modifications and makes code easier to reason about")
 }
 
-/// The place a pattern bound a name from, when that place does not permit a change through the name (#1561).
+/// The place a pattern or a `for` loop bound a name from, when that place does not permit a change through the name
+/// (#1561).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadOnlyScrutinee<'a> {
     /// A local binding declared without `mut`.
     Binding(&'a str),
     /// A parameter declared without `mut`.
     Parameter(&'a str),
-    /// A module static, which a pattern cannot bind in place.
+    /// A module static, which a bound name cannot change in place.
     Static(&'a str),
     /// `self` in a method that takes a plain `self` receiver.
     SelfReceiver,
@@ -1117,13 +1118,13 @@ pub enum ReadOnlyScrutinee<'a> {
     DictValue,
 }
 
-/// Refuse a change through a name a `match`, `if let` or `while let` pattern binds from a place that does not permit
-/// it (#1561).
+/// Refuse a change through a name a `match`, `if let` or `while let` pattern, or a `for` loop, binds from a place that
+/// does not permit it (#1561).
 ///
-/// A name a pattern binds from a place is part of that place, so a change through the name is a change to the place:
-/// a `mut` binding or parameter, a field or list element of one, or `self` in a `mut self` method takes the change. The
-/// place named by `place` does not, so the change is refused rather than applied to a copy. `binding` is the name the
-/// change goes through.
+/// A name a pattern or a loop binds from a place is part of that place, so a change through the name is a change to the
+/// place: a `mut` binding or parameter, a field or list element of one, or `self` in a `mut self` method takes the
+/// change. The place named by `place` does not, so the change is refused rather than applied to a copy or left to fail
+/// in the build. `binding` is the name the change goes through.
 pub fn change_through_binding_of_read_only_place(
     binding: &str,
     place: ReadOnlyScrutinee<'_>,
@@ -1139,12 +1140,12 @@ pub fn change_through_binding_of_read_only_place(
             format!("Declare the parameter 'mut' to change the caller's value through '{binding}': mut {name}: ..."),
         ),
         ReadOnlyScrutinee::Static(name) => (
-            format!("the static '{name}', which a pattern cannot change in place"),
+            format!("the static '{name}', which is changed only through its own name"),
             format!("Bind the value to a 'mut' variable, change it, and assign it back to '{name}'"),
         ),
         ReadOnlyScrutinee::SelfReceiver => (
             "'self', which this method takes as plain 'self'".to_string(),
-            "Declare the method with 'mut self' to change its fields through a pattern".to_string(),
+            format!("Declare the method with 'mut self' to change 'self' through '{binding}'"),
         ),
         ReadOnlyScrutinee::DictValue => (
             "a dict value, which a pattern binds as a copy".to_string(),
@@ -1154,7 +1155,7 @@ pub fn change_through_binding_of_read_only_place(
     CompileError::type_error(format!("Cannot change '{binding}' - it is bound from {source}"), span)
         .with_hint(hint)
         .with_note(
-            "A name a pattern binds from a place is part of that place, so a change through the name changes the place",
+            "A name a pattern or a `for` loop binds from a place is part of that place, so a change through the name changes the place",
         )
 }
 
@@ -3094,14 +3095,6 @@ pub fn string_index_assignment_not_allowed(span: Span) -> CompileError {
 }
 
 // -- Tuples ------------------------------------------------------------------
-
-pub fn mutable_tuple(span: Span) -> CompileError {
-    CompileError::type_error(
-        "Tuples are immutable and cannot be declared with 'mut'".to_string(),
-        span,
-    )
-    .with_hint("Remove 'mut' - tuples cannot be modified after creation")
-}
 
 /// Report a tuple annotation written without its element types (#1717).
 ///

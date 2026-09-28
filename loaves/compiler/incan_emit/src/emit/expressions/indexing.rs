@@ -18,27 +18,6 @@ use crate::ownership::{frozen_dict_entry_types, list_read_element_type, plan_dic
 use incan_ir::expr::{IrExprKind, TypedExpr, UnaryOp, VarRefKind};
 use incan_ir::types::IrType;
 
-/// Normalize dictionary index probes to the borrow shape expected by runtime lookup helpers.
-///
-/// `Dict[str, V]` should accept borrowed string probes (`"x"`, `&str`, `String`) without forcing owned `String`
-/// materialization at every `dict[key]` read site. Non-string dictionaries keep the ordinary `&key` lookup shape.
-fn emit_dict_lookup_index_key(object: &TypedExpr, index: &TypedExpr, emitted: TokenStream) -> TokenStream {
-    match &object.ty {
-        IrType::Dict(key_ty, _)
-            if matches!(
-                key_ty.as_ref(),
-                IrType::String | IrType::StrRef | IrType::StaticStr | IrType::FrozenStr
-            ) =>
-        {
-            match &index.ty {
-                IrType::Ref(_) | IrType::RefMut(_) | IrType::StrRef | IrType::StaticStr => emitted,
-                _ => quote! { <_ as AsRef<str>>::as_ref(&#emitted) },
-            }
-        }
-        _ => quote! { &#emitted },
-    }
-}
-
 impl<'a> IrEmitter<'a> {
     /// Emit the stable source name for a function-typed value when the value points at a registered generated
     /// function. Decorator lowering passes undecorated originals such as `__incan_original_sample`, but source-facing
@@ -201,7 +180,9 @@ impl<'a> IrEmitter<'a> {
         match obj_ty {
             IrType::Dict(_, v) => {
                 let i = self.emit_expr(index)?;
-                let key = emit_dict_lookup_index_key(object, index, i);
+                // The planner sees through a `mut` dict parameter's reference, so a literal `str` key is borrowed as
+                // `str` there too (#1561).
+                let key = plan_dict_lookup_key(&object.ty, &index.ty).apply(i);
                 if v.is_copy() {
                     Ok(quote! { *incan_std_core::collections::dict_get(&#o, #key) })
                 } else {

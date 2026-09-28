@@ -1096,11 +1096,12 @@ fn in_place_list_item_type(ty: &IrType) -> Option<&IrType> {
 
 /// Plan a `for` loop over a derived iterable whose body changes the loop bindings `changed`.
 ///
-/// Returns `None` when `iterable` is not one of the derived iterables, or when no source has to be reached in place,
-/// in which case the loop keeps its ordinary plan. The pattern decides which source a changed binding belongs to:
-/// the second name of `(index, item)` for `enumerate`, and each name of `(left, right)` for `zip`. A pattern that does
-/// not split that way counts as changing every source it covers. `item_is_user_enum` says whether a list item type is
-/// a user enum, which an ordinary loop over the list clones.
+/// The derived iterables are `enumerate`, `zip`, a dict's `values()`, and a list reached through an element of another
+/// collection (`groups[0]`, `holders[0].rows`). Returns `None` when `iterable` is not one of them, or when no source
+/// has to be reached in place, in which case the loop keeps its ordinary plan. The pattern decides which source a
+/// changed binding belongs to: the second name of `(index, item)` for `enumerate`, and each name of `(left, right)` for
+/// `zip`. A pattern that does not split that way counts as changing every source it covers. `item_is_user_enum` says
+/// whether a list item type is a user enum, which an ordinary loop over the list clones.
 pub fn plan_mutating_derived_loop<'a>(
     iterable: &'a IrExpr,
     pattern: &Pattern,
@@ -1170,7 +1171,25 @@ pub fn plan_mutating_derived_loop<'a>(
                 .unwrap_or_default();
             Some(MutatingDerivedLoopPlan::Element { list: iterable, items })
         }
+        // A list field of an element (`holders[0].rows`) is read out of its collection like the element itself, so it
+        // is reached as a place too (#1561).
+        IrExprKind::Field { object, .. } if place_reaches_an_element(object) => {
+            let items = in_place_list_item_type(&iterable.ty)
+                .map(|item_ty| InPlaceItems::copying(pattern, item_ty))
+                .unwrap_or_default();
+            Some(MutatingDerivedLoopPlan::Element { list: iterable, items })
+        }
         _ => None,
+    }
+}
+
+/// Return whether a place (`rows[0]`, `holders[0].inner`) reaches its value through an element of a collection, which
+/// an ordinary read copies out.
+fn place_reaches_an_element(place: &IrExpr) -> bool {
+    match &place.kind {
+        IrExprKind::Index { .. } => true,
+        IrExprKind::Field { object, .. } => place_reaches_an_element(object),
+        _ => false,
     }
 }
 

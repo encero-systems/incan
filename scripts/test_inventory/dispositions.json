@@ -3177,6 +3177,32 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/dict_value_places.rs": {
+      "disposition": "retire",
+      "notes": "builds and runs the generated Rust of places reached through a dict value or a list element: a changing method, an element or field assignment, a `mut self` method and a loop through `d[key]` on a `mut` dict, a `mut` dict parameter, a tuple in a dict value, a nested dict and a list of dicts, a `mut self` call on a list element, and a loop over a list field of an element (#1561); retires with the Rust-source backend.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "dict_value_changes_in_place_through_a_mut_dict_issue1561": {
+          "notes": "Runs changing methods, element writes and a loop through dict values under literal, variable and `int` keys, through a tuple in the value, a nested dict, a list of dicts and a field of `self`; the fixture prints each changed value.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_values_and_fields/dict_values_changed_in_place.incn"
+        },
+        "dict_value_of_a_model_changes_in_place_issue1561": {
+          "notes": "Runs a `mut self` method and field writes through a dict value of a model, locally and through a `mut` dict parameter, and a `mut self` call on a tuple element of a dict value; the fixture prints the counts.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_values_and_fields/dict_values_changed_in_place.incn"
+        },
+        "loop_over_a_list_field_of_an_element_changes_it_in_place_issue1561": {
+          "notes": "Runs a loop that appends to the items of a list field of a list element and of a dict value; the fixture prints both lists.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_values_and_fields/loop_over_a_list_field_of_an_element.incn"
+        },
+        "mut_self_call_on_a_list_element_changes_it_in_place_issue1561": {
+          "notes": "Runs a `mut self` method on a list element, a list element of a field, an element counted from the end and a field of a list element; the fixture prints each count and adds a dict value.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_values_and_fields/mut_self_call_on_a_collection_element.incn"
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/tests/emitted_spellings.rs": {
       "disposition": "retire",
       "notes": "asserts the Rust text emission gives keyword identifiers, a program type named like a runtime surface type, `set()` over a generator, `const` `FrozenDict` reads and an explicit channel element type; generated Rust dies with #654.",
@@ -6337,6 +6363,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/read_only_binding_changes.rs": {
+      "disposition": "keep",
+      "notes": "typechecker only: changes through a binding declared without `mut` or a parameter not marked `mut` by a changing method call, and through the variable of a `for` loop or a list comprehension that reads such a place's items in place, are refused with `INCAN-T0001`, and changes the place permits are accepted (#1561); no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/rust_constructors_and_fields.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency. asserts checker facts about `rust::` imports; moves with #1337's interop spec in slice 7, not with the route.",
@@ -7581,6 +7615,20 @@
         "method_partial_forwards_on_a_receiver_typed_by_its_model_issue1765": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/method_partial_over_model_method.incn",
           "notes": "Asserts the recorded shape on the legacy IR (a model method partial's generated forwarding call has its `self` receiver typed by the model, directly and through a method alias); retires with `incan_ir`. The behavior, `user.short()` printing the preset and `short(prefix=\"other\")` overriding it, is carried by the named fixture (#1765)."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/mut_self_receiver_places.rs": {
+      "disposition": "retire",
+      "notes": "the Rust-source backend's own lowering of a `mut self` call whose receiver reaches a list element or a dict value to a mutable borrow of that place (#1561); retires with `incan_ir`. Twins belong in Body IR (loaves/compiler/incan_frontend/src/body_ir/tests/).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "mut_self_receiver_through_an_element_is_borrowed_as_a_place_issue1561": {
+          "notes": "Asserts the legacy IR borrows a list element, a dict value and a field of a list element mutably as the receiver of a `mut self` call, and leaves a local and a tuple element as they are; the fixture runs the same calls and prints the changed counts.",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_values_and_fields/mut_self_call_on_a_collection_element.incn"
         }
       },
       "twin": ""
@@ -10848,6 +10896,12 @@
     "loaves/compiler/incan_test_support/fixtures/behavior/cli_refusals": {
       "disposition": "re-point",
       "notes": "behavior fixtures whose observable is a check-time refusal: each program is refused with the diagnostic code its header declares and is never run. Run by behavior_cli_tests.rs; a fixture is proved by checking a program, so it is re-point today and stays valid after the route flips; a fixture that twins a retire test names it in `# retires:` lines.",
+      "owner": 1561,
+      "pattern": "<name>.incn or <name>/"
+    },
+    "loaves/compiler/incan_test_support/fixtures/behavior/cli_refusals_mutation": {
+      "disposition": "re-point",
+      "notes": "behavior fixtures whose observable is a check-time refusal of a change through a place that does not permit it: a changing method call through a binding declared without `mut` or a parameter not marked `mut`, and a `for` loop that changes the items of such a place. Run by behavior_cli_tests.rs; a fixture is proved by checking a program, so it is re-point today and stays valid after the route flips.",
       "owner": 1561,
       "pattern": "<name>.incn or <name>/"
     },

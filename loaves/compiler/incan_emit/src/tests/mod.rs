@@ -2,6 +2,7 @@
 
 mod dependency_method_unions;
 mod derived_display_emission;
+mod dict_value_places;
 mod emitted_spellings;
 mod expected_literal_emission;
 mod generic_caller_bounds;

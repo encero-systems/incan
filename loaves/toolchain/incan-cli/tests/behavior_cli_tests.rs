@@ -17,6 +17,13 @@ fn behavior_cli_refusals_fixtures_hold() -> Result<(), Box<dyn std::error::Error
     assert_area_green("cli_refusals")
 }
 
+/// Programs refused at check time for a change through a place that does not permit it: a binding declared without
+/// `mut`, a parameter not marked `mut`, or the items of such a place that a `for` loop changes.
+#[test]
+fn behavior_cli_refusals_mutation_fixtures_hold() -> Result<(), Box<dyn std::error::Error>> {
+    assert_area_green("cli_refusals_mutation")
+}
+
 /// Literals, collections, assignments, patterns, numerics, mut parameters, and the task handles, channel senders and
 /// locks a loop passes on.
 #[test]

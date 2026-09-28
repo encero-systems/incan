@@ -238,7 +238,7 @@ Panics at runtime with `IndexError: index 99 out of range for list of length 3`.
 
 ```incan
 def main() -> None:
-    xs: list[int] = []
+    mut xs: list[int] = []
     _ = xs.pop()
 
 ```

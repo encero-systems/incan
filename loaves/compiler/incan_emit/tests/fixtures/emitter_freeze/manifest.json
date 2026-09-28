@@ -64,8 +64,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/indexing.rs",
-      "sha256": "8f262f2dce1f92d8c52df107e9eb9d76796bf129c79102db63bf8e40dd88358d",
-      "lines": 523
+      "sha256": "3cf6aedb79b0d4b3680d3ed954acac805038f7e704653f057367db4304df989f",
+      "lines": 504
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/interop_coercions.rs",
@@ -74,8 +74,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/lvalue.rs",
-      "sha256": "227a23e0b618e7a62060dfdf821ed0a82eda31bb456e41e3c72cecb6d40f150a",
-      "lines": 197
+      "sha256": "66dc64ad998fd45782bfec390ac20a35c671701ccad24e185843a044d5389f26",
+      "lines": 209
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
@@ -535,6 +535,25 @@
       "behavior_evidence": "unit test change_through_a_pattern_binding_of_a_mut_local_reaches_it_issue1561 in loaves/compiler/incan_emit/src/tests/mut_parameter_changes.rs, which fails without the change (the in-place scrutinee rows[0] is read out through list_get and the change is lost); behavior fixture cli_values_and_calls/mut_local_changed_through_a_pattern_binding.incn",
       "semantic_owner": "#1561: the checker fact TypeCheckInfo::match_scrutinee_is_changed_in_place, which lowering (incan_ir lower/expr/in_place_matches.rs) turns into a UnaryOp::RefMut scrutinee; the emitter only borrows that operand as a place",
       "retirement_condition": "the Rust-source backend is deleted (#654); the replacement route matches the recorded place in place from the checked fact"
+    },
+    {
+      "kind": "change",
+      "pr": null,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/indexing.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/lvalue.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "1561",
+      "behavior_evidence": "unit tests dict_value_changes_in_place_through_a_mut_dict_issue1561 and dict_value_of_a_model_changes_in_place_issue1561 in loaves/compiler/incan_emit/src/tests/dict_value_places.rs, which build and run the program and fail without the change (E0596/E0594 on HashMap indexing, E0308 on the key, E0277 on a str literal key through a mut dict parameter); behavior fixture ownership_values_and_fields/dict_values_changed_in_place.incn",
+      "semantic_owner": "#1561: the checked place facts (a dict value named by d[key] is a writable place of a mut dict) and the ownership planner's key probe ownership::plan_dict_lookup_key; the emitter only spells the lookup through incan_std_core::collections::dict_get_mut",
+      "retirement_condition": "the Rust-source backend is deleted (#654); the replacement route writes the dict entry in place from the same checked place facts"
     }
   ]
 }

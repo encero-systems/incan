@@ -234,6 +234,25 @@ fn borrow_receiver_root_mutably(receiver: &mut TypedExpr) {
     }
 }
 
+/// Return whether a method receiver place reaches its value through a list element or a dict value (`rows[0]`,
+/// `table["k"]`, `rows[0].inner`), which a read of the receiver copies out of its collection.
+///
+/// A `mut self` call on such a receiver borrows it mutably as a place instead, so the change lands in the collection
+/// (#1561).
+fn receiver_reaches_a_collection_element(receiver: &TypedExpr) -> bool {
+    match &receiver.kind {
+        IrExprKind::Index { object, .. } => {
+            let collection = match &object.ty {
+                IrType::Ref(inner) | IrType::RefMut(inner) => inner.as_ref(),
+                other => other,
+            };
+            matches!(collection, IrType::List(_) | IrType::Dict(_, _)) || receiver_reaches_a_collection_element(object)
+        }
+        IrExprKind::Field { object, .. } => receiver_reaches_a_collection_element(object),
+        _ => false,
+    }
+}
+
 impl AstLowering {
     /// Select the physical method target while retaining any checked trait evidence needed after lowering.
     pub fn project_resolved_method_target(
@@ -2387,6 +2406,9 @@ impl AstLowering {
                             .is_some_and(|info| info.method_call_takes_mutable_receiver(expr_span))
                     {
                         borrow_receiver_root_mutably(&mut receiver);
+                        if receiver_reaches_a_collection_element(&receiver) {
+                            receiver = Self::in_place_scrutinee(receiver);
+                        }
                     }
                     (
                         IrExprKind::MethodCall {

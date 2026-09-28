@@ -17,7 +17,7 @@ class Counter:
         self.value += 1
 
 def main() -> None:
-    c = Counter(value=0)  # (4)
+    mut c = Counter(value=0)  # (4)
     c.increment()
     println(c.get()) # (5)
     println(c.value) # (6)
@@ -314,4 +314,5 @@ See: [Reflection (Reference)](../../reference/reflection.md)
 
 - **Using a class for schema mapping**: if you need wire keys/aliases, use a model (and embed it in a class if needed).
 - **Forgetting `mut self`**: if a method assigns to `self.field`, it must take `mut self`.
+- **Forgetting `mut` on the binding**: a `mut self` method is called through a binding declared `mut`, such as `mut c = Counter(value=0)`; through `c = Counter(value=0)` the call is refused.
 - **Using inheritance for data reuse**: prefer composition for data shapes; use `extends` for behavior reuse and overrides.

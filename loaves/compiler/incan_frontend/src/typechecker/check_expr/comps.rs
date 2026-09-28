@@ -88,17 +88,21 @@ impl TypeChecker {
     pub(in crate::typechecker::check_expr) fn check_list_comp(&mut self, comp: &ListComp, _span: Span) -> ResolvedType {
         let iter_ty = self.check_expr(&comp.iter);
         let elem_ty = self.infer_iterator_element_type_from_expr(&comp.iter, &iter_ty);
+        // The iterated place is resolved before the clause's bindings shadow it.
+        let item_views = self.read_only_comprehension_item_views(&comp.iter, &comp.pattern.node);
 
         self.symbols.enter_scope(ScopeKind::Block);
         // See `check_generator_expr` for why the element type is recorded at the pattern's span.
         self.record_expr_type(comp.pattern.span, elem_ty.clone());
         self.define_for_pattern_bindings(&comp.pattern, &elem_ty);
+        let previous_views = self.enter_item_views(item_views);
 
         if let Some(filter) = &comp.filter {
             self.check_expr(filter);
         }
 
         let result_elem_ty = self.check_expr(&comp.expr);
+        self.exit_pattern_views(previous_views);
         self.symbols.exit_scope();
 
         list_ty(result_elem_ty)

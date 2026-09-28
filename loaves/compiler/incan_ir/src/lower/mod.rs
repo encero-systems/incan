@@ -4716,6 +4716,7 @@ mod tests {
     mod list_count_forms;
     mod method_decorator_receivers;
     mod method_partial_forwarding;
+    mod mut_self_receiver_places;
     mod newtype_automatic_derives;
     mod pattern_alternatives_and_private_rests;
     mod power_base_type;

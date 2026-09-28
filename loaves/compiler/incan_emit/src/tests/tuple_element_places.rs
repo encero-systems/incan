@@ -24,16 +24,16 @@ fn tuple_element_method_changes_the_tuple_in_place_issue1561() -> TestResult {
     let output = program_output(
         r#"
 def main() -> None:
-    pair: tuple[list[int], int] = ([], 0)
+    mut pair: tuple[list[int], int] = ([], 0)
     pair[0].append(1)
     pair[0].append(2)
-    outer: tuple[int, tuple[list[int], int]] = (0, ([], 0))
+    mut outer: tuple[int, tuple[list[int], int]] = (0, ([], 0))
     outer[1][0].append(3)
     mut rows: list[tuple[list[int], int]] = [([], 0)]
     rows[0][0].append(4)
     for row in rows:
         row[0].append(5)
-    tail: tuple[int, list[int]] = (0, [])
+    mut tail: tuple[int, list[int]] = (0, [])
     tail[-1].append(6)
     println(len(pair[0]))
     println(outer[1][0][0])
@@ -84,10 +84,10 @@ class Counter:
 
 
 def main() -> None:
-    pair: tuple[list[int], int] = ([0], 0)
+    mut pair: tuple[list[int], int] = ([0], 0)
     pair[0][0] = 5
     pair[0][0] += 1
-    counted: tuple[Counter, int] = (Counter(count=1), 0)
+    mut counted: tuple[Counter, int] = (Counter(count=1), 0)
     counted[0].count = 10
     counted[0].bump()
     mut spare = 0

@@ -209,7 +209,7 @@ def build_workspace() -> Result[Path, IoError]:
     return workspace.persist()
 
 def collect_large_payload(chunks: list[bytes]) -> Result[Path, IoError]:
-    spool = SpooledTemporaryFile(max_size=1024 * 1024)
+    mut spool = SpooledTemporaryFile(max_size=1024 * 1024)
     for chunk in chunks:
         spool.write(chunk)?
     return spool.persist()

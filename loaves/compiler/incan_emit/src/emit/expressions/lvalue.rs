@@ -13,6 +13,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use super::super::{EmitError, IrEmitter};
+use crate::ownership::plan_dict_lookup_key;
 use incan_ir::expr::{IrExprKind, TypedExpr, positional_field_index};
 use incan_ir::stmt::AssignTarget;
 use incan_ir::types::IrType;
@@ -90,6 +91,17 @@ impl<'a> IrEmitter<'a> {
                 // Lists: Python-style negative indices + canonical IndexError via stdlib helper.
                 if matches!(obj_ty, IrType::List(_)) {
                     return self.emit_list_get_mut_lvalue(object, index, &o);
+                }
+                // A dict value is a place too; `HashMap` has no `IndexMut`, so it is reached through the helper
+                // (#1561).
+                if matches!(obj_ty, IrType::Dict(_, _)) {
+                    let key = plan_dict_lookup_key(&object.ty, &index.ty).apply(self.emit_expr(index)?);
+                    let dict_mut = if matches!(&object.ty, IrType::RefMut(_)) {
+                        quote! { #o }
+                    } else {
+                        quote! { &mut #o }
+                    };
+                    return Ok(quote! { *incan_std_core::collections::dict_get_mut(#dict_mut, #key) });
                 }
 
                 // Fallback for non-list targets: emit direct Rust indexing.

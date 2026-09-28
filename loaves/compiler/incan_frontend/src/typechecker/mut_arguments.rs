@@ -37,8 +37,10 @@ use crate::diagnostics::errors::{
     self, MutArgumentPlace, MutParameterChange, MutParameterCopy, MutParameterLabel, ReadOnlyScrutinee,
 };
 use crate::symbols::{CallableParam, ResolvedType, SymbolKind, TypeInfo};
+use incan_lang::lang::builtins::{self, BuiltinFnId};
 use incan_lang::lang::keywords::{self, KeywordId};
 use incan_lang::lang::surface::constructors;
+use incan_lang::lang::surface::dict_methods::{self, DictMethodId};
 use incan_lang::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::{CanonicalSymbolId, SemanticSourceTargetKind};
 
@@ -430,13 +432,16 @@ impl TypeChecker {
     /// Enter the body of `for <pattern> in ...`, whose bindings are already defined; returns the state to restore with
     /// [`Self::exit_for_loop_body`].
     ///
-    /// Every variable the pattern binds is a loop variable. When `source` names the caller-visible parameter the loop
-    /// iterates in place ([`Self::loop_view_param`]), each variable is a view into its elements, so a change through
-    /// it is a change to the parameter.
+    /// Every variable the pattern binds is a loop variable. When `source` describes the place the loop iterates in
+    /// place ([`Self::loop_view_param`]), each variable is a view into its elements, so a change through it is a change
+    /// to that place, and to the caller-visible parameter it belongs to, if any. Otherwise each of `derived`, from
+    /// [`Self::read_only_derived_loop_views`], makes the variable it names a view into the read-only place a derived
+    /// iterable reads in place.
     pub(in crate::typechecker) fn enter_for_loop_body(
         &mut self,
         pattern: &Pattern,
         source: Option<ViewSource>,
+        derived: Vec<(String, ViewSource)>,
     ) -> (usize, usize) {
         let mut names = Vec::new();
         collect_pattern_bindings(pattern, &mut names);
@@ -462,8 +467,193 @@ impl TypeChecker {
                 span,
                 source: source.clone(),
             }));
+        } else {
+            for (name, source) in derived {
+                if let Some((_, span)) = bindings.iter().find(|(bound, _)| *bound == name) {
+                    body.views.push(ParamView {
+                        name,
+                        span: *span,
+                        source,
+                    });
+                }
+            }
         }
         (previous_views, previous_variables)
+    }
+
+    /// Return a view, for each variable of `for <pattern> in iter` that a derived iterable reads in place, into the
+    /// place its item belongs to, when that place does not permit a change; resolved before the loop's own bindings are
+    /// defined (#1561).
+    ///
+    /// A loop whose body changes its items reads them in place out of the item of `enumerate(place)`, each operand of
+    /// `zip(left, right)`, the values of `place.values()` on a dict, and a list reached through an element such as
+    /// `groups[0]`, `pair[0]` or `boxes[0].rows`, as a loop over a place itself does ([`Self::loop_view_param`]). A
+    /// change through the variable then changes the place, so one through a place declared without `mut` is refused
+    /// like a change through a pattern binding of it. A writable place adds no view: a caller-visible parameter
+    /// iterated through a derived iterable is not counted as changed.
+    pub(in crate::typechecker) fn read_only_derived_loop_views(
+        &self,
+        iter: &Spanned<Expr>,
+        pattern: &Pattern,
+    ) -> Vec<(String, ViewSource)> {
+        let mut node = iter;
+        while let Expr::Paren(inner) = &node.node {
+            node = inner;
+        }
+        // Each in-place source with the part of the pattern that binds its items (`None` for the whole pattern).
+        let mut sources: Vec<(Option<usize>, &Spanned<Expr>)> = Vec::new();
+        match &node.node {
+            Expr::Call(callee, _, args) => {
+                let Expr::Ident(name) = &callee.node else {
+                    return Vec::new();
+                };
+                if self.has_non_builtin_call_root_binding(name) {
+                    return Vec::new();
+                }
+                let operands = args
+                    .iter()
+                    .filter_map(|arg| match arg {
+                        CallArg::Positional(value) => Some(value),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                match builtins::from_str(name) {
+                    Some(BuiltinFnId::Enumerate) => sources.extend(operands.first().map(|operand| (Some(1), *operand))),
+                    Some(BuiltinFnId::Zip) => {
+                        sources.extend(
+                            operands
+                                .iter()
+                                .take(2)
+                                .enumerate()
+                                .map(|(part, operand)| (Some(part), *operand)),
+                        );
+                    }
+                    _ => {}
+                }
+                sources.retain(|(_, operand)| {
+                    self.type_info
+                        .expr_type(operand.span)
+                        .is_some_and(list_of_changeable_elements)
+                });
+            }
+            Expr::MethodCall(receiver, method, _, args)
+                if args.is_empty()
+                    && dict_methods::from_str(method) == Some(DictMethodId::Values)
+                    && self
+                        .type_info
+                        .expr_type(receiver.span)
+                        .is_some_and(dict_of_changeable_values) =>
+            {
+                sources.push((None, receiver));
+            }
+            // A place reached through an element (`groups[0]`, `boxes[0].rows`); one reached through fields alone is
+            // the place `loop_view_param` already reads.
+            Expr::Index(_, _) | Expr::Field(_, _)
+                if self
+                    .type_info
+                    .expr_type(node.span)
+                    .is_some_and(list_of_changeable_elements) =>
+            {
+                sources.push((None, node));
+            }
+            _ => {}
+        }
+        let mut views = Vec::new();
+        for (part, place) in sources {
+            let Some(source) = self.in_place_source(place) else {
+                continue;
+            };
+            if !matches!(source.access, ViewAccess::ReadOnly(_)) {
+                continue;
+            }
+            let bound = match (part, pattern) {
+                (Some(part), Pattern::Tuple(items)) => items.get(part).map(|item| &item.node),
+                _ => Some(pattern),
+            };
+            let mut names = Vec::new();
+            if let Some(bound) = bound {
+                collect_pattern_bindings(bound, &mut names);
+            }
+            for name in names {
+                if !views.iter().any(|(viewed, _): &(String, ViewSource)| *viewed == name) {
+                    views.push((name, source.clone()));
+                }
+            }
+        }
+        views
+    }
+
+    /// Return a view for the name a list comprehension's `for` clause binds when the comprehension reads its items in
+    /// place from a place that does not permit a change (#1561).
+    ///
+    /// A list comprehension whose element or filter changes the item a plain name binds reads the items of a list place
+    /// in place, as a `for` loop does, so a change through the name to a place declared without `mut` is refused like
+    /// one through a loop variable. A destructuring pattern, and an iterable that is no place, bind items of their own.
+    pub(in crate::typechecker) fn read_only_comprehension_item_views(
+        &self,
+        iter: &Spanned<Expr>,
+        pattern: &Pattern,
+    ) -> Vec<(String, ViewSource)> {
+        let Pattern::Binding(name) = pattern else {
+            return Vec::new();
+        };
+        if !self
+            .type_info
+            .expr_type(iter.span)
+            .is_some_and(list_of_changeable_elements)
+        {
+            return Vec::new();
+        }
+        self.in_place_source(iter)
+            .filter(|source| matches!(source.access, ViewAccess::ReadOnly(_)))
+            .map(|source| vec![(name.clone(), source)])
+            .unwrap_or_default()
+    }
+
+    /// Make each named binding, already defined, a view described by its source until [`Self::exit_pattern_views`]
+    /// restores the returned state.
+    pub(in crate::typechecker) fn enter_item_views(&mut self, views: Vec<(String, ViewSource)>) -> usize {
+        let bound = views
+            .into_iter()
+            .filter_map(|(name, source)| {
+                let span = self.lookup_symbol(&name)?.span;
+                Some(ParamView { name, span, source })
+            })
+            .collect::<Vec<_>>();
+        let Some(body) = &mut self.mut_params.current else {
+            return 0;
+        };
+        let previous = body.views.len();
+        body.views.extend(bound);
+        previous
+    }
+
+    /// Return what a change reaches through the place `place` names when a loop reads it in place: the source of its
+    /// root binding, followed through parentheses, fields, and the elements of a list, a dict or a tuple. A place
+    /// reached any other way, such as through a call, is no place.
+    fn in_place_source(&self, place: &Spanned<Expr>) -> Option<ViewSource> {
+        let mut node = place;
+        loop {
+            match &node.node {
+                Expr::Paren(inner) | Expr::Field(inner, _) => node = inner,
+                Expr::Index(inner, _) => {
+                    let element_place = self.type_info.expr_type(inner.span).is_some_and(|ty| match ty {
+                        ResolvedType::Generic(name, _) => matches!(
+                            collection_type_id(name),
+                            Some(CollectionTypeId::List | CollectionTypeId::Dict | CollectionTypeId::Tuple)
+                        ),
+                        ResolvedType::Tuple(_) => true,
+                        _ => false,
+                    });
+                    if !element_place {
+                        return None;
+                    }
+                    node = inner;
+                }
+                _ => break,
+            }
+        }
+        self.view_root_source(&node.node)
     }
 
     /// Leave a loop body entered with [`Self::enter_for_loop_body`].
@@ -601,8 +791,10 @@ impl TypeChecker {
     /// Record a change at `span` through the binding `binding`, which reaches the place `source` describes.
     ///
     /// A change through a name a pattern bound from a writable place records each scrutinee it goes through as matched
-    /// in place; a `certain` one from a read-only place is refused. A change to a caller-visible parameter is recorded
-    /// as the parameter's, and when made inside a closure it is a closure holding the parameter, which is refused.
+    /// in place. A `certain` change through a name a pattern or a `for` loop bound from a read-only place is refused:
+    /// the loop would otherwise borrow a place declared without `mut` mutably, and the pattern would change a copy. A
+    /// change to a caller-visible parameter is recorded as the parameter's, and when made inside a closure it is a
+    /// closure holding the parameter, which is refused.
     fn note_param_change(&mut self, source: ViewSource, binding: &str, span: Span, certain: bool) {
         let ViewSource {
             param,
@@ -615,7 +807,7 @@ impl TypeChecker {
                     self.type_info.record_match_scrutinee_changed_in_place(scrutinee);
                 }
             }
-            ViewAccess::ReadOnly(place) if certain && !scrutinees.is_empty() => {
+            ViewAccess::ReadOnly(place) if certain => {
                 let place = match &place {
                     ReadOnlyPlace::Binding(name) => ReadOnlyScrutinee::Binding(name),
                     ReadOnlyPlace::Parameter(name) => ReadOnlyScrutinee::Parameter(name),
@@ -1421,6 +1613,21 @@ fn list_of_changeable_elements(ty: &ResolvedType) -> bool {
                 && args.first().is_some_and(|element| {
                     !matches!(element, ResolvedType::Int | ResolvedType::Float | ResolvedType::Bool)
                 })
+        }
+        _ => false,
+    }
+}
+
+/// Return whether `ty` is a dict whose values can be changed in place, which a loop over its `values()` reaches: any
+/// value type other than `int`, `float` or `bool`.
+fn dict_of_changeable_values(ty: &ResolvedType) -> bool {
+    match ty {
+        ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => dict_of_changeable_values(inner),
+        ResolvedType::Generic(name, args) => {
+            collection_type_id(name) == Some(CollectionTypeId::Dict)
+                && args
+                    .get(1)
+                    .is_some_and(|value| !matches!(value, ResolvedType::Int | ResolvedType::Float | ResolvedType::Bool))
         }
         _ => false,
     }

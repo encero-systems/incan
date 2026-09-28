@@ -219,7 +219,7 @@ class CounterImpl with Counter:
   count: int
 
 def main() -> None:
-  c = CounterImpl(count=1)
+  mut c = CounterImpl(count=1)
   c.bump()
 "#;
     assert_check_ok(source);

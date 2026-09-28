@@ -361,6 +361,25 @@ where
     }
 }
 
+/// Get a mutable dict value by key, the place `d[key]` names when a method call, an assignment or a loop changes the
+/// stored value in place.
+///
+/// The probe borrows the way [`dict_get`]'s does.
+///
+/// ## Panics
+/// - `KeyError: '{key}' not found in dict` if missing.
+#[inline]
+pub fn dict_get_mut<'a, K, Q, V>(map: &'a mut HashMap<K, V>, key: &Q) -> &'a mut V
+where
+    K: Borrow<Q> + Eq + Hash,
+    Q: Eq + Hash + Display + ?Sized,
+{
+    match map.get_mut(key) {
+        Some(v) => v,
+        None => raise(key_not_found_in_dict(key)),
+    }
+}
+
 /// Get a frozen dict value by key (Python-style `d[key]` on a `const` `FrozenDict`).
 ///
 /// The probe borrows the way [`dict_get`]'s does, so string-keyed frozen dicts accept literal and runtime `str`
@@ -569,6 +588,22 @@ mod tests {
         let mut m: HashMap<String, i64> = HashMap::new();
         m.insert("a".to_string(), 1);
         let _ = dict_get(&m, "b");
+    }
+
+    #[test]
+    fn dict_get_mut_changes_the_stored_value_in_place() {
+        let mut m: HashMap<String, Vec<i64>> = HashMap::new();
+        m.insert("a".to_string(), vec![1]);
+        dict_get_mut(&mut m, "a").push(2);
+        assert_eq!(m.get("a"), Some(&vec![1, 2]));
+    }
+
+    #[test]
+    #[should_panic(expected = "KeyError: 'b' not found in dict")]
+    fn dict_get_mut_missing_panics_with_key_error() {
+        let mut m: HashMap<String, i64> = HashMap::new();
+        m.insert("a".to_string(), 1);
+        let _ = dict_get_mut(&mut m, "b");
     }
 
     #[test]

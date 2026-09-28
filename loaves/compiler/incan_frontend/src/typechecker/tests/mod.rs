@@ -93,6 +93,7 @@ mod pub_imports_namespaces_and_fields;
 mod pub_imports_partial_defaults;
 mod pub_imports_symbols_and_identity;
 mod pub_imports_trait_adoptions;
+mod read_only_binding_changes;
 mod rust_constructors_and_fields;
 mod rust_generics_and_traits;
 mod rust_imports_and_types;

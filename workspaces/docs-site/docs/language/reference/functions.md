@@ -62,6 +62,7 @@ A closure reads each outer local it names as the value that local holds when the
 | Copied scalars      | On an `int`, `float` or `bool` parameter of a function type, also through a type alias, the marker is refused with `INCAN-T0001`. |
 | Type identity       | The marker is part of the function type. Two function types match only when they mark the same parameters; a mismatch in either direction is refused with `INCAN-T0001`. |
 | `def` parameters    | A `def` parameter declared `mut` is marked, except a parameter of type `int`, `float` or `bool`, a parameter of a Rust type, and `*args` or `**kwargs`. |
+| Parameters without `mut` | The body does not change a parameter declared without `mut`: a field or element write through it, a call of a method that changes it, and a change through the variable of a `for` loop over it are refused with `INCAN-T0001` (see [Assignments](assignments.md#rules)). |
 | Rebinding           | The body does not assign a new value to a marked parameter: `items = []` and `label += "!"` are refused with `INCAN-T0001`. |
 | Holding             | The body does not hold a marked parameter in another name or value. Each form in the table below is refused with `INCAN-T0001`. Passing the parameter as an argument to any other call is accepted, `rows.append(items)` included. |
 | Changing calls      | A call changes a marked parameter in the cases that [Changing calls](#changing-calls) lists. |

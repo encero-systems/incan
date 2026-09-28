@@ -897,8 +897,8 @@ def changes(mut box: Option[Option[list[int]]], mut h: Holder, mut other: Option
 
 /// #1561: a change through a name a pattern binds from a place that does not permit it is refused (`INCAN-T0001`),
 /// naming the place: a binding or parameter declared without `mut`, a static, `self` in a plain `self` method, a dict
-/// value, and the variable of a loop over an immutable list. A pattern that only reads, a direct change to an immutable
-/// local, a subject that is no place, and a method the checker cannot classify are not refused.
+/// value, and the variable of a loop over an immutable list. A pattern that only reads, a subject that is no place, and
+/// a method the checker cannot classify are not refused.
 #[test]
 fn change_through_a_pattern_binding_of_a_read_only_place_is_refused_issue1561() -> Result<(), String> {
     let refused = r#"
@@ -951,7 +951,7 @@ def main() -> None:
             "Cannot change 'xs' - it is bound from 'self', which this method takes as plain 'self'",
             "Cannot change 'xs' - it is bound from the parameter 'box', which is not declared 'mut'",
             "Cannot change 'xs' - it is bound from 'fixed', which is immutable",
-            "Cannot change 'xs' - it is bound from the static 'BOX', which a pattern cannot change in place",
+            "Cannot change 'xs' - it is bound from the static 'BOX', which is changed only through its own name",
             "Cannot change 'xs' - it is bound from a dict value, which a pattern binds as a copy",
             "Cannot change 'xs' - it is bound from 'rows', which is immutable",
         ]
@@ -974,7 +974,7 @@ def main() -> None:
     match fixed:
         Some(xs) => println(len(xs))
         None => pass
-    items = [1]
+    mut items = [1]
     items.append(2)
     match fresh():
         Some(xs) => xs.append(3)

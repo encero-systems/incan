@@ -12,7 +12,7 @@ fn negative_constant_tuple_index_counts_from_the_end_issue1561() -> Result<(), S
         "def last(pair: tuple[int, str]) -> str:\n    return pair[-1]\n",
         "def last(pair: tuple[int, str]) -> str:\n    return pair[(-1)]\n",
         "def first() -> int:\n    pair = (1, \"one\")\n    return pair[-2]\n",
-        "def main() -> None:\n    pair: tuple[int, list[int]] = (0, [])\n    pair[-1].append(1)\n",
+        "def main() -> None:\n    mut pair: tuple[int, list[int]] = (0, [])\n    pair[-1].append(1)\n",
     ] {
         check_str(source).map_err(|errors| format!("{source}: {errors:?}"))?;
     }

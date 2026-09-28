@@ -116,7 +116,7 @@ pub const EXCEPTIONS: &[ExceptionInfo] = &[
             },
             Example {
                 code: r#"def main() -> None:
-    xs: list[int] = []
+    mut xs: list[int] = []
     _ = xs.pop()
 "#,
                 note: Some("Panics at runtime with `IndexError: pop from empty list`."),

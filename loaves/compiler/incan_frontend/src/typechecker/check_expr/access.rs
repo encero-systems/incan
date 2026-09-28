@@ -5101,8 +5101,8 @@ impl TypeChecker {
     /// the build would refuse it; reporting it here names the receiver to declare instead. The receiver chain is
     /// followed the way assignments are (`Self::self_rooted_place`), and the method is judged by its declarations
     /// ([`Self::method_receiver_change`]): only a call every candidate of which changes the receiver is refused. A
-    /// method the checker cannot classify is left alone, as is a receiver that is not rooted at `self`; a local
-    /// collection's mutability is the emitter's inference to make, not a source contract.
+    /// method the checker cannot classify is left alone, as is a receiver that is not rooted at `self`, which
+    /// [`Self::refuse_mutating_call_through_read_only_binding`] judges instead.
     fn reject_mutating_call_through_immutable_self(
         &mut self,
         base: &Spanned<Expr>,
@@ -5118,6 +5118,28 @@ impl TypeChecker {
         };
         if self.method_receiver_change(base_ty, method, span) == ReceiverChange::Changes {
             self.reject_write_through_immutable_self(&place, SelfMutation::MutatingCall { callee: method }, span);
+        }
+    }
+
+    /// Refuse a call that changes a place rooted at a local declared without `mut` or a parameter not marked `mut`
+    /// (#1561).
+    ///
+    /// A binding is immutable unless declared `mut`, and so is what it holds, so a call that changes its receiver goes
+    /// through the same refusal as a field or element write ([`Self::refuse_write_through_read_only_binding`]). The
+    /// method is judged by its declarations ([`Self::method_receiver_change`]): only a call every candidate of which
+    /// changes the receiver is refused, so a method the checker cannot classify is left alone. A generator's methods
+    /// advance it but take it by value, which a binding declared without `mut` hands over, so they are left alone too.
+    fn refuse_mutating_call_through_read_only_binding(
+        &mut self,
+        base: &Spanned<Expr>,
+        base_ty: &ResolvedType,
+        method: &str,
+        span: Span,
+    ) {
+        let generator = matches!(base_ty, ResolvedType::Generic(name, _)
+            if collection_type_id(name.as_str()) == Some(CollectionTypeId::Generator));
+        if !generator && self.method_receiver_change(base_ty, method, span) == ReceiverChange::Changes {
+            self.refuse_write_through_read_only_binding(base, span);
         }
     }
 
@@ -5497,6 +5519,7 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
         self.reject_mutating_call_through_immutable_self(base, &base_ty, method, span);
+        self.refuse_mutating_call_through_read_only_binding(base, &base_ty, method, span);
         self.note_mut_param_method_call(base, &base_ty, method);
         self.record_mutable_receiver_method_call(&base_ty, method, span);
         if let Some(identity) = Self::compiler_builtin_method_identity(&base_ty, method) {

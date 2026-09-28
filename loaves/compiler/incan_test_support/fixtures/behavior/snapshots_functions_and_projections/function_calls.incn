@@ -58,7 +58,7 @@ def test_function_calls() -> None:
     println(result)
 
     # List methods
-    numbers: List[int] = [1, 2, 3]
+    mut numbers: List[int] = [1, 2, 3]
     numbers.append(4)
     popped: int = numbers.pop()
     println(f"{popped} {len(numbers)}")
