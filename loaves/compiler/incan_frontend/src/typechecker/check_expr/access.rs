@@ -4909,10 +4909,7 @@ impl TypeChecker {
         };
 
         if let ResolvedType::Generic(name, args) = &base_ty
-            && matches!(
-                surface_types::from_str(name.as_str()),
-                Some(SurfaceTypeId::Json | SurfaceTypeId::Query)
-            )
+            && surface_types::from_str(name.as_str()).is_some_and(surface_types::field_access_reads_wrapped_value)
             && args.len() == 1
         {
             if field == "value" {
@@ -5138,6 +5135,28 @@ impl TypeChecker {
                 .and_then(|info| info.methods.get(method))
                 .is_some_and(|info| info.receiver == Some(Receiver::Mutable)),
             _ => false,
+        }
+    }
+
+    /// Record the call at `span` when the receiver's source type declares `method` only with `mut self`.
+    ///
+    /// Only the type's own declarations answer, after resolving a method alias; a method a trait provides reaches
+    /// lowering through its trait dispatch fact, which carries the receiver itself. Builtin receivers and unknown
+    /// methods are not recorded.
+    fn record_mutable_receiver_method_call(&mut self, base_ty: &ResolvedType, method: &str, span: Span) {
+        let type_name = match base_ty {
+            ResolvedType::Named(name) => name,
+            ResolvedType::Generic(name, _) if collection_type_id(name.as_str()).is_none() => name,
+            _ => return,
+        };
+        let Some((declared, _)) = self.declared_method_receivers_and_adoptions(type_name, method) else {
+            return;
+        };
+        if !declared.is_empty() && declared.iter().all(|receiver| *receiver == Some(Receiver::Mutable)) {
+            self.type_info
+                .calls
+                .mutable_receiver_method_calls
+                .insert((span.start, span.end));
         }
     }
 
@@ -5571,6 +5590,7 @@ impl TypeChecker {
         }
         self.reject_mutating_call_through_immutable_self(base, &base_ty, method, span);
         self.note_mut_param_method_call(base, &base_ty, method);
+        self.record_mutable_receiver_method_call(&base_ty, method, span);
         if let Some(identity) = Self::compiler_builtin_method_identity(&base_ty, method) {
             self.type_info.record_resolved_identity(span, identity);
         }

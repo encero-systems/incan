@@ -471,6 +471,7 @@ fn planner_wraps_a_static_str_at_frozen_str_destinations_issue1794() {
         IrExprKind::StaticRead {
             name: "NAME".to_string(),
             reference_kind: IrStaticReferenceKind::Source,
+            owner_module_path: None,
         },
         IrType::StaticStr,
     );

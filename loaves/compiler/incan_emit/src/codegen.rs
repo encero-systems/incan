@@ -50,17 +50,13 @@ use oven_model::compiler_suite_env::OVEN_LOAF_ENV;
 
 use crate::emit::CallableNameResolution;
 use crate::{EmitError, EmitService, IrEmitter};
-use incan_ir::decl::{
-    FunctionParamDefault, IrImportItem, IrImportOrigin, IrImportQualifier, IrStaticProvenance, IrTraitBoundOrigin,
-    IrTypeParam, Visibility,
-};
+use incan_ir::decl::{FunctionParamDefault, IrTraitBoundOrigin, IrTypeParam, Visibility};
 use incan_ir::scanners::{
     check_for_this_import as scan_check_for_this_import, collect_rust_crates as scan_collect_rust_crates,
     detect_serde_usage,
 };
 use incan_ir::types::{IrType, manifest_type_ref_from_ir};
-use incan_ir::{AstLowering, FunctionRegistry, IrDecl, IrDeclKind, IrExpr, IrExprKind, IrProgram, LoweringErrors};
-use incan_semantics_core::CanonicalSymbolId;
+use incan_ir::{AstLowering, FunctionRegistry, IrDeclKind, IrExpr, IrExprKind, IrProgram, LoweringErrors};
 
 mod capability_bridge;
 mod dependency_metadata;
@@ -909,97 +905,52 @@ fn merge_native_union_capture(
 }
 
 impl<'a> IrCodegen<'a> {
-    /// Retain canonical imports for source statics read by defaults that an external call materializes in this module.
+    /// Complete the callable signature of each call this module makes, through a canonical callee path, to a function
+    /// another module of the compilation declares.
     ///
-    /// A dependency's default expression is checked and lowered with its declaration, then copied into the caller's
-    /// callable signature. The caller therefore needs an explicit projection import even though its own source never
-    /// names the static (#1842). Every emitted module is such a caller, the crate root and each source module alike,
-    /// so `dependency_programs` holds every other lowered module of the compilation keyed by its module path, and
-    /// `externally_reachable_items` is the reachability set this module is emitted with.
-    fn add_external_default_static_imports<'p>(
+    /// A call whose lowering carried no signature takes the declaring module's parameters, defaults included, so the
+    /// passes after this one and emission see the callee's declared surface (#1842). Every emitted module is such a
+    /// caller, the crate root and each source module alike, so `dependency_programs` holds every other lowered module
+    /// of the compilation keyed by its module path. A static such a default reads needs no binding in the caller:
+    /// lowering names it through the module that declares it.
+    fn complete_external_call_signatures<'p>(
         program: &mut IrProgram,
         dependency_programs: impl IntoIterator<Item = (&'p [String], &'p IrProgram)>,
-        externally_reachable_items: &mut HashSet<String>,
     ) {
         use incan_ir::{Visitor, walk_expr};
 
-        let mut statics = HashMap::new();
         let mut callables = HashMap::new();
         for (module_path, dependency) in dependency_programs {
             for decl in &dependency.declarations {
-                match &decl.kind {
-                    IrDeclKind::Static {
-                        name,
-                        provenance: IrStaticProvenance::Source(identity),
-                        ..
-                    } => {
-                        statics.insert((module_path.to_vec(), name.clone()), identity.clone());
-                    }
-                    IrDeclKind::Function(function) => {
-                        callables.insert(
-                            (module_path.to_vec(), function.name.clone()),
-                            incan_ir::FunctionSignature {
-                                params: function.params.clone(),
-                                return_type: function.return_type.clone(),
-                            },
-                        );
-                    }
-                    _ => {}
+                if let IrDeclKind::Function(function) = &decl.kind {
+                    callables.insert(
+                        (module_path.to_vec(), function.name.clone()),
+                        incan_ir::FunctionSignature {
+                            params: function.params.clone(),
+                            return_type: function.return_type.clone(),
+                        },
+                    );
                 }
             }
         }
 
-        struct StaticReads(Vec<String>);
-        impl Visitor for StaticReads {
-            fn expr(&mut self, expr: &mut IrExpr) {
-                if let IrExprKind::StaticRead { name, .. } = &expr.kind
-                    && !self.0.contains(name)
-                {
-                    self.0.push(name.clone());
-                }
-                walk_expr(expr, self);
-            }
-        }
-
-        struct ExternalDefaults<'a> {
-            statics: &'a HashMap<(Vec<String>, String), CanonicalSymbolId>,
+        struct ExternalCallSignatures<'a> {
             callables: &'a HashMap<(Vec<String>, String), incan_ir::FunctionSignature>,
-            imports: Vec<(Vec<String>, String, CanonicalSymbolId)>,
         }
-        impl Visitor for ExternalDefaults<'_> {
+        impl Visitor for ExternalCallSignatures<'_> {
             fn expr(&mut self, expr: &mut IrExpr) {
                 if let IrExprKind::Call {
-                    callable_signature: signature,
+                    callable_signature,
                     canonical_path: Some(canonical_path),
                     ..
                 } = &mut expr.kind
+                    && callable_signature.is_none()
                     && let Some((callable_name, module_path)) = canonical_path.split_last()
                 {
-                    let resolved_signature = signature.clone().or_else(|| {
-                        self.callables
-                            .get(&(module_path.to_vec(), callable_name.clone()))
-                            .cloned()
-                    });
-                    if signature.is_none() {
-                        *signature = resolved_signature.clone();
-                    }
-                    let params = resolved_signature.map(|signature| signature.params).unwrap_or_default();
-                    for default in params.into_iter().filter_map(|param| param.default) {
-                        let FunctionParamDefault::Source(mut default) = default else {
-                            continue;
-                        };
-                        let mut reads = StaticReads(Vec::new());
-                        reads.expr(&mut default);
-                        for name in reads.0 {
-                            let key = (module_path.to_vec(), name.clone());
-                            let Some(identity) = self.statics.get(&key) else {
-                                continue;
-                            };
-                            if !self.imports.iter().any(|(_, _, imported)| imported == identity) {
-                                self.imports.push((module_path.to_vec(), name, identity.clone()));
-                            }
-                        }
-                    }
+                    *callable_signature = self
+                        .callables
+                        .get(&(module_path.to_vec(), callable_name.clone()))
+                        .cloned();
                 }
                 walk_expr(expr, self);
             }
@@ -1017,11 +968,7 @@ impl<'a> IrCodegen<'a> {
             }
         }
 
-        let mut visitor = ExternalDefaults {
-            statics: &statics,
-            callables: &callables,
-            imports: Vec::new(),
-        };
+        let mut visitor = ExternalCallSignatures { callables: &callables };
         for stmt in &mut program.module_init {
             visitor.stmt(stmt);
         }
@@ -1046,24 +993,6 @@ impl<'a> IrCodegen<'a> {
                 IrDeclKind::Const { value, .. } | IrDeclKind::Static { value, .. } => visitor.expr(value),
                 _ => {}
             }
-        }
-        for (path, name, identity) in visitor.imports {
-            externally_reachable_items.insert(name.clone());
-            program.declarations.push(IrDecl::new(IrDeclKind::Import {
-                visibility: Visibility::Private,
-                origin: IrImportOrigin::Standard,
-                qualifier: IrImportQualifier::Crate,
-                path,
-                alias: None,
-                items: vec![IrImportItem {
-                    name,
-                    alias: None,
-                    canonical: Some(identity),
-                    is_static: true,
-                    force_reexport: false,
-                    rust_trait_import: None,
-                }],
-            }));
         }
     }
 
@@ -2378,12 +2307,11 @@ impl<'a> IrCodegen<'a> {
             .iter()
             .map(|(_, dep_ir)| dep_ir)
             .collect::<Vec<_>>();
-        Self::add_external_default_static_imports(
+        Self::complete_external_call_signatures(
             &mut ir_program,
             dependency_ir_programs
                 .iter()
                 .map(|(module_path, dep_ir)| (module_path.as_slice(), dep_ir)),
-            &mut self.externally_reachable_items,
         );
         crate::trait_bound_inference::propagate_trait_bounds_from_programs(&mut ir_program, &dependency_programs);
         let root_module_path = self.metadata_root_module_path.clone().unwrap_or_else(|| {
@@ -2599,13 +2527,12 @@ impl<'a> IrCodegen<'a> {
             let dep_module_path = dep_identity_path.unwrap_or_else(|| vec![dep_name.to_string()]);
             dependency_ir_programs.push((dep_module_path, dep_ir));
         }
-        let mut reachable_items = self.externally_reachable_items.clone();
-        Self::add_external_default_static_imports(
+        let reachable_items = self.externally_reachable_items.clone();
+        Self::complete_external_call_signatures(
             &mut ir_program,
             dependency_ir_programs
                 .iter()
                 .map(|(module_path, dep_ir)| (module_path.as_slice(), dep_ir)),
-            &mut reachable_items,
         );
         let dependency_programs = dependency_ir_programs
             .iter()
@@ -2761,18 +2688,14 @@ impl<'a> IrCodegen<'a> {
         );
         for idx in 0..lowered_modules.len() {
             let (left, rest) = lowered_modules.split_at_mut(idx);
-            let Some((current_path, current_ir, tail)) = rest
-                .split_first_mut()
-                .map(|((_name, path, ir), tail)| (path.clone(), ir, tail))
-            else {
+            let Some((current_ir, tail)) = rest.split_first_mut().map(|((_, _, ir), tail)| (ir, tail)) else {
                 continue;
             };
-            Self::add_external_default_static_imports(
+            Self::complete_external_call_signatures(
                 current_ir,
                 left.iter()
                     .chain(tail.iter())
                     .map(|(_, module_path, ir)| (module_path.as_slice(), ir)),
-                dependency_reachable_items.entry(current_path).or_default(),
             );
             let external_programs: Vec<&incan_ir::IrProgram> = left
                 .iter()
@@ -3084,18 +3007,14 @@ impl<'a> IrCodegen<'a> {
         );
         for idx in 0..lowered_modules.len() {
             let (left, rest) = lowered_modules.split_at_mut(idx);
-            let Some((current_path, current_ir, tail)) = rest
-                .split_first_mut()
-                .map(|((path, ir), tail)| (path.clone(), ir, tail))
-            else {
+            let Some((current_ir, tail)) = rest.split_first_mut().map(|((_, ir), tail)| (ir, tail)) else {
                 continue;
             };
-            Self::add_external_default_static_imports(
+            Self::complete_external_call_signatures(
                 current_ir,
                 left.iter()
                     .chain(tail.iter())
                     .map(|(module_path, ir)| (module_path.as_slice(), ir)),
-                dependency_reachable_items.entry(current_path).or_default(),
             );
             let external_programs: Vec<&incan_ir::IrProgram> = left
                 .iter()
@@ -6233,9 +6152,9 @@ def main() -> None:
         Ok(())
     }
 
-    /// Issue #1842: a default evaluated at a caller in another module keeps the static projection and initializer of
-    /// the module that declares the callable. The caller may be the crate root or another source module, whose IR is
-    /// emitted on its own; both projects must build.
+    /// Issue #1842: a default evaluated at a caller in another module reads the static projection, and runs the static
+    /// initializer, of the module that declares the callable. The caller may be the crate root or another source
+    /// module, whose IR is emitted on its own; both projects must build.
     #[test]
     fn cross_module_default_reading_static_keeps_projection_issue1842() -> Result<(), Box<dyn std::error::Error>> {
         let helpers =
@@ -6260,9 +6179,11 @@ def main() -> None:
         let (main_code, modules) =
             codegen.try_generate_multi_file_nested(&main, std::slice::from_ref(&helpers_path))?;
         let projection = static_projection(modules.get(&helpers_path).ok_or("missing generated helpers module")?)?;
+        let compact_main = compact_rust(&main_code);
         assert!(
-            main_code.contains(&projection) && main_code.contains("__incan_init_imported_static_count"),
-            "the caller must bind and initialize the default's static projection:\n{main_code}"
+            compact_main.contains(&format!("crate::helpers::{projection}"))
+                && compact_main.contains("crate::helpers::__incan_init_module_statics()"),
+            "the caller must initialize and read the default's static through its declaring module:\n{main_code}"
         );
         compile_generated_project(&main_code, &modules)?;
 
@@ -6277,11 +6198,159 @@ def main() -> None:
             codegen.try_generate_multi_file_nested(&main, &[helpers_path.clone(), caller_path.clone()])?;
         let projection = static_projection(modules.get(&helpers_path).ok_or("missing generated helpers module")?)?;
         let caller_code = modules.get(&caller_path).ok_or("missing generated caller module")?;
+        let compact_caller = compact_rust(caller_code);
         assert!(
-            caller_code.contains(&projection) && caller_code.contains("__incan_init_imported_static_count"),
-            "a source-module caller must bind and initialize the default's static projection:\n{caller_code}"
+            compact_caller.contains(&format!("crate::helpers::{projection}"))
+                && compact_caller.contains("crate::helpers::__incan_init_module_statics()"),
+            "a source-module caller must initialize and read the default's static through its declaring module:\n{caller_code}"
         );
         compile_generated_project(&main_code, &modules)?;
+        Ok(())
+    }
+
+    /// Generate a crate-root program beside top-level source modules, given as `(name, source)` pairs, and compile the
+    /// generated project with rustc. Returns the crate root's code and each module's code keyed by its path.
+    fn generate_and_compile_project(
+        main_source: &str,
+        module_sources: &[(&str, &str)],
+    ) -> Result<(String, HashMap<Vec<String>, String>), Box<dyn std::error::Error>> {
+        let main = parse_program_result(main_source)?;
+        let modules = module_sources
+            .iter()
+            .map(|(name, source)| Ok(((*name).to_string(), parse_program_result(source)?)))
+            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+        let paths = modules.iter().map(|(name, _)| vec![name.clone()]).collect::<Vec<_>>();
+        let mut codegen = IrCodegen::new();
+        for ((name, program), path) in modules.iter().zip(&paths) {
+            codegen.add_module_with_path_segments(name, program, path.clone());
+        }
+        let (main_code, generated) = codegen.try_generate_multi_file_nested(&main, &paths)?;
+        compile_generated_project(&main_code, &generated)?;
+        Ok((main_code, generated))
+    }
+
+    /// A default reads the static of the module that declares its callable, also at a caller that declares a static of
+    /// the same name: the default's read names the declaring module's static by its path, and the caller's own name
+    /// keeps reading the caller's static. The caller may be the crate root or another source module.
+    #[test]
+    fn default_static_read_beside_a_same_named_caller_static_builds() -> Result<(), Box<dyn std::error::Error>> {
+        let helpers = "pub static COUNT: int = 3\n\npub def take(n: int = COUNT) -> int:\n    return n\n";
+        let (main_code, _) = generate_and_compile_project(
+            "from helpers import take\n\nstatic COUNT: int = 7\n\n\ndef main() -> None:\n    println(take())\n    println(COUNT)\n",
+            &[("helpers", helpers)],
+        )?;
+        assert!(
+            compact_rust(&main_code).contains("crate::helpers::__incan_init_module_statics()"),
+            "the default must initialize and read the declaring module's static through its path:\n{main_code}"
+        );
+        generate_and_compile_project(
+            "from caller import run\n\n\ndef main() -> None:\n    println(run())\n",
+            &[
+                ("helpers", helpers),
+                (
+                    "caller",
+                    "from helpers import take\n\nstatic COUNT: int = 7\n\n\npub def run() -> int:\n    return take() + COUNT\n",
+                ),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// A default that reads a static list whole, through a method call on it or through a builtin reads the declaring
+    /// module's list at a caller that declares a static list of the same name.
+    #[test]
+    fn default_static_list_reads_beside_a_same_named_caller_static_build() -> Result<(), Box<dyn std::error::Error>> {
+        let helpers = r#"pub static ITEMS: list[int] = [1, 2]
+
+
+pub def first(items: list[int] = ITEMS) -> int:
+    return items[0]
+
+
+pub def has(flag: bool = ITEMS.contains(2)) -> bool:
+    return flag
+
+
+pub def size(n: int = len(ITEMS)) -> int:
+    return n
+"#;
+        let (main_code, _) = generate_and_compile_project(
+            r#"from helpers import first, has, size
+
+static ITEMS: list[str] = ["a"]
+
+
+def main() -> None:
+    println(first())
+    println(has())
+    println(size())
+    println(len(ITEMS))
+"#,
+            &[("helpers", helpers)],
+        )?;
+        assert!(
+            compact_rust(&main_code).contains("crate::helpers::__incan_init_module_statics();crate::helpers::"),
+            "each default must read `helpers`' list, not the caller's:\n{main_code}"
+        );
+        Ok(())
+    }
+
+    /// A method default, a method-partial preset and a static method's default that read a static of the declaring
+    /// module build at a caller in another module, also where the caller imports that static itself or declares its
+    /// own static of the same name.
+    #[test]
+    fn default_static_read_in_method_defaults_across_modules_builds() -> Result<(), Box<dyn std::error::Error>> {
+        let helpers = r#"pub static LIMIT: int = 3
+
+pub class Box:
+    pub v: int
+
+    def get(self, n: int = LIMIT) -> int:
+        return n + self.v
+
+    def add(self, n: int) -> int:
+        return n + self.v
+
+    capped = partial add(n=LIMIT)
+
+    @staticmethod
+    def make(v: int = LIMIT) -> Box:
+        return Box(v=v)
+"#;
+        generate_and_compile_project(
+            "from helpers import Box\n\n\ndef main() -> None:\n    b = Box(v=1)\n    println(b.get())\n    println(b.capped())\n    println(Box.make().v)\n",
+            &[("helpers", helpers)],
+        )?;
+        generate_and_compile_project(
+            "from helpers import Box, LIMIT\n\nstatic OTHER: int = 9\n\n\ndef main() -> None:\n    b = Box(v=1)\n    println(b.get() + LIMIT + OTHER)\n",
+            &[("helpers", helpers)],
+        )?;
+        generate_and_compile_project(
+            "from helpers import Box\n\nstatic LIMIT: int = 5\n\n\ndef main() -> None:\n    println(Box(v=1).get() + LIMIT)\n",
+            &[("helpers", helpers)],
+        )?;
+        Ok(())
+    }
+
+    /// A default that reads a static its module imports, or that calls a function whose own default reads a static,
+    /// reads the module that declares the static at a caller that neither imports that static nor its module, even
+    /// where the caller declares a static of the same name.
+    #[test]
+    fn default_static_read_through_imports_and_nested_defaults_builds() -> Result<(), Box<dyn std::error::Error>> {
+        let (main_code, _) = generate_and_compile_project(
+            "from helpers import take, wrap\n\nstatic LIMIT: int = 5\n\n\ndef main() -> None:\n    println(take() + wrap() + LIMIT)\n",
+            &[
+                ("config", "pub static LIMIT: int = 4\n"),
+                (
+                    "helpers",
+                    "from config import LIMIT\n\n\ndef inner(k: int = LIMIT) -> int:\n    return k\n\n\npub def take(n: int = LIMIT) -> int:\n    return n\n\n\npub def wrap(n: int = inner()) -> int:\n    return n\n",
+                ),
+            ],
+        )?;
+        assert!(
+            compact_rust(&main_code).contains("crate::config::__incan_init_module_statics()"),
+            "the defaults must read `config`'s static rather than the caller's static of the same name:\n{main_code}"
+        );
         Ok(())
     }
 

@@ -918,6 +918,7 @@ impl AstLowering {
             IrExprKind::StaticRead {
                 name: static_name,
                 reference_kind: super::super::super::expr::IrStaticReferenceKind::CompilerGenerated,
+                owner_module_path: None,
             },
             IrType::Function {
                 params: callable_signature.params.iter().map(|param| param.ty.clone()).collect(),

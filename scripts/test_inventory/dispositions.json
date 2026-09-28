@@ -1174,6 +1174,22 @@
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/compiled_generic_bounds",
           "notes": "The provider fixture publishes and consumes the same declared Callable bounds and an adopting model's default."
         },
+        "default_static_list_reads_beside_a_same_named_caller_static_build": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/default_static_reads_across_modules",
+          "notes": "twinned by the module fixture whose defaults read the helpers' static list whole, through `contains` and through `len`, beside the caller's own `ITEMS`."
+        },
+        "default_static_read_beside_a_same_named_caller_static_builds": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/default_static_reads_across_modules",
+          "notes": "twinned by the module fixture whose crate root and a second module each declare a `COUNT` static beside a default reading the helpers' `COUNT`, printing both values."
+        },
+        "default_static_read_in_method_defaults_across_modules_builds": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/default_static_reads_across_modules",
+          "notes": "twinned by the module fixture calling a method default, a method-partial preset and a static method's default that read the helpers' statics beside the caller's same-named static."
+        },
+        "default_static_read_through_imports_and_nested_defaults_builds": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/default_static_reads_across_modules",
+          "notes": "twinned by the module fixture whose defaults read a static the helpers import from `config`, directly and through a nested default, beside the caller's own `LIMIT`."
+        },
         "followups_b_option_none_identity_emits_presence_predicates": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_enums_and_matching/union_types.incn",
           "notes": "The fixture exercises None identity and non-None narrowing over Option payloads without requiring payload equality."
@@ -3302,9 +3318,21 @@
       "split_required": false,
       "split_target": "",
       "tests": {
+        "in_place_derived_loop_items_copy_their_copy_tuple_elements": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/zip_loop_changing_one_operand_in_place.incn",
+          "notes": "twinned by the same program changing the list of a dict's tuple values, of a list read out of another list, and a list zipped beside a list of tuples."
+        },
+        "mut_self_call_inside_a_larger_expression_iterates_in_place": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/mut_self_call_on_a_loop_item_inside_an_expression.incn",
+          "notes": "twinned by a program calling a `mut self` method on each loop item inside a call, a list, an f-string, an `enumerate` loop and a field, printing the changed values."
+        },
         "task_handle_field_is_refused_before_loop_lowering_issue1853": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_refusals/refused_model_field_holding_a_join_handle.incn",
           "notes": "The refusal fixture proves the JoinHandle field is rejected before any loop is lowered."
+        },
+        "zip_loop_iterates_only_the_changed_operand_in_place": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_parameters_and_receivers/zip_loop_changing_one_operand_in_place.incn",
+          "notes": "twinned by a program zipping a changed list with an immutable `list[int]`, a mutable list it only reads, a `range` on either side and a `list[str]`, printing each list."
         }
       },
       "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/mutation_ownership_regressions.incn"

@@ -412,6 +412,16 @@ pub fn category(id: SurfaceTypeId) -> SurfaceTypeCategory {
     info_for(id).ownership.category
 }
 
+/// Whether a field read on a value of this surface type reads a field of the one type it wraps.
+///
+/// `Json[T]` and `Query[T]` are the web extractor wrappers: `body.name` on a `Json[User]` reads the `name` field of the
+/// `User` it carries, and `body.value` is that `User`. The checker resolves such a field on `T`, and the generated read
+/// goes through the wrapper, so the field is borrowed storage however the wrapper itself is owned.
+#[must_use]
+pub fn field_access_reads_wrapped_value(id: SurfaceTypeId) -> bool {
+    matches!(id, SurfaceTypeId::Json | SurfaceTypeId::Query)
+}
+
 /// Whether a value of this surface type can be neither copied nor cloned; see [`SurfaceTypeInfo::not_cloneable`].
 #[must_use]
 pub fn is_not_cloneable(id: SurfaceTypeId) -> bool {

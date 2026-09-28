@@ -145,6 +145,14 @@ pub enum IrExprKind {
     StaticRead {
         name: String,
         reference_kind: IrStaticReferenceKind,
+        /// Rust module path below the crate root of the module that declares the static, when the read names the
+        /// static through that module rather than through a binding of the module it is emitted in; `name` is then
+        /// the static's canonical projection.
+        ///
+        /// A parameter default is evaluated at every caller that omits the argument, which can be another module with
+        /// no binding of the static, or with a static of the same name of its own, so a static the default reads is
+        /// spelled through its declaring module, as a const it reads is (#1771, #1842).
+        owner_module_path: Option<Vec<String>>,
     },
 
     /// Create a live local binding wrapper from a compiler-managed module static.

@@ -208,6 +208,29 @@ fn grouped_index_method_receiver(receiver: TypedExpr) -> TypedExpr {
     )
 }
 
+/// Mark the binding at the root of a method receiver place (`c`, `c.inner`, `rows[i]`) as borrowed mutably.
+///
+/// A call to a `mut self` source method changes that binding. Every later question about whether a body changes a
+/// binding, such as whether a `for` loop must reach its items in place, reads a change from a mutable borrow of the
+/// binding, so the call is seen wherever it sits: its own statement, a call argument, a list element or an f-string
+/// (#1561). A receiver that is not a place rooted at a value binding, such as a call result or a static, is left as it
+/// is.
+fn borrow_receiver_root_mutably(receiver: &mut TypedExpr) {
+    match &mut receiver.kind {
+        IrExprKind::Var {
+            access,
+            ref_kind: VarRefKind::Value,
+            ..
+        } => *access = VarAccess::BorrowMut,
+        IrExprKind::Field { object, .. } | IrExprKind::Index { object, .. } => borrow_receiver_root_mutably(object),
+        IrExprKind::Block {
+            stmts,
+            value: Some(value),
+        } if stmts.is_empty() => borrow_receiver_root_mutably(value),
+        _ => {}
+    }
+}
+
 impl AstLowering {
     /// Select the physical method target while retaining any checked trait evidence needed after lowering.
     pub fn project_resolved_method_target(
@@ -1428,9 +1451,16 @@ impl AstLowering {
         if let Some(kind) = self.ident_kind_for_lowering(expr) {
             match (&expr.node, &mut lowered.kind) {
                 (ast::Expr::Ident(name), _) if matches!(kind, IdentKind::Static) => {
+                    // A static read in a parameter default reaches callers in other modules through the module that
+                    // declares the static.
+                    let (name, owner_module_path) = match self.default_owner_static(name, expr.span) {
+                        Some((module_path, projection)) => (projection, Some(module_path)),
+                        None => (name.clone(), None),
+                    };
                     lowered.kind = IrExprKind::StaticRead {
-                        name: name.clone(),
+                        name,
                         reference_kind: super::super::expr::IrStaticReferenceKind::Source,
+                        owner_module_path,
                     };
                 }
                 (ast::Expr::Ident(name), IrExprKind::Var { ref_kind, .. }) => {
@@ -2343,6 +2373,18 @@ impl AstLowering {
                         self.project_resolved_method_target(expr_span, &method_name, &receiver, dispatch);
                     Self::retain_argument_union_owners(&mut args_ir, callable_signature.as_ref());
                     Self::keep_rust_collection_static_args_readable(&receiver, &mut args_ir);
+                    // A `mut self` source method borrows the binding its receiver is rooted at mutably. The checker
+                    // fact is keyed by span in the module being lowered, so an imported trait default, whose spans
+                    // belong to another file, does not consult it.
+                    let mut receiver = receiver;
+                    if !self.active_imported_trait_defaults.last().copied().unwrap_or(false)
+                        && self
+                            .type_info
+                            .as_ref()
+                            .is_some_and(|info| info.method_call_takes_mutable_receiver(expr_span))
+                    {
+                        borrow_receiver_root_mutably(&mut receiver);
+                    }
                     (
                         IrExprKind::MethodCall {
                             receiver: Box::new(receiver),

@@ -1,0 +1,52 @@
+# behavior: a loop over zip that changes the items of one operand changes that operand's items in place, while the other operand, an immutable list of int or of str, a mutable list the loop only reads, or a range on either side, is read as a loop over it alone reads it; a loop over a dict's tuple values and over a list read out of another list changes the tuple's list and reads its int
+# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::zip_loop_iterates_only_the_changed_operand_in_place
+# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::in_place_derived_loop_items_copy_their_copy_tuple_elements
+# expect-stdout:
+#   1 3 5 0 0 1
+#   2 4 6 1 1 2
+#   5 6
+#   1 2
+#   1 2
+#   1 2
+
+
+def show(values: list[int]) -> str:
+    mut text = ""
+    for value in values:
+        if len(text) > 0:
+            text += " "
+        text += f"{value}"
+    return text
+
+
+def main() -> None:
+    mut rows: list[list[int]] = [[1], [2]]
+    extra: list[int] = [3, 4]
+    for row, n in zip(rows, extra):
+        row.append(n)
+    mut more: list[int] = [5, 6]
+    for row, n in zip(rows, more):
+        row.append(n)
+    for row, i in zip(rows, range(2)):
+        row.append(i)
+    for i, row in zip(range(2), rows):
+        row.append(i)
+    names: list[str] = ["a", "bc"]
+    for row, name in zip(rows, names):
+        row.append(len(name))
+    println(show(rows[0]))
+    println(show(rows[1]))
+    println(show(more))
+    mut table: dict[str, tuple[list[int], int]] = {"x": ([1], 2)}
+    for xs, n in table.values():
+        xs.append(n)
+    println(show(table["x"][0]))
+    mut groups: list[list[tuple[list[int], int]]] = [[([1], 2)]]
+    for xs, n in groups[0]:
+        xs.append(n)
+    println(show(groups[0][0][0]))
+    pairs: list[tuple[list[int], int]] = [([7], 2)]
+    mut sizes: list[list[int]] = [[1]]
+    for pair, size in zip(pairs, sizes):
+        size.append(pair[1])
+    println(show(sizes[0]))

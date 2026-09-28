@@ -14,12 +14,13 @@ use crate::emit::expressions::{
     method_dispatch_uses_mutable_receiver, method_kind_uses_mutable_receiver, method_name_uses_mutable_receiver,
 };
 use crate::ownership::{
-    LoopIterationPlan, ValueUseSite, dict_entry_types, list_index_assignment_element_type, plan_for_loop_iteration,
-    plan_value_use,
+    DerivedLoopSourceShape, LoopIterationPlan, MutatingDerivedLoopPlan, ValueUseSite,
+    copy_elements_of_in_place_tuple_items, dict_entry_types, list_index_assignment_element_type,
+    plan_for_loop_iteration, plan_mutating_derived_loop, plan_value_use,
 };
 use incan_ir::expr::{
-    BuiltinFn, CollectionMethodKind, IrCallArgKind, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, MatchArm,
-    MethodKind, Pattern, TypedExpr, VarAccess,
+    BuiltinFn, IrCallArgKind, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, MatchArm, Pattern, TypedExpr,
+    VarAccess,
 };
 use incan_ir::scanners::{binding_use_scan, expr_uses_binding_name};
 use incan_ir::stmt::{AssignTarget, IrStmt, IrStmtKind};
@@ -45,51 +46,6 @@ fn target_mutates_var(target: &AssignTarget, var: &str) -> bool {
         AssignTarget::Field { object, .. } => root_var_name(object).is_some_and(|n| n == var),
         AssignTarget::Index { object, .. } => root_var_name(object).is_some_and(|n| n == var),
     }
-}
-
-/// Read the `Copy` elements of each tuple item out of a mutably iterated list by value.
-///
-/// Iterating `list[tuple[list[int], int]]` in place yields `&mut (Vec<i64>, i64)`, so destructuring it binds every
-/// element as a `&mut`: the list element can then be changed in place, but the `int` element is a `&mut i64` where the
-/// body expects an `i64` (#1869). Each `Copy` element bound by a plain name is dereferenced as the item is produced;
-/// any other element, or a tuple pattern that does not match the item's arity, is left as the reference it is.
-fn copy_elements_of_mutable_tuple_items(pattern: &Pattern, iterable_ty: &IrType, iter: TokenStream) -> TokenStream {
-    let Pattern::Tuple(items) = pattern else {
-        return iter;
-    };
-    let item_ty = match iterable_ty {
-        IrType::List(item) => item.as_ref(),
-        IrType::Ref(inner) | IrType::RefMut(inner) => match inner.as_ref() {
-            IrType::List(item) => item.as_ref(),
-            _ => return iter,
-        },
-        _ => return iter,
-    };
-    let IrType::Tuple(element_tys) = item_ty else {
-        return iter;
-    };
-    if element_tys.len() != items.len() {
-        return iter;
-    }
-    let copied = items
-        .iter()
-        .zip(element_tys)
-        .map(|(item, ty)| matches!(item, Pattern::Var(_)) && ty.is_copy())
-        .collect::<Vec<_>>();
-    if !copied.contains(&true) {
-        return iter;
-    }
-    let names = (0..items.len())
-        .map(|index| format_ident!("__incan_item_{}", index))
-        .collect::<Vec<_>>();
-    let values = names.iter().zip(&copied).map(|(name, copied)| {
-        if *copied {
-            quote! { *#name }
-        } else {
-            quote! { #name }
-        }
-    });
-    quote! { #iter.map(|(#(#names),*)| (#(#values),*)) }
 }
 
 /// Check if an expression contains a mutation of a variable.
@@ -299,21 +255,6 @@ pub(in crate::emit) fn stmt_mutates_var(stmt: &IrStmt, var: &str) -> bool {
         IrStmtKind::Break { label: _, value } => value.as_ref().is_some_and(|value| expr_contains_mutation(value, var)),
         IrStmtKind::Return(None) | IrStmtKind::Continue(_) => false,
     }
-}
-
-/// Determine whether a `for` loop body requires mutable iteration of the loop variable.
-///
-/// We use this as a *codegen heuristic* to avoid emitting `.iter_mut()` when the loop body performs no mutation of the
-/// loop item. Emitting `.iter_mut()`:
-///
-/// - requires mutable access to the source collection, and
-/// - changes the loop item type from `&T` to `&mut T`.
-fn for_body_needs_mut_iteration(pattern: &Pattern, body: &[IrStmt]) -> bool {
-    let mut bindings = HashSet::new();
-    collect_pattern_binding_names(pattern, &mut bindings);
-    bindings
-        .iter()
-        .any(|binding| body.iter().any(|statement| stmt_mutates_var(statement, binding)))
 }
 
 /// Collect `for` pattern bindings mutated by the loop body.
@@ -851,92 +792,6 @@ fn arm_uses_pattern_binding(arm: &MatchArm, name: &str) -> bool {
 }
 
 impl<'a> IrEmitter<'a> {
-    /// Return whether a loop-body statement calls a source method with `mut self` on `binding`.
-    fn stmt_calls_mutable_source_method_on_binding(&self, stmt: &IrStmt, binding: &str) -> bool {
-        match &stmt.kind {
-            IrStmtKind::Expr(expr)
-            | IrStmtKind::Return(Some(expr))
-            | IrStmtKind::Yield(expr)
-            | IrStmtKind::Let { value: expr, .. }
-            | IrStmtKind::Assign { value: expr, .. }
-            | IrStmtKind::CompoundAssign { value: expr, .. }
-            | IrStmtKind::Break { value: Some(expr), .. } => {
-                self.expr_calls_mutable_source_method_on_binding(expr, binding)
-            }
-            IrStmtKind::Block(stmts) | IrStmtKind::Loop { body: stmts, .. } => stmts
-                .iter()
-                .any(|stmt| self.stmt_calls_mutable_source_method_on_binding(stmt, binding)),
-            IrStmtKind::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                self.expr_calls_mutable_source_method_on_binding(condition, binding)
-                    || then_branch
-                        .iter()
-                        .any(|stmt| self.stmt_calls_mutable_source_method_on_binding(stmt, binding))
-                    || else_branch.as_ref().is_some_and(|branch| {
-                        branch
-                            .iter()
-                            .any(|stmt| self.stmt_calls_mutable_source_method_on_binding(stmt, binding))
-                    })
-            }
-            IrStmtKind::While { condition, body, .. } => {
-                self.expr_calls_mutable_source_method_on_binding(condition, binding)
-                    || body
-                        .iter()
-                        .any(|stmt| self.stmt_calls_mutable_source_method_on_binding(stmt, binding))
-            }
-            IrStmtKind::For { iterable, body, .. } => {
-                self.expr_calls_mutable_source_method_on_binding(iterable, binding)
-                    || body
-                        .iter()
-                        .any(|stmt| self.stmt_calls_mutable_source_method_on_binding(stmt, binding))
-            }
-            IrStmtKind::Match { scrutinee, arms } => {
-                self.expr_calls_mutable_source_method_on_binding(scrutinee, binding)
-                    || arms.iter().any(|arm| {
-                        arm.bindings.iter().any(|arm_binding| {
-                            self.expr_calls_mutable_source_method_on_binding(&arm_binding.value, binding)
-                                || arm_binding.guard_value.as_ref().is_some_and(|guard| {
-                                    self.expr_calls_mutable_source_method_on_binding(guard, binding)
-                                })
-                        }) || arm
-                            .guard
-                            .as_ref()
-                            .is_some_and(|guard| self.expr_calls_mutable_source_method_on_binding(guard, binding))
-                            || self.expr_calls_mutable_source_method_on_binding(&arm.body, binding)
-                    })
-            }
-            IrStmtKind::Return(None) | IrStmtKind::Break { value: None, .. } | IrStmtKind::Continue(_) => false,
-        }
-    }
-
-    /// Return whether an expression directly calls a source method with a mutable receiver on `binding`.
-    fn expr_calls_mutable_source_method_on_binding(&self, expr: &TypedExpr, binding: &str) -> bool {
-        let IrExprKind::MethodCall { receiver, method, .. } = &expr.kind else {
-            return false;
-        };
-        root_var_name(receiver).is_some_and(|name| name == binding)
-            && (matches!(
-                receiver.kind,
-                IrExprKind::Var {
-                    access: VarAccess::BorrowMut,
-                    ..
-                }
-            ) || self.method_receiver_is_mutable(&receiver.ty, method))
-    }
-
-    /// Return whether any binding in the loop pattern needs mutable source-method dispatch.
-    fn for_body_calls_mutable_source_method(&self, pattern: &Pattern, body: &[IrStmt]) -> bool {
-        let mut bindings = HashSet::new();
-        collect_pattern_binding_names(pattern, &mut bindings);
-        bindings.iter().any(|binding| {
-            body.iter()
-                .any(|stmt| self.stmt_calls_mutable_source_method_on_binding(stmt, binding))
-        })
-    }
-
     /// Emit a sibling statement slice with precomputed binding context.
     ///
     /// Storage-alias mutability is tracked as a frame because helper paths may emit nested statements. Plain local
@@ -1479,11 +1334,11 @@ impl<'a> IrEmitter<'a> {
                 body,
             } => {
                 let body_stmts = self.emit_stmts(body)?;
-                // For non-copy collections, iterate by reference to avoid move This handles the common case where a
-                // collection is used multiple times For primitive element types, use .iter().copied() to get values
-                // instead of references
-                let needs_mut_items = for_body_needs_mut_iteration(pattern, body)
-                    || self.for_body_calls_mutable_source_method(pattern, body);
+                // A non-copy collection is iterated by reference, so a collection used again after the loop is not
+                // moved; primitive elements are copied out with `.iter().copied()`. A body that changes a loop binding
+                // needs its items in place.
+                let changed_bindings = for_pattern_mutated_bindings(pattern, body);
+                let needs_mut_items = !changed_bindings.is_empty();
                 let iterable_is_borrowable_lvalue = matches!(
                     &iterable.kind,
                     IrExprKind::Var { .. } | IrExprKind::Field { .. } | IrExprKind::Index { .. }
@@ -1509,10 +1364,15 @@ impl<'a> IrEmitter<'a> {
                 {
                     HashSet::new()
                 } else {
-                    for_pattern_mutated_bindings(pattern, body)
+                    changed_bindings.clone()
                 };
                 let pat = self.emit_pattern_with_mutable_bindings(pattern, &mutable_bindings);
-                if needs_mut_items && let Some(iter_expr) = self.emit_mutating_derived_for_iterable(iterable)? {
+                if needs_mut_items
+                    && let Some(plan) = plan_mutating_derived_loop(iterable, pattern, &changed_bindings, |ty| {
+                        self.type_is_user_enum(ty)
+                    })
+                {
+                    let iter_expr = self.emit_mutating_derived_for_iterable(&plan)?;
                     return Ok(quote! {
                         for #pat in #iter_expr {
                             #(#body_stmts)*
@@ -1526,7 +1386,7 @@ impl<'a> IrEmitter<'a> {
                 }
                 let iter_expr = self.emit_for_iterable(iterable, iter_plan)?;
                 let iter_expr = if iter_plan == LoopIterationPlan::IterMut {
-                    copy_elements_of_mutable_tuple_items(pattern, &iterable.ty, iter_expr)
+                    copy_elements_of_in_place_tuple_items(pattern, &iterable.ty, iter_expr)
                 } else {
                     iter_expr
                 };
@@ -1799,46 +1659,13 @@ impl<'a> IrEmitter<'a> {
         Ok(iter_plan.apply(iter))
     }
 
-    /// Emit a derived iterable that must expose mutable elements to the loop body.
-    fn emit_mutating_derived_for_iterable(&self, iterable: &TypedExpr) -> Result<Option<TokenStream>, EmitError> {
-        match &iterable.kind {
-            IrExprKind::BuiltinCall {
-                func: BuiltinFn::Enumerate,
-                args,
-            } => {
-                let Some(arg) = args.first() else {
-                    return Ok(None);
-                };
-                let source = self.emit_lvalue_expr(arg)?;
-                Ok(Some(quote! {
-                    (#source).iter_mut().enumerate().map(|(index, value)| (index as i64, value))
-                }))
-            }
-            IrExprKind::BuiltinCall {
-                func: BuiltinFn::Zip,
-                args,
-            } => {
-                let [left, right, ..] = args.as_slice() else {
-                    return Ok(None);
-                };
-                let left = self.emit_lvalue_expr(left)?;
-                let right = self.emit_lvalue_expr(right)?;
-                Ok(Some(quote! { (#left).iter_mut().zip((#right).iter_mut()) }))
-            }
-            IrExprKind::KnownMethodCall {
-                receiver,
-                kind: MethodKind::Collection(CollectionMethodKind::Values),
-                args,
-            } if args.is_empty() => {
-                let receiver = self.emit_lvalue_expr(receiver)?;
-                Ok(Some(quote! { (#receiver).values_mut() }))
-            }
-            IrExprKind::Index { .. } => {
-                let source = self.emit_lvalue_expr(iterable)?;
-                Ok(Some(quote! { (#source).iter_mut() }))
-            }
-            _ => Ok(None),
-        }
+    /// Emit the iterator of a `for` loop over a derived iterable whose body changes its items, as `plan` reads each
+    /// source: a source read in place is emitted as its place, any other as an ordinary loop over it would iterate it.
+    fn emit_mutating_derived_for_iterable(&self, plan: &MutatingDerivedLoopPlan<'_>) -> Result<TokenStream, EmitError> {
+        plan.assemble(|source, shape| match shape {
+            DerivedLoopSourceShape::Place => self.emit_lvalue_expr(source),
+            DerivedLoopSourceShape::Iterable(iter_plan) => self.emit_for_iterable(source, iter_plan),
+        })
     }
 }
 

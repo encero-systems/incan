@@ -1,0 +1,50 @@
+# behavior: a mut self method called on a loop item inside a call argument, a list, an f-string or a field of the item changes the item in the list, as the same call written as its own statement does
+# retires: loaves/compiler/incan_emit/src/tests/mut_ownership_regressions.rs::mut_self_call_inside_a_larger_expression_iterates_in_place
+# expect-stdout:
+#   2
+#   11
+#   3
+#   12
+#   1
+#   1
+#   6
+#   15
+#   1 6
+#   2 15
+#   3
+#   24
+
+
+class Cell:
+    pub value: int
+
+    def bump(mut self) -> int:
+        self.value += 1
+        return self.value
+
+
+class Grid:
+    pub inner: Cell
+
+
+def show(n: int) -> int:
+    return n
+
+
+def main() -> None:
+    mut cells: list[Cell] = [Cell(value=1), Cell(value=10)]
+    for c in cells:
+        println(c.bump())
+    for c in cells:
+        println(show(c.bump()))
+    for c in cells:
+        values = [c.bump()]
+        println(len(values))
+    for c in cells:
+        println(f"{c.bump() + 1}")
+    for i, c in enumerate(cells):
+        println(f"{i + 1} {c.bump()}")
+    mut grids: list[Grid] = [Grid(inner=Cell(value=2))]
+    for g in grids:
+        println(g.inner.bump())
+    println(cells[0].value + cells[1].value + grids[0].inner.value)

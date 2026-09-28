@@ -402,3 +402,104 @@ pub def total[T](grid: list[list[T]]) -> int:
     assert!(rust.contains("<T:Clone,>"), "{rust}");
     Ok(())
 }
+
+/// A loop over `zip(left, right)` that changes only the items of one operand iterates only that operand in place; the
+/// other operand is read as a loop over it alone reads it, so an immutable list, a list of `int`, a list of `str` and a
+/// `range` all build beside it, on either side.
+#[test]
+fn zip_loop_iterates_only_the_changed_operand_in_place() -> TestResult {
+    let rust = generated_rust(
+        r#"
+def main() -> None:
+    mut rows: list[list[int]] = [[1], [2]]
+    extra: list[int] = [3, 4]
+    for row, n in zip(rows, extra):
+        row.append(n)
+    mut more: list[int] = [5, 6]
+    for row, n in zip(rows, more):
+        row.append(n)
+    for row, i in zip(rows, range(2)):
+        row.append(i)
+    names: list[str] = ["a", "bc"]
+    for row, name in zip(rows, names):
+        row.append(len(name))
+    for i, row in zip(range(2), rows):
+        row.append(i)
+    println(len(rows[0]) + len(more) + len(extra))
+"#,
+    )?;
+    compile_generated_rust(&rust)?;
+    let rust = compact(&rust);
+    assert!(!rust.contains("extra).iter_mut()"), "{rust}");
+    assert!(!rust.contains(".iter_mut()).iter_mut()"), "{rust}");
+    Ok(())
+}
+
+/// A loop whose derived items are changed in place reads each `Copy` element of a tuple item by value, as a loop over
+/// the list alone does (#1869): over a dict's values and over a list read out of another list. A list of tuples zipped
+/// beside a changed list is read as a loop over it alone reads it.
+#[test]
+fn in_place_derived_loop_items_copy_their_copy_tuple_elements() -> TestResult {
+    let rust = generated_rust(
+        r#"
+def main() -> None:
+    mut table: dict[str, tuple[list[int], int]] = {"x": ([1], 2)}
+    for xs, n in table.values():
+        xs.append(n)
+    mut groups: list[list[tuple[list[int], int]]] = [[([1], 2)]]
+    for xs, n in groups[0]:
+        xs.append(n)
+    pairs: list[tuple[list[int], int]] = [([1], 2)]
+    mut rows: list[list[int]] = [[3]]
+    for pair, row in zip(pairs, rows):
+        row.append(pair[1])
+    println(len(rows[0]) + len(groups[0][0][0]) + len(pairs))
+"#,
+    )?;
+    compile_generated_rust(&rust)
+}
+
+/// A `mut self` method called on a loop item inside a larger expression (a call argument, a list element, an
+/// f-string, a field of the item) iterates the list in place, as the same call written as its own statement does.
+#[test]
+fn mut_self_call_inside_a_larger_expression_iterates_in_place() -> TestResult {
+    let rust = generated_rust(
+        r#"
+class Cell:
+    pub value: int
+
+    def bump(mut self) -> int:
+        self.value += 1
+        return self.value
+
+class Grid:
+    pub inner: Cell
+
+def show(n: int) -> int:
+    return n
+
+def main() -> None:
+    mut cells: list[Cell] = [Cell(value=1)]
+    for c in cells:
+        println(c.bump())
+    for c in cells:
+        show(c.bump())
+    for c in cells:
+        values = [c.bump()]
+        println(len(values))
+    for c in cells:
+        println(f"{c.bump()}")
+    for i, c in enumerate(cells):
+        println(i + c.bump())
+    mut grids: list[Grid] = [Grid(inner=Cell(value=2))]
+    for g in grids:
+        println(g.inner.bump())
+    println(cells[0].value + grids[0].inner.value)
+"#,
+    )?;
+    compile_generated_rust(&rust)?;
+    let rust = compact(&rust);
+    assert!(!rust.contains("incells.iter()"), "{rust}");
+    assert!(!rust.contains("ingrids.iter()"), "{rust}");
+    Ok(())
+}

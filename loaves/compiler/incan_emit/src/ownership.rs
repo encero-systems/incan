@@ -7,8 +7,10 @@
 //! `.into()` decisions.
 
 use incan_lang::interop::{RustTypeShape, RustTypeShapePathFallback, parse_rust_type_shape_text};
+use std::collections::HashSet;
+
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 
 use crate::conversions::{
     Conversion as OwnershipPlan, ConversionContext, determine_conversion, determine_conversion_for_incan_call,
@@ -16,7 +18,10 @@ use crate::conversions::{
 };
 use crate::reference_shape::expr_has_rust_reference_shape;
 use incan_ir::decl::FunctionParam;
-use incan_ir::expr::{IrExpr, IrExprKind, MethodCallArgPolicy, VarAccess, VarRefKind};
+use incan_ir::expr::{
+    BuiltinFn, CollectionMethodKind, IrExpr, IrExprKind, MethodCallArgPolicy, MethodKind, Pattern, VarAccess,
+    VarRefKind,
+};
 use incan_ir::types::IrType;
 use incan_lang::lang::types::collections::{self, CollectionTypeId};
 
@@ -951,6 +956,295 @@ pub fn plan_for_loop_iteration(
             }
         }
         _ => LoopIterationPlan::AsIs,
+    }
+}
+
+/// How a `for` loop over `enumerate(...)`, `zip(...)`, `dict.values()` or a list read out of another collection reaches
+/// the items its body changes.
+///
+/// Each of those derives the loop items from one or two sources. A source whose items the body changes is iterated in
+/// place; any other source is read as a loop over it alone reads it, so a `range`, an immutable list or a list of
+/// `int` zipped beside a changed list keeps its ordinary plan (#1863). The planner decides from the loop pattern
+/// which source a changed binding belongs to; the emitter only emits each source in the shape the plan asks for.
+#[derive(Debug, Clone)]
+pub enum MutatingDerivedLoopPlan<'a> {
+    /// Number the items of `source`, iterated in place, with Incan `int` indices.
+    Enumerate { source: &'a IrExpr, items: InPlaceItems },
+    /// Walk the two operands of `zip` in step, each read as its own plan says.
+    Zip {
+        left: DerivedLoopOperand<'a>,
+        right: DerivedLoopOperand<'a>,
+    },
+    /// Iterate the values of `dict` in place.
+    DictValues { dict: &'a IrExpr, items: InPlaceItems },
+    /// Iterate `list`, a list read out of another collection, in place.
+    Element { list: &'a IrExpr, items: InPlaceItems },
+}
+
+/// One operand of `zip` in a loop whose body changes items, with how the loop reads it.
+#[derive(Debug, Clone)]
+pub struct DerivedLoopOperand<'a> {
+    source: &'a IrExpr,
+    read: DerivedLoopRead,
+}
+
+/// How a derived loop reads one of its sources.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DerivedLoopRead {
+    /// Iterate the source's place in place.
+    InPlace(InPlaceItems),
+    /// Read the source as a `for` loop over it alone reads it.
+    Ordinary(LoopIterationPlan),
+}
+
+/// The shape in which the emitter supplies one source of a derived loop to [`MutatingDerivedLoopPlan::assemble`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DerivedLoopSourceShape {
+    /// The source as an assignable place, which the plan iterates in place.
+    Place,
+    /// The source as a `for` loop over it alone would iterate it under this plan.
+    Iterable(LoopIterationPlan),
+}
+
+/// Which elements of the tuple items a source yields in place are read out by value.
+///
+/// Iterating `list[tuple[list[int], int]]` in place yields `&mut (Vec<i64>, i64)`, and destructuring that binds every
+/// element as a `&mut`: the list element can then be changed in place, but the `int` element is a `&mut i64` where the
+/// body expects an `i64` (#1869). Each `Copy` element bound by a plain name is dereferenced as the item is produced.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InPlaceItems {
+    /// One flag per element when each item is rebuilt as a tuple of its elements: `true` for a `Copy` element bound
+    /// by a plain name, read out by value; every other element stays the reference in-place iteration yields. Empty
+    /// when items pass through as they are.
+    elements: Vec<bool>,
+}
+
+impl InPlaceItems {
+    /// Rebuild each item `pattern` destructures as a tuple of `item_ty`'s arity, reading its `Copy` elements by value.
+    ///
+    /// Used where the loop pattern binds a derived item's parts by value, so an item that stayed a `&mut` tuple would
+    /// bind its elements by reference, where a changed element cannot be marked `mut`.
+    fn destructured(pattern: Option<&Pattern>, item_ty: &IrType) -> Self {
+        match (pattern, item_ty) {
+            (Some(Pattern::Tuple(items)), IrType::Tuple(element_tys)) if items.len() == element_tys.len() => Self {
+                elements: items
+                    .iter()
+                    .zip(element_tys)
+                    .map(|(item, ty)| matches!(item, Pattern::Var(_)) && ty.is_copy())
+                    .collect(),
+            },
+            _ => Self::default(),
+        }
+    }
+
+    /// Rebuild each item only when `pattern` reads one of its `Copy` elements; otherwise the loop pattern binds the
+    /// `&mut` item's elements by reference itself.
+    fn copying(pattern: &Pattern, item_ty: &IrType) -> Self {
+        let items = Self::destructured(Some(pattern), item_ty);
+        if items.elements.contains(&true) {
+            items
+        } else {
+            Self::default()
+        }
+    }
+
+    /// Adapt an iterator over `&mut` items so each item is rebuilt as this plan says.
+    pub fn apply(&self, iter: TokenStream) -> TokenStream {
+        if self.elements.is_empty() {
+            return iter;
+        }
+        let names = (0..self.elements.len())
+            .map(|index| format_ident!("__incan_item_{}", index))
+            .collect::<Vec<_>>();
+        let values = names.iter().zip(&self.elements).map(|(name, copied)| {
+            if *copied {
+                quote! { *#name }
+            } else {
+                quote! { #name }
+            }
+        });
+        quote! { #iter.map(|(#(#names),*)| (#(#values),*)) }
+    }
+}
+
+/// Read the `Copy` elements of each tuple item of a list iterated in place by value (#1869).
+///
+/// `pattern` is the loop pattern and `iterable_ty` the list's type; any other iterable, a pattern that is not a tuple
+/// of the items' arity, or one that reads no `Copy` element leaves `iter` as it is.
+pub fn copy_elements_of_in_place_tuple_items(
+    pattern: &Pattern,
+    iterable_ty: &IrType,
+    iter: TokenStream,
+) -> TokenStream {
+    match in_place_list_item_type(iterable_ty) {
+        Some(item_ty) => InPlaceItems::copying(pattern, item_ty).apply(iter),
+        None => iter,
+    }
+}
+
+/// Return the item type of a list, or of a reference to one.
+fn in_place_list_item_type(ty: &IrType) -> Option<&IrType> {
+    match ty {
+        IrType::List(item) => Some(item.as_ref()),
+        IrType::Ref(inner) | IrType::RefMut(inner) => match inner.as_ref() {
+            IrType::List(item) => Some(item.as_ref()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Plan a `for` loop over a derived iterable whose body changes the loop bindings `changed`.
+///
+/// Returns `None` when `iterable` is not one of the derived iterables, or when no source has to be reached in place,
+/// in which case the loop keeps its ordinary plan. The pattern decides which source a changed binding belongs to:
+/// the second name of `(index, item)` for `enumerate`, and each name of `(left, right)` for `zip`. A pattern that does
+/// not split that way counts as changing every source it covers. `item_is_user_enum` says whether a list item type is
+/// a user enum, which an ordinary loop over the list clones.
+pub fn plan_mutating_derived_loop<'a>(
+    iterable: &'a IrExpr,
+    pattern: &Pattern,
+    changed: &HashSet<String>,
+    item_is_user_enum: impl Fn(&IrType) -> bool,
+) -> Option<MutatingDerivedLoopPlan<'a>> {
+    let binds_changed = |part: Option<&Pattern>| part.is_none_or(|part| pattern_binds_any(part, changed));
+    match &iterable.kind {
+        IrExprKind::BuiltinCall {
+            func: BuiltinFn::Enumerate,
+            args,
+        } => {
+            let source = args.first()?;
+            let item_pattern = pair_pattern_part(pattern, 1);
+            if !binds_changed(item_pattern) {
+                return None;
+            }
+            let items = in_place_list_item_type(&source.ty)
+                .map(|item_ty| InPlaceItems::destructured(item_pattern, item_ty))
+                .unwrap_or_default();
+            Some(MutatingDerivedLoopPlan::Enumerate { source, items })
+        }
+        IrExprKind::BuiltinCall {
+            func: BuiltinFn::Zip,
+            args,
+        } => {
+            let [left, right, ..] = args.as_slice() else {
+                return None;
+            };
+            let plan_operand = |source: &'a IrExpr, part: Option<&Pattern>| {
+                let item_ty = in_place_list_item_type(&source.ty);
+                let plan = plan_for_loop_iteration(
+                    &source.ty,
+                    matches!(
+                        source.kind,
+                        IrExprKind::Var { .. } | IrExprKind::Field { .. } | IrExprKind::Index { .. }
+                    ),
+                    binds_changed(part),
+                    item_ty.is_some_and(&item_is_user_enum),
+                );
+                let read = match item_ty {
+                    Some(item_ty) if plan == LoopIterationPlan::IterMut => {
+                        DerivedLoopRead::InPlace(InPlaceItems::destructured(part, item_ty))
+                    }
+                    _ => DerivedLoopRead::Ordinary(plan),
+                };
+                DerivedLoopOperand { source, read }
+            };
+            let left = plan_operand(left, pair_pattern_part(pattern, 0));
+            let right = plan_operand(right, pair_pattern_part(pattern, 1));
+            let reads_in_place = |operand: &DerivedLoopOperand<'_>| matches!(operand.read, DerivedLoopRead::InPlace(_));
+            (reads_in_place(&left) || reads_in_place(&right)).then_some(MutatingDerivedLoopPlan::Zip { left, right })
+        }
+        IrExprKind::KnownMethodCall {
+            receiver,
+            kind: MethodKind::Collection(CollectionMethodKind::Values),
+            args,
+        } if args.is_empty() => {
+            let items = dict_entry_types(&receiver.ty)
+                .map(|(_, value_ty)| InPlaceItems::destructured(Some(pattern), value_ty))
+                .unwrap_or_default();
+            Some(MutatingDerivedLoopPlan::DictValues { dict: receiver, items })
+        }
+        IrExprKind::Index { .. } => {
+            let items = in_place_list_item_type(&iterable.ty)
+                .map(|item_ty| InPlaceItems::copying(pattern, item_ty))
+                .unwrap_or_default();
+            Some(MutatingDerivedLoopPlan::Element { list: iterable, items })
+        }
+        _ => None,
+    }
+}
+
+impl MutatingDerivedLoopPlan<'_> {
+    /// Assemble the loop's iterator from its sources.
+    ///
+    /// `emit_source` emits one source in the shape the plan asks for: as a place the plan iterates in place, or as
+    /// the iterable an ordinary loop over the source would use.
+    pub fn assemble<E>(
+        &self,
+        mut emit_source: impl FnMut(&IrExpr, DerivedLoopSourceShape) -> Result<TokenStream, E>,
+    ) -> Result<TokenStream, E> {
+        match self {
+            Self::Enumerate { source, items } => {
+                let place = emit_source(source, DerivedLoopSourceShape::Place)?;
+                let items = items.apply(quote! { (#place).iter_mut() });
+                Ok(quote! { #items.enumerate().map(|(index, value)| (index as i64, value)) })
+            }
+            Self::Zip { left, right } => {
+                let left_iter = left.emit(&mut emit_source)?;
+                let right_iter = right.emit(&mut emit_source)?;
+                // An ordinary read can be a collection or a range rather than an iterator, so only an in-place
+                // operand, which is always an iterator, takes `zip` directly.
+                if matches!(left.read, DerivedLoopRead::InPlace(_)) {
+                    Ok(quote! { #left_iter.zip(#right_iter) })
+                } else {
+                    Ok(quote! { ::std::iter::IntoIterator::into_iter(#left_iter).zip(#right_iter) })
+                }
+            }
+            Self::DictValues { dict, items } => {
+                let place = emit_source(dict, DerivedLoopSourceShape::Place)?;
+                Ok(items.apply(quote! { (#place).values_mut() }))
+            }
+            Self::Element { list, items } => {
+                let place = emit_source(list, DerivedLoopSourceShape::Place)?;
+                Ok(items.apply(quote! { (#place).iter_mut() }))
+            }
+        }
+    }
+}
+
+impl DerivedLoopOperand<'_> {
+    /// Emit this operand's iterator through `emit_source`, in place or as its ordinary iterable.
+    fn emit<E>(
+        &self,
+        emit_source: &mut impl FnMut(&IrExpr, DerivedLoopSourceShape) -> Result<TokenStream, E>,
+    ) -> Result<TokenStream, E> {
+        match &self.read {
+            DerivedLoopRead::InPlace(items) => {
+                let place = emit_source(self.source, DerivedLoopSourceShape::Place)?;
+                Ok(items.apply(quote! { (#place).iter_mut() }))
+            }
+            DerivedLoopRead::Ordinary(plan) => emit_source(self.source, DerivedLoopSourceShape::Iterable(*plan)),
+        }
+    }
+}
+
+/// Return part `index` of a two-part tuple pattern, or `None` when the pattern does not split in two.
+fn pair_pattern_part(pattern: &Pattern, index: usize) -> Option<&Pattern> {
+    match pattern {
+        Pattern::Tuple(parts) if parts.len() == 2 => parts.get(index),
+        _ => None,
+    }
+}
+
+/// Return whether `pattern` binds any of the names in `names`, at any depth.
+fn pattern_binds_any(pattern: &Pattern, names: &HashSet<String>) -> bool {
+    match pattern {
+        Pattern::Var(name) => names.contains(name),
+        Pattern::Tuple(items) | Pattern::Enum { fields: items, .. } | Pattern::Or(items) => {
+            items.iter().any(|item| pattern_binds_any(item, names))
+        }
+        Pattern::Struct { fields, .. } => fields.iter().any(|(_, field)| pattern_binds_any(field, names)),
+        Pattern::Wildcard | Pattern::Literal(_) => false,
     }
 }
 

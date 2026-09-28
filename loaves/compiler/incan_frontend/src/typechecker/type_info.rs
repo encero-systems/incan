@@ -1383,6 +1383,13 @@ pub struct CallArtifacts {
     /// Argument expressions, by span, that a call hands to a caller-visible `mut` parameter the callee never changes
     /// while the argument is an immutable binding or field: lowering passes a copy of the value (#1773).
     pub mut_argument_copies: HashSet<(usize, usize)>,
+    /// Method calls, by full call span, whose receiver's source type declares the method only with `mut self`.
+    ///
+    /// Lowering marks the binding at the root of such a call's receiver as borrowed mutably, so every later question
+    /// about whether a body changes that binding, such as whether a `for` loop must reach its items in place, sees the
+    /// call wherever it sits in the body (#1561). A method that trait dispatch selects carries its receiver in the
+    /// dispatch fact instead.
+    pub mutable_receiver_method_calls: HashSet<(usize, usize)>,
     /// Compiler-owned builtin selected for a call, keyed by the full call span.
     ///
     /// This distinguishes an explicit `std.builtins.name(...)` or unshadowed ambient builtin from a source/import
@@ -1892,6 +1899,13 @@ impl TypeCheckInfo {
     /// Return whether the argument expression at `span` is passed to its `mut` parameter as a copy.
     pub fn mut_argument_is_copied(&self, span: Span) -> bool {
         self.calls.mut_argument_copies.contains(&(span.start, span.end))
+    }
+
+    /// Return whether the method call at `span` calls a source method whose receiver is `mut self`.
+    pub fn method_call_takes_mutable_receiver(&self, span: Span) -> bool {
+        self.calls
+            .mutable_receiver_method_calls
+            .contains(&(span.start, span.end))
     }
 
     /// Return the checked source path associated with one active import-derived binding.

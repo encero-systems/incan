@@ -3939,6 +3939,7 @@ impl AstLowering {
             lowered_registry.kind = IrExprKind::StaticRead {
                 name: description.registry_name.clone(),
                 reference_kind: super::expr::IrStaticReferenceKind::Source,
+                owner_module_path: None,
             };
             let key = self.lower_expr_spanned(key)?;
             let descriptor = self.lower_expr_spanned(descriptor)?;
@@ -4217,6 +4218,7 @@ impl AstLowering {
             IrExprKind::StaticRead {
                 name: static_name.to_string(),
                 reference_kind: super::expr::IrStaticReferenceKind::CompilerGenerated,
+                owner_module_path: None,
             },
             IrType::Function {
                 params: params.iter().map(|param| param.ty.clone()).collect(),

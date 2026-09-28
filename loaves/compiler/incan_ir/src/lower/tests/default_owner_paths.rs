@@ -62,7 +62,14 @@ fn param_default<'a>(ir: &'a IrProgram, callable: &str, param: &str) -> Result<&
             IrDeclKind::Impl(impl_decl) => impl_decl.methods.iter().collect(),
             _ => Vec::new(),
         })
-        .find(|function| function.name == callable)
+        .find(|function| {
+            // A method is emitted under its canonical projection, which names its declaration.
+            function.name == callable
+                || incan_semantics_core::decode_incan_symbol_identity(&function.name)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|identity| identity.declaration_name == callable)
+        })
         .ok_or_else(|| format!("missing callable `{callable}`"))?;
     match function
         .params
@@ -203,5 +210,70 @@ pub def make(size: Size = Size(n=1)) -> int:
             "the `{module}` default must construct `{module}.Size`: {default:?}"
         );
     }
+    Ok(())
+}
+
+/// A static a default, a method default or a method-partial preset reads is named through the module that declares it,
+/// by the static's canonical projection, so a caller elsewhere neither needs a binding of it nor reads a static of its
+/// own by the same name. A function body reads the static by its own name.
+#[test]
+fn statics_a_default_reads_are_named_through_their_module() -> Result<(), String> {
+    let source = r#"
+pub static LIMIT: int = 3
+
+
+pub def take(n: int = LIMIT) -> int:
+    return n
+
+
+pub def total() -> int:
+    return LIMIT
+
+
+pub model Box:
+    pub v: int
+
+    def fetch(self, n: int = LIMIT) -> int:
+        return n + self.v
+
+    def add(self, n: int) -> int:
+        return n + self.v
+
+    capped = partial add(n=LIMIT)
+"#;
+    let ir = lower_module_at(source, &["helpers"])?;
+    let declared = ir
+        .declarations
+        .iter()
+        .find_map(|decl| match &decl.kind {
+            IrDeclKind::Static {
+                provenance: crate::decl::IrStaticProvenance::Source(identity),
+                ..
+            } => Some(incan_semantics_core::encode_incan_symbol_identity(identity)),
+            _ => None,
+        })
+        .ok_or("missing static `LIMIT`")?;
+    for (callable, param) in [("take", "n"), ("fetch", "n"), ("capped", "n")] {
+        let default = param_default(&ir, callable, param)?;
+        assert!(
+            matches!(&default.kind, IrExprKind::StaticRead { name, owner_module_path: Some(path), .. }
+                if name == &declared && path.as_slice() == ["helpers".to_string()]),
+            "`{callable}({param})` must read `LIMIT` through `helpers` by its projection: {default:?}"
+        );
+    }
+    let total = ir
+        .declarations
+        .iter()
+        .find_map(|decl| match &decl.kind {
+            IrDeclKind::Function(function) if function.name == "total" => Some(function),
+            _ => None,
+        })
+        .ok_or("missing function `total`")?;
+    assert!(
+        matches!(total.body.last(), Some(IrStmt { kind: IrStmtKind::Return(Some(returned)), .. })
+            if matches!(&returned.kind, IrExprKind::StaticRead { name, owner_module_path: None, .. } if name == "LIMIT")),
+        "a function body reads `LIMIT` by its own name: {:?}",
+        total.body
+    );
     Ok(())
 }

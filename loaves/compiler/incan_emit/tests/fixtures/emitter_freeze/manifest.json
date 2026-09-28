@@ -104,8 +104,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/mod.rs",
-      "sha256": "7c5df7acd849846bc2b7a1178b52680390e01690551c3e7479284d6a11d7fc00",
-      "lines": 4410
+      "sha256": "63ea1ecfe21e81ec5ca3ac8a00dc408ca9db1119c6e07bb2917af1e8b2e1ee35",
+      "lines": 4481
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/structs_enums.rs",
@@ -114,8 +114,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/mod.rs",
-      "sha256": "ca305f27f9c33222e168cd8f54b42cda2ae1ce6d725fb84cf55b4182ec2d8c4d",
-      "lines": 4711
+      "sha256": "69f3161285eb9b1fd635f3d66ac8a1d6ad4e8c85238e6e66a95db82c93acfb38",
+      "lines": 4691
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/native_unions.rs",
@@ -129,8 +129,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
-      "sha256": "b97998a387d622a6fd98a7c603cfcb26f61092bdff68ac392541957fd927460f",
-      "lines": 2159
+      "sha256": "df73b0a0ba13ecdfce5004bf9a3f3a71c724e40426d8f643c59c1c409bec4fc9",
+      "lines": 1986
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/types.rs",
@@ -141,7 +141,7 @@
   "changes": [
     {
       "kind": "change",
-      "pr": null,
+      "pr": 1731,
       "policy": "frozen",
       "files": [
         {
@@ -218,21 +218,6 @@
         },
         {
           "path": "loaves/compiler/incan_emit/src/emit/decls/impls.rs",
-          "change": "modified"
-        }
-      ],
-      "compatibility_issue": "#1773",
-      "behavior_evidence": "behavior fixture cli/trait_default_method_mutable_parameter.incn (combined-branch run); emitter unit tests trait_method_mut_parameter_keeps_one_shape_across_slot_impl_and_wrapper_issue1773 and mut_arguments_follow_the_checker_facts_issue1773 in incan_emit/src/tests/trait_parameters_and_element_bounds.rs; codegen_snapshot_tests and stdlib_generated_rust_snapshot_tests unchanged",
-      "semantic_owner": "#1561: the checked parameter marker lowering already carries (FunctionParam mutability, Mutable = the caller sees the change); after the cutover Body IR states the parameter-passing shape and the trait slot, implementation and wrapper read it from there",
-      "retirement_condition": "#654: the Rust-source backend is deleted; the replacement route passes a mut parameter from the recorded parameter fact and needs no separate trait-method or wrapper spelling"
-    },
-    {
-      "kind": "change",
-      "pr": 1814,
-      "policy": "frozen",
-      "files": [
-        {
-          "path": "loaves/compiler/incan_emit/src/emit/decls/functions.rs",
           "change": "modified"
         }
       ],
@@ -497,6 +482,29 @@
       "behavior_evidence": "spelling only in decls/structures.rs, expressions/format.rs, expressions/structs_enums.rs and emit/mod.rs (no behavior change); expressions/methods.rs, expressions/methods/iterator_methods.rs and expressions/mod.rs are covered by rustc-compiling emitter test flat_map_expands_any_iterable_compiles and lowering test flat_map_callbacks_hand_the_adapter_a_nested_iterator, proving FlatMapIterator.current as Option[Nested] borrowed through Option.as_mut()",
       "semantic_owner": "none: prose, except FlatMapIterator and the Option.as_mut registry in std.derives.collection, which own methods.rs, iterator_methods.rs and expressions/mod.rs",
       "retirement_condition": "dies with #654: the Rust-source backend is deleted; Body IR constructs the adapter from the source model"
+    },
+    {
+      "kind": "change",
+      "pr": null,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/mod.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/mod.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1561, #1842, #1863, #1869",
+      "behavior_evidence": "rustc-compiled emitter tests default_static_read_beside_a_same_named_caller_static_builds, default_static_read_in_method_defaults_across_modules_builds, default_static_read_through_imports_and_nested_defaults_builds, default_static_list_reads_beside_a_same_named_caller_static_build and cross_module_default_reading_static_keeps_projection_issue1842 (codegen.rs), zip_loop_iterates_only_the_changed_operand_in_place, in_place_derived_loop_items_copy_their_copy_tuple_elements and mut_self_call_inside_a_larger_expression_iterates_in_place (tests/mut_ownership_regressions.rs, beside the unchanged #1863/#1869 tests); lowering tests statics_a_default_reads_are_named_through_their_module and mut_self_calls_borrow_their_receiver_root_mutably; behavior fixtures cli_modules_and_declarations/default_static_reads_across_modules, ownership_parameters_and_receivers/zip_loop_changing_one_operand_in_place.incn and ownership_parameters_and_receivers/mut_self_call_on_a_loop_item_inside_an_expression.incn",
+      "semantic_owner": "lowering facts the emitter now only spells: StaticRead.owner_module_path (a static a parameter default reads, named through its declaring module by its projection), VarAccess::BorrowMut on the binding at the root of a mut self call receiver (from the checker fact mutable_receiver_method_calls), and the derived-loop plan plan_mutating_derived_loop in ownership.rs; the emitter-side receiver walker and the name-keyed mutable_method_receivers set are removed",
+      "retirement_condition": "#654: the Rust-source backend is deleted; Body IR carries the declaring module of a static read and the in-place plan of a loop, and the replacement route reads both"
     }
   ]
 }

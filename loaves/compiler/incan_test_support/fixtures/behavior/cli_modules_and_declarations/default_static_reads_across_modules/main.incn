@@ -1,0 +1,40 @@
+# behavior: a default, a method default, a method-partial preset and a static method's default that read a static of their module, or a static their module imports, take that static's value where another module omits the argument, also when that module declares a static of the same name
+# retires: loaves/compiler/incan_emit/src/codegen.rs::default_static_read_beside_a_same_named_caller_static_builds
+# retires: loaves/compiler/incan_emit/src/codegen.rs::default_static_read_in_method_defaults_across_modules_builds
+# retires: loaves/compiler/incan_emit/src/codegen.rs::default_static_read_through_imports_and_nested_defaults_builds
+# retires: loaves/compiler/incan_emit/src/codegen.rs::default_static_list_reads_beside_a_same_named_caller_static_build
+# expect-stdout:
+#   3
+#   7
+#   4
+#   5
+#   4
+#   3
+#   3
+#   13
+#   1
+#   true
+#   2
+#   1
+
+from caller import run
+from helpers import Box, first, has, size, take, wrap
+
+static COUNT: int = 7
+static LIMIT: int = 5
+static ITEMS: list[str] = ["a"]
+
+
+def main() -> None:
+    println(take())
+    println(COUNT)
+    println(wrap())
+    println(LIMIT)
+    println(Box(v=0).fetch())
+    println(Box(v=0).capped())
+    println(Box.make().v)
+    println(run())
+    println(first())
+    println(has())
+    println(size())
+    println(len(ITEMS))

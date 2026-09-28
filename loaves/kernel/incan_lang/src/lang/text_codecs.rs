@@ -25,7 +25,8 @@ pub fn is_utf8_encoding_label(label: &str) -> bool {
 /// How `bytes.decode` treats malformed input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DecodeErrorsPolicy {
-    /// Malformed input raises `ValueError` (Python's `UnicodeDecodeError` is a `ValueError`).
+    /// Malformed input makes `decode` return `Err` with a `ValidationError` of code `invalid-utf8` at the first
+    /// malformed sequence.
     Strict,
     /// Malformed sequences become U+FFFD replacement characters, so decoding never fails.
     Replace,

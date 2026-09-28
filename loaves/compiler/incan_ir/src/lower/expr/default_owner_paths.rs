@@ -3,8 +3,9 @@
 //! A caller that omits an argument receives the parameter's default at its own call site, which can be in another
 //! module of the crate. A name in the default means what it means in the module that declares the callable (#1771),
 //! and two modules can each declare the name. The checked identity of each name records the module that declares it,
-//! also when the name was imported, so a const the default reads is spelled as a crate path to that module and a
-//! function the default calls carries that module's path as its canonical callee path.
+//! also when the name was imported, so a const the default reads is spelled as a crate path to that module, a static
+//! it reads is read through that module, and a function the default calls carries that module's path as its canonical
+//! callee path.
 
 use std::collections::HashMap;
 
@@ -13,7 +14,7 @@ use super::super::super::expr::{IrExprKind, VarRefKind};
 use super::super::AstLowering;
 use super::calls::canonical_path_naming_selected_overload;
 use incan_frontend::ast;
-use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin};
+use incan_semantics_core::{SemanticSourceTargetKind, SymbolOrigin, encode_incan_symbol_identity};
 
 impl AstLowering {
     /// Record the Rust module path below the crate root of each source module compiled into this crate.
@@ -58,6 +59,19 @@ impl AstLowering {
         );
         spelled.ty = lowered.ty.clone();
         Some(spelled)
+    }
+
+    /// Return the Rust module path of the module that declares a static a parameter default reads, with the static's
+    /// canonical projection.
+    ///
+    /// A static read is an initialization call and a read of the storage cell, and a caller that omits the argument
+    /// may have no binding of the static, or a static of the same name of its own, so the read names the cell through
+    /// its declaring module. Returns `None` outside a source parameter default and for every name that is not a
+    /// module-level static of a module compiled into this crate.
+    pub(in crate::lower) fn default_owner_static(&self, name: &str, span: ast::Span) -> Option<(Vec<String>, String)> {
+        let (module_path, _) = self.default_name_owner(name, span, &[SemanticSourceTargetKind::Static])?;
+        let identity = self.type_info.as_ref()?.resolved_identity(span)?;
+        Some((module_path, encode_incan_symbol_identity(identity)))
     }
 
     /// Return the canonical path of a function that a parameter default calls, through the module that declares it.

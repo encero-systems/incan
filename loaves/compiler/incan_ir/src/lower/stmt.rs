@@ -1683,6 +1683,7 @@ impl AstLowering {
                         IrExprKind::StaticRead {
                             name: ca.name.clone(),
                             reference_kind: *reference_kind,
+                            owner_module_path: None,
                         },
                         lhs_ty.clone(),
                     ),
