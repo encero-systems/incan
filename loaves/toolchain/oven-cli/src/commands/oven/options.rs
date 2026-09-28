@@ -56,6 +56,23 @@ pub struct OvenHarvestCommandOptions {
     pub format: OvenOutputFormat,
 }
 
+/// Inputs for `incan oven inventory`.
+#[derive(Debug, Clone)]
+pub struct OvenInventoryCommandOptions {
+    /// Cargo lock supplying the exact Incan registry package identities.
+    pub incan_lock: PathBuf,
+    /// Incan harvest directory containing proposals and refusal reports.
+    pub incan_harvest: PathBuf,
+    /// Optional Cargo lock supplying the exact IncQL registry package identities.
+    pub incql_lock: Option<PathBuf>,
+    /// Optional IncQL harvest directory containing proposals and refusal reports.
+    pub incql_harvest: Option<PathBuf>,
+    /// Destination for a newly generated inventory.
+    pub output: Option<PathBuf>,
+    /// Existing inventory fixture to check byte-for-byte after canonical decoding.
+    pub check: Option<PathBuf>,
+}
+
 /// Inputs for `incan inspect oven` receipt and build-unit inspection.
 #[derive(Debug, Clone)]
 pub struct OvenReceiptInspectCommandOptions {

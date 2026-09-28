@@ -19,9 +19,9 @@ use std::path::{Path, PathBuf};
 use oven_cargo_compat::{
     HarvestEvidenceInputs, HarvestPublisherIdentity, HarvestReport, OvenLegacyCargoDirectDependencyClosure,
     OvenLegacyCargoPrepareRequest, OvenLegacyCargoPublicationKind, ambient_harvest_hazards,
-    bind_legacy_cargo_selected_registry_sources, harvest_notes_for_checkout, harvest_registry_units,
+    bind_legacy_cargo_selected_registry_sources, harvest_notes_for_checkout, harvest_registry_units_to_dir,
     legacy_cargo_resolved_registry_sources, prepare_direct_rustc_plan, proposal_directory_names,
-    stage_locked_loaf_fixture, write_harvest_report,
+    stage_locked_loaf_fixture,
 };
 use oven_model::loaf_registry::enclosing_checkout_head_commit;
 use oven_model::manifest::{DependencySource, DependencySpec, ProjectManifest};
@@ -169,10 +169,16 @@ pub fn oven_harvest(options: OvenHarvestCommandOptions) -> CliResult<ExitCode> {
         &prepared,
         HarvestPublisherIdentity::new(&receipt.identity, &compiler_closure, ambient_hazards, notes.clone()),
     );
-    let report = harvest_registry_units(&capture, &evidence, &options.profile).map_err(oven_error)?;
-    let hazards = report.hazards.clone();
     let (entry, _lease) = store.select(&prepared.plan_identity).map_err(oven_error)?;
-    write_harvest_report(&report, &options.output, &entry.materialized_root()).map_err(oven_error)?;
+    let report = harvest_registry_units_to_dir(
+        &capture,
+        &evidence,
+        &options.profile,
+        &options.output,
+        &entry.materialized_root(),
+    )
+    .map_err(oven_error)?;
+    let hazards = report.hazards.clone();
     let summary = OvenHarvestSummary {
         manifest: manifest_path,
         target: options.target,
@@ -370,6 +376,16 @@ mod tests {
     use super::*;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// Standalone and release harvesting must remain wired to the one canonical library writer.
+    #[test]
+    fn shared_harvest_contract_is_used_by_both_callers() {
+        let shared_call = ["harvest_registry_units", "_to_dir("].concat();
+        let standalone = include_str!("harvest.rs");
+        let release = include_str!("loaf_bake.rs");
+        assert_eq!(standalone.matches(&shared_call).count(), 1);
+        assert_eq!(release.matches(&shared_call).count(), 1);
+    }
 
     #[test]
     fn a_checked_manifest_renders_one_cargo_package_over_its_registry_dependencies() -> TestResult {

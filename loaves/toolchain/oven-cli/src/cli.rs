@@ -223,6 +223,37 @@ pub enum OvenCommand {
         #[arg(long = "format", value_enum, default_value = "text")]
         format: OvenOutputFormat,
     },
+    /// Generate or check a binding-level inventory of harvested registry closure facts
+    Inventory {
+        /// Cargo lock supplying the exact Incan registry package identities
+        #[arg(long = "incan-lock", value_name = "PATH")]
+        incan_lock: PathBuf,
+        /// Incan harvest directory containing proposals and selected-unit refusals
+        #[arg(long = "incan-harvest", value_name = "PATH")]
+        incan_harvest: PathBuf,
+        /// Cargo lock supplying the exact IncQL registry package identities
+        #[arg(long = "incql-lock", value_name = "PATH")]
+        incql_lock: Option<PathBuf>,
+        /// IncQL harvest directory containing proposals and selected-unit refusals
+        #[arg(long = "incql-harvest", value_name = "PATH")]
+        incql_harvest: Option<PathBuf>,
+        /// Write the generated canonical inventory
+        #[arg(
+            long,
+            value_name = "PATH",
+            required_unless_present = "check",
+            conflicts_with = "check"
+        )]
+        output: Option<PathBuf>,
+        /// Check the generated inventory against this fixture
+        #[arg(
+            long,
+            value_name = "PATH",
+            required_unless_present = "output",
+            conflicts_with = "output"
+        )]
+        check: Option<PathBuf>,
+    },
     /// Bake locked C/C++ interop shims and static inputs into one receipt-bound direct-rustc plan
     Interop {
         #[command(subcommand)]

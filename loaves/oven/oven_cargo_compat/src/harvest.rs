@@ -2,10 +2,11 @@
 //!
 //! RFC 119 makes adoption a harvest, not a hand edit: a crates.io package gains its declared build facts by running
 //! one coordinated Cargo build for the selected closure on the publisher's machine and reading Cargo's build-script
-//! output records into `cfg` and `out`. The capture that build leaves behind (`OvenLegacyCargoSelectedUnitCapture`)
-//! is the observation; this module turns it into one proposal per registry package, version and exact selection,
-//! and one refusal per unit whose observation the record vocabulary cannot carry. Admitting a proposal is
-//! `incan-pub add-fact`'s job, in a separate, reviewable step; nothing here writes into a registry.
+//! output records into canonical proposals. The capture that build leaves behind
+//! (`OvenLegacyCargoSelectedUnitCapture`) is the observation; this module turns it into one proposal per registry
+//! package, version and exact selection, and one refusal per unit whose observation cannot be proven or retained.
+//! Admitting a proposal is `incan-pub add-fact`'s job, in a separate, reviewable step; nothing here writes into a
+//! registry.
 //!
 //! Every fact proposed here is one `LoafRegistryAuthority::resolve` will later compare with a fresh observation
 //! (`check_observation`), so the shape emitted must be the shape the reader compares: `features` and `cfg` sorted and
@@ -16,7 +17,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use oven_model::loaf_registry::canonical_checksum;
-use oven_model::manifest::{RustFactOut, is_sha256_identity};
+use oven_model::manifest::{RustFactOut, RustFactRecord, is_sha256_identity};
 use serde::{Deserialize, Serialize};
 
 use super::loaf_bake::OvenLoafPublisherProvenance;
@@ -82,10 +83,10 @@ pub struct HarvestSource {
     pub checksum: String,
 }
 
-/// One proposed `[[rust.facts]]` record: the `RustFactRecord` shape minus the keys admission fills or reserves.
+/// One candidate `[[rust.facts]]` record plus observations checked before the proposal reaches disk.
 ///
-/// `harvested-from` is derived by admission from `evidence.receipt`; `link` and `tool` are reserved, and a unit that
-/// would need them is refused rather than proposed.
+/// `harvested-from` is derived by admission from `evidence.receipt`. A candidate with raw environment/link/tool
+/// observations is retained as a refusal instead of being serialized as a proposal until typed records exist.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HarvestFact {
@@ -101,6 +102,123 @@ pub struct HarvestFact {
     pub cfg: Vec<String>,
     /// Retained `OUT_DIR` members: `name` is the member path, `path` is `out/<name>` relative to the proposal.
     pub out: Vec<RustFactOut>,
+    /// Script environment values that losslessly name retained owner-relative inputs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub environment_inputs: Vec<HarvestEnvironmentInput>,
+    /// Publisher-only native-link observations, preserved without assigning Lane 2 manifest semantics.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub link_observations: Vec<HarvestLinkObservation>,
+    /// Publisher-only compiler/tool observations, preserved without assigning Lane 2 manifest semantics.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_observations: Vec<HarvestToolObservation>,
+}
+
+/// A script environment value rebound to one retained product rather than preserving an ambient scalar or path.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HarvestEnvironmentInput {
+    /// Environment variable name observed from Cargo's build-script output.
+    pub name: String,
+    /// Path below the retained output owner, independent of the publisher staging root.
+    pub owner_relative_path: String,
+    /// Byte identity of that exact retained member.
+    pub digest: String,
+}
+
+/// One retained product named by a raw link or tool observation.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HarvestObservedProduct {
+    /// Path below the retained output owner.
+    pub owner_relative_path: String,
+    /// Byte identity of the product.
+    pub digest: String,
+}
+
+/// Native-link evidence retained on a typed refusal while Lane 2's manifest record is unavailable.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HarvestLinkObservation {
+    /// Cargo link-name/kind directives, sorted and unique.
+    pub libraries: Vec<String>,
+    /// Search paths rebound to the retained output owner.
+    pub search_paths: Vec<HarvestLinkSearchPath>,
+    /// Identity of the complete retained output tree.
+    pub output_tree_digest: String,
+    /// Identities of every retained product member.
+    pub products: Vec<HarvestObservedProduct>,
+}
+
+/// One native-link search path whose ownership was proven below the retained output root.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HarvestLinkSearchPath {
+    /// Cargo search-path kind before `=`, or `all` for an unqualified path.
+    pub kind: String,
+    /// Path below the retained output owner; `.` names its root.
+    pub owner_relative_path: String,
+}
+
+/// Proposal-only compiler/tool evidence awaiting Lane 2's typed manifest record.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HarvestToolObservation {
+    /// Host/target domain Cargo assigned to the script invocation.
+    pub target_context: String,
+    /// Target argument of the exact compiler probe.
+    pub rustc_target: String,
+    /// Canonical identity of the probe invocation and its declared environment.
+    pub probe_digest: String,
+    /// Byte identity of the bounded compiler closure containing the exact probe executable.
+    pub executable_identity: String,
+    /// Identity of the complete retained output tree.
+    pub output_tree_digest: String,
+    /// Identities of every retained generated product member.
+    pub products: Vec<HarvestObservedProduct>,
+}
+
+/// Effect classes used by the generated closure inventory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HarvestEffectClass {
+    /// The selected binding explicitly observes no build effect.
+    Empty,
+    /// Compiler cfg answers were observed.
+    Cfg,
+    /// Retained generated inputs were observed.
+    Out,
+    /// Retained environment-to-input bindings were observed.
+    EnvironmentInput,
+    /// Publisher-only native-link work was observed.
+    Link,
+    /// Publisher-only tool work was observed.
+    Tool,
+}
+
+impl HarvestFact {
+    /// Sorted effect classes for closure-completeness checks, including an explicit empty class.
+    pub fn effect_classes(&self) -> Vec<HarvestEffectClass> {
+        let mut effects = Vec::new();
+        if !self.cfg.is_empty() {
+            effects.push(HarvestEffectClass::Cfg);
+        }
+        if !self.environment_inputs.is_empty() {
+            effects.push(HarvestEffectClass::EnvironmentInput);
+        }
+        if !self.link_observations.is_empty() {
+            effects.push(HarvestEffectClass::Link);
+        }
+        if !self.out.is_empty() {
+            effects.push(HarvestEffectClass::Out);
+        }
+        if !self.tool_observations.is_empty() {
+            effects.push(HarvestEffectClass::Tool);
+        }
+        if effects.is_empty() {
+            effects.push(HarvestEffectClass::Empty);
+        }
+        effects
+    }
 }
 
 /// `rust`: the fact list, which a proposal keeps to exactly one entry.
@@ -159,6 +277,55 @@ pub struct HarvestProposal {
     pub out_relative_root: Option<String>,
 }
 
+/// Why a canonical proposal cannot yet become an admitted manifest fact.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum HarvestAdmissionRefusal {
+    /// A proposal must contain exactly one binding.
+    #[error("harvest proposal must contain exactly one fact")]
+    FactCount,
+    /// Lane 2 has not supplied a typed retained-environment input conversion yet.
+    #[error("harvest proposal contains unresolved environment-input observations")]
+    UnresolvedEnvironmentInputs,
+    /// Lane 2 has not supplied the typed native-link record conversion yet.
+    #[error("harvest proposal contains unresolved native-link observations")]
+    UnresolvedLinkObservations,
+    /// Lane 2 has not supplied the typed tool record conversion yet.
+    #[error("harvest proposal contains unresolved tool observations")]
+    UnresolvedToolObservations,
+}
+
+impl HarvestProposal {
+    /// Convert a cfg/out proposal into the registry record shape, refusing raw publisher-only observations.
+    ///
+    /// This is the single Lane 2 hand-off: typed environment/link/tool records replace only the three refusal
+    /// branches without changing capture or proposal generation.
+    pub fn admitted_record(&self) -> Result<RustFactRecord, HarvestAdmissionRefusal> {
+        let [fact] = self.rust.facts.as_slice() else {
+            return Err(HarvestAdmissionRefusal::FactCount);
+        };
+        if !fact.link_observations.is_empty() {
+            return Err(HarvestAdmissionRefusal::UnresolvedLinkObservations);
+        }
+        if !fact.tool_observations.is_empty() {
+            return Err(HarvestAdmissionRefusal::UnresolvedToolObservations);
+        }
+        if !fact.environment_inputs.is_empty() {
+            return Err(HarvestAdmissionRefusal::UnresolvedEnvironmentInputs);
+        }
+        Ok(RustFactRecord {
+            toolchain: fact.toolchain.clone(),
+            target: fact.target.clone(),
+            profile: fact.profile.clone(),
+            features: fact.features.clone(),
+            cfg: fact.cfg.clone(),
+            out: fact.out.clone(),
+            link: None,
+            tool: None,
+            harvested_from: self.evidence.receipt.clone(),
+        })
+    }
+}
+
 // ============================================================================
 // Refusals
 // ============================================================================
@@ -180,6 +347,8 @@ pub enum HarvestRefusalReason {
     /// The script emitted `rustc-env` values, which Cargo set on the consumer's compilation and no record key
     /// carries.
     EnvironmentObserved,
+    /// A recognized script-emitted constant disagrees with the value derived from the selected binding.
+    BindingDerivedEnvironmentMismatch,
     /// The script's `OUT_DIR` was never retained, so its members cannot be named by digest.
     OutputNotRetained,
     /// The unit compiled for a platform other than the captured target, which the reader binds every record to.
@@ -188,10 +357,34 @@ pub enum HarvestRefusalReason {
     MultipleBuildScriptEdges,
     /// Two units of the same package, version and selection observed different facts.
     ConflictingObservations,
+    /// Another binding of this package refused, so the whole package is withheld from the drop.
+    PackageHasRefusedBinding,
     /// The staged registry source names a checksum that is not a SHA-256 identity, so no record can bind it.
     MalformedChecksum,
     /// A retained `OUT_DIR` member has no plain relative path, no sha256 digest, or is inventoried twice.
     MalformedOutput,
+}
+
+/// Portable raw evidence retained on a refusal for work the admitted record vocabulary cannot express.
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HarvestRefusalObservations {
+    /// Owner-relative environment inputs and their byte identities.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub environment: Vec<HarvestEnvironmentInput>,
+    /// Native-link observations and retained product identities.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub link: Vec<HarvestLinkObservation>,
+    /// Tool-probe observations, executable identity, and retained product identities.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool: Vec<HarvestToolObservation>,
+}
+
+impl HarvestRefusalObservations {
+    /// Whether the refusal carries no portable raw observation beyond its typed reason and path-free detail.
+    fn is_empty(&self) -> bool {
+        self.environment.is_empty() && self.link.is_empty() && self.tool.is_empty()
+    }
 }
 
 /// One unit the harvest declined to propose, named so a reviewer can see what the closure still lacks.
@@ -206,6 +399,9 @@ pub struct HarvestRefusal {
     pub reason: HarvestRefusalReason,
     /// Short, path-free detail: the names involved, never their values.
     pub detail: String,
+    /// Portable observations that prove what the unavailable admitted-record field would need to express.
+    #[serde(default, skip_serializing_if = "HarvestRefusalObservations::is_empty")]
+    pub observations: HarvestRefusalObservations,
 }
 
 /// Everything one harvest produced: proposals and refusals, each in deterministic order.
@@ -343,12 +539,15 @@ struct Observation {
     out_relative_root: Option<String>,
 }
 
-/// Turn one capture into proposals for every adoptable registry unit and refusals for the rest.
+/// Turn one capture into proposals for every immediately admissible registry unit and refusals for the rest.
 ///
-/// A unit is adoptable when it is registry-backed, compiled for the captured target, and either has no build script
-/// or has exactly one whose script emitted only `cfg` answers and `OUT_DIR` members, both possibly empty. The
-/// proposal's `out` entries name every retained member by its path and digest, so the reader's
-/// `check_observation` compares equal on the next capture. Everything else is a refusal with a typed reason.
+/// A unit is harvestable when it is registry-backed, compiled for the captured target, and has at most one retained
+/// build-script observation. Binding-derived constants need no new fact. Before writing,
+/// [`HarvestProposal::admitted_record`] proves that the candidate declares everything its script did; candidates with
+/// unresolved environment/link/tool observations become typed refusals that retain those observations and their byte
+/// identities. The proposal's `out` entries name every retained member by path and digest, so the reader's
+/// `check_observation` compares equal on the next capture. No package can occur in both proposal and refusal channels
+/// for one report.
 ///
 /// The capture must carry its compiler context: without it no record can bind a toolchain or target, so that is an
 /// error rather than a refusal of every unit.
@@ -369,9 +568,12 @@ pub fn harvest_registry_units(
     let mut refusals = BTreeSet::new();
     let mut observations: BTreeMap<(String, String, Vec<String>), Vec<Observation>> = BTreeMap::new();
 
-    // ---- Classify every unit: refuse, or record its observation ----
+    // ---- Classify every registry binding: refuse, or record its observation ----
     for unit in &capture.units {
-        match observe_unit(capture, compiler, unit, profile) {
+        if is_build_script_unit(unit) {
+            continue;
+        }
+        match observe_unit(capture, compiler, unit, profile, &evidence.rustc_identity) {
             Ok(observation) => {
                 let key = (
                     unit.package.clone(),
@@ -396,15 +598,19 @@ pub fn harvest_registry_units(
             .iter()
             .any(|other| other.fact != first.fact || other.source != first.source)
         {
+            let refusal_observations = raw_refusal_observations(
+                std::iter::once(&first.fact).chain(group.iter().map(|observation| &observation.fact)),
+            );
             refusals.insert(HarvestRefusal {
                 package,
                 version,
                 reason: HarvestRefusalReason::ConflictingObservations,
                 detail: format!("{} units of one selection observed different facts", group.len() + 1),
+                observations: refusal_observations,
             });
             continue;
         }
-        proposals.push(HarvestProposal {
+        let proposal = HarvestProposal {
             project: HarvestProject { name: package, version },
             source: first.source,
             rust: HarvestRustFacts {
@@ -422,6 +628,36 @@ pub fn harvest_registry_units(
             },
             notes: evidence.notes.clone(),
             out_relative_root: first.out_relative_root,
+        };
+        match proposal.admitted_record() {
+            Ok(_) => proposals.push(proposal),
+            Err(reason) => {
+                refusals.insert(admission_refusal(&proposal, reason));
+            }
+        }
+    }
+
+    // ---- A registry drop never names one package in both channels ----
+    let refused_packages = refusals
+        .iter()
+        .map(|refusal| refusal.package.clone())
+        .collect::<BTreeSet<_>>();
+    let mut held_back = Vec::new();
+    proposals.retain(|proposal| {
+        if refused_packages.contains(&proposal.project.name) {
+            held_back.push((proposal.project.name.clone(), proposal.project.version.clone()));
+            false
+        } else {
+            true
+        }
+    });
+    for (package, version) in held_back {
+        refusals.insert(HarvestRefusal {
+            package,
+            version,
+            reason: HarvestRefusalReason::PackageHasRefusedBinding,
+            detail: "another binding of this package was refused".to_string(),
+            observations: HarvestRefusalObservations::default(),
         });
     }
     Ok(HarvestReport {
@@ -432,18 +668,88 @@ pub fn harvest_registry_units(
     })
 }
 
+/// Convert an in-memory admission refusal into the complete on-disk refusal evidence the registry can inspect.
+fn admission_refusal(proposal: &HarvestProposal, refusal: HarvestAdmissionRefusal) -> HarvestRefusal {
+    let observations = raw_refusal_observations(proposal.rust.facts.iter());
+    let (reason, detail) = match refusal {
+        HarvestAdmissionRefusal::FactCount => (
+            HarvestRefusalReason::ConflictingObservations,
+            "proposal did not contain exactly one fact".to_string(),
+        ),
+        HarvestAdmissionRefusal::UnresolvedEnvironmentInputs => {
+            let names = observations
+                .environment
+                .iter()
+                .map(|input| input.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            (HarvestRefusalReason::EnvironmentObserved, names)
+        }
+        HarvestAdmissionRefusal::UnresolvedLinkObservations => {
+            let libraries = observations
+                .link
+                .iter()
+                .flat_map(|observation| observation.libraries.iter().map(String::as_str))
+                .collect::<Vec<_>>();
+            if libraries.is_empty() {
+                let paths = observations
+                    .link
+                    .iter()
+                    .map(|observation| observation.search_paths.len())
+                    .sum::<usize>();
+                (
+                    HarvestRefusalReason::LinkedPaths,
+                    format!("{paths} link search path(s)"),
+                )
+            } else {
+                (HarvestRefusalReason::LinkedLibraries, libraries.join(", "))
+            }
+        }
+        HarvestAdmissionRefusal::UnresolvedToolObservations => (
+            HarvestRefusalReason::ToolProbes,
+            format!("{} compiler probe(s)", observations.tool.len()),
+        ),
+    };
+    HarvestRefusal {
+        package: proposal.project.name.clone(),
+        version: proposal.project.version.clone(),
+        reason,
+        detail,
+        observations,
+    }
+}
+
+/// Collect deterministic raw evidence from every candidate fact represented by one typed refusal.
+fn raw_refusal_observations<'a>(facts: impl IntoIterator<Item = &'a HarvestFact>) -> HarvestRefusalObservations {
+    let mut observations = HarvestRefusalObservations::default();
+    for fact in facts {
+        observations.environment.extend(fact.environment_inputs.iter().cloned());
+        observations.link.extend(fact.link_observations.iter().cloned());
+        observations.tool.extend(fact.tool_observations.iter().cloned());
+    }
+    observations.environment.sort();
+    observations.environment.dedup();
+    observations.link.sort();
+    observations.link.dedup();
+    observations.tool.sort();
+    observations.tool.dedup();
+    observations
+}
+
 /// Observe one unit, or say why it cannot be proposed.
 fn observe_unit(
     capture: &OvenLegacyCargoSelectedUnitCapture,
     compiler: &OvenLegacyCargoSelectedCompilerContext,
     unit: &OvenLegacyCargoSelectedUnit,
     profile: &str,
+    rustc_executable_identity: &str,
 ) -> Result<Observation, HarvestRefusal> {
     let refuse = |reason: HarvestRefusalReason, detail: String| HarvestRefusal {
         package: unit.package.clone(),
         version: unit.package_version.clone(),
         reason,
         detail,
+        observations: HarvestRefusalObservations::default(),
     };
     if is_build_script_unit(unit) {
         // Named by what it is, never by its position: Cargo orders the unit graph differently between runs, and a
@@ -504,36 +810,6 @@ fn observe_unit(
                         "build-script edge has no retained facts".to_string(),
                     )
                 })?;
-            // ---- Anything outside cfg and OUT_DIR needs a grammar that does not exist yet ----
-            if !facts.linked_libraries.is_empty() {
-                return Err(refuse(
-                    HarvestRefusalReason::LinkedLibraries,
-                    facts.linked_libraries.join(", "),
-                ));
-            }
-            if !facts.linked_paths.is_empty() {
-                return Err(refuse(
-                    HarvestRefusalReason::LinkedPaths,
-                    format!("{} link search path(s)", facts.linked_paths.len()),
-                ));
-            }
-            let probes = capture
-                .build_script_tool_probes
-                .iter()
-                .filter(|probe| probe.package_id == build_unit.package_id && probe.out_dir == facts.out_dir)
-                .count();
-            if probes > 0 {
-                return Err(refuse(
-                    HarvestRefusalReason::ToolProbes,
-                    format!("{probes} compiler probe(s)"),
-                ));
-            }
-            if !facts.environment.is_empty() {
-                return Err(refuse(
-                    HarvestRefusalReason::EnvironmentObserved,
-                    facts.environment.keys().cloned().collect::<Vec<_>>().join(", "),
-                ));
-            }
             if facts.output.is_none() {
                 return Err(refuse(
                     HarvestRefusalReason::OutputNotRetained,
@@ -553,6 +829,12 @@ fn observe_unit(
     cfg.sort();
     cfg.dedup();
     let output = facts.and_then(|facts| facts.output.as_ref());
+    if output.is_some_and(|output| !is_sha256_identity(&output.digest)) {
+        return Err(refuse(
+            HarvestRefusalReason::MalformedOutput,
+            "retained output tree has no sha256 digest".to_string(),
+        ));
+    }
     let mut out = Vec::new();
     let mut names = BTreeSet::new();
     for member in output.map(|output| output.members.as_slice()).unwrap_or_default() {
@@ -578,6 +860,116 @@ fn observe_unit(
         });
     }
     out.sort_by(|left, right| left.name.cmp(&right.name));
+    let mut products = output
+        .map(|output| {
+            output
+                .members
+                .iter()
+                .map(|member| HarvestObservedProduct {
+                    owner_relative_path: member.path.clone(),
+                    digest: member.digest.clone(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    products.sort();
+
+    // ---- Environment: prove binding-derived constants or retain an exact owner-relative input ----
+    let mut environment_inputs = Vec::new();
+    if let Some(facts) = facts {
+        for (name, value) in &facts.environment {
+            if let Some(expected) = binding_derived_environment_value(name, &features, profile, &compiler.target_cfg) {
+                if value != &expected {
+                    return Err(refuse(
+                        HarvestRefusalReason::BindingDerivedEnvironmentMismatch,
+                        name.clone(),
+                    ));
+                }
+                continue;
+            }
+            let Some(owner_relative_path) = owner_relative_path(Path::new(value), &facts.out_dir) else {
+                return Err(refuse(HarvestRefusalReason::EnvironmentObserved, name.clone()));
+            };
+            let Some(product) = products
+                .iter()
+                .find(|product| product.owner_relative_path == owner_relative_path)
+            else {
+                return Err(refuse(HarvestRefusalReason::EnvironmentObserved, name.clone()));
+            };
+            environment_inputs.push(HarvestEnvironmentInput {
+                name: name.clone(),
+                owner_relative_path,
+                digest: product.digest.clone(),
+            });
+        }
+    }
+    environment_inputs.sort();
+
+    // ---- Native-link paths retain ownership, never their publisher staging coordinates ----
+    let mut link_observations = Vec::new();
+    if let Some(facts) = facts
+        && (!facts.linked_libraries.is_empty() || !facts.linked_paths.is_empty())
+    {
+        let mut libraries = facts.linked_libraries.clone();
+        libraries.sort();
+        libraries.dedup();
+        let mut search_paths = Vec::new();
+        for value in &facts.linked_paths {
+            let (kind, path) = value.split_once('=').unwrap_or(("all", value));
+            let Some(owner_relative_path) = owner_relative_path(Path::new(path), &facts.out_dir) else {
+                return Err(refuse(
+                    HarvestRefusalReason::LinkedPaths,
+                    "link search path is not owned by the retained output".to_string(),
+                ));
+            };
+            search_paths.push(HarvestLinkSearchPath {
+                kind: kind.to_string(),
+                owner_relative_path,
+            });
+        }
+        search_paths.sort();
+        search_paths.dedup();
+        let output_tree_digest = output.map(|output| output.digest.clone()).ok_or_else(|| {
+            refuse(
+                HarvestRefusalReason::OutputNotRetained,
+                "link products were not retained".to_string(),
+            )
+        })?;
+        link_observations.push(HarvestLinkObservation {
+            libraries,
+            search_paths,
+            output_tree_digest,
+            products: products.clone(),
+        });
+    }
+
+    // ---- Tool probes retain their target domains, invocation identity and generated product identities ----
+    let mut tool_observations = Vec::new();
+    if let (Some(facts), Some((_, build_unit))) = (facts, edge) {
+        let output_tree_digest = output.map(|output| output.digest.clone());
+        for probe in capture
+            .build_script_tool_probes
+            .iter()
+            .filter(|probe| probe.package_id == build_unit.package_id && probe.out_dir == facts.out_dir)
+        {
+            let Some(output_tree_digest) = output_tree_digest.clone() else {
+                return Err(refuse(
+                    HarvestRefusalReason::OutputNotRetained,
+                    "tool products were not retained".to_string(),
+                ));
+            };
+            tool_observations.push(HarvestToolObservation {
+                target_context: probe.target_context.clone(),
+                rustc_target: probe.rustc_target.clone(),
+                probe_digest: probe.digest.clone(),
+                executable_identity: rustc_executable_identity.to_string(),
+                output_tree_digest,
+                products: products.clone(),
+            });
+        }
+    }
+    tool_observations.sort();
+    tool_observations.dedup();
     Ok(Observation {
         fact: HarvestFact {
             toolchain: compiler.toolchain.clone(),
@@ -586,6 +978,9 @@ fn observe_unit(
             features,
             cfg,
             out,
+            environment_inputs,
+            link_observations,
+            tool_observations,
         },
         source: HarvestSource {
             registry: registry_index_of(&registry_source.registry),
@@ -593,6 +988,44 @@ fn observe_unit(
         },
         out_relative_root: output.map(|output| output.relative_root.clone()),
     })
+}
+
+/// Derive the recognized script-emitted constants whose bytes are already fixed by the selected binding.
+fn binding_derived_environment_value(
+    name: &str,
+    features: &[String],
+    profile: &str,
+    target_cfg: &oven_rustc::rustc::OvenSelectedRustFacetCfgSnapshot,
+) -> Option<String> {
+    match name {
+        "CFG_CARGO_FEATURES" => Some(format!("{features:?}")),
+        "CFG_OPT_LEVEL" => Some(if profile == "release" { "3" } else { "0" }.to_string()),
+        "CFG_TARGET_FEATURES" => {
+            let mut target_features = target_cfg
+                .values
+                .get("target_feature")
+                .into_iter()
+                .flatten()
+                .flat_map(|value| value.split(','))
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            target_features.sort();
+            target_features.dedup();
+            Some(format!("{target_features:?}"))
+        }
+        _ => None,
+    }
+}
+
+/// Rebind one path below `owner` to a portable owner-relative coordinate.
+fn owner_relative_path(path: &Path, owner: &Path) -> Option<String> {
+    let relative = path.strip_prefix(owner).ok()?;
+    if relative.as_os_str().is_empty() {
+        return Some(".".to_string());
+    }
+    let value = relative.to_str()?;
+    safe_relative(value).map(|safe| safe.to_string_lossy().into_owned())
 }
 
 /// The execution node that supplies build-script facts to a consumer edge; the same test the projection applies.
@@ -772,6 +1205,22 @@ pub fn write_harvest_report(
     )?;
     written.push(refusals_path);
     Ok(written)
+}
+
+/// Produce and idempotently write one canonical harvest report.
+///
+/// Standalone and release harvesting share this operation so classification, canonical proposal bytes, retained-byte
+/// validation, and refusal writing cannot drift between entry points.
+pub fn harvest_registry_units_to_dir(
+    capture: &OvenLegacyCargoSelectedUnitCapture,
+    evidence: &HarvestEvidenceInputs,
+    profile: &str,
+    dir: &Path,
+    out_dir_sources: &Path,
+) -> Result<HarvestReport, OvenLegacyCargoError> {
+    let report = harvest_registry_units(capture, evidence, profile)?;
+    write_harvest_report(&report, dir, out_dir_sources)?;
+    Ok(report)
 }
 
 /// A plain relative path with only normal components, or `None`.
@@ -955,6 +1404,240 @@ mod tests {
         }
     }
 
+    /// A retained output tree with stable product bytes for raw-observation contract tests.
+    fn retained_products() -> OvenLegacyCargoSelectedGeneratedOutput {
+        OvenLegacyCargoSelectedGeneratedOutput {
+            relative_root: "generated-outputs/products".to_string(),
+            digest: selected_graph_sha256(b"product-tree"),
+            members: vec![OvenLegacyCargoInspectionSourceMember {
+                path: "libfixture.a".to_string(),
+                digest: selected_graph_sha256(b"archive"),
+            }],
+        }
+    }
+
+    #[test]
+    fn harvest_contract_preserves_link_product_byte_identities() -> TestResult {
+        let mut linked = facts(&[], Some(retained_products()));
+        linked.linked_libraries = vec!["static=fixture".to_string()];
+        linked.linked_paths = vec!["native=/transient/out".to_string()];
+        let report = harvest_registry_units(
+            &capture(vec![(library("fixture-sys", "1.0.0", &[]), Some(linked))]),
+            &evidence(),
+            "release",
+        )?;
+        assert!(report.proposals.is_empty());
+        let refusal = report
+            .refusals
+            .iter()
+            .find(|refusal| refusal.package == "fixture-sys" && refusal.reason == HarvestRefusalReason::LinkedLibraries)
+            .ok_or("owned link work must be refused")?;
+        let observation = &refusal.observations.link[0];
+        assert_eq!(observation.libraries, ["static=fixture"]);
+        assert_eq!(observation.search_paths[0].owner_relative_path, ".");
+        assert_eq!(observation.output_tree_digest, selected_graph_sha256(b"product-tree"));
+        assert_eq!(observation.products[0].digest, selected_graph_sha256(b"archive"));
+        Ok(())
+    }
+
+    #[test]
+    fn harvest_contract_preserves_tool_probe_and_product_identities() -> TestResult {
+        let unit = library("isle-meta", "1.0.0", &[]);
+        let build = build_script_of(&unit);
+        let mut selected = capture(vec![(unit, Some(facts(&[], Some(retained_products()))))]);
+        selected
+            .build_script_tool_probes
+            .push(OvenLegacyCargoBuildScriptToolProbe {
+                package_id: build.package_id,
+                out_dir: PathBuf::from("/transient/out"),
+                target_context: "x86_64-unknown-linux-gnu".to_string(),
+                rustc_target: "x86_64-unknown-linux-gnu".to_string(),
+                digest: selected_graph_sha256(b"probe"),
+            });
+        let report = harvest_registry_units(&selected, &evidence(), "release")?;
+        assert!(report.proposals.is_empty());
+        let refusal = report
+            .refusals
+            .iter()
+            .find(|refusal| refusal.package == "isle-meta" && refusal.reason == HarvestRefusalReason::ToolProbes)
+            .ok_or("owned tool work must be refused")?;
+        let observation = &refusal.observations.tool[0];
+        assert_eq!(observation.probe_digest, selected_graph_sha256(b"probe"));
+        assert_eq!(observation.products[0].digest, selected_graph_sha256(b"archive"));
+        Ok(())
+    }
+
+    #[test]
+    fn harvest_contract_converts_only_rebindable_environment_inputs() -> TestResult {
+        let mut observed = facts(&[], Some(retained_products()));
+        observed
+            .environment
+            .insert("FIXTURE_ARCHIVE".to_string(), "/transient/out/libfixture.a".to_string());
+        let report = harvest_registry_units(
+            &capture(vec![(library("fixture", "1.0.0", &[]), Some(observed))]),
+            &evidence(),
+            "release",
+        )?;
+        assert!(report.proposals.is_empty());
+        let refusal = report
+            .refusals
+            .iter()
+            .find(|refusal| refusal.package == "fixture" && refusal.reason == HarvestRefusalReason::EnvironmentObserved)
+            .ok_or("retained environment input must be refused until its typed record exists")?;
+        let input = &refusal.observations.environment[0];
+        assert_eq!(input.name, "FIXTURE_ARCHIVE");
+        assert_eq!(input.owner_relative_path, "libfixture.a");
+        assert_eq!(input.digest, selected_graph_sha256(b"archive"));
+        Ok(())
+    }
+
+    #[test]
+    fn harvest_contract_refuses_unmodelled_environment_values() -> TestResult {
+        let mut observed = facts(&[], Some(retained_products()));
+        observed
+            .environment
+            .insert("SECRET".to_string(), "ambient-value".to_string());
+        let report = harvest_registry_units(
+            &capture(vec![(library("fixture", "1.0.0", &[]), Some(observed))]),
+            &evidence(),
+            "release",
+        )?;
+        assert!(report.proposals.is_empty());
+        assert!(
+            report
+                .refusals
+                .iter()
+                .any(|refusal| refusal.reason == HarvestRefusalReason::EnvironmentObserved)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn harvest_contract_proves_binding_derived_environment_constants() -> TestResult {
+        let mut observed = facts(&[], Some(retained_products()));
+        observed.environment = BTreeMap::from([
+            ("CFG_CARGO_FEATURES".to_string(), "[\"arch\", \"default\"]".to_string()),
+            ("CFG_OPT_LEVEL".to_string(), "3".to_string()),
+            ("CFG_TARGET_FEATURES".to_string(), "[\"neon\", \"sha2\"]".to_string()),
+        ]);
+        let mut selected = capture(vec![(library("libm", "0.2.16", &["default", "arch"]), Some(observed))]);
+        let compiler = selected.compiler.as_mut().ok_or("fixture compiler context missing")?;
+        compiler
+            .target_cfg
+            .values
+            .insert("target_feature".to_string(), vec!["sha2,neon".to_string()]);
+
+        let report = harvest_registry_units(&selected, &evidence(), "release")?;
+        let proposal = report
+            .proposals
+            .iter()
+            .find(|proposal| proposal.project.name == "libm")
+            .ok_or("libm binding-derived constants must harvest")?;
+        assert!(proposal.rust.facts[0].environment_inputs.is_empty());
+        assert!(proposal.admitted_record().is_ok());
+        assert!(
+            !serde_json::to_string(proposal)?.contains("CFG_"),
+            "proved constants need no fact key"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn harvest_contract_refuses_a_binding_derived_constant_that_disagrees() -> TestResult {
+        for (name, value) in [
+            ("CFG_CARGO_FEATURES", "[\"wrong\"]"),
+            ("CFG_OPT_LEVEL", "0"),
+            ("CFG_TARGET_FEATURES", "[\"wrong\"]"),
+        ] {
+            let mut observed = facts(&[], Some(retained_products()));
+            observed.environment.insert(name.to_string(), value.to_string());
+            let report = harvest_registry_units(
+                &capture(vec![(library("libm", "0.2.16", &["arch", "default"]), Some(observed))]),
+                &evidence(),
+                "release",
+            )?;
+            assert!(report.proposals.is_empty());
+            assert!(report.refusals.iter().any(|refusal| {
+                refusal.reason == HarvestRefusalReason::BindingDerivedEnvironmentMismatch && refusal.detail == name
+            }));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn harvest_contract_emits_explicit_empty_facts() -> TestResult {
+        let report = harvest_registry_units(
+            &capture(vec![(library("empty", "1.0.0", &[]), None)]),
+            &evidence(),
+            "release",
+        )?;
+        assert_eq!(report.proposals.len(), 1);
+        assert_eq!(
+            report.proposals[0].rust.facts[0].effect_classes(),
+            [HarvestEffectClass::Empty]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn admitted_proposal_converts_cfg_out_and_refuses_raw_work() -> TestResult {
+        let clean = harvest_registry_units(
+            &capture(vec![(library("empty", "1.0.0", &[]), None)]),
+            &evidence(),
+            "release",
+        )?;
+        let admitted = clean.proposals[0].admitted_record()?;
+        assert!(admitted.cfg.is_empty() && admitted.out.is_empty());
+        assert_eq!(admitted.harvested_from, evidence().receipt);
+
+        let mut linked = facts(&[], Some(retained_products()));
+        linked.linked_libraries = vec!["static=fixture".to_string()];
+        let raw = harvest_registry_units(
+            &capture(vec![(library("fixture-sys", "1.0.0", &[]), Some(linked))]),
+            &evidence(),
+            "release",
+        )?;
+        let link = raw
+            .refusals
+            .iter()
+            .find(|refusal| refusal.package == "fixture-sys")
+            .ok_or("link refusal missing")?
+            .observations
+            .link
+            .clone();
+        let mut raw_proposal = clean.proposals[0].clone();
+        raw_proposal.rust.facts[0].link_observations = link;
+        assert_eq!(
+            raw_proposal.admitted_record().err(),
+            Some(HarvestAdmissionRefusal::UnresolvedLinkObservations)
+        );
+
+        let mut environment = facts(&[], Some(retained_products()));
+        environment
+            .environment
+            .insert("FIXTURE_ARCHIVE".to_string(), "/transient/out/libfixture.a".to_string());
+        let raw = harvest_registry_units(
+            &capture(vec![(library("fixture", "1.0.0", &[]), Some(environment))]),
+            &evidence(),
+            "release",
+        )?;
+        let environment = raw
+            .refusals
+            .iter()
+            .find(|refusal| refusal.package == "fixture")
+            .ok_or("environment refusal missing")?
+            .observations
+            .environment
+            .clone();
+        let mut raw_proposal = clean.proposals[0].clone();
+        raw_proposal.rust.facts[0].environment_inputs = environment;
+        assert_eq!(
+            raw_proposal.admitted_record().err(),
+            Some(HarvestAdmissionRefusal::UnresolvedEnvironmentInputs)
+        );
+        Ok(())
+    }
+
     /// One fixture unit and, when present, the facts of the build-script edge feeding it.
     type FixtureUnit = (OvenLegacyCargoSelectedUnit, Option<OvenLegacyCargoBuildScriptFacts>);
 
@@ -1046,13 +1729,10 @@ mod tests {
         assert_eq!(proposal.evidence.host, "x86_64-unknown-linux-gnu");
         assert!(proposal.evidence.hazards.is_empty());
         assert!(proposal.notes.is_none());
-        // The transport root and the run-custom-build node are refused by name, not silently dropped.
+        // The transport root is refused; the build-script node is evidence owned by the library binding.
         assert_eq!(
             reasons(&report),
-            [
-                ("libm", HarvestRefusalReason::BuildScriptUnit),
-                ("oven_release_stdlib", HarvestRefusalReason::NotRegistryBacked),
-            ]
+            [("oven_release_stdlib", HarvestRefusalReason::NotRegistryBacked)]
         );
         Ok(())
     }
@@ -1127,15 +1807,15 @@ mod tests {
 
     #[test]
     fn scripts_outside_the_record_vocabulary_are_refused_by_reason() -> TestResult {
-        let mut linked = facts(&[], None);
+        let mut linked = facts(&[], Some(retained_products()));
         linked.linked_libraries = vec!["static=zstd".to_string()];
-        let mut paths = facts(&[], None);
-        paths.linked_paths = vec!["/transient/out/lib".to_string()];
-        let mut environment = facts(&[], None);
+        let mut paths = facts(&[], Some(retained_products()));
+        paths.linked_paths = vec!["/transient/out".to_string()];
+        let mut environment = facts(&[], Some(retained_products()));
         environment
             .environment
-            .insert("CFG_OPT_LEVEL".to_string(), "3".to_string());
-        let mut probed = facts(&[], None);
+            .insert("SECRET".to_string(), "ambient-value".to_string());
+        let mut probed = facts(&[], Some(retained_products()));
         probed.out_dir = PathBuf::from("/transient/probed-out");
         let unretained = facts(&["answer"], None);
         let mut capture = capture(vec![
@@ -1175,7 +1855,7 @@ mod tests {
                     HarvestRefusalReason::OutputNotRetained,
                     "OUT_DIR was not inventoried"
                 ),
-                ("libm", HarvestRefusalReason::EnvironmentObserved, "CFG_OPT_LEVEL"),
+                ("libm", HarvestRefusalReason::EnvironmentObserved, "SECRET"),
                 (
                     "openssl-sys",
                     HarvestRefusalReason::LinkedPaths,
@@ -1190,6 +1870,53 @@ mod tests {
                 ("zstd-sys", HarvestRefusalReason::LinkedLibraries, "static=zstd"),
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn harvest_contract_never_emits_one_package_as_both_proposal_and_refusal() -> TestResult {
+        let mut linked = facts(&[], Some(retained_products()));
+        linked.linked_libraries = vec!["static=mixed".to_string()];
+        let report = harvest_registry_units(
+            &capture(vec![
+                (library("mixed", "1.0.0", &["clean"]), None),
+                (library("mixed", "1.0.0", &["native"]), Some(linked)),
+                (library("plain", "1.0.0", &[]), None),
+            ]),
+            &evidence(),
+            "release",
+        )?;
+        let proposed = report
+            .proposals
+            .iter()
+            .map(|proposal| proposal.project.name.as_str())
+            .collect::<BTreeSet<_>>();
+        let refused = report
+            .refusals
+            .iter()
+            .map(|refusal| refusal.package.as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(proposed.is_disjoint(&refused));
+        assert!(proposed.contains("plain"));
+        assert!(!proposed.contains("mixed"));
+        assert!(refused.contains("mixed"));
+
+        let output = tempdir()?;
+        let retained = tempdir()?;
+        let written = write_harvest_report(&report, output.path(), retained.path())?;
+        assert!(written.contains(&output.path().join("plain-1.0.0-release/proposal.json")));
+        assert!(
+            !written
+                .iter()
+                .any(|path| path.to_string_lossy().contains("mixed-1.0.0-release/proposal.json"))
+        );
+        let refusals: Vec<HarvestRefusal> =
+            serde_json::from_slice(&fs::read(output.path().join("refusals-release.json"))?)?;
+        let refused_on_disk = refusals
+            .iter()
+            .map(|refusal| refusal.package.as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(proposed.is_disjoint(&refused_on_disk));
         Ok(())
     }
 
@@ -1225,7 +1952,7 @@ mod tests {
 
     /// Cargo orders the unit graph differently between runs; the report, refusals included, must not.
     #[test]
-    fn a_reordered_capture_yields_byte_identical_proposals_and_refusals() -> TestResult {
+    fn harvest_contract_is_byte_identical_after_reordered_capture() -> TestResult {
         let empty_output = || {
             Some(OvenLegacyCargoSelectedGeneratedOutput {
                 relative_root: "generated-outputs/empty".to_string(),
@@ -1257,14 +1984,13 @@ mod tests {
             first
                 .refusals
                 .iter()
-                .any(|refusal| refusal.reason == HarvestRefusalReason::BuildScriptUnit),
-            "the script execution nodes are refused by what they are"
+                .all(|refusal| refusal.reason != HarvestRefusalReason::BuildScriptUnit)
         );
         Ok(())
     }
 
     #[test]
-    fn units_of_one_selection_that_disagree_refuse_and_distinct_selections_get_distinct_directories() -> TestResult {
+    fn harvest_contract_folds_equal_and_refuses_conflicting_observations() -> TestResult {
         let empty_output = || {
             Some(OvenLegacyCargoSelectedGeneratedOutput {
                 relative_root: "generated-outputs/empty".to_string(),
@@ -1272,18 +1998,22 @@ mod tests {
                 members: Vec::new(),
             })
         };
+        let mut one = facts(&["one"], empty_output());
+        one.linked_libraries = vec!["static=one".to_string()];
+        let mut two = facts(&["two"], empty_output());
+        two.linked_libraries = vec!["static=two".to_string()];
         let disagreeing = capture(vec![
-            (library("alpha", "1.0.0", &["x"]), Some(facts(&["one"], empty_output()))),
-            (library("alpha", "1.0.0", &["x"]), Some(facts(&["two"], empty_output()))),
+            (library("alpha", "1.0.0", &["x"]), Some(one)),
+            (library("alpha", "1.0.0", &["x"]), Some(two)),
         ]);
         let report = harvest_registry_units(&disagreeing, &evidence(), "release")?;
         assert!(report.proposals.is_empty());
-        assert!(
-            report
-                .refusals
-                .iter()
-                .any(|refusal| refusal.reason == HarvestRefusalReason::ConflictingObservations)
-        );
+        let conflict = report
+            .refusals
+            .iter()
+            .find(|refusal| refusal.reason == HarvestRefusalReason::ConflictingObservations)
+            .ok_or("missing conflicting-observations refusal")?;
+        assert_eq!(conflict.observations.link.len(), 2);
 
         let split = capture(vec![
             (library("syn", "2.0.0", &["full"]), None),
@@ -1355,14 +2085,20 @@ mod tests {
         struct Rendered<'a> {
             project: &'a HarvestProject,
             source: &'a HarvestSource,
-            rust: &'a HarvestRustFacts,
+            rust: RenderedRust,
+        }
+        #[derive(Serialize)]
+        struct RenderedRust {
+            facts: Vec<RustFactRecord>,
         }
         fs::write(
             record_dir.join("loaf.toml"),
             toml::to_string(&Rendered {
                 project: &proposal.project,
                 source: &proposal.source,
-                rust: &proposal.rust,
+                rust: RenderedRust {
+                    facts: vec![proposal.admitted_record()?],
+                },
             })?,
         )?;
         let index_dir = registry_root.path().join("index/se/rd");
@@ -1605,12 +2341,12 @@ mod tests {
         let refusals: Vec<HarvestRefusal> =
             serde_json::from_slice(&fs::read(output.path().join("refusals-release.json"))?)?;
         assert_eq!(refusals, report.refusals);
-        let script_refusal = refusals
-            .iter()
-            .find(|refusal| refusal.package == "serde_core")
-            .ok_or("the serde_core build script is refused by name")?;
+        assert!(
+            refusals.iter().all(|refusal| refusal.package != "serde_core"),
+            "serde_core's build-script node is supporting evidence for its proposal, never a refusal of the package"
+        );
         assert_eq!(
-            serde_json::to_value(script_refusal.reason)?,
+            serde_json::to_value(HarvestRefusalReason::BuildScriptUnit)?,
             "build-script-unit",
             "reasons are kebab-case on the wire"
         );

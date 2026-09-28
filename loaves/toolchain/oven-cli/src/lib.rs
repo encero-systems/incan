@@ -70,6 +70,21 @@ pub fn run_oven_command(command: OvenCommand) -> CliResult<ExitCode> {
             output,
             format,
         }),
+        OvenCommand::Inventory {
+            incan_lock,
+            incan_harvest,
+            incql_lock,
+            incql_harvest,
+            output,
+            check,
+        } => commands::oven_inventory(commands::OvenInventoryCommandOptions {
+            incan_lock,
+            incan_harvest,
+            incql_lock,
+            incql_harvest,
+            output,
+            check,
+        }),
         OvenCommand::Interop { command } => match command {
             OvenInteropCommand::Bake {
                 project,

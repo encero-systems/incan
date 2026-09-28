@@ -21,9 +21,9 @@ use oven_cargo_compat::{
     OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT, OvenLegacyCargoCompilerSuiteResult,
     OvenLegacyCargoFoundationSelection, OvenLegacyCargoSelectedUnitCapture, ambient_harvest_hazards,
     encode_selected_graph_policy_request, finalize_compiler_support_selected_graph, harvest_notes_for_checkout,
-    harvest_registry_units, legacy_cargo_build_script_closure_digest, legacy_cargo_foundation_projection,
+    harvest_registry_units_to_dir, legacy_cargo_build_script_closure_digest, legacy_cargo_foundation_projection,
     legacy_cargo_generated_archive_bindings, legacy_cargo_generated_output_bindings, proposal_directory_names,
-    runtime_foundation_from_compiled_loaf, runtime_foundation_inventories_from_policy_response, write_harvest_report,
+    runtime_foundation_from_compiled_loaf, runtime_foundation_inventories_from_policy_response,
 };
 use oven_model::loaf_registry::{LoafRegistry, checkout_head_commit};
 use oven_model::manifest::ProjectManifest;
@@ -1661,14 +1661,14 @@ fn harvest_release_entry(
         &prepared.publisher,
         HarvestPublisherIdentity::new(&receipt.identity, compiler_closure, ambient_harvest_hazards(), notes),
     );
-    let report = harvest_registry_units(capture, &evidence, profile).map_err(oven_error)?;
     let loaf_name = prepared
         .preparation
         .loaf_identity
         .strip_prefix("sha256:")
         .unwrap_or(&prepared.preparation.loaf_identity);
     let retained_root = staged_root.join(format!("{loaf_name}.loaf"));
-    write_harvest_report(&report, harvest_dir, &retained_root).map_err(oven_error)?;
+    let report =
+        harvest_registry_units_to_dir(capture, &evidence, profile, harvest_dir, &retained_root).map_err(oven_error)?;
     let proposals = proposal_directory_names(&report).map_err(oven_error)?;
     announce_oven_progress(
         "HARVESTED",
