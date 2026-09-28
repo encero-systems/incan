@@ -5233,6 +5233,19 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_emit/tests/numeric_helper_codegen_tests.rs": {
+      "disposition": "retire",
+      "notes": "generated-Rust compile-and-run proof for RFC 009 integer overflow helpers and explicit resize targets; the behavior fixture preserves the observable contract across the backend cutover.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "rfc009_integer_helpers_and_explicit_resizes_compile_and_run": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/ownership_numerics_and_bounds/integer_overflow_helpers_and_explicit_resizes.incn"
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/tests/qualified_type_annotation_codegen_tests.rs": {
       "disposition": "retire",
       "notes": "asserts generated Rust text.",

@@ -50,7 +50,7 @@ use incan_lang::lang::surface::result_methods::ResultMethodId;
 use incan_lang::lang::surface::types::{self as surface_types, SurfaceTypeId, TASK_JOIN_ERROR_TYPE_NAME};
 use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_lang::lang::types::collections::{self as collection_types, CollectionTypeId};
-use incan_lang::lang::types::numerics::NumericTypeId;
+use incan_lang::lang::types::numerics::{self as numerics, NumericTypeId};
 use incan_lang::lang::{stdlib, trait_bounds};
 use incan_semantics_core::SurfaceExprLoweringAction;
 
@@ -2137,7 +2137,10 @@ impl AstLowering {
                 let receiver = grouped_index_method_receiver(receiver);
                 let mut args_ir = self.lower_call_args(args)?;
                 let lowered_type_args = self.lower_call_site_type_args(expr_span, type_args);
-                let method_name = self.resolve_method_rebinding(&receiver.ty, m);
+                let resolved_method_name = self.resolve_method_rebinding(&receiver.ty, m);
+                let method_name = numerics::integer_helper_from_str(&resolved_method_name)
+                    .map(|helper| helper.canonical.to_string())
+                    .unwrap_or(resolved_method_name);
                 let arg_policy = self.regular_method_call_arg_policy(o.span, &receiver, &method_name, &args_ir);
                 for (arg_ir, arg_ast) in args_ir.iter_mut().zip(args.iter()) {
                     let arg_span = match arg_ast {
@@ -2205,7 +2208,6 @@ impl AstLowering {
                     )
                 } else if let Some(policy) = numeric_resize_policy(&method_name)
                     && args_ir.is_empty()
-                    && lowered_type_args.is_empty()
                 {
                     let target_ty = match (policy, &expr_ty) {
                         (NumericResizePolicy::Try, IrType::Option(inner)) => (**inner).clone(),

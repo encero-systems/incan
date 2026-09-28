@@ -148,16 +148,16 @@ def main() -> None:
 
 ## Resizing methods
 
-A resizing method converts a numeric value to its destination type `T`, the expected type of the call, such as a binding's declared type.
+A resizing method converts a numeric value to its destination type `T`. The destination may come from the expected type of the call, such as a binding's declared type. `try_resize[T]()`, `wrapping_resize[T]()` and `saturating_resize[T]()` may instead name it explicitly. When both forms supply a destination, they must name the same type (`try_resize` compares `T` with the payload of the expected `Option[T]`).
 
 | Method | Destination | Receiver and `T` | Result |
 | --- | --- | --- | --- |
 | `resize()` | `T` | The receiver's type is `T` or assignable to `T` | The same value |
-| `try_resize()` | `Option[T]` | Integer types | `Some(value)` when `T` holds the value, otherwise `None` |
-| `wrapping_resize()` | `T` | Integer types | The value modulo 2^N, in the range of `T`, where N is the bit width of `T` |
-| `saturating_resize()` | `T` | Integer types | The value clamped to the minimum and maximum of `T` |
+| `try_resize()` or `try_resize[T]()` | `Option[T]` | Integer types | `Some(value)` when `T` holds the value, otherwise `None` |
+| `wrapping_resize()` or `wrapping_resize[T]()` | `T` | Integer types | The value modulo 2^N, in the range of `T`, where N is the bit width of `T` |
+| `saturating_resize()` or `saturating_resize[T]()` | `T` | Integer types | The value clamped to the minimum and maximum of `T` |
 
-- A call without a destination type, with arguments or with type arguments, or outside the table's receiver and destination types is refused (`INCAN-T0001`).
+- A call without a contextual or explicit destination type, with value arguments, with more than one type argument, or outside the table's receiver and destination types is refused (`INCAN-T0001`). `resize()` does not accept an explicit type argument.
 
 ```incan
 def main() -> None:
@@ -165,10 +165,32 @@ def main() -> None:
     wide: int = small.resize()                   # accepted
     incoming: i16 = 240
     maybe: Option[i8] = incoming.try_resize()    # accepted
-    wrapped: i8 = incoming.wrapping_resize()     # accepted
-    capped: i8 = incoming.saturating_resize()    # accepted
+    wrapped = incoming.wrapping_resize[i8]()     # accepted: explicit destination
+    capped: i8 = incoming.saturating_resize[i8]() # accepted: matching context and explicit destination
+    conflict: u8 = incoming.saturating_resize[i8]() # refused: conflicting destinations
     narrow: i8 = wide.resize()                   # refused: int is not assignable to i8
     loose = small.resize()                       # refused: no destination type
+```
+
+## Integer overflow helpers
+
+All signed and unsigned integer types, including `int`, provide the following helpers. `T` is the receiver's type. The operand to `add`, `sub` and `mul` must also be `T`; mixed-width values require an explicit resize. A `pow` exponent is `u32`, matching the underlying integer operation. Float receivers are refused (`INCAN-T0001`).
+
+| Policy | Methods | Result |
+| --- | --- | --- |
+| Checked | `checked_add(other: T)`, `checked_sub(other: T)`, `checked_mul(other: T)`, `checked_pow(exponent: u32)` | `Option[T]`: `Some(result)` when representable, otherwise `None` |
+| Wrapping | `wrapping_add(other: T)`, `wrapping_sub(other: T)`, `wrapping_mul(other: T)`, `wrapping_pow(exponent: u32)` | `T`, wrapped at the bounds of `T` |
+| Saturating | `saturating_add(other: T)`, `saturating_sub(other: T)`, `saturating_mul(other: T)`, `saturating_pow(exponent: u32)` | `T`, clamped at the bounds of `T` |
+
+Ordinary sized-integer arithmetic traps on overflow in debug builds and wraps in release builds. The helper methods select checked, wrapping or saturating behavior explicitly in every build profile.
+
+```incan
+def main() -> None:
+    maximum: u8 = 255
+    maybe: Option[u8] = maximum.checked_add(1u8)
+    wrapped: u8 = maximum.wrapping_add(1u8)
+    clamped: u8 = maximum.saturating_add(1u8)
+    power: u8 = 3u8.saturating_pow(6u32)
 ```
 
 ## Rust interop numeric arguments

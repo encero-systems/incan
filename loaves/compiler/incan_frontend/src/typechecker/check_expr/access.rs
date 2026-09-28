@@ -39,7 +39,7 @@ use incan_lang::lang::surface::{
 use incan_lang::lang::text_codecs::{self, DecodeErrorsPolicy};
 use incan_lang::lang::traits::{self as core_traits, TraitId};
 use incan_lang::lang::types::collections::CollectionTypeId;
-use incan_lang::lang::types::numerics::NumericFamily;
+use incan_lang::lang::types::numerics::{self as numerics, IntegerHelperFamily, IntegerHelperOperation, NumericFamily};
 use incan_lang::lang::{conventions, stdlib};
 use incan_lang::lang::{enum_helpers, surface::option_methods};
 use incan_semantics_core::body_ir::HelperOp;
@@ -1648,39 +1648,54 @@ impl TypeChecker {
             "saturating_resize" => NumericResizeMethodPolicy::Saturating,
             _ => return None,
         };
-        if !type_args.is_empty() {
-            self.errors
-                .push(errors::type_mismatch("no type arguments", "type arguments", span));
-            return Some(ResolvedType::Unknown);
-        }
+        let explicit_target = match type_args {
+            [] => None,
+            [target] if !matches!(policy, NumericResizeMethodPolicy::Lossless) => {
+                Some(self.resolve_type_checked(target))
+            }
+            [_] => {
+                self.errors.push(errors::type_mismatch(
+                    "no explicit target on resize()",
+                    "explicit resize target",
+                    span,
+                ));
+                return Some(ResolvedType::Unknown);
+            }
+            _ => {
+                self.errors.push(errors::type_mismatch(
+                    "at most one explicit resize target",
+                    "multiple type arguments",
+                    span,
+                ));
+                return Some(ResolvedType::Unknown);
+            }
+        };
         if !args.is_empty() {
             self.errors
                 .push(errors::type_mismatch("no arguments", "arguments", span));
             return Some(ResolvedType::Unknown);
         }
 
-        let target_ty = match policy {
+        let contextual_target = match policy {
             NumericResizeMethodPolicy::Try => match expected_return_ty {
                 Some(ResolvedType::Generic(name, args))
                     if collection_type_id(name.as_str()) == Some(CollectionTypeId::Option) && args.len() == 1 =>
                 {
-                    args[0].clone()
+                    Some(args[0].clone())
                 }
-                _ => {
+                Some(found) if explicit_target.is_none() => {
                     self.errors.push(errors::type_mismatch(
                         "contextual Option[numeric] target",
-                        expected_return_ty
-                            .map(ToString::to_string)
-                            .as_deref()
-                            .unwrap_or("unknown target"),
+                        &found.to_string(),
                         span,
                     ));
                     return Some(ResolvedType::Unknown);
                 }
+                _ => None,
             },
             _ => match expected_return_ty {
-                Some(ty) => ty.clone(),
-                None => {
+                Some(ty) => Some(ty.clone()),
+                None if explicit_target.is_none() => {
                     self.errors.push(errors::type_mismatch(
                         "contextual numeric target",
                         "unknown target",
@@ -1688,8 +1703,27 @@ impl TypeChecker {
                     ));
                     return Some(ResolvedType::Unknown);
                 }
+                None => None,
             },
         };
+        let target_ty = explicit_target
+            .or_else(|| contextual_target.clone())
+            .unwrap_or(ResolvedType::Unknown);
+        if let Some(contextual_target) = contextual_target
+            && super::super::numeric_type_id_for_compat(&target_ty)
+                != super::super::numeric_type_id_for_compat(&contextual_target)
+        {
+            let contextual_result = match policy {
+                NumericResizeMethodPolicy::Try => option_ty(contextual_target),
+                _ => contextual_target,
+            };
+            self.errors.push(errors::type_mismatch(
+                &format!("explicit resize target compatible with {contextual_result}"),
+                &target_ty.to_string(),
+                span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
         let Some(target) = super::super::numeric_type_id_for_compat(&target_ty) else {
             self.errors
                 .push(errors::type_mismatch("numeric target", &target_ty.to_string(), span));
@@ -1734,6 +1768,51 @@ impl TypeChecker {
                     _ => Some(target_ty),
                 }
             }
+        }
+    }
+
+    /// Typecheck RFC 009 integer overflow helpers from the language-owned numeric registry.
+    fn check_integer_overflow_helper(
+        &mut self,
+        base_ty: &ResolvedType,
+        method: &str,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let helper = numerics::integer_helper_from_str(method)?;
+        let source = super::super::numeric_type_id_for_compat(base_ty)?;
+        if !numerics::supports_integer_helper(source, helper) {
+            return None;
+        }
+        if !type_args.is_empty() {
+            self.errors
+                .push(errors::type_mismatch("no type arguments", "type arguments", span));
+            return Some(ResolvedType::Unknown);
+        }
+        if args.len() != 1 || arg_types.len() != 1 {
+            self.errors
+                .push(errors::builtin_arity(helper.canonical, 1, args.len(), span));
+            return Some(ResolvedType::Unknown);
+        }
+
+        let expected_operand = match helper.operation {
+            IntegerHelperOperation::Add | IntegerHelperOperation::Sub | IntegerHelperOperation::Mul => source,
+            IntegerHelperOperation::Pow => numerics::NumericTypeId::U32,
+        };
+        if super::super::numeric_type_id_for_compat(&arg_types[0]) != Some(expected_operand) {
+            self.errors.push(errors::type_mismatch(
+                numerics::as_str(expected_operand),
+                &arg_types[0].to_string(),
+                span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+
+        match helper.family {
+            IntegerHelperFamily::Checked => Some(option_ty(base_ty.clone())),
+            IntegerHelperFamily::Wrapping | IntegerHelperFamily::Saturating => Some(base_ty.clone()),
         }
     }
 
@@ -5318,6 +5397,18 @@ impl TypeChecker {
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => inner.as_ref(),
             other => other,
         };
+        if let Some(source) = super::super::numeric_type_id_for_compat(base_ty)
+            && let Some(helper) = numerics::integer_helper_from_str(method)
+            && index == 0
+            && numerics::supports_integer_helper(source, helper)
+        {
+            return Some(match helper.operation {
+                IntegerHelperOperation::Add | IntegerHelperOperation::Sub | IntegerHelperOperation::Mul => {
+                    base_ty.clone()
+                }
+                IntegerHelperOperation::Pow => ResolvedType::Numeric(numerics::NumericTypeId::U32),
+            });
+        }
         match base_ty {
             ResolvedType::Float | ResolvedType::Numeric(NumericTypeId::F32) => (index == 0
                 && float_methods::from_str(method) == Some(float_methods::FloatMethodId::Powf))
@@ -5826,6 +5917,9 @@ impl TypeChecker {
 
         if let Some(ret) = self.check_numeric_resize_method(&base_ty, method, type_args, args, span, expected_return_ty)
         {
+            return ret;
+        }
+        if let Some(ret) = self.check_integer_overflow_helper(&base_ty, method, type_args, args, &arg_types, span) {
             return ret;
         }
         // Trait default methods typecheck against `Self`, so be permissive here too.
