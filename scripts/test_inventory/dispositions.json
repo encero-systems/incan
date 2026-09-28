@@ -339,7 +339,7 @@
     },
     "loaves/compiler/incan_driver/src/cargo_policy.rs": {
       "disposition": "retire",
-      "notes": "Two tests die with the Cargo command line (arg ordering, `INCAN_CARGO_ARGS`); the `INCAN_LOCKED/FROZEN/OFFLINE` env defaults, the `--no-locked/--no-offline/--no-frozen` negations and frozen \u21d2 locked+offline survive as Oven lock-policy inputs (maintainer ruling, 2026-09-20) and are twinned by re-point CLI tests.",
+      "notes": "Two tests die with the Cargo command line (arg ordering, `INCAN_CARGO_ARGS`); the `INCAN_LOCKED/FROZEN/OFFLINE` env defaults, the `--no-locked/--no-offline/--no-frozen` negations and frozen ⇒ locked+offline survive as Oven lock-policy inputs (maintainer ruling, 2026-09-20) and are twinned by re-point CLI tests.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -349,12 +349,12 @@
           "dies": "Cargo argument ordering (policy flags, then features, then extra args) on the generated Cargo command line; dies with #654."
         },
         "cargo_policy_cli_disable_flags_override_env_defaults": {
-          "twin": "loaves/toolchain/incan-cli/tests/cli_workspace_and_lock_tests.rs::build_no_flags_override_lock_policy_env_defaults",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_lock_policy_tests.rs::build_no_flags_override_lock_policy_env_defaults",
           "notes": "`--no-locked` / `--no-frozen` negate the environment defaults on the command line."
         },
         "cargo_policy_resolves_env_defaults_and_frozen_implication": {
-          "twin": "loaves/toolchain/incan-cli/tests/cli_workspace_and_lock_tests.rs::build_lock_policy_env_defaults_refuse_a_missing_lock",
-          "notes": "`INCAN_LOCKED=1` and `INCAN_FROZEN=1` (frozen \u21d2 locked) refuse a project without `oven.lock` and create none; the `INCAN_CARGO_ARGS` half dies with the Cargo command line."
+          "twin": "loaves/toolchain/incan-cli/tests/cli_lock_policy_tests.rs::build_lock_policy_env_defaults_refuse_a_missing_lock",
+          "notes": "`INCAN_LOCKED=1` and `INCAN_FROZEN=1` (frozen ⇒ locked) refuse a project without `oven.lock` and create none; the `INCAN_CARGO_ARGS` half dies with the Cargo command line."
         },
         "cargo_policy_uses_cli_extra_args_before_env_extra_args": {
           "twin": "dies",
@@ -552,7 +552,7 @@
       "tests": {
         "explicitly_baked_project_reuses_release_json_authority_without_cargo": {
           "twin": "dies",
-          "dies": "the `sealed project output \u2026 no longer matches this source tree` warning after an edit dies (maintainer ruling, 2026-09-20: a stale bake is re-baked transparently, no explicit rebake \u2014 the DX requirement is recorded on #1142, slice 8, with its re-point CLI test). The other observables are carried: `reused sealed project Loaf` on `build --locked` after a bake by `rfc031_pub_import_integration_tests.rs`; `oven.lock is out of date` after a manifest edit by `cli_workspace_and_lock_tests.rs` and `cli_interop_target_tests.rs`; `incan test tests --fail-on-empty` on a baked `std.json` project (#1056) by no other test \u2014 folded into the #1142 requirement as well."
+          "dies": "the `sealed project output … no longer matches this source tree` warning after an edit dies (maintainer ruling, 2026-09-20: a stale bake is re-baked transparently, no explicit rebake — the DX requirement is recorded on #1142, slice 8, with its re-point CLI test). The other observables are carried: `reused sealed project Loaf` on `build --locked` after a bake by `rfc031_pub_import_integration_tests.rs`; `oven.lock is out of date` after a manifest edit by `cli_workspace_and_lock_tests.rs` and `cli_interop_target_tests.rs`; `incan test tests --fail-on-empty` on a baked `std.json` project (#1056) by no other test — folded into the #1142 requirement as well."
         }
       },
       "twin": "dies"
@@ -566,7 +566,7 @@
       "tests": {
         "a_package_projects_a_call_into_its_own_sibling_module": {
           "twin": "dies",
-          "dies": "asserts the RFC 120 `__incan_v1_` projected wrapper name, not the source spelling `c.bumped()`, in a package's generated `lib.rs` (#1174 emitted-name recoverability); the emitted-name projection and the legacy `incan_ir` lowering that required it die with generated Rust. The package-calls-its-own-sibling behavior is reachable only through a `--lib`/SDK component build, which is not a run the fixture format can express. The surviving observable \u2014 a package whose library calls a sibling module's method builds \u2014 is carried by the SDK provider prewarm every suite root performs."
+          "dies": "asserts the RFC 120 `__incan_v1_` projected wrapper name, not the source spelling `c.bumped()`, in a package's generated `lib.rs` (#1174 emitted-name recoverability); the emitted-name projection and the legacy `incan_ir` lowering that required it die with generated Rust. The package-calls-its-own-sibling behavior is reachable only through a `--lib`/SDK component build, which is not a run the fixture format can express. The surviving observable — a package whose library calls a sibling module's method builds — is carried by the SDK provider prewarm every suite root performs."
         },
         "generated_application_artifact_matches_baseline": {
           "twin": "dies",
@@ -578,7 +578,7 @@
         },
         "generated_library_and_pub_dependency_consumer_artifacts_match_baseline": {
           "disposition": "retire",
-          "twin": "loaves/toolchain/incan-cli/tests/rfc031_pub_import_integration_tests.rs::private_pub_model_survives_facade_library_and_test_batch_boundaries_issue884",
+          "twin": "loaves/toolchain/incan-cli/tests/rfc031_pub_model_tests.rs::private_pub_model_survives_facade_library_and_test_batch_boundaries_issue884",
           "notes": "The generated `lib.rs`/`widgets.rs`/consumer `main.rs` fragments and both Cargo manifests die with #654. The `.incnlib` fields are pinned by re-point rows (`cli_workspace_and_lock_tests.rs`, `cli_provider_boundary_tests.rs`, `package_boundary_facade_tests.rs`, `cli_decorator_and_partial_tests.rs`, `package_executable_representation.rs`); the consumer run (a provider baked, a consumer importing a `pub model`, stdout asserted) is carried by the named re-point test."
         },
         "path_dependency_artifact_rebuilds_for_a_b_a_feature_projections": {
@@ -1101,7 +1101,7 @@
       "tests": {
         "rust_trait_associated_call_uses_callable_shape_from_dependency_namespace_source": {
           "disposition": "retire",
-          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_generic_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
           "notes": "twinned by the CLI scenario that builds and runs the same prost program (`cross_crate_decode_case`: `FileDescriptorSet.decode(encoded)` over a `Message` trait from a dependency's namespace); the `.as_slice()` spelling and the checker-fact assertions die with the emitter (the checker facts move with #1337's spec)."
         }
       },
@@ -1167,7 +1167,7 @@
           "dies": "a hand-built legacy IR program over `sha2`, asserting a trait `use` survives for an associated method; legacy IR and generated text, no program to run."
         },
         "generic_callable_name_emits_support_for_function_items_issue1865": {
-          "twin": "loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs::run_generic_reflection_contracts_issues712_715_819",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_language_reflection_tests.rs::run_generic_reflection_contracts_issues712_715_819",
           "notes": "twinned by the CLI regression's generic `remember[F](func: F)` function reading `func.__name__` from decorated function items; this test pins the emitted support trait and impl spellings, which die with #654."
         },
         "implementation_metadata_preserves_decimal_type_arguments": {
@@ -1227,7 +1227,7 @@
           "notes": "twinned by the same program building a generic model whose field is never read; the `#[expect(dead_code)]` assertion dies."
         },
         "normal_codegen_keeps_external_generated_entrypoints": {
-          "twin": "loaves/toolchain/incan-cli/tests/integration_tests.rs::e2e_builtin_fixture_and_assert_helper_share_one_project",
+          "twin": "loaves/toolchain/incan-cli/tests/integration_test_runner_basics_tests.rs::e2e_builtin_fixture_and_assert_helper_share_one_project",
           "notes": "twinned by the CLI test that runs `incan test` over `def test_...` functions, which is what the externally-reachable entrypoint set exists for; the `use <projection> as test_generated_entrypoint` spelling dies."
         },
         "normal_codegen_keeps_used_private_helpers_without_dead_code_allows": {
@@ -1391,11 +1391,11 @@
           "notes": "open (harness-deps): the assertion is `builder.json(&payload)` and a `&str` literal reaching `post<U: IntoUrl>` unconverted, over a reqwest-shaped stub. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` carries a `client_probe` crate with the same `Client`/`RequestBuilder` shape and prints the builder's recorded URL and payload length. A `rust::` program; waits for a Cargo-free bake under the compiler suite."
         },
         "test_codegen_borrows_rust_backed_free_function_args_from_metadata": {
-          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_generic_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
           "notes": "twinned by the CLI scenario that builds and runs `takes_ref(payload)` against a Rust free function taking `&T` (`borrowed_generic_case`); the `takes_ref(&value)` spelling over the synthetic `demo` crate dies."
         },
         "test_codegen_borrows_rust_backed_method_args_from_metadata": {
-          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::rust_concrete_reference_arguments_borrow_by_metadata_issue861",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_borrow_interop_tests.rs::rust_concrete_reference_arguments_borrow_by_metadata_issue861",
           "notes": "twinned by the CLI test that builds and runs `writer.view_value(header)` against a Rust method taking `&Header` and prints the read; the `builder.json(&payload)` spelling over the synthetic `demo` crate dies."
         },
         "test_codegen_boxes_variant_payloads_whatever_argument_shape": {
@@ -1447,7 +1447,7 @@
           "notes": "open (harness-deps): the assertion is the `PairFactory::new(7, \\\"marker\\\".to_string())` spelling. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` builds `PairFactory.new(7, \\\"marker\\\")` and prints both fields. A `rust::` program; waits for a Cargo-free bake under the compiler suite."
         },
         "test_codegen_preserves_direct_foreign_argument_when_only_a_sibling_needs_mutable_reference": {
-          "twin": "loaves/toolchain/incan-cli/tests/rfc031_pub_import_integration_tests.rs::oven_build_projects_structural_mutable_reference_generics_for_an_unrelated_provider",
+          "twin": "loaves/toolchain/incan-cli/tests/rfc031_rust_interop_tests.rs::oven_build_projects_structural_mutable_reference_generics_for_an_unrelated_provider",
           "notes": "twinned by the same CLI test, whose `FooBar[Entity]` argument stays owned beside the projected tuple; the `ProviderHandle<(Entity, &mut Widget)>` spelling dies."
         },
         "test_codegen_preserves_explicit_mutable_rust_generic_arguments_in_mutating_for_loop": {
@@ -1475,11 +1475,11 @@
           "notes": "open (harness-deps): the projection inside a trait method's parameter. Candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/codegen/rust_demo_interop/` declares a trait whose method takes `FooBar[tuple[Widget, Gadget]]` and adopts it on a model. A `rust::` program; waits for a Cargo-free bake under the compiler suite."
         },
         "test_codegen_projects_metadata_directed_mutable_rust_generic_arguments_without_nominal_matching": {
-          "twin": "loaves/toolchain/incan-cli/tests/rfc031_pub_import_integration_tests.rs::oven_build_projects_structural_mutable_reference_generics_for_an_unrelated_provider",
+          "twin": "loaves/toolchain/incan-cli/tests/rfc031_rust_interop_tests.rs::oven_build_projects_structural_mutable_reference_generics_for_an_unrelated_provider",
           "notes": "twinned by the CLI test that bakes and builds `FooBar[tuple[Widget, Gadget]]` against a real provider whose metadata directs the mutable projection, without name matching; the lowered-signature and `ProviderHandle<(&mut Widget, &mut Gadget)>` assertions die."
         },
         "test_codegen_rejects_inexact_expanded_derive_trait_contracts": {
-          "twin": "loaves/toolchain/incan-cli/tests/rfc031_pub_import_integration_tests.rs::oven_bake_fails_closed_when_a_derive_probe_differs_from_the_real_type",
+          "twin": "loaves/toolchain/incan-cli/tests/rfc031_rust_interop_tests.rs::oven_bake_fails_closed_when_a_derive_probe_differs_from_the_real_type",
           "notes": "twinned by the CLI test whose bake fails closed when the real derive output differs from the probed contract; the synthetic expanded-derive rejection dies."
         },
         "test_codegen_uses_source_field_names_for_metadata_free_rust_type_constructor": {
@@ -1777,7 +1777,7 @@
           "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_trait_object_view_to_a_reference_parameter/` (an `Arc<dyn Array>` from an in-fixture crate viewed through `as_ref()` and handed to a Rust function over `&dyn Array`, twice; a second `&` would refuse the program at the Rust build). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
         },
         "test_external_function_as_slice_arg_does_not_double_borrow": {
-          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_generic_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
           "notes": "twinned by the re-point program whose `trait_by_value_decode_case` hands `encoded.as_slice()` to a Rust `decode` implemented for `&[u8]` and prints the outcome."
         },
         "test_external_function_field_with_by_value_target_does_not_borrow": {
@@ -1789,7 +1789,7 @@
           "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_duration_fields_to_rust_parameters.incn` (a Rust `Duration` field handed to `eq`). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
         },
         "test_external_function_int_no_conversion": {
-          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::rust_trait_object_method_arguments_borrow_by_metadata_issue832",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_borrow_interop_tests.rs::rust_trait_object_method_arguments_borrow_by_metadata_issue832",
           "notes": "twinned by the re-point program that hands a `usize` local to a Rust constructor (`InterleavedOwned.new(input_frames)`) and runs; a scalar passes as it is. The metadata-free branch the test drives is where the policy lands without a Rust signature; the value's passing is what the program shows."
         },
         "test_external_function_known_field_without_target_does_not_guess_borrow": {
@@ -1801,7 +1801,7 @@
           "notes": "twinned by a program that unpacks a channel into its two ends, sends two values through the sender wrapper and receives them in order. The stdlib `Sender` wrapper sends through its inner Rust value from methods taking self, twice, and is asked whether it is closed afterwards: the field is lent, never moved out of the receiver, which is what the test protects."
         },
         "test_external_function_string_expression_to_str_ref_borrows_issue716": {
-          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::build_inline_fstring_rust_interop_variants_issue716",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_expression_interop_tests.rs::build_inline_fstring_rust_interop_variants_issue716",
           "notes": "twinned by the re-point program that hands inline and local f-strings to a Rust function taking `&str` and to a Rust enum variant holding a `String` (#716); the target-less half of the retired test is the metadata-free branch, which a runnable program does not take."
         },
         "test_external_function_string_field_without_target_borrows_like_string_variable": {
@@ -1817,7 +1817,7 @@
           "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_string_parameters_by_value_and_in_a_field/` (`shout(name.upper())`: a str method result handed to a Rust function taking a `String` passes by value, the variable it was made from still readable). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
         },
         "test_external_function_string_var_borrow": {
-          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::build_inline_fstring_rust_interop_variants_issue716",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_expression_interop_tests.rs::build_inline_fstring_rust_interop_variants_issue716",
           "notes": "twinned by the re-point program whose `fail_local` hands a str local to `raise_value_error(&str)` and builds; the local is lent. The metadata-free branch the test drives is where the policy lands without a Rust signature; the lend is what the program shows."
         },
         "test_external_function_string_var_with_by_value_target_does_not_borrow": {
@@ -1993,7 +1993,7 @@
           "notes": "twinned by a program that builds a model from a str literal, an int literal and a str variable, prints the fields and uses the variable afterwards."
         },
         "test_struct_field_static_str_const_to_rust_string_targets": {
-          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::build_static_str_const_rust_string_struct_field",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_expression_interop_tests.rs::build_static_str_const_rust_string_struct_field",
           "notes": "twinned by the re-point program that fills a Rust struct's `String` field from a `const OPTION_NAME: str` and builds."
         },
         "test_struct_field_string_literal": {
@@ -2805,7 +2805,7 @@
       "split_target": "",
       "tests": {
         "argument_plan_checked_c_borrow_skips_owned_value_materialization": {
-          "twin": "loaves/toolchain/incan-cli/tests/rfc031_pub_import_integration_tests.rs::consumer_check_hides_owned_c_resources_behind_an_incan_facade",
+          "twin": "loaves/toolchain/incan-cli/tests/rfc031_checked_c_resource_tests.rs::consumer_check_hides_owned_c_resources_behind_an_incan_facade",
           "notes": "twinned by the re-point checked-C program that flushes and reads the descriptor of a C file resource through `c.BorrowedMut`/`c.Borrowed` symbols and runs to completion."
         },
         "argument_plan_clone_bound_query_follows_shared_incan_arg_policy": {
@@ -2813,15 +2813,15 @@
           "notes": "twinned by a program that passes a generic value to a method twice from a generic function and passes a wrapper's generic field to a generic function while still reading the wrapper. `read_cursor` passes `other.cursor` to a generic function and reads it again."
         },
         "argument_plan_external_buf_param_keeps_explicit_as_slice_shape": {
-          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_generic_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
           "notes": "twinned by the re-point program whose `trait_by_value_decode_case` hands `encoded.as_slice()` to `decode`."
         },
         "argument_plan_external_buf_param_keeps_non_byte_buf_implementors_by_value": {
-          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_generic_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
           "notes": "twinned by the re-point program whose `by_value_decode_case` hands a `Cursor<Vec<u8>>` to `decode` by value."
         },
         "argument_plan_external_buf_param_lends_generic_rust_vec_u8_as_slice": {
-          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_generic_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
           "notes": "twinned by the same `cross_crate_decode_case`: the value is the same `Vec<u8>` whichever way the checker spells its type."
         },
         "argument_plan_external_buf_param_lends_incan_bytes_as_slice": {
@@ -2829,7 +2829,7 @@
           "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_buf_parameter_from_bytes/` (an Incan bytes value to a Rust `impl Buf` parameter, still usable afterwards). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
         },
         "argument_plan_external_buf_param_lends_rust_vec_u8_as_slice": {
-          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_generic_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
           "notes": "twinned by the re-point program whose `cross_crate_decode_case` hands the `Vec<u8>` of `encode_to_vec()` to a `decode(impl prost::Buf)`."
         },
         "argument_plan_external_inferred_generic_moved_string_stays_direct": {
@@ -2841,7 +2841,7 @@
           "notes": "candidate `loaves/compiler/incan_test_support/fixtures/behavior_candidates/ownership/rust_into_bound_string_variables/` (the #804 crate; a str variable encoded twice and printed afterwards). A `rust::` program; waits for a Cargo-free bake under the compiler suite."
         },
         "argument_plan_external_inferred_generic_string_literal_stays_direct": {
-          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::rust_method_into_bound_keeps_string_argument_inferable_issue804",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_generic_interop_tests.rs::rust_method_into_bound_keeps_string_argument_inferable_issue804",
           "notes": "twinned by the re-point program that hands a str literal to a Rust method generic over `Into<String>` and prints the encoded text."
         },
         "argument_plan_external_list_element_into_is_value_plan": {
@@ -2857,7 +2857,7 @@
           "dies": "a `list[Unknown]` element type is the state of a list whose element metadata is absent; checked source cannot spell it. The resolved list and the empty literal are the candidate `rust_list_elements_converted_into_a_vec/`."
         },
         "argument_plan_external_ref_param_borrows_once": {
-          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::rust_concrete_reference_arguments_borrow_by_metadata_issue861",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_borrow_interop_tests.rs::rust_concrete_reference_arguments_borrow_by_metadata_issue861",
           "notes": "twinned by the re-point program that hands a Rust `Header` to a Rust method that only reads it (`view_value`) and prints the result; the `&thing` spelling dies with #654."
         },
         "argument_plan_mutable_list_param_reborrows_without_value_clone": {
@@ -2885,7 +2885,7 @@
           "notes": "twinned by a program that probes and updates str- and int-keyed dicts through mut parameters, reuses a str probe, and builds a dict comprehension keyed by strings."
         },
         "external_call_string_var_borrows": {
-          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::build_inline_fstring_rust_interop_variants_issue716",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_expression_interop_tests.rs::build_inline_fstring_rust_interop_variants_issue716",
           "notes": "twinned by the re-point program whose `fail_local` hands a str local to `raise_value_error(&str)` and builds; the local is lent. The `&s` spelling dies with #654."
         },
         "filtered_list_comprehension_uses_filter_map_clone_plan": {
@@ -2957,7 +2957,7 @@
           "notes": "twinned by a program with generator expressions over a list read again afterwards, a list at its last use and a one-shot literal, plus a comprehension over a generator variable, printing what each yields."
         },
         "plan_read_by_ref_receiver_borrows_owned_value": {
-          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::rust_std_io_trait_interop_borrows_receivers_and_propagates_results_issues878_888",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_borrow_interop_tests.rs::rust_std_io_trait_interop_borrows_receivers_and_propagates_results_issues878_888",
           "notes": "twinned by the re-point program that calls `Read.by_ref(input)` on a `Stdin` value and builds."
         },
         "plan_read_by_ref_receiver_preserves_metadata_free_guard_fallback": {
@@ -2977,11 +2977,11 @@
           "notes": "twinned by a program whose method returns self and whose wrapper field is passed to a function, with the receiver and the wrapper printed afterwards. `snapshot` returns self and the receiver is read afterwards."
         },
         "rust_display_buf_detection_uses_shared_type_shape_parser": {
-          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_generic_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
           "notes": "twinned by the re-point program whose `decode(impl prost::Buf)` and `decode(impl DecodeBuf)` parameters take the argument as a slice and by value; the spelling table itself dies with #654."
         },
         "rust_display_byte_buffer_detection_uses_shared_type_shape_parser": {
-          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_rust_generic_interop_tests.rs::rust_generic_interop_scenarios_share_one_project",
           "notes": "twinned by the re-point program in which a `Vec<u8>` reaches a `Buf` parameter as a slice (`cross_crate_decode_case`) while a `Cursor<Vec<u8>>` is handed over by value (`by_value_decode_case`); the spelling table itself dies with #654."
         },
         "rust_string_buffer_detection_is_owned_string_only": {
@@ -4497,7 +4497,7 @@
           "notes": "twinned by the program calling the stdlib extern through its source wrapper and aborting on a failing assertion; the projection and `incan_std_testing::fail_t` symbol assertions die with #654."
         },
         "test_rust_generic_bounds": {
-          "twin": "loaves/toolchain/incan-cli/tests/integration_tests.rs::imported_rust_generic_bounds_remain_native_obligations",
+          "twin": "loaves/toolchain/incan-cli/tests/integration_sdk_interop_tests.rs::imported_rust_generic_bounds_remain_native_obligations",
           "notes": "twinned by the CLI test that writes the same `valid/rust_generic_bounds.incn` program into a project with a serde dependency, bakes it and runs it (re-point); the snapshot of its Rust dies with #654."
         },
         "test_rust_interop_associated_functions_codegen": {
@@ -4821,7 +4821,7 @@
       "owner": 1561,
       "split_required": false,
       "split_target": "",
-      "twin": "loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs::named_constructor_arguments_evaluate_in_written_order_issue1462"
+      "twin": "loaves/toolchain/incan-cli/tests/cli_language_value_regression_tests.rs::named_constructor_arguments_evaluate_in_written_order_issue1462"
     },
     "loaves/compiler/incan_emit/tests/default_argument_codegen_tests.rs": {
       "disposition": "retire",
@@ -4878,7 +4878,7 @@
       "tests": {
         "generated_rust_names_the_element_type_on_the_empty_operand": {
           "disposition": "retire",
-          "twin": "loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs::empty_list_equality_operands_build_with_json_cohort_issue1476",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_language_value_regression_tests.rs::empty_list_equality_operands_build_with_json_cohort_issue1476",
           "notes": "asserts generated Rust text"
         },
         "lowered_empty_list_operand_carries_the_element_type": {
@@ -5107,7 +5107,7 @@
         },
         "nested_list_loop_emits_owned_strings_without_caller_annotation": {
           "disposition": "retire",
-          "twin": "loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs::nested_empty_first_list_runs_without_a_caller_annotation_issue1471",
+          "twin": "loaves/toolchain/incan-cli/tests/cli_language_value_regression_tests.rs::nested_empty_first_list_runs_without_a_caller_annotation_issue1471",
           "notes": "asserts generated Rust text"
         }
       },
@@ -5141,7 +5141,7 @@
       "owner": 1561,
       "split_required": false,
       "split_target": "",
-      "twin": "loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs::returning_a_loop_variable_from_a_list_of_lists_issue1489"
+      "twin": "loaves/toolchain/incan-cli/tests/cli_language_value_regression_tests.rs::returning_a_loop_variable_from_a_list_of_lists_issue1489"
     },
     "loaves/compiler/incan_emit/tests/stdlib_generated_rust_snapshot_tests.rs": {
       "disposition": "retire",
@@ -5188,7 +5188,7 @@
         },
         "std_root_prelude_trait_import_is_refused": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_refusals/refused_prelude_trait_imported_from_the_std_root.incn",
-          "notes": "twinned by the test's program as a refusal: the std root exports only its submodules, so `from std import Debug, Eq, Clone, \u2026` is refused at check time (INCAN-I0001) rather than emitting re-exports no standard-library facade defines (E0432) (#1767)."
+          "notes": "twinned by the test's program as a refusal: the std root exports only its submodules, so `from std import Debug, Eq, Clone, …` is refused at check time (INCAN-I0001) rather than emitting re-exports no standard-library facade defines (E0432) (#1767)."
         },
         "std_serde_prelude_import_snapshot": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections/std_serde_prelude_surface.incn",
@@ -5236,7 +5236,7 @@
         },
         "string_len_spelling_emit_shared_runtime_semantics": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections/string_length_counts_scalars.incn",
-          "notes": "twinned by a program counting the scalars of `h\u00e9llo` through `len()` and `.len()`; the `str_len` helper spelling dies."
+          "notes": "twinned by a program counting the scalars of `héllo` through `len()` and `.len()`; the `str_len` helper spelling dies."
         }
       },
       "twin": ""
@@ -8819,13 +8819,13 @@
           "disposition": "retire",
           "twin": "dies",
           "notes": "libtest harness of the generated test crate",
-          "dies": "merges `[dependencies]` and `[dev-dependencies]` into the generated test-runner crate's Cargo dependency set (`promoted_oven_test_dependencies`); the generated crate dies with #654. Its user-visible half \u2014 a test file using a `[rust-dev-dependencies]` crate through `incan test` \u2014 is untwinned: no CLI test uses `rust-dev-dependencies`; it goes with #1337's interop spec (slice 7)."
+          "dies": "merges `[dependencies]` and `[dev-dependencies]` into the generated test-runner crate's Cargo dependency set (`promoted_oven_test_dependencies`); the generated crate dies with #654. Its user-visible half — a test file using a `[rust-dev-dependencies]` crate through `incan test` — is untwinned: no CLI test uses `rust-dev-dependencies`; it goes with #1337's interop spec (slice 7)."
         },
         "merge_test_runner_dependencies_unifies_normal_and_dev_features": {
           "disposition": "retire",
           "twin": "dies",
           "notes": "libtest harness of the generated test crate",
-          "dies": "unions Cargo feature lists and refuses a version conflict inside the generated test-runner crate's Cargo dependency set; the generated crate dies with #654. Its user-visible half \u2014 a normal/dev version conflict surfacing as an `incan test` failure naming the crate \u2014 is untwinned and goes with #1337's interop spec (slice 7)."
+          "dies": "unions Cargo feature lists and refuses a version conflict inside the generated test-runner crate's Cargo dependency set; the generated crate dies with #654. Its user-visible half — a normal/dev version conflict surfacing as an `incan test` failure naming the crate — is untwinned and goes with #1337's interop spec (slice 7)."
         },
         "native_test_outputs_do_not_alias_distinct_execution_groups": {
           "disposition": "retire",
@@ -8971,23 +8971,13 @@
       "split_target": "",
       "twin": ""
     },
-    "loaves/toolchain/incan-cli/tests/cli_codegraph_and_inspection_tests.rs": {
+    "loaves/toolchain/incan-cli/tests/cli_codegraph_projection_tests.rs": {
       "disposition": "re-point",
       "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. `inspect codegraph`/`inspect bindings`/`check`-only tests are keep; `inspect rust` asserts the generated-project report and generated Rust text and retires unless #654 keeps that inspection path (overrides).",
       "owner": 1561,
-      "split_required": true,
+      "split_required": false,
       "split_target": "",
       "tests": {
-        "diagnostic_facts_keep_related_spans_and_type_payloads_across_cli_and_codegraph": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust."
-        },
-        "inspect_bindings_projects_checked_declaration_facts": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust."
-        },
         "inspect_codegraph_attaches_facade_paths_to_checked_registry_facts": {
           "disposition": "keep",
           "twin": "",
@@ -9017,12 +9007,6 @@
           "disposition": "keep",
           "twin": "",
           "notes": "`incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust."
-        },
-        "inspect_rust_reports_current_generated_rust_files": {
-          "disposition": "retire",
-          "twin": "dies",
-          "notes": "`incan inspect rust` over an executable and a library project; the report and the generated Rust it points at die with #654.",
-          "dies": "`incan inspect rust --format json`: asserts the generated-project report (`rust_files` with a `crate_root`, `generated.project_path` under `target/lib`) and `#[doc = ...]` text in the generated crate root; `inspect rust` output dies with #654."
         }
       },
       "twin": ""
@@ -9081,18 +9065,36 @@
       "split_target": "",
       "twin": ""
     },
-    "loaves/toolchain/incan-cli/tests/cli_language_regression_tests.rs": {
+    "loaves/toolchain/incan-cli/tests/cli_language_call_regression_tests.rs": {
       "disposition": "re-point",
       "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that also read generated Rust (`target/incan/<project>/src/main.rs`, `--emit-rust`) stay re-point on their build or run assertion and lose the generated-text assertion in slice 7 (overrides).",
       "owner": 1561,
-      "split_required": true,
+      "split_required": false,
       "split_target": "",
       "tests": {
         "build_locked_map_err_string_literal_closure_issue880": {
           "disposition": "re-point",
           "twin": "",
           "notes": "builds through `incan build` (the build must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; the build assertion stays, the generated-text assertion drops in slice 7."
-        },
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/cli_language_reflection_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that also read generated Rust (`target/incan/<project>/src/main.rs`, `--emit-rust`) stay re-point on their build or run assertion and lose the generated-text assertion in slice 7 (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/cli_language_union_regression_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that also read generated Rust (`target/incan/<project>/src/main.rs`, `--emit-rust`) stay re-point on their build or run assertion and lose the generated-text assertion in slice 7 (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
         "build_pub_helper_wraps_union_call_result_as_option_payload_issue745": {
           "disposition": "re-point",
           "twin": "",
@@ -9107,7 +9109,17 @@
           "disposition": "re-point",
           "twin": "",
           "notes": "builds through `incan build` (the build must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; the build assertion stays, the generated-text assertion drops in slice 7."
-        },
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/cli_language_value_regression_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that also read generated Rust (`target/incan/<project>/src/main.rs`, `--emit-rust`) stay re-point on their build or run assertion and lose the generated-text assertion in slice 7 (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
         "module_qualified_stdlib_type_annotation_emits_and_runs_issue1437": {
           "disposition": "re-point",
           "twin": "",
@@ -9124,6 +9136,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/toolchain/incan-cli/tests/cli_lock_policy_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. `workspace check`/`workspace fmt` tests are keep; `lock`/`workspace inspect`-only tests are unaffected; one build test also reads generated Rust and loses that assertion in slice 7 (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/toolchain/incan-cli/tests/cli_provider_boundary_tests.rs": {
       "disposition": "re-point",
       "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that read the generated .rs retire.",
@@ -9132,34 +9152,19 @@
       "split_target": "",
       "twin": ""
     },
-    "loaves/toolchain/incan-cli/tests/cli_rust_interop_tests.rs": {
+    "loaves/toolchain/incan-cli/tests/cli_rust_borrow_interop_tests.rs": {
       "disposition": "re-point",
       "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that also read generated Rust (`target/incan/<project>/src/main.rs`) stay re-point on their build or run assertion and lose the generated-text assertion in slice 7 (overrides); the one library-build test that only asserts generated text retires.",
       "owner": 1561,
-      "split_required": true,
+      "split_required": false,
       "split_target": "",
       "tests": {
-        "build_metadata_free_into_bound_tokenizer_encode_issue804": {
-          "disposition": "re-point",
-          "twin": "",
-          "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
-        },
         "cold_library_build_preserves_rust_string_compound_assignment_issue896": {
           "disposition": "retire",
           "twin": "",
-          "notes": "open (twin-h-cli): the library build is the only non-text assertion and the `str_concat` selection under cold Rust metadata is generated text. The surviving behavior, `+=` and `+` with a `rust::`-returned `String` operand, needs a `[rust-dependencies]` path into the checkout (`development_support_crate_dir(\"incan_std_core\")`) that a fixture cannot carry. A `rust::std::string::String.from(...)` stand-in does not type as `str` (`from` is generic), so no in-fixture substitute exists. Question (with Q1): does Rust-crate interop behavior get a twin in this corpus (a fixture would need a Rust crate with a `String`-returning function and the inspection bake of Q1), or does it move with #1337's spec? If the latter, this row is `dies` with the cold-metadata half named."
-        },
-        "comprehension_over_rust_iterator_consumes_it_by_value_issue1490": {
-          "disposition": "re-point",
-          "twin": "",
-          "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
+          "notes": "open (harness-deps): the behavior needs a local Rust crate under `[rust-dependencies]` and a `rust::` inspection bake, neither of which the Cargo-free behavior-fixture harness admits. The build assertion is not a behavioral twin for the generated `str_concat` selection."
         },
         "rust_concrete_reference_arguments_borrow_by_metadata_issue861": {
-          "disposition": "re-point",
-          "twin": "",
-          "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
-        },
-        "rust_method_into_bound_keeps_string_argument_inferable_issue804": {
           "disposition": "re-point",
           "twin": "",
           "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
@@ -9178,6 +9183,67 @@
           "disposition": "re-point",
           "twin": "",
           "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/cli_rust_expression_interop_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that also read generated Rust (`target/incan/<project>/src/main.rs`) stay re-point on their build or run assertion and lose the generated-text assertion in slice 7 (overrides); the one library-build test that only asserts generated text retires.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "build_metadata_free_into_bound_tokenizer_encode_issue804": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
+        },
+        "comprehension_over_rust_iterator_consumes_it_by_value_issue1490": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/cli_rust_generic_interop_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that also read generated Rust (`target/incan/<project>/src/main.rs`) stay re-point on their build or run assertion and lose the generated-text assertion in slice 7 (overrides); the one library-build test that only asserts generated text retires.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "rust_method_into_bound_keeps_string_argument_inferable_issue804": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/cli_semantic_inspection_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. `inspect codegraph`/`inspect bindings`/`check`-only tests are keep; `inspect rust` asserts the generated-project report and generated Rust text and retires unless #654 keeps that inspection path (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "diagnostic_facts_keep_related_spans_and_type_payloads_across_cli_and_codegraph": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust."
+        },
+        "inspect_bindings_projects_checked_declaration_facts": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan inspect codegraph`/`inspect bindings`/`check` only; representation inspection from checked facts, no generated Rust."
+        },
+        "inspect_rust_reports_current_generated_rust_files": {
+          "disposition": "retire",
+          "twin": "dies",
+          "notes": "`incan inspect rust` over an executable and a library project; the report and the generated Rust it points at die with #654.",
+          "dies": "`incan inspect rust --format json`: asserts the generated-project report (`rust_files` with a `crate_root`, `generated.project_path` under `target/lib`) and `#[doc = ...]` text in the generated crate root; `inspect rust` output dies with #654."
         }
       },
       "twin": ""
@@ -9270,22 +9336,17 @@
       },
       "twin": ""
     },
-    "loaves/toolchain/incan-cli/tests/cli_workspace_and_lock_tests.rs": {
+    "loaves/toolchain/incan-cli/tests/cli_workspace_command_tests.rs": {
       "disposition": "re-point",
       "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. `workspace check`/`workspace fmt` tests are keep; `lock`/`workspace inspect`-only tests are unaffected; one build test also reads generated Rust and loses that assertion in slice 7 (overrides).",
       "owner": 1561,
-      "split_required": true,
+      "split_required": false,
       "split_target": "",
       "tests": {
         "a_plain_build_of_a_toolchain_loaf_selects_its_rust_binaries_and_names_the_interim_receipt_inputs_issue1698": {
           "disposition": "unaffected",
           "twin": "",
           "notes": "`incan build` dispatch for a toolchain Loaf (`[[rust.bin]]`, #1698): asserts the stored-plan route is taken and its refusals; no Incan compilation, not the Rust backend."
-        },
-        "rooted_workspace_cold_lock_and_selected_member_preserve_identity_issues908_909_931": {
-          "disposition": "re-point",
-          "twin": "",
-          "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
         },
         "workspace_check_fans_out_with_one_member_scoped_json_report": {
           "disposition": "keep",
@@ -9297,12 +9358,27 @@
           "twin": "",
           "notes": "`incan workspace fmt` only; formatter surface fanned out per member, no generated Rust."
         },
-        "workspace_inspect_reports_deterministic_scope_and_stale_member_locks": {
+        "workspace_lock_concurrent_publishers_leave_one_parseable_root_lock": {
           "disposition": "unaffected",
           "twin": "",
           "notes": "`incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/cli_workspace_scope_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. `workspace check`/`workspace fmt` tests are keep; `lock`/`workspace inspect`-only tests are unaffected; one build test also reads generated Rust and loses that assertion in slice 7 (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "rooted_workspace_cold_lock_and_selected_member_preserve_identity_issues908_909_931": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
         },
-        "workspace_lock_concurrent_publishers_leave_one_parseable_root_lock": {
+        "workspace_inspect_reports_deterministic_scope_and_stale_member_locks": {
           "disposition": "unaffected",
           "twin": "",
           "notes": "`incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend."
@@ -9328,53 +9404,128 @@
       "split_target": "",
       "twin": ""
     },
-    "loaves/toolchain/incan-cli/tests/integration_tests.rs": {
+    "loaves/toolchain/incan-cli/tests/integration_codegen_async_and_modules_tests.rs": {
       "disposition": "re-point",
       "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides).",
       "owner": 1561,
-      "split_required": true,
+      "split_required": false,
       "split_target": "",
       "tests": {
-        "build_explicit_mutable_rust_generic_reaches_codegen_through_normal_cli_path": {
+        "test_check_web_route_uses_proc_macro_passthrough": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan --check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/integration_codegen_constants_and_interop_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "test_rfc009_numeric_resize_and_decimal_codegen_smoke": {
+          "disposition": "retire",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/numeric_resize_policies_and_decimal.incn",
+          "notes": "twinned by a program that prints each resize policy's result and the decimal literal; the retired assertion was the casts and stdlib helper calls they lowered to."
+        },
+        "test_rfc041_rust_coercion_codegen_smoke": {
           "disposition": "retire",
           "twin": "",
-          "notes": "open: the build succeeds and the assertions are the projected ABI in `main.rs` (`ProviderHandle<(&mut i64, &mut i64)>`), generated text. A behavior twin exists and passes standalone and under a root admitted to the explicit bake: the same program run to completion, printing its marker line (this program's `rust::std::vec::Vec` import launched no Cargo itself, but the bake that records its authority is the same explicit bake). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. Candidate: `loaves/compiler/incan_test_support/fixtures/behavior_candidates/cli/rust_generic_mutable_reference_args.incn`."
+          "notes": "open: IrCodegen text only (`Duration::from_secs_f32`). A behavior twin exists and passes standalone and under a root admitted to the explicit bake: a program passing a float literal to `rust::std::time::Duration.from_secs_f32` and printing `as_millis()` (`1500`). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. Candidate: `loaves/compiler/incan_test_support/fixtures/behavior_candidates/cli/rust_f32_argument_coercion.incn`."
         },
-        "build_lib_imported_static_decorator_receiver_materializes_string_arg_issue671": {
-          "disposition": "retire",
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/imported_static_decorator_receiver",
-          "notes": "twinned by the #671 program run to completion: the decorator factory called on the imported static receiver with a str argument leaves the decorated function callable. The retired test built `--lib` and asserted how the str argument materialized in generated text."
-        },
-        "decorated_method_explicit_mutable_rust_generic_keeps_static_and_wrapper_abi": {
-          "disposition": "retire",
+        "test_rfc041_rusttype_interop_typechecks_end_to_end": {
+          "disposition": "keep",
           "twin": "",
-          "notes": "open: the build succeeds and the assertions are the shared ABI spelling in `main.rs`, generated text. A behavior twin exists and passes standalone and under a root admitted to the explicit bake: the same program run to completion (`7`, then its marker line). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. Candidate: `loaves/compiler/incan_test_support/fixtures/behavior_candidates/cli/decorated_rust_generic_mutable_reference_args.incn`."
+          "notes": "lex/parse/typecheck only"
         },
+        "test_rfc041_rusttype_with_methods_typechecks": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_rfc041_structural_coercion_codegen_smoke": {
+          "disposition": "retire",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/annotated_collection_literals.incn",
+          "notes": "twinned by a program that binds the annotated `Option[int]`, `List[str]` and `Dict[str, float]` literals and reads them back; the retired assertion was the Rust expressions they lowered to."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/integration_codegen_hash_and_io_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/integration_codegen_imports_and_results_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/integration_codegen_language_and_fs_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "test_hello_world_codegen": {
+          "disposition": "retire",
+          "twin": "dies",
+          "notes": "IrCodegen over examples/hello.incn, a path that no longer exists (the test skips itself); the example is run by the `examples` fixture root.",
+          "dies": "IrCodegen text of `examples/hello.incn` (`fn main()`, `println!`, the message). The test returns early because that path no longer exists (the example is `examples/simple/hello.incn`), so it proves nothing today; the example itself is a case of the re-point `examples` fixture root, run by `make examples`."
+        },
+        "test_method_alias_codegen_rewrites_to_target_method": {
+          "disposition": "retire",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/method_alias_calls_target.incn",
+          "notes": "twinned by a program whose model declares `mean = avg` and prints both calls; the retired assertion (the alias lowering to the target's canonical projection, no wrapper) was generated text."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/integration_codegen_ownership_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/integration_codegen_stdlib_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
         "explicit_legacy_sdk_inventory_blocks_lock_preheat": {
           "disposition": "unaffected",
           "twin": "",
           "notes": "`incan lock` / `workspace inspect` only; lock orchestration over Oven, not the Rust backend."
         },
-        "lexer_token_surface_cases": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "lexer only"
-        },
         "test_check_cyclic_explicit_call_site_generics_cross_module_succeeds": {
           "disposition": "keep",
           "twin": "",
           "notes": "`incan --check` only; checker surface (diagnostics through the CLI), no generated Rust."
-        },
-        "test_check_web_route_uses_proc_macro_passthrough": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan --check` only; checker surface (diagnostics through the CLI), no generated Rust."
-        },
-        "test_class_with_traits": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "lex/parse/typecheck only"
-        },
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/integration_format_and_cli_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
         "test_cli_check_accepts_trailing_comma_in_multiline_function_params": {
           "disposition": "keep",
           "twin": "",
@@ -9420,6 +9571,150 @@
           "twin": "",
           "notes": "lex/parse/typecheck only"
         },
+        "test_help_is_banner_free": {
+          "disposition": "unaffected",
+          "twin": "",
+          "notes": "CLI argument surface (`--help`, `--version`, an unknown flag); never reaches the compiler."
+        },
+        "test_invalid_fixtures": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_valid_fixtures": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
+        "test_version_is_single_line_and_banner_free": {
+          "disposition": "unaffected",
+          "twin": "",
+          "notes": "CLI argument surface (`--help`, `--version`, an unknown flag); never reaches the compiler."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/integration_language_runtime_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "test_imported_static_initializer_does_not_deadlock_issue680": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "Builds and runs (prints `ok` within 30 s with a static reached directly and through a facade, #680) and also reads the generated Rust; the run assertion stays, the generated-text assertion drops in slice 7. Re-point, not retire: the run half has no other coverage."
+        },
+        "test_parse_error_is_banner_free": {
+          "disposition": "unaffected",
+          "twin": "",
+          "notes": "CLI argument surface (`--help`, `--version`, an unknown flag); never reaches the compiler."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/integration_lexer_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "lexer_token_surface_cases": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lexer only"
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/integration_numeric_semantics_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "test_python_like_numeric_ops_compile": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/integration_runtime_types_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "build_explicit_mutable_rust_generic_reaches_codegen_through_normal_cli_path": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "open: the build succeeds and the assertions are the projected ABI in `main.rs` (`ProviderHandle<(&mut i64, &mut i64)>`), generated text. A behavior twin exists and passes standalone and under a root admitted to the explicit bake: the same program run to completion, printing its marker line (this program's `rust::std::vec::Vec` import launched no Cargo itself, but the bake that records its authority is the same explicit bake). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. Candidate: `loaves/compiler/incan_test_support/fixtures/behavior_candidates/cli/rust_generic_mutable_reference_args.incn`."
+        },
+        "decorated_method_explicit_mutable_rust_generic_keeps_static_and_wrapper_abi": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "open: the build succeeds and the assertions are the shared ABI spelling in `main.rs`, generated text. A behavior twin exists and passes standalone and under a root admitted to the explicit bake: the same program run to completion (`7`, then its marker line). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. Candidate: `loaves/compiler/incan_test_support/fixtures/behavior_candidates/cli/decorated_rust_generic_mutable_reference_args.incn`."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/integration_sdk_interop_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/integration_test_runner_basics_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/integration_test_runner_fixtures_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "build_lib_imported_static_decorator_receiver_materializes_string_arg_issue671": {
+          "disposition": "retire",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/imported_static_decorator_receiver",
+          "notes": "twinned by the #671 program run to completion: the decorator factory called on the imported static receiver with a str argument leaves the decorated function callable. The retired test built `--lib` and asserted how the str argument materialized in generated text."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/integration_test_runner_scheduling_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/integration_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Checker-only and lexer tests stay; generated-text and IrCodegen tests retire; `fmt`- and `check`-only CLI tests are keep and `--help`/`--version`/`lock`-only ones unaffected (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "test_class_with_traits": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "lex/parse/typecheck only"
+        },
         "test_fixture_decorator": {
           "disposition": "keep",
           "twin": "",
@@ -9435,27 +9730,6 @@
           "twin": "",
           "notes": "lex/parse/typecheck only"
         },
-        "test_hello_world_codegen": {
-          "disposition": "retire",
-          "twin": "dies",
-          "notes": "IrCodegen over examples/hello.incn, a path that no longer exists (the test skips itself); the example is run by the `examples` fixture root.",
-          "dies": "IrCodegen text of `examples/hello.incn` (`fn main()`, `println!`, the message). The test returns early because that path no longer exists (the example is `examples/simple/hello.incn`), so it proves nothing today; the example itself is a case of the re-point `examples` fixture root, run by `make examples`."
-        },
-        "test_help_is_banner_free": {
-          "disposition": "unaffected",
-          "twin": "",
-          "notes": "CLI argument surface (`--help`, `--version`, an unknown flag); never reaches the compiler."
-        },
-        "test_imported_static_initializer_does_not_deadlock_issue680": {
-          "disposition": "re-point",
-          "twin": "",
-          "notes": "Builds and runs (prints `ok` within 30 s with a static reached directly and through a facade, #680) and also reads the generated Rust; the run assertion stays, the generated-text assertion drops in slice 7. Re-point, not retire: the run half has no other coverage."
-        },
-        "test_invalid_fixtures": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "lex/parse/typecheck only"
-        },
         "test_list_comprehension": {
           "disposition": "keep",
           "twin": "",
@@ -9466,11 +9740,6 @@
           "twin": "",
           "notes": "lex/parse/typecheck only"
         },
-        "test_method_alias_codegen_rewrites_to_target_method": {
-          "disposition": "retire",
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/method_alias_calls_target.incn",
-          "notes": "twinned by a program whose model declares `mean = avg` and prints both calls; the retired assertion (the alias lowering to the target's canonical projection, no wrapper) was generated text."
-        },
         "test_method_with_mut_self": {
           "disposition": "keep",
           "twin": "",
@@ -9480,41 +9749,6 @@
           "disposition": "keep",
           "twin": "",
           "notes": "lex/parse/typecheck only"
-        },
-        "test_parse_error_is_banner_free": {
-          "disposition": "unaffected",
-          "twin": "",
-          "notes": "CLI argument surface (`--help`, `--version`, an unknown flag); never reaches the compiler."
-        },
-        "test_python_like_numeric_ops_compile": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "lex/parse/typecheck only"
-        },
-        "test_rfc009_numeric_resize_and_decimal_codegen_smoke": {
-          "disposition": "retire",
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/numeric_resize_policies_and_decimal.incn",
-          "notes": "twinned by a program that prints each resize policy's result and the decimal literal; the retired assertion was the casts and stdlib helper calls they lowered to."
-        },
-        "test_rfc041_rust_coercion_codegen_smoke": {
-          "disposition": "retire",
-          "twin": "",
-          "notes": "open: IrCodegen text only (`Duration::from_secs_f32`). A behavior twin exists and passes standalone and under a root admitted to the explicit bake: a program passing a float literal to `rust::std::time::Duration.from_secs_f32` and printing `as_millis()` (`1500`). Waits for a Cargo-free bake under the suite: a program with a `rust::` import needs source-current project inspection authority, which only an explicit `incan oven bake --project .` of its project records, and that bake runs Rust inspection through Cargo (`cargo metadata` of the inspection workspace and the toolchain's `std` sources, `rustc --print` probes, `cargo check`; ten launches per fixture), which under the suite needs the root registered with `explicit_bake_cargo` and is ruled out. Candidate: `loaves/compiler/incan_test_support/fixtures/behavior_candidates/cli/rust_f32_argument_coercion.incn`."
-        },
-        "test_rfc041_rusttype_interop_typechecks_end_to_end": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "lex/parse/typecheck only"
-        },
-        "test_rfc041_rusttype_with_methods_typechecks": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "lex/parse/typecheck only"
-        },
-        "test_rfc041_structural_coercion_codegen_smoke": {
-          "disposition": "retire",
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/annotated_collection_literals.incn",
-          "notes": "twinned by a program that binds the annotated `Option[int]`, `List[str]` and `Dict[str, float]` literals and reads them back; the retired assertion was the Rust expressions they lowered to."
         },
         "test_rust_crate_import": {
           "disposition": "keep",
@@ -9535,16 +9769,6 @@
           "disposition": "keep",
           "twin": "",
           "notes": "lex/parse/typecheck only"
-        },
-        "test_valid_fixtures": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "lex/parse/typecheck only"
-        },
-        "test_version_is_single_line_and_banner_free": {
-          "disposition": "unaffected",
-          "twin": "",
-          "notes": "CLI argument surface (`--help`, `--version`, an unknown flag); never reaches the compiler."
         },
         "test_yield_expression": {
           "disposition": "keep",
@@ -9591,103 +9815,58 @@
       "split_target": "",
       "twin": ""
     },
-    "loaves/toolchain/incan-cli/tests/rfc031_pub_import_integration_tests.rs": {
+    "loaves/toolchain/incan-cli/tests/rfc031_boundary_parity_tests.rs": {
       "disposition": "re-point",
       "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides).",
       "owner": 1561,
-      "split_required": true,
+      "split_required": false,
       "split_target": "",
       "tests": {
-        "check_passes_for_pub_imported_manifest_type": {
+        "external_pub_consumer_narrows_dependency_owned_union_through_model_field_issue1697": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "#1697: bakes a provider whose `pub model` field is a `pub type` union alias, then bakes and runs a consumer that narrows the field, a binding of the field, a helper result and a `List` field's loop element, asserting the exact run output; also asserts the provider-qualified wrapper in `target/incan/<project>/src/main.rs`, which drops in slice 7 while the run assertion stays."
+        },
+        "external_pub_consumer_uses_flattened_nested_union_variant_index_issue1198": {
+          "disposition": "re-point",
+          "twin": "",
+          "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
+        },
+        "fmt_dependency_collection_does_not_prepare_persistent_library_artifact": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan fmt` only; formatter surface, no generated Rust."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/rfc031_checked_c_resource_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "consumer_check_resolves_a_manifest_declared_package_relative_c_header": {
           "disposition": "keep",
           "twin": "",
           "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
-        },
-        "check_reports_missing_pub_export": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
-        },
-        "check_reports_missing_pub_library_artifacts": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
-        },
-        "check_reports_pub_library_artifact_mismatch": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
-        },
-        "check_reports_pub_manifest_load_failure": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
-        },
-        "check_reports_unknown_pub_library": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
-        },
-        "compiled_provider_preserves_shared_rust_interop_contracts_issues834_835_961": {
-          "disposition": "retire",
-          "twin": "",
-          "notes": "open (twin-h-cli): the provider bake and the consumer build succeed over a local Rust crate (`receiver_factory`, `[rust-dependencies]`); the assertions are the manifest `rust_abi` type-parameter record and generated provider text (method turbofish, `&mut [f32]` callback, receiver specialization). A twin would be a project fixture carrying a Rust crate plus the provider bake of Q2 and the `rust::` inspection bake of Q1. Question: does Rust-crate interop behavior get a twin in this corpus (fixture carries Rust source), or does it move with #1337's spec?"
-        },
-        "consumer_build_plans_source_backed_pub_helper_calls_with_defaults_and_unions_issue729": {
-          "disposition": "retire",
-          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_helper_defaults_and_unions",
-          "notes": "the consumer build succeeded and the assertions were generated text (`querykit::count(` filled from the helper default, `COUNT_SENTINEL` and `DEFAULT_LABEL` through the provider module path, no re-owned `__IncanUnion`, `.to_string()` arguments); the twin is a project fixture with `deps/querykit` whose `main` prints `adjusted=5`, `order_count=__querykit_count_no_argument__` and `orders=7` (union parameter, omitted-argument default, dependency-owned const default), with the provider baked by the runner (harness-deps). Narrowing the dependency's `Union[IntLiteralExpr, StringLiteralExpr]` in the consumer is accepted by the checker but the legacy route does not compile it, so the twin narrows inside the provider."
-        },
-        "consumer_build_plans_source_backed_vocab_helper_calls_with_defaults_and_unions_issue729": {
-          "disposition": "retire",
-          "twin": "",
-          "notes": "open (twin-h-cli): the consumer build succeeds and the assertions are generated text (`querykit::count(` filled from the helper default, `COUNT_SENTINEL` through the provider path, no re-owned `__IncanUnion`). The desugared `where true:` calls come from a vocab companion crate (`write_vocab_companion_crate_with_source`, a wasm desugarer) a fixture cannot carry, on top of the provider bake of Q2. The same helpers' default, union and string behavior through ordinary calls is the pub sibling's candidate twin; the re-point sibling `consumer_build_plans_vocab_helper_calls_like_ordinary_calls_issue729` proves desugared helper calls build. Question: is that enough for `dies`, or does the vocab lane want a fixture with a companion?"
-        },
-        "consumer_check_accepts_expression_desugar_output_in_statement_position": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
-        },
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/rfc031_checked_c_span_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
         "consumer_check_copies_a_sqlite_error_view_with_an_explicit_bound": {
           "disposition": "retire",
           "twin": "dies",
           "notes": "`incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter, as its sibling `consumer_check_models_an_accelerate_f32_span_through_a_declared_framework_shim` does.",
           "dies": "`--emit-rust` text half (the `__incan_checked_c_copy_utf8` bounded-copy helper); the `incan check` acceptance in the same test is checker-only and survives. The binding's `header` is a host-specific absolute path (`sqlite_header_path()`) and the check needs the host verifier, so a fixture cannot carry the program."
-        },
-        "consumer_check_desugared_generic_method_call_uses_expected_return_type_issue735": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
-        },
-        "consumer_check_desugared_public_field_callee_call_typechecks_as_method_issue727": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
-        },
-        "consumer_check_desugars_braced_vocab_expression_with_compound_clauses_issue727": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
-        },
-        "consumer_check_desugars_colon_vocab_expression_in_assignment_issue727": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
-        },
-        "consumer_check_desugars_colon_vocab_expression_in_return_issue727": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
-        },
-        "consumer_check_desugars_colon_vocab_expression_preserves_inline_clauses_issue727": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
-        },
-        "consumer_check_desugars_external_vocab_block_via_wasm": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
         },
         "consumer_check_models_a_sqlite_caller_owned_byte_buffer_through_a_declared_shim": {
           "disposition": "retire",
@@ -9700,21 +9879,6 @@
           "twin": "dies",
           "notes": "`incan check` (checker-only) followed by `--emit-rust`, whose generated Rust text is the assertion; nothing is built or run, so the test retires with the emitter.",
           "dies": "`--emit-rust` text half (`*const f32`, the `f32` output carrier, the `#[link(... kind = \"framework\")]` attribute); the `incan check` acceptance in the same test is checker-only and survives. The declared shim symbol `incan_accelerate_sum_f32` has no implementation, so the program cannot run and no behavior fixture is possible."
-        },
-        "consumer_check_passes_expr_list_item_metadata_to_desugarer_issue724": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
-        },
-        "consumer_check_passes_request_payload_into_external_vocab_desugarer": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
-        },
-        "consumer_check_passes_scoped_query_surface_artifacts_to_desugarer": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
         },
         "consumer_check_preserves_checked_c_f32_scalar_identity": {
           "disposition": "retire",
@@ -9748,16 +9912,6 @@
           "twin": "",
           "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
         },
-        "consumer_check_reports_external_vocab_desugarer_failure": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
-        },
-        "consumer_check_resolves_a_manifest_declared_package_relative_c_header": {
-          "disposition": "keep",
-          "twin": "",
-          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
-        },
         "consumer_check_supports_checked_byte_spans_and_caller_owned_buffers": {
           "disposition": "retire",
           "twin": "dies",
@@ -9769,35 +9923,181 @@
           "twin": "",
           "notes": "`incan check` and `inspect bindings` only; representation inspection from checked facts, no generated Rust."
         },
-        "external_pub_consumer_narrows_dependency_owned_union_through_model_field_issue1697": {
-          "disposition": "re-point",
-          "twin": "",
-          "notes": "#1697: bakes a provider whose `pub model` field is a `pub type` union alias, then bakes and runs a consumer that narrows the field, a binding of the field, a helper result and a `List` field's loop element, asserting the exact run output; also asserts the provider-qualified wrapper in `target/incan/<project>/src/main.rs`, which drops in slice 7 while the run assertion stays."
-        },
-        "external_pub_consumer_uses_flattened_nested_union_variant_index_issue1198": {
-          "disposition": "re-point",
-          "twin": "",
-          "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
-        },
-        "fmt_activates_clean_source_dependency_vocab_before_parsing_issue756": {
+        "sqlite_checked_c_tooling_projects_the_shared_descriptor": {
           "disposition": "keep",
           "twin": "",
-          "notes": "`incan fmt` only; formatter surface, no generated Rust."
-        },
-        "fmt_dependency_collection_does_not_prepare_persistent_library_artifact": {
+          "notes": "`incan check` and `inspect bindings` only; representation inspection from checked facts, no generated Rust."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/rfc031_manifest_diagnostics_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "check_passes_for_pub_imported_manifest_type": {
           "disposition": "keep",
           "twin": "",
-          "notes": "`incan fmt` only; formatter surface, no generated Rust."
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "check_reports_missing_pub_export": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "check_reports_missing_pub_library_artifacts": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "check_reports_pub_library_artifact_mismatch": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "check_reports_pub_manifest_load_failure": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "check_reports_unknown_pub_library": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/rfc031_pub_model_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/rfc031_rust_interop_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "compiled_provider_preserves_shared_rust_interop_contracts_issues834_835_961": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "open (harness-deps): the behavior needs a provider with its own `[rust-dependencies]` local crate and a `rust::` inspection bake, neither of which the Cargo-free behavior-fixture harness admits. The remaining assertions are generated provider and manifest representation."
         },
         "oven_build_projects_structural_mutable_reference_generics_for_an_unrelated_provider": {
           "disposition": "re-point",
           "twin": "",
           "notes": "builds or runs through `incan` (the build or run must succeed) and then asserts Rust text read from `target/incan/<project>/src/main.rs`; that assertion drops in slice 7, the build or run assertion stays."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/rfc031_stdlib_facade_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/rfc031_vocab_desugar_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "consumer_build_plans_source_backed_pub_helper_calls_with_defaults_and_unions_issue729": {
+          "disposition": "retire",
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_dependencies/dependency_helper_defaults_and_unions",
+          "notes": "the consumer build succeeded and the assertions were generated text (`querykit::count(` filled from the helper default, `COUNT_SENTINEL` and `DEFAULT_LABEL` through the provider module path, no re-owned `__IncanUnion`, `.to_string()` arguments); the twin is a project fixture with `deps/querykit` whose `main` prints `adjusted=5`, `order_count=__querykit_count_no_argument__` and `orders=7` (union parameter, omitted-argument default, dependency-owned const default), with the provider baked by the runner (harness-deps). Narrowing the dependency's `Union[IntLiteralExpr, StringLiteralExpr]` in the consumer is accepted by the checker but the legacy route does not compile it, so the twin narrows inside the provider."
         },
-        "sqlite_checked_c_tooling_projects_the_shared_descriptor": {
+        "consumer_build_plans_source_backed_vocab_helper_calls_with_defaults_and_unions_issue729": {
+          "disposition": "retire",
+          "twin": "",
+          "notes": "open (twin-h-cli): the consumer build succeeds and the assertions are generated text (`querykit::count(` filled from the helper default, `COUNT_SENTINEL` through the provider path, no re-owned `__IncanUnion`). The desugared `where true:` calls come from a vocab companion crate (`write_vocab_companion_crate_with_source`, a wasm desugarer) a fixture cannot carry, on top of the provider bake of Q2. The same helpers' default, union and string behavior through ordinary calls is the pub sibling's candidate twin; the re-point sibling `consumer_build_plans_vocab_helper_calls_like_ordinary_calls_issue729` proves desugared helper calls build. Question: is that enough for `dies`, or does the vocab lane want a fixture with a companion?"
+        },
+        "consumer_check_accepts_expression_desugar_output_in_statement_position": {
           "disposition": "keep",
           "twin": "",
-          "notes": "`incan check` and `inspect bindings` only; representation inspection from checked facts, no generated Rust."
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_desugars_external_vocab_block_via_wasm": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_passes_request_payload_into_external_vocab_desugarer": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_reports_external_vocab_desugarer_failure": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/toolchain/incan-cli/tests/rfc031_vocab_integration_tests.rs": {
+      "disposition": "re-point",
+      "notes": "runs `incan` and asserts output, exit code or diagnostics; the route changes in slice 7. Tests that build and also read generated Rust stay re-point and lose the generated-text assertion in slice 7; tests whose only backend assertion is generated text (`--emit-rust` after `incan check`, a planned build's Rust) retire; `check`-only and `fmt`-only tests are keep (overrides).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "consumer_check_desugared_generic_method_call_uses_expected_return_type_issue735": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_desugared_public_field_callee_call_typechecks_as_method_issue727": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_desugars_braced_vocab_expression_with_compound_clauses_issue727": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_desugars_colon_vocab_expression_in_assignment_issue727": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_desugars_colon_vocab_expression_in_return_issue727": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_desugars_colon_vocab_expression_preserves_inline_clauses_issue727": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_passes_expr_list_item_metadata_to_desugarer_issue724": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "consumer_check_passes_scoped_query_surface_artifacts_to_desugarer": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan check` / `--check` only; checker surface (diagnostics through the CLI), no generated Rust."
+        },
+        "fmt_activates_clean_source_dependency_vocab_before_parsing_issue756": {
+          "disposition": "keep",
+          "twin": "",
+          "notes": "`incan fmt` only; formatter surface, no generated Rust."
         }
       },
       "twin": ""
