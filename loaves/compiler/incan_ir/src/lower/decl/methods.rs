@@ -1780,8 +1780,22 @@ impl AstLowering {
 
     /// Lower one concrete impl method while preserving owner and method type parameters.
     ///
-    /// A `mut` parameter is recorded as a mutable local, so the body may reassign it as a free function's body may.
+    /// A `mut` parameter is recorded as a mutable local, so the body may reassign it as a free function's body may. The
+    /// method's `mut` locals are its own: the caller's set is restored afterwards.
     fn lower_impl_method_for_trait(
+        &mut self,
+        m: &ast::MethodDecl,
+        type_param_names: Option<&std::collections::HashSet<&str>>,
+    ) -> Result<IrFunction, LoweringError> {
+        let outer_mutable_vars = std::mem::take(&mut self.mutable_vars);
+        let lowered = self.lower_impl_method_for_trait_body(m, type_param_names);
+        self.mutable_vars = outer_mutable_vars;
+        lowered
+    }
+
+    /// Lower one concrete impl method's signature and body; [`Self::lower_impl_method_for_trait`] scopes its `mut`
+    /// locals.
+    fn lower_impl_method_for_trait_body(
         &mut self,
         m: &ast::MethodDecl,
         type_param_names: Option<&std::collections::HashSet<&str>>,
@@ -2093,7 +2107,25 @@ impl AstLowering {
     }
 
     /// Lower an inherent method using an explicit emitted name and visibility.
+    ///
+    /// The method's `mut` locals and parameters are its own: the set starts empty and the caller's set is restored
+    /// afterwards.
     fn lower_method_named_with_type_params(
+        &mut self,
+        m: &ast::MethodDecl,
+        name: String,
+        visibility: Visibility,
+        type_param_names: Option<&std::collections::HashSet<&str>>,
+    ) -> Result<IrFunction, LoweringError> {
+        let outer_mutable_vars = std::mem::take(&mut self.mutable_vars);
+        let lowered = self.lower_method_named_with_type_params_body(m, name, visibility, type_param_names);
+        self.mutable_vars = outer_mutable_vars;
+        lowered
+    }
+
+    /// Lower an inherent method's signature and body; [`Self::lower_method_named_with_type_params`] scopes its `mut`
+    /// locals.
+    fn lower_method_named_with_type_params_body(
         &mut self,
         m: &ast::MethodDecl,
         name: String,

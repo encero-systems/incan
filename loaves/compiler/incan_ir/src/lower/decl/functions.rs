@@ -358,7 +358,23 @@ impl AstLowering {
     }
 
     /// Lower a function declaration using an explicit emitted name and visibility.
+    ///
+    /// The function's `mut` locals and parameters are its own: the set starts empty and the caller's set is restored
+    /// afterwards, so a `mut x` in one function does not keep a later function's `x` from moving on its final read.
     pub(in crate::lower) fn lower_function_named(
+        &mut self,
+        f: &ast::FunctionDecl,
+        name: String,
+        visibility: super::super::super::decl::Visibility,
+    ) -> Result<IrFunction, LoweringError> {
+        let outer_mutable_vars = std::mem::take(&mut self.mutable_vars);
+        let lowered = self.lower_function_named_body(f, name, visibility);
+        self.mutable_vars = outer_mutable_vars;
+        lowered
+    }
+
+    /// Lower a function declaration's signature and body; [`Self::lower_function_named`] scopes its `mut` locals.
+    fn lower_function_named_body(
         &mut self,
         f: &ast::FunctionDecl,
         name: String,

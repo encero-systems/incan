@@ -27,6 +27,8 @@ use crate::ast::{ClassDecl, Declaration, EnumDecl, FieldDecl, ModelDecl, Newtype
 use crate::diagnostics::errors::{self, TypeArgumentOrigin};
 use crate::library_manifest::TypeParamExport;
 use crate::symbols::{ResolvedType, TypeBoundInfo, TypeInfo, resolve_type};
+use incan_lang::lang::derives::{self, DeriveId};
+use incan_lang::lang::traits::{self as builtin_traits, TraitId};
 use incan_semantics_core::{CanonicalSymbolId, SymbolOrigin};
 
 use super::TypeChecker;
@@ -558,7 +560,9 @@ impl TypeChecker {
             .is_some_and(|bounds| {
                 bounds.iter().any(|bound| {
                     let name = Self::type_bound_source_name(bound);
-                    name == required_name || (required_name == "Clone" && name == "Copy")
+                    name == required_name
+                        || (required_name == builtin_traits::as_str(TraitId::Clone)
+                            && name == derives::as_str(DeriveId::Copy))
                 })
             })
     }

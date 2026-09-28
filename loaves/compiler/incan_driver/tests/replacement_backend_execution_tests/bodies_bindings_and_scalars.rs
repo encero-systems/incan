@@ -82,7 +82,7 @@ def score(mut values: list[int]) -> int:
   return pair.0 + pair.1
 
 def main() -> int:
-  values = [1, 2]
+  mut values = [1, 2]
   return score(values)
 "#;
     let module = lower_typed_body_ir(source)?;

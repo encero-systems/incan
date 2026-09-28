@@ -117,6 +117,62 @@ fn list_read_after_the_loop_that_took_its_items_is_refused_issue1844() -> Result
     Ok(())
 }
 
+/// #1844: a stdlib provider's checked API types the handles `spawn` returns by their runtime Rust path
+/// (`incan_std_async::task::JoinHandle<T>`), not by the `JoinHandle[T]` spelling. A loop that awaits each such handle
+/// still takes the items, and a later read of the list is refused naming the surface type. A value of another runtime
+/// type the provider records the same way, one that can be cloned, stays in its list.
+#[test]
+fn handles_typed_by_their_runtime_rust_path_are_taken_out_of_the_list_issue1844()
+-> Result<(), Box<dyn std::error::Error>> {
+    let body = r#"from rust::incan_std_async::task import JoinHandle as RuntimeJoinHandle
+from rust::incan_std_async::channel import Sender as RuntimeSender
+
+def provided_handles() -> list[RuntimeJoinHandle[int]]:
+    return []
+
+def provided_senders() -> list[RuntimeSender[int]]:
+    return []
+
+def forward(tx: RuntimeSender[int]) -> None:
+    pass
+
+async def main() -> None:
+    handles = provided_handles()
+    for handle in handles:
+        match await handle:
+            Ok(value) => println(value)
+            Err(_) => println("join failed")
+    senders = provided_senders()
+    for sender in senders:
+        forward(sender)
+    println(len(senders))
+    println(len(handles))
+"#;
+    let source = format!("{PRELUDE}{body}");
+    let errors = checked(body).err().ok_or("reading the emptied list must be refused")?;
+    let refusals = taken_list_refusals(&errors);
+    let [refusal] = refusals.as_slice() else {
+        return Err(format!("expected one INCAN-T0119 refusal, got {errors:?}").into());
+    };
+    assert_eq!(
+        refusal.message,
+        "`handles` is used after the `for` loop that took its items"
+    );
+    let read = span_of(&source, "len(handles)", 0)?;
+    let prefix = "len(".len();
+    assert_eq!(
+        refusal.span,
+        Span::new(read.start + prefix, read.end - 1),
+        "the refusal points at the later read"
+    );
+    assert!(
+        refusal.notes.iter().any(|note| note.contains("each `JoinHandle` item")),
+        "the refusal names the handle by its surface type: {:?}",
+        refusal.notes
+    );
+    Ok(())
+}
+
 /// #1844: a read of the list inside the loop that takes its items is refused too.
 #[test]
 fn list_read_inside_the_loop_that_takes_its_items_is_refused_issue1844() -> Result<(), Box<dyn std::error::Error>> {

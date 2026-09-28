@@ -268,9 +268,10 @@ fn release_cargo_selector_preserves_explicit_and_uses_pinned_rustup_toolchain() 
         .arg("")
         .output()?;
     assert!(system.status.success());
+    // The selector reports the physical directory it found Cargo in, and macOS puts `/tmp` behind a symlink.
     assert_eq!(
         String::from_utf8(system.stdout)?,
-        format!("{}\n", system_cargo.display())
+        format!("{}\n", fs::canonicalize(&system_cargo)?.display())
     );
 
     let missing = Command::new(release_cargo_selector())

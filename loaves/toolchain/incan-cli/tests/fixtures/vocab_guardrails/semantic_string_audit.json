@@ -481,6 +481,12 @@
       "expected_fingerprint": "0x833c26bd2a682d37"
     },
     {
+      "path": "loaves/compiler/incan_frontend/src/typechecker/for_item_taking.rs",
+      "category": "taken-list refusal deduplication by stable diagnostic code",
+      "expected_count": 1,
+      "expected_fingerprint": "0x5651b51f30089fe8"
+    },
+    {
       "path": "loaves/compiler/incan_frontend/src/typechecker/mod.rs",
       "category": "Rust display type parsing, provider ABI lookup, shared nominal String canonicalization, source type-name validation, stdlib derive compatibility, and dependency registry owner paths",
       "expected_count": 42,

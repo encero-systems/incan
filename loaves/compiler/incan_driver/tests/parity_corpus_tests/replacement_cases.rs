@@ -96,7 +96,7 @@ def score(mut values: list[int]) -> int:
     return pair.0 + pair.1
 
 def structural_values() -> int:
-    values = [1, 2]
+    mut values = [1, 2]
     return score(values)
 "#;
 

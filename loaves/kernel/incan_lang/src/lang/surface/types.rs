@@ -8,6 +8,7 @@
 
 use crate::lang::derives::DeriveId;
 use crate::lang::registry::{LangItemInfo, RFC, RfcId, Since, Stability};
+use crate::lang::stdlib::facets;
 
 /// Stable identifier for a surface type. TODO: given RFC 023 approach, we should move/remove some of these types.
 /// Stdlibs should be able to define their own types.
@@ -119,10 +120,12 @@ const RUNTIME_ASYNC_RACE: SurfaceTypeOwnership = runtime(
     SurfaceTypeCategory::AsyncRace,
     "Runtime race helper vocabulary surfaced through `std.async.race`; name lookup requires the stdlib module import.",
 );
-const RUNTIME_ASYNC_CHANNEL: SurfaceTypeOwnership = runtime(
+const STDLIB_ASYNC_CHANNEL: SurfaceTypeOwnership = stdlib(
     "std.async.channel",
     SurfaceTypeCategory::AsyncChannel,
-    "Runtime channel vocabulary surfaced through `std.async.channel`; name lookup requires the stdlib module import.",
+    "Channel handle declared by `std.async.channel` as a newtype over its runtime type, the type `channel()` and \
+     `oneshot()` return; core records the spelling so compiler passes share it, and name lookup requires the stdlib \
+     module import.",
 );
 const INTEROP_RUST: SurfaceTypeOwnership = interop(
     SurfaceTypeCategory::RustInterop,
@@ -217,7 +220,7 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
         SurfaceTypeId::Sender,
         "Sender",
         SurfaceTypeKind::Generic,
-        RUNTIME_ASYNC_CHANNEL,
+        STDLIB_ASYNC_CHANNEL,
         "Bounded channel sender.",
         RFC::_000,
         Since(0, 1),
@@ -226,7 +229,7 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
         SurfaceTypeId::Receiver,
         "Receiver",
         SurfaceTypeKind::Generic,
-        RUNTIME_ASYNC_CHANNEL,
+        STDLIB_ASYNC_CHANNEL,
         "Bounded channel receiver.",
         RFC::_000,
         Since(0, 1),
@@ -235,7 +238,7 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
         SurfaceTypeId::OneshotSender,
         "OneshotSender",
         SurfaceTypeKind::Generic,
-        RUNTIME_ASYNC_CHANNEL,
+        STDLIB_ASYNC_CHANNEL,
         "Oneshot channel sender.",
         RFC::_000,
         Since(0, 1),
@@ -244,7 +247,7 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
         SurfaceTypeId::OneshotReceiver,
         "OneshotReceiver",
         SurfaceTypeKind::Generic,
-        RUNTIME_ASYNC_CHANNEL,
+        STDLIB_ASYNC_CHANNEL,
         "Oneshot channel receiver.",
         RFC::_000,
         Since(0, 1),
@@ -413,6 +416,40 @@ pub fn category(id: SurfaceTypeId) -> SurfaceTypeCategory {
 #[must_use]
 pub fn is_not_cloneable(id: SurfaceTypeId) -> bool {
     info_for(id).not_cloneable
+}
+
+/// Return the runtime-owned surface type whose runtime Rust type `rust_path` names, generic arguments allowed.
+///
+/// A stdlib provider's checked API names a runtime type by its Rust path where source spells the surface type:
+/// `spawn` returns `incan_std_async::task::JoinHandle<T>` for `JoinHandle[T]`. The runtime type of a surface type
+/// declared in `std.<namespace>.<rest>` lives at `<facet>[::<namespace>]::<rest>::<Name>`, the location runtime
+/// re-exports use, so a path names the surface type exactly when it spells that location.
+#[must_use]
+pub fn from_runtime_rust_path(rust_path: &str) -> Option<SurfaceTypeId> {
+    let path = rust_path.strip_prefix("::").unwrap_or(rust_path);
+    let base = path.split_once('<').map_or(path, |(base, _)| base).trim_end();
+    let id = from_str(base.rsplit("::").next()?)?;
+    runtime_rust_path_segments(id)?
+        .into_iter()
+        .eq(base.split("::"))
+        .then_some(id)
+}
+
+/// Return the segments of the Rust path a runtime-owned surface type's runtime type lives at.
+fn runtime_rust_path_segments(id: SurfaceTypeId) -> Option<Vec<&'static str>> {
+    let ownership = info_for(id).ownership;
+    if ownership.owner != SurfaceTypeOwner::Runtime {
+        return None;
+    }
+    let mut module = ownership.stdlib_module_path?.split('.').skip(1);
+    let namespace = module.next()?;
+    let mut segments = vec![facets::for_namespace(namespace)];
+    if !facets::namespace_is_facet_root(namespace) {
+        segments.push(namespace);
+    }
+    segments.extend(module);
+    segments.push(as_str(id));
+    Some(segments)
 }
 
 /// What the compiler records about one surface type's implementation of a builtin derive.
@@ -670,6 +707,50 @@ mod tests {
                 "{} must be recorded as non-Clone",
                 as_str(id)
             );
+        }
+    }
+
+    #[test]
+    fn runtime_rust_path_names_the_surface_type_at_its_facet_location() {
+        for path in [
+            "incan_std_async::task::JoinHandle<T>",
+            "incan_std_async::task::JoinHandle<i64>",
+            "::incan_std_async::task::JoinHandle",
+        ] {
+            assert_eq!(from_runtime_rust_path(path), Some(SurfaceTypeId::JoinHandle), "{path}");
+        }
+        assert_eq!(
+            from_runtime_rust_path("incan_std_async::sync::Mutex<i64>"),
+            Some(SurfaceTypeId::Mutex)
+        );
+        assert_eq!(
+            from_runtime_rust_path("incan_std_async::channel::Sender<String>"),
+            None,
+            "a channel handle is the stdlib newtype, not its runtime type"
+        );
+        for path in [
+            "incan_std_async::sync::JoinHandle<T>",
+            "incan_std_async::JoinHandle<T>",
+            "tokio::task::JoinHandle<T>",
+            "incan_std_core::task::JoinHandle<T>",
+            "incan_std_async::task::Unknown<T>",
+        ] {
+            assert_eq!(from_runtime_rust_path(path), None, "{path}");
+        }
+    }
+
+    /// `std.async.channel` declares each channel handle as a newtype over its runtime type and `channel()` returns the
+    /// newtype, so an import of the handle binds the newtype rather than re-exporting the runtime type.
+    #[test]
+    fn channel_handles_are_the_stdlib_newtypes_channel_returns() {
+        for id in [
+            SurfaceTypeId::Sender,
+            SurfaceTypeId::Receiver,
+            SurfaceTypeId::OneshotSender,
+            SurfaceTypeId::OneshotReceiver,
+        ] {
+            assert_eq!(owner(id), SurfaceTypeOwner::Stdlib, "{}", as_str(id));
+            assert_eq!(stdlib_module_path(id), Some("std.async.channel"), "{}", as_str(id));
         }
     }
 

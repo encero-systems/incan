@@ -22,7 +22,9 @@ use incan_frontend::ast::{
 use incan_frontend::decorator_resolution;
 use incan_frontend::library_manifest_index::LibraryManifestIndex;
 use incan_frontend::module::logical_module_segments_from_file;
-use incan_frontend::testing_markers::{TestingMarkerKind, TestingMarkerSemantics, resolve_testing_marker_kind};
+use incan_frontend::testing_markers::{
+    TestingMarkerKind, TestingMarkerSemantics, resolve_testing_marker_kind, yield_fixture_teardown_span,
+};
 use incan_frontend::vocab_desugar_pass;
 use incan_frontend::{lexer, parser};
 use incan_provider::FeatureSelection;
@@ -1022,9 +1024,10 @@ fn split_yield_fixture_declarations(
         }
         // The teardown is a second declaration split out of one source function, so it cannot share the fixture's
         // declaration span: a canonical identity is namespace + declaration + kind + scope + span, and two
-        // declarations carrying the same span project to the same name however they are called. The `yield` that
-        // splits the body is the honest span for the half that follows it.
-        let yield_span = func.body[yield_index].span;
+        // declarations carrying the same span project to the same name however they are called. The declaration
+        // takes the teardown span the testing markers anchor at the `yield` that splits the body; its body statements
+        // keep their source spans.
+        let teardown_span = yield_fixture_teardown_span(func.body[yield_index].span);
         let teardown_name = yield_fixture_teardown_name(&func.name);
         let mut setup_body = func.body[..yield_index].to_vec();
         let teardown_body = if yield_index + 1 < func.body.len() {
@@ -1111,7 +1114,7 @@ fn split_yield_fixture_declarations(
                 value_ty: original_return_type,
             },
         );
-        additional.push(Spanned::new(Declaration::Function(teardown_func), yield_span));
+        additional.push(Spanned::new(Declaration::Function(teardown_func), teardown_span));
     }
 
     ast.declarations.extend(additional);

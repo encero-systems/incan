@@ -33,6 +33,7 @@ use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use super::grouped_unary_operand;
 use incan_frontend::ast::{self, Spanned};
+use incan_lang::lang::surface::constructors::{self, ConstructorId};
 use std::collections::VecDeque;
 
 /// Prefix of the binding a `str` literal nested in an arm's own pattern is hoisted into.
@@ -982,9 +983,9 @@ impl AstLowering {
         if !matches!(literal.kind, IrExprKind::None) {
             return None;
         }
-        match variant_name(variant) {
-            "None" => Some(fields.is_empty()),
-            "Some" => Some(false),
+        match constructors::from_str(variant_name(variant)) {
+            Some(ConstructorId::None) => Some(fields.is_empty()),
+            Some(ConstructorId::Some) => Some(false),
             _ => None,
         }
     }
