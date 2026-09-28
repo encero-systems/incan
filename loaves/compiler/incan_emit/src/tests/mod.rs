@@ -13,3 +13,4 @@ mod static_reads_and_frozen_strings;
 mod trait_parameters_and_element_bounds;
 mod trait_slot_mut_parameters;
 mod tuple_assignment_emission;
+mod union_member_identity;

@@ -328,6 +328,26 @@ impl AstLowering {
         }
     }
 
+    /// Return the type a narrowing condition tests its subject binding against.
+    ///
+    /// That is the binding's lowered type, unless that type names a transparent alias the binding does not expand,
+    /// such as a parameter annotated `answer: Answer` with `type Answer = Item | int`: narrowing then reads the type
+    /// the checker proved for the subject expression, which is the alias's union or option. Without that, an
+    /// `isinstance` over an alias-typed union fell back to a plain test and read the narrowed member's fields from
+    /// the wrapper itself (#1796).
+    fn narrowing_subject_type(&self, binding: &str, subject: &Spanned<ast::Expr>) -> IrType {
+        let declared = self.lookup_var(binding);
+        if declared.is_union() || matches!(declared, IrType::Option(_)) {
+            return declared;
+        }
+        self.type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(subject.span))
+            .map(|checked| self.lower_resolved_type(checked))
+            .filter(|checked| checked.is_union() || matches!(checked, IrType::Option(_)))
+            .unwrap_or(declared)
+    }
+
     /// Return whether a known concrete value can satisfy an `isinstance(..., T)` target.
     fn isinstance_member_matches(member: &IrType, target_ty: &IrType) -> bool {
         isinstance_type_matches(member, target_ty)
@@ -352,7 +372,7 @@ impl AstLowering {
             _ => return None,
         }
         let target_ty = self.resolved_isinstance_target_type(condition)?;
-        let union_ty = self.lookup_var(binding);
+        let union_ty = self.narrowing_subject_type(binding, value);
         let variant_indices = isinstance_union_variant_indices(&union_ty, &target_ty)?;
         let members = union_ty.union_members()?;
         let matching_variants = variant_indices
@@ -506,7 +526,7 @@ impl AstLowering {
         let ast::Expr::Ident(binding) = &value.node else {
             return None;
         };
-        let IrType::Option(inner_ty) = self.lookup_var(binding) else {
+        let IrType::Option(inner_ty) = self.narrowing_subject_type(binding, value) else {
             return None;
         };
 
@@ -537,7 +557,7 @@ impl AstLowering {
             _ => return None,
         }
         let target_ty = self.resolved_isinstance_target_type(condition)?;
-        let IrType::Option(inner_ty) = self.lookup_var(binding) else {
+        let IrType::Option(inner_ty) = self.narrowing_subject_type(binding, value) else {
             return None;
         };
 

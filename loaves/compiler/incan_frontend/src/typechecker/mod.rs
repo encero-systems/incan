@@ -63,6 +63,7 @@ mod reserved_names;
 pub mod stdlib_loader;
 mod trait_bound_relations;
 mod type_info;
+mod union_member_identity;
 mod validate_rust_module;
 mod web_routes;
 
@@ -680,6 +681,9 @@ pub struct TypeChecker {
     /// alongside the flat name — the same thing `IrCodegen::add_module_with_path_segments` does for emission — lets an
     /// identity name the module that actually answered.
     pub dependency_module_path_segments: HashMap<String, Vec<String>>,
+    /// Which modules of the current check declare each nominal type name, so a union member of a name several of them
+    /// declare names its declaration (#1796).
+    nominal_declarations: union_member_identity::NominalDeclarationContext,
     /// Module-owned direct partial projection metadata captured while that module is being imported.
     pub dependency_direct_member_partial_projections: HashMap<String, HashMap<String, PartialProjectionInfo>>,
     /// RFC 024 derivable-module metadata from imported source modules, keyed by module path.
@@ -921,6 +925,7 @@ impl TypeChecker {
             dependency_direct_member_identities: HashMap::new(),
             dependency_member_reexports: HashMap::new(),
             dependency_module_path_segments: HashMap::new(),
+            nominal_declarations: union_member_identity::NominalDeclarationContext::default(),
             dependency_direct_member_partial_projections: HashMap::new(),
             dependency_derivable_modules: HashMap::new(),
             dependency_module_traits: HashMap::new(),
@@ -2828,7 +2833,9 @@ impl TypeChecker {
     ///   - `symbols.get(id)` → `Option<&Symbol>`
     ///   - `match sym.kind { SymbolKind::Type(info) => ... }`
     pub fn lookup_type_info(&self, name: &str) -> Option<&TypeInfo> {
-        let id = self.symbols.lookup(name)?;
+        let Some(id) = self.symbols.lookup(name) else {
+            return self.module_qualified_nominal_type_info(name);
+        };
         let sym = self.symbols.get(id)?;
         match &sym.kind {
             SymbolKind::Type(info) => Some(info),
@@ -5324,6 +5331,7 @@ impl TypeChecker {
             &|segments| self.qualified_type_annotation_resolved_type(segments),
         );
         self.record_mutable_rust_type_argument_projection(ty);
+        let resolved = self.normalize_union_member_identity(resolved);
         let resolved = self.expand_type_aliases(resolved);
         // Only the checking pass sees every declaration's derives; collection may resolve a name declared further on.
         if self.validate_source_type_names {
@@ -5339,7 +5347,7 @@ impl TypeChecker {
     fn qualified_type_annotation_resolved_type(&self, segments: &[String]) -> Option<ResolvedType> {
         self.type_info
             .qualified_type_reference(&segments.join("."))
-            .map(|reference| reference.resolved.clone())
+            .map(|reference| self.qualified_reference_member_spelling(reference.resolved.clone(), &reference.identity))
     }
 
     /// Preserve a metadata-directed mutable-reference projection for one imported Rust generic annotation.
@@ -6708,7 +6716,9 @@ impl TypeChecker {
         self.source_import_targets.clear();
         self.surface_context = SurfaceContext::from_program(program);
         self.supertrait_closure.clear();
+        self.enter_nominal_declaring_module(program);
         if !preserve_dependency_semantics {
+            self.clear_nominal_declaring_modules();
             self.hash_key_type_params.clear();
             self.transitive_pub_types.clear();
             self.public_library_type_identities.clear();
@@ -6780,6 +6790,8 @@ impl TypeChecker {
         // ---- RFC 120: export the minted declaration identities for later stages ----
         self.export_declaration_identities();
         self.export_checked_import_bindings();
+        self.export_unique_nominal_declaring_modules();
+        self.export_type_alias_targets();
         self.record_binding_collision_diagnostics();
 
         if self.provider_plan.public_artifacts().next().is_some() {
@@ -6919,6 +6931,7 @@ impl TypeChecker {
             .cloned()
             .unwrap_or_else(|| vec![module_name.to_string()]);
         self.set_current_module_path(Some(dependency_module_path));
+        let previous_nominal_declarations = self.enter_nominal_declaring_module(module_ast);
         self.surface_context = SurfaceContext::from_program(module_ast);
         self.symbols.begin_dependency_interface_bindings();
         self.seed_dependency_interface_bindings(module_ast, true);
@@ -6984,6 +6997,7 @@ impl TypeChecker {
         self.current_module_function_symbols = previous_module_function_symbols;
         self.symbols.finish_dependency_interface_bindings();
         self.type_aliases = previous_type_aliases;
+        self.restore_nominal_declaring_module(previous_nominal_declarations);
         self.set_current_module_path(previous_module_path);
     }
 
@@ -7002,6 +7016,7 @@ impl TypeChecker {
             .cloned()
             .unwrap_or_else(|| vec![module_name.to_string()]);
         self.set_current_module_path(Some(dependency_module_path));
+        let previous_nominal_declarations = self.enter_nominal_declaring_module(module_ast);
         self.surface_context = SurfaceContext::from_program(module_ast);
         self.symbols.begin_dependency_interface_bindings();
         self.seed_dependency_interface_bindings(module_ast, false);
@@ -7067,6 +7082,7 @@ impl TypeChecker {
         self.current_module_function_symbols = previous_module_function_symbols;
         self.symbols.finish_dependency_interface_bindings();
         self.type_aliases = previous_type_aliases;
+        self.restore_nominal_declaring_module(previous_nominal_declarations);
         self.set_current_module_path(previous_module_path);
     }
 
@@ -8200,6 +8216,7 @@ impl TypeChecker {
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
         self.seed_sdk_provider_symbols();
+        self.record_nominal_declaring_modules(program, dependencies);
         for (name, dep_ast) in dependencies {
             if Self::is_generated_stdlib_dependency_module(name) {
                 continue;
@@ -8252,6 +8269,7 @@ impl TypeChecker {
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
         self.seed_sdk_provider_symbols();
+        self.record_nominal_declaring_modules(program, dependencies);
         self.predeclare_dependency_interfaces(dependencies, false);
         for (name, dep_ast) in dependencies {
             if Self::is_generated_stdlib_dependency_module(name) {
@@ -8454,6 +8472,10 @@ impl TypeChecker {
 
         if actual == expected {
             return true;
+        }
+
+        if let Some(matches) = self.module_qualified_nominals_compatible(actual, expected) {
+            return matches;
         }
 
         if let Some(matches) = self.rust_type_identities_compatible(actual, expected) {

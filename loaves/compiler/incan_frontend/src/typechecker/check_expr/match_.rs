@@ -137,7 +137,9 @@ impl TypeChecker {
     /// A constructor pattern over a union may name either one concrete member (`A(value)`) or a transparent alias whose
     /// expanded union members are a subset of the scrutinee union (`Base(value)` where `Input = Union[Base, int]`).
     fn union_pattern_target_type(&self, expected_ty: &ResolvedType, name: &str) -> Option<ResolvedType> {
-        let target_ty = self.expand_type_aliases(resolve_type(&Type::Simple(name.to_string()), &self.symbols));
+        let target_ty = self.union_member_target_spelling(
+            self.expand_type_aliases(resolve_type(&Type::Simple(name.to_string()), &self.symbols)),
+        );
         let members = Self::expected_union_members(expected_ty)?;
 
         if let Some(target_members) = target_ty.union_members()
@@ -242,7 +244,9 @@ impl TypeChecker {
     /// Return the type represented by the as-yet-uncovered union members for wildcard and binding arms.
     fn match_arm_remainder_type(&self, pattern: &Spanned<Pattern>, remaining: &[ResolvedType]) -> Option<ResolvedType> {
         match &pattern.node {
-            Pattern::Wildcard | Pattern::Binding(_) if !remaining.is_empty() => Some(union_ty(remaining.to_vec())),
+            Pattern::Wildcard | Pattern::Binding(_) if !remaining.is_empty() => {
+                Some(Self::localize_union_member(union_ty(remaining.to_vec())))
+            }
             Pattern::Group(inner) => self.match_arm_remainder_type(inner, remaining),
             _ => None,
         }
@@ -457,7 +461,8 @@ impl TypeChecker {
                         }
                     }
                     if let Some(pat) = positional {
-                        self.check_pattern(pat, &member_ty);
+                        let written_ty = resolve_type(&Type::Simple(ctor_name.to_string()), &self.symbols);
+                        self.check_pattern(pat, &Self::narrowed_union_member_type(&member_ty, &written_ty));
                     }
                     return;
                 }

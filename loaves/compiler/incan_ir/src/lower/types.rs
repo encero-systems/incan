@@ -27,6 +27,7 @@ use incan_lang::lang::types::collections::{self, CollectionTypeId};
 use incan_lang::lang::types::numerics::{self, NumericFamily, NumericTypeId};
 use incan_lang::lang::types::stringlike::{self, StringLikeId};
 use incan_lang::{NumericTy, PowExponentKind, result_numeric_type};
+use incan_semantics_core::SemanticSourceTargetKind;
 
 const API_CRATE_ROOT_SEGMENT: &str = "crate";
 
@@ -919,6 +920,27 @@ impl AstLowering {
         {
             return IrType::Struct(format!("{library}::{public_name}"));
         }
+        // A union member the checker spelled by its declaring module, and an import alias this module writes as a
+        // union member, name their declaration (#1796).
+        if let ResolvedType::Named(name) = ty
+            && let Some(spelled) = self
+                .lower_module_qualified_nominal(name)
+                .or_else(|| self.union_member_import_alias(name).map(str::to_string))
+        {
+            return IrType::Struct(spelled);
+        }
+        if let ResolvedType::Generic(name, args) = ty
+            && let Some(spelled) = self
+                .lower_module_qualified_nominal(name)
+                .or_else(|| self.union_member_import_alias(name).map(str::to_string))
+        {
+            return IrType::NamedGeneric(
+                spelled,
+                args.iter()
+                    .map(|arg| self.lower_resolved_type_with_rust_path_mode(arg, rust_path_mode))
+                    .collect(),
+            );
+        }
         if let ResolvedType::Generic(name, args) = ty
             && let Some((library, public_name)) = split_canonical_public_library_type_name(name)
         {
@@ -1235,6 +1257,14 @@ impl AstLowering {
                     return imported_alias;
                 }
 
+                if let Some(target) = self.lower_shared_imported_type_alias(n) {
+                    return target;
+                }
+
+                if let Some(declaration) = self.union_member_import_alias(n) {
+                    return IrType::Struct(declaration.to_string());
+                }
+
                 if n == conventions::NONE_TYPE_NAME || n == conventions::UNIT_TYPE_NAME {
                     return IrType::Unit;
                 }
@@ -1318,8 +1348,13 @@ impl AstLowering {
                     ),
                     GenericBaseKind::Other if base == IR_UNION_TYPE_NAME => self.lower_union_members(lowered_params),
                     GenericBaseKind::Other => IrType::NamedGeneric(
-                        self.active_trait_default_type_path(base)
-                            .map_or_else(|| base.clone(), |path| path.join("::")),
+                        self.active_trait_default_type_path(base).map_or_else(
+                            || {
+                                self.union_member_import_alias(base)
+                                    .map_or_else(|| base.clone(), str::to_string)
+                            },
+                            |path| path.join("::"),
+                        ),
                         lowered_params,
                     ),
                 }
@@ -1379,13 +1414,26 @@ impl AstLowering {
         }) else {
             return IrType::Unknown;
         };
-        let apply_args = |nominal: IrType| match (nominal, args.is_empty()) {
+        let has_args = !args.is_empty();
+        let apply_args = |nominal: IrType| match (nominal, !has_args) {
             (nominal, true) => nominal,
             (IrType::Struct(name), false) => IrType::NamedGeneric(name, args),
             (other, false) => other,
         };
         if reference.module_path.first().map(String::as_str) == Some("pub") {
             return apply_args(self.lower_resolved_type(&reference.resolved));
+        }
+        // A module-qualified source type alias (`first.Answer`) whose target holds a union lowers to that target: the
+        // emitter resolves an alias only by its bare name, so a value returned or passed into the alias was never
+        // wrapped into the union (#1796). A generic alias keeps its name; the checker resolved no target for it.
+        if !has_args
+            && matches!(reference.identity.kind, SemanticSourceTargetKind::TypeAlias)
+            && !matches!(reference.resolved, ResolvedType::Named(_))
+        {
+            let target = self.lower_resolved_type(&reference.resolved);
+            if super::union_identity::ir_type_contains_union(&target) {
+                return target;
+            }
         }
         let mut path = vec!["crate".to_string()];
         path.extend(reference.module_path.iter().enumerate().map(|(index, segment)| {

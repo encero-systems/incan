@@ -2747,6 +2747,14 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/union_member_identity.rs": {
+      "disposition": "retire",
+      "notes": "asserts the generated Rust of unions whose members name their declarations across the modules of a crate (reached through signatures, generic types, aliases and import aliases) and of narrowing over alias-typed unions (#1796); retires with the Rust-source backend (#654).",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/trait_bound_inference.rs": {
       "disposition": "retire",
       "notes": "infers Rust trait bounds for generated generics. Twinned by the ownership_numerics_and_bounds fixtures (a bound is proved by the program running for concrete types); the absent-bound tests are open on a candidate that instantiates a non-`Clone` Rust type; the metadata-free, legacy-encoding and conservative-fallback tests die; the implementation-bound tests are open on #1280.",
@@ -5350,6 +5358,14 @@
     "loaves/compiler/incan_frontend/src/typechecker/tests/traits.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/union_member_identity.rs": {
+      "disposition": "keep",
+      "notes": "typechecker union member identity across modules (#1796); no emit/driver dependency.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",

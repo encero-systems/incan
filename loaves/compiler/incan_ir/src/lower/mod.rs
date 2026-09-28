@@ -366,6 +366,9 @@ pub struct AstLowering {
     /// Number of source parameter defaults being lowered; names read in them are spelled through their declaring
     /// modules.
     pub param_default_depth: usize,
+    /// Import aliases of crate nominals this module writes as union members, each mapped to the declaration's crate
+    /// path that types their values (#1796).
+    pub union_member_import_aliases: HashMap<String, String>,
 }
 
 impl AstLowering {
@@ -814,6 +817,7 @@ impl AstLowering {
             module_declared_nominals: HashSet::new(),
             source_module_rust_paths: HashMap::new(),
             param_default_depth: 0,
+            union_member_import_aliases: HashMap::new(),
         }
     }
 
@@ -2558,6 +2562,7 @@ impl AstLowering {
         self.emitted_member_projections.clear();
         ir_program.source_module_name = self.current_source_module_name.clone();
         self.module_declared_nominals = declared_nominal_names(program);
+        self.union_member_import_aliases = self.collect_union_member_import_aliases(program);
         let mut errors: Vec<LoweringError> = Vec::new();
         self.import_aliases = decorator_resolution::collect_import_aliases(program);
         self.rust_import_aliases = decorator_resolution::collect_rust_import_aliases(program);

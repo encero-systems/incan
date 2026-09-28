@@ -959,6 +959,19 @@ pub struct DeclarationArtifacts {
     /// its declaring module and must never rebuild that placement from the written segments. An absent entry means
     /// the checker did not prove a type and reported that at the annotation.
     pub qualified_type_references: HashMap<String, QualifiedTypeReferenceInfo>,
+    /// The module path of the one module of this check that declares each nominal type name no other module of the
+    /// check declares.
+    ///
+    /// A union that reaches this module through another module's signature spells such a member by its bare name even
+    /// where no binding of this module names it; lowering reads the declaring module here to place the member's
+    /// wrapper payload (#1796). A name several modules of the check declare is absent: the checker spells a union
+    /// member of that name by its declaring module instead.
+    pub unique_nominal_declaring_modules: HashMap<String, Vec<String>>,
+    /// The target of each non-generic type alias this module declares or imports, keyed by its local name.
+    ///
+    /// Lowering reads an imported alias's target here where the emitter cannot place the alias by its name, because
+    /// another module of the crate declares a type of that name too (#1796).
+    pub type_alias_targets: HashMap<String, ResolvedType>,
     /// RFC 120 identities of this module's own top-level declarations, keyed by declaration span.
     ///
     /// Exported from the symbol table's minting after checking as a compatibility view for span-keyed declaration
@@ -2238,6 +2251,19 @@ impl TypeCheckInfo {
     /// must not fall back to the written segments: see [`DeclarationArtifacts::qualified_type_references`].
     pub fn qualified_type_reference(&self, spelling: &str) -> Option<&QualifiedTypeReferenceInfo> {
         self.declarations.qualified_type_references.get(spelling)
+    }
+
+    /// Return the target of a non-generic type alias this module declares or imports.
+    pub fn type_alias_target(&self, name: &str) -> Option<&ResolvedType> {
+        self.declarations.type_alias_targets.get(name)
+    }
+
+    /// Return the one module of this check that declares a nominal type of this name, when no other module does.
+    pub fn unique_nominal_declaring_module(&self, name: &str) -> Option<&[String]> {
+        self.declarations
+            .unique_nominal_declaring_modules
+            .get(name)
+            .map(Vec::as_slice)
     }
 
     /// Return a compiler-proven source target for the expression at `span`, if one was recorded.

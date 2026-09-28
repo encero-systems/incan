@@ -124,8 +124,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/program.rs",
-      "sha256": "764ae027ca4a45ab7a843615b5f507e02fd3021a0dd73247d76e8595c3930567",
-      "lines": 4664
+      "sha256": "95026334c7a1ad1cf0be2aaf19b9b5fc8b1db2802802b79513e868433f3d15aa",
+      "lines": 4666
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/statements.rs",
@@ -352,6 +352,21 @@
       "behavior_evidence": "incan_emit::tests::mut_ownership_regressions compiled-Rust tests; incan_emit tests::mut_ownership_regressions compile the generated Rust with rustc, including comprehension_filter_mutation_reaches_the_source_issue1864; loop_popping_each_element_builds_issue1869",
       "semantic_owner": "Body IR mutation and receiver ownership facts",
       "retirement_condition": "Body IR carries mutable place and iteration plans so the emitter only renders them"
+    },
+    {
+      "kind": "change",
+      "pr": 1896,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/program.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1796",
+      "behavior_evidence": "generated-Rust test a_union_over_a_generic_type_two_modules_declare_gets_one_wrapper_each_issue1796 in incan_emit/src/tests/union_member_identity.rs: two modules that each declare Holder[T] and write Holder[int] | str get one crate-root wrapper each, whose payload names crate::third::Holder<i64> and crate::fourth::Holder<i64>. Printed output changes only for a crate-root wrapper payload whose generic base lowering spells by a module path, which it does only for a generic type that more than one module of the crate declares; every other wrapper payload prints as before.",
+      "semantic_owner": "#1561: lowering's union member identity (incan_ir lower/union_identity.rs) decides the declaration each union member names and spells it; the emitter only prints the spelled path.",
+      "retirement_condition": "Removal of the Rust-source backend (#654), or a wrapper-payload emitter that takes a typed item path instead of a spelled name."
     }
   ]
 }

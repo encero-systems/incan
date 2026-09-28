@@ -100,6 +100,7 @@ mod stdlib_default_const_paths;
 mod stdlib_surfaces;
 mod trait_instantiation_and_operators;
 mod traits;
+mod union_member_identity;
 mod web_route_payloads;
 
 use helpers::{

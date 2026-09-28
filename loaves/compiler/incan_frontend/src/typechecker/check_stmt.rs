@@ -1308,19 +1308,20 @@ impl TypeChecker {
         current_ty: &ResolvedType,
         target_ty: &ResolvedType,
     ) -> Option<ResolvedType> {
+        let member_target = self.union_member_target_spelling(target_ty.clone());
         if let Some(members) = current_ty.union_members() {
             return members
                 .iter()
-                .find(|member| self.union_member_matches(member, target_ty))
-                .cloned();
+                .find(|member| self.union_member_matches(member, &member_target))
+                .map(|member| Self::narrowed_union_member_type(member, target_ty));
         }
 
         if let Some(inner) = current_ty.option_inner_type() {
             if let Some(members) = inner.union_members() {
                 return members
                     .iter()
-                    .find(|member| self.union_member_matches(member, target_ty))
-                    .cloned();
+                    .find(|member| self.union_member_matches(member, &member_target))
+                    .map(|member| Self::narrowed_union_member_type(member, target_ty));
             }
             if self.union_member_matches(inner, target_ty) {
                 return Some(inner.clone());
@@ -1332,15 +1333,16 @@ impl TypeChecker {
 
     /// Return the union-minus-target type after a failed `isinstance` check.
     fn union_minus_type(&self, members: &[ResolvedType], target_ty: &ResolvedType) -> Option<ResolvedType> {
+        let member_target = self.union_member_target_spelling(target_ty.clone());
         let remaining: Vec<_> = members
             .iter()
-            .filter(|member| !self.union_member_matches(member, target_ty))
+            .filter(|member| !self.union_member_matches(member, &member_target))
             .cloned()
             .collect();
         if remaining.len() == members.len() {
             None
         } else {
-            Some(union_ty(remaining))
+            Some(Self::localize_union_member(union_ty(remaining)))
         }
     }
 

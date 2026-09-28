@@ -669,16 +669,26 @@ pub fn crate_qualified_member_local_name(name: &str) -> Option<&str> {
     path.rsplit("::").next().filter(|local| !local.is_empty())
 }
 
-/// Return whether a union member names the same type as a value once crate-qualified member nominals are read by
-/// their module-local names.
+/// Return whether a union member names the same type as a value once crate-qualified nominals are read by their
+/// module-local names.
 ///
-/// Only the member side may carry the qualification; a value spelled `crate::...` must equal the member exactly.
+/// Two crate-qualified spellings must be equal. A member spelled by its declaring module matches a value of its
+/// module-local name, and a value spelled by its declaring module (the type of a value whose import alias names a union
+/// member) matches a member of its declaration name, which a member keeps only when no other module of the crate
+/// declares that name.
 fn crate_qualified_type_matches(member: &IrType, value: &IrType) -> bool {
     if member == value {
         return true;
     }
-    let names_match =
-        |member: &str, value: &str| member == value || crate_qualified_member_local_name(member) == Some(value);
+    let names_match = |member: &str, value: &str| match (
+        crate_qualified_member_local_name(member),
+        crate_qualified_member_local_name(value),
+    ) {
+        (Some(_), Some(_)) => member == value,
+        (Some(member_local), None) => member_local == value,
+        (None, Some(value_local)) => member == value_local,
+        (None, None) => member == value,
+    };
     let all_match = |members: &[IrType], values: &[IrType]| {
         members.len() == values.len()
             && members

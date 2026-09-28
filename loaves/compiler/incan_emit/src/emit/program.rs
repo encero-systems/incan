@@ -3517,8 +3517,10 @@ impl<'a> IrEmitter<'a> {
                     .emit_dependency_type_path(name)
                     .or_else(|| self.emit_public_dependency_type_path(name))
                     .unwrap_or_else(|| {
-                        let ident = Self::rust_ident(name);
-                        quote! { #ident }
+                        // Lowering spells a generic member that two modules of the crate declare by its declaring
+                        // module's path (`crate::first::Holder`), so the base is a path of one or more segments.
+                        let segments = name.split("::").map(Self::rust_ident).collect::<Vec<_>>();
+                        quote! { #(#segments)::* }
                     });
                 let args: Vec<_> = args
                     .iter()
