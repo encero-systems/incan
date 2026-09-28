@@ -63,11 +63,11 @@ impl<'a> IrEmitter<'a> {
             });
 
         // A Rust derive enumerates every struct field, so on a phantom-parameter struct `#[derive(Debug)]` and
-        // `#[derive(FieldInfo)]` would print and list the marker. Those two traits are realised by hand over the
+        // `#[derive(FieldInfo)]` would print and list the marker. Those two traits are realized by hand over the
         // source fields instead (`emit_phantom_struct_field_trait_impls`); the recorded fact decides, not the field
         // list. See #1370.
         let has_phantom_type_params = !s.phantom_type_params.is_empty();
-        let realised_over_source_fields = |derive: &str| {
+        let realized_over_source_fields = |derive: &str| {
             has_phantom_type_params
                 && (derives::from_str(derive) == Some(DeriveId::Debug) || derive == derives::FIELD_INFO_DERIVE_NAME)
         };
@@ -78,7 +78,7 @@ impl<'a> IrEmitter<'a> {
             .filter(|d| derives::from_str(d.as_str()) != Some(DeriveId::Validate))
             // Validated newtypes must reconstruct through their checked ingress rather than Serde's tuple derive.
             .filter(|d| checked_deserialize_plan.is_none() || d.as_str() != SERDE_DESERIALIZE_DERIVE)
-            .filter(|d| !realised_over_source_fields(d.as_str()))
+            .filter(|d| !realized_over_source_fields(d.as_str()))
             .map(|d| match derives::from_str(d.as_str()) {
                 _ if d == derives::FIELD_INFO_DERIVE_NAME => quote! { incan_derive::FieldInfo },
                 _ if d == derives::INCAN_CLASS_DERIVE_NAME => quote! { incan_derive::IncanClass },
@@ -243,7 +243,7 @@ impl<'a> IrEmitter<'a> {
                 .collect();
 
             // ---- Phantom type parameters: one compiler-owned marker field, recorded by lowering (#1370) ----
-            // The marker is public so a struct literal in another generated module can initialise it; it is skipped
+            // The marker is public so a struct literal in another generated module can initialize it; it is skipped
             // by Serde because it is not source data, and rustc exempts `PhantomData` fields from dead-code analysis.
             //
             // Compatibility issue: #1370 — a type parameter used only in method signatures emitted a struct rustc
@@ -252,7 +252,7 @@ impl<'a> IrEmitter<'a> {
             // `cli_issue1370_phantom_type_param_tests` root, which builds and runs the issue's program.
             // Semantic owner: `IrStruct::phantom_type_params`, recorded by lowering; this emitter and the
             // struct-literal emitters (`StructConstructorMetadata::phantom_marker_initializer`) only
-            // realise the marker, and `emit_phantom_struct_field_trait_impls` keeps it out of the `Debug`
+            // realize the marker, and `emit_phantom_struct_field_trait_impls` keeps it out of the `Debug`
             // rendering and the `HasFieldInfo` field list that a Rust derive would otherwise enumerate.
             // Retirement condition: removal of the Rust-source backend (#654); a replacement backend
             // consumes the same recorded fact for its own representation.
@@ -352,7 +352,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
-    /// Realise `Debug` and `HasFieldInfo` over the source fields of a struct that carries a phantom marker.
+    /// Realize `Debug` and `HasFieldInfo` over the source fields of a struct that carries a phantom marker.
     ///
     /// Both traits are normally Rust derives, and a derive enumerates every field of the Rust struct, marker
     /// included. The hand-written impls render exactly what the derives would for the source fields — the same

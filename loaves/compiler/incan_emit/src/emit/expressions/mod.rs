@@ -3990,8 +3990,7 @@ mod tests {
 
         let flat_map_rendered = render(IteratorMethodKind::FlatMap, callback())?;
         assert!(
-            flat_map_rendered.contains("collection :: FlatMapIterator")
-                && flat_map_rendered.contains("current : Vec :: new ()"),
+            flat_map_rendered.contains("collection :: FlatMapIterator") && flat_map_rendered.contains("current : None"),
             "unexpected flat_map emission: {flat_map_rendered}"
         );
 

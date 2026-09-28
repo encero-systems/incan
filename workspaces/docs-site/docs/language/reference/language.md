@@ -688,6 +688,7 @@ Class, model, trait, enum, newtype, field, alias and module declarations accept 
 
 | Id | Canonical | Aliases | Description | RFC | Since | Stability |
 |---|---|---|---|---|---|---|
+| AsMut | `as_mut` |  | Borrow the contained value mutably without consuming the option. | RFC 000 | 0.6 | Stable |
 | Copied | `copied` |  | Copy from Option[&T] to Option[T] when T: Copy. | RFC 000 | 0.1 | Stable |
 | UnwrapOr | `unwrap_or` |  | Return the contained value or a default. | RFC 000 | 0.1 | Stable |
 | Unwrap | `unwrap` |  | Return the contained value or panic. | RFC 000 | 0.1 | Stable |

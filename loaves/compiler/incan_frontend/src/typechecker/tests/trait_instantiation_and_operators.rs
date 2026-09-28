@@ -660,7 +660,7 @@ def main() -> str:
 }
 
 #[test]
-fn test_source_callable_bound_records_typed_rust_closure_boundary() -> Result<(), Vec<CompileError>> {
+fn test_source_callable_bound_records_typed_rust_closure_boundary() -> Result<(), String> {
     let source = r#"
 from std.traits.callable import Callable1
 
@@ -674,13 +674,17 @@ def main() -> str:
   prefix = "item"
   return apply((error) => f"{prefix}:{error.kind}", Failure(kind="read"))
 "#;
-    let tokens = lexer::lex(source)?;
-    let ast = parser::parse(&tokens)?;
+    let tokens = lexer::lex(source).map_err(|errors| format!("fixture should lex: {errors:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errors| format!("fixture should parse: {errors:?}"))?;
     let mut checker = TypeChecker::new();
-    checker.check_program(&ast)?;
+    checker
+        .check_program(&ast)
+        .map_err(|errors| format!("fixture should typecheck: {errors:?}"))?;
 
     let closure = r#"(error) => f"{prefix}:{error.kind}""#;
-    let start = source.find(closure).expect("fixture must contain closure");
+    let start = source
+        .find(closure)
+        .ok_or_else(|| "fixture must contain closure".to_string())?;
     assert!(
         checker
             .type_info()
@@ -717,7 +721,7 @@ def apply[Mapper with Callable1[int, str]](mapper: Mapper, value: int) -> str:
 }
 
 #[test]
-fn test_source_callable_bound_infers_return_type_from_nominal_adoption() -> Result<(), Vec<CompileError>> {
+fn test_source_callable_bound_infers_return_type_from_nominal_adoption() -> Result<(), String> {
     let source = r#"
 from std.traits.callable import Callable1
 
@@ -735,15 +739,17 @@ model Label with Callable1[int, str]:
 def main() -> None:
   mapped = Source().map(Label())
 "#;
-    let tokens = lexer::lex(source)?;
-    let ast = parser::parse(&tokens)?;
+    let tokens = lexer::lex(source).map_err(|errors| format!("fixture should lex: {errors:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errors| format!("fixture should parse: {errors:?}"))?;
     let mut checker = TypeChecker::new();
-    checker.check_program(&ast)?;
+    checker
+        .check_program(&ast)
+        .map_err(|errors| format!("fixture should typecheck: {errors:?}"))?;
 
     let expression = "Source().map(Label())";
     let start = source
         .find(expression)
-        .expect("fixture must contain nominal callable call");
+        .ok_or_else(|| "fixture must contain nominal callable call".to_string())?;
     let span = Span::new(start, start + expression.len());
     assert_eq!(
         checker.type_info().expr_type(span),

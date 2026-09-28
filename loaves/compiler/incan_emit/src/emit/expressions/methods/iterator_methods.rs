@@ -125,7 +125,7 @@ pub fn emit_iterator_method(
                 crate::__incan_std::derives::collection::FlatMapIterator {
                     source: (#r),
                     f: #callback,
-                    current: Vec::new(),
+                    current: None,
                     marker: None,
                 }
             })

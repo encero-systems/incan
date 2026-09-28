@@ -24,6 +24,7 @@ use incan_lang::interop::{
     METADATA_FREE_METHOD_BORROW_RULES, MetadataFreeArgClass, MetadataFreeMethodArgBorrowPolicy,
     MetadataFreeReceiverClass, RustCollectionFamily,
 };
+use incan_lang::lang::surface::option_methods::{self, OptionMethodId};
 use incan_lang::lang::surface::result_methods::{self, ResultMethodId};
 use incan_lang::lang::{magic_methods, stdlib, trait_bounds::rust as tb};
 
@@ -191,7 +192,7 @@ impl<'a> IrEmitter<'a> {
     /// - Compatibility issue: #1718 -- `result.inspect(observe_int)` over a Copy payload passed the fn item `fn(i64)`
     ///   where the helper wants `fn(&i64)` (E0308); the pre-emission analysis and the adapter generator both skip Copy
     ///   payloads by design, so no recorded fact reached this site.
-    /// - Behavior evidence: `result_inspect_named_observer_copy_payload` (behaviour fixture, `snapshots_stdlib`),
+    /// - Behavior evidence: `result_inspect_named_observer_copy_payload` (behavior fixture, `snapshots_stdlib`),
     ///   `copy_payload_named_observer_is_borrowed_through_a_closure_issue1718` below, and the untouched non-Copy
     ///   adapter test `test_rfc070_result_inspect_non_copy_observer_borrows_payload`.
     /// - Semantic owner: the RFC 070 combinator's callable fact (the observer takes the payload by borrow); Body IR
@@ -1142,7 +1143,13 @@ impl<'a> IrEmitter<'a> {
 
         let inferred_receiver = self.receiver_with_known_field_type(receiver);
         let receiver = inferred_receiver.as_ref().unwrap_or(receiver);
-        let r0 = self.emit_expr(receiver)?;
+        let option_mut_receiver =
+            matches!(receiver.ty, IrType::Option(_)) && option_methods::from_str(method) == Some(OptionMethodId::AsMut);
+        let r0 = if option_mut_receiver {
+            self.emit_lvalue_expr(receiver)?
+        } else {
+            self.emit_expr(receiver)?
+        };
         let info = ReceiverInfo::new(&receiver.ty, r0);
         let r = &info.r;
         if let Some(call) = emit_registered_method_fast_path(self, receiver, method, args, r)? {

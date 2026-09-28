@@ -1182,6 +1182,8 @@ pub mod option_methods {
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub enum OptionMethodId {
+        /// Borrow the payload mutably without consuming the option.
+        AsMut,
         Copied,
         UnwrapOr,
         Unwrap,
@@ -1190,6 +1192,14 @@ pub mod option_methods {
     pub type OptionMethodInfo = LangItemInfo<OptionMethodId>;
 
     pub const OPTION_METHODS: &[OptionMethodInfo] = &[
+        info(
+            OptionMethodId::AsMut,
+            "as_mut",
+            &[],
+            "Borrow the contained value mutably without consuming the option.",
+            RFC::_000,
+            Since(0, 6),
+        ),
         info(
             OptionMethodId::Copied,
             "copied",

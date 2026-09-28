@@ -4,7 +4,7 @@
 use super::*;
 
 #[test]
-fn test_partial_function_presets_project_as_defaults() {
+fn test_partial_function_presets_project_as_defaults() -> Result<(), String> {
     let source = r#"
 def route(method: str, path: str, content_type: str = "text") -> str:
   return method
@@ -20,23 +20,32 @@ def use() -> str:
     let mut checker = TypeChecker::new();
     checker
         .check_program(&ast)
-        .unwrap_or_else(|errs| panic!("typecheck failed: {errs:?}"));
+        .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
     let sym = checker
         .lookup_symbol("get")
-        .unwrap_or_else(|| panic!("missing projected partial symbol"));
+        .ok_or_else(|| "missing projected partial symbol".to_string())?;
     let SymbolKind::Function(info) = &sym.kind else {
-        panic!("expected function symbol for partial, got {:?}", sym.kind);
+        return Err(format!("expected function symbol for partial, got {:?}", sym.kind));
     };
-    let method = info.params.iter().find(|param| param.name() == Some("method")).unwrap();
-    let path = info.params.iter().find(|param| param.name() == Some("path")).unwrap();
+    let method = info
+        .params
+        .iter()
+        .find(|param| param.name() == Some("method"))
+        .ok_or_else(|| "missing method parameter".to_string())?;
+    let path = info
+        .params
+        .iter()
+        .find(|param| param.name() == Some("path"))
+        .ok_or_else(|| "missing path parameter".to_string())?;
     let content_type = info
         .params
         .iter()
         .find(|param| param.name() == Some("content_type"))
-        .unwrap();
+        .ok_or_else(|| "missing content_type parameter".to_string())?;
     assert!(method.has_default, "{info:?}");
     assert!(!path.has_default, "{info:?}");
     assert!(content_type.has_default, "{info:?}");
+    Ok(())
 }
 
 #[test]
@@ -125,7 +134,7 @@ def use() -> int:
 }
 
 #[test]
-fn test_public_partial_exports_projected_defaults() {
+fn test_public_partial_exports_projected_defaults() -> Result<(), String> {
     let source = r#"
 pub def route(method: str, path: str, content_type: str = "text") -> str:
   return method
@@ -136,7 +145,7 @@ pub get = partial route(method="GET")
     let mut checker = TypeChecker::new();
     checker
         .check_program(&ast)
-        .unwrap_or_else(|errs| panic!("typecheck failed: {errs:?}"));
+        .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
 
     let exports = collect_checked_public_exports(&ast, &checker);
     let get = exports
@@ -145,18 +154,26 @@ pub get = partial route(method="GET")
             CheckedExportKind::Partial(partial) if partial.name == "get" => Some(partial),
             _ => None,
         })
-        .unwrap_or_else(|| panic!("missing public partial export: {exports:?}"));
+        .ok_or_else(|| format!("missing public partial export: {exports:?}"))?;
     assert_eq!(get.target_path, vec!["route"]);
     assert_eq!(get.target_kind, CheckedPartialTargetKind::Function);
     assert_eq!(get.presets[0].name, "method");
     assert_eq!(get.presets[0].value, CheckedPresetValue::String("GET".to_string()));
-    let method = get.params.iter().find(|param| param.name() == Some("method")).unwrap();
-    let path = get.params.iter().find(|param| param.name() == Some("path")).unwrap();
+    let method = get
+        .params
+        .iter()
+        .find(|param| param.name() == Some("method"))
+        .ok_or_else(|| "missing method parameter".to_string())?;
+    let path = get
+        .params
+        .iter()
+        .find(|param| param.name() == Some("path"))
+        .ok_or_else(|| "missing path parameter".to_string())?;
     let content_type = get
         .params
         .iter()
         .find(|param| param.name() == Some("content_type"))
-        .unwrap();
+        .ok_or_else(|| "missing content_type parameter".to_string())?;
     assert!(method.has_default, "{get:?}");
     assert!(!path.has_default, "{get:?}");
     assert!(content_type.has_default, "{get:?}");
@@ -171,6 +188,7 @@ pub get = partial route(method="GET")
         manifest.exports.partials[0].presets[0].value,
         PresetValueExport::String("GET".to_string())
     );
+    Ok(())
 }
 
 #[test]

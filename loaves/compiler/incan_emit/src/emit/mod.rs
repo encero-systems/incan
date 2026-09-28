@@ -205,7 +205,7 @@ struct SourceConstructorReexport {
 #[derive(Clone)]
 struct ManifestConstructorShape {
     kind: IrStructKind,
-    /// Declared type parameter names in declaration order, so phantom parameters can be recognised (#1370).
+    /// Declared type parameter names in declaration order, so phantom parameters can be recognized (#1370).
     type_params: Vec<String>,
     fields: Vec<FieldExport>,
 }
@@ -272,17 +272,17 @@ pub struct StructConstructorMetadata {
     ///
     /// For a source declaration this is `IrStruct::phantom_type_params` as lowering recorded it; for a compiled
     /// dependency it is the same rule applied to the manifest's recorded type parameters and field types, so a
-    /// consumer's struct literal initialises the marker the provider's crate declared. See #1370.
+    /// consumer's struct literal initializes the marker the provider's crate declared. See #1370.
     phantom_type_params: Vec<String>,
     constructor_surface: StructConstructorSurface,
 }
 
 impl StructConstructorMetadata {
-    /// The marker-field initialiser a Rust struct literal for this type must carry, or none when every type
+    /// The marker-field initializer a Rust struct literal for this type must carry, or none when every type
     /// parameter is stored by a source field.
     ///
-    /// A generated constructor function initialises the marker inside its own body, so its call sites pass source
-    /// fields only; this initialiser is for the struct-literal surfaces.
+    /// A generated constructor function initializes the marker inside its own body, so its call sites pass source
+    /// fields only; this initializer is for the struct-literal surfaces.
     pub(in crate::emit) fn phantom_marker_initializer(&self) -> Option<TokenStream> {
         if self.phantom_type_params.is_empty() {
             return None;

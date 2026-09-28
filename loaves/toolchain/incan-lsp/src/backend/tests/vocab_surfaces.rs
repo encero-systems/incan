@@ -11,12 +11,15 @@ use super::{
 use incan_frontend::ast::Program;
 use incan_frontend::{lexer, parser};
 
-fn scoped_symbol_fixture() -> (
+fn scoped_symbol_fixture() -> Result<
+    (
+        String,
+        Program,
+        parser::ImportedLibraryDslSurfaces,
+        parser::ImportedLibraryVocab,
+    ),
     String,
-    Program,
-    parser::ImportedLibraryDslSurfaces,
-    parser::ImportedLibraryVocab,
-) {
+> {
     let source = "import pub::analytics\n\ndef configure() -> None:\n  query:\n    sum(amount)\n\nconst outside = 1\n";
     let mut keyword_map = HashMap::new();
     keyword_map.insert(
@@ -48,16 +51,18 @@ fn scoped_symbol_fixture() -> (
                 ),
         ],
     );
-    let tokens = lexer::lex(source).expect("fixture should lex");
+    let tokens = lexer::lex(source).map_err(|errors| format!("fixture should lex: {errors:?}"))?;
     let ast = parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
-        .expect("fixture should parse");
-    (source.to_string(), ast, surface_map, keyword_map)
+        .map_err(|errors| format!("fixture should parse: {errors:?}"))?;
+    Ok((source.to_string(), ast, surface_map, keyword_map))
 }
 
 #[test]
-fn scoped_symbol_completion_is_limited_to_active_dsl_scope() {
-    let (source, ast, surface_map, _keyword_map) = scoped_symbol_fixture();
-    let scoped_offset = source.find("sum(amount)").expect("sum call should exist");
+fn scoped_symbol_completion_is_limited_to_active_dsl_scope() -> Result<(), String> {
+    let (source, ast, surface_map, _keyword_map) = scoped_symbol_fixture()?;
+    let scoped_offset = source
+        .find("sum(amount)")
+        .ok_or_else(|| "sum call should exist".to_string())?;
     let items = active_scoped_symbol_completions(&ast, &surface_map, scoped_offset);
     assert!(
         items.iter().any(|item| {
@@ -66,20 +71,26 @@ fn scoped_symbol_completion_is_limited_to_active_dsl_scope() {
         "expected sum completion inside query block, got {items:?}"
     );
 
-    let outside_offset = source.find("const outside").expect("outside binding should exist");
+    let outside_offset = source
+        .find("const outside")
+        .ok_or_else(|| "outside binding should exist".to_string())?;
     let outside_items = active_scoped_symbol_completions(&ast, &surface_map, outside_offset);
     assert!(
         outside_items.is_empty(),
         "scoped symbol completions must not leak outside the owning DSL scope: {outside_items:?}"
     );
+    Ok(())
 }
 
 #[test]
-fn scoped_symbol_hover_resolves_imported_descriptor_metadata() {
-    let (source, ast, surface_map, _keyword_map) = scoped_symbol_fixture();
-    let offset = source.find("sum(amount)").expect("sum call should exist") + 1;
-    let occurrence =
-        scoped_symbol_at_offset(&ast, &source, &surface_map, offset).expect("sum should resolve as scoped symbol");
+fn scoped_symbol_hover_resolves_imported_descriptor_metadata() -> Result<(), String> {
+    let (source, ast, surface_map, _keyword_map) = scoped_symbol_fixture()?;
+    let offset = source
+        .find("sum(amount)")
+        .ok_or_else(|| "sum call should exist".to_string())?
+        + 1;
+    let occurrence = scoped_symbol_at_offset(&ast, &source, &surface_map, offset)
+        .ok_or_else(|| "sum should resolve as scoped symbol".to_string())?;
     let markdown = scoped_symbol_hover_markdown(occurrence.dependency_key, occurrence.descriptor);
 
     assert_eq!(occurrence.dependency_key, "analytics");
@@ -92,18 +103,23 @@ fn scoped_symbol_hover_resolves_imported_descriptor_metadata() {
             && markdown.contains("Family: `aggregate-like`"),
         "hover markdown should expose descriptor metadata, got:\n{markdown}"
     );
+    Ok(())
 }
 
 #[test]
-fn scoped_symbol_definition_points_to_activating_pub_import() {
-    let (source, ast, surface_map, _keyword_map) = scoped_symbol_fixture();
-    let offset = source.find("sum(amount)").expect("sum call should exist") + 1;
-    let occurrence =
-        scoped_symbol_at_offset(&ast, &source, &surface_map, offset).expect("sum should resolve as scoped symbol");
+fn scoped_symbol_definition_points_to_activating_pub_import() -> Result<(), String> {
+    let (source, ast, surface_map, _keyword_map) = scoped_symbol_fixture()?;
+    let offset = source
+        .find("sum(amount)")
+        .ok_or_else(|| "sum call should exist".to_string())?
+        + 1;
+    let occurrence = scoped_symbol_at_offset(&ast, &source, &surface_map, offset)
+        .ok_or_else(|| "sum should resolve as scoped symbol".to_string())?;
     let import_span = find_pub_library_import_span(&ast, occurrence.dependency_key, occurrence.symbol_span.start)
-        .expect("activating import span should be available");
+        .ok_or_else(|| "activating import span should be available".to_string())?;
 
     assert_eq!(&source[import_span.start..import_span.end], "import pub::analytics");
+    Ok(())
 }
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;

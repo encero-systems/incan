@@ -1248,9 +1248,8 @@ pub enum MutParameterCopy {
 /// `other = items`, a literal, comprehension, field store, construction or `partial` preset holding `items`, a
 /// `match`, `if`, `break` or `yield` value that is `items`, a `match items:` arm that binds it and a closure that
 /// returns it, changes it or passes it on to a parameter that may change it would each hold the parameter's value under
-/// another name. Whether such a holder
-/// shares the caller's value or copies it is not defined, so the parameter is used only directly. `copy` spells the
-/// independent copy the hint offers.
+/// another name. Whether such a holder shares the caller's value or copies it is not defined, so the parameter is used
+/// only directly. `copy` spells the independent copy the hint offers.
 pub fn caller_visible_mut_parameter_held(name: &str, copy: &MutParameterCopy, span: Span) -> CompileError {
     let copy = match copy {
         MutParameterCopy::Expression(expression) => format!("write {expression}"),

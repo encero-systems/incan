@@ -29,7 +29,7 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/decls/structures.rs",
-      "sha256": "afe837c36e1e346b8d864abea2a3e0b97bd3f1ac88cf9a26f06ee2efffe862d4",
+      "sha256": "5a75b71885fc3901f31dc456442fd2d8ce338976aaae670563f639414acaacff",
       "lines": 1222
     },
     {
@@ -59,7 +59,7 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/format.rs",
-      "sha256": "6ea8684af490c608c5bfbaf82ddd9dac103d7f0e71339cd36c847c2da65c914d",
+      "sha256": "fbaa6d213e3cdce288a24ff3dc77046738e45c1263f8290a92efdf070a7de074",
       "lines": 145
     },
     {
@@ -79,8 +79,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
-      "sha256": "38e1fe4e7785f586ef39e9a05bc4f3ccbba1c344ddf6851f6be826e1425bd6b1",
-      "lines": 1600
+      "sha256": "3ad739a3b423f8e42a1c380d456a5f6a241346f99590e7da5436a16e64d5d552",
+      "lines": 1607
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/collection_methods.rs",
@@ -94,7 +94,7 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/iterator_methods.rs",
-      "sha256": "509dfe2093a73c49c9039f9ad257641762fa2135e6c1e1bb7196a79b479b48b2",
+      "sha256": "0ac5b5ab607226d9e6b4a3f282400783af56c23ccbc9b144728da9e209b2a40f",
       "lines": 377
     },
     {
@@ -104,17 +104,17 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/mod.rs",
-      "sha256": "90b64cbeabd0b6c2586a69d085ff3faab5aa0eea839a96a76e7a1779507b0da4",
-      "lines": 4411
+      "sha256": "7c5df7acd849846bc2b7a1178b52680390e01690551c3e7479284d6a11d7fc00",
+      "lines": 4410
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/expressions/structs_enums.rs",
-      "sha256": "bd27da03cc1482b036e7802f26ebac78f4f8995ecbe48e23b34ec2c9982384a7",
+      "sha256": "a518a9b6c859fbf2f6e6896d104be952364b14893757c113709f4a040298e11c",
       "lines": 144
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/mod.rs",
-      "sha256": "ceae5e37033de6fcf78746d9764a19e07635130d64ea3894be97d3f1c7c2f991",
+      "sha256": "ca305f27f9c33222e168cd8f54b42cda2ae1ce6d725fb84cf55b4182ec2d8c4d",
       "lines": 4711
     },
     {
@@ -458,6 +458,45 @@
       "behavior_evidence": "behavior fixture snapshots_traits_and_generics/iterator_flat_map_draws_expansions_lazily.incn (take(1) over a recording generator expansion draws one item) beside iterator_flat_map_over_iterables.incn; lowering test flat_map_callbacks_hand_the_adapter_a_nested_iterator in incan_ir; rustc-compiling emitter test flat_map_expands_any_iterable_compiles; codegen snapshot std_derives_collection_compiled shows FlatMapIterator holding the nested iterator and its marker",
       "semantic_owner": "#1561: FlatMapIterator in std.derives.collection owns the adapter state and its fields; lowering (flat_map_iterator_callback) hands it a callback that returns the nested iterator; this literal only spells the fields",
       "retirement_condition": "#654: the Rust-source backend is deleted; Body IR constructs the adapter from the source model"
+    },
+    {
+      "kind": "change",
+      "pr": null,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/decls/structures.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/format.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/methods.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/methods/iterator_methods.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/mod.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/expressions/structs_enums.rs",
+          "change": "modified"
+        },
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/mod.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "1561",
+      "behavior_evidence": "spelling only in decls/structures.rs, expressions/format.rs, expressions/structs_enums.rs and emit/mod.rs (no behavior change); expressions/methods.rs, expressions/methods/iterator_methods.rs and expressions/mod.rs are covered by rustc-compiling emitter test flat_map_expands_any_iterable_compiles and lowering test flat_map_callbacks_hand_the_adapter_a_nested_iterator, proving FlatMapIterator.current as Option[Nested] borrowed through Option.as_mut()",
+      "semantic_owner": "none: prose, except FlatMapIterator and the Option.as_mut registry in std.derives.collection, which own methods.rs, iterator_methods.rs and expressions/mod.rs",
+      "retirement_condition": "dies with #654: the Rust-source backend is deleted; Body IR constructs the adapter from the source model"
     }
   ]
 }

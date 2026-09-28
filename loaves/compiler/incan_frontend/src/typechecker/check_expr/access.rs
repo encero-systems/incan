@@ -5111,6 +5111,9 @@ impl TypeChecker {
     /// default method the receiver is `Self` and the trait's own declarations answer. Anything else (Rust
     /// receivers, unknown methods) is `false`: the checker refuses only what it can read from a declaration.
     fn method_requires_mutable_receiver(&mut self, base_ty: &ResolvedType, method: &str, span: Span) -> bool {
+        if base_ty.is_option() {
+            return option_methods::from_str(method) == Some(option_methods::OptionMethodId::AsMut);
+        }
         match base_ty {
             ResolvedType::Generic(name, _) => match collection_type_id(name.as_str()) {
                 Some(CollectionTypeId::List) => list_methods::from_str(method).is_some_and(|id| {
@@ -6163,6 +6166,13 @@ impl TypeChecker {
                 return ResolvedType::Unknown;
             }
             match option_methods::from_str(method) {
+                Some(option_methods::OptionMethodId::AsMut) => {
+                    if !args.is_empty() {
+                        self.errors
+                            .push(errors::builtin_arity("Option.as_mut", 0, args.len(), span));
+                    }
+                    return option_ty(ResolvedType::RefMut(Box::new(inner)));
+                }
                 Some(option_methods::OptionMethodId::Copied) => {
                     // Rust: `Option<&T>::copied() -> Option<T>` (for `T: Copy`).
                     if let ResolvedType::Ref(t) | ResolvedType::RefMut(t) = inner {
