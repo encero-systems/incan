@@ -4694,6 +4694,7 @@ mod tests {
     mod import_paths;
     mod imported_trait_adoption_scope;
     mod json_protocol_bounds;
+    mod lane_followups_b;
     mod list_count_forms;
     mod method_decorator_receivers;
     mod method_partial_forwarding;

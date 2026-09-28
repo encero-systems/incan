@@ -34,6 +34,7 @@ Examples:
 """
 
 import std.async
+from std.rust import Send, Static
 from std.traits.error import Error
 from rust::incan_std_async::task import JoinHandle, RuntimeFuture
 from rust::incan_std_async::time import (

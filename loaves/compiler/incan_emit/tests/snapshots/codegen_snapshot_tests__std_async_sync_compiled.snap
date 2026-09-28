@@ -97,7 +97,7 @@ impl std::fmt::Display for SemaphoreAcquireError {
         write!(f, "{}", self.__str__())
     }
 }
-impl Error for SemaphoreAcquireError {
+impl crate::__incan_std::traits::error::Error for SemaphoreAcquireError {
     fn message(&self) -> String {
         return "failed to acquire semaphore permit: semaphore closed".to_string();
     }

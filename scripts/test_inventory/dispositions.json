@@ -5879,6 +5879,14 @@
       "split_target": "",
       "twin": ""
     },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/lane_followups_b.rs": {
+      "disposition": "keep",
+      "notes": "typechecker contracts for bounded sorting, stored trait annotations, bound-name validation and inline-list generic inference; no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
     "loaves/compiler/incan_frontend/src/typechecker/tests/list_method_forms.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
@@ -7057,6 +7065,14 @@
           "notes": "Asserts the recorded shapes on the legacy IR (after `from std import serde`, a `serde.json.Serialize` bound and parameter carry the trait plus `::serde::Serialize`, a return is the two-bound Rust type, `to_json` dispatches through the stdlib trait, and a `with serde.json.Serialize` adopter implements the trait and derives its capability); retires with `incan_ir`. The behavior, `to_json`, `json_stringify` and `from_json` through `serde.json` bounds, a parameter and a return over a derived model, is carried by the named fixture (#1887)."
         }
       },
+      "twin": ""
+    },
+    "loaves/compiler/incan_ir/src/lower/tests/lane_followups_b.rs": {
+      "disposition": "retire",
+      "notes": "legacy Rust-source lowering shapes for source-owned comparison trait impl paths, Option presence predicates and the Rust Ord bound. Retire with incan_ir (#654); the frontend contracts remain covered by lane_followups_b.rs in incan_frontend.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
       "twin": ""
     },
     "loaves/compiler/incan_ir/src/lower/tests/list_count_forms.rs": {

@@ -84,7 +84,7 @@ impl std::fmt::Display for TimeoutError {
         write!(f, "{}", self.__str__())
     }
 }
-impl Error for TimeoutError {
+impl crate::__incan_std::traits::error::Error for TimeoutError {
     fn message(&self) -> String {
         return "operation timed out".to_string();
     }

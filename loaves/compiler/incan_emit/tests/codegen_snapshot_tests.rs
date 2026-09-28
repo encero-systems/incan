@@ -4670,7 +4670,7 @@ fn test_rfc043_rust_derive_passthrough_codegen() {
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("#[derive(serde::Serialize,Default,Eq,Hash,PartialEq,Debug,Clone"),
+        compact.contains("#[derive(::serde::Serialize,Default,Eq,Hash,PartialEq,Debug,Clone"),
         "expected @rust.derive to emit imported and built-in Rust derives; generated:\n{rust_code}"
     );
     assert_codegen_snapshot!("rfc043_rust_derive_passthrough", rust_code);
@@ -5425,7 +5425,7 @@ fn test_validated_newtype_json_deserialization_uses_canonical_hook() {
         "validated newtypes must not derive unchecked deserialization:\n{rust_code}"
     );
     assert!(
-        rust_code.contains("#[derive(Debug, Clone, serde::Serialize)]\nstruct ShortId"),
+        rust_code.contains("#[derive(Debug, Clone, ::serde::Serialize)]\nstruct ShortId"),
         "checked deserialization must preserve newtype serialization:\n{rust_code}"
     );
     assert!(
@@ -6021,8 +6021,8 @@ def main() -> None:
     let rust_code = generate_rust(source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("#[derive(Debug,serde::Serialize)]structWrapped(pubString);")
-            || compact.contains("#[derive(Debug,Clone,serde::Serialize)]structWrapped(pubString);"),
+        compact.contains("#[derive(Debug,::serde::Serialize)]structWrapped(pubString);")
+            || compact.contains("#[derive(Debug,Clone,::serde::Serialize)]structWrapped(pubString);"),
         "expected newtype `with Serialize` to forward the Rust serde derive; generated:\n{rust_code}"
     );
     assert!(
@@ -6138,7 +6138,7 @@ fn test_rfc024_module_derive_json_codegen() {
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("serde::Serialize,serde::Deserialize"),
+        compact.contains("::serde::Serialize,::serde::Deserialize"),
         "expected @derive(json) to forward serde derives; generated:\n{rust_code}"
     );
     assert!(

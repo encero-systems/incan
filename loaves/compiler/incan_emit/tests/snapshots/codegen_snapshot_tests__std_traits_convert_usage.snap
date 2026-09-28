@@ -64,7 +64,7 @@ impl UserId {
         return UserId { value: value };
     }
 }
-impl From<i64> for UserId {
+impl crate::__incan_std::traits::convert::From<i64> for UserId {
     fn from(value: i64) -> Self
     where
         Self: Sized,
@@ -130,7 +130,7 @@ impl PositiveInt {
         return Ok::<Self, String>(PositiveInt { value: value });
     }
 }
-impl TryFrom<i64> for PositiveInt {
+impl crate::__incan_std::traits::convert::TryFrom<i64> for PositiveInt {
     fn try_from(value: i64) -> Result<Self, String>
     where
         Self: Sized,

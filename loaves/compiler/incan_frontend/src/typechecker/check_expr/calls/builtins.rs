@@ -609,6 +609,11 @@ impl TypeChecker {
                     {
                         return Some(list_ty(inner));
                     }
+                    if let Some(placeholder) = self.generic_placeholder_name(&inner)
+                        && self.active_type_param_satisfies_builtin_bound(placeholder, TraitId::Ord)
+                    {
+                        return Some(list_ty(inner));
+                    }
                     if self.generic_placeholder_name(&inner).is_some() {
                         self.errors.push(errors::builtin_list_element_type_not_supported(
                             name,

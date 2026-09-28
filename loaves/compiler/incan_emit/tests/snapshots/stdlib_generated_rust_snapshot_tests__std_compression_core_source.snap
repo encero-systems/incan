@@ -275,7 +275,7 @@ impl std::fmt::Display for CompressionError {
         write!(f, "{}", self.__str__())
     }
 }
-impl Error for CompressionError {
+impl crate::__incan_std::traits::error::Error for CompressionError {
     fn message(&self) -> String {
         let _ = "\n        Return the human-readable error detail.\n        ";
         return self.detail.clone();

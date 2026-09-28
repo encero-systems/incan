@@ -156,7 +156,7 @@ impl std::fmt::Display for GraphError {
         write!(f, "{}", self.__str__())
     }
 }
-impl Error for GraphError {
+impl crate::__incan_std::traits::error::Error for GraphError {
     fn message(&self) -> String {
         return self.detail.clone();
     }

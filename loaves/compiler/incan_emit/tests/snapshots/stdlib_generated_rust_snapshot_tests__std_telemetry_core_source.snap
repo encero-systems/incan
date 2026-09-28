@@ -112,7 +112,7 @@ impl serde::Serialize for TelemetryValueKind {
 ///
 /// Values are encoded as strings so stdlib modules can carry RFC 3339-style timestamps without committing this data
 /// layer to one clock implementation.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, ::serde::Serialize)]
 pub struct Timestamp(pub String);
 impl incan_std_core::reflection::HasTypeClassName for Timestamp {
     fn __class_name__() -> &'static str {
@@ -144,7 +144,7 @@ impl Timestamp {
 /// values, so callers do not need to silently stringify structured attributes before they reach the telemetry boundary.
 #[derive(
     Clone,
-    serde::Serialize,
+    ::serde::Serialize,
     Debug,
     incan_derive::FieldInfo,
     incan_derive::IncanClass
@@ -651,7 +651,7 @@ impl TelemetryValue {
 ///
 /// Attribute keys may use OpenTelemetry semantic-convention names such as `service.name`, `http.request.method`, or
 /// `gen_ai.request.model`. Values remain structured through the telemetry data-model boundary.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, ::serde::Serialize)]
 pub struct Attributes(pub std::collections::HashMap<String, TelemetryValue>);
 impl incan_std_core::reflection::HasTypeClassName for Attributes {
     fn __class_name__() -> &'static str {
@@ -736,7 +736,7 @@ impl Attributes {
 /// Trace identifier for a correlated telemetry record.
 ///
 /// Values use the OpenTelemetry/W3C trace-id spelling when a provider supplies active trace context.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, ::serde::Serialize)]
 pub struct TraceId(pub String);
 impl incan_std_core::reflection::HasTypeClassName for TraceId {
     fn __class_name__() -> &'static str {
@@ -765,7 +765,7 @@ impl TraceId {
 /// Span identifier for a correlated telemetry record.
 ///
 /// Values use the OpenTelemetry/W3C span-id spelling when a provider supplies active span context.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, ::serde::Serialize)]
 pub struct SpanId(pub String);
 impl incan_std_core::reflection::HasTypeClassName for SpanId {
     fn __class_name__() -> &'static str {
@@ -794,7 +794,7 @@ impl SpanId {
 /// W3C trace flags for a correlated span context.
 ///
 /// The value is kept as its wire spelling so propagation code can preserve flags without lossy conversion.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, ::serde::Serialize)]
 pub struct TraceFlags(pub String);
 impl incan_std_core::reflection::HasTypeClassName for TraceFlags {
     fn __class_name__() -> &'static str {
@@ -825,7 +825,7 @@ impl TraceFlags {
 /// Resource attributes describe the process, service, deployment, or runtime that emitted a record. The minimal source
 /// model keeps attributes structured while full resource detection belongs to `std.telemetry`.
 #[derive(
-    serde::Serialize,
+    ::serde::Serialize,
     Debug,
     Clone,
     incan_derive::FieldInfo,
@@ -921,7 +921,7 @@ impl Resource {
 /// For `std.logging`, the scope name is the logger name. Future telemetry providers can add scope version and schema
 /// metadata without changing ordinary logging call sites.
 #[derive(
-    serde::Serialize,
+    ::serde::Serialize,
     Debug,
     Clone,
     incan_derive::FieldInfo,
@@ -1117,7 +1117,7 @@ impl InstrumentationScope {
 ///
 /// This value type is inert until a configured telemetry provider supplies an active span context.
 #[derive(
-    serde::Serialize,
+    ::serde::Serialize,
     Debug,
     Clone,
     incan_derive::FieldInfo,

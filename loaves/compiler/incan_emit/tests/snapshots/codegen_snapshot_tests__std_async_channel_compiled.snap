@@ -108,7 +108,7 @@ impl<T> std::fmt::Display for SendError<T> {
         write!(f, "{}", self.__str__())
     }
 }
-impl<T> Error for SendError<T> {
+impl<T> crate::__incan_std::traits::error::Error for SendError<T> {
     fn message(&self) -> String {
         return "channel send failed".to_string();
     }
@@ -184,7 +184,7 @@ impl std::fmt::Display for RecvError {
         write!(f, "{}", self.__str__())
     }
 }
-impl Error for RecvError {
+impl crate::__incan_std::traits::error::Error for RecvError {
     fn message(&self) -> String {
         return "channel closed: no more messages".to_string();
     }

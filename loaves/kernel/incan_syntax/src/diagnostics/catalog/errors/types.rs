@@ -1418,6 +1418,27 @@ pub fn trait_type_nested_in_annotation_unsupported(trait_type: &str, annotation:
     .with_note("A trait names the types that adopt it only as a whole parameter or return type")
 }
 
+/// Emitted when a model or class field stores a trait directly or inside a container.
+pub fn trait_typed_field_annotation_unsupported(
+    owner_kind: &str,
+    owner_name: &str,
+    field_name: &str,
+    annotation: &str,
+    trait_name: &str,
+    span: Span,
+) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Trait-typed field '{owner_name}.{field_name}' has unsupported {owner_kind} storage type '{annotation}'"
+        ),
+        span,
+    )
+    .with_hint(format!(
+        "Use a concrete type that adopts '{trait_name}' for the stored field"
+    ))
+    .with_note("Trait annotations are supported on callable boundaries and `with` adoption clauses, not stored fields")
+}
+
 /// Emitted when two supertraits require the same field with incompatible types (RFC 042).
 pub fn supertrait_requires_conflict(
     trait_name: &str,

@@ -1468,6 +1468,9 @@ impl AstLowering {
             impl_associated_types,
         } = input;
         let (trait_module_path, trait_source_name) = self.canonical_trait_identity(trait_name);
+        let trait_impl_path = self
+            .source_owned_builtin_trait_path(trait_name)
+            .unwrap_or_else(|| trait_name.to_string());
         let stdlib_json_protocol = self.stdlib_json_protocol_for_adopted_trait(trait_name);
         let type_param_names: std::collections::HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
         let prev = self.current_impl_type.replace(type_name.to_string());
@@ -1525,7 +1528,7 @@ impl AstLowering {
                 return Ok(IrImpl {
                     target_type: type_name.to_string(),
                     type_params: self.lower_type_params(type_params),
-                    trait_name: Some(trait_name.to_string()),
+                    trait_name: Some(trait_impl_path.clone()),
                     trait_module_path: trait_module_path.clone(),
                     trait_source_name: trait_source_name.clone(),
                     trait_type_args,
@@ -1712,7 +1715,7 @@ impl AstLowering {
             Ok(IrImpl {
                 target_type: type_name.to_string(),
                 type_params: self.lower_type_params(type_params),
-                trait_name: Some(trait_name.to_string()),
+                trait_name: Some(trait_impl_path),
                 trait_module_path,
                 trait_source_name,
                 trait_type_args,

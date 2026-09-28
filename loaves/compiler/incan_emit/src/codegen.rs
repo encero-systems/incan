@@ -6399,6 +6399,61 @@ def same(left: Value, right: Value) -> bool:
         Ok(())
     }
 
+    /// The stdlib namespace binding named `serde` must not capture generated serde derive paths.
+    #[test]
+    fn followups_b_serde_derives_are_crate_rooted_when_stdlib_serde_is_imported() {
+        let generated = generate(
+            r#"
+from std import serde
+from std.serde.json import Serialize
+
+@derive(Serialize)
+pub model Derived:
+  value: int
+
+pub model Adopted with Serialize:
+  value: int
+"#,
+        );
+        assert!(
+            generated.contains("::serde::Serialize"),
+            "serde derives must resolve from the crate root despite the local `serde` binding:\n{generated}"
+        );
+        assert!(
+            !generated.contains("derive(Debug, Clone, serde::Serialize)"),
+            "a relative serde derive remains shadowable:\n{generated}"
+        );
+    }
+
+    /// Option identity against `None` must not require equality of the payload type.
+    #[test]
+    fn followups_b_option_none_identity_emits_presence_predicates() {
+        let generated = generate(
+            r#"
+pub model Payload:
+  value: int
+
+pub def absent(value: Option[Payload]) -> bool:
+  return value is None
+
+pub def present(value: Option[Payload]) -> bool:
+  return value is not None
+"#,
+        );
+        assert!(
+            generated.contains("value.is_none()"),
+            "missing `is_none()`:\n{generated}"
+        );
+        assert!(
+            generated.contains("value.is_some()"),
+            "missing `is_some()`:\n{generated}"
+        );
+        assert!(
+            !generated.contains("value == None") && !generated.contains("value != None"),
+            "Option identity must not emit payload equality:\n{generated}"
+        );
+    }
+
     #[test]
     fn result_map_err_closure_keeps_concrete_member_identity() {
         let generated = generate(
@@ -6653,7 +6708,7 @@ def main() -> None:
             .ok_or_else(|| std::io::Error::other("missing generated std.io module"))?;
 
         assert!(
-            io_code.contains("impl Error for IoError"),
+            io_code.contains("impl crate::__incan_std::traits::error::Error for IoError"),
             "expected IoError to adopt std.traits.error.Error; got:\n{io_code}"
         );
         assert!(

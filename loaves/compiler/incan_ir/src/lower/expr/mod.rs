@@ -1244,6 +1244,32 @@ impl AstLowering {
             .is_some_and(|ty| matches!(ty, IrType::Generic(_)))
     }
 
+    /// Return the `Option` receiver and Rust presence predicate for an identity comparison with `None`.
+    fn option_none_identity<'a>(
+        &self,
+        left: &'a Spanned<ast::Expr>,
+        op: &ast::BinaryOp,
+        right: &'a Spanned<ast::Expr>,
+    ) -> Option<(&'a Spanned<ast::Expr>, &'static str)> {
+        let receiver = if matches!(right.node, ast::Expr::Literal(ast::Literal::None)) {
+            left
+        } else if matches!(left.node, ast::Expr::Literal(ast::Literal::None)) {
+            right
+        } else {
+            return None;
+        };
+        let method = match op {
+            ast::BinaryOp::Is => "is_none",
+            ast::BinaryOp::IsNot => "is_some",
+            _ => return None,
+        };
+        self.type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(receiver.span))
+            .is_some_and(ResolvedType::is_option)
+            .then_some((receiver, method))
+    }
+
     /// Lower a control-flow condition, rewriting validated `__bool__` hooks into direct method calls.
     pub(in crate::lower) fn lower_condition_expr(
         &mut self,
@@ -1756,7 +1782,21 @@ impl AstLowering {
 
             // ---- Binary operations ----
             ast::Expr::Binary(l, op, r) => {
-                if let Some(resolved_operator) = self
+                if let Some((receiver, method)) = self.option_none_identity(l, op, r) {
+                    let receiver = self.lower_expr_spanned(receiver)?;
+                    (
+                        IrExprKind::MethodCall {
+                            receiver: Box::new(receiver),
+                            method: method.to_string(),
+                            dispatch: None,
+                            type_args: Vec::new(),
+                            args: Vec::new(),
+                            callable_signature: None,
+                            arg_policy: MethodCallArgPolicy::Default,
+                        },
+                        IrType::Bool,
+                    )
+                } else if let Some(resolved_operator) = self
                     .type_info
                     .as_ref()
                     .and_then(|info| info.resolved_operator_call(expr_span).cloned())

@@ -260,6 +260,12 @@ impl TypeChecker {
                     &value_ty.to_string(),
                     span,
                 ));
+            } else if has_open_part(expected) && !has_open_part(&value_ty) {
+                if has_open_part(member_ty) {
+                    *member_ty = value_ty;
+                } else {
+                    self.merge_collection_member_type(member_ty, value_ty, span);
+                }
             }
             return;
         }

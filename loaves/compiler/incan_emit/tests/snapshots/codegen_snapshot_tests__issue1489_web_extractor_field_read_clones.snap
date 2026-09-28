@@ -15,8 +15,8 @@ pub use crate::__incan_std::web::GET;
 pub use crate::__incan_std::serde::json;
 pub use crate::__incan_std::r#async;
 #[derive(
-    serde::Serialize,
-    serde::Deserialize,
+    ::serde::Serialize,
+    ::serde::Deserialize,
     Debug,
     Clone,
     incan_derive::FieldInfo,
@@ -82,8 +82,8 @@ impl json::Deserialize for Search {
     }
 }
 #[derive(
-    serde::Serialize,
-    serde::Deserialize,
+    ::serde::Serialize,
+    ::serde::Deserialize,
     Debug,
     Clone,
     incan_derive::FieldInfo,

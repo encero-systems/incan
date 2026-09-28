@@ -29,8 +29,8 @@
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/decls/structures.rs",
-      "sha256": "db2f024f2c47b7355872e0f013ff4e11c45c1f7a003462db7df10b63732ec593",
-      "lines": 1211
+      "sha256": "afe837c36e1e346b8d864abea2a3e0b97bd3f1ac88cf9a26f06ee2efffe862d4",
+      "lines": 1222
     },
     {
       "path": "loaves/compiler/incan_emit/src/emit/errors.rs",
@@ -428,6 +428,21 @@
       "behavior_evidence": "emission test dict_get_with_default_reads_the_value in incan_emit src/tests/reads_and_iterator_surface.rs (rustc-compiled) and the behavior fixture snapshots_collections_and_strings/dict_get_with_default.incn (combined-branch run)",
       "semantic_owner": "#1561: the checked Dict.get(k, default) call typed V and the membership-probe ownership plan in the ownership planner; after the cutover Body IR states the static read from those facts",
       "retirement_condition": "#654: the Rust-source backend is deleted; the replacement route reads a static dict entry from the recorded facts"
+    },
+    {
+      "kind": "change",
+      "pr": 1901,
+      "policy": "frozen",
+      "files": [
+        {
+          "path": "loaves/compiler/incan_emit/src/emit/decls/structures.rs",
+          "change": "modified"
+        }
+      ],
+      "compatibility_issue": "#1561",
+      "behavior_evidence": "followups_b_serde_derives_are_crate_rooted_when_stdlib_serde_is_imported",
+      "semantic_owner": "compiler-owned derive path identity in IR",
+      "retirement_condition": "the Rust-source emitter is removed or consumes pre-rendered absolute derive identities"
     }
   ]
 }

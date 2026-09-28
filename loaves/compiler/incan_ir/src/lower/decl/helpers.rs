@@ -266,7 +266,7 @@ impl AstLowering {
     /// [`Self::rust_mapped_builtin_trait_path`]. This helper covers source-owned protocols such as `Iterator[T]` and
     /// only accepts either their exact imported owner or the implicit builtin binding. A local or third-party
     /// same-named trait stays on its own path.
-    fn source_owned_builtin_trait_path(&self, visible_name: &str) -> Option<String> {
+    pub(in crate::lower) fn source_owned_builtin_trait_path(&self, visible_name: &str) -> Option<String> {
         let (actual_module, source_name) = self.canonical_trait_identity(visible_name);
         let source_name = source_name?;
         let trait_id = core_traits::from_str(&source_name)?;

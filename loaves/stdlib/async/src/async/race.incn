@@ -26,6 +26,7 @@ Example:
 """
 
 import std.async
+from std.rust import Send, Static
 from rust::incan_std_async::time import clamp_seconds
 from rust::incan_std_async::task import RuntimeFuture
 from rust::incan_std_async::race import RaceArm as RawRaceArm, RuntimeRaceCallback

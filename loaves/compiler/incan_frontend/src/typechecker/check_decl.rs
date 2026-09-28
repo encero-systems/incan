@@ -3440,6 +3440,7 @@ impl TypeChecker {
         let mut json_members = Vec::new();
         for field in active_model_fields {
             let ty = self.resolve_type_checked(&field.node.ty);
+            self.refuse_stored_trait_field("model", &model.name, &field.node, &ty);
             self.validate_direct_recursive_model_field(&model.name, &ty, field.span);
             self.refuse_member_without_automatic_derives(
                 "model",
@@ -3900,6 +3901,7 @@ impl TypeChecker {
         let mut json_members = Vec::new();
         for field in active_class_fields {
             let ty = self.resolve_type_checked(&field.node.ty);
+            self.refuse_stored_trait_field("class", &class.name, &field.node, &ty);
             self.refuse_member_without_automatic_derives(
                 "class",
                 &class.name,
@@ -5924,6 +5926,7 @@ impl TypeChecker {
             );
         }
         self.refuse_unsupported_callable_markers(&func.type_params, CallableMarkerOwner::Callable);
+        self.validate_type_param_bound_type_names(&func.type_params);
         let active_bounds = self.type_param_bound_details_from_type_params(&func.type_params);
         self.current_type_param_bound_details.push(active_bounds);
         let previous_annotation_owner = self.enter_annotation_owner(&func.name, &func.type_params);
@@ -6098,14 +6101,81 @@ impl TypeChecker {
             .collect()
     }
 
-    /// Revisit bound type arguments for declarations whose collected signatures otherwise have no semantic body pass.
+    /// Validate bound names and type arguments for declarations whose collected signatures otherwise have no semantic
+    /// body pass.
+    ///
+    /// A bound name resolves as a builtin trait (`Eq`, `Ord`, `Awaitable`, ...) or a builtin derive bound (`Copy`
+    /// included, which names no builtin trait of its own; see [`Self::builtin_derive_bound`]), neither of which appears
+    /// in the symbol table since no import declares it, or as a user-defined trait the program declares or imports.
     fn validate_type_param_bound_type_names(&mut self, type_params: &[TypeParam]) {
         for type_param in type_params {
             for bound in &type_param.bounds {
+                let resolved_name = self.resolve_trait_bound_name(&bound.name, type_param.span);
+                let is_builtin = builtin_traits::from_str(&resolved_name).is_some()
+                    || self.builtin_derive_bound(&resolved_name).is_some();
+                if !is_builtin && self.lookup_symbol(&resolved_name).is_none() {
+                    self.errors.push(errors::unknown_symbol(&bound.name, type_param.span));
+                }
                 for type_arg in &bound.type_args {
                     let _ = self.resolve_type_checked(type_arg);
                 }
             }
+        }
+    }
+
+    /// Return the first trait leaf stored inside a field annotation, including nested collection positions.
+    fn stored_trait_annotation(&self, ty: &ResolvedType) -> Option<String> {
+        match ty {
+            ResolvedType::Named(name) if self.lookup_semantic_trait_info(name).is_some() => Some(name.clone()),
+            ResolvedType::Generic(name, args) => {
+                if self.lookup_semantic_trait_info(name).is_some() {
+                    return Some(name.clone());
+                }
+                args.iter().find_map(|arg| self.stored_trait_annotation(arg))
+            }
+            ResolvedType::FrozenList(inner)
+            | ResolvedType::FrozenSet(inner)
+            | ResolvedType::TypeToken(inner)
+            | ResolvedType::Ref(inner)
+            | ResolvedType::RefMut(inner) => self.stored_trait_annotation(inner),
+            ResolvedType::FrozenDict(key, value) => self
+                .stored_trait_annotation(key)
+                .or_else(|| self.stored_trait_annotation(value)),
+            ResolvedType::Function(params, returned) => params
+                .iter()
+                .find_map(|param| self.stored_trait_annotation(&param.ty))
+                .or_else(|| self.stored_trait_annotation(returned)),
+            ResolvedType::Tuple(items) => items.iter().find_map(|item| self.stored_trait_annotation(item)),
+            ResolvedType::Never
+            | ResolvedType::Int
+            | ResolvedType::Float
+            | ResolvedType::Numeric(_)
+            | ResolvedType::Bool
+            | ResolvedType::Str
+            | ResolvedType::Bytes
+            | ResolvedType::FrozenStr
+            | ResolvedType::FrozenBytes
+            | ResolvedType::Unit
+            | ResolvedType::Named(_)
+            | ResolvedType::TypeVar(_)
+            | ResolvedType::SelfType
+            | ResolvedType::RustPath(_)
+            | ResolvedType::CallSiteInfer
+            | ResolvedType::Unknown => None,
+        }
+    }
+
+    /// Refuse a field annotation that would store a bare trait value in generated Rust.
+    fn refuse_stored_trait_field(&mut self, owner_kind: &str, owner_name: &str, field: &FieldDecl, ty: &ResolvedType) {
+        if let Some(trait_name) = self.stored_trait_annotation(ty) {
+            self.errors.push(errors::trait_typed_field_annotation_unsupported(
+                owner_kind,
+                owner_name,
+                &field.name,
+                &field.ty.node.to_string(),
+                &trait_name,
+                field.ty.span,
+            ));
         }
     }
 

@@ -459,6 +459,23 @@ impl TypeChecker {
         false
     }
 
+    /// Return whether an active type parameter explicitly or transitively carries one builtin trait bound.
+    pub(in crate::typechecker) fn active_type_param_satisfies_builtin_bound(
+        &self,
+        placeholder_name: &str,
+        required: TraitId,
+    ) -> bool {
+        let required = TypeBoundInfo {
+            name: builtin_traits::as_str(required).to_string(),
+            source_name: None,
+            type_args: Vec::new(),
+            module_path: None,
+            implementation_type_params: Vec::new(),
+            inferred: false,
+        };
+        self.active_type_param_satisfies_bound_info(placeholder_name, &required, &HashMap::new())
+    }
+
     /// Return the resolved source trait item name for a bound, falling back to the visible spelling.
     pub(in crate::typechecker) fn type_bound_source_name(bound: &TypeBoundInfo) -> &str {
         bound

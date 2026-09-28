@@ -407,7 +407,7 @@ impl std::fmt::Display for EnvironError {
         write!(f, "{}", self.__str__())
     }
 }
-impl Error for EnvironError {
+impl crate::__incan_std::traits::error::Error for EnvironError {
     fn message(&self) -> String {
         let _ = "Return the redacted human-readable error detail.";
         return self.detail.clone();
@@ -422,7 +422,7 @@ impl EnvironError {
     pub fn source(
         &self,
     ) -> Option<String> {
-        <Self as Error>::source(self)
+        <Self as crate::__incan_std::traits::error::Error>::source(self)
     }
 }
 fn _get_raw(

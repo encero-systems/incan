@@ -261,7 +261,7 @@ impl std::fmt::Display for UuidError {
         write!(f, "{}", self.__str__())
     }
 }
-impl Error for UuidError {
+impl crate::__incan_std::traits::error::Error for UuidError {
     fn message(&self) -> String {
         let _ = "\n        Return the human-readable error detail.\n\n        Returns:\n            The detail text attached to the UUID failure.\n        ";
         return self.detail.clone();
@@ -274,7 +274,7 @@ impl Error for UuidError {
 impl UuidError {
     #[inline(never)]
     pub fn source(&self) -> Option<String> {
-        <Self as Error>::source(self)
+        <Self as crate::__incan_std::traits::error::Error>::source(self)
     }
 }
 /// RFC 9562 UUID value stored as one unsigned 128-bit integer.

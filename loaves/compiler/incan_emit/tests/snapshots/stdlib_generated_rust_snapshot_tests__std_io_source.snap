@@ -222,7 +222,7 @@ impl std::fmt::Display for IoError {
         write!(f, "{}", self.__str__())
     }
 }
-impl Error for IoError {
+impl crate::__incan_std::traits::error::Error for IoError {
     fn message(&self) -> String {
         let _ = "\n        Return the human-readable error detail.\n\n        Returns:\n            The detail text attached to the failed operation.\n        ";
         return self.detail.clone();
@@ -237,7 +237,7 @@ impl IoError {
     pub fn source(
         &self,
     ) -> Option<String> {
-        <Self as Error>::source(self)
+        <Self as crate::__incan_std::traits::error::Error>::source(self)
     }
 }
 /// Trait-backed typed binary reads from a byte stream.
