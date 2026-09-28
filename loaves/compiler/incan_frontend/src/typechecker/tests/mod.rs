@@ -83,6 +83,7 @@ mod list_method_forms;
 mod match_literals_and_payload_coverage;
 mod method_decorator_receivers;
 mod models_enums_and_newtypes;
+mod multi_target_assignments;
 mod mut_parameters;
 mod narrowing_and_matching;
 mod numeric_assignment_and_compound;

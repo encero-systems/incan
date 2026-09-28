@@ -3,8 +3,9 @@
 //! Each diagnostic here refuses at check time a program that the checker used to accept and the generated program's
 //! build then refused: a field whose type cannot satisfy its declaration's automatic derives (`INCAN-T0113`, #1754), a
 //! set element or dict key whose type does not implement `Eq` and `Hash` (`INCAN-T0114`, #1758), an argument that is
-//! not a task where a task is required (`INCAN-T0115`, #1772), and a member whose type has no JSON form for the
-//! `std.serde.json` trait its declaration provides (`INCAN-T0001`, #1886, #1867).
+//! not a task where a task is required (`INCAN-T0115`, #1772), a member whose type has no JSON form for the
+//! `std.serde.json` trait its declaration provides (`INCAN-T0001`, #1886, #1867), and a `json_stringify` argument whose
+//! type has no `Serialize` form (`INCAN-T0001`).
 
 use crate::ast::Span;
 use crate::diagnostics::CompileError;
@@ -166,6 +167,24 @@ fn hash_remedy_hint(holder_type: &str, missing: &[&str], remedy: HashRemedy) -> 
             missing.join(", ")
         ),
     }
+}
+
+/// Report a `json_stringify` argument whose type has no `Serialize` form: a model or class that neither derives nor
+/// adopts `Serialize`, or a type parameter or trait whose bounds do not provide it, at the top level or inside a
+/// collection, `Option` or tuple.
+pub fn json_stringify_value_lacks_serialize(value_type: &str, holder_type: &str, span: Span) -> CompileError {
+    let subject = if value_type == holder_type {
+        "which".to_string()
+    } else {
+        format!("whose '{holder_type}'")
+    };
+    CompileError::type_error(
+        format!("json_stringify cannot write a value of type '{value_type}', {subject} does not provide 'Serialize'"),
+        span,
+    )
+    .with_hint(format!(
+        "Derive or adopt 'Serialize' on '{holder_type}', or bound a type parameter by 'Serialize'"
+    ))
 }
 
 /// Report a set element or dict key type that does not implement `Eq` and `Hash` (#1758).

@@ -9,7 +9,7 @@
 
 use crate::ast::*;
 use crate::diagnostics::{CompileError, errors};
-use crate::symbols::{FieldInfo, FunctionInfo, ResolvedType, SymbolKind, VariableInfo};
+use crate::symbols::{FieldInfo, FunctionInfo, ResolvedType, SymbolKind, TypeInfo, VariableInfo};
 use crate::typechecker::helpers::{decimal_shape, is_frozen_bytes, is_frozen_str};
 use incan_lang::lang::keywords;
 use incan_lang::lang::types::numerics::{self, NumericFamily, NumericTypeId};
@@ -17,8 +17,8 @@ use incan_lang::numeric_values::{IntegerBounds, integer_bounds};
 use incan_semantics_core::SurfaceExprTypeCheck;
 use std::collections::HashMap;
 
-use super::TypeChecker;
 use super::mut_arguments::MutArgumentCallee;
+use super::{IdentKind, TypeChecker};
 
 mod access;
 mod basics;
@@ -42,7 +42,10 @@ impl TypeChecker {
             self.errors
                 .push(errors::explicit_call_site_type_args_not_supported(span));
         }
-        let target_ty = self.check_expr(&partial.target);
+        let target_ty = match self.partial_constructor_target_type(&partial.target) {
+            Some(constructor_ty) => constructor_ty,
+            None => self.check_expr(&partial.target),
+        };
         let ResolvedType::Function(params, ret) = target_ty else {
             self.errors.push(CompileError::type_error(
                 "Partial expression target must be a callable value".to_string(),
@@ -101,6 +104,41 @@ impl TypeChecker {
         // A local partial retains its complete callable signature. Presets become defaulted, name-overrideable
         // slots; `is_partial_preset` preserves the separate positional rule that starts at the residual arguments.
         ResolvedType::Function(Self::local_partial_params(projected, &partial.args), ret)
+    }
+
+    /// Return the constructor of the model, class or newtype a local partial names as its target, as a callable type.
+    ///
+    /// RFC 084 makes constructor presets first-class, so `partial Reader(layer=layer)` inside a function presets the
+    /// constructor's parameters as the top-level form does. The callable type is recorded at the target for lowering,
+    /// with the target marked as a type name. A generic type's constructor is left to the ordinary expression check,
+    /// as a generic function is: a local value is not generic over the type's parameters.
+    fn partial_constructor_target_type(&mut self, target: &Spanned<Expr>) -> Option<ResolvedType> {
+        let Expr::Ident(name) = &target.node else {
+            return None;
+        };
+        let symbol_id = self.symbols.lookup(name)?;
+        let kind = self.symbols.get(symbol_id)?.kind.clone();
+        if !matches!(
+            kind,
+            SymbolKind::Type(TypeInfo::Model(_) | TypeInfo::Class(_) | TypeInfo::Newtype(_))
+        ) {
+            return None;
+        }
+        let (params, return_type, _, type_params, _, _) =
+            Self::partial_callable_signature_from_kind(std::slice::from_ref(name), kind)?;
+        if !type_params.is_empty() {
+            return None;
+        }
+        if let Some(identity) = self.symbols.identity_of(symbol_id).cloned() {
+            self.type_info.record_resolved_identity(target.span, identity);
+        }
+        self.type_info
+            .expressions
+            .ident_kinds
+            .insert((target.span.start, target.span.end), IdentKind::TypeName);
+        let constructor_ty = ResolvedType::Function(params, Box::new(return_type));
+        self.record_expr_type(target.span, constructor_ty.clone());
+        Some(constructor_ty)
     }
 
     /// Type-check every interpolated expression of an f-string and refuse a `{value}` part with no printed form
@@ -165,7 +203,10 @@ impl TypeChecker {
     ///
     /// This is intentionally module-kind driven (`SymbolKind::Module`) instead of name-driven so member access does not
     /// require per-module hardcoded registries.
-    fn imported_module_for_expr(&self, expr: &Spanned<Expr>) -> Option<(String, Vec<String>)> {
+    pub(in crate::typechecker) fn imported_module_for_expr(
+        &self,
+        expr: &Spanned<Expr>,
+    ) -> Option<(String, Vec<String>)> {
         let Expr::Ident(name) = &expr.node else {
             return None;
         };
@@ -214,7 +255,7 @@ impl TypeChecker {
     }
 
     /// Resolve a constant reached through an imported standard-library or checked public-package module.
-    fn resolve_imported_module_constant_member(
+    pub(in crate::typechecker) fn resolve_imported_module_constant_member(
         &mut self,
         module_path: &[String],
         member: &str,

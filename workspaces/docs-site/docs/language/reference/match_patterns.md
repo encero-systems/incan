@@ -31,7 +31,7 @@ This page specifies the patterns of `match`, `if let`, and `while let`: each pat
 
 | Literal | Positions it matches | Additional rule |
 | --- | --- | --- |
-| Integer, such as `0`, `-1`, `255` | An integer type: `int` and every exact-width integer | The value lies in the type's range. |
+| Integer, such as `0`, `255` | An integer type: `int` and every exact-width integer | The value lies in the type's range. |
 | Float, such as `1.5` | A float type: `float` (`f64`) or `f32` | For `f32`, the value is finite in `f32`. |
 | String, such as `"a"` | `str` | |
 | `true`, `false` | `bool` | |

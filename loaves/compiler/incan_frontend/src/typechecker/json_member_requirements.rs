@@ -198,6 +198,59 @@ impl TypeChecker {
         }
     }
 
+    /// Return the spelling of the first type inside the type of a value `json_stringify` writes that certainly has no
+    /// `Serialize` form, or `None` when every part has, or may have, one.
+    ///
+    /// Collections, `Option`, `Result`, tuples and the frozen collections carry their elements, and a generic nominal
+    /// its type arguments. A `model` or `class` is decided by [`Self::nominal_certainly_lacks_json_form`]. A type
+    /// parameter of the body has a `Serialize` form only through its bounds, and a trait-typed value only through the
+    /// trait or a supertrait of it. Any other type, an `enum` or newtype included, is left to the build.
+    pub(in crate::typechecker) fn value_type_without_serialize_form(&self, ty: &ResolvedType) -> Option<String> {
+        let protocol = StdlibJsonTraitId::Serialize;
+        if let Some(name) = self.active_type_param_name(ty) {
+            let bounds = self
+                .current_type_param_bound_details
+                .iter()
+                .rev()
+                .find_map(|frame| frame.get(name))?;
+            return (!self.adoptions_provide_json_protocol(bounds, protocol)).then(|| name.to_string());
+        }
+        match ty {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.value_type_without_serialize_form(inner),
+            ResolvedType::Named(name) if self.lookup_trait_info(name).is_some() => {
+                let trait_bound = TypeBoundInfo {
+                    name: name.clone(),
+                    source_name: None,
+                    type_args: Vec::new(),
+                    module_path: None,
+                    implementation_type_params: Vec::new(),
+                    inferred: false,
+                };
+                (!self.adoptions_provide_json_protocol(std::slice::from_ref(&trait_bound), protocol))
+                    .then(|| name.clone())
+            }
+            ResolvedType::Named(name) => self
+                .nominal_certainly_lacks_json_form(name, protocol)
+                .then(|| name.clone()),
+            ResolvedType::Generic(name, args) => {
+                if collection_type_id(name).is_none() && self.nominal_certainly_lacks_json_form(name, protocol) {
+                    return Some(name.clone());
+                }
+                args.iter().find_map(|arg| self.value_type_without_serialize_form(arg))
+            }
+            ResolvedType::Tuple(items) => items
+                .iter()
+                .find_map(|item| self.value_type_without_serialize_form(item)),
+            ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => {
+                self.value_type_without_serialize_form(inner)
+            }
+            ResolvedType::FrozenDict(key, value) => self
+                .value_type_without_serialize_form(key)
+                .or_else(|| self.value_type_without_serialize_form(value)),
+            _ => None,
+        }
+    }
+
     /// Return the trait adoptions recorded for the nominal `name`, those its derives adopt included.
     pub(in crate::typechecker) fn nominal_trait_adoptions(&self, name: &str) -> Vec<TypeBoundInfo> {
         match self.lookup_type_info(name) {

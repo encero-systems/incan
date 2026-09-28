@@ -171,7 +171,7 @@ from std.async.channel import OneshotReceiver, OneshotSender
 | `unbounded_channel[T]() -> Tuple[Sender[T], Receiver[T]]` | An unbounded multi-producer, single-consumer channel. | Producers can grow memory without a capacity limit. |
 | `oneshot[T]() -> Tuple[OneshotSender[T], OneshotReceiver[T]]` | A channel that carries at most one value. | The sender is consumed by its single send operation. |
 
-The constructors infer `T` from the channel's sends, receives or an annotation. An explicit type argument, as in `channel[str](4)`, is refused (`INCAN-T0001`).
+Each constructor takes `T` as an explicit type argument, as in `channel[str](4)`, or infers it from the channel's sends, receives or an annotation.
 
 ### `Sender[T]`
 

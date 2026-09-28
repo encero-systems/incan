@@ -70,7 +70,7 @@ type InheritedMembers = (
     HashMap<String, Vec<MethodInfo>>,
 );
 
-type PartialCallableSignature = (
+pub(in crate::typechecker) type PartialCallableSignature = (
     Vec<CallableParam>,
     ResolvedType,
     bool,
@@ -488,7 +488,10 @@ impl TypeChecker {
     }
 
     /// Resolve the callable surface that a top-level partial declaration projects from an already-resolved symbol.
-    fn partial_callable_signature_from_kind(segments: &[String], kind: SymbolKind) -> Option<PartialCallableSignature> {
+    pub(in crate::typechecker) fn partial_callable_signature_from_kind(
+        segments: &[String],
+        kind: SymbolKind,
+    ) -> Option<PartialCallableSignature> {
         match kind {
             SymbolKind::Function(info) => Some((
                 info.params,

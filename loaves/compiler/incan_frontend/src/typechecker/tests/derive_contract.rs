@@ -625,3 +625,57 @@ def main() -> None:
 "#,
     )
 }
+
+/// A newtype is `Copy` without a derive when its underlying type is a builtin `Copy` value (a number, `bool`, or a
+/// tuple, `Option` or `Result` of those); over another newtype or a model that derives `Copy` it is `Copy` only by
+/// deriving it.
+#[test]
+fn newtype_copy_follows_a_builtin_underlying_type_or_its_own_derive() -> TestResult {
+    accepted(
+        r#"
+type Meters = newtype int
+type Span = newtype tuple[int, float]
+type Maybe = newtype Option[bool]
+
+@derive(Copy)
+type Distance = newtype Meters
+
+@derive(Copy)
+model Leg:
+    meters: Meters
+    span: Span
+    maybe: Maybe
+    distance: Distance
+"#,
+    )?;
+    for (declarations, holder) in [
+        (
+            "type Meters = newtype int\ntype Distance = newtype Meters\n",
+            "Distance",
+        ),
+        (
+            "@derive(Copy)\nmodel Point:\n    x: int\n\ntype Place = newtype Point\n",
+            "Place",
+        ),
+    ] {
+        let source = format!("{declarations}\n@derive(Copy)\nmodel Leg:\n    value: {holder}\n");
+        let errors = refused(&source)?;
+        assert_refusal(&errors, &["@derive(Copy) on model 'Leg'", holder])?;
+    }
+    Ok(())
+}
+
+/// A newtype lacks the derives its underlying type lacks, and deriving one of them on the newtype is refused.
+#[test]
+fn newtype_derive_its_underlying_type_lacks_is_refused() -> TestResult {
+    let errors = refused(
+        "import std.async\nfrom std.async.task import JoinHandle\n\n@derive(Clone)\ntype Handle = newtype JoinHandle[int]\n",
+    )?;
+    assert_refusal(
+        &errors,
+        &[
+            "@derive(Clone) on newtype 'Handle'",
+            "underlying type 'JoinHandle[int]'",
+        ],
+    )
+}

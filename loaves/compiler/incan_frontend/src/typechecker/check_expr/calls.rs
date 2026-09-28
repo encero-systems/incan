@@ -346,7 +346,17 @@ impl TypeChecker {
                 return ResolvedType::Unknown;
             }
 
-            if let Some(result) = self.check_builtin_call(name, args, span, expected_return_ty) {
+            // RFC 054: a generic standard-library function reached through a surface-function import, such as
+            // `channel[str](4)`, takes explicit type arguments as any generic function does, so a call that writes
+            // them is checked against the function's declaration below.
+            let explicit_generic_surface_call = !type_args.is_empty()
+                && self.active_surface_function_import(name).is_some()
+                && self.lookup_symbol(name).is_some_and(
+                    |symbol| matches!(&symbol.kind, SymbolKind::Function(info) if !info.type_params.is_empty()),
+                );
+            if !explicit_generic_surface_call
+                && let Some(result) = self.check_builtin_call(name, args, span, expected_return_ty)
+            {
                 if !type_args.is_empty() {
                     self.errors
                         .push(errors::explicit_call_site_type_args_not_supported(span));

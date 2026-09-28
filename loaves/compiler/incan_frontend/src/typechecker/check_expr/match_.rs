@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::diagnostics::errors;
+use crate::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::symbols::*;
 use incan_lang::interop::RustItemKind;
 use incan_lang::lang::surface::constructors;
@@ -75,7 +76,7 @@ enum LiteralPatternFamily {
 }
 
 impl LiteralPatternFamily {
-    /// Return the family of a position type, or `None` when a literal cannot be judged against it here.
+    /// Return the family of a position type, or `None` when the type is of no literal family.
     fn of_position(ty: &ResolvedType) -> Option<Self> {
         match ty {
             ResolvedType::Int => Some(Self::Integer),
@@ -87,6 +88,23 @@ impl LiteralPatternFamily {
             _ if ty.is_option() => Some(Self::Option),
             _ => None,
         }
+    }
+
+    /// Whether a position type of no literal family is known well enough to say that no literal matches a value of it:
+    /// `bytes`, a tuple, a collection, a model, class, enum or newtype, a union, a decimal and a type parameter are. An
+    /// unresolved type, a Rust type the checker does not see into and `Self` are not, and are left to the checks that
+    /// own them.
+    fn position_is_known(ty: &ResolvedType) -> bool {
+        !matches!(
+            ty,
+            ResolvedType::Unknown
+                | ResolvedType::CallSiteInfer
+                | ResolvedType::Never
+                | ResolvedType::RustPath(_)
+                | ResolvedType::SelfType
+                | ResolvedType::Ref(_)
+                | ResolvedType::RefMut(_)
+        )
     }
 
     /// Whether a literal of this spelling can match a value of this family.
@@ -594,23 +612,34 @@ impl TypeChecker {
                     name.node.as_str()
                 };
 
-                let model_or_class_fields = match expected_ty {
-                    ResolvedType::Named(type_name) if ctor_name == type_name => self
-                        .lookup_type_info(type_name)
-                        .and_then(|type_info| match type_info {
-                            TypeInfo::Model(model_info) => {
-                                Some((model_info.fields.clone(), model_info.field_order.clone()))
-                            }
-                            TypeInfo::Class(class_info) => {
-                                Some((class_info.fields.clone(), class_info.field_order.clone()))
-                            }
-                            _ => None,
-                        })
-                        .map(|(fields, field_order)| (type_name, fields, field_order)),
+                // A record pattern names the subject's model or class, generic ones included: each field it names
+                // is checked against the field's type under the subject's type arguments.
+                let model_or_class_fields = match subject_ty {
+                    ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) if ctor_name == type_name => {
+                        let type_args = match subject_ty {
+                            ResolvedType::Generic(_, type_args) => type_args.as_slice(),
+                            _ => &[],
+                        };
+                        self.lookup_type_info(type_name)
+                            .and_then(|type_info| match type_info {
+                                TypeInfo::Model(model_info) => Some((
+                                    model_info.fields.clone(),
+                                    model_info.field_order.clone(),
+                                    type_param_subst_map(&model_info.type_params, type_args),
+                                )),
+                                TypeInfo::Class(class_info) => Some((
+                                    class_info.fields.clone(),
+                                    class_info.field_order.clone(),
+                                    type_param_subst_map(&class_info.type_params, type_args),
+                                )),
+                                _ => None,
+                            })
+                            .map(|(fields, field_order, substitutions)| (type_name, fields, field_order, substitutions))
+                    }
                     _ => None,
                 };
 
-                if let Some((type_name, fields, field_order)) = model_or_class_fields {
+                if let Some((type_name, fields, field_order, substitutions)) = model_or_class_fields {
                     self.record_pattern_lexical_identity(type_name, name.span);
                     let mut provided = HashSet::new();
                     for arg in sub_patterns {
@@ -652,7 +681,8 @@ impl TypeChecker {
                                     ));
                                     continue;
                                 }
-                                self.check_pattern(pat, &info.ty);
+                                let field_ty = substitute_resolved_type(&info.ty, &substitutions);
+                                self.check_pattern(pat, &borrowed_pattern_payload(field_ty, borrow));
                             }
                         }
                     }
@@ -735,11 +765,11 @@ impl TypeChecker {
     ///
     /// A decimal or bytes literal has no pattern form at all. Any other literal is compared with the position's type
     /// (the scrutinee, a tuple element, a variant payload or a field) after peeling the borrow wrappers match
-    /// ergonomics add; only the families a literal can spell are judged (`LiteralPatternFamily`), and any other
-    /// position type (a type parameter, a union, a nominal, an unresolved type) is left to the checks that own it. A
-    /// numeric literal that has the position's family is then held to the position's width and range by the same rules
-    /// a value literal of that type follows; a suffixed one is held to its suffix's range, and its suffix must name the
-    /// position's exact type.
+    /// ergonomics add: a literal matches only a position of its own family (`LiteralPatternFamily`), so one in a known
+    /// position of no family (a type parameter, a union, a nominal, a collection, a tuple) is refused too, and only an
+    /// unresolved or Rust-only position type is left to the checks that own it. A numeric literal that has the
+    /// position's family is then held to the position's width and range by the same rules a value literal of that type
+    /// follows; a suffixed one is held to its suffix's range, and its suffix must name the position's exact type.
     fn check_literal_pattern(&mut self, literal: &Literal, expected_ty: &ResolvedType, span: Span) {
         let unmatchable = match literal {
             Literal::Decimal(_) => Some("decimal"),
@@ -751,10 +781,11 @@ impl TypeChecker {
             return;
         }
         let (position_ty, _) = borrowed_pattern_subject(expected_ty);
-        let Some(family) = LiteralPatternFamily::of_position(position_ty) else {
+        let family = LiteralPatternFamily::of_position(position_ty);
+        if family.is_none() && !LiteralPatternFamily::position_is_known(position_ty) {
             return;
-        };
-        if !family.admits(literal) {
+        }
+        if !family.is_some_and(|family| family.admits(literal)) {
             let found = match literal {
                 Literal::None => constructors::as_str(ConstructorId::None).to_string(),
                 _ => self.check_literal(literal, span).to_string(),
@@ -979,7 +1010,8 @@ impl TypeChecker {
         }
     }
 
-    /// Payload types for a source-defined enum variant, using the enum type's own metadata.
+    /// Payload types for a source-defined enum variant, using the enum type's own metadata under the subject's type
+    /// arguments.
     ///
     /// Qualified patterns such as `Color.Red` should not depend on a module-level `Red` symbol being importable or
     /// winning same-scope shadowing. The scrutinee already tells us which enum is being matched, so resolve the
@@ -1009,10 +1041,20 @@ impl TypeChecker {
         if !enum_info.variants.iter().any(|variant| variant == canonical_variant) {
             return None;
         }
+        // A generic enum's payloads are typed under the subject's type arguments, as a generic record's fields are.
+        let substitutions = match expected_ty {
+            ResolvedType::Generic(_, type_args) => type_param_subst_map(&enum_info.type_params, type_args),
+            _ => HashMap::new(),
+        };
         let fields = enum_info
             .variant_fields
             .get(canonical_variant)
-            .cloned()
+            .map(|fields| {
+                fields
+                    .iter()
+                    .map(|field| substitute_resolved_type(field, &substitutions))
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default();
         if positional_count > fields.len() {
             return None;

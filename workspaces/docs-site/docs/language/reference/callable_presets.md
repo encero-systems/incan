@@ -41,7 +41,7 @@ Every preset is a named argument; a positional preset is a syntax error, `INCAN-
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Top-level declaration    | A function, declared or imported (`partial math.sqrt(x=4.0)`), a model, class or newtype constructor, or a symbol alias or top-level partial that resolves to one of these. A newtype constructor's parameter is named `value`. |
 | Method partial           | A method of the same type, named by its unqualified name or through a same-type method alias (`display = label`).                                                                                                                    |
-| Local partial expression | Any expression of callable type: a function, a model, class or newtype constructor, a symbol alias, a partial, a method of a value (`partial user.label(prefix="x")`), or a generic function.                                          |
+| Local partial expression | A callable named by its name or path: a function, a generic function, a model, class or newtype constructor, a symbol alias, a top-level partial, or a method of a value (`partial user.label(prefix="x")`).                              |
 
 A top-level target that is a const, a static, a module, an enum variant, a call expression, a local variable, a closure, a field or an unbound method is error `INCAN-T0001`. A local partial expression whose target is not callable, or is a variable or parameter holding a callable, is error `INCAN-T0001`.
 
@@ -102,7 +102,7 @@ Each preset value of a top-level declaration is one of:
 - a scalar literal, including a negative number literal such as `-2`, a string or bytes literal, or `None`;
 - a const, named by its identifier or by a qualified path, whose value is itself such a value;
 - an enum variant path whose variant takes no payload, such as `Mode.Fast`;
-- a collection literal whose elements, keys and values are such values;
+- a list, set, tuple or dict literal whose elements, keys and values are such values;
 - a model literal of a known model whose field values are such values.
 
 Any other preset value of a top-level declaration, such as a function or constructor call, a closure, a comprehension or a spread entry, is error `INCAN-T0001`:

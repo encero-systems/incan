@@ -300,14 +300,26 @@ impl AstLowering {
     /// Lower `target, target = value` whose targets are places: fields, elements, or names mixed with them.
     ///
     /// Each target is written like the single-target statement of the same shape: a field like `obj.field = value`, an
-    /// element like `items[i] = value`, a name like `name = value`. A target's own sub-expressions (the object, the
-    /// index) are evaluated when it is written, after the right side, in source order.
+    /// element like `items[i] = value`, a name like `name = value`, so a name with no binding is declared. A target's
+    /// own sub-expressions (the object, the index) are evaluated when it is written, after the right side, in source
+    /// order.
     pub(super) fn lower_tuple_assign(&mut self, assign: &ast::TupleAssignStmt) -> Result<IrStmt, LoweringError> {
         let value = self.lower_expr_spanned(&assign.value)?;
         let element_types = Self::tuple_element_types(&value.ty, assign.targets.len());
 
         let mut stmts = vec![self.bind_temporary(TUPLE_ASSIGN_TEMPORARY, value)];
         for (index, (target, element_ty)) in assign.targets.iter().zip(element_types).enumerate() {
+            if let ast::Expr::Ident(name) = &target.node {
+                let element = self.tuple_temporary_element(TUPLE_ASSIGN_TEMPORARY, index, element_ty.clone());
+                stmts.push(self.assign_or_declare_name(
+                    ast::BindingKind::Inferred,
+                    name,
+                    element_ty,
+                    Mutability::Immutable,
+                    element,
+                ));
+                continue;
+            }
             let place = self.tuple_assign_place(target)?;
             let element = self.tuple_temporary_element(TUPLE_ASSIGN_TEMPORARY, index, element_ty);
             stmts.push(IrStmt::new(IrStmtKind::Assign {
@@ -338,20 +350,20 @@ impl AstLowering {
         }
     }
 
-    /// Lower one tuple-assignment target to the place a single assignment of the same shape writes.
+    /// Lower one field or element target of a tuple assignment to the place a single assignment of the same shape
+    /// writes; a name target is given its value by [`Self::lower_tuple_assign`] itself.
     ///
     /// The checker accepts only names, fields and elements as targets and refuses any other expression, a parenthesized
     /// target included, so reaching one here is a lowering error rather than a silent skip.
     fn tuple_assign_place(&mut self, target: &Spanned<ast::Expr>) -> Result<AssignTarget, LoweringError> {
         match &target.node {
-            ast::Expr::Ident(name) => Ok(self.resolve_named_assign_target(name)),
             ast::Expr::Field(object, field) => self.field_assign_target(object, field, target.span),
             ast::Expr::Index(object, index) => Ok(AssignTarget::Index {
                 object: Box::new(self.lower_expr_spanned(object)?),
                 index: Box::new(self.lower_expr_spanned(index)?),
             }),
             _ => Err(LoweringError {
-                message: "a tuple assignment target must be a name, a field or an element".to_string(),
+                message: "a tuple assignment place must be a field or an element".to_string(),
                 span: IrSpan::default(),
             }),
         }

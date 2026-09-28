@@ -11,12 +11,12 @@ These derives belong to every declaration of the kind, without `@derive(...)`:
 | `model` | `Debug`, `Clone` |
 | `class` | `Debug`, `Clone` |
 | `enum` | `Debug`, `Clone`; `PartialEq` when every payload type is a number, `bool`, `str` or `bytes`, or a `list`, `set`, `dict`, `Option`, `Result` or tuple of those |
-| `newtype` | `Debug` when the underlying type implements it; `Clone` as listed below; `Copy` when the underlying type is `Copy` |
+| `newtype` | `Debug` when the underlying type implements it; `Clone` as listed below; `Copy` as listed under [Copy](derives/copying_default.md#copy) |
 
 - An automatic derive satisfies a generic bound on the same trait.
 - Writing an automatic derive in `@derive(...)` is accepted and adds nothing.
 - A newtype carries `Clone` when its underlying type is a `Copy` type; a builtin scalar; a builtin collection, `Option`, `Result`, tuple, `model`, `class` or `enum` whose type arguments implement `Clone`; a newtype that carries `Clone`; a standard-library type that implements `Clone`, such as `Mutex[T]` over such a `T`; or one of the newtype's own type parameters, in which case the newtype is `Clone` for type arguments that are. Over any other underlying type, including a `rust::` type and a `rusttype`, it carries `Clone` only through `@derive(Clone)` or `@rust.derive(Clone)`.
-- A `model` or `class` field, or an `enum` payload, whose type does not implement both `Clone` and `Debug` is refused at the declaration (`INCAN-T0113`). `JoinHandle[T]` and `RaceArm[R]` implement neither; `Receiver[T]`, `OneshotSender[T]` and `OneshotReceiver[T]` lack `Clone`; a newtype lacks what its underlying type lacks unless it derives it; a `list`, `dict`, `set`, `Option`, `Result`, tuple or generic declaration lacks what a type argument lacks.
+- A `model` or `class` field, or an `enum` payload, whose type does not implement both `Clone` and `Debug` is refused at the declaration (`INCAN-T0113`). `JoinHandle[T]` and `RaceArm[R]` implement neither; `Receiver[T]`, `OneshotSender[T]` and `OneshotReceiver[T]` lack `Clone`; a newtype lacks what its underlying type lacks, and deriving it on the newtype is refused (`INCAN-T0001`); a `list`, `dict`, `set`, `Option`, `Result`, tuple or generic declaration lacks what a type argument lacks.
 
 ```incan
 import std.async
@@ -36,7 +36,7 @@ model Wrapped:
 | Derive | Provides | Dunder | Reference |
 | --- | --- | --- | --- |
 | `Debug` | `{value:?}` | — | [String representation](derives/string_representation.md#debug) |
-| `Display` | `{value}`, `str(value)`, `print(value)` | `__str__` | [String representation](derives/string_representation.md#display) |
+| `Display` | Nothing: `{value}`, `str(value)` and `print(value)` come from `__str__` | `__str__` | [String representation](derives/string_representation.md#display) |
 | `Eq` | `==`, `!=`; with `Hash`, use as a `set` element or `dict` key | `__eq__`, `__ne__` | [Comparison](derives/comparison.md#eq) |
 | `PartialEq` | `==`, `!=` | `__eq__`, `__ne__` | [Comparison](derives/comparison.md#partialeq) |
 | `Ord` | `<`, `<=`, `>`, `>=`, `sorted(values)` | `__lt__`, `__le__`, `__gt__`, `__ge__` | [Comparison](derives/comparison.md#ord) |
@@ -54,7 +54,7 @@ model Wrapped:
 ## `@derive(...)`
 
 - `@derive(...)` names derives from the catalog. `json` needs `from std.serde import json`, and `Serialize` and `Deserialize` need their import from `std.serde.json`.
-- `@derive(...)` also names a trait imported by name (`from codec import Encode`, then `@derive(Encode)`), or a module that declares `__derives__` (`import codec`, then `@derive(codec)`, which names each trait in the module's `__derives__` list). A model or class adopts each such trait as a `with` clause adopts it: the trait's methods, default methods included, are called on the type (`item.tag()`), and the type satisfies a bound on the trait.
+- `@derive(...)` also names a trait imported by name that its module lists in `__derives__` (`from codec import Encode`, then `@derive(Encode)`), or a module that declares `__derives__` (`import codec`, then `@derive(codec)`, which names each trait in the module's `__derives__` list). A model or class adopts each such trait as a `with` clause adopts it: the trait's methods, default methods included, are called on the type (`item.tag()`), and the type satisfies a bound on the trait.
 - `Eq` implies `PartialEq`, and `Ord` implies `PartialOrd`, `Eq` and `PartialEq`.
 - `@rust.derive(...)` names Rust derives (see [Decorators](language.md#decorators)).
 - The dunders that define what a derive provides, and the pairs that conflict, are in [Custom behavior](derives/custom_behavior.md).
@@ -66,6 +66,7 @@ Each of these is refused (`INCAN-T0001`):
 | `@derive(Debg)` | The name is not a derive. |
 | `@derive(User)` where `User` is a model, class, enum or function | The name is not a derive. |
 | `@derive(module)` for a module that declares no `__derives__` | The module provides no derives. |
+| `@derive(Encode)` for an imported trait its module's `__derives__` does not list | The name is not a derive. |
 | `@derive(Eq)` on a type that defines `__eq__` | See [Custom behavior](derives/custom_behavior.md). |
 | `@derive(Copy)` on a type with a field that is not `Copy` | See [Copy](derives/copying_default.md#copy). |
 | `@derive(Eq)`, or any derive, on a type with a field, payload or underlying type that does not meet the derive's **Requires** entry, such as a `float` field | See the derive's page in the [catalog](#derive-catalog). A derive's requirements include those of the derives it implies. |

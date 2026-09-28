@@ -13,10 +13,10 @@ This page specifies `Clone`, `Copy` and `Default`, and field defaults at constru
 ## Copy
 
 - **Provides**: an assignment or an argument copies the value, and the original stays usable.
-- **Provided by**: `@derive(Copy)`; a `newtype` whose underlying type is `Copy`.
+- **Provided by**: `@derive(Copy)`; a `newtype` whose underlying type is a number, `bool`, `None`, `decimal[p, s]`, `FrozenStr` or `FrozenBytes`, or a tuple, `Option` or `Result` of those.
 - **Behavior**: every field is copied.
 - **Dunder**: none.
-- **Requires**: every field type is `Copy`: a number, `bool`, a tuple, `Option` or `Result` of `Copy` types, a type that derives `Copy`, or a newtype over a `Copy` type. A field of any other type is refused (`INCAN-T0001`).
+- **Requires**: every field type is `Copy`: a number, `bool`, a tuple, `Option` or `Result` of `Copy` types, a type that derives `Copy`, or a newtype that is `Copy` without a derive (see **Provided by**). A field of any other type is refused (`INCAN-T0001`).
 
 ## Default
 

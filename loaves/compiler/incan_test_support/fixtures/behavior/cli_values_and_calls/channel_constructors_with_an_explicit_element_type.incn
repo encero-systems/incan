@@ -1,0 +1,33 @@
+# behavior: the channel constructors take an explicit element type, and a value sent through each channel is received
+# retires: loaves/compiler/incan_emit/src/tests/emitted_spellings.rs::explicit_channel_element_type_is_spelled_on_the_call
+# expect-stdout:
+#   got hello
+#   got 3
+#   got true
+
+import std.async
+from std.async.channel import channel, oneshot, unbounded_channel
+
+
+async def main() -> None:
+    tx, rx = channel[str](4)
+    match await tx.send("hello"):
+        Ok(_) => pass
+        Err(err) => println(err.message())
+    match await rx.recv():
+        Some(text) => println(f"got {text}")
+        None => println("closed")
+    unbounded_tx, unbounded_rx = unbounded_channel[int]()
+    match await unbounded_tx.send(3):
+        Ok(_) => pass
+        Err(err) => println(err.message())
+    match await unbounded_rx.recv():
+        Some(value) => println(f"got {value}")
+        None => println("closed")
+    once_tx, once_rx = oneshot[bool]()
+    match once_tx.send(true):
+        Ok(_) => pass
+        Err(value) => println(f"dropped {value}")
+    match await once_rx.recv():
+        Ok(value) => println(f"got {value}")
+        Err(err) => println(err.message())

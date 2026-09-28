@@ -649,7 +649,16 @@ impl TypeChecker {
                         self.check_call_args(args);
                         return Some(ResolvedType::Str);
                     }
-                    self.check_expr(Self::call_arg_expr(&args[0]));
+                    // The value is written as JSON, so its type needs a `Serialize` form.
+                    let arg_expr = Self::call_arg_expr(&args[0]);
+                    let arg_ty = self.check_expr(arg_expr);
+                    if let Some(holder) = self.value_type_without_serialize_form(&arg_ty) {
+                        self.errors.push(errors::json_stringify_value_lacks_serialize(
+                            &arg_ty.to_string(),
+                            &holder,
+                            arg_expr.span,
+                        ));
+                    }
                     Some(ResolvedType::Str)
                 }
             };

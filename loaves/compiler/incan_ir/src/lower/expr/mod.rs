@@ -3091,7 +3091,20 @@ impl AstLowering {
                             .to_string(),
                         span: expr_span.into(),
                     })?;
-                let target = self.lower_expr_spanned(&partial.target)?;
+                // A model, class or newtype named as the target is its constructor: the closure constructs the value
+                // the way a direct call does, instead of calling the type name.
+                let constructor_target = match &partial.target.node {
+                    ast::Expr::Ident(name)
+                        if self.ident_kind_for_lowering(&partial.target) == Some(IdentKind::TypeName) =>
+                    {
+                        Some(name.clone())
+                    }
+                    _ => None,
+                };
+                let target = match constructor_target {
+                    Some(_) => None,
+                    None => Some(self.lower_expr_spanned(&partial.target)?),
+                };
 
                 // Evaluate every preset exactly once before the closure is constructed. The generated closure is
                 // `move`, so a later mutation of the source local cannot change an omitted preset argument.
@@ -3213,16 +3226,27 @@ impl AstLowering {
                         expr: value,
                     });
                 }
-                let body = TypedExpr::new(
-                    IrExprKind::Call {
-                        func: Box::new(target),
-                        type_args: self.lower_call_site_type_args(expr_span, &partial.type_args),
-                        args: forward_args,
-                        callable_signature: None,
-                        canonical_path: None,
-                    },
-                    signature.return_type.clone(),
-                );
+                let body = match (constructor_target, target) {
+                    (Some(constructor), _) => {
+                        self.local_partial_constructor_body(&constructor, forward_args, &signature.return_type)?
+                    }
+                    (None, Some(target)) => TypedExpr::new(
+                        IrExprKind::Call {
+                            func: Box::new(target),
+                            type_args: self.lower_call_site_type_args(expr_span, &partial.type_args),
+                            args: forward_args,
+                            callable_signature: None,
+                            canonical_path: None,
+                        },
+                        signature.return_type.clone(),
+                    ),
+                    (None, None) => {
+                        return Err(LoweringError {
+                            message: "Partial callable target was neither a constructor nor lowered".to_string(),
+                            span: partial.target.span.into(),
+                        });
+                    }
+                };
                 let closure = TypedExpr::new(
                     IrExprKind::Closure {
                         params: closure_params.clone(),
@@ -3250,6 +3274,56 @@ impl AstLowering {
             }
         };
         Ok(TypedExpr::new(kind, ty))
+    }
+
+    /// Build the construction a local partial of a model, class or newtype constructor forwards to.
+    ///
+    /// Each forwarded argument, a closure parameter or its preset, is bound to a temporary of the closure body, and the
+    /// constructor is lowered as a call naming each parameter by its temporary, so the value is constructed exactly as
+    /// a direct call constructs it (a newtype's checks included).
+    fn local_partial_constructor_body(
+        &mut self,
+        constructor: &str,
+        forward_args: Vec<IrCallArg>,
+        return_type: &IrType,
+    ) -> Result<TypedExpr, LoweringError> {
+        let mut stmts = Vec::with_capacity(forward_args.len());
+        let mut args = Vec::with_capacity(forward_args.len());
+        for arg in forward_args {
+            let Some(parameter) = arg.name else {
+                return Err(LoweringError {
+                    message: format!("Partial constructor '{constructor}' forwards an unnamed argument"),
+                    span: ast::Span::default().into(),
+                });
+            };
+            let temporary = format!("__incan_partial_arg_{parameter}");
+            let ty = arg.expr.ty.clone();
+            self.define_local_binding(temporary.clone(), ty.clone(), false);
+            stmts.push(IrStmt::new(IrStmtKind::Let {
+                name: temporary.clone(),
+                ty,
+                type_annotation: None,
+                mutability: Mutability::Immutable,
+                value: arg.expr,
+            }));
+            args.push(ast::CallArg::Named(
+                Spanned::new(parameter, ast::Span::default()),
+                Spanned::new(ast::Expr::Ident(temporary), ast::Span::default()),
+            ));
+        }
+        let (construction, constructed_ty) =
+            self.lower_constructor_call(constructor, &[], &args, ast::Span::default())?;
+        let ty = match constructed_ty {
+            IrType::Unknown => return_type.clone(),
+            known => known,
+        };
+        Ok(TypedExpr::new(
+            IrExprKind::Block {
+                stmts,
+                value: Some(Box::new(TypedExpr::new(construction, ty.clone()))),
+            },
+            ty,
+        ))
     }
 
     /// Recursively lower every expression hole nested inside one embedded-fragment node, appending each lowered

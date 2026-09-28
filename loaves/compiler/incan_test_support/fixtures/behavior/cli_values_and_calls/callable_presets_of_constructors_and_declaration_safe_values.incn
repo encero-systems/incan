@@ -1,0 +1,77 @@
+# behavior: a local partial of a model, class or newtype constructor builds the value with its presets as overridable defaults, and top-level presets of a negative number, an imported const, a module-qualified const and tuple and set literals apply at each call
+# retires: loaves/compiler/incan_emit/src/tests/partial_preset_emission.rs::local_partials_of_constructors_compile
+# retires: loaves/compiler/incan_emit/src/tests/partial_preset_emission.rs::top_level_presets_of_negative_numbers_tuples_and_sets_compile
+# expect-stdout:
+#   bronze orders delta
+#   bronze orders csv
+#   1 2
+#   UserId(7) UserId(8)
+#   UserId(9)
+#   -6
+#   65537
+#   65537
+#   1
+#   3
+#   0.5
+
+from std import hash
+from std.hash import DEFAULT_CHUNK_SIZE
+
+model Reader:
+    layer: str
+    format: str
+    path: str
+
+
+class Counter:
+    pub start: int
+    pub step: int
+
+
+type UserId = newtype int
+
+
+def scale(k: int, n: int) -> int:
+    return k * n
+
+
+def shift(by: float, x: float) -> float:
+    return x + by
+
+
+def pair_sum(p: tuple[int, int], n: int) -> int:
+    return p[0] + p[1] + n
+
+
+def count_tags(tags: set[str], extra: int) -> int:
+    return len(tags) + extra
+
+
+negative = partial scale(k=-2)
+negative_float = partial shift(by=-0.5)
+chunked = partial scale(k=DEFAULT_CHUNK_SIZE)
+qualified = partial scale(k=hash.DEFAULT_CHUNK_SIZE)
+paired = partial pair_sum(p=(1, -2))
+tagged = partial count_tags(tags={"a", "b"})
+default_user = partial UserId(value=9)
+
+
+def main() -> None:
+    layer = "bronze"
+    make = partial Reader(layer=layer, format="delta")
+    reader = make(path="orders")
+    println(f"{reader.layer} {reader.path} {reader.format}")
+    csv = make(path="orders", format="csv")
+    println(f"{csv.layer} {csv.path} {csv.format}")
+    counter = partial Counter(step=2)
+    c = counter(start=1)
+    println(f"{c.start} {c.step}")
+    user = partial UserId(value=7)
+    println(f"{user():?} {user(value=8):?}")
+    println(f"{default_user():?}")
+    println(negative(n=3))
+    println(chunked(n=1) + 1)
+    println(qualified(n=1) + 1)
+    println(paired(n=2))
+    println(tagged(extra=1))
+    println(negative_float(x=1.0))

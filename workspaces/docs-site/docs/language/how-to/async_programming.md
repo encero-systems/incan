@@ -328,9 +328,6 @@ async def cooperative_loop() -> None:
 
 Channels enable safe message passing between concurrent tasks. They're the primary way to communicate between async tasks without shared mutable state.
 
-!!! warning "Current compiler limitation"
-    The channel declarations exist in `std.async.channel`, but the current compiler rejects the documented typed constructor and imported `Sender`/`Receiver` methods. Treat the channel material below as the intended library contract, not as a currently runnable authoring path. Task spawning, joining, and timeouts are runnable in [Build an asynchronous worker pipeline](../tutorials/async_worker_pipeline.md). Call the constructors without type arguments, such as `channel(32)`, and let subsequent sends, receives, or annotations infer `T`.
-
 ### MPSC Channel (Multi-Producer, Single-Consumer)
 
 **MPSC** stands for **M**ulti-**P**roducer, **S**ingle-**C**onsumer:

@@ -128,6 +128,9 @@ pub struct OwnedLoopItems {
     pub names: HashSet<String>,
 }
 
+/// The name of a newtype constructor's one parameter, which a partial of the constructor presets by name.
+pub(in crate::lower) const NEWTYPE_CONSTRUCTOR_PARAM: &str = "value";
+
 /// AST to IR lowering context.
 ///
 /// Maintains state needed during the lowering pass:
@@ -1466,7 +1469,7 @@ impl AstLowering {
             ast::Param {
                 is_mut: false,
                 kind: ast::ParamKind::Normal,
-                name: "value".to_string(),
+                name: NEWTYPE_CONSTRUCTOR_PARAM.to_string(),
                 ty: nt.underlying.clone(),
                 default: None,
             },

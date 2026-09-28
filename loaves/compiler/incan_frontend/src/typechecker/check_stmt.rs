@@ -386,31 +386,25 @@ impl TypeChecker {
 
                 // Check each target expression - must be a valid lvalue
                 for (i, target) in assign.targets.iter().enumerate() {
-                    let target_ty = self.check_expr(target);
                     let expected_ty = element_types.get(i).cloned().unwrap_or(ResolvedType::Unknown);
+
+                    // A name target follows the rule `name = value` follows, as in a tuple unpacking: a bound name is
+                    // reassigned (it must be `mut`, and a caller-visible `mut` parameter is changed in place, never
+                    // rebound, #1773), and a name with no binding is declared with its element's type.
+                    if let Expr::Ident(name) = &target.node {
+                        self.check_unannotated_assignment_target(
+                            name,
+                            BindingKind::Inferred,
+                            expected_ty,
+                            target.span,
+                            assign.value.span,
+                        );
+                        continue;
+                    }
+                    let target_ty = self.check_expr(target);
 
                     // Check that target is a valid lvalue
                     match &target.node {
-                        Expr::Ident(name) => {
-                            self.record_write_target_identity(target.span, name);
-                            // Check that the variable is mutable; a caller-visible `mut` parameter is changed in
-                            // place, never rebound (#1773).
-                            if self.refuse_caller_visible_mut_param_rebinding(name, target.span) {
-                                // Reported by the refusal itself.
-                            } else if let Some(var_info) = self.lookup_local_variable_info(name)
-                                && !var_info.is_mutable
-                            {
-                                self.errors.push(errors::mutation_without_mut(name, target.span));
-                            } else if let Some(static_info) = self.lookup_static_info(name) {
-                                if static_info.is_imported {
-                                    self.errors
-                                        .push(errors::imported_static_reassignment_not_allowed(name, target.span));
-                                }
-                            } else if self.const_decls.contains_key(name) {
-                                self.errors
-                                    .push(errors::const_reassignment_suggests_static(name, target.span));
-                            }
-                        }
                         Expr::Index(_, _) | Expr::Field(_, _) => {
                             // Index and field expressions are valid lvalues; type compatibility is checked below.
                             // A place rooted at the receiver is a write through `self` like any other (#1723).

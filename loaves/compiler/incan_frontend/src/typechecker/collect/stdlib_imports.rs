@@ -3791,6 +3791,18 @@ impl TypeChecker {
                     .map(|item| Self::checked_preset_value_from_manifest(item, imported_type_aliases))
                     .collect::<Option<Vec<_>>>()?,
             ),
+            PresetValueExport::Set(values) => CheckedPresetValue::Set(
+                values
+                    .iter()
+                    .map(|item| Self::checked_preset_value_from_manifest(item, imported_type_aliases))
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            PresetValueExport::Tuple(values) => CheckedPresetValue::Tuple(
+                values
+                    .iter()
+                    .map(|item| Self::checked_preset_value_from_manifest(item, imported_type_aliases))
+                    .collect::<Option<Vec<_>>>()?,
+            ),
             PresetValueExport::Dict(entries) => CheckedPresetValue::Dict(
                 entries
                     .iter()
@@ -3853,6 +3865,18 @@ impl TypeChecker {
                     .map(|item| {
                         Self::manifest_preset_value_expr(item, imported_type_aliases, span).map(ListEntry::Element)
                     })
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            PresetValueExport::Set(values) => Expr::Set(
+                values
+                    .iter()
+                    .map(|item| Self::manifest_preset_value_expr(item, imported_type_aliases, span))
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            PresetValueExport::Tuple(values) => Expr::Tuple(
+                values
+                    .iter()
+                    .map(|item| Self::manifest_preset_value_expr(item, imported_type_aliases, span))
                     .collect::<Option<Vec<_>>>()?,
             ),
             PresetValueExport::Dict(entries) => Expr::Dict(

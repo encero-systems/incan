@@ -339,7 +339,7 @@
     },
     "loaves/compiler/incan_driver/src/cargo_policy.rs": {
       "disposition": "retire",
-      "notes": "Two tests die with the Cargo command line (arg ordering, `INCAN_CARGO_ARGS`); the `INCAN_LOCKED/FROZEN/OFFLINE` env defaults, the `--no-locked/--no-offline/--no-frozen` negations and frozen ⇒ locked+offline survive as Oven lock-policy inputs (maintainer ruling, 2026-09-20) and are twinned by re-point CLI tests.",
+      "notes": "Two tests die with the Cargo command line (arg ordering, `INCAN_CARGO_ARGS`); the `INCAN_LOCKED/FROZEN/OFFLINE` env defaults, the `--no-locked/--no-offline/--no-frozen` negations and frozen \u21d2 locked+offline survive as Oven lock-policy inputs (maintainer ruling, 2026-09-20) and are twinned by re-point CLI tests.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -354,7 +354,7 @@
         },
         "cargo_policy_resolves_env_defaults_and_frozen_implication": {
           "twin": "loaves/toolchain/incan-cli/tests/cli_lock_policy_tests.rs::build_lock_policy_env_defaults_refuse_a_missing_lock",
-          "notes": "`INCAN_LOCKED=1` and `INCAN_FROZEN=1` (frozen ⇒ locked) refuse a project without `oven.lock` and create none; the `INCAN_CARGO_ARGS` half dies with the Cargo command line."
+          "notes": "`INCAN_LOCKED=1` and `INCAN_FROZEN=1` (frozen \u21d2 locked) refuse a project without `oven.lock` and create none; the `INCAN_CARGO_ARGS` half dies with the Cargo command line."
         },
         "cargo_policy_uses_cli_extra_args_before_env_extra_args": {
           "twin": "dies",
@@ -552,7 +552,7 @@
       "tests": {
         "explicitly_baked_project_reuses_release_json_authority_without_cargo": {
           "twin": "dies",
-          "dies": "the `sealed project output … no longer matches this source tree` warning after an edit dies (maintainer ruling, 2026-09-20: a stale bake is re-baked transparently, no explicit rebake — the DX requirement is recorded on #1142, slice 8, with its re-point CLI test). The other observables are carried: `reused sealed project Loaf` on `build --locked` after a bake by `rfc031_pub_import_integration_tests.rs`; `oven.lock is out of date` after a manifest edit by `cli_workspace_and_lock_tests.rs` and `cli_interop_target_tests.rs`; `incan test tests --fail-on-empty` on a baked `std.json` project (#1056) by no other test — folded into the #1142 requirement as well."
+          "dies": "the `sealed project output \u2026 no longer matches this source tree` warning after an edit dies (maintainer ruling, 2026-09-20: a stale bake is re-baked transparently, no explicit rebake \u2014 the DX requirement is recorded on #1142, slice 8, with its re-point CLI test). The other observables are carried: `reused sealed project Loaf` on `build --locked` after a bake by `rfc031_pub_import_integration_tests.rs`; `oven.lock is out of date` after a manifest edit by `cli_workspace_and_lock_tests.rs` and `cli_interop_target_tests.rs`; `incan test tests --fail-on-empty` on a baked `std.json` project (#1056) by no other test \u2014 folded into the #1142 requirement as well."
         }
       },
       "twin": "dies"
@@ -566,7 +566,7 @@
       "tests": {
         "a_package_projects_a_call_into_its_own_sibling_module": {
           "twin": "dies",
-          "dies": "asserts the RFC 120 `__incan_v1_` projected wrapper name, not the source spelling `c.bumped()`, in a package's generated `lib.rs` (#1174 emitted-name recoverability); the emitted-name projection and the legacy `incan_ir` lowering that required it die with generated Rust. The package-calls-its-own-sibling behavior is reachable only through a `--lib`/SDK component build, which is not a run the fixture format can express. The surviving observable — a package whose library calls a sibling module's method builds — is carried by the SDK provider prewarm every suite root performs."
+          "dies": "asserts the RFC 120 `__incan_v1_` projected wrapper name, not the source spelling `c.bumped()`, in a package's generated `lib.rs` (#1174 emitted-name recoverability); the emitted-name projection and the legacy `incan_ir` lowering that required it die with generated Rust. The package-calls-its-own-sibling behavior is reachable only through a `--lib`/SDK component build, which is not a run the fixture format can express. The surviving observable \u2014 a package whose library calls a sibling module's method builds \u2014 is carried by the SDK provider prewarm every suite root performs."
         },
         "generated_application_artifact_matches_baseline": {
           "twin": "dies",
@@ -3161,7 +3161,7 @@
     },
     "loaves/compiler/incan_emit/src/tests/emitted_spellings.rs": {
       "disposition": "retire",
-      "notes": "asserts the Rust text emission gives keyword identifiers, a program type named like a runtime surface type, `set()` over a generator and `const` `FrozenDict` reads; generated Rust dies with #654.",
+      "notes": "asserts the Rust text emission gives keyword identifiers, a program type named like a runtime surface type, `set()` over a generator, `const` `FrozenDict` reads and an explicit channel element type; generated Rust dies with #654.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -3169,6 +3169,10 @@
         "const_frozen_dict_reads_use_the_frozen_lookup_issue1757": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/const_frozen_collection_reads.incn",
           "notes": "Asserts generated Rust text; the behavior is carried by the named fixture (#1757)."
+        },
+        "explicit_channel_element_type_is_spelled_on_the_call": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/channel_constructors_with_an_explicit_element_type.incn",
+          "notes": "Asserts generated Rust text; the behavior, values sent and received through channels built with an explicit element type, is carried by the named fixture."
         },
         "host_keyword_identifiers_are_raw_in_every_position_issue1775": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_modules_and_declarations/host_keyword_identifiers.incn",
@@ -3375,6 +3379,24 @@
       },
       "twin": ""
     },
+    "loaves/compiler/incan_emit/src/tests/partial_preset_emission.rs": {
+      "disposition": "retire",
+      "notes": "compiles the Rust text emission gives a local partial of a model, class or newtype constructor and top-level presets of negative numbers, tuple and set literals and a newtype constructor; generated Rust dies with #654.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "local_partials_of_constructors_compile": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/callable_presets_of_constructors_and_declaration_safe_values.incn",
+          "notes": "Asserts that generated Rust compiles; the behavior, local constructor partials building values with overridable presets, is carried by the named fixture."
+        },
+        "top_level_presets_of_negative_numbers_tuples_and_sets_compile": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/callable_presets_of_constructors_and_declaration_safe_values.incn",
+          "notes": "Asserts that generated Rust compiles; the behavior, negative, tuple, set and newtype-constructor presets applied at each call, is carried by the named fixture."
+        }
+      },
+      "twin": ""
+    },
     "loaves/compiler/incan_emit/src/tests/power_grouping_emission.rs": {
       "disposition": "retire",
       "notes": "asserts the generated Rust text of a prefix operator over a power (#1786); retires with the Rust-source backend.",
@@ -3411,6 +3433,20 @@
         "generator_adapters_and_consumers_compile": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/snapshots_stdlib/generator_iterator_surface.incn",
           "notes": "Asserts that generated Rust compiles; the behavior, every adapter and consumer over a generator printing its result, is carried by the named fixture."
+        }
+      },
+      "twin": ""
+    },
+    "loaves/compiler/incan_emit/src/tests/record_pattern_emission.rs": {
+      "disposition": "retire",
+      "notes": "compiles the Rust text emission gives record patterns over a generic model and class and a literal payload pattern over a generic enum; generated Rust dies with #654.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "tests": {
+        "record_patterns_over_a_generic_model_and_class_compile": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/record_patterns_over_generic_models_and_classes.incn",
+          "notes": "Asserts that generated Rust compiles; the behavior, each arm selected by the instantiated fields and payloads, is carried by the named fixture."
         }
       },
       "twin": ""
@@ -3541,7 +3577,7 @@
     },
     "loaves/compiler/incan_emit/src/tests/tuple_assignment_emission.rs": {
       "disposition": "retire",
-      "notes": "asserts the generated Rust text of multi-target assignments that write existing places (#1798, #1799, #1806); retires with the Rust-source backend.",
+      "notes": "asserts the generated Rust text of multi-target assignments that write existing places or declare a name beside a place (#1798, #1799, #1806); retires with the Rust-source backend.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -3569,6 +3605,10 @@
         "chained_targets_of_equivalent_types_share_one_temporary_issue1806": {
           "notes": "Asserts `list[int]` and `list[i64]` targets read one `Vec<i64>` temporary; the fixture assigns `empty()` to both and prints their lengths.",
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/chained_assignment_reassigns_names_inside_a_loop.incn"
+        },
+        "tuple_assignment_declares_an_unbound_name_beside_a_place": {
+          "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_values_and_calls/tuple_assignment_declares_a_name_beside_a_place.incn",
+          "notes": "Asserts the name beside a place is declared from the temporary and the Rust compiles; the fixture prints the declared names, in a loop body too."
         },
         "tuple_assignment_writes_each_field_and_element_issue1798": {
           "notes": "Asserts the emitted writes of a field swap, a list-element swap and a field beside a name; the fixture runs the same shapes and prints the swapped values.",
@@ -5357,7 +5397,7 @@
         },
         "std_root_prelude_trait_import_is_refused": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/cli_refusals/refused_prelude_trait_imported_from_the_std_root.incn",
-          "notes": "twinned by the test's program as a refusal: the std root exports only its submodules, so `from std import Debug, Eq, Clone, …` is refused at check time (INCAN-I0001) rather than emitting re-exports no standard-library facade defines (E0432) (#1767)."
+          "notes": "twinned by the test's program as a refusal: the std root exports only its submodules, so `from std import Debug, Eq, Clone, \u2026` is refused at check time (INCAN-I0001) rather than emitting re-exports no standard-library facade defines (E0432) (#1767)."
         },
         "std_serde_prelude_import_snapshot": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections/std_serde_prelude_surface.incn",
@@ -5405,7 +5445,7 @@
         },
         "string_len_spelling_emit_shared_runtime_semantics": {
           "twin": "loaves/compiler/incan_test_support/fixtures/behavior/codegen_models_and_collections/string_length_counts_scalars.incn",
-          "notes": "twinned by a program counting the scalars of `héllo` through `len()` and `.len()`; the `str_len` helper spelling dies."
+          "notes": "twinned by a program counting the scalars of `h\u00e9llo` through `len()` and `.len()`; the `str_len` helper spelling dies."
         }
       },
       "twin": ""
@@ -6095,6 +6135,14 @@
     "loaves/compiler/incan_frontend/src/typechecker/tests/models_enums_and_newtypes.rs": {
       "disposition": "keep",
       "notes": "split of typechecker/tests.rs; typechecker, Body IR, library manifests, provider plans; no emit/driver dependency.",
+      "owner": 1561,
+      "split_required": false,
+      "split_target": "",
+      "twin": ""
+    },
+    "loaves/compiler/incan_frontend/src/typechecker/tests/multi_target_assignments.rs": {
+      "disposition": "keep",
+      "notes": "typechecker tests of tuple assignments that mix places and names; no emit/driver dependency.",
       "owner": 1561,
       "split_required": false,
       "split_target": "",
@@ -9128,13 +9176,13 @@
           "disposition": "retire",
           "twin": "dies",
           "notes": "libtest harness of the generated test crate",
-          "dies": "merges `[dependencies]` and `[dev-dependencies]` into the generated test-runner crate's Cargo dependency set (`promoted_oven_test_dependencies`); the generated crate dies with #654. Its user-visible half — a test file using a `[rust-dev-dependencies]` crate through `incan test` — is untwinned: no CLI test uses `rust-dev-dependencies`; it goes with #1337's interop spec (slice 7)."
+          "dies": "merges `[dependencies]` and `[dev-dependencies]` into the generated test-runner crate's Cargo dependency set (`promoted_oven_test_dependencies`); the generated crate dies with #654. Its user-visible half \u2014 a test file using a `[rust-dev-dependencies]` crate through `incan test` \u2014 is untwinned: no CLI test uses `rust-dev-dependencies`; it goes with #1337's interop spec (slice 7)."
         },
         "merge_test_runner_dependencies_unifies_normal_and_dev_features": {
           "disposition": "retire",
           "twin": "dies",
           "notes": "libtest harness of the generated test crate",
-          "dies": "unions Cargo feature lists and refuses a version conflict inside the generated test-runner crate's Cargo dependency set; the generated crate dies with #654. Its user-visible half — a normal/dev version conflict surfacing as an `incan test` failure naming the crate — is untwinned and goes with #1337's interop spec (slice 7)."
+          "dies": "unions Cargo feature lists and refuses a version conflict inside the generated test-runner crate's Cargo dependency set; the generated crate dies with #654. Its user-visible half \u2014 a normal/dev version conflict surfacing as an `incan test` failure naming the crate \u2014 is untwinned and goes with #1337's interop spec (slice 7)."
         },
         "native_test_outputs_do_not_alias_distinct_execution_groups": {
           "disposition": "retire",

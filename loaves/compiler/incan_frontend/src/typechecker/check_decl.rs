@@ -2476,11 +2476,21 @@ impl TypeChecker {
     }
 
     /// Return whether a module-level partial preset can be represented without executing user code.
-    fn is_declaration_safe_partial_preset(&self, expr: &Spanned<Expr>) -> bool {
+    ///
+    /// RFC 084 admits a scalar literal (a negated number literal included), a const named by identifier or by a
+    /// qualified path, a payload-free enum variant path, a list, dict, set or tuple literal of such values, and a model
+    /// literal of a known model.
+    fn is_declaration_safe_partial_preset(&mut self, expr: &Spanned<Expr>) -> bool {
         match &expr.node {
             Expr::Literal(_) => true,
+            Expr::Unary(UnaryOp::Neg, operand) => {
+                matches!(operand.node, Expr::Literal(Literal::Int(_) | Literal::Float(_)))
+            }
             Expr::Ident(_) | Expr::Field(_, _) => self.is_declaration_safe_const_or_variant_path(expr),
             Expr::Paren(inner) => self.is_declaration_safe_partial_preset(inner),
+            Expr::Tuple(items) | Expr::Set(items) => {
+                items.iter().all(|item| self.is_declaration_safe_partial_preset(item))
+            }
             Expr::List(entries) => entries.iter().all(|entry| match entry {
                 ListEntry::Element(value) => self.is_declaration_safe_partial_preset(value),
                 ListEntry::Spread(_) => false,
@@ -2525,13 +2535,22 @@ impl TypeChecker {
     }
 
     /// Return whether a top-level partial preset path names a const or a zero-argument enum variant.
-    fn is_declaration_safe_const_or_variant_path(&self, expr: &Spanned<Expr>) -> bool {
+    ///
+    /// A const is one this module declares, one imported by name (its binding carries the const's identity), or one
+    /// read through an imported module (`limits.LIMIT`).
+    fn is_declaration_safe_const_or_variant_path(&mut self, expr: &Spanned<Expr>) -> bool {
         match &expr.node {
             Expr::Ident(name) => {
                 self.const_decls.contains_key(name)
-                    || self
-                        .lookup_symbol(name)
-                        .is_some_and(|sym| matches!(sym.kind, SymbolKind::Variant(_)))
+                    || self.symbols.lookup(name).is_some_and(|symbol_id| {
+                        self.symbols
+                            .identity_of(symbol_id)
+                            .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Const)
+                            || self
+                                .symbols
+                                .get(symbol_id)
+                                .is_some_and(|sym| matches!(sym.kind, SymbolKind::Variant(_)))
+                    })
             }
             Expr::Field(base, member) => {
                 if let Expr::Ident(type_name) = &base.node
@@ -2541,7 +2560,12 @@ impl TypeChecker {
                     return info.variants.iter().any(|variant| variant == member)
                         || info.variant_aliases.contains_key(member);
                 }
-                false
+                let Some((_, module_path)) = self.imported_module_for_expr(base) else {
+                    return false;
+                };
+                self.resolve_imported_module_constant_member(&module_path, member)
+                    .and_then(|(_, identity)| identity)
+                    .is_some_and(|identity| identity.kind == SemanticSourceTargetKind::Const)
             }
             _ => false,
         }

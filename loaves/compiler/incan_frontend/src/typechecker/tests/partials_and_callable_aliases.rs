@@ -1132,3 +1132,172 @@ fn a_same_module_public_alias_publishes_its_target_callable_metadata() -> Result
     );
     Ok(())
 }
+
+/// RFC 084 admits scalar literals, consts named by identifier or qualified path, and collection literals as top-level
+/// preset values: a negative number, a const imported from another module, a module-qualified const, and tuple and
+/// set literals of such values are each declaration-safe.
+#[test]
+fn top_level_partial_accepts_negative_numbers_imported_consts_tuples_and_sets() -> Result<(), String> {
+    let source = r#"
+from std import hash
+from std.hash import DEFAULT_CHUNK_SIZE
+
+def scale(k: int, n: int) -> int:
+    return k * n
+
+def shift(by: float, x: float) -> float:
+    return x + by
+
+def pair_sum(p: tuple[int, int], n: int) -> int:
+    return p[0] + p[1] + n
+
+def count_tags(tags: set[str], extra: int) -> int:
+    return len(tags) + extra
+
+negative = partial scale(k=-2)
+negative_float = partial shift(by=-0.5)
+chunked = partial scale(k=DEFAULT_CHUNK_SIZE)
+qualified = partial scale(k=hash.DEFAULT_CHUNK_SIZE)
+paired = partial pair_sum(p=(1, -2))
+tagged = partial count_tags(tags={"a", "b"})
+
+def main() -> None:
+    println(negative(n=3) + chunked(n=1) + qualified(n=1) + paired(n=1) + tagged(extra=1))
+    println(negative_float(x=1.0))
+"#;
+    check_str(source).map_err(|errors| {
+        format!(
+            "declaration-safe presets must check, got: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        )
+    })
+}
+
+/// A const from a sibling module, imported by name or read through its module, is a declaration-safe preset, while a
+/// non-const binding of that module is not.
+#[test]
+fn top_level_partial_accepts_a_const_of_another_module() -> Result<(), String> {
+    let limits = parse_program("pub const LIMIT: int = 3\npub static hits: int = 0\n", "limits module");
+    let accepted = parse_program(
+        r#"
+import limits
+from limits import LIMIT
+
+def scale(k: int, n: int) -> int:
+    return k * n
+
+by_name = partial scale(k=LIMIT)
+by_path = partial scale(k=limits.LIMIT)
+"#,
+        "const preset consumer",
+    );
+    TypeChecker::new()
+        .check_with_imports(&accepted, &[("limits", &limits)])
+        .map_err(|errors| format!("a sibling module's const must be a declaration-safe preset: {errors:?}"))?;
+
+    let refused = parse_program(
+        r#"
+from limits import hits
+
+def scale(k: int, n: int) -> int:
+    return k * n
+
+by_static = partial scale(k=hits)
+"#,
+        "static preset consumer",
+    );
+    let errors = TypeChecker::new()
+        .check_with_imports(&refused, &[("limits", &limits)])
+        .err()
+        .ok_or("a static of another module is not a declaration-safe preset")?;
+    if errors
+        .iter()
+        .any(|error| error.message.contains("must be declaration-safe"))
+    {
+        Ok(())
+    } else {
+        Err(format!("expected the declaration-safe refusal, got: {errors:?}"))
+    }
+}
+
+/// A public partial publishes a negative number and tuple and set literals as preset metadata.
+#[test]
+fn public_partial_exports_negative_tuple_and_set_presets() -> Result<(), String> {
+    let source = r#"
+pub def configure(offset: int, ratio: float, pair: tuple[int, str], tags: set[str]) -> int:
+    return offset
+
+pub tuned = partial configure(offset=-2, ratio=-0.5, pair=(1, "a"), tags={"x"})
+"#;
+    let ast = parse_program(source, "public partial presets");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
+    let exports = collect_checked_public_exports(&ast, &checker);
+    let tuned = exports
+        .iter()
+        .find_map(|export| match &export.kind {
+            CheckedExportKind::Partial(partial) if partial.name == "tuned" => Some(partial),
+            _ => None,
+        })
+        .ok_or_else(|| format!("missing partial export: {exports:?}"))?;
+    let value = |name: &str| {
+        tuned
+            .presets
+            .iter()
+            .find(|preset| preset.name == name)
+            .map(|preset| preset.value.clone())
+    };
+    assert_eq!(value("offset"), Some(CheckedPresetValue::Int(-2)));
+    assert_eq!(value("ratio"), Some(CheckedPresetValue::Float(-0.5)));
+    assert_eq!(
+        value("pair"),
+        Some(CheckedPresetValue::Tuple(vec![
+            CheckedPresetValue::Int(1),
+            CheckedPresetValue::String("a".to_string()),
+        ]))
+    );
+    assert_eq!(
+        value("tags"),
+        Some(CheckedPresetValue::Set(vec![CheckedPresetValue::String(
+            "x".to_string()
+        )]))
+    );
+    Ok(())
+}
+
+/// RFC 084 makes constructor presets first-class: a local partial expression over a model, class or newtype
+/// constructor is a callable of the constructor's parameters with the presets as overridable defaults.
+#[test]
+fn local_partial_expression_accepts_model_class_and_newtype_constructors() -> Result<(), String> {
+    let source = r#"
+model Reader:
+    layer: str
+    format: str
+    path: str
+
+class Counter:
+    pub start: int
+    pub step: int
+
+type UserId = newtype int
+
+def main() -> None:
+    layer = "bronze"
+    make = partial Reader(layer=layer, format="delta")
+    reader = make(path="orders")
+    csv = make(path="orders", format="csv")
+    counter = partial Counter(step=2)
+    c: Counter = counter(start=1)
+    user = partial UserId(value=7)
+    u: UserId = user()
+    println(f"{reader.path} {csv.format} {c.step}")
+"#;
+    check_str(source).map_err(|errors| {
+        format!(
+            "a local partial of a constructor must check, got: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        )
+    })
+}

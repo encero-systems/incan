@@ -1403,3 +1403,73 @@ def early(n: int) -> int:
     );
     Ok(())
 }
+
+/// A record pattern over a generic model or class names the subject's type, and each named field's sub-pattern is
+/// checked against that field under the subject's type arguments; a pattern naming every field, or leaving the rest
+/// to match any value, covers the subject.
+#[test]
+fn record_pattern_over_a_generic_model_or_class_checks_the_instantiated_fields() -> Result<(), String> {
+    check_str(
+        r#"
+model Box[T]:
+    value: T
+    label: str
+
+class Pair[A, B]:
+    pub first: A
+    pub second: B
+
+def unbox(b: Box[int]) -> int:
+    match b:
+        Box(value=0) => return -1
+        Box(value=v, label="x") => return v
+        Box(value=v) => return v + 1
+
+def first(p: Pair[str, int]) -> str:
+    match p:
+        Pair(second=2, first=f) => return f
+        Pair(first=f) => return f
+"#,
+    )
+    .map_err(|errors| {
+        format!(
+            "record patterns over a generic model and class must check, got: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        )
+    })
+}
+
+/// A record pattern over a generic model holds its fields to their instantiated types and refuses a field the model
+/// does not declare and a positional sub-pattern, as over a model without type parameters.
+#[test]
+fn record_pattern_over_a_generic_model_refuses_mistyped_unknown_and_positional_fields() -> Result<(), String> {
+    for (arm, needle) in [
+        ("Box(value=\"a\")", "Pattern type mismatch"),
+        ("Box(size=1)", "size"),
+        ("Box(1)", "Box"),
+    ] {
+        let source = format!(
+            "model Box[T]:\n    value: T\n\ndef unbox(b: Box[int]) -> int:\n    match b:\n        {arm} => return 1\n        _ => return 0\n"
+        );
+        let errors = match check_str(&source) {
+            Ok(()) => return Err(format!("`{arm}` over Box[int] must be refused")),
+            Err(errors) => errors,
+        };
+        if !errors.iter().any(|error| error.message.contains(needle)) {
+            return Err(format!(
+                "expected `{arm}` to be refused naming `{needle}`, got: {:?}",
+                errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+            ));
+        }
+        if errors
+            .iter()
+            .any(|error| error.message.contains("does not resolve for this match"))
+        {
+            return Err(format!(
+                "`{arm}` must resolve as a record pattern of Box, got: {:?}",
+                errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+            ));
+        }
+    }
+    Ok(())
+}

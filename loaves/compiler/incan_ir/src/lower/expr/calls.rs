@@ -4094,6 +4094,24 @@ impl AstLowering {
                     IrType::List(Box::new(IrType::Unknown)),
                 ))
             }
+            CheckedPresetValue::Set(values) => {
+                let items = values
+                    .iter()
+                    .map(|value| self.lower_external_partial_preset(library, value))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(TypedExpr::new(
+                    IrExprKind::Set(items),
+                    IrType::Set(Box::new(IrType::Unknown)),
+                ))
+            }
+            CheckedPresetValue::Tuple(values) => {
+                let items = values
+                    .iter()
+                    .map(|value| self.lower_external_partial_preset(library, value))
+                    .collect::<Option<Vec<_>>>()?;
+                let item_types = items.iter().map(|item| item.ty.clone()).collect();
+                Some(TypedExpr::new(IrExprKind::Tuple(items), IrType::Tuple(item_types)))
+            }
             CheckedPresetValue::Dict(entries) => {
                 let entries = entries
                     .iter()
@@ -4233,6 +4251,20 @@ impl AstLowering {
                 IrType::Struct(surface_types::as_str(surface_types::SurfaceTypeId::ValidationError).to_string()),
             ));
         }
+
+        // A newtype's constructor parameter, which a partial presets by name, is the newtype's one positional value,
+        // so its construction is the one a positional call makes.
+        let positional_newtype_value;
+        let args = match args {
+            [ast::CallArg::Named(parameter, value)]
+                if parameter.node == super::super::NEWTYPE_CONSTRUCTOR_PARAM
+                    && self.newtype_construction.contains_key(name) =>
+            {
+                positional_newtype_value = [ast::CallArg::Positional(value.clone())];
+                positional_newtype_value.as_slice()
+            }
+            _ => args,
+        };
 
         // Get type if known, otherwise Unknown (will be inferred at emit time)
         let struct_ty = self.struct_names.get(name).cloned().unwrap_or(IrType::Unknown);

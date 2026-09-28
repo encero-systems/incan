@@ -1096,3 +1096,61 @@ def modulo[T with Mod[T, T]](a: T, b: T) -> T:
         "the local trait contract must still refuse `%`: {errors:?}"
     );
 }
+
+/// RFC 054 applies to every generic function, the `std.async.channel` constructors included: `channel[str](4)`,
+/// `unbounded_channel[int]()` and `oneshot[int]()` fix the element type of the channel they return.
+#[test]
+fn channel_constructors_accept_an_explicit_element_type() -> Result<(), String> {
+    check_str(
+        r#"
+import std.async
+from std.async.channel import channel, oneshot, unbounded_channel, OneshotSender, Receiver, Sender
+
+
+async def main() -> None:
+    tx, rx = channel[str](4)
+    unbounded_tx, unbounded_rx = unbounded_channel[int]()
+    once_tx, once_rx = oneshot[int]()
+    sender: Sender[str] = tx
+    receiver: Receiver[str] = rx
+    unbounded_receiver: Receiver[int] = unbounded_rx
+    single: OneshotSender[int] = once_tx
+"#,
+    )
+    .map_err(|errors| {
+        format!(
+            "the channel constructors must take an explicit element type, got: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        )
+    })
+}
+
+/// An explicit element type is checked like any other: a channel end of another element type, and a second type
+/// argument, are refused.
+#[test]
+fn channel_constructor_type_argument_is_checked() {
+    for (body, needle) in [
+        (
+            "    tx, rx = channel[str](4)\n    wrong: Sender[int] = tx\n",
+            "Sender[int]",
+        ),
+        ("    tx, rx = channel[str, int](4)\n", "type argument"),
+    ] {
+        let source = format!(
+            "import std.async\nfrom std.async.channel import channel, Sender\n\n\nasync def main() -> None:\n{body}"
+        );
+        let errors = check_str_err(&source, "the explicit channel type argument must be checked");
+        assert!(
+            errors.iter().any(|error| error.message.contains(needle)),
+            "expected a refusal naming `{needle}` for {body:?}, got: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        );
+        assert!(
+            !errors
+                .iter()
+                .any(|error| error.message.contains("not supported for this call form")),
+            "the explicit type argument itself must be accepted: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        );
+    }
+}
