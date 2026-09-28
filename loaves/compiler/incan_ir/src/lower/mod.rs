@@ -4697,6 +4697,7 @@ mod tests {
     mod method_partial_forwarding;
     mod newtype_automatic_derives;
     mod pattern_alternatives_and_private_rests;
+    mod power_base_type;
     mod pub_method_results;
     mod reexported_projections;
     mod static_method_args;

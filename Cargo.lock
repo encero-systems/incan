@@ -1503,7 +1503,7 @@ dependencies = [
 
 [[package]]
 name = "incan_derive"
-version = "0.6.0-dev.5"
+version = "0.6.0-dev.6"
 dependencies = [
  "quote",
  "syn 2.0.117",
@@ -1699,14 +1699,14 @@ dependencies = [
 
 [[package]]
 name = "incan_std_async"
-version = "0.6.0-dev.5"
+version = "0.6.0-dev.6"
 dependencies = [
  "tokio",
 ]
 
 [[package]]
 name = "incan_std_core"
-version = "0.6.0-dev.5"
+version = "0.6.0-dev.6"
 dependencies = [
  "incan_derive",
  "incan_lang",
@@ -1714,7 +1714,7 @@ dependencies = [
 
 [[package]]
 name = "incan_std_data"
-version = "0.6.0-dev.5"
+version = "0.6.0-dev.6"
 dependencies = [
  "incan_std_core",
  "serde",
@@ -1724,7 +1724,7 @@ dependencies = [
 
 [[package]]
 name = "incan_std_testing"
-version = "0.6.0-dev.5"
+version = "0.6.0-dev.6"
 dependencies = [
  "incan_lang",
  "incan_std_core",
@@ -1732,7 +1732,7 @@ dependencies = [
 
 [[package]]
 name = "incan_std_web"
-version = "0.6.0-dev.5"
+version = "0.6.0-dev.6"
 dependencies = [
  "axum",
  "inventory",
@@ -1780,7 +1780,7 @@ dependencies = [
 
 [[package]]
 name = "incan_web_macros"
-version = "0.6.0-dev.5"
+version = "0.6.0-dev.6"
 dependencies = [
  "axum",
  "incan_std_web",

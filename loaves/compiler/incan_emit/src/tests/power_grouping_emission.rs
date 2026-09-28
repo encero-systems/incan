@@ -42,19 +42,19 @@ def main() -> None:
 "#,
     )?;
     assert!(
-        code.contains("-{(x).pow(2asu32)}"),
+        code.contains("-{(xasi64).pow(2asu32)}"),
         "`-x ** 2` must negate the grouped power:\n{code}"
     );
     assert!(
-        code.contains("(-x).pow(2asu32)"),
+        code.contains("(-xasi64).pow(2asu32)"),
         "`(-x) ** 2` must raise the negated base:\n{code}"
     );
     assert!(
-        code.contains("-{(x).powf("),
+        code.contains("-{(xasf64).powf("),
         "`-x ** 2` over a float must negate the grouped `powf`:\n{code}"
     );
     assert!(
-        code.contains("!{(x).pow(2asu32)}"),
+        code.contains("!{(xasi64).pow(2asu32)}"),
         "`~x ** 2` must invert the grouped power:\n{code}"
     );
     Ok(())

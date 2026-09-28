@@ -1,0 +1,18 @@
+# behavior: compound assignment takes the operator's result type, so an f32 binding keeps f32 through s *= s and an unsigned binding keeps its type through b //= 2
+# expect-stdout:
+#   2.25
+#   4.5
+#   3
+#   1
+
+def main() -> None:
+    mut s: f32 = 1.5
+    s *= s
+    println(s)
+    s += s
+    println(s)
+    mut b: u8 = 7
+    b //= 2
+    println(b)
+    b %= 2
+    println(b)

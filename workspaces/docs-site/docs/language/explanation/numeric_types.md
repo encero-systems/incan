@@ -62,7 +62,7 @@ Generated code keeps that promise by checking an exact value where it enters or 
 
 ## Division keeps Python's meaning
 
-`/` is true division, `//` floors toward negative infinity and `%` takes the sign of the divisor, as Python defines them, so arithmetic ported from Python keeps its results. Division by zero raises `ZeroDivisionError` for floats too, instead of producing NaN or infinity.
+`/` is true division, `//` floors toward negative infinity and `%` takes the sign of the divisor, as Python defines them, so arithmetic ported from Python keeps its results. Division by zero raises `ZeroDivisionError` for integers, unsigned ones included, and for floats too, instead of producing NaN or infinity. The message names the operation: `division by zero` for integer `/`, `integer division or modulo by zero` for integer `//` and `%`, and `float division by zero`, `float floor division by zero` or `float modulo` when an operand is a float.
 
 ## Rust interop follows the same rule
 

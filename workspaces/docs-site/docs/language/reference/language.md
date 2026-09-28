@@ -215,7 +215,7 @@ def main() -> None:
 
 ```
 
-Panics at runtime with `ZeroDivisionError: float division by zero`.
+Panics at runtime with `ZeroDivisionError: division by zero`.
 
 #### `IndexError`
 

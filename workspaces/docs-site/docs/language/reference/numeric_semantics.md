@@ -89,7 +89,9 @@ def main() -> None:
 - A decimal literal at a `decimal[p, s]` destination has at most `s` fractional digits, and its integer part has at most `p - s` digits (an integer part of `0` has none). A literal outside these limits is refused (`INCAN-T0001`). A literal with fewer than `s` fractional digits is accepted.
 - An `int` value is not assignable to a decimal type (`INCAN-T0001`).
 - A decimal value is assignable to a decimal type with at least its scale and at least its number of integer digits (`p - s`). A conversion that loses precision or scale is not implicit.
-- The language defines no arithmetic on decimal values: an arithmetic operator with a decimal operand, unary `-` included, is refused (`INCAN-T0001`). Decimal values compare with `==`, `!=`, `<`, `<=`, `>` and `>=` against decimal values.
+- The language defines no arithmetic on decimal values: an arithmetic operator with a decimal operand, unary `-` included, is refused (`INCAN-T0001`).
+- Decimal values compare by value with `==`, `!=`, `<`, `<=`, `>` and `>=` against decimal values of any precision and scale: `1.5d` equals `1.50d`, and `1.49d` is less than `1.5d`. Equal decimal values are the same set element and the same dict key.
+- A decimal value displays the fractional digits it was written with, whatever the scale of its type: `1.5d` displays as `1.5` and `1.50d` as `1.50`.
 
 ```incan
 def main() -> None:
@@ -97,10 +99,12 @@ def main() -> None:
     amount: numeric[12, 4] = 1000.2500d          # accepted
     whole: decimal[5, 0] = 12345d                # accepted
     wider: decimal[12, 4] = price                # accepted
+    narrower: decimal[5, 2] = price              # refused: 3 integer digits, not 8
     too_precise: decimal[10, 2] = 1.234d         # refused: 3 fractional digits
     too_large: decimal[7, 2] = 123456.78d        # refused: 6 integer digits
     missing_shape: decimal = 1.00d               # refused: bare decimal
     total = price + price                        # refused: no decimal arithmetic
+    cheaper = amount < price                     # accepted
 ```
 
 ## Assignment between numeric types
@@ -198,7 +202,7 @@ A numeric argument to a Rust parameter of a primitive numeric type is accepted w
 - `//` or `%` between two different unsigned types, or between an unsigned operand and an `int` value or a negative integer literal, is refused (`INCAN-T0001`).
 - `&`, `|`, `^`, `<<` and `>>` with a float operand are refused (`INCAN-T0001`).
 - `/` is true division. `//` rounds the quotient toward negative infinity. The result of `%` has the sign of the divisor, and `a == (a // b) * b + (a % b)`.
-- `/`, `//` and `%` with a zero divisor raise `ZeroDivisionError`, for integer and float operands alike.
+- `/`, `//` and `%` with a zero divisor raise `ZeroDivisionError`, for signed integer, unsigned integer and float operands alike.
 - An `int` `//` whose quotient is outside the `int` range, the minimum `int` divided by `-1`, raises `ValueError`. The minimum `int` `% -1` is `0`.
 - `**` binds tighter than a prefix `-` or `~` on its left and looser than one on its right: `-x ** 2` is `-(x ** 2)`, `~x ** 2` is `~(x ** 2)`, and `2 ** -1` is `2 ** (-1)`. The [operator table](language.md#operators) gives the precedence of every operator.
 - `+`, `-` and `*` between two values of one type parameter are accepted. `/`, `//`, `%` and `**` between two values of one type parameter are refused (`INCAN-T0109`), unless the parameter is bounded by a trait that defines the operator's method (`__div__`, `__floordiv__`, `__mod__` or `__pow__`); the operator then resolves through that trait.
@@ -243,6 +247,11 @@ def main() -> None:
     mut n: i8 = 10
     n += 1                                       # refused: n + 1 is an int
     following: Option[i8] = (n + 1).try_resize() # accepted
+    mut s: f32 = 1.5
+    s *= s                                       # accepted
+    s *= 2.0                                     # refused: s * 2.0 is a float
+    mut b: u8 = 7
+    b //= 2                                      # accepted
 ```
 
 ## NaN and infinity
