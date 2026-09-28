@@ -25,6 +25,8 @@ pub struct LoafRegistryAdoption {
     pub checksum: String,
     /// Identity of the exact index line the package was selected from.
     pub index_line_digest: String,
+    /// Content identity of the exact governing manifest bytes.
+    pub manifest_digest: String,
     /// `harvested` or `attested`, as the index line states it for this binding.
     pub status: String,
     /// The bound record.
@@ -69,9 +71,12 @@ impl LoafRegistryAuthority {
             let Some(package) = package else {
                 continue;
             };
+            let Some(platform) = unit.platform.as_ref() else {
+                continue;
+            };
             let selection = RustFactSelection {
                 toolchain: compiler.toolchain.clone(),
-                target: compiler.target.clone(),
+                target: platform.clone(),
                 profile: profile.to_string(),
                 features: unit.effective_features.clone(),
             };
@@ -85,6 +90,7 @@ impl LoafRegistryAuthority {
                     version: package.version.clone(),
                     checksum: package.checksum.clone(),
                     index_line_digest: package.index_line_digest(),
+                    manifest_digest: package.manifest_digest.clone(),
                     status: package.binding_status(&selection),
                     record: record.clone(),
                 },
@@ -136,26 +142,34 @@ impl LoafRegistryAuthority {
         if self.adoptions.is_empty() {
             return None;
         }
-        let lines = self
+        let mut lines = self
             .adoptions
             .values()
             .map(|adoption| {
                 format!(
-                    "{}@{} {} {}\n",
-                    adoption.package, adoption.version, adoption.checksum, adoption.index_line_digest
+                    "{}@{} {} {} {}\n",
+                    adoption.package,
+                    adoption.version,
+                    adoption.checksum,
+                    adoption.index_line_digest,
+                    adoption.manifest_digest
                 )
             })
-            .collect::<String>();
-        Some(oven_model::digest::digest_bytes(lines.as_bytes()))
+            .collect::<Vec<_>>();
+        lines.sort();
+        lines.dedup();
+        Some(oven_model::digest::digest_bytes(lines.concat().as_bytes()))
     }
 
     /// Require the observed build-script facts of one adopted unit to agree with its declaration.
     ///
     /// `facts` is the observation from the unit's build-script edge, or `None` when the unit has none; a declaration
-    /// then must state no `cfg` answer and no generated input.
+    /// then must state no `cfg` answer and no generated input. `has_tool_probes` closes the separate capture channel
+    /// that a registry declaration also cannot represent.
     pub fn check_observation(
         adoption: &LoafRegistryAdoption,
         facts: Option<&OvenLegacyCargoBuildScriptFacts>,
+        has_tool_probes: bool,
     ) -> Result<(), OvenLegacyCargoError> {
         let refuse = |message: String| {
             OvenLegacyCargoError::Plan(format!(
@@ -163,6 +177,21 @@ impl LoafRegistryAuthority {
                 adoption.package, adoption.version
             ))
         };
+        if let Some(facts) = facts {
+            if !facts.environment.is_empty() {
+                return Err(refuse(
+                    "the declaration cannot carry observed rustc-env values".to_string(),
+                ));
+            }
+            if !facts.linked_libraries.is_empty() || !facts.linked_paths.is_empty() {
+                return Err(refuse(
+                    "the declaration cannot carry observed linked libraries or search paths".to_string(),
+                ));
+            }
+        }
+        if has_tool_probes {
+            return Err(refuse("the declaration cannot carry observed tool probes".to_string()));
+        }
         let mut observed_cfg = facts.map(|facts| facts.cfgs.clone()).unwrap_or_default();
         observed_cfg.sort();
         observed_cfg.dedup();

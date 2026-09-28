@@ -5,11 +5,6 @@
 //! immutable root. Both direct Rustc publication and Rust inspection can use this adapter; neither gets a second
 //! graphing path.
 
-#![allow(
-    dead_code,
-    reason = "the source publisher wires this adapter after its selected runtime provider lands"
-)]
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs;

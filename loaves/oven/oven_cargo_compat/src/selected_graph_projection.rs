@@ -3,6 +3,9 @@
 //! Cargo capture observes compiled units, but it intentionally has no authority to assign portable source owners or
 //! authored feature requests. This module joins that observation to publisher-retained physical bindings and emits a
 //! rootless graph. The caller must bind roots with an admitted project or compiler-support authority afterwards.
+//!
+//! TODO(#1561): observation-governed build-script facts are transitional capture evidence. Registry declarations
+//! replace them as the release graph becomes fully governed.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -20,8 +23,8 @@ use oven_rustc::rustc::{
     OvenSelectedRustFacetPath, OvenSelectedRustFacetPurpose, OvenSelectedRustFacetSelection,
     OvenSelectedRustFacetSource, OvenSelectedRustFacetSourceKind, OvenSelectedRustFacetSourceMember,
     OvenSelectedRustFacetTargetSpec, OvenSelectedRustFacetUnit, OvenSelectedRustFacetUnitRole,
-    ValidatedOvenSelectedRustFacetGraph, bind_compiler_support_root_intents, selected_graph_environment_retains_text,
-    selected_graph_sha256, selected_graph_unit_identity,
+    ValidatedOvenSelectedRustFacetGraph, bind_compiler_support_root_intents, selected_graph_sha256,
+    selected_graph_unit_identity,
 };
 use oven_store::OvenReceipt;
 use oven_store::{receipt_with_build_unit_input, receipt_with_compiler_support_root_intent};
@@ -31,6 +34,7 @@ use super::LoafRegistryAuthority;
 use super::{
     OvenLegacyCargoBuildScriptToolProbe, OvenLegacyCargoError, OvenLegacyCargoInspectionSource,
     OvenLegacyCargoSelectedGeneratedOutput, OvenLegacyCargoSelectedUnit, OvenLegacyCargoSelectedUnitCapture,
+    legacy_cargo_selected_unit_capture_identity,
 };
 
 /// Receipt key binding the complete selected build-script closure to a final publisher transaction.
@@ -72,9 +76,8 @@ pub struct OvenLegacyCargoSelectedGeneratedBinding {
 ///
 /// Every `rustc-env` line a build script emitted gets one binding, so the closure digest states what was observed
 /// and what became of it; the binding decides whether the graph carries the value. RFC 119 makes a script's
-/// directives capture provenance rather than unit authority, and the selected graph admits an environment entry
-/// as text only under a registered public compiler fact, so an observation under any other name is retained here
-/// and in the closure digest, and withheld from the graph.
+/// directives capture provenance rather than unit authority, so every observed value is retained here and in the
+/// closure digest but withheld from the graph.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OvenLegacyCargoSelectedEnvironmentBinding {
     /// Exact raw Cargo observation retained only for producer-side comparison.
@@ -310,11 +313,53 @@ struct PolicySourceInventory {
     effective_features: Vec<String>,
 }
 
+/// One inert build-script warning selected by the policy engine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OvenRustPolicyWarning {
+    /// Package name whose discovered script is inert.
+    pub package: String,
+}
+
+/// Strictly parsed selected-policy output consumed at the release bake boundary.
+pub struct OvenRustPolicySelection {
+    /// Source inventories joined to selected physical units.
+    pub inventories: Vec<OvenRuntimeFoundationSourceInventory>,
+    /// One warning per selected package whose build script is inert.
+    pub warnings: Vec<OvenRustPolicyWarning>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PolicyWarning {
+    owner: String,
+    package_root: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PolicySelectedResponse {
+    schema: String,
+    operation: String,
+    status: String,
+    graph_digest: String,
+    #[serde(default)]
+    rounds: Option<serde_json::Value>,
+    #[serde(default)]
+    activations: Option<serde_json::Value>,
+    #[serde(default)]
+    units: Option<serde_json::Value>,
+    #[serde(default)]
+    bindings: Option<serde_json::Value>,
+    inventories: Vec<PolicySourceInventory>,
+    #[serde(default)]
+    warnings: Vec<PolicyWarning>,
+}
+
 /// Join selected policy inventories to every physical unit sharing the exact retained source.
 pub fn runtime_foundation_inventories_from_policy_response(
     selected: &ValidatedOvenSelectedRustFacetGraph,
     response: &serde_json::Value,
-) -> Result<Vec<OvenRuntimeFoundationSourceInventory>, OvenLegacyCargoError> {
+) -> Result<OvenRustPolicySelection, OvenLegacyCargoError> {
     if response.get("schema").and_then(serde_json::Value::as_str) != Some("incan.oven.rust-policy-exchange/5")
         || response.get("operation").and_then(serde_json::Value::as_str) != Some("validate_selected_rust_graph")
         || response.get("status").and_then(serde_json::Value::as_str) != Some("selected")
@@ -354,12 +399,32 @@ pub fn runtime_foundation_inventories_from_policy_response(
             ),
         ));
     }
-    let encoded = response
-        .get("inventories")
-        .cloned()
-        .ok_or_else(|| projection_error("Rust policy inventories", "are absent"))?;
-    let records: Vec<PolicySourceInventory> = serde_json::from_value(encoded)
-        .map_err(|error| projection_error("Rust policy inventories", &error.to_string()))?;
+    let parsed: PolicySelectedResponse = serde_json::from_value(response.clone())
+        .map_err(|error| projection_error("Rust policy response", &error.to_string()))?;
+    if parsed.schema != "incan.oven.rust-policy-exchange/5"
+        || parsed.operation != "validate_selected_rust_graph"
+        || parsed.status != "selected"
+        || parsed.graph_digest != selected.digest()
+    {
+        return Err(projection_error(
+            "Rust policy response",
+            "changed after selection validation",
+        ));
+    }
+    let _ = (&parsed.rounds, &parsed.activations, &parsed.units, &parsed.bindings);
+    let warning_packages = parsed
+        .warnings
+        .into_iter()
+        .map(|warning| {
+            parsed
+                .inventories
+                .iter()
+                .find(|inventory| inventory.owner == warning.owner && inventory.package_root == warning.package_root)
+                .map(|inventory| ((warning.owner, warning.package_root), inventory.package.name.clone()))
+                .ok_or_else(|| projection_error("Rust policy warning", "does not name one selected package"))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let records = parsed.inventories;
     let mut catalogs = BTreeMap::new();
     for record in records {
         let bytes = hex::decode(&record.manifest.bytes_hex)
@@ -455,7 +520,13 @@ pub fn runtime_foundation_inventories_from_policy_response(
             "contain an unselected source",
         ));
     }
-    Ok(inventories)
+    Ok(OvenRustPolicySelection {
+        inventories,
+        warnings: warning_packages
+            .into_values()
+            .map(|package| OvenRustPolicyWarning { package })
+            .collect(),
+    })
 }
 
 /// Return a stable internal ordering key without changing the public wire spelling.
@@ -848,6 +919,21 @@ fn compiler_support_capture(
             .filter_map(|(edge, binding)| map_edge(edge).map(|mapped| (mapped, binding.clone())))
             .collect(),
     };
+    let build_script_tool_probes = capture
+        .build_script_tool_probes
+        .iter()
+        .filter(|probe| {
+            units.iter().any(|consumer| {
+                consumer.dependencies.iter().any(|dependency| {
+                    units.get(dependency.unit_index).is_some_and(|build_unit| {
+                        let facts = dependency.build_script.as_ref().or(build_unit.build_script.as_ref());
+                        facts.is_some_and(|facts| build_script_probe_matches_edge(probe, consumer, build_unit, facts))
+                    })
+                })
+            })
+        })
+        .cloned()
+        .collect();
     let capture = OvenLegacyCargoSelectedUnitCapture {
         roots: roots
             .iter()
@@ -860,7 +946,7 @@ fn compiler_support_capture(
             .collect::<Result<Vec<_>, _>>()?,
         units,
         rustc_invocations_observed: capture.rustc_invocations_observed,
-        build_script_tool_probes: capture.build_script_tool_probes.clone(),
+        build_script_tool_probes,
         compiler: capture.compiler.clone(),
     };
     let root_units = root_units
@@ -1300,7 +1386,7 @@ pub fn legacy_cargo_foundation_projection(
                 .is_some_and(is_build_script_unit)
         });
         if !has_build_script {
-            LoafRegistryAuthority::check_observation(adoption, None)?;
+            LoafRegistryAuthority::check_observation(adoption, None, false)?;
         }
     }
     let mut build_scripts = BTreeMap::new();
@@ -1324,7 +1410,11 @@ pub fn legacy_cargo_foundation_projection(
             // projection carries the declaration: nothing the script emitted outside it, environment included.
             let adoption = authority.adoption(consumer);
             if let Some(adoption) = adoption {
-                LoafRegistryAuthority::check_observation(adoption, Some(facts))?;
+                let has_tool_probes = capture
+                    .build_script_tool_probes
+                    .iter()
+                    .any(|probe| build_script_probe_matches_edge(probe, unit, build_unit, facts));
+                LoafRegistryAuthority::check_observation(adoption, Some(facts), has_tool_probes)?;
             }
             let edge = (consumer, dependency.unit_index);
             let typed_linked = linked_libraries.get(&edge).cloned();
@@ -1395,18 +1485,12 @@ pub fn legacy_cargo_foundation_projection(
 
 /// Bind one observed `rustc-env` line of an observation-governed build-script edge.
 ///
-/// The graph carries the value verbatim only when the validator would retain the name as text; a script's other
-/// variables -- `libm` reemitting its feature list as `CFG_CARGO_FEATURES=["arch", "default"]`, say -- have no
-/// admissible graph form under RFC 119 and are withheld, staying identity-bound through the closure digest. The
-/// classification is the validator's own so the two sides cannot drift; a retained value may still be refused
-/// there on its alphabet, which is the right outcome for a machine-local location under a public name.
-fn observed_environment_binding(name: &str, observed: &str) -> OvenLegacyCargoSelectedEnvironmentBinding {
-    let value = selected_graph_environment_retains_text(name).then(|| OvenSelectedRustFacetEnvironmentValue::Text {
-        value: observed.to_string(),
-    });
+/// Script-emitted environment is capture evidence rather than selected-unit authority under RFC 119. The value is
+/// therefore withheld from the graph and stays identity-bound through the build-script closure digest.
+fn observed_environment_binding(_name: &str, observed: &str) -> OvenLegacyCargoSelectedEnvironmentBinding {
     OvenLegacyCargoSelectedEnvironmentBinding {
         observed_value: observed.to_string(),
-        value,
+        value: None,
     }
 }
 
@@ -1714,17 +1798,23 @@ fn validate_projection_compiler(
 
 /// One canonical capture-to-binding record folded into the final receipt.
 #[derive(Serialize)]
-struct BuildScriptAuthorityRecord<'a> {
-    consumer: usize,
-    build_unit: usize,
-    package: &'a str,
-    cfg: &'a [String],
-    environment: &'a BTreeMap<String, String>,
-    linked_libraries: &'a [String],
-    linked_paths: &'a [String],
-    tool_probes: Vec<&'a OvenLegacyCargoBuildScriptToolProbe>,
-    output: Option<&'a OvenLegacyCargoSelectedGeneratedOutput>,
-    binding: Option<&'a OvenLegacyCargoSelectedBuildScriptBinding>,
+struct BuildScriptAuthorityRecord {
+    consumer: String,
+    build_unit: String,
+    package: String,
+    package_version: String,
+    package_source: Option<String>,
+    facts: serde_json::Value,
+    tool_probes: Vec<PortableBuildScriptToolProbe>,
+    binding: Option<serde_json::Value>,
+}
+
+/// One probe without capture-only package and staging coordinates.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+struct PortableBuildScriptToolProbe {
+    target_context: String,
+    rustc_target: String,
+    digest: String,
 }
 
 /// Digest every selected build-script observation and its typed closure binding in canonical edge order.
@@ -1751,17 +1841,35 @@ pub fn legacy_cargo_build_script_closure_digest(
                 .or(build_unit.build_script.as_ref())
                 .ok_or_else(|| projection_error("selected build-script unit", "has no structured retained facts"))?;
             let tool_probes = build_script_tool_probes(capture, unit, build_unit, facts, &mut probe_matches)?;
+            let mut portable_probes = tool_probes
+                .into_iter()
+                .map(|probe| PortableBuildScriptToolProbe {
+                    target_context: probe.target_context.clone(),
+                    rustc_target: probe.rustc_target.clone(),
+                    digest: probe.digest.clone(),
+                })
+                .collect::<Vec<_>>();
+            portable_probes.sort();
+            let mut portable_facts = serde_json::to_value(facts)
+                .map_err(|error| projection_error("selected build-script closure", &error.to_string()))?;
+            normalize_build_script_staging_paths(&mut portable_facts, &facts.out_dir);
+            let mut portable_binding = bindings
+                .get(&(consumer, dependency.unit_index))
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(|error| projection_error("selected build-script closure", &error.to_string()))?;
+            if let Some(binding) = portable_binding.as_mut() {
+                normalize_build_script_staging_paths(binding, &facts.out_dir);
+            }
             records.push(BuildScriptAuthorityRecord {
-                consumer,
-                build_unit: dependency.unit_index,
-                package: &build_unit.package_id,
-                cfg: &facts.cfgs,
-                environment: &facts.environment,
-                linked_libraries: &facts.linked_libraries,
-                linked_paths: &facts.linked_paths,
-                tool_probes,
-                output: facts.output.as_ref(),
-                binding: bindings.get(&(consumer, dependency.unit_index)),
+                consumer: legacy_cargo_selected_unit_capture_identity(capture, consumer)?,
+                build_unit: legacy_cargo_selected_unit_capture_identity(capture, dependency.unit_index)?,
+                package: build_unit.package.clone(),
+                package_version: build_unit.package_version.clone(),
+                package_source: build_unit.package_source.clone(),
+                facts: portable_facts,
+                tool_probes: portable_probes,
+                binding: portable_binding,
             });
         }
     }
@@ -1771,9 +1879,35 @@ pub fn legacy_cargo_build_script_closure_digest(
             "is not consumed by one exact selected build-script edge",
         ));
     }
-    let bytes = serde_json::to_vec(&("incan.oven.legacy-cargo-build-script-closure/1", records))
+    records.sort_by(|left, right| {
+        (&left.consumer, &left.build_unit, &left.package).cmp(&(&right.consumer, &right.build_unit, &right.package))
+    });
+    let bytes = serde_json::to_vec(&("incan.oven.legacy-cargo-build-script-closure/2", records))
         .map_err(|error| projection_error("selected build-script closure", &error.to_string()))?;
     Ok(oven_rustc::rustc::selected_graph_sha256(&bytes))
+}
+
+/// Replace one capture-only OUT_DIR prefix throughout serialized closure evidence.
+fn normalize_build_script_staging_paths(value: &mut serde_json::Value, out_dir: &Path) {
+    let staging = out_dir.to_string_lossy();
+    match value {
+        serde_json::Value::String(text) => {
+            if !staging.is_empty() && text.contains(staging.as_ref()) {
+                *text = text.replace(staging.as_ref(), "@oven-out-dir");
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                normalize_build_script_staging_paths(value, out_dir);
+            }
+        }
+        serde_json::Value::Object(values) => {
+            for value in values.values_mut() {
+                normalize_build_script_staging_paths(value, out_dir);
+            }
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
+    }
 }
 
 /// Bind every transient compiler probe to one exact captured run-custom-build record.
@@ -1784,21 +1918,33 @@ fn build_script_tool_probes<'a>(
     facts: &'a super::OvenLegacyCargoBuildScriptFacts,
     probe_matches: &mut [usize],
 ) -> Result<Vec<&'a OvenLegacyCargoBuildScriptToolProbe>, OvenLegacyCargoError> {
-    let domain = consumer
-        .platform
-        .as_deref()
-        .ok_or_else(|| projection_error("selected build-script consumer", "has no captured target domain"))?;
+    if consumer.platform.is_none() {
+        return Err(projection_error(
+            "selected build-script consumer",
+            "has no captured target domain",
+        ));
+    }
     let mut selected = Vec::new();
     for (probe_index, probe) in capture.build_script_tool_probes.iter().enumerate() {
-        let matches_unit = probe.package_id == build_unit.package_id
-            && probe.out_dir == facts.out_dir
-            && probe.target_context == domain;
+        let matches_unit = build_script_probe_matches_edge(probe, consumer, build_unit, facts);
         if matches_unit {
             selected.push(probe);
             probe_matches[probe_index] += 1;
         }
     }
     Ok(selected)
+}
+
+/// Whether one transient probe belongs to one exact selected build-script edge.
+fn build_script_probe_matches_edge(
+    probe: &OvenLegacyCargoBuildScriptToolProbe,
+    consumer: &OvenLegacyCargoSelectedUnit,
+    build_unit: &OvenLegacyCargoSelectedUnit,
+    facts: &super::OvenLegacyCargoBuildScriptFacts,
+) -> bool {
+    consumer.platform.as_deref().is_some_and(|domain| {
+        probe.package_id == build_unit.package_id && probe.out_dir == facts.out_dir && probe.target_context == domain
+    })
 }
 
 /// Require every selected build-script closure to be sealed by the verified final publisher receipt.
@@ -2700,6 +2846,37 @@ mod tests {
         cc_source.package = "cc".to_string();
         cc_source.source_root = PathBuf::from("/staged/registry-sources/cc-1.0.0");
         sources.push(cc_source);
+        let mut script_only_build = capture.units[2].clone();
+        script_only_build.package_id = "registry+https://example.invalid/index#probe-only@1.0.0".to_string();
+        script_only_build.package = "probe-only".to_string();
+        script_only_build.package_version = "1.0.0".to_string();
+        script_only_build.source_path = PathBuf::from("/transient/probe-only/build.rs");
+        script_only_build.dependencies = Vec::new();
+        let probe_facts = super::super::OvenLegacyCargoBuildScriptFacts {
+            cfgs: Vec::new(),
+            environment: BTreeMap::new(),
+            linked_libraries: Vec::new(),
+            linked_paths: Vec::new(),
+            out_dir: PathBuf::from("/transient/probe-only/out"),
+            output: None,
+        };
+        capture.units[2]
+            .dependencies
+            .push(super::super::OvenLegacyCargoSelectedDependency {
+                unit_index: 4,
+                extern_crate_name: None,
+                build_script: Some(probe_facts),
+            });
+        capture.units.push(script_only_build);
+        capture
+            .build_script_tool_probes
+            .push(super::super::OvenLegacyCargoBuildScriptToolProbe {
+                package_id: "registry+https://example.invalid/index#probe-only@1.0.0".to_string(),
+                out_dir: PathBuf::from("/transient/probe-only/out"),
+                target_context: "x86_64-unknown-linux-gnu".to_string(),
+                rustc_target: "x86_64-unknown-linux-gnu".to_string(),
+                digest: digest(b"pruned script probe"),
+            });
         let finalized = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none())?;
         let graph = finalized.graph.graph();
         assert_eq!(
@@ -2847,7 +3024,7 @@ mod tests {
             "without a declaration the script-emitted environment is withheld from the graph, not refused"
         );
 
-        let (_root, registry) = adoption_registry(&checksum, "")?;
+        let (registry_root, registry) = adoption_registry(&checksum, "")?;
         let authority = LoafRegistryAuthority::resolve(&capture, &registry, "release")?;
         assert!(
             authority.adoption(1).is_some(),
@@ -2867,13 +3044,64 @@ mod tests {
             "a fixture index line lists no binding status, so the adoption is harvested"
         );
         assert!(oven_model::manifest::is_sha256_identity(&records[0].index_line_digest));
-        let finalized = finalize_release_shaped(&capture, &sources, &authority)?;
-        let unit = &finalized.graph.graph().units[0];
+        let refused = finalize_release_shaped(&capture, &sources, &authority);
         assert!(
-            unit.environment.is_empty(),
-            "the declaration carries no environment, so neither does the graph"
+            refused
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.to_string().contains("cannot carry observed rustc-env")),
+            "an adopted record must refuse script environment it cannot carry: {:?}",
+            refused.as_ref().err().map(ToString::to_string)
         );
         assert!(authority.evidence_digest().is_some());
+
+        let (mut probed_capture, probed_sources) = release_shaped_capture(&checksum, BTreeMap::new())?;
+        probed_capture
+            .build_script_tool_probes
+            .push(super::super::OvenLegacyCargoBuildScriptToolProbe {
+                package_id: probed_capture.units[2].package_id.clone(),
+                out_dir: PathBuf::from("/transient/serde/out"),
+                target_context: "x86_64-unknown-linux-gnu".to_string(),
+                rustc_target: "x86_64-unknown-linux-gnu".to_string(),
+                digest: digest(b"adopted script probe"),
+            });
+        let probed_authority = LoafRegistryAuthority::resolve(&probed_capture, &registry, "release")?;
+        let refused_probe = finalize_release_shaped(&probed_capture, &probed_sources, &probed_authority);
+        assert!(
+            refused_probe
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.to_string().contains("cannot carry observed tool probes")),
+            "an adopted record must refuse script probes it cannot carry: {:?}",
+            refused_probe.as_ref().err().map(ToString::to_string)
+        );
+
+        let (mut wrong_platform_capture, _) = release_shaped_capture(&checksum, BTreeMap::new())?;
+        wrong_platform_capture.units[1].platform = Some("aarch64-apple-darwin".to_string());
+        let wrong_platform = LoafRegistryAuthority::resolve(&wrong_platform_capture, &registry, "release")?;
+        assert!(
+            wrong_platform.adoption(1).is_none(),
+            "a target-bound record must not govern a unit compiled for another platform"
+        );
+
+        let plain_capture = release_shaped_capture(&checksum, BTreeMap::new())?.0;
+        let first_evidence = LoafRegistryAuthority::resolve(&plain_capture, &registry, "release")?
+            .evidence_digest()
+            .ok_or("registry adoption must produce evidence")?;
+        let manifest_path = registry_root.path().join("crates-io/serde/1.0.0/loaf.toml");
+        let original_manifest = fs::read_to_string(&manifest_path)?;
+        fs::write(
+            &manifest_path,
+            format!("# governing manifest revision\n{original_manifest}"),
+        )?;
+        let changed_registry = oven_model::loaf_registry::LoafRegistry::open(registry_root.path())?;
+        let changed_evidence = LoafRegistryAuthority::resolve(&plain_capture, &changed_registry, "release")?
+            .evidence_digest()
+            .ok_or("changed registry adoption must produce evidence")?;
+        assert_ne!(
+            first_evidence, changed_evidence,
+            "registry evidence must bind the governing manifest bytes"
+        );
 
         let (_root, disagreeing) = adoption_registry(&checksum, "\"has_answer\"")?;
         let authority = LoafRegistryAuthority::resolve(&capture, &disagreeing, "release")?;
@@ -2895,8 +3123,8 @@ mod tests {
 
     /// `libm` reemits its configuration through `rustc-env` for its own test logging; the values are not portable
     /// text (`["arch", "default"]`) and the names are nobody's public compiler fact. Without a registry declaration
-    /// the release publisher must still publish: those entries are withheld from the graph, a registered name the
-    /// same script emitted is carried as text, and the closure digest binds every observation either way (#1704).
+    /// the release publisher must still publish: every entry is withheld from the graph, and the closure digest
+    /// binds every observation (#1704).
     #[test]
     fn an_unadopted_script_environment_is_withheld_from_the_graph_and_bound_by_the_closure_digest_issue1704()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -2912,15 +3140,9 @@ mod tests {
 
         let finalized = finalize_release_shaped(&capture, &sources, &LoafRegistryAuthority::none())?;
         let unit = &finalized.graph.graph().units[0];
-        assert_eq!(
-            unit.environment,
-            BTreeMap::from([(
-                "PROFILE".to_string(),
-                OvenSelectedRustFacetEnvironmentValue::Text {
-                    value: "release".to_string()
-                }
-            )]),
-            "only the registered public fact reaches the graph"
+        assert!(
+            unit.environment.is_empty(),
+            "an ungoverned script-emitted directive must not become a selected unit fact"
         );
         let encoded = String::from_utf8(finalized.graph.to_json_bytes()?)?;
         assert!(
@@ -2954,12 +3176,7 @@ mod tests {
         );
         assert_eq!(edge.environment["CFG_CARGO_FEATURES"].value, None);
         assert_eq!(edge.environment["CFG_CARGO_FEATURES"].observed_value, withheld_value);
-        assert_eq!(
-            edge.environment["PROFILE"].value,
-            Some(OvenSelectedRustFacetEnvironmentValue::Text {
-                value: "release".to_string()
-            })
-        );
+        assert_eq!(edge.environment["PROFILE"].value, None);
         let closure_digest = legacy_cargo_build_script_closure_digest(&capture, &bindings)?;
         let (changed_capture, _) = release_shaped_capture(
             &checksum,
@@ -3516,14 +3733,31 @@ mod tests {
                 "build_unit_present": false,
                 "effective_features": selected_unit.features,
             }],
+            "warnings": [
+                {"owner": selected_unit.source.owner, "package_root": selected_unit.source.root},
+                {"owner": selected_unit.source.owner, "package_root": selected_unit.source.root},
+            ],
         });
-        let inventories = runtime_foundation_inventories_from_policy_response(&finalized.graph, &response)?;
+        let selection = runtime_foundation_inventories_from_policy_response(&finalized.graph, &response)?;
+        assert_eq!(
+            selection.warnings.len(),
+            1,
+            "each selected package is reported exactly once"
+        );
+        assert_eq!(selection.warnings[0].package, selected_unit.package);
+        let inventories = selection.inventories;
         assert_eq!(inventories.len(), 1);
         assert_eq!(inventories[0].selected_identity, selected_unit.identity);
         assert_eq!(inventories[0].package.manifest.path, "Cargo.toml");
-        let mut tampered = response;
+        let mut tampered = response.clone();
         tampered["inventories"][0]["manifest"]["bytes_hex"] = serde_json::json!("00");
         assert!(runtime_foundation_inventories_from_policy_response(&finalized.graph, &tampered).is_err());
+        let mut unknown = response;
+        unknown["unexpected"] = serde_json::json!(true);
+        assert!(
+            runtime_foundation_inventories_from_policy_response(&finalized.graph, &unknown).is_err(),
+            "the selected policy response schema must refuse unknown fields"
+        );
         let stale_base = receipt_with_build_unit_input(
             &receipt,
             OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT,
@@ -3783,6 +4017,52 @@ mod tests {
                 digest: digest(b"first bounded probe"),
             });
         let first_probe_digest = legacy_cargo_build_script_closure_digest(&capture, &sealed.build_scripts)?;
+        let mut relocated_capture = capture.clone();
+        let relocated_facts = relocated_capture.units[0].dependencies[0]
+            .build_script
+            .as_mut()
+            .ok_or("relocated fixture lost its build-script facts")?;
+        relocated_facts
+            .environment
+            .insert("DEP_FIXTURE".to_string(), "/another/staging/out".to_string());
+        relocated_facts.linked_paths = vec!["native=/another/staging/out".to_string()];
+        relocated_facts.out_dir = PathBuf::from("/another/staging/out");
+        relocated_capture.build_script_tool_probes[0].out_dir = PathBuf::from("/another/staging/out");
+        let mut relocated_bindings = sealed.build_scripts.clone();
+        let relocated_binding = relocated_bindings
+            .get_mut(&(0, 1))
+            .ok_or("relocated fixture lost its sealed binding")?;
+        let relocated_environment = relocated_binding
+            .environment
+            .get_mut("DEP_FIXTURE")
+            .ok_or("relocated fixture lost its environment binding")?;
+        relocated_environment.observed_value = "/another/staging/out".to_string();
+        relocated_environment.value = Some(OvenSelectedRustFacetEnvironmentValue::Text {
+            value: "/another/staging/out".to_string(),
+        });
+        if let Some(linked) = relocated_binding.linked_libraries.as_mut() {
+            linked.observed_paths = vec!["native=/another/staging/out".to_string()];
+        }
+        assert_eq!(
+            first_probe_digest,
+            legacy_cargo_build_script_closure_digest(&relocated_capture, &relocated_bindings)?,
+            "absolute staging paths must not change the closure receipt"
+        );
+
+        let mut reordered_capture = capture.clone();
+        reordered_capture.units.swap(0, 1);
+        reordered_capture.roots = vec![1];
+        reordered_capture.units[1].dependencies[0].unit_index = 0;
+        let mut reordered_bindings = sealed.build_scripts.clone();
+        let binding = reordered_bindings
+            .remove(&(0, 1))
+            .ok_or("reordered fixture lost its sealed binding")?;
+        reordered_bindings.insert((1, 0), binding);
+        assert_eq!(
+            first_probe_digest,
+            legacy_cargo_build_script_closure_digest(&reordered_capture, &reordered_bindings)?,
+            "capture message order must not change the closure receipt"
+        );
         capture.build_script_tool_probes[0].digest = digest(b"changed bounded probe");
         assert_ne!(
             first_probe_digest,

@@ -5,11 +5,6 @@
 //! manifest, or scan a target directory. Instead it validates a producer-selected Rust facet graph and projects its
 //! declared prebuilt dependency edges for the direct-Rustc publisher.
 
-#![allow(
-    dead_code,
-    reason = "the runtime source publisher loads this sealed authority in the next wiring slice"
-)]
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 

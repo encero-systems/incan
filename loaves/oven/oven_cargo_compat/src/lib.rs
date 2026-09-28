@@ -3454,13 +3454,6 @@ fn artifact_closure(
     Ok((dependency_search_paths, externs, supporting_artifacts))
 }
 
-/// Derive one direct-rustc closure from the exact compiler artifacts the explicit Cargo invocation reported.
-///
-/// Cargo's target layout is an implementation detail: recent Cargo versions can place a dependency library below
-/// `target/<triple>/<profile>/build/<package>/<identity>/out`, while older versions use `deps/`. The JSON message
-/// stream is the stable publisher authority in both cases. Every path remains confined to private staging, must be
-/// a regular non-symlink file, and must have Cargo's crate-and-identity-shaped build-output form before it enters a
-/// Loaf.
 /// Canonical artifact paths of every host library the linked closure reaches without crossing a build script.
 ///
 /// From the captured roots, follow dependency edges but stop at run-custom-build units: what lies beyond them is a
@@ -3495,6 +3488,10 @@ fn linked_host_library_artifacts(
     Ok(artifacts)
 }
 
+/// Derive one direct-rustc closure from the exact compiler artifacts the explicit Cargo invocation reported.
+///
+/// Cargo's JSON stream is the publisher authority. Every reported path remains confined to private staging and
+/// must be a regular non-symlink compiler artifact before it enters a Loaf.
 fn artifact_closure_from_reported_paths(
     staging: &Path,
     target_triple: &str,

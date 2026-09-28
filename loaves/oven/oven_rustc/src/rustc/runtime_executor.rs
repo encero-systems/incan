@@ -10,11 +10,6 @@
 //! The boundary is deliberately narrow. The foundation decides *what* is compiled and in which order; this module
 //! decides only *how* one already-selected unit is handed to a retained compiler.
 
-#![allow(
-    dead_code,
-    reason = "runtime closure publication consumes these outputs in the next gate of the Cargo-free publisher"
-)]
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};

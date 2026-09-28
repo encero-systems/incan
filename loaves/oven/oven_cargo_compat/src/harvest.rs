@@ -1379,7 +1379,7 @@ mod tests {
         let authority = super::super::LoafRegistryAuthority::resolve(&capture, &registry, "release")?;
         let adoption = authority.adoption(1).ok_or("the harvested unit must be adopted")?;
         assert_eq!(adoption.checksum, CHECKSUM);
-        super::super::LoafRegistryAuthority::check_observation(adoption, Some(&facts))?;
+        super::super::LoafRegistryAuthority::check_observation(adoption, Some(&facts), false)?;
         assert!(
             super::super::LoafRegistryAuthority::resolve(&capture, &registry, "debug")?.is_empty(),
             "the record binds the harvested profile only"

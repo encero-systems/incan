@@ -69,9 +69,6 @@ use super::{
     write_sealed_oven_inspection_source_authority,
 };
 
-/// Generation evidence key binding the exact registry content whose declarations governed adopted units.
-const OVEN_LOAF_REGISTRY_AUTHORITY_EVIDENCE: &str = "loaf_registry_authority_digest";
-
 /// The release stdlib fixture's exact physical capture, and what the foundation steps after the fixture loop need
 /// beside it.
 struct ReleaseFoundationCapture {
@@ -101,7 +98,8 @@ struct StagedReleaseToolchain {
 
 /// Bake or exactly reuse one complete compiler-owned Alpha Loaf envelope.
 ///
-/// The command is hidden beneath `legacy_cargo` because Cargo may run only for a genuine Loaf miss. Normal
+/// The command is hidden beneath `legacy_cargo`. Compiler-suite reuse is checked before Cargo; release reuse first
+/// captures the physical closure needed to derive registry, runtime-foundation, and generation evidence. Normal
 /// build/run/test commands never call this function and never fall back to it.
 pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliResult<ExitCode> {
     let started = Instant::now();
@@ -229,6 +227,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             release_store_member.as_ref(),
             None,
             None,
+            None,
         )?;
     }
     if envelope == OvenLoafEnvelope::CompilerSuite
@@ -240,6 +239,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             release_store_member: release_store_member.as_ref(),
             runtime_foundation: None,
             runtime_closure: None,
+            loaf_registry_evidence: None,
             limits,
             started,
         })?
@@ -757,36 +757,47 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             .ok_or_else(|| CliError::failure("release stdlib result is absent"))?;
         final_entry.result = republished;
     }
-    let release_policy_inventories = if let (Some(finalized), Some(policy), Some(foundation), Some(toolchain)) = (
-        finalized_release_graph.as_ref(),
-        release_policy_output.as_ref(),
-        release_foundation_capture.as_ref(),
-        release_toolchain.as_ref(),
-    ) {
-        let request = encode_selected_graph_policy_request(
-            &finalized.graph,
-            &foundation.capture,
-            &foundation.sources,
-            &toolchain.compiler_closure_identity,
-        )
-        .map_err(oven_error)?;
-        let exchange_root = scratch.path().join("rust-policy-exchange");
-        let response = run_release_rust_policy(policy, &exchange_root, &request)?;
-        match runtime_foundation_inventories_from_policy_response(&finalized.graph, &response) {
-            Ok(inventories) => Some(inventories),
-            Err(error) => {
-                // The scratch exchange is discarded with the publisher; retain the refused exchange where an
-                // investigation can replay it against the policy engine and its tests.
-                let retained = retain_refused_policy_exchange(&exchange_root).map_err(oven_error)?;
-                return Err(CliError::failure(format!(
-                    "{error}; the refused exchange is retained at {}",
-                    retained.display()
-                )));
+    let (release_policy_inventories, build_script_warnings) =
+        if let (Some(finalized), Some(policy), Some(foundation), Some(toolchain)) = (
+            finalized_release_graph.as_ref(),
+            release_policy_output.as_ref(),
+            release_foundation_capture.as_ref(),
+            release_toolchain.as_ref(),
+        ) {
+            let request = encode_selected_graph_policy_request(
+                &finalized.graph,
+                &foundation.capture,
+                &foundation.sources,
+                &toolchain.compiler_closure_identity,
+            )
+            .map_err(oven_error)?;
+            let exchange_root = scratch.path().join("rust-policy-exchange");
+            let response = run_release_rust_policy(policy, &exchange_root, &request)?;
+            match runtime_foundation_inventories_from_policy_response(&finalized.graph, &response) {
+                Ok(selection) => {
+                    let warnings = selection
+                        .warnings
+                        .iter()
+                        .map(|warning| format!("build script for package `{}` is inert", warning.package))
+                        .collect::<Vec<_>>();
+                    for warning in &warnings {
+                        eprintln!("warning: {warning}");
+                    }
+                    (Some(selection.inventories), warnings)
+                }
+                Err(error) => {
+                    // The scratch exchange is discarded with the publisher; retain the refused exchange where an
+                    // investigation can replay it against the policy engine and its tests.
+                    let retained = retain_refused_policy_exchange(&exchange_root).map_err(oven_error)?;
+                    return Err(CliError::failure(format!(
+                        "{error}; the refused exchange is retained at {}",
+                        retained.display()
+                    )));
+                }
             }
-        }
-    } else {
-        None
-    };
+        } else {
+            (None, Vec::new())
+        };
     if envelope == OvenLoafEnvelope::Release && release_policy_inventories.is_none() {
         return Err(CliError::failure(
             "release envelope did not produce admitted Rust policy inventories".to_string(),
@@ -841,6 +852,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                 release_store_member: release_store_member.as_ref(),
                 runtime_foundation: Some(&foundation_member),
                 runtime_closure: Some(&closure_member),
+                loaf_registry_evidence: loaf_registry_evidence.as_deref(),
                 limits,
                 started,
             })? {
@@ -848,6 +860,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
                     finish_loaf_bake_after_publication(publication_lock, &options, envelope, report, started)?;
                 report.harvest = harvest_report;
                 report.registry_records = registry_records.clone();
+                report.warnings = build_script_warnings.clone();
                 verify_committed_release_policy_output(
                     &options.output,
                     release_store_member.as_ref(),
@@ -949,6 +962,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             release_store_member.as_ref(),
             runtime_foundation.as_ref(),
             runtime_closure.as_ref(),
+            loaf_registry_evidence.as_deref(),
         )?;
         if let Some(report) = reuse_complete_loaf_envelope(CompleteLoafEnvelopeReuseInput {
             output: &options.output,
@@ -958,6 +972,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
             release_store_member: release_store_member.as_ref(),
             runtime_foundation: runtime_foundation.as_ref(),
             runtime_closure: runtime_closure.as_ref(),
+            loaf_registry_evidence: loaf_registry_evidence.as_deref(),
             limits,
             started,
         })? {
@@ -1012,8 +1027,11 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     let prepared_count = pending.len();
     let envelope_publication_started = Instant::now();
     announce_oven_progress("PUBLISH", "Loaf envelope", Some(&format!("{prepared_count} Loaf(s)")));
-    let mut compatibility_evidence =
-        loaf_envelope_compatibility_map_with_release_member(&evidence, release_store_member.as_ref())?;
+    let mut compatibility_evidence = loaf_envelope_compatibility_map_with_release_member(
+        &evidence,
+        release_store_member.as_ref(),
+        loaf_registry_evidence.as_deref(),
+    )?;
     if let Some(member) = runtime_foundation.as_ref() {
         oven_rustc::loaf::bind_release_runtime_foundation_evidence(&mut compatibility_evidence, member)
             .map_err(oven_error)?;
@@ -1021,9 +1039,6 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
     if let Some(member) = runtime_closure.as_ref() {
         oven_rustc::loaf::bind_release_runtime_closure_evidence(&mut compatibility_evidence, member)
             .map_err(oven_error)?;
-    }
-    if let Some(digest) = loaf_registry_evidence.as_ref() {
-        compatibility_evidence.insert(OVEN_LOAF_REGISTRY_AUTHORITY_EVIDENCE.to_string(), digest.clone());
     }
     let generation_identity =
         loaf_generation_identity_with_release_member(envelope, &compatibility_evidence, release_store_member.as_ref())?;
@@ -1133,6 +1148,7 @@ pub fn oven_legacy_cargo_bake_loafs(options: OvenLoafBakeCommandOptions) -> CliR
         compiler_suite: None,
         harvest: harvest_report,
         registry_records: registry_records.clone(),
+        warnings: build_script_warnings,
     };
     // `finish_loaf_bake` opens the committed Loafs as a normal shared-lease consumer. Publication and retirement
     // are complete, so release exclusive authority before crossing into that consumer phase.
@@ -1231,7 +1247,6 @@ pub(crate) fn import_release_policy_output(
     stored_project_output_from_parts(manifest, artifact_root, payload, lease)
 }
 
-/// Execute the exact admitted policy engine with one bounded file exchange.
 /// Copy a refused Rust policy exchange out of publisher scratch so it can be inspected and replayed.
 fn retain_refused_policy_exchange(exchange_root: &Path) -> Result<PathBuf, oven_rustc::loaf::OvenLoafError> {
     let stamp = std::time::SystemTime::now()
@@ -1253,6 +1268,7 @@ fn retain_refused_policy_exchange(exchange_root: &Path) -> Result<PathBuf, oven_
     Ok(destination)
 }
 
+/// Execute the exact admitted policy engine with one bounded file exchange.
 fn run_release_rust_policy(
     policy: &OvenStoredProjectOutput,
     exchange_root: &Path,

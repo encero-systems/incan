@@ -3718,7 +3718,9 @@ mod tests {
             runtime_source_digest: digest_bytes(b"runtime"),
             fixture_digest: digest_bytes(b"fixture"),
         };
-        let compatibility = loaf_envelope_compatibility_map_with_release_member(&evidence, Some(&member))?;
+        let registry_evidence = digest_bytes(b"registry authority");
+        let compatibility =
+            loaf_envelope_compatibility_map_with_release_member(&evidence, Some(&member), Some(&registry_evidence))?;
         let generation_identity =
             loaf_generation_identity_with_release_member(OvenLoafEnvelope::Release, &compatibility, Some(&member))?;
         let output = tempfile::tempdir()?;
@@ -3748,6 +3750,7 @@ mod tests {
                 release_store_member: Some(&member),
                 runtime_foundation: None,
                 runtime_closure: None,
+                loaf_registry_evidence: Some(&registry_evidence),
                 limits,
                 started: Instant::now(),
             })?
@@ -3987,7 +3990,9 @@ mod tests {
             &sdk_inventory,
             &rustc,
         )?;
-        let compatibility = loaf_envelope_compatibility_map(&evidence);
+        let registry_evidence = digest_bytes(b"registry authority");
+        let compatibility =
+            loaf_envelope_compatibility_map_with_release_member(&evidence, None, Some(&registry_evidence))?;
         let generation_identity =
             loaf_generation_identity_with_release_member(OvenLoafEnvelope::Release, &compatibility, None)?;
         let manifest = write_synthetic_release_envelope(mirror.path(), &generation_identity, &compatibility, None)?;
@@ -4004,6 +4009,7 @@ mod tests {
             None,
             None,
             None,
+            Some(&registry_evidence),
             &[stale.path().to_path_buf()],
         )?;
         assert!(
@@ -4019,6 +4025,7 @@ mod tests {
             None,
             None,
             None,
+            Some(&registry_evidence),
             &[stale.path().to_path_buf(), mirror.path().to_path_buf()],
         )?;
         let committed: OvenLoafEnvelopeManifest =
@@ -4037,6 +4044,7 @@ mod tests {
             release_store_member: None,
             runtime_foundation: None,
             runtime_closure: None,
+            loaf_registry_evidence: Some(&registry_evidence),
             limits: OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
             started: Instant::now(),
         })?
@@ -4132,6 +4140,7 @@ mod tests {
             release_store_member: None,
             runtime_foundation: None,
             runtime_closure: None,
+            loaf_registry_evidence: None,
             limits: OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
             started: Instant::now(),
         })?
@@ -4186,6 +4195,7 @@ mod tests {
                 release_store_member: None,
                 runtime_foundation: None,
                 runtime_closure: None,
+                loaf_registry_evidence: None,
                 limits: OvenStoreLimits::new(1024 * 1024, 1024 * 1024, 1024 * 1024),
                 started: Instant::now(),
             })?
@@ -4364,6 +4374,7 @@ mod tests {
             compiler_suite: None,
             harvest: None,
             registry_records: Vec::new(),
+            warnings: Vec::new(),
         };
         let publication_lock = acquire_exclusive_loaf_generation_lock(output.path())?;
         let report = super::finish_loaf_bake_after_publication(

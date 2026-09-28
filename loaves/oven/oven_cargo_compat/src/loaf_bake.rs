@@ -260,22 +260,6 @@ fn bind_registry_leaf_selected_unit_identities(
     let mut used = BTreeSet::new();
     let mut retained = Vec::with_capacity(leaves.len());
     let mut undeclared = Vec::new();
-    let emitted = leaves
-        .iter()
-        .map(|leaf| {
-            format!(
-                "{}@{} {:?} {:?} {}",
-                leaf.package,
-                leaf.version,
-                leaf.domain,
-                leaf.crate_kind,
-                leaf.selected_unit_identity
-                    .as_deref()
-                    .map(|identity| &identity[..23])
-                    .unwrap_or("-")
-            )
-        })
-        .collect::<Vec<_>>();
     for mut leaf in leaves.drain(..) {
         let capture_identity = leaf
             .selected_unit_identity
@@ -283,6 +267,11 @@ fn bind_registry_leaf_selected_unit_identities(
             .ok_or_else(|| OvenLoafError::Preparation {
                 message: "registry artifact lacks its traced physical-unit identity".to_string(),
             })?;
+        if !oven_model::manifest::is_sha256_identity(&capture_identity) {
+            return Err(OvenLoafError::Preparation {
+                message: "registry artifact has a malformed traced physical-unit identity".to_string(),
+            });
+        }
         if !linked_identities.contains(&capture_identity) {
             continue;
         }
@@ -313,6 +302,22 @@ fn bind_registry_leaf_selected_unit_identities(
         });
     }
     if used.len() != bindings.len() {
+        let emitted = retained
+            .iter()
+            .map(|leaf| {
+                format!(
+                    "{}@{} {:?} {:?} {}",
+                    leaf.package,
+                    leaf.version,
+                    leaf.domain,
+                    leaf.crate_kind,
+                    leaf.selected_unit_identity
+                        .as_deref()
+                        .and_then(|identity| identity.get(..23))
+                        .unwrap_or("-")
+                )
+            })
+            .collect::<Vec<_>>();
         // Name the compiled units that no sealed artifact carries, so the catalog gap is visible rather than counted.
         let mut identities_by_capture = BTreeMap::new();
         for index in &linked {
@@ -1132,6 +1137,61 @@ mod tests {
         let mut other_intent = final_receipt.clone();
         other_intent.intent.profile = "debug".to_string();
         assert!(republish_loaf_under_final_receipt(&provisional_dir, &other_intent, &capture, &bindings).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_provisional_selected_unit_identity_is_a_typed_error() -> Result<(), Box<dyn std::error::Error>> {
+        let base = runtime_receipt_for_plan()?;
+        let final_receipt = oven_store::receipt_with_build_unit_input(
+            &base,
+            crate::OVEN_LEGACY_CARGO_BUILD_SCRIPT_CLOSURE_INPUT,
+            digest_bytes(b"closure"),
+        )?;
+        let unit = selected_registry_unit(&["target_has_atomic=\"64\""]);
+        let capture = OvenLegacyCargoSelectedUnitCapture {
+            roots: vec![0],
+            units: vec![unit],
+            rustc_invocations_observed: true,
+            build_script_tool_probes: Vec::new(),
+            compiler: None,
+        };
+        let mut leaf = registry_leaf();
+        leaf.selected_unit_identity = Some("bad".to_string());
+        let mut plan = empty_manifest(&base);
+        plan.registry_leaves = vec![leaf.clone()];
+        let provisional = OvenLoaf {
+            schema_version: OVEN_LOAF_SCHEMA_VERSION,
+            build_unit_identity: base.build_unit_identity.clone(),
+            provenance: OvenLoafProvenance {
+                compiler_version: "fixture".to_string(),
+                rust_toolchain: base.intent.toolchain.clone(),
+                sdk_provider_codegen_revision: "fixture".to_string(),
+                baker: "legacy_cargo".to_string(),
+            },
+            accounting: OvenLoafAccounting {
+                payload_logical_bytes: 0,
+                payload_physical_bytes: 0,
+            },
+            compatibility: OvenLoafCompatibility::from_receipt(&base)?,
+            registry_leaves: vec![leaf.clone()],
+            plan,
+        };
+        let root = tempfile::tempdir()?;
+        let provisional_dir = root.path().join("provisional.loaf");
+        let artifact = provisional_dir.join(&leaf.artifact.relative_path);
+        fs::create_dir_all(artifact.parent().ok_or("artifact parent")?)?;
+        fs::write(&artifact, b"exact compiled bytes")?;
+        fs::write(
+            provisional_dir.join("loaf.json"),
+            serde_json::to_vec_pretty(&provisional)?,
+        )?;
+
+        let result = republish_loaf_under_final_receipt(&provisional_dir, &final_receipt, &capture, &BTreeMap::new());
+        assert!(
+            result.is_err(),
+            "a malformed identity must be refused without slicing it"
+        );
         Ok(())
     }
 
