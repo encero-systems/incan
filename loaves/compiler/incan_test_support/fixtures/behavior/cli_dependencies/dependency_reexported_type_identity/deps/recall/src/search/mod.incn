@@ -1,0 +1,18 @@
+"""Public facade for the search profiles."""
+
+pub from crate.search.exact import (
+    ExactResult,
+    Index,
+    Outcome,
+    best_outcome,
+    build_index,
+    exact_query,
+)
+pub from crate.search.models import (
+    MAX_TOP_K,
+    Candidate,
+    Nomination,
+    SearchError,
+    SearchErrorKind,
+    SearchProfile,
+)

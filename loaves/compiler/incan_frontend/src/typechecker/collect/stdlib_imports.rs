@@ -842,7 +842,7 @@ impl TypeChecker {
     }
 
     /// Return the public source spelling for one checked API declaration.
-    fn api_declaration_name(declaration: &ApiDeclaration) -> &str {
+    pub(super) fn api_declaration_name(declaration: &ApiDeclaration) -> &str {
         match declaration {
             ApiDeclaration::Function(item) => &item.name,
             ApiDeclaration::Model(item) => &item.name,
@@ -1643,11 +1643,11 @@ impl TypeChecker {
             .iter()
             .map(|(source_module, _)| source_module.join("."))
             .collect::<Vec<_>>();
-        if matches.len() != 1 {
-            return Err(source_modules);
-        }
-
-        let (source_module_path, declarations) = &matches[0];
+        let (source_module_path, declarations) = match matches.as_slice() {
+            [only] => only,
+            _ => Self::one_declaration_behind_namespace_matches(manifest, member, &matches)
+                .ok_or_else(|| source_modules.clone())?,
+        };
         let mut kinds = declarations
             .iter()
             .filter_map(|declaration| match declaration {
@@ -1708,7 +1708,12 @@ impl TypeChecker {
             ),
             _ => return Err(source_modules),
         };
+        let canonical = manifest
+            .contract_metadata
+            .identity_graph
+            .canonical_for_public_path(&public_path);
         let remapping = self.public_module_type_remapping(library, manifest, &resolved_source_module_path);
+        self.remap_symbol_kind_through_declaring_module(library, manifest, canonical.as_ref(), &mut kind);
         self.remap_symbol_kind_with_import_aliases(&mut kind, &remapping);
         if let Some((_, target)) = &mut type_alias {
             Self::remap_resolved_type_with_import_aliases(target, &remapping);
@@ -1730,15 +1735,55 @@ impl TypeChecker {
         Self::mark_compiled_class_field_provider(&mut kind, library);
         Ok(Some(PublicModuleMember {
             kind,
-            canonical: manifest
-                .contract_metadata
-                .identity_graph
-                .canonical_for_public_path(&public_path),
+            canonical,
             source_module_path: resolved_source_module_path,
             source_name: resolved_source_name,
             type_alias,
             partial_projection,
         }))
+    }
+
+    /// Choose one of several source modules that each publish `member` into the same derived namespace, when the
+    /// identity graph says they all publish the same declarations.
+    ///
+    /// A directory namespace exposes its entrypoint's declarations and its source-file children's, so a facade that
+    /// re-exports a child's declaration (`pkg/mod.incn` holding `pub from crate.pkg.inner import Greeting`) puts the
+    /// name there twice. Each source module publishes the member at its own namespace path, and the identity graph
+    /// records the canonical declarations there; when every module's set is the same, the spellings name one
+    /// declaration and nothing is ambiguous. The declaring module's match is preferred, so the member keeps its
+    /// declaration rather than a forwarding alias. Different or unproven identities stay ambiguous.
+    fn one_declaration_behind_namespace_matches<'m, 'a>(
+        manifest: &LibraryManifest,
+        member: &str,
+        matches: &'m [(Vec<String>, Vec<&'a ApiDeclaration>)],
+    ) -> Option<&'m (Vec<String>, Vec<&'a ApiDeclaration>)> {
+        let graph = &manifest.contract_metadata.identity_graph;
+        let canonicals_of = |module_path: &[String]| {
+            let public_path = std::iter::once(manifest.name.clone())
+                .chain(module_path.iter().cloned())
+                .chain(std::iter::once(member.to_string()))
+                .collect::<Vec<_>>();
+            let mut canonicals = graph.canonicals_at_public_path(&public_path);
+            canonicals.sort();
+            canonicals
+        };
+        let (first, rest) = matches.split_first()?;
+        let published = canonicals_of(&first.0);
+        if published.is_empty()
+            || rest
+                .iter()
+                .any(|(module_path, _)| canonicals_of(module_path) != published)
+        {
+            return None;
+        }
+        matches
+            .iter()
+            .find(|(_, declarations)| {
+                declarations
+                    .iter()
+                    .any(|declaration| !matches!(declaration, ApiDeclaration::Alias(_)))
+            })
+            .or(Some(first))
     }
 
     /// Build canonical and local type spellings for API declarations consumed through public module namespaces.
@@ -2610,6 +2655,11 @@ impl TypeChecker {
                 }
             }
         };
+        let canonical = manifest
+            .contract_metadata
+            .identity_graph
+            .canonical_for_public_name(member);
+        self.remap_symbol_kind_through_declaring_module(library, &manifest, canonical.as_ref(), &mut kind);
         self.remap_symbol_kind_with_import_aliases(&mut kind, &remapping);
         Self::mark_compiled_class_field_provider(&mut kind, library);
         Some(kind)
@@ -2747,18 +2797,23 @@ impl TypeChecker {
                 .push(trait_info);
         }
 
-        let canonical_types = manifest
-            .contract_metadata
-            .identity_graph
+        self.register_pub_library_declarations(library, manifest, &canonical_remapping);
+        let identity_graph = &manifest.contract_metadata.identity_graph;
+        let canonical_types = identity_graph
             .exports
             .iter()
             .filter_map(|identity| {
                 let info = self.manifest_nominal_type_info(manifest, &identity.public_name)?;
-                Some((canonical_public_library_type_name(library, &identity.public_name), info))
+                Some((
+                    canonical_public_library_type_name(library, &identity.public_name),
+                    identity_graph.canonical_for_public_name(&identity.public_name),
+                    info,
+                ))
             })
             .collect::<Vec<_>>();
-        for (canonical_name, info) in canonical_types {
+        for (canonical_name, declaration, info) in canonical_types {
             let mut kind = SymbolKind::Type(info);
+            self.remap_symbol_kind_through_declaring_module(library, manifest, declaration.as_ref(), &mut kind);
             self.remap_symbol_kind_with_import_aliases(&mut kind, &canonical_remapping);
             Self::mark_compiled_class_field_provider(&mut kind, library);
             if let SymbolKind::Type(info) = kind {
@@ -3191,7 +3246,7 @@ impl TypeChecker {
     ///
     /// `api` is the checked API the declaration belongs to; a partial's leftover defaulted parameters are completed
     /// from its target there (#1760).
-    fn symbol_kind_from_api_declaration(
+    pub(super) fn symbol_kind_from_api_declaration(
         &self,
         api: Option<&CheckedApiMetadataPackage>,
         declaration: &ApiDeclaration,
@@ -3365,6 +3420,11 @@ impl TypeChecker {
                 kind
             }
         };
+        let canonical = manifest
+            .contract_metadata
+            .identity_graph
+            .canonical_for_public_name(source_name);
+        self.remap_symbol_kind_through_declaring_module(library, manifest, canonical.as_ref(), &mut kind);
         self.remap_symbol_kind_with_import_aliases(&mut kind, imported_type_aliases);
         Self::mark_compiled_class_field_provider(&mut kind, library);
 
@@ -3381,10 +3441,6 @@ impl TypeChecker {
             );
             return;
         }
-        let canonical = manifest
-            .contract_metadata
-            .identity_graph
-            .canonical_for_public_name(source_name);
         let symbol_id = self.symbols.define_import_binding_at_path(
             Symbol {
                 name: local_name.clone(),
@@ -3425,7 +3481,7 @@ impl TypeChecker {
     }
 
     /// Attach the importing dependency key to every field reconstructed from one compiled class manifest.
-    fn mark_compiled_class_field_provider(kind: &mut SymbolKind, library: &str) {
+    pub(super) fn mark_compiled_class_field_provider(kind: &mut SymbolKind, library: &str) {
         let SymbolKind::Type(TypeInfo::Class(info)) = kind else {
             return;
         };
@@ -3435,7 +3491,7 @@ impl TypeChecker {
     }
 
     /// Rewrite imported semantic type references through type aliases from the source library manifest.
-    fn remap_symbol_kind_with_import_aliases(
+    pub(super) fn remap_symbol_kind_with_import_aliases(
         &self,
         kind: &mut SymbolKind,
         imported_type_aliases: &HashMap<String, String>,

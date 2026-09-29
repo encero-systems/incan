@@ -145,6 +145,23 @@ impl TypeChecker {
         }
     }
 
+    /// Whether a type spelled `written` in a pattern names the subject's type `subject_name`.
+    ///
+    /// The spellings agree, or they are two spellings of one compiled-library declaration: a consumer's import of the
+    /// type and the provider-qualified key a dependency signature carries when the signature was imported before the
+    /// type, or two public paths of the type. Both carry the declaration's identity, so the pattern names the subject's
+    /// type.
+    fn pattern_type_spelling_names_subject(&self, written: &str, subject_name: &str) -> bool {
+        written == subject_name
+            || matches!(
+                (
+                    self.public_library_type_identities.get(written),
+                    self.public_library_type_identities.get(subject_name),
+                ),
+                (Some(written_identity), Some(subject_identity)) if written_identity == subject_identity
+            )
+    }
+
     /// Whether an explicit pattern qualifier names the same enum-like scrutinee type being matched.
     fn pattern_qualifier_matches_expected_type(expected_ty: &ResolvedType, qualifier: &str) -> bool {
         match expected_ty {
@@ -513,7 +530,9 @@ impl TypeChecker {
     /// The subject's enum qualifies the variant, and a variant alias resolves to the variant it names, so a bare
     /// `Filled(n)` and an aliased `Full(n)` or `Shape.Full(n)` are spelled `Shape::Filled` by lowering, as a qualified
     /// pattern over the canonical variant is. A module that matches a value of an enum another project module declares
-    /// without binding the enum's name spells it from the crate root (`crate::shapes::Shape::Filled`).
+    /// without binding the enum's name spells it from the crate root (`crate::shapes::Shape::Filled`), and a value of a
+    /// dependency's enum typed by its provider-qualified key (`pub::recall::Outcome`) spells it from the dependency's
+    /// crate, as lowering spells that type (`recall::Outcome::Found`).
     fn record_incan_enum_pattern_path(&mut self, expected_ty: &ResolvedType, variant: &str, span: Span) {
         let enum_name = match expected_ty {
             ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
@@ -536,7 +555,10 @@ impl TypeChecker {
                     module_path.join("::")
                 )
             }
-            _ => enum_name.clone(),
+            _ => match crate::typechecker::split_canonical_public_library_type_name(enum_name) {
+                Some((library, public_name)) => format!("{library}::{public_name}"),
+                None => enum_name.clone(),
+            },
         };
         let path = format!("{owner}::{canonical}");
         self.type_info
@@ -659,12 +681,15 @@ impl TypeChecker {
                 // A record pattern names the subject's model or class, generic ones included: each field it names
                 // is checked against the field's type under the subject's type arguments.
                 let model_or_class_fields = match subject_ty {
-                    ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) if ctor_name == type_name => {
+                    ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _)
+                        if self.pattern_type_spelling_names_subject(ctor_name, type_name) =>
+                    {
                         let type_args = match subject_ty {
                             ResolvedType::Generic(_, type_args) => type_args.as_slice(),
                             _ => &[],
                         };
-                        self.lookup_type_info(type_name)
+                        // A dependency's type the module reaches only through a signature has no lexical symbol.
+                        self.lookup_semantic_type_info(type_name)
                             .and_then(|type_info| match type_info {
                                 TypeInfo::Model(model_info) => Some((
                                     model_info.fields.clone(),
@@ -1089,7 +1114,7 @@ impl TypeChecker {
             ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => type_name,
             _ => return None,
         };
-        if enum_qualifier_opt.is_some_and(|qualifier| qualifier != enum_name) {
+        if enum_qualifier_opt.is_some_and(|qualifier| !self.pattern_type_spelling_names_subject(qualifier, enum_name)) {
             return None;
         }
         let Some(TypeInfo::Enum(enum_info)) = self.lookup_semantic_type_info(enum_name) else {

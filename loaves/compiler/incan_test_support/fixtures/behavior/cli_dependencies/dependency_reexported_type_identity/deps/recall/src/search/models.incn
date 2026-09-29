@@ -1,0 +1,51 @@
+"""Models shared by the search profiles."""
+
+from std.traits.error import Error
+from crate.ids import EntryId
+
+pub const MAX_TOP_K: int = 8
+
+
+@derive(Clone, Eq)
+pub enum SearchProfile(str):
+    Exact = "exact"
+    Approximate = "approximate"
+
+
+@derive(Clone, Eq)
+pub enum SearchErrorKind(str):
+    EmptyIndex = "empty_index"
+    InvalidTopK = "invalid_top_k"
+
+
+@derive(Clone)
+pub model SearchError with Error:
+    pub _kind: SearchErrorKind
+    pub _detail: str
+
+    def kind(self) -> SearchErrorKind:
+        return self._kind
+
+    def message(self) -> str:
+        return self._detail
+
+    def source(self) -> Option[str]:
+        return None
+
+
+@derive(Clone)
+pub model Nomination:
+    """One ranked entry."""
+
+    pub entry_id: EntryId
+    pub rank: int
+    pub relevance_bps: int
+
+    def label(self) -> str:
+        return f"{self.entry_id.0}#{self.rank}"
+
+
+@derive(Clone)
+pub model Candidate:
+    pub entry_id: EntryId
+    pub score: int

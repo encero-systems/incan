@@ -776,6 +776,15 @@ pub struct TypeChecker {
     pub cached_pub_libraries: HashSet<String>,
     /// Physical type routes projected once from checked foreign leaf identities for each imported provider.
     pub foreign_pub_type_remappings: HashMap<String, HashMap<String, String>>,
+    /// Per imported provider and checked API module: the type names the module's declarations spell whose meaning
+    /// the package root's public names do not carry, mapped to the declaration's provider-qualified key.
+    ///
+    /// A published signature or field names a type as its declaring module spells it, through the module's own
+    /// declarations and imports, private ones included. The root's public names cover the spellings that name the same
+    /// declaration at the root; these maps cover the rest, such as a type only a submodule publishes or a root name
+    /// that names another declaration.
+    pub(in crate::typechecker) pub_library_declaration_scopes:
+        HashMap<String, HashMap<Vec<String>, HashMap<String, String>>>,
     /// Whether a manual [`Self::import_module`] call prepared dependency-only semantics for the next program check.
     dependency_semantics_pending: bool,
     /// Module path for the program being checked (if known).
@@ -986,6 +995,7 @@ impl TypeChecker {
             transitive_stdlib_stub_traits: HashMap::new(),
             cached_pub_libraries: HashSet::new(),
             foreign_pub_type_remappings: HashMap::new(),
+            pub_library_declaration_scopes: HashMap::new(),
             dependency_semantics_pending: false,
             current_module_path: None,
             source_import_targets: HashMap::new(),
@@ -1746,13 +1756,29 @@ impl TypeChecker {
     }
 
     /// Bind a nominal declaration to the exact artifact already admitted for this consumer dependency route.
+    ///
+    /// `source_path` is the path the caller reached the type through, which for a re-export is the hop it forwards
+    /// through. When the library's identity graph publishes the declaration `canonical` names, the identity carries
+    /// the declaration's own source path instead, so every public path of one type yields one identity.
     fn admitted_public_type_identity(
         &self,
         library: &str,
         source_path: &[String],
         canonical: Option<CanonicalSymbolId>,
     ) -> PublicLibraryTypeIdentity {
-        let mut identity = PublicLibraryTypeIdentity::new(library, source_path).with_canonical(canonical);
+        let manifest_entry = self.provider_plan.library_manifest_index().get(library);
+        let declaration_path = match (&canonical, manifest_entry) {
+            (
+                Some(canonical),
+                Some(crate::library_manifest_index::LibraryManifestIndexEntry::Loaded { manifest, .. }),
+            ) => manifest
+                .contract_metadata
+                .identity_graph
+                .declaration_source_path(canonical),
+            _ => None,
+        };
+        let mut identity =
+            PublicLibraryTypeIdentity::new(library, declaration_path.unwrap_or(source_path)).with_canonical(canonical);
         if let Some(canonical) = &identity.canonical {
             identity.selected_provider = self.provider_plan.declaring_public_provider(library, canonical).ok();
         } else if let Some(crate::library_manifest_index::LibraryManifestIndexEntry::Loaded { metadata, .. }) =
@@ -6984,6 +7010,7 @@ impl TypeChecker {
             self.transitive_pub_traits.clear();
             self.cached_pub_libraries.clear();
             self.foreign_pub_type_remappings.clear();
+            self.pub_library_declaration_scopes.clear();
         }
         self.validate_alias_declarations(program);
         self.report_reserved_compiler_names(program);
@@ -8464,6 +8491,7 @@ impl TypeChecker {
         self.transitive_pub_traits.clear();
         self.cached_pub_libraries.clear();
         self.foreign_pub_type_remappings.clear();
+        self.pub_library_declaration_scopes.clear();
         self.dependency_exports.clear();
         self.dependency_member_symbols.clear();
         self.dependency_member_type_aliases.clear();
@@ -8516,6 +8544,7 @@ impl TypeChecker {
         self.transitive_pub_traits.clear();
         self.cached_pub_libraries.clear();
         self.foreign_pub_type_remappings.clear();
+        self.pub_library_declaration_scopes.clear();
         // Skip populating dependency exports so visibility checks are bypassed.
         self.dependency_exports.clear();
         self.dependency_member_symbols.clear();

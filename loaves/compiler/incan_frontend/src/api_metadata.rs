@@ -935,6 +935,12 @@ pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
     }
 }
 
+/// Whether a checked API module path names the package's root module, whose declarations the package publishes under
+/// its own name rather than under a module namespace.
+pub(crate) fn is_package_root_module(module_path: &[String]) -> bool {
+    matches!(module_path, [root] if root == "lib" || root == "main")
+}
+
 /// Materialize the deterministic public namespace graph owned by one checked package API.
 pub fn materialize_checked_api_public_namespaces(
     api: &mut CheckedApiMetadataPackage,
@@ -950,7 +956,7 @@ pub fn materialize_checked_api_public_namespaces(
 
     let mut namespaces = HashMap::<Vec<String>, CheckedApiPublicNamespace>::new();
     for module in &api.modules {
-        if matches!(module.module_path.as_slice(), [root] if root == "lib" || root == "main") {
+        if is_package_root_module(&module.module_path) {
             continue;
         }
         for len in 1..=module.module_path.len() {
